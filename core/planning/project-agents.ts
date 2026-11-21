@@ -45,22 +45,12 @@ export class ProjectAgentTargetRefusal extends Error {
   }
 }
 
-/**
- * An entry is observed only on the host it was registered from. A bare legacy
- * Paseo id has no encoded host, exactly like the planner liveness read, so any
- * Paseo host may observe it. Every other host mismatch is incomplete, not gone.
- */
+/** A registered entry is observed only on its recorded host. */
 export function projectAgentObservedOn(
   agent: Pick<ProjectAgent, "agentId" | "hostId">,
   observedHostId: string | null,
 ): boolean {
-  if (!observedHostId) return false;
-  if (agent.hostId === observedHostId) return true;
-  if (parseAgentId(agent.agentId)) return false;
-  return (
-    legacyIdentityObservedOn(agent.hostId) &&
-    legacyIdentityObservedOn(observedHostId)
-  );
+  return Boolean(observedHostId && agent.hostId === observedHostId);
 }
 
 /** One entry's live state from its own host. A failed read is `unknown`. */
@@ -158,8 +148,8 @@ export async function resolveProjectAgent(
       hostId:
         entry?.hostId ??
         parseAgentId(fallback)?.hostId ??
-        context.observedHostId ??
-        "",
+        (context.observedHostId && legacyIdentityObservedOn(context.observedHostId)
+          ? context.observedHostId : ""),
       name: entry?.name ?? project.planner?.name ?? "",
     };
   }

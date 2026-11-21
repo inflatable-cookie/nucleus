@@ -59,7 +59,8 @@ export function identitySourceHostEvidence(agentId: string, identitySource: Iden
   try {
     const qualified = parseAgentId(identitySource.agent);
     if (qualified && qualified.hostId !== identitySource.hostId) return undefined;
-    if (!sameCallerIdentity(identitySource.agent, agentId, identitySource.hostId)) return undefined;
+    const legacyHost = knownHostIds.find(id => hostKindOf(id) === 'paseo');
+    if (!sameCallerIdentity(identitySource.agent, agentId, identitySource.hostId, legacyHost)) return undefined;
   } catch { return undefined; }
   return knownHostIds.includes(identitySource.hostId) ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined;
 }
@@ -83,10 +84,12 @@ export async function resolveOriginHost<T>(registry: HostRegistry<T>, agentId: s
   evidence?: OriginHostEvidence): Promise<string | undefined> {
   const qualified = parseAgentId(agentId);
   const known = registry.known().map(entry => entry.id);
+  if (qualified) return known.includes(qualified.hostId) && registry.get(qualified.hostId)
+    ? qualified.hostId : undefined;
   // Bare caller fields predate host-qualified identities and belong to Paseo.
   // An unrelated T3 host must not make a legacy Paseo identity ambiguous or
   // prevent its checks while T3 is offline.
-  const candidates = qualified ? known : known.filter(id => hostKindOf(id) === 'paseo');
+  const candidates = known.filter(id => hostKindOf(id) === 'paseo');
   const online = registry.onlineIds().filter(id => candidates.includes(id));
   // Stale evidence (a host this registry never knew) decides nothing.
   const named = evidence && known.includes(evidence.hostId) ? evidence.hostId : undefined;

@@ -12,7 +12,8 @@ export function formatAgentId(hostId: string, nativeAgentId: string): string {
 
 /** A reserved but malformed identity must never be treated as a legacy ID. */
 export function parseAgentId(id: string): QualifiedAgentId | null {
-  if (!id.startsWith(PREFIX)) return null;
+  if (!id.startsWith('nucleus-agent:')) return null;
+  if (!id.startsWith(PREFIX)) throw new Error('Malformed qualified agent identity');
   let value: unknown;
   try { value = JSON.parse(id.slice(PREFIX.length)); } catch { throw new Error('Malformed qualified agent identity'); }
   if (!Array.isArray(value) || value.length !== 2 || typeof value[0] !== 'string' || !value[0]
@@ -44,7 +45,7 @@ export function legacyIdentityObservedOn(hostId: string | null | undefined): boo
   return hostKindOf(hostId) === 'paseo';
 }
 
-/** Caller fields accept old bare Paseo IDs without changing the stored record. */
+/** Compare caller fields using supplied host evidence; two bare legacy fields still match. */
 export function sameCallerIdentity(left: string | null | undefined, right: string | null | undefined,
   leftHostId?: string | null, rightHostId?: string | null): boolean {
   if (!left || !right) return false;
@@ -52,8 +53,9 @@ export function sameCallerIdentity(left: string | null | undefined, right: strin
   const aHost = a?.hostId ?? leftHostId, bHost = b?.hostId ?? rightHostId;
   if ((a?.nativeAgentId ?? left) !== (b?.nativeAgentId ?? right)) return false;
   if (aHost && bHost) return aHost === bHost;
-  // Unqualified historical caller fields belong to Paseo, never a new host.
-  return legacyIdentityObservedOn(aHost) && legacyIdentityObservedOn(bHost);
+  // Two bare legacy fields compare as before. A mixed comparison needs host
+  // evidence for the bare side; an opaque unknown host is not proof of Paseo.
+  return !a && !b;
 }
 
 /** Resolve a caller for a host API; a qualified identity must match that host. */

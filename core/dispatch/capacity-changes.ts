@@ -1,3 +1,4 @@
+import { effectiveDefaultHostKind, type HostKind } from "../../shared/host-kind";
 /**
  * Settings-only capacity writes (service-boundary contract, "Settings-only
  * capacity writes").
@@ -126,14 +127,9 @@ export function capacityAuthorityEffective(
     hostOutageNoticeMinutes:
       store.getMeta<number>("hostOutageNoticeMinutes") ??
       DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
-    operatorDefaultHostKind:
-      store.getMeta<import("../../shared/host-kind").HostKind | null>(
-        "operatorDefaultHostKind",
-      ) === undefined
-        ? "paseo"
-        : store.getMeta<import("../../shared/host-kind").HostKind | null>(
-            "operatorDefaultHostKind",
-          )!,
+    operatorDefaultHostKind: effectiveDefaultHostKind(
+      store.getMeta<HostKind | null>("operatorDefaultHostKind"),
+    ),
     threadRetentionDays:
       store.getMeta<number>("threadRetentionDays") ??
       DEFAULT_THREAD_RETENTION_DAYS,

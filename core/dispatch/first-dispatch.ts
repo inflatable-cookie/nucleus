@@ -1,3 +1,4 @@
+import { effectiveDefaultHostKind, type HostKind } from "../../shared/host-kind";
 import { admitPhaseFacts } from "../scheduling/phase-latency";
 import type { Engine } from "../engine";
 import type { Task } from "../../shared/contracts";
@@ -124,8 +125,8 @@ export class FirstDispatch {
         this.store.usageLevel(),
         [
           this.store.repositoryFor(task.repoPath)?.hostKind,
-          this.store.getMeta<import("../../shared/host-kind").HostKind | null>(
-            "operatorDefaultHostKind",
+          effectiveDefaultHostKind(
+            this.store.getMeta<HostKind | null>("operatorDefaultHostKind"),
           ),
         ],
       );

@@ -5,6 +5,7 @@ import type { Adapter } from '../core/host/adapter';
 import type { Profile } from '../shared/contracts';
 import type { NucleusProfile } from '../shared/profiles';
 import type { HostCatalog } from '../shared/host';
+import { profile } from './support/fakes';
 
 const stored: NucleusProfile = { id: 'sol', name: 'Sol', provider: 'test', model: 'test-model', notes: '' };
 const emptyCatalog: HostCatalog = { providers: [] };
@@ -55,4 +56,18 @@ test('a secondary host keeps its previous snapshot when a later catalog read fai
   await catalogs.refresh();
   assert.equal(catalogs.profileCatalogKnownFor('t3code:env'), true);
   assert.equal(secondaryReads, 2);
+});
+
+test('an unknown recorded host never borrows the legacy Paseo provider result', async () => {
+  const primary = adapter('paseo:primary');
+  const catalogs = new ProfileCatalogs({
+    store: { profiles: () => [stored] }, adapter: primary, primaryAdapter: primary,
+    resolveHostAdapter: id => id === 'paseo:primary' ? primary : undefined,
+    hostIds: () => ['paseo:primary'], hostOnline: () => true, profiles: [],
+  });
+  await catalogs.refresh();
+  const selected = profile('sol');
+  assert.equal(catalogs.workerProviderUnavailable({ profile: selected, hostId: 'paseo:primary' }), true);
+  assert.equal(catalogs.workerProviderUnavailable({ profile: selected, hostId: 't3code:unknown' }), false);
+  assert.equal(catalogs.workerProviderUnavailable({ profile: selected, hostId: null }), true);
 });

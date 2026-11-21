@@ -39,7 +39,6 @@ import {
   workerThinkingConflict,
 } from "../dispatch/routing";
 import { now } from "../store/store";
-import { plannerIdMatches } from "../recovery/task-reasons";
 
 /**
  * The owner verbs that change a task's settings and nothing else: lanes, routing,
@@ -102,9 +101,7 @@ export class SettingsControls {
       );
       if (input.critical !== undefined) {
         if (
-          !this.engine
-            .forcePlanners(task)
-            .some((id) => plannerIdMatches(id, input.caller ?? "")) &&
+          !this.engine.forcePlannerMatches(task, input.caller ?? "") &&
           input.caller !== OPERATOR_BOARD_CALLER
         )
           throw Error("Only the planner or operator may change critical");

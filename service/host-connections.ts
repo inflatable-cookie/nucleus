@@ -1,6 +1,7 @@
 import { parseAgentId } from "../shared/agent-identity";
 import {
   HOST_PLUGIN_RELOAD_COMMANDS,
+  effectiveDefaultHostKind,
   hostKindOf,
   type HostKind,
   type IdentitySource,
@@ -76,7 +77,7 @@ export function wireEngineHosts(
         import("../shared/host-kind").HostKind | null
       >("operatorDefaultHostKind");
       const operatorDefaultHostKind =
-        storedDefault === undefined ? "paseo" : storedDefault;
+        effectiveDefaultHostKind(storedDefault);
       if (operatorDefaultHostKind) {
         const ofKind = online.filter(
           (id) => hostKindOf(id) === operatorDefaultHostKind,
@@ -93,7 +94,7 @@ export function wireEngineHosts(
       import("../shared/host-kind").HostKind | null
     >("operatorDefaultHostKind");
     const operatorDefaultHostKind =
-      storedDefault === undefined ? "paseo" : storedDefault;
+      effectiveDefaultHostKind(storedDefault);
     try {
       return resolveIngressHost({
         explicit,
@@ -123,6 +124,7 @@ export function wireEngineHosts(
   engine.selectIngressHost = (explicit, repoPath, origin, plannerHostId) =>
     engine.selectIngressSelection(explicit, repoPath, origin, plannerHostId)
       ?.hostId;
+  engine.legacyPaseoHostId = () => runtime.hostRegistry.legacyPaseoPrimary()?.id;
   engine.resolveHostAdapter = (id) => runtime.hostRegistry.get(id)?.adapter;
   engine.hostIds = () => runtime.hostRegistry.known().map((host) => host.id);
   engine.inventoryHostMatches = (id) => runtime.hostSession?.id === id;

@@ -7,6 +7,11 @@ import { z } from 'zod';
 export const hostKindSchema = z.enum(["paseo", "t3code", "bb"]);
 export type HostKind = z.infer<typeof hostKindSchema>;
 export const DEFAULT_HOST_KIND: HostKind = 'paseo';
+/** An absent setting predates host choice; explicit null means the planner's host. */
+export function effectiveDefaultHostKind(stored: HostKind | null | undefined): HostKind | null {
+  return stored === undefined ? DEFAULT_HOST_KIND : stored;
+}
+
 /** The host names an operator reads, by host kind. */
 export const HOST_KIND_LABELS: Record<HostKind, string> = {
   paseo: "Paseo",
@@ -23,6 +28,11 @@ export const HOST_PLUGIN_RELOAD_COMMANDS: Partial<Record<HostKind, string>> = {
   bb: "bb plugin reload nucleus",
 };
 
+/**
+ * Compatibility classification for recorded host IDs: old Paseo server IDs
+ * were opaque, while T3Code and BB use reserved prefixes. This is not proof
+ * that an arbitrary ID is registered or authorized.
+ */
 export function hostKindOf(hostId: string | null | undefined): HostKind {
   if (typeof hostId !== "string") return "paseo";
   if (hostId.startsWith("t3code:")) return "t3code";

@@ -227,11 +227,7 @@ export class ProfileCatalogs {
     hostId?: string | null;
   }): boolean {
     if (!task.profile) return false;
-    const selected = task.hostId
-      ? this.owner.resolveHostAdapter(task.hostId)
-      : this.owner.primaryAdapter;
-    const primary =
-      !task.hostId || !selected || selected === this.owner.primaryAdapter;
+    const primary = this.isPrimaryHost(task.hostId);
     const read = this.hostCatalogs.get(
       primary ? PRIMARY_CATALOG : task.hostId!,
     );
@@ -252,8 +248,7 @@ export class ProfileCatalogs {
    * answers only from its own catalog snapshot: an unread or unreachable host
    * waits on its own catalog instead of selecting from another host's profiles,
    * so a task hosted on T3 never launches a profile only Paseo's catalog judges
-   * (nucleus#1364). A host without a distinct adapter, or the primary host, is
-   * the primary profile set.
+   * (nucleus#1364). Only a host known to be the primary uses its profile set.
    */
   profilesFor(hostId?: string | null): Profile[] {
     if (this.isPrimaryHost(hostId)) return this.owner.profiles;

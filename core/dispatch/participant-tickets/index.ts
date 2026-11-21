@@ -259,7 +259,8 @@ export class ParticipantTickets {
         planner.agentId !== caller &&
         !(
           planner.agentId === qualified.nativeAgentId &&
-          hostKindOf(qualified.hostId) === "paseo"
+          qualified.hostId === (project.agents?.find(agent => agent.agentId === planner.agentId)?.hostId
+            ?? this.engine.legacyPaseoHostId())
         )
       )
         continue;
@@ -647,14 +648,10 @@ export class ParticipantTickets {
     caller: string,
     qualified: { hostId: string; nativeAgentId: string },
   ): boolean {
+    if (agent.hostId !== qualified.hostId) return false;
     if (agent.agentId === caller) return true;
     if (parseAgentId(agent.agentId)) return false;
-    if (agent.agentId !== qualified.nativeAgentId) return false;
-    return (
-      agent.hostId === qualified.hostId ||
-      (hostKindOf(agent.hostId) === "paseo" &&
-        hostKindOf(qualified.hostId) === "paseo")
-    );
+    return agent.agentId === qualified.nativeAgentId;
   }
 
   /** Remove one name's record, pending marker and participant id, so its ticket stops resolving. */
