@@ -448,6 +448,13 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
     const inbox = inboxLayout ?? { listWidth: null, laneModal: compact };
     const pane = { flex: 1, minHeight: 0, backgroundColor: c.surface0 } as const;
     const listStyle = inbox.listWidth ? { width: inbox.listWidth, minHeight: 0, borderRightWidth: 1, borderRightColor: c.border } : { flex: 1, minHeight: 0 };
+    // Several projects list as flat rows against the pane's own edges, so the
+    // Dormant group below them carries the pane's gutter itself (nucleus#1511).
+    const flatRows = !searching && sections.length > 1;
+    const dormantGroup = <DormantGroup projects={dormant} c={c}>{project => {
+      const triage = allSections.find(section => section.project.key === project.key)?.triage;
+      return triage && <ProjectTriage project={project.name} triage={triage} onOpenTask={onOpenTask} c={c} />;
+    }}</DormantGroup>;
     const listBody = searching
       ? <LaneFinderResults rows={rows} total={scoped.length} query={query} loading={lanesLoading} error={lanesError} plansError={plansError} allProjects={allScopeOn} onRetry={onRetryLanes} onOpenLane={onOpenLane} selectedLane={selectedLane} c={c}/>
       : <>
@@ -473,10 +480,7 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
             {open&&<View style={{padding:space.md,gap:space.md,borderBottomWidth:1,borderBottomColor:c.border}}>{roadmapFor(section)}</View>}
           </View>;
         })}
-        <DormantGroup projects={dormant} c={c}>{project => {
-          const triage = allSections.find(section => section.project.key === project.key)?.triage;
-          return triage && <ProjectTriage project={project.name} triage={triage} onOpenTask={onOpenTask} c={c} />;
-        }}</DormantGroup>
+        {flatRows ? <View style={{ paddingHorizontal: space.md, paddingVertical: space.sm }}>{dormantGroup}</View> : dormantGroup}
       </>;
     const laneOpen = Boolean(selectedLane) && step === 'lane';
     return <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
@@ -497,7 +501,7 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
           </View>}
           {searching&&<Text accessibilityLabel="Lane search scope" style={{...muted(c),fontSize:type.metadata.fontSize,lineHeight:type.metadata.lineHeight}}>Searching {scopeLabel==='All projects'?'all projects':scopeLabel}. {query.trim()?'Results match the title, aim or project.':'Every lane in scope is listed.'}</Text>}
         </View>
-        <ScrollView accessibilityLabel={searching ? "Lane search results" : "Planning plan"} style={{flex:1,minHeight:0,borderTopWidth:1,borderTopColor:c.border}} contentContainerStyle={searching||sections.length<=1 ? {padding:space.md,gap:space.md} : undefined}>
+        <ScrollView accessibilityLabel={searching ? "Lane search results" : "Planning plan"} style={{flex:1,minHeight:0,borderTopWidth:1,borderTopColor:c.border}} contentContainerStyle={flatRows ? undefined : {padding:space.md,gap:space.md}}>
           {listBody}
         </ScrollView>
       </View>

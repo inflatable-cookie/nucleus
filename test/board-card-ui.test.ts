@@ -1891,6 +1891,61 @@ test("a task row keeps one status line and no host identity, while the detail ke
   }
 });
 
+test("a host-waiting task keeps an owner-facing stop's detail in its one row line", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const f = fixtures(store);
+    const summary = {
+      ...f.stopped,
+      hostId: "t3code:32be2844",
+      hostWait: { hostId: "t3code:32be2844", since: at },
+    };
+    mounted = mountBoard(
+      invokeWith(board([summary]), async () => ({ tasks: [], hasMore: false })),
+    );
+    const tree = mounted;
+    await settle(() => tree.text().includes("Operator decides whether to restart"));
+    openView(tree, "Needs you");
+    const row = tree.raw
+      .all(/.*/)
+      .find((node) =>
+        String(node.props.accessibilityLabel ?? "").includes(", stopped,"),
+      );
+    assert.ok(row, "the stopped task's row is on the board");
+    const text = nodeText(row as HostNode);
+    assert.match(
+      text,
+      /Operator decides whether to restart/,
+      "the owner-facing stop keeps its detail",
+    );
+    assert.match(
+      text,
+      /Waiting on the host · /,
+      "and the host wait is still named",
+    );
+    assert.doesNotMatch(
+      text,
+      /T3Code host/,
+      "the host identity stays off the row",
+    );
+    // Both facts ride the row's single status line, not two lines.
+    const status = tree.raw
+      .ofType("Text")
+      .find((node) => nodeText(node).includes("Operator decides whether to restart"));
+    assert.ok(status, "the detail is drawn");
+    assert.match(
+      nodeText(status as HostNode),
+      /Waiting on the host · /,
+      "the row's one line carries the stop and the wait",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
 test("the Leads tabs hide the kind chip the tab already names", async () => {
   await load();
   const store = new Store(":memory:");
@@ -1938,6 +1993,12 @@ test("Planning draws its projects as flat rows with the lists' divider and accen
       repositories: [{ origin: "owner/second", path: "/second" }],
       primary: { origin: "owner/second", path: "/second" },
     };
+    const sleepy = {
+      key: "sleepy",
+      name: "Sleepy",
+      repositories: [{ origin: "owner/sleepy", path: "/sleepy" }],
+      primary: { origin: "owner/sleepy", path: "/sleepy" },
+    };
     const plan = (name: string, projectKey: string) => ({
       project: projectKey,
       version: 1,
@@ -1945,10 +2006,11 @@ test("Planning draws its projects as flat rows with the lists' divider and accen
       createdAt: at,
       entries: [{ lane: name, note: "", horizon: "now", doneWhen: "It ships" }],
     });
-    // Store-wide activity keeps both projects out of Planning's Dormant group.
+    // Store-wide activity keeps two projects out of Planning's Dormant group; the
+    // third has none and lists under it (nucleus#1511's gutter check).
     const snapshot = {
       ...board([]),
-      projects: [project, second],
+      projects: [project, second, sleepy],
       projectActivity: recentProjectActivity([project, second]),
     };
     mounted = mountBoard(async (method: string) => {
@@ -1968,7 +2030,7 @@ test("Planning draws its projects as flat rows with the lists' divider and accen
       return [];
     });
     const tree = mounted;
-    await settle(() => Boolean(tree.text().includes("Project row") || true));
+    await settle(() => Boolean(tree.raw.query("Nucleus header controls")));
     openView(tree, "Planning");
     await settle(() => Boolean(tree.raw.query("Project row Second")));
     const frame = (name: string) =>
@@ -2012,6 +2074,24 @@ test("Planning draws its projects as flat rows with the lists' divider and accen
       () =>
         (frame("App")?.props.style as { borderLeftColor?: string })
           .borderLeftColor === dark.accent,
+    );
+
+    // Flat rows touch the pane's edges, so the Dormant group below them keeps its gutter.
+    const dormantLabel = "Dormant projects, 1";
+    assert.ok(tree.raw.query(dormantLabel), "the dormant project is grouped");
+    assert.ok(
+      tree.raw
+        .ofType("View")
+        .some(
+          (node) =>
+            node.props.style?.paddingHorizontal === 16 &&
+            nodeHas(
+              node,
+              (child) =>
+                child.props.accessibilityLabel === dormantLabel,
+            ),
+        ),
+      "the Dormant group keeps the list's horizontal gutter",
     );
   } finally {
     mounted?.update(h("View", null));

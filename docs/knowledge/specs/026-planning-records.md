@@ -574,7 +574,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Rows stay short, and a card's controls sit in its row** (nucleus#1511). A task row
   keeps its project, its title, one status line and its chips: the line is the wait or
   stop that moves the task next, else its progress, so the host wait reads once
-  ("Waiting on the host · 1m ago") without the host identity. The routing sentence behind
+  ("Waiting on the host · 1m ago") without the host identity; an owner-facing stop
+  keeps its detail ahead of that wait on the same line. The routing sentence behind
   a host choice belongs to the task detail, which names the host selection and its
   reason; the row's accessible label keeps the full wording. A card with operator
   controls (the drained lane's Close and Keep, the escalated merge hold's Release and
@@ -746,8 +747,9 @@ The header's project selector chooses the projects (Board, "Scope"); Planning ha
 chooser of its own since 2026-11-21. It has two panes:
 
 - **Plan:** for each selected project, a flat row — the list's divider, and an accent
-  edge on the expanded row — that opens and closes the project's lanes, with that project's lanes in plan order, each with its live-task
-  count and last activity, grouped under **Now** and **Later** (each plan entry
+  edge on the expanded row — that opens and closes the project's lanes, with that
+  project's lanes in plan order, each with its live-task count and last activity,
+  grouped under **Now** and **Later** (each plan entry
   carries `horizon: now | later`; existing entries are `now`). Up and down
   controls reorder, and a move between groups changes the horizon; saving writes a
   new plan version with the stale-save refusal. Lanes that list one of the

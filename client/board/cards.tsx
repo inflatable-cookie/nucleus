@@ -756,9 +756,21 @@ export const TaskCard = React.memo(function TaskCard({
   // (a row reads "Waiting on the host · 1m ago", never the host identity), and the
   // routing sentence behind the host choice stays in the task detail, which shows
   // the host selection and its reason.
+  // An owner-facing stop keeps its detail beside the host wait (nucleus#1198), and
+  // the row still draws it as the one line: why the task stopped, then that its host
+  // is away. The host's own outage detail is the wait itself, so it is not repeated.
+  const rowHostWait = hostWait
+    ? `Waiting on the host · ${decisionAge(hostWait.since)}`
+    : null;
+  const rowStopDetail =
+    stopRecord && stopRecord.reason !== "host_unavailable"
+      ? (stopDetail ?? stopLabel)
+      : null;
   const firstQuestion = questions[0]?.questions[0]?.question;
   const rowStatus = hostWait
-    ? `Waiting on the host · ${decisionAge(hostWait.since)}`
+    ? rowStopDetail
+      ? `${rowStopDetail} · ${rowHostWait}`
+      : rowHostWait
     : plainWait
       ? plainWait
       : task.heavyRun
