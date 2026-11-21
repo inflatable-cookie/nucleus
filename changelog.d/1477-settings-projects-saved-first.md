@@ -1,0 +1,1 @@
+Settings → Projects now shows the project list from saved data straight away. Planner and agent status and the planner picker's threads load only when a project is opened, so a slow or offline host no longer holds the list. An offline host shows planner status as unknown, and saved settings stay editable.

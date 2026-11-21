@@ -1,7 +1,12 @@
 import { parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
 import { isAgentGoneRefusal } from "../host/errors";
-import type { Project, ProjectAgent, ProjectAgentState, ProjectAgentView } from "../../shared/contracts";
+import type {
+  Project,
+  ProjectAgent,
+  ProjectAgentState,
+  ProjectAgentView,
+} from "../../shared/contracts";
 import type { Host } from "../../shared/host";
 import type { Adapter } from "../host/adapter";
 import type { Store } from "../store/store";
@@ -48,7 +53,9 @@ export class ProjectAgentTargetRefusal extends Error {
  * `hostKindOf` answers the default kind for an unnamed host, exactly as the rest
  * of the queue treats a pre-cutover record.
  */
-export function legacyIdentityObservedOn(observedHostId: string | null | undefined): boolean {
+export function legacyIdentityObservedOn(
+  observedHostId: string | null | undefined,
+): boolean {
   return hostKindOf(observedHostId) === "paseo";
 }
 
@@ -57,16 +64,26 @@ export function legacyIdentityObservedOn(observedHostId: string | null | undefin
  * Paseo id has no encoded host, exactly like the planner liveness read, so any
  * Paseo host may observe it. Every other host mismatch is incomplete, not gone.
  */
-export function projectAgentObservedOn(agent: Pick<ProjectAgent, "agentId" | "hostId">, observedHostId: string | null): boolean {
+export function projectAgentObservedOn(
+  agent: Pick<ProjectAgent, "agentId" | "hostId">,
+  observedHostId: string | null,
+): boolean {
   if (!observedHostId) return false;
   if (agent.hostId === observedHostId) return true;
   if (parseAgentId(agent.agentId)) return false;
-  return legacyIdentityObservedOn(agent.hostId) && legacyIdentityObservedOn(observedHostId);
+  return (
+    legacyIdentityObservedOn(agent.hostId) &&
+    legacyIdentityObservedOn(observedHostId)
+  );
 }
 
 /** One entry's live state from its own host. A failed read is `unknown`. */
-export async function observeProjectAgent(context: ProjectAgentsContext, agent: ProjectAgent): Promise<ProjectAgentObservation> {
-  if (!projectAgentObservedOn(agent, context.observedHostId)) return { state: "unknown", lastSeen: null };
+export async function observeProjectAgent(
+  context: ProjectAgentsContext,
+  agent: ProjectAgent,
+): Promise<ProjectAgentObservation> {
+  if (!projectAgentObservedOn(agent, context.observedHostId))
+    return { state: "unknown", lastSeen: null };
   try {
     const origin = await context.host.originAgent(agent.agentId);
     if (!origin) return { state: "gone", lastSeen: null };
@@ -81,23 +98,48 @@ export async function observeProjectAgent(context: ProjectAgentsContext, agent: 
   }
 }
 
-/** The project's agents with their live state, in registration order. */
-export async function projectAgentViews(context: ProjectAgentsContext, project: Pick<Project, "agents" | "planner">): Promise<ProjectAgentView[]> {
-  return Promise.all((project.agents ?? []).map(async agent => {
-    const observation = await observeProjectAgent(context, agent);
-    return {
-      name: agent.name,
-      purpose: agent.purpose,
-      agentId: agent.agentId,
-      hostId: agent.hostId,
-      state: observation.state,
-      lastSeen: observation.lastSeen,
-      fallback: Boolean(project.planner?.agentId && project.planner.agentId === agent.agentId),
-    };
+/** The project's agents as saved, every state unknown: the list read never observes a host. */
+export function unobservedProjectAgentViews(
+  project: Pick<Project, "agents" | "planner">,
+): ProjectAgentView[] {
+  return (project.agents ?? []).map((agent) => ({
+    name: agent.name,
+    purpose: agent.purpose,
+    agentId: agent.agentId,
+    hostId: agent.hostId,
+    state: "unknown",
+    lastSeen: null,
+    fallback: Boolean(
+      project.planner?.agentId && project.planner.agentId === agent.agentId,
+    ),
   }));
 }
 
-export const PROJECT_AGENT_REFUSAL_POINTER = "List the project's agents with project.agents.";
+/** The project's agents with their live state, in registration order. */
+export async function projectAgentViews(
+  context: ProjectAgentsContext,
+  project: Pick<Project, "agents" | "planner">,
+): Promise<ProjectAgentView[]> {
+  return Promise.all(
+    (project.agents ?? []).map(async (agent) => {
+      const observation = await observeProjectAgent(context, agent);
+      return {
+        name: agent.name,
+        purpose: agent.purpose,
+        agentId: agent.agentId,
+        hostId: agent.hostId,
+        state: observation.state,
+        lastSeen: observation.lastSeen,
+        fallback: Boolean(
+          project.planner?.agentId && project.planner.agentId === agent.agentId,
+        ),
+      };
+    }),
+  );
+}
+
+export const PROJECT_AGENT_REFUSAL_POINTER =
+  "List the project's agents with project.agents.";
 
 /**
  * Resolve a registered agent for a send. Nothing is sent here.
@@ -115,26 +157,55 @@ export async function resolveProjectAgent(
 ): Promise<{ agentId: string; hostId: string; name: string }> {
   if (name === null) {
     const fallback = project.planner?.agentId;
-    if (!fallback) throw new ProjectAgentTargetRefusal(project.key, null, "no-fallback",
-      `${project.name} has no fallback planner, so to: {project} has no thread to reach. Register one with agent.register and mark it with project.set-planner. ${PROJECT_AGENT_REFUSAL_POINTER}`);
-    const entry = (project.agents ?? []).find(agent => agent.agentId === fallback);
-    return { agentId: fallback,
-      hostId: entry?.hostId ?? parseAgentId(fallback)?.hostId ?? context.observedHostId ?? "",
-      name: entry?.name ?? project.planner?.name ?? "" };
+    if (!fallback)
+      throw new ProjectAgentTargetRefusal(
+        project.key,
+        null,
+        "no-fallback",
+        `${project.name} has no fallback planner, so to: {project} has no thread to reach. Register one with agent.register and mark it with project.set-planner. ${PROJECT_AGENT_REFUSAL_POINTER}`,
+      );
+    const entry = (project.agents ?? []).find(
+      (agent) => agent.agentId === fallback,
+    );
+    return {
+      agentId: fallback,
+      hostId:
+        entry?.hostId ??
+        parseAgentId(fallback)?.hostId ??
+        context.observedHostId ??
+        "",
+      name: entry?.name ?? project.planner?.name ?? "",
+    };
   }
-  const entry = (project.agents ?? []).find(agent => agent.name === name);
-  if (!entry) throw new ProjectAgentTargetRefusal(project.key, name, "unregistered",
-    `${project.name} has no agent named "${name}". ${PROJECT_AGENT_REFUSAL_POINTER}`);
+  const entry = (project.agents ?? []).find((agent) => agent.name === name);
+  if (!entry)
+    throw new ProjectAgentTargetRefusal(
+      project.key,
+      name,
+      "unregistered",
+      `${project.name} has no agent named "${name}". ${PROJECT_AGENT_REFUSAL_POINTER}`,
+    );
   const state = (await observeProjectAgent(context, entry)).state;
   if (state === "archived" || state === "gone" || state === "unknown")
-    throw new ProjectAgentTargetRefusal(project.key, name, state, refusalText(project, name, state));
+    throw new ProjectAgentTargetRefusal(
+      project.key,
+      name,
+      state,
+      refusalText(project, name, state),
+    );
   return { agentId: entry.agentId, hostId: entry.hostId, name: entry.name };
 }
 
-function refusalText(project: Project, name: string, state: ProjectAgentState): string {
+function refusalText(
+  project: Project,
+  name: string,
+  state: ProjectAgentState,
+): string {
   const pointer = `Nucleus never sends into that thread. ${PROJECT_AGENT_REFUSAL_POINTER}`;
-  if (state === "archived") return `Agent "${name}" on ${project.name} is archived. ${pointer}`;
-  if (state === "gone") return `Agent "${name}" on ${project.name} is gone. ${pointer}`;
+  if (state === "archived")
+    return `Agent "${name}" on ${project.name} is archived. ${pointer}`;
+  if (state === "gone")
+    return `Agent "${name}" on ${project.name} is gone. ${pointer}`;
   return `Agent "${name}" on ${project.name} could not be observed, so its state is unknown. Nothing was sent. ${pointer}`;
 }
 
@@ -162,15 +233,33 @@ export type ProjectAgentTargetPorts = {
  * context, where the observation refuses as its own unknown.
  */
 export async function projectAgentTarget(
-  ports: ProjectAgentTargetPorts, projectKey: string, name: string | null,
+  ports: ProjectAgentTargetPorts,
+  projectKey: string,
+  name: string | null,
 ): Promise<{ agentId: string; hostId: string; name: string }> {
   const project = ports.store.projectByKey(projectKey);
   if (!project) throw new Error(`Unknown project ${projectKey}`);
-  const entry = name === null
-    ? (project.agents ?? []).find(agent => agent.agentId === project.planner?.agentId)
-    : (project.agents ?? []).find(agent => agent.name === name);
-  const current = () => ({ host: ports.host, observedHostId: observedHostIdOf(ports.adapter) });
-  if (entry && entry.hostId !== observedHostIdOf(ports.adapter) && ports.originHostAvailable(entry.hostId))
-    return ports.withHost(entry.hostId, () => resolveProjectAgent(current(), ports.store.projectByKey(projectKey)!, name));
+  const entry =
+    name === null
+      ? (project.agents ?? []).find(
+          (agent) => agent.agentId === project.planner?.agentId,
+        )
+      : (project.agents ?? []).find((agent) => agent.name === name);
+  const current = () => ({
+    host: ports.host,
+    observedHostId: observedHostIdOf(ports.adapter),
+  });
+  if (
+    entry &&
+    entry.hostId !== observedHostIdOf(ports.adapter) &&
+    ports.originHostAvailable(entry.hostId)
+  )
+    return ports.withHost(entry.hostId, () =>
+      resolveProjectAgent(
+        current(),
+        ports.store.projectByKey(projectKey)!,
+        name,
+      ),
+    );
   return resolveProjectAgent(current(), project, name);
 }

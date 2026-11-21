@@ -66,8 +66,10 @@ registration is never silently dropped for another thread's address.
 
 `project.agents` takes `{project}` and returns each entry's name, purpose,
 agentId, host, live state, last seen and whether it is the fallback planner.
-`project.settings` returns the same list per project, so the board shows it
-without a second read.
+The opened project's Settings editor reads the same list with
+`project.settings({project})`. The Settings list read returns each agent with
+state `unknown` and never observes a host, so the list renders with no host
+call; the editor fills the live states in when it opens.
 
 Live state is `running` (an active turn), `idle` (readable, no turn),
 `archived` (the host keeps an archived record), `gone` (the host proves the

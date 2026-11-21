@@ -583,9 +583,9 @@ export class RuntimeRepositories {
     return this.context.engine.projectOwnerCandidates();
   }
 
-  projectSettings() {
+  projectSettings(input: { project?: string } = {}) {
     this.context.markStoreAccess();
-    return this.context.engine.projectSettings();
+    return this.context.engine.projectSettings(input);
   }
 
   resetProjectCancellation(input: {
