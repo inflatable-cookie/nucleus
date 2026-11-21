@@ -41,11 +41,9 @@ export const muted = (c: Colors) => ({
 /** A passive row surface that follows the pointer without becoming clickable. */
 export function HoverRow({
   c,
-  style,
   children,
 }: {
   c: Colors;
-  style: ViewStyle;
   children: React.ReactNode;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -54,7 +52,6 @@ export function HoverRow({
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       style={{
-        ...style,
         borderRadius: radius.control,
         backgroundColor: hovered ? c.surface2 : "transparent",
       }}
@@ -2002,16 +1999,19 @@ export function Dialog({
 }) {
   const r = roles(c);
   const frame = (
-          <View
-            accessibilityViewIsModal={!inline}
-            accessibilityLabel={label}
-            style={inline ? {
+    <View
+      accessibilityViewIsModal={!inline}
+      accessibilityLabel={label}
+      style={
+        inline
+          ? {
               flex: 1,
               minHeight: 0,
               gap: space.sm,
               padding: space.lg,
               backgroundColor: r.canvas,
-            } : {
+            }
+          : {
               maxWidth: wide ? 980 : 560,
               width: "100%",
               maxHeight: "90%",
@@ -2023,42 +2023,43 @@ export function Dialog({
               borderWidth: 1,
               borderColor: r.border,
               backgroundColor: r.section,
+            }
+      }
+    >
+      <View style={{ ...row, flexWrap: "nowrap" }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            accessibilityRole="header"
+            numberOfLines={2}
+            style={{
+              color: r.foreground,
+              fontSize: type.section.fontSize,
+              lineHeight: type.section.lineHeight,
+              fontWeight: "600",
             }}
           >
-            <View style={{ ...row, flexWrap: "nowrap" }}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text
-                  accessibilityRole="header"
-                  numberOfLines={2}
-                  style={{
-                    color: r.foreground,
-                    fontSize: type.section.fontSize,
-                    lineHeight: type.section.lineHeight,
-                    fontWeight: "600",
-                  }}
-                >
-                  {title}
-                </Text>
-                {eyebrow}
-              </View>
-              <ActionButton
-                c={c}
-                action="close"
-                label={closeLabel}
-                disabled={closeDisabled}
-                onPress={onClose}
-              />
-            </View>
-            <ScrollView
-              accessibilityLabel={bodyLabel}
-              style={{ flexShrink: 1, minHeight: 0 }}
-              contentContainerStyle={{ gap: space.sm }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {children}
-            </ScrollView>
-            {footer}
-          </View>
+            {title}
+          </Text>
+          {eyebrow}
+        </View>
+        <ActionButton
+          c={c}
+          action="close"
+          label={closeLabel}
+          disabled={closeDisabled}
+          onPress={onClose}
+        />
+      </View>
+      <ScrollView
+        accessibilityLabel={bodyLabel}
+        style={{ flexShrink: 1, minHeight: 0 }}
+        contentContainerStyle={{ gap: space.sm }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {children}
+      </ScrollView>
+      {footer}
+    </View>
   );
   if (inline) return frame;
   return (

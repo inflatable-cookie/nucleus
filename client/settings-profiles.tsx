@@ -521,25 +521,27 @@ function StalePoolEntry({
         gap: space.xs,
       }}
     >
-      <HoverRow c={c} style={{ ...row, flexWrap: "nowrap" }}>
-        <Text
-          style={{
-            flex: 1,
-            minWidth: 0,
-            color: c.foreground,
-            fontWeight: "600",
-            fontSize: typeScale.body.fontSize,
-          }}
-        >
-          {entry.profileId}
-        </Text>
-        <ActionButton
-          c={c}
-          action="remove"
-          label={`Remove ${entry.profileId}`}
-          disabled={busy}
-          onPress={onRemove}
-        />
+      <HoverRow c={c}>
+        <View style={{ ...row, flexWrap: "nowrap" }}>
+          <Text
+            style={{
+              flex: 1,
+              minWidth: 0,
+              color: c.foreground,
+              fontWeight: "600",
+              fontSize: typeScale.body.fontSize,
+            }}
+          >
+            {entry.profileId}
+          </Text>
+          <ActionButton
+            c={c}
+            action="remove"
+            label={`Remove ${entry.profileId}`}
+            disabled={busy}
+            onPress={onRemove}
+          />
+        </View>
       </HoverRow>
       <Text
         style={{
@@ -582,44 +584,46 @@ function Availability({
         paddingVertical: space.xs,
       }}
     >
-      <HoverRow c={c} style={row}>
-        <Text style={{ color: c.foreground, fontWeight: "600", flex: 1 }}>
-          {group}
-        </Text>
-        <Text
-          style={{
-            color: paused ? c.statusWarning : c.foregroundMuted,
-            fontSize: typeScale.metadata.fontSize,
-          }}
-        >
-          {paused
-            ? current?.retryAt
-              ? `Unavailable until ${new Date(current.retryAt).toLocaleString()}`
-              : "Unavailable"
-            : "Available"}
-        </Text>
-        {paused && (
-          <Button
-            small
+      <HoverRow c={c}>
+        <View style={row}>
+          <Text style={{ color: c.foreground, fontWeight: "600", flex: 1 }}>
+            {group}
+          </Text>
+          <Text
+            style={{
+              color: paused ? c.statusWarning : c.foregroundMuted,
+              fontSize: typeScale.metadata.fontSize,
+            }}
+          >
+            {paused
+              ? current?.retryAt
+                ? `Unavailable until ${new Date(current.retryAt).toLocaleString()}`
+                : "Unavailable"
+              : "Available"}
+          </Text>
+          {paused && (
+            <Button
+              small
+              c={c}
+              text={`Reset ${group}`}
+              disabled={busy}
+              onPress={() =>
+                void save({
+                  group,
+                  unavailable: false,
+                  reason: "Reset by operator",
+                  retryAt: null,
+                })
+              }
+            />
+          )}
+          <ActionButton
             c={c}
-            text={`Reset ${group}`}
-            disabled={busy}
-            onPress={() =>
-              void save({
-                group,
-                unavailable: false,
-                reason: "Reset by operator",
-                retryAt: null,
-              })
-            }
+            action={editing ? "close" : paused ? "edit" : "pause"}
+            label={`${editing ? "Close" : paused ? "Edit" : "Pause"} ${group}`}
+            onPress={() => setEditing(!editing)}
           />
-        )}
-        <ActionButton
-          c={c}
-          action={editing ? "close" : paused ? "edit" : "pause"}
-          label={`${editing ? "Close" : paused ? "Edit" : "Pause"} ${group}`}
-          onPress={() => setEditing(!editing)}
-        />
+        </View>
       </HoverRow>
       {editing && (
         <View

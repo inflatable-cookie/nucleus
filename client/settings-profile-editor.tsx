@@ -305,55 +305,57 @@ export function ProfileRow({
         gap: space.xs,
       }}
     >
-      <HoverRow c={c} style={{ ...row, flexWrap: "nowrap" }}>
-        <Text
-          style={{
-            flex: 1,
-            minWidth: 0,
-            color: c.foreground,
-            fontWeight: "600",
-            fontSize: typeScale.body.fontSize,
-          }}
-        >
-          {profile.name}
-        </Text>
-        {usage ? (
-          <ProfileUsageBar
+      <HoverRow c={c}>
+        <View style={{ ...row, flexWrap: "nowrap" }}>
+          <Text
+            style={{
+              flex: 1,
+              minWidth: 0,
+              color: c.foreground,
+              fontWeight: "600",
+              fontSize: typeScale.body.fontSize,
+            }}
+          >
+            {profile.name}
+          </Text>
+          {usage ? (
+            <ProfileUsageBar
+              c={c}
+              name={profile.name}
+              count={usage.count}
+              max={usage.max}
+              sample={usage.sample}
+              role={usageRole}
+            />
+          ) : null}
+          {attention ? (
+            <StatusGlyph
+              c={c}
+              icon="TriangleAlert"
+              color={c.statusWarning}
+              text={attention}
+              label={`${profile.name}: ${attention.split("\n")[0]}`}
+            />
+          ) : null}
+          <Button
+            matchField
             c={c}
-            name={profile.name}
-            count={usage.count}
-            max={usage.max}
-            sample={usage.sample}
-            role={usageRole}
+            text={entry.enabled ? "On" : "Off"}
+            selected={entry.enabled}
+            disabled={busy || !state}
+            label={`${entry.enabled ? "Disable" : "Enable"} ${profile.name}`}
+            onPress={() => change({ enabled: !entry.enabled })}
           />
-        ) : null}
-        {attention ? (
-          <StatusGlyph
+          <ActionButton
             c={c}
-            icon="TriangleAlert"
-            color={c.statusWarning}
-            text={attention}
-            label={`${profile.name}: ${attention.split("\n")[0]}`}
+            action={editing ? "close" : "edit"}
+            label={`${editing ? "Close" : "Edit"} ${profile.name}`}
+            onPress={() => {
+              void saver.current!.flush();
+              onEdit();
+            }}
           />
-        ) : null}
-        <Button
-          matchField
-          c={c}
-          text={entry.enabled ? "On" : "Off"}
-          selected={entry.enabled}
-          disabled={busy || !state}
-          label={`${entry.enabled ? "Disable" : "Enable"} ${profile.name}`}
-          onPress={() => change({ enabled: !entry.enabled })}
-        />
-        <ActionButton
-          c={c}
-          action={editing ? "close" : "edit"}
-          label={`${editing ? "Close" : "Edit"} ${profile.name}`}
-          onPress={() => {
-            void saver.current!.flush();
-            onEdit();
-          }}
-        />
+        </View>
       </HoverRow>
       {editing && (
         <ProfileEditor
