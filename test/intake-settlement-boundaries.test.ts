@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { submissionSchema, type Completion, type Run, type Task } from '../shared/contracts';
+import type { LaneDocumentRef } from '../shared/schema/briefs';
 import { Store } from '../core/store/store';
 import { reportReadyRefusal, settleReportReady } from '../core/intake/report-ready';
 import { proofResultRefusal, settleProofExecution } from '../core/intake/proof-settlement';
@@ -47,6 +48,35 @@ test('the report_ready gate names its own refusal and accepts one exact artifact
     assert.match(reportReadyRefusal(lanes, { ...ready, lanes: [] }, input())!, /lane attached to this task/);
     const plainBrief = { ...version, text: reportBrief.replace('  reportOnly: true\n', '') };
     assert.match(reportReadyRefusal(lanes, { ...ready, briefVersions: [plainBrief] }, input())!, /queue.reportOnly: true/);
+  } finally { store.close(); }
+});
+
+test('the report_ready gate names the version and digest it compared, so a mistyped artifact is visible', () => {
+  const store = new Store(':memory:');
+  try {
+    store.upsertLane({ key: 'web-health', title: 'Web health', aim: 'Report web health', repositories: [{ origin: 'example/repo', path: '/repo' }] });
+    const version = { version: 1, text: reportBrief, mediaType: 'text/markdown', reason: 'Initial brief', pinnedAt: new Date().toISOString(), digest: laneDigest };
+    const ready = task(store, { briefVersions: [version], lanes: ['web-health'] });
+    const delivered = store.editLaneDocument({ key: 'web-health', version: 0, text: '# Report\n\nThe diagnosis.\n', author: 'worker' });
+    const report = (artifact: LaneDocumentRef) => ({ eventId: 'e', taskId: ready.id, runId: 'r', status: 'report_ready', summary: 'Report written', artifact }) as Completion;
+    const latest = `the latest version is ${delivered.version} with digest ${delivered.digest}`;
+
+    // A 64-character digest transcribed one character wrong: the refusal names both digests.
+    const mistyped = reportReadyRefusal(store, ready, report({ ...delivered, digest: `${delivered.digest.slice(0, -1)}${delivered.digest.endsWith('0') ? '1' : '0'}` }))!;
+    assert.match(mistyped, /latest exact Nucleus lane document/);
+    assert.match(mistyped, new RegExp(`stored version ${delivered.version} has digest ${delivered.digest}`));
+    assert.match(mistyped, new RegExp(latest));
+    assert.match(mistyped, /re-read it with lane\.document\.get/);
+    // The exit the refusal names: the stored exact artifact is accepted.
+    assert.equal(reportReadyRefusal(store, ready, report(delivered)), null);
+
+    // A version the lane never stored names the latest it does hold.
+    assert.match(reportReadyRefusal(store, ready, report({ ...delivered, version: delivered.version + 7 }))!, new RegExp(`holds no stored version ${delivered.version + 7}, and ${latest}`));
+
+    // Another writer moved the lane: the previously exact artifact now names the newer latest.
+    const moved = store.editLaneDocument({ key: 'web-health', version: delivered.version, text: '# Report\n\nThe diagnosis, updated.\n', author: 'planner' });
+    assert.match(reportReadyRefusal(store, ready, report(delivered))!, new RegExp(`the latest version is ${moved.version} with digest ${moved.digest}`));
+    assert.equal(reportReadyRefusal(store, ready, report(moved)), null);
   } finally { store.close(); }
 });
 

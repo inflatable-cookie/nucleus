@@ -446,7 +446,7 @@ test("report_ready accepts a lead-promoted brief that has no queue_approval", as
   }
 });
 
-test("report_ready releases a report-only revision into planner acceptance", async () => {
+test("report_ready names the stored digest a mistyped artifact misses, then accepts the re-read revision artifact", async () => {
   const f = fixture({ brief: reportOnlyBrief });
   try {
     const runId = "report-ready-revision";
@@ -480,6 +480,26 @@ test("report_ready releases a report-only revision into planner acceptance", asy
       version: f.artifact.version,
       digest: f.artifact.digest,
     };
+    // nucleus#1466 (effigy#622): one hex character of a 64-character digest transcribed
+    // wrong is refused with the stored version and digest named, so the worker reads the
+    // cause instead of concluding Nucleus's lane-document view is stale.
+    const mistyped = `${artifact.digest.slice(0, -1)}${artifact.digest.endsWith("0") ? "1" : "0"}`;
+    await assert.rejects(
+      f.engine.complete(
+        {
+          eventId: "report-ready-revision-mistyped",
+          taskId: task.id,
+          runId,
+          status: "report_ready",
+          summary: "Revised report delivered",
+          artifact: { ...artifact, digest: mistyped },
+        },
+        "report-ready-revision-token",
+      ),
+      new RegExp(
+        `the stored version ${artifact.version} has digest ${artifact.digest}`,
+      ),
+    );
     const accepted = await f.engine.complete(
       {
         eventId: "report-ready-revision-event",

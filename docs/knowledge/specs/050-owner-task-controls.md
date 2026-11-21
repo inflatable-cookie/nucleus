@@ -840,7 +840,11 @@ delivery and custody fences rather than manufacturing a verdict for the old run.
 
 A brief opts in with `queue.reportOnly: true` and may name `queue.reportLane`.
 The worker returns `report_ready` with the latest exact Nucleus lane document
-reference. Nucleus releases the run and parks the task in `report_ready`; this is
+reference. A refusal of that reference names the reported key, version and
+digest beside the stored digest of that version and the lane's latest version
+and digest, and names `lane.document.get` as the route to re-read: a digest
+transcribed wrong, or a lane another writer moved, is visible in the refusal
+instead of reading as a stale lane-document view (nucleus#1466). Nucleus releases the run and parks the task in `report_ready`; this is
 not a blocker and invokes no blocked hook, reviewer consult, recovery coordinator
 or escalation. The project planner, or Nucleus planner when absent, receives the
 report and accepts it with `complete` and the artifact, or returns it with

@@ -1,9 +1,49 @@
-import type { Completion, Run, Task } from "../../shared/contracts";
+import type {
+  Completion,
+  LaneDocumentVersion,
+  Run,
+  Task,
+} from "../../shared/contracts";
 import { heldBriefQueuePolicy } from "../planning/handoff";
 import type { Resolution } from "../resolution";
 import type { Store } from "../store/store";
 import { recordResultApplied, resultApplied } from "./applied-result";
 import { admitPhaseFacts } from "../scheduling/phase-latency";
+
+const ARTIFACT_RULE =
+  "report_ready artifact must identify the latest exact Nucleus lane document version and digest";
+
+/**
+ * One refusal family, always naming what the intake actually compared: the artifact
+ * the report carried and the stored version and digest of the lane's latest document.
+ * A 64-character digest transcribed one character wrong, or a lane another writer moved
+ * after the worker read it, otherwise raises the same bare sentence and reads as a stale
+ * Nucleus view (nucleus#1466, effigy#622: the report refused the version 176 digest the
+ * store actually holds). The message is the visible cause and the route out: re-read the
+ * lane document and report the latest exact version and digest.
+ */
+function artifactMismatch(
+  artifact: NonNullable<Completion["artifact"]>,
+  exact: LaneDocumentVersion | null,
+  latest: LaneDocumentVersion | null,
+): string | null {
+  const reread =
+    "; re-read it with lane.document.get and report that exact version and digest";
+  if (!latest)
+    return `${ARTIFACT_RULE}: lane ${artifact.key} holds no stored document; write the report to it and report the version and digest the edit returns`;
+  const latestValues = `the latest version is ${latest.version} with digest ${latest.digest}`;
+  if (
+    !exact ||
+    exact.key !== artifact.key ||
+    exact.version !== artifact.version
+  )
+    return `${ARTIFACT_RULE}: lane ${artifact.key} holds no stored version ${artifact.version}, and ${latestValues}${reread}`;
+  if (exact.digest !== artifact.digest)
+    return `${ARTIFACT_RULE}: the report names lane ${artifact.key} version ${artifact.version} digest ${artifact.digest}, and the stored version ${artifact.version} has digest ${exact.digest}; ${latestValues}${reread}`;
+  if (latest.version !== artifact.version || latest.digest !== artifact.digest)
+    return `${ARTIFACT_RULE}: the report names lane ${artifact.key} version ${artifact.version} digest ${artifact.digest}, and ${latestValues}${reread}`;
+  return null;
+}
 
 /**
  * `report_ready` is one report-only result: the brief it was dispatched under must
@@ -33,17 +73,11 @@ export function reportReadyRefusal(
     return `report_ready artifact must use the brief's report lane ${policy.reportLane}`;
   if (!task.lanes.includes(input.artifact.key))
     return "report_ready artifact must be a lane attached to this task";
-  const exact = store.laneDocument(input.artifact.key, input.artifact.version);
-  const latest = store.laneDocument(input.artifact.key);
-  if (
-    !exact ||
-    exact.digest !== input.artifact.digest ||
-    !latest ||
-    latest.version !== input.artifact.version ||
-    latest.digest !== input.artifact.digest
-  )
-    return "report_ready artifact must identify the latest exact Nucleus lane document version and digest";
-  return null;
+  return artifactMismatch(
+    input.artifact,
+    store.laneDocument(input.artifact.key, input.artifact.version),
+    store.laneDocument(input.artifact.key),
+  );
 }
 
 export type ReportReadyFacts = {
