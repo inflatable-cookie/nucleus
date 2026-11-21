@@ -10,7 +10,12 @@ import {
 } from "../../shared/contracts";
 import { LEGACY_QA_ROLL_DEFERRED } from "../../shared/service-roll";
 import { findProcessByCommandToken } from "../../core/machine/process-identity";
-import { assertCheckoutAvailable, liveCheckoutDataDir } from "../../core/workspaces/checkout-volume";
+import {
+  assertWorkPlacementAvailable,
+  liveWorkPlacement,
+} from "../../core/workspaces/checkout-volume";
+import { getWorkPlacement } from "../../core/workspaces/work-root.mjs";
+import { legacyQaRoots } from "../../core/qa/qa-evidence-roots";
 import { resolveQaCallerKey } from "../../core/qa/qa-caller-provenance";
 
 function stat(path: string) {
@@ -35,9 +40,7 @@ export function assertLegacyQaSettled(dataDir: string): void {
   const path = join(dataDir, "queue.sqlite");
   try {
     if (!stat(path)) {
-      checkLegacyQaFiles(dataDir);
-      const liveRoot = liveCheckoutDataDir(dataDir);
-      if (liveRoot) checkLegacyQaFiles(liveRoot);
+      for (const root of legacyQaRoots(dataDir).roots) checkLegacyQaFiles(root);
       return;
     }
     const db = new DatabaseSync(path, { readOnly: true });
@@ -115,24 +118,23 @@ function checkLegacyQa(db: DatabaseSync, dataDir: string): void {
       defer(`Legacy QA run ${run.id} lacks process-group settlement`);
   }
 
-  const liveRoot = liveCheckoutDataDir(dataDir);
-  if (liveRoot && (runs.size || stat(join(dataDir, "project-qa")) || stat(join(liveRoot, "project-qa"))))
-    assertCheckoutAvailable();
-  const roots = new Set([dataDir, ...(liveRoot ? [liveRoot] : [])]);
-  for (const root of roots) checkLegacyQaFiles(root);
+  const live = liveWorkPlacement(dataDir);
+  const qaRoots = legacyQaRoots(dataDir).roots;
+  if (live && (runs.size || qaRoots.some(root => stat(root))))
+    assertWorkPlacementAvailable(getWorkPlacement(dataDir));
+  for (const root of qaRoots) checkLegacyQaFiles(root);
   for (const run of runs.values()) {
     if (!run.checkoutPath) continue;
     const key = createHash("sha256").update(run.submittedKey ?? run.key).digest("hex").slice(0, 24);
     if (!/^[a-f0-9-]{36}$/.test(run.id)
-        || ![...roots].some(root => run.checkoutPath === join(root, "project-qa", key, run.id)))
+        || !qaRoots.some(root => run.checkoutPath === join(root, key, run.id)))
       defer(`Legacy QA run ${run.id} has an unverified checkout allocation`);
     if (stat(run.checkoutPath))
       defer(`Legacy QA run ${run.id} still owns its checkout`);
   }
 }
 
-function checkLegacyQaFiles(root: string): void {
-  const directory = join(root, "project-qa");
+function checkLegacyQaFiles(directory: string): void {
   const info = stat(directory);
   if (!info) return;
   if (!info.isDirectory()) defer("The legacy QA evidence root is unreadable");

@@ -64,10 +64,20 @@ export interface VolumeStat {
 }
 
 /**
- * Spec 028: Queue's one backup directory. It is on the configured work root, which is
- * not a consumer prune root, and it is the only place a snapshot is written.
+ * Spec 028: Queue's one backup directory. It is the configured `backupRoot` on the
+ * work volume, which is not a consumer prune root, and it is the only place a new
+ * snapshot is written.
  */
 export function liveBackupDir(): string;
+/** The retired `<workRoot>/queue/backups` location an existing install still reads. */
+export function legacyLiveBackupDir(): string;
+/** Every location the live backup set is read from: configured first, then the retired one. */
+export function liveBackupReadDirs(placement?: {
+  backupRoot: string;
+  retired: { backupRoot?: string };
+}): string[];
+/** The newest verified scheduled snapshot across every live backup location, or null. */
+export function newestLiveScheduledSnapshotAt(dirs?: string[]): number | null;
 /** The live store's path, so a refusal can name the only store the live set holds. */
 export function liveStorePath(): string;
 /** True for the one data directory whose backups use the configured work root. */
@@ -85,6 +95,8 @@ export function backupDirState(dir: string, volumeRoot?: string | null): { avail
 
 /** The verified snapshots in the one backup directory, and why the last snapshot failed. */
 export function listBackups(dir: string, dataDir?: string): BackupList;
+/** The live backup listing, merged with the retired location while it still holds snapshots. */
+export function listLiveBackups(dataDir: string, dirs?: string[]): BackupList;
 /** The durable status a listing and the board's snapshot health read, kept beside the store. */
 export function readBackupStatus(dataDir: string): BackupStatus;
 /** Decompress a snapshot in a stream and require the digest of the verified bytes. */

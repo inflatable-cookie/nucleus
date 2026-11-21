@@ -1,11 +1,11 @@
 import { writeOwnedJson } from "../machine/owned-file.mjs";
 import { CURRENT_DATA_HOME_LEAF } from "../../shared/data-home.mjs";
-import { getWorkStorage, readWorkVolume } from '../workspaces/work-root.mjs';
+import { getRetiredWorkClassPath, getWorkClassPath, getWorkStorage, readWorkVolume } from '../workspaces/work-root.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, rmSync, statSync, realpathSync, linkSync, fstatSync, constants } from 'node:fs';
+import { copyFileSync, createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, rmSync, statSync, realpathSync, linkSync, fstatSync, constants } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
@@ -74,12 +74,41 @@ const samePath = (a, b) => {
 };
 
 /**
- * Spec 028: Queue's backups live on the configured work root. The work root
- * is not a consumer prune root, so no cleanup can reclaim a snapshot there. The
- * drive that held earlier snapshots is retired (Tom, 2026-11-05): it is never listed,
- * probed or written.
+ * Spec 028: Queue's backups live in the configured backup location on the work
+ * volume (`backupRoot` in `settings.json`, default `<workRoot>/archives/nucleus-backups`).
+ * The work root is not a consumer prune root, so no cleanup can reclaim a
+ * snapshot there. The drive that held earlier snapshots is retired
+ * (Tom, 2026-11-05): it is never listed, probed or written.
  */
-export const liveBackupDir = () => join(getWorkStorage(liveStoreDir()).root, 'queue', 'backups');
+export const liveBackupDir = () => getWorkClassPath('backupRoot', liveStoreDir());
+/** The retired `<workRoot>/queue/backups` location an existing install still reads. */
+export const legacyLiveBackupDir = () => getRetiredWorkClassPath('backupRoot', liveStoreDir());
+/**
+ * Every location the live backup set is read from: the configured one, then the
+ * retired one while it still holds a snapshot. Reads never delete: an existing
+ * install keeps working until its old files are migrated or removed by hand.
+ */
+export function liveBackupReadDirs(placement = { backupRoot: liveBackupDir(), retired: { backupRoot: legacyLiveBackupDir() } }) {
+  const live = placement.backupRoot;
+  const legacy = placement.retired.backupRoot;
+  if (!legacy || legacy === live) return [live];
+  return files(legacy).length ? [live, legacy] : [live];
+}
+/** The newest verified scheduled snapshot in any live backup location, or null. */
+export function newestLiveScheduledSnapshotAt(dirs = liveBackupReadDirs()) {
+  let newest = null;
+  for (const dir of dirs) {
+    let names;
+    try { names = readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      const snapshot = snapshotName(name);
+      if (snapshot?.kind !== 'hourly') continue;
+      const at = Date.parse(snapshot.at);
+      if (Number.isFinite(at) && (newest === null || at > newest)) newest = at;
+    }
+  }
+  return newest;
+}
 // Instance overrides choose their own store, never the shared live backup set.
 // The live-store boundary is a path comparison to the account's ~/.nucleus, not
 // an adopt check: a private NUCLEUS_DATA_HOME instance must still start when
@@ -107,7 +136,13 @@ export const backupDirForDataDir = dataDir => isLiveStoreDir(dataDir) ? liveBack
 /** A pinned work root, or the volume root of an explicitly named external path. */
 export const volumeRootFor = dir => {
   const path = resolve(dir);
-  const storage = /\/queue\/backups(?:\/|$)/.test(path) || process.env.NUCLEUS_WORK_ROOT ? getWorkStorage() : null;
+  // A live class root is proved against the configured volume, whatever its path.
+  try {
+    const storage = getWorkStorage();
+    if (path === getWorkClassPath('backupRoot') || path === getRetiredWorkClassPath('backupRoot'))
+      return storage.volumeId ? storage.root : null;
+  } catch { /* A refused placement falls through to the external-path shape below. */ }
+  const storage = /\/queue\/backups(?:\/|$)|\/archives\/nucleus-backups(?:\/|$)/.test(path) || process.env.NUCLEUS_WORK_ROOT ? getWorkStorage() : null;
   if (storage && (path === storage.root || path.startsWith(`${storage.root}/`))) return storage.volumeId ? storage.root : null;
   const match = /^\/Volumes\/([^/]+)(?:\/|$)/.exec(resolve(dir));
   return match ? join('/', 'Volumes', match[1]) : null;
@@ -117,6 +152,28 @@ const unavailable = (root, reason) => Object.assign(
 const unwritable = (dir, reason) => Object.assign(
   new Error(`Backup storage unavailable: ${dir} ${reason}`), { code: 'BACKUP_STORAGE_UNAVAILABLE' });
 /**
+ * The live backup class is a path setting (nucleus#1526), so every existing level
+ * from the work root down to it must be a real directory on the mount's own
+ * device: a symlinked `archives` level would otherwise receive snapshots somewhere
+ * else on the drive, or off it. A missing leaf is created after this proof.
+ */
+const proveLivePlacement = (dir, stat = statSync) => {
+  let live, workRoot;
+  try { live = liveBackupDir(); workRoot = getWorkStorage(liveStoreDir()).root; } catch { return; }
+  if (dir !== live) return;
+  const mount = stat(workRoot);
+  let path = workRoot;
+  for (const part of relative(workRoot, live).split(sep)) {
+    path = join(path, part);
+    let current;
+    try { current = lstatSync(path); }
+    catch (error) { if (error?.code === 'ENOENT') continue; throw error; }
+    if (current.isSymbolicLink() || !current.isDirectory() || current.dev !== mount.dev || realpathSync(path) !== path)
+      throw new Error(`Backup directory ${path} is redirected or is not a directory on the backup volume`);
+  }
+};
+
+/**
  * Put the backup directory in place, or refuse before anything exists. The mount check
  * comes first so an absent volume is never turned into a directory at its mount point; a
  * path that is already there and is not a directory is a configured wrong path, not an
@@ -124,6 +181,7 @@ const unwritable = (dir, reason) => Object.assign(
  */
 const prepareBackupDir = (dir, volumeRoot, stat) => {
   if (volumeRoot) assertBackupVolume(volumeRoot, stat);
+  proveLivePlacement(dir, stat);
   let existing = null;
   try { existing = statSync(dir); } catch {}
   if (existing) {
@@ -189,6 +247,29 @@ export function listBackups(dir, dataDir = dirname(dir)) {
   const snapshots = state.available ? entries(dir).map(entry => manual.has(snapshotName(entry.name).stem) ? { ...entry, manual: true } : entry) : [];
   snapshots.sort((a, b) => b.at.localeCompare(a.at));
   return { snapshots, localError: state.error ?? status.localError ?? error ?? null, dir, retention: { ...kinds } };
+}
+/**
+ * The live backup listing: the configured location and, while it still holds
+ * snapshots, the retired one. One snapshot's identical name in both places is
+ * one entry, and the listing names the configured directory it writes to.
+ */
+export function listLiveBackups(dataDir, dirs = liveBackupReadDirs()) {
+  const { status, error } = readStatusFile(dataDir);
+  const states = dirs.map(dir => ({ dir, state: backupDirState(dir) }));
+  const manual = new Set(Array.isArray(status.manual) ? status.manual : []);
+  const seen = new Set();
+  const snapshots = [];
+  for (const { dir, state } of states) {
+    if (!state.available) continue;
+    for (const entry of entries(dir)) {
+      if (seen.has(entry.name)) continue;
+      seen.add(entry.name);
+      snapshots.push(manual.has(snapshotName(entry.name).stem) ? { ...entry, manual: true } : entry);
+    }
+  }
+  snapshots.sort((a, b) => b.at.localeCompare(a.at));
+  const unavailable = states.find(item => !item.state.available);
+  return { snapshots, localError: unavailable?.state.error ?? status.localError ?? error ?? null, dir: dirs[0], retention: { ...kinds } };
 }
 const key = at => at.slice(0, 10);
 const week = at => {
@@ -327,8 +408,9 @@ export async function createBackup(dbPath, dir = backupDirForDataDir(dirname(dbP
   const dataDir = dirname(admitted ? admitted.path : dbPath);
   // The live backup directory serves only the live store: a fixture or temporary store
   // aimed at it is refused before anything is written or pruned (2026-10-04: test runs
-  // once wrote into the live folder and pruned its real backups).
-  if (!isLiveStoreDir(dataDir) && /\/queue\/backups\/?$/.test(dir) && samePath(dir, liveBackupDir())) {
+  // once wrote into the live folder and pruned its real backups). The retired live
+  // location holds only the live store too, so a fixture cannot write there either.
+  if (!isLiveStoreDir(dataDir) && (samePath(dir, liveBackupDir()) || samePath(dir, legacyLiveBackupDir()))) {
     throw new Error(`Refusing to back up ${dbPath} to the live backup directory ${dir}: it holds only the live store ${liveStorePath()}`);
   }
   if (admitted) return publishStagedBackup(dbPath, dir, at, options, dataDir, verifySource);

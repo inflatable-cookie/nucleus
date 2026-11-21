@@ -27,7 +27,7 @@ import { backupBeforeMigration, backupCommand, backupDirForDataDir, backupHealth
 import { timingTest, performanceAssert } from './support/timing';
 import { cpuSample } from './support/cpu-time';
 // The child-process implementation is plain JavaScript so Node can run it without a TS loader.
-import { assertBackupVolume, backupDirState, createBackup, listBackups, liveStorePath, readBackupStatus, snapshotFileName, snapshotName, volumeRootFor } from '../core/store/backup-worker.mjs';
+import { assertBackupVolume, backupDirState, createBackup, legacyLiveBackupDir, listBackups, liveStorePath, readBackupStatus, snapshotFileName, snapshotName, volumeRootFor } from '../core/store/backup-worker.mjs';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const dir = mkdtempSync(join(tmpdir(), 'queue-backup-'));
@@ -246,7 +246,9 @@ test('Spec 028: a backup volume must be a real mount, not an ordinary directory 
 test('Spec 028: the live store backs up under its configured work root and other instances remain isolated', () => {
   // The live store is the account's ~/.nucleus (path comparison, not an adopt check).
   const live = dirname(liveStorePath());
-  assert.equal(liveBackupDir(), join(getWorkRoot(), 'queue', 'backups'));
+  assert.equal(liveBackupDir(), join(getWorkRoot(), 'archives', 'nucleus-backups'));
+  // The retired queue/backups location is read while it still holds a snapshot.
+  assert.equal(legacyLiveBackupDir(), join(getWorkRoot(), 'queue', 'backups'));
   assert.equal(backupDirForDataDir(live), liveBackupDir());
   for (const root of ['project-c-pool', 'project-c-outputs', 'scratch', 'caches'])
     assert.ok(!liveBackupDir().includes(`/${root}/`), `${liveBackupDir()} stays outside the ${root} prune root`);

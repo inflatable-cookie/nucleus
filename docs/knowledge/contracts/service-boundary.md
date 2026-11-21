@@ -563,79 +563,114 @@ proof lands with its task.
 
 ## Process and data ownership
 
-- **Work placement (Tom, 2026-11-10).** `workRoot` in `settings.json`,
-  overridden by `NUCLEUS_WORK_ROOT`, owns the work volume mount for
-  `queue/project-qa/`, `queue/backups/`, `queue/barge-custodians/`,
-  `scratch/<namespace>/`, and the default local task-workspace root
-  `queue/workspaces/`. It defaults to `~/.nucleus/work`. Optional
-  `workVolumeId`, overridden by `NUCLEUS_WORK_VOLUME_ID`, pins the exact volume
-  mounted at that root; no pin means no volume check. An unpinned path may
-  create ordinary local directories, including a missing mount-point directory;
-  configure a pin when that must refuse. A missing or mismatched pinned volume
-  refuses writes with no fallback to internal storage.
-  When neither setting is present, existing workspace, QA, backup or scratch
-  records supply their common root, and adoption reads its mounted volume ID.
-  Startup persists both once before opening the store for writes. Unprovable or
-  conflicting history refuses adoption without changing placement. Recorded
-  paths and durable data remain in place. Settings → Backups → Storage shows the
-  resolved work root as read-only text.
+- **Work placement (Tom, 2026-11-10; every class a setting, nucleus#1526).**
+  `workRoot` in `settings.json`, overridden by `NUCLEUS_WORK_ROOT`, names the work
+  volume mount. It defaults to `<data dir>/work`. Optional `workVolumeId`,
+  overridden by `NUCLEUS_WORK_VOLUME_ID`, pins the exact volume mounted at that
+  root; no pin means no volume check. An unpinned path may create ordinary local
+  directories, including a missing mount-point directory; configure a pin when
+  that must refuse. A missing or mismatched pinned volume refuses writes with no
+  fallback to internal storage. When neither setting is present, existing
+  workspace, QA, backup or scratch records supply their common root, and adoption
+  reads its mounted volume ID. Startup persists both once before opening the store
+  for writes. Unprovable or conflicting history refuses adoption without changing
+  placement. Recorded paths and durable data remain in place.
 
-- **Local task-workspace placement (nucleus#1506).** Active local task-workspace
-  placement is separated from `workRoot` and `workVolumeId` via
-  `localWorkspaceRoot` in `settings.json` (overridden by
-  `NUCLEUS_LOCAL_WORKSPACE_ROOT`) and optional `retainedWorkspaceRoots`
-  (overridden by `NUCLEUS_RETAINED_WORKSPACE_ROOTS`, `path.delimiter`-separated).
-  When `localWorkspaceRoot` is unset, active local task workspaces preserve the
-  default `<workRoot>/queue/workspaces/`. When set (for example to
-  `<workRoot>/worktrees/nucleus`), new local task allocations, recovery
-  re-creations without a recorded directory, and sibling/dependency links
-  (`canonicalLinkRoot`) use `<localWorkspaceRoot>/<digest(gitCommonDir)>/ns-<taskId>`
-  (or `.../task-<taskId>/ns-<taskId>` for BB hosts), while
-  `backup`, `run-scratch`, `project-qa`, `barge-custodians`, Barge leases, and
-  attached external/intake review checkouts preserve their existing placement.
-  - **Volume and path guard:** `localWorkspaceRoot` and every entry in
-    `retainedWorkspaceRoots` must be canonical absolute directories strictly
-    inside `workRoot`. Admission (`assertCheckoutAvailable`) verifies the pinned
-    volume (`workVolumeId`) and every existing directory component from
-    `workRoot` down to both the active root and any target path, rejecting
-    symlink/redirected components, paths outside `workRoot`, or an absent or
-    mismatched volume without falling back to internal storage.
-  - **Retained roots and positive binding:** Whenever `localWorkspaceRoot`
-    differs from `<workRoot>/queue/workspaces`, `<workRoot>/queue/workspaces`
-    is automatically included as a supported retained root alongside any
-    explicit `retainedWorkspaceRoots`. Existing allocated tasks, displaced host
-    workspaces, and pre-roll prepared checkouts (`workspaceIntent` / `found_done`)
-    reuse their recorded workspace and Git identity without moves or record
-    rewrites. Only a positively bound path on a retained root (recorded
-    `task.directory`, `displacedHostWorkspaces`, or an unbound `workspaceIntent`
-    orphan/creation recovery) may continue or clean up there; new allocations
-    always land on the active root.
+  Every class Nucleus writes on that volume is its own setting with a portable
+  default under `workRoot` and its own environment override:
+
+  | Class | Setting (override) | Portable default | Retired location still read |
+  | --- | --- | --- | --- |
+  | Local task worktrees | `localWorkspaceRoot` (`NUCLEUS_LOCAL_WORKSPACE_ROOT`) | `<workRoot>/worktrees/nucleus/` | `<workRoot>/queue/workspaces/` |
+  | Database backups | `backupRoot` (`NUCLEUS_BACKUP_ROOT`) | `<workRoot>/archives/nucleus-backups/` | `<workRoot>/queue/backups/` |
+  | Legacy milestone QA history | `projectQaRoot` (`NUCLEUS_PROJECT_QA_ROOT`) | `<workRoot>/archives/nucleus-project-qa/` | `<workRoot>/queue/project-qa/` |
+  | Run and service scratch | `scratchRoot` (`NUCLEUS_SCRATCH_ROOT`) | `<workRoot>/scratch/nucleus/` | — (recorded run directories keep their own path) |
+  | Barge custodian records | `custodianRoot` (`NUCLEUS_CUSTODIAN_ROOT`) | `<workRoot>/scratch/nucleus/barge-custodians/` | `<workRoot>/queue/barge-custodians/` |
+
+  Custodian control files carry one live lease's start/stop handshake, so they use
+  the scratch class rather than the archive class. A repository-scoped scratch
+  namespace keeps its established `<workRoot>/scratch/<namespace>` placement,
+  because recorded run directories name it.
+
+  - **The one guard.** Every configured class path must be canonical and absolute
+    and strictly inside `workRoot`. Admission verifies the pinned volume and every
+    existing directory component from `workRoot` down to the class root and any
+    target: a symlinked or redirected component, a path outside `workRoot`, or an
+    absent or mismatched volume refuses without falling back to internal storage.
+    `assertCheckoutAvailable` covers allocation, archive and scratch targets;
+    `assertWorkPlacementAvailable` covers a whole placement (worktrees, backups, QA,
+    scratch, custodians). A missing class leaf is created only after its proof.
+  - **Settings → Storage.** A separate page with its own navigation entry
+    (`settingsViews` in `shared/queue-navigation.ts`), not a Backups section: one
+    noun per control (Work root, Task worktrees, Database backups, QA history, Run
+    scratch, Custodian records), explanations behind `?`. `queue.work-storage`
+    reads the resolved placement and `queue.work-storage.set` saves it; the save is
+    Settings-only on the same transport surfaces as `queue.capacity`
+    (`SETTINGS_ONLY_METHODS`), and each write also needs the web Settings marker.
+    A save validates the whole candidate placement — every path through the guard
+    above — before writing `settings.json` (mode `0600`), explains a refusal on the
+    page, and applies on the next service start. An empty control restores that
+    class's portable default; an untouched work root is not written, so a portable
+    install stays portable.
+  - **Existing installs keep working.** An install whose data sits in the retired
+    `<workRoot>/queue/...` locations is read there until those files are moved:
+    the backup resolver, retention, `backup.list`, snapshot health and the restore
+    procedure read both the configured and the retired backup directory until the
+    retired one holds no snapshot; legacy QA custody and retention read the
+    configured QA root and the retired one, and `project.qa.*` history reads the
+    same durable store rows. Nothing is deleted and no file moves during the
+    release itself: the operator moves the static snapshot and QA files (or leaves
+    them) and removes `queue/` by hand, with the check below.
+  - **Removing `queue/` (operator step).** First confirm no live task references
+    it: read `queue.sqlite` read-only for non-terminal or unarchived tasks
+    (`phase` outside `done`/`cancelled`, `removedAt` null, and
+    `displacedHostWorkspaces`) whose `directory` or workspace paths start with
+    `<workRoot>/queue/workspaces`. Zero references, plus the storage save above,
+    means new writes land outside `queue/`; move any snapshot and QA files still
+    worth keeping to the configured roots, then remove `<workRoot>/queue/` by
+    hand. The retired readers then simply find nothing.
+
+  - **Local task-workspace placement (nucleus#1506).** `localWorkspaceRoot`
+    defaults to `<workRoot>/worktrees/nucleus/`, and optional
+    `retainedWorkspaceRoots` (overridden by `NUCLEUS_RETAINED_WORKSPACE_ROOTS`,
+    `path.delimiter`-separated) keeps further roots supported. New local task
+    allocations, recovery re-creations without a recorded directory, and
+    sibling/dependency links (`canonicalLinkRoot`) use
+    `<localWorkspaceRoot>/<digest(gitCommonDir)>/ns-<taskId>` (or
+    `.../task-<taskId>/ns-<taskId>` for BB hosts), while Barge leases and attached
+    external/intake review checkouts preserve their existing placement.
+  - **Retained roots and positive binding:** Whenever the active root is not
+    `<workRoot>/queue/workspaces`, that retired root is automatically included as a
+    supported retained root alongside any explicit `retainedWorkspaceRoots`.
+    Existing allocated tasks, displaced host workspaces, and pre-roll prepared
+    checkouts (`workspaceIntent` / `found_done`) reuse their recorded workspace and
+    Git identity without moves or record rewrites. Only a positively bound path on
+    a retained root (recorded `task.directory`, `displacedHostWorkspaces`, or an
+    unbound `workspaceIntent` orphan/creation recovery) may continue or clean up
+    there; new allocations always land on the active root.
   - **Configuration, activation, and rollback procedure:**
-    1. *Configure & verify before activation:* Confirm `workRoot` and
-       `workVolumeId` are set in `~/.nucleus/settings.json` (mode `0600`), verify
-       the volume is mounted with matching UUID (`diskutil info <workRoot>`),
-       and confirm `<workRoot>/worktrees` and `<workRoot>/worktrees/nucleus` (if
-       present) are real directories on that volume with no symlinks.
-    2. *Activate:* Add `"localWorkspaceRoot": "<workRoot>/worktrees/nucleus"` to
-       `~/.nucleus/settings.json` (keeping `workRoot`, `workVolumeId`, and mode
-       `0600`), then reload or restart the Nucleus service so startup
-       (`initializeWorkRoot`) validates and applies the active root. Verify that
-       `backup.list` still reports `workRoot`, new local task allocations create
-       under `<workRoot>/worktrees/nucleus/<digest>/ns-<taskId>`, sibling links
-       resolve beside those checkouts, and existing tasks on
-       `<workRoot>/queue/workspaces` continue and archive at their recorded paths.
-    3. *Rollback:* Inspect non-terminal and unarchived tasks in `queue.sqlite`
-       (read-only, e.g. checking `directory` and `displacedHostWorkspaces`) for
-       any remaining references to `<workRoot>/worktrees/nucleus`. Remove
-       `localWorkspaceRoot` from `~/.nucleus/settings.json` (or set it back to
-       `<workRoot>/queue/workspaces`). If any active or unarchived tasks still
-       reference `<workRoot>/worktrees/nucleus`, add
-       `"retainedWorkspaceRoots": ["<workRoot>/worktrees/nucleus"]` so those
-       positively bound paths continue and clean up in place while new
-       allocations return to `<workRoot>/queue/workspaces`. Restart or reload the
-       service, verify new allocations land under `<workRoot>/queue/workspaces`,
-       and remove `retainedWorkspaceRoots` once a read-only check confirms zero
-       remaining references to `<workRoot>/worktrees/nucleus`.
+    1. *Configure & verify before activation:* set `workRoot` and `workVolumeId`
+       in `settings.json` or save them on Settings → Storage, verify the volume is
+       mounted with matching UUID (`diskutil info <workRoot>`), and confirm the
+       chosen roots' existing levels are real directories on that volume with no
+       symlinks. The Storage page refuses a path that fails the guard and says why.
+    2. *Activate:* save on Settings → Storage, then reload or restart the Nucleus
+       service so startup (`initializeWorkRoot`) validates the whole placement and
+       new writes land on the configured roots. Verify `backup.list` still reports
+       `workRoot`, a new local task allocates under
+       `<localWorkspaceRoot>/<digest>/ns-<taskId>`, sibling links resolve beside
+       those checkouts, and existing tasks on a retired root continue and archive
+       at their recorded paths.
+    3. *Rollback:* inspect non-terminal and unarchived tasks in `queue.sqlite`
+       (read-only, e.g. `directory` and `displacedHostWorkspaces`) for references
+       to the new worktrees root. Save the class back to its previous path on
+       Settings → Storage (removing `localWorkspaceRoot` returns to the portable
+       default, so a rollback to `<workRoot>/queue/workspaces` names that path
+       explicitly), and add any root still in use to `retainedWorkspaceRoots` so
+       those positively bound paths continue and clean up in place while new
+       allocations follow the saved path. Restart or reload the service and remove
+       `retainedWorkspaceRoots` once a read-only check confirms zero remaining
+       references.
 
 - The [milestone QA handoff](milestone-qa.md#legacy-history-and-upgrades)
   verifies custody of legacy checkouts before replacement.

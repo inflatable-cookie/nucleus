@@ -19,7 +19,8 @@ import {
   resolveBargeBinary,
   type BargeClientOptions,
 } from "./barge-cli";
-import { getWorkRoot } from "./work-root.mjs";
+import { getWorkPlacement } from "./work-root.mjs";
+import { assertWorkPlacementAvailable } from "./checkout-volume";
 
 const CUSTODIAN_SCRIPT_PATH = fileURLToPath(
   new URL("./barge-custodian.mjs", import.meta.url),
@@ -79,15 +80,22 @@ export function overrideBargeCustodianDriverForTest(
   custodianDriverOverride = driver;
 }
 
+function custodianControlRoot(controlRootDir?: string): string {
+  if (controlRootDir) return controlRootDir;
+  const placement = getWorkPlacement();
+  // Custodian control files are one lease's live start/stop handshake: the
+  // scratch class, on the configured work volume.
+  assertWorkPlacementAvailable(placement);
+  return placement.custodianRoot;
+}
+
 function defaultCustodianControlDir(
   allocationId: string,
   token: string,
   controlRootDir?: string,
 ): string {
   const safeId = allocationId.replace(/[^A-Za-z0-9-_.]/g, "_").slice(0, 64);
-  const base =
-    controlRootDir ?? join(getWorkRoot(), "queue", "barge-custodians");
-  return join(base, `${safeId}-${token.slice(0, 8)}`);
+  return join(custodianControlRoot(controlRootDir), `${safeId}-${token.slice(0, 8)}`);
 }
 
 function sleep(ms: number): Promise<void> {

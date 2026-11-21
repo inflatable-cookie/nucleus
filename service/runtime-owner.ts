@@ -857,6 +857,7 @@ export class QueueRuntime {
       markStoreAccess: () => this.markStoreAccess(),
     });
     this.settingsOperations = new RuntimeSettings({
+      dataDir: this.dataDir,
       store: this.store,
       engine: this.engine,
       decisions: this.decisions,
@@ -1137,6 +1138,18 @@ export class QueueRuntime {
   }
   backupList(_input: Record<string, never> = {}) {
     return this.maintenance.backupList(_input);
+  }
+
+  /** Settings → Storage: every work-volume path is a setting (nucleus#1526). */
+  workStorage(_input: Record<string, never> = {}) {
+    return this.settingsOperations.workStorage();
+  }
+  saveWorkStorage(
+    input: import("../shared/schema/work-storage").WorkStorageInput,
+    _accepted?: unknown,
+    context?: { via?: string | null },
+  ) {
+    return this.settingsOperations.saveWorkStorage(input, _accepted, context);
   }
 
   /**

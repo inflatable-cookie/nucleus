@@ -47,6 +47,7 @@ export * from "./schema/outcomes";
 export * from "./schema/state";
 export * from "./rpc/state";
 export * from "./rpc/backup";
+export * from "./rpc/work-storage";
 export * from "./rpc/settings";
 export * from "./rpc/tasks";
 export * from "./schema/task-control";

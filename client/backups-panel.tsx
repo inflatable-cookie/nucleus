@@ -59,8 +59,10 @@ const ONE_LINE_MIN_WIDTH = 520;
 /**
  * Settings → Backups (Spec 028, nucleus#965): the stored snapshots, newest first, under
  * a one-line summary. Problems read as one warning line; where snapshots live, the
- * schedule, retention and the restore procedure wait behind the `?`. There is no
- * restore action here: restore is an operator procedure (docs/knowledge/operations/restore.md).
+ * schedule, retention and the restore procedure wait behind the `?`. Every
+ * work-volume path, including the backup location, is edited on Settings → Storage
+ * (nucleus#1526). There is no restore action here: restore is an operator procedure
+ * (docs/knowledge/operations/restore.md).
  */
 export function BackupsPanel({ c, list, loading, loadError, health, inset, backUp, now = Date.now() }: {
   c: Colors;
@@ -106,11 +108,6 @@ export function BackupsPanel({ c, list, loading, loadError, health, inset, backU
     try { await backUp(); } finally { setRunning(false); }
   }
   return <ScrollView accessibilityLabel="Store backups" onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ gap: space.xs, paddingBottom: inset, width: "100%", maxWidth: 780 }}>
-    {list?.workRoot && <View style={{ gap: space.xxs, marginBottom: space.md }}>
-      <Text accessibilityRole="header" style={{ color: r.foreground, fontSize: type.section.fontSize, fontWeight: "600" }}>Storage</Text>
-      <Text style={muted(c)}>Work root</Text>
-      <Text selectable accessibilityLabel="Work root" style={{ color: r.foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight }}>{list.workRoot}</Text>
-    </View>}
     <View ref={anchor} style={{ ...row, flexWrap: "nowrap" }}>
       <Text accessibilityRole="header" style={{ color: r.foreground, fontSize: type.section.fontSize, fontWeight: "600" }}>Backups</Text>
       <HelpTip c={c} label="Backups" text={help} open={helpOpen} onOpenChange={setHelpOpen} />

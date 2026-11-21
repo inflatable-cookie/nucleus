@@ -62,6 +62,20 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     method: "backupList",
     mutating: false,
   },
+  // Settings → Storage (nucleus#1526): every work-volume path is one setting with
+  // a portable default; the save is Settings-only, like the capacity writes.
+  {
+    name: "queue.work-storage",
+    contract: contracts.workStorage,
+    method: "workStorage",
+    mutating: false,
+  },
+  {
+    name: "queue.work-storage.set",
+    contract: contracts.saveWorkStorage,
+    method: "saveWorkStorage",
+    mutating: true,
+  },
   {
     name: "queue.queued-page",
     contract: contracts.queuePage,

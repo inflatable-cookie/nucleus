@@ -1,6 +1,6 @@
 import { readdirSync, lstatSync, unlinkSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
-import { backupDirForDataDir, isLiveStoreDir, listBackups, liveBackupDir, snapshotName } from "./backup-worker.mjs";
+import { backupDirForDataDir, isLiveStoreDir, listLiveBackups, liveBackupDir, snapshotName } from "./backup-worker.mjs";
 
 export interface RetentionRemoval { path: string; bytes: number }
 
@@ -13,7 +13,7 @@ export function staleBackupCopies(local: readonly { path: string; at: string; by
 /** Remove stale backup copies from the live data home only; the external set is read-only here. */
 export function pruneLiveDataHomeBackupCopies(dataDir: string): RetentionRemoval[] {
   if (!isLiveStoreDir(dataDir) || backupDirForDataDir(dataDir) !== liveBackupDir()) return [];
-  const live = listBackups(liveBackupDir(), dataDir);
+  const live = listLiveBackups(dataDir);
   const newestLiveAt = live.snapshots[0]?.at ?? null;
   if (!newestLiveAt) return [];
 

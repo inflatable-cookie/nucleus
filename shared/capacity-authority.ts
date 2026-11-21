@@ -66,4 +66,15 @@ export function hostRemoveRefusalMessage(): string {
 export const SETTINGS_ONLY_METHODS: Readonly<Record<string, () => string>> = {
   "queue.capacity": capacityWriteRefusalMessage,
   "host.remove": hostRemoveRefusalMessage,
+  "queue.work-storage.set": workStorageWriteRefusalMessage,
 };
+
+/**
+ * Settings → Storage (nucleus#1526) follows the same Settings-only rule: the
+ * operator's paths for the work volume are not an agent's to choose, and a path
+ * change re-places every future write on that volume.
+ */
+export function workStorageWriteRefusalMessage(): string {
+  return "queue.work-storage.set is refused: only the operator changes Nucleus's storage paths, on Settings → Storage. "
+    + "Nothing changed; do not retry.";
+}

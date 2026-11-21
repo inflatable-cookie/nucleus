@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { lstatSync, realpathSync } from "node:fs";
 import { createCheckoutScratchDirectory, removeCheckoutRunScratchDirectory, type CheckoutVolumeInfo } from "./checkout-volume";
-import { getWorkRoot } from "./work-root.mjs";
+import { getWorkPlacement, getWorkRoot } from "./work-root.mjs";
 
 /**
  * Queue #535 (papercut 5ac8ffb0): every Queue-launched run gets its own TMPDIR
@@ -42,6 +42,11 @@ export function repositoryScratchNamespace(repository: string | null | undefined
  * on purpose: macOS caps a Unix socket path at 104 bytes. Test fixtures use
  * short hash-named directories directly under TMPDIR so the longest repository
  * namespace still leaves room for the socket leaf.
+ *
+ * `scratchRoot` in `settings.json` (or `NUCLEUS_SCRATCH_ROOT`) names Nucleus's
+ * own scratch root; its portable default is `<workRoot>/scratch/nucleus`. A
+ * repository-scoped namespace keeps its established `<workRoot>/scratch/<namespace>`
+ * placement, because recorded run directories name it and are read back as-is.
  */
 export function runScratchRoot(mount: string = getWorkRoot(), namespace = RUN_SCRATCH_NAMESPACE): string {
   if (!SCRATCH_NAMESPACE_SHAPE.test(namespace)) throw new Error("Repository scratch namespace is invalid");
@@ -99,12 +104,20 @@ export function ticketTemporaryDirectoryBeside(recorded: string | undefined, rec
 export function checkoutRunScratchPlacement(options: {
   mount?: string;
   namespace?: string;
+  /** Fixture seam: the exact root, instead of deriving it from the mount and namespace. */
+  root?: string;
   uuid?: string;
   observe?: (mount: string) => CheckoutVolumeInfo;
   create?: (directory: string) => void;
 } = {}): RunScratchPlacement {
   const mount = options.mount ?? getWorkRoot();
-  const root = runScratchRoot(mount, options.namespace ?? RUN_SCRATCH_NAMESPACE);
+  const namespace = options.namespace ?? RUN_SCRATCH_NAMESPACE;
+  // The configured scratch root applies to Nucleus's own namespace on the real
+  // work volume; an explicit fixture mount or a repository namespace keeps the
+  // established `<mount>/scratch/<namespace>` derivation.
+  const configured =
+    options.mount === undefined && options.root === undefined && namespace === RUN_SCRATCH_NAMESPACE;
+  const root = options.root ?? (configured ? getWorkPlacement().scratchRoot : runScratchRoot(mount, namespace));
   return {
     mount, root,
     create: directory => createCheckoutScratchDirectory({ mount, root, target: directory, uuid: options.uuid, observe: options.observe, create: options.create, exclusive: true }),
@@ -128,12 +141,15 @@ export function runTemporaryEnvironment(runId: string, placement: RunScratchPlac
     // settings changed after dispatch. Earlier Queue roots remain readable too.
     const hash = createHash("sha256").update(runId).digest("hex").slice(0, 8);
     const legacyHash = createHash("sha256").update(runId).digest("hex").slice(0, 12);
+    // A leaf directly under the placement's own root is one Queue wrote there,
+    // whatever the configured root is.
+    const ownRoot = dirname(recordedDirectory) === placement.root && basename(recordedDirectory) === hash;
     const recordedMount = recordedDirectory.startsWith(`${placement.mount}/scratch/`) ? placement.mount : undefined;
     const relativeRoot = recordedMount ? dirname(recordedDirectory).slice(`${recordedMount}/scratch/`.length) : "";
     const currentRecordedRoot = /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$/.test(relativeRoot);
     const legacyRecordedRoot = /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?\/(?:q|r)$/.test(relativeRoot);
     const legacyRoot = ((recordedMount && /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?\/runs$/.test(relativeRoot) && basename(recordedDirectory) === runId) || recordedDirectory === join(placement.root, "runs", runId)) && runIdShape.test(runId);
-    if ((currentRecordedRoot && basename(recordedDirectory) === hash) || (legacyRecordedRoot && basename(recordedDirectory) === legacyHash) || legacyRoot) {
+    if ((ownRoot || (currentRecordedRoot && basename(recordedDirectory) === hash)) || (legacyRecordedRoot && basename(recordedDirectory) === legacyHash) || legacyRoot) {
       const root = dirname(recordedDirectory);
       if (!placement.createAtRoot) throw new Error("Recorded run temp directory cannot be proved on its recorded storage");
       try { placement.createAtRoot(root, recordedDirectory); }
@@ -169,6 +185,11 @@ export function removeRecordedRunScratchDirectory(directory: string, fixture?: {
   mount: string; uuid: string; observe: (mount: string) => CheckoutVolumeInfo;
 }): boolean {
   const mount = fixture?.mount ?? getWorkRoot();
+  const placement = fixture ? null : getWorkPlacement();
+  // A leaf directly under the configured scratch root is one Queue wrote there.
+  if (placement && dirname(directory) === placement.scratchRoot)
+    return removeCheckoutRunScratchDirectory({ root: placement.scratchRoot, target: directory, mount,
+      uuid: placement.volumeId, observe: fixture?.observe });
   if (!directory.startsWith(`${mount}/scratch/`)) return true;
   const relativePath = directory.slice(`${mount}/scratch/`.length);
   const current = relativePath.match(/^([a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?)\/([a-f0-9]{8})$/);

@@ -1,5 +1,5 @@
 import { getWorkRoot } from '../core/workspaces/work-root.mjs';
-import { backupCommand, backupHealth, listBackupSnapshots, newestScheduledSnapshotAt } from '../core/store/backups';
+import { backupCommand, backupHealth, listBackupSnapshots, newestBackupAt } from '../core/store/backups';
 import type { Store } from '../core/store/store';
 import type { StoreCompactor } from '../core/store/store-compaction';
 import { BACKUP_FAILURE_RETRY_MS, BACKUP_HEALTH_REFRESH_MS, BACKUP_INTERVAL_MS, type BackupHealth, type BackupList } from '../shared/contracts';
@@ -43,7 +43,7 @@ export class StoreMaintenance {
 
   backupIfDue(): void {
     if (this.owner.closing || this.backupRunning) return;
-    const newest = newestScheduledSnapshotAt(this.owner.backupDir);
+    const newest = newestBackupAt(this.owner.backupDir, this.owner.dataDir);
     if (newest !== null && Date.now() - newest < BACKUP_INTERVAL_MS) return;
     if (Date.now() - this.backupFailedAt < BACKUP_FAILURE_RETRY_MS) return;
     void this.owner.backupNow({}, 'automatic').catch(() => { this.backupFailedAt = Date.now(); });

@@ -23,7 +23,7 @@ const liveList = () => ({
     entry(30 * HOUR, 'cccc', 'weekly'),
     entry(6 * HOUR, 'bbbb', 'daily'),
   ],
-  localError: null, dir: '/Volumes/example-volume/queue/backups', retention: { hourly: 24, daily: 14, weekly: 8 },
+  localError: null, dir: '/Volumes/example-volume/archives/nucleus-backups', retention: { hourly: 24, daily: 14, weekly: 8 },
 });
 
 async function panel(props: Record<string, unknown>, width = 660) {
@@ -36,13 +36,11 @@ async function panel(props: Record<string, unknown>, width = 660) {
 const snapshotLabels = (ui: Awaited<ReturnType<typeof panel>>) => ui.all(/^Snapshot /).map(node => node.props.accessibilityLabel as string);
 const textOf = (node: HostNode | string): string => typeof node === 'string' ? node : node.children.map(textOf).join('');
 
-test('storage shows the resolved work root as selectable read-only text', async () => {
+test('Backups carries no Storage section: every path lives on Settings → Storage', async () => {
   const ui = await panel({ list: { ...liveList(), workRoot: '/workspace/nucleus/work' } });
-  const root = ui.get('Work root');
-  assert.equal(textOf(root), '/workspace/nucleus/work');
-  assert.equal(root.props.selectable, true);
-  assert.equal(root.type, 'Text');
-  assert.match(ui.text(), /Storage.*Work root/s);
+  assert.equal(ui.query('Work root'), undefined, 'the read-only work-root text moved to its own page');
+  assert.doesNotMatch(ui.text(), /Storage/);
+  assert.doesNotMatch(ui.text(), /\/workspace\/nucleus\/work/, 'the path is not repeated here');
   ui.update(h('View'));
 });
 
@@ -82,7 +80,7 @@ test('a normal list: summary line, one row per file with date, age, size and tie
 test('the ? names the folder, the schedule, the retention and the restore procedure', async () => {
   const ui = await panel({});
   const tip = ui.get('Backups help');
-  assert.match(tip.props.accessibilityHint, /\/Volumes\/example-volume\/queue\/backups/);
+  assert.match(tip.props.accessibilityHint, /\/Volumes\/example-volume\/archives\/nucleus-backups/);
   assert.match(tip.props.accessibilityHint, /every 6 hours \(checked every 15 minutes\)/);
   assert.match(tip.props.accessibilityHint, /24 hourly, 14 daily and 8 weekly/);
   assert.match(tip.props.accessibilityHint, /docs\/knowledge\/operations\/restore\.md/);
@@ -143,7 +141,7 @@ test('empty, loading and long content states', async () => {
   loading.update(h('View'));
 
   // A long reason wraps in full rather than truncating.
-  const reason = `Backup storage unavailable: ${'/Volumes/example-volume/queue/backups/'.repeat(6)} could not be created (EACCES)`;
+  const reason = `Backup storage unavailable: ${'/Volumes/example-volume/archives/nucleus-backups/'.repeat(6)} could not be created (EACCES)`;
   const long = await panel({ health: { newestSnapshotAt: at(15 * 60_000), localError: reason } });
   const alert = long.ofType('Text').find(node => node.props.accessibilityRole === 'alert')!;
   assert.equal(alert.props.numberOfLines, undefined);

@@ -13,4 +13,10 @@ if (process.env.NODE_TEST_CONTEXT && /\.test\.(?:[cm]?[jt]s|[jt]sx)$/.test(proce
   delete process.env.NUCLEUS_WORK_VOLUME_ID;
   delete process.env.NUCLEUS_LOCAL_WORKSPACE_ROOT;
   delete process.env.NUCLEUS_RETAINED_WORKSPACE_ROOTS;
+  // Every work-volume class is its own setting (nucleus#1526); none may leak in
+  // from the developer's shell and re-place a fixture's writes.
+  delete process.env.NUCLEUS_BACKUP_ROOT;
+  delete process.env.NUCLEUS_PROJECT_QA_ROOT;
+  delete process.env.NUCLEUS_SCRATCH_ROOT;
+  delete process.env.NUCLEUS_CUSTODIAN_ROOT;
 }

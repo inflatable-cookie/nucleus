@@ -8,6 +8,8 @@ export const settingsViews = [
   // nucleus#1325: the host catalogue and the default host picker (nucleus#1494: after Projects).
   { id: "hosts", label: "Hosts", short: "Hosts" },
   { id: "backups", label: "Backups", short: "Backups" },
+  // nucleus#1526: every work-volume path is a setting; Storage is its own page, not a Backups section.
+  { id: "storage", label: "Storage", short: "Storage" },
   { id: "telemetry", label: "Telemetry", short: "Telemetry" },
 ] as const;
 
