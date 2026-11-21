@@ -18,7 +18,7 @@ import {
 import { taskPrNumber } from "../../forge/index";
 import type { Resolution } from "../../resolution";
 import { absentReplacementRecord } from "./budget";
-import { provenAbsentCreation } from "./decisions";
+import { agentlessCreation, provenAbsentCreation } from "./decisions";
 
 /** Classify a complete, occurrence-bound lookup without treating uncertain placement as absence. */
 export function creationLookup(
@@ -210,15 +210,9 @@ export class AbsentRestarts {
     const run = t.resolution.currentRunId
       ? this.store.run(t.resolution.currentRunId)
       : null;
-    if (
-      !run ||
-      run.released ||
-      run.agentId ||
-      run.completion ||
-      run.status !== "uncertain" ||
-      !resolutionCreationRoles.has(run.role)
-    )
+    if (!run || run.released || run.completion || !agentlessCreation(run))
       return null;
+    if (!resolutionCreationRoles.has(run.role)) return null;
     return run;
   }
 
@@ -231,7 +225,7 @@ export class AbsentRestarts {
     const run = this.absentResolutionRun(current);
     if (!run || run.id !== runId)
       throw Error(
-        "Absent resolution-run recovery requires an uncertain reviewer or coordinator creation with no agent",
+        "Absent resolution-run recovery requires an agentless reviewer or coordinator creation whose delivery is unanswered",
       );
     if (!current.workspaceId || !current.directory)
       throw Error(
@@ -293,8 +287,7 @@ export class AbsentRestarts {
         current.resolution.currentRunId !== runId ||
         !run ||
         run.released ||
-        run.agentId ||
-        run.status !== "uncertain"
+        !agentlessCreation(run)
       )
         throw Error(
           "Absent run changed during restart; refresh before retrying",
@@ -326,7 +319,7 @@ export class AbsentRestarts {
   }
 
   /**
-   * Release one unreleased, agentless uncertain creation as settled history:
+   * Release one unreleased, agentless creation as settled history:
    * its credential is revoked so a late callback cannot authenticate, the run is
    * superseded and released, and its incident resolves. Nothing is archived or
    * stopped, because no thread exists. The caller proves the absence first; the
@@ -334,9 +327,9 @@ export class AbsentRestarts {
    */
   releaseAbsentRun(t: Task, runId: string, detail: string): void {
     const run = this.store.run(runId);
-    if (!run || run.released || run.agentId || run.status !== "uncertain")
+    if (!run || run.released || !agentlessCreation(run))
       throw Error(
-        "Only an uncertain creation with no agent can be released as absent",
+        "Only an agentless creation whose delivery is unanswered can be released as absent",
       );
     this.store.deleteCredential(run.id);
     this.store.putRun({

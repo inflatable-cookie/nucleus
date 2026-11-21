@@ -399,7 +399,7 @@ export class EpisodeRestarts {
       const run = this.resolution.absentResolutionRun(current);
       if (!run || !run.hostId || run.hostId !== current.hostId)
         throw Error(
-          "Absent resolution-run recovery requires an uncertain reviewer, coordinator or escalated recovery creation with no agent",
+          "Absent resolution-run recovery requires an agentless reviewer, coordinator or escalated recovery creation whose delivery is unanswered",
         );
       if (
         this.resolution.recovery.busy(current) &&

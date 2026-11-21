@@ -767,8 +767,10 @@ Resolution, including `retry` so instance overrides still fire.
 
 **AbsentRestarts** (`core/recovery/absent-creation/restarts.ts`). Recreates
 uncertain creations: the worker sweep retains an intent while its producer might
-still deliver. Owner-control and resolution-run cutover remain follow-up work; the
-one-replacement creation budget, whose record shape and reader are
+still deliver, and a resolution-role reservation is replaced only from the
+sweep's exact absence proof, whichever stored shape (`intent` or `uncertain`)
+the roll left behind. Owner-control and resolution-run cutover remain follow-up
+work; the one-replacement creation budget, whose record shape and reader are
 `absent-creation/budget.ts`. Enforces
 [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
 Delegates remain on Resolution.
@@ -2022,7 +2024,14 @@ review or merge credit; live participants and unsettled effects remain fences.
 - Restart and immediate route can replace an agentless resolution run after
   the exact lookup proves absence following producer termination. Release
   revokes its credential and re-enters the role's ordinary admission on a fresh
-  run ID. An agentless recovery also settles its bound episode.
+  run ID at the recorded head. An agentless recovery also settles its bound
+  episode. One durable creation state answers both stored shapes: a reservation
+  whose native call never settled stays `intent` across a service roll, and a
+  send that threw stays `uncertain`; `agentlessCreation` names it, so a proved
+  absence recorded on either shape is offered by `next` and applied by the same
+  restart or route. The preview is a store read, so an applied control re-runs
+  the observation and source check; a fresh bound, partial or unreadable lookup
+  keeps the reservation instead of starting a second agent.
 - One observation answers an agentless resolution-role creation: the recorded
   producer, the creation attempt and the complete exact lookup on the recorded
   host and workspace. Its answers are `bound` (one exact in-workspace match

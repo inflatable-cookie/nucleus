@@ -2483,6 +2483,327 @@ test("the sweep, the owner preview and the applying restart name the same review
   }
 });
 
+/**
+ * The Bovine #6518 shape: a service roll between the reservation and the native
+ * send leaves the stored run at `intent`. The reservation journaled its attempt,
+ * no native call settled, and the process that could have sent it is gone.
+ */
+async function storedReviewerCreationIntent(f: Fixture) {
+  f.plantReview();
+  let runId: string | null = null;
+  const deliver = f.engine.resolution.deliverLaunchRun.bind(
+    f.engine.resolution,
+  );
+  f.engine.resolution.deliverLaunchRun = async (
+    _task,
+    _role,
+    { run, token },
+  ) => {
+    runId = run.id;
+    f.tokens.set(run.id, token);
+  };
+  await f.engine.wake();
+  f.engine.resolution.deliverLaunchRun = deliver;
+  assert.ok(runId, "the reservation was recorded");
+  const run = f.store.run(runId)!;
+  assert.equal(run.status, "intent");
+  assert.equal(run.agentId, null);
+  // The roll that owns the recorded producer, well past the lookup grace.
+  rolledReviewerCreation(f, run);
+  return run;
+}
+
+/** The sweep's own pass over one creation occurrence, after its incident is old enough. */
+async function sweepCreation(f: Fixture) {
+  await f.engine.wake();
+  ageIncident(f);
+  await f.engine.wake();
+}
+
+function routeReviewerNow(f: Fixture, pi: Profile, reason: string) {
+  return f.engine.performTaskControl({
+    taskId: f.task.id,
+    version: f.current().version,
+    action: "route",
+    role: "reviewer",
+    profileId: pi.id,
+    now: true,
+    reason,
+    caller: OWNER,
+  });
+}
+
+function addReviewerProfile(f: Fixture) {
+  const pi = profile("reviewer-pi", "reviewer-pi", { provider: "pi" });
+  addProfile(f, pi, "review-pi", "reviewer");
+  return pi;
+}
+
+function liveReviewers(f: Fixture) {
+  return f.store
+    .runs(f.task.id)
+    .filter((run) => run.role === "reviewer" && !run.released);
+}
+
+test("the sweep proves a stored reviewer creation intent absent once and offers the exit it names", async () => {
+  const f = fixture(50_000);
+  try {
+    const run = await storedReviewerCreationIntent(f);
+    f.foundAgents.set(run.id, []);
+    await sweepCreation(f);
+    const proved = f.store.run(run.id)!;
+    assert.equal(proved.status, "intent");
+    assert.ok(
+      proved.absentProvenAt,
+      "the same exact lookup proves a stored intent absent",
+    );
+    assert.equal(proved.agentId, null);
+    assert.equal(
+      proved.released,
+      false,
+      "only an owner control releases the reservation",
+    );
+    assert.equal(f.events("absent_creation_proven").length, 1);
+    assert.equal(provenAbsentCreation(proved), true);
+    assert.match(
+      f.current().reason,
+      /route role=reviewer now or restart role=reviewer/,
+    );
+    assert.equal(
+      reviewerRestartOffer(f)?.available,
+      true,
+      "the preview offers the exit its own wait names",
+    );
+    // `next` filters the wait's own suggestions against what it really offers.
+    const view = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
+    assert.equal(
+      view.stop?.suggestedVerbs.includes("restart"),
+      true,
+      "the advertised restart is offered",
+    );
+    assert.equal(
+      view.stop?.suggestedVerbs.includes("route"),
+      true,
+      "the advertised route is offered",
+    );
+    assert.equal(
+      f.current().resolution.incident?.status,
+      "resolved",
+      "the sweep no longer leaves an incident retry as the only exit",
+    );
+    // Replay converges: the settled occurrence is never looked up or re-escalated.
+    const count = f.store.eventsAll(f.task.id).length;
+    await f.engine.wake();
+    await f.engine.wake();
+    assert.equal(f.store.eventsAll(f.task.id).length, count);
+    assert.equal(f.creates.length, 0);
+    assert.equal(f.sends.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a stored reviewer creation intent that a fresh lookup binds keeps its original reservation", async () => {
+  const f = fixture(50_000);
+  try {
+    const run = await storedReviewerCreationIntent(f);
+    f.foundAgents.set(run.id, []);
+    await sweepCreation(f);
+    const restart = reviewerRestartOffer(f);
+    assert.equal(restart?.available, true);
+    // A stale preview is not evidence: the applied lookup answers first.
+    f.foundAgents.set(run.id, [
+      { id: "agent-retained", workspaceId: run.workspaceId },
+    ]);
+    f.states.set("agent-retained", {
+      id: "agent-retained",
+      workspaceId: run.workspaceId,
+      status: "idle",
+      active: false,
+      permissions: false,
+      error: "",
+    });
+    await restartReviewer(f, "Resume the review");
+    const bound = f.store.run(run.id)!;
+    assert.equal(bound.agentId, "agent-retained");
+    assert.equal(bound.status, "running");
+    assert.equal(bound.released, false);
+    assert.equal(bound.absentProvenAt, undefined);
+    assert.equal(
+      f.store
+        .runs(f.task.id)
+        .filter((candidate) => candidate.role === "reviewer").length,
+      1,
+      "a bound creation keeps the original run identity",
+    );
+    assert.equal(f.creates.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("restart over a proved-absent stored intent starts one review on the same head", async () => {
+  const f = fixture(50_000);
+  try {
+    const run = await storedReviewerCreationIntent(f);
+    f.foundAgents.set(run.id, []);
+    await sweepCreation(f);
+    const token = f.tokens.get(run.id)!;
+    assert.doesNotThrow(() => f.store.authenticate(run.id, token));
+    await restartReviewer(f, "Replace the proved-absent reviewer");
+    const released = f.store.run(run.id)!;
+    assert.equal(released.released, true);
+    assert.equal(released.status, "superseded");
+    assert.throws(
+      () => f.store.authenticate(run.id, "any-token"),
+      /Unauthorized/,
+    );
+    await f.engine.wake();
+    const live = liveReviewers(f);
+    assert.equal(live.length, 1, "one fresh reviewer owns the review");
+    assert.notEqual(live[0]!.id, run.id);
+    assert.equal(live[0]!.head, head, "the replacement reviews the same head");
+    assert.equal(f.creates.length, 1);
+    assert.equal(f.creates[0]!.head, head);
+    assert.equal(
+      f.store.runs(f.task.id).filter((candidate) => run.id === candidate.id)
+        .length,
+      1,
+      "the proved-absent reservation is not re-opened as a second run",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("route now over a proved-absent stored intent retires only the reservation and reviews the same head", async () => {
+  const f = fixture(50_000);
+  try {
+    const run = await storedReviewerCreationIntent(f);
+    f.foundAgents.set(run.id, []);
+    await sweepCreation(f);
+    const pi = addReviewerProfile(f);
+    await routeReviewerNow(f, pi, "Owner route after proved absence");
+    const released = f.store.run(run.id)!;
+    assert.equal(released.released, true);
+    assert.equal(released.status, "superseded");
+    assert.equal(released.agentId, null);
+    assert.throws(
+      () => f.store.authenticate(run.id, "any-token"),
+      /Unauthorized/,
+    );
+    await f.engine.wake();
+    const live = liveReviewers(f);
+    assert.equal(live.length, 1, "one fresh reviewer owns the review");
+    assert.notEqual(live[0]!.id, run.id);
+    assert.equal(live[0]!.head, head, "the replacement reviews the same head");
+    assert.equal(live[0]!.profile?.id, pi.id);
+    assert.equal(f.creates.length, 1);
+    assert.equal(
+      f.store.runs(f.task.id).filter((candidate) => run.id === candidate.id)
+        .length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a changed head refuses both exits for a proved-absent stored intent", async () => {
+  const f = fixture(50_000);
+  try {
+    const run = await storedReviewerCreationIntent(f);
+    f.foundAgents.set(run.id, []);
+    await sweepCreation(f);
+    assert.equal(reviewerRestartOffer(f)?.available, true);
+    const pi = addReviewerProfile(f);
+    f.setHead("d".repeat(40));
+    await assert.rejects(
+      restartReviewer(f, "Replace the proved-absent reviewer"),
+      /PR head changed/,
+    );
+    await assert.rejects(
+      routeReviewerNow(f, pi, "Owner route after proved absence"),
+      /PR head changed/,
+    );
+    const kept = f.store.run(run.id)!;
+    assert.equal(kept.released, false);
+    assert.equal(kept.head, head);
+    assert.equal(f.creates.length, 0);
+    assert.equal(f.sends.length, 0);
+    // The preview is a store read; only the applied controls refresh the source.
+    assert.equal(reviewerRestartOffer(f)?.available, true);
+    assert.equal(f.store.run(run.id)?.absentProvenAt !== undefined, true);
+  } finally {
+    await f.close();
+  }
+});
+
+test("an unanswered stored intent keeps its reservation owned in sweep, preview and route", async () => {
+  const f = fixture(50_000);
+  try {
+    const deliver = f.engine.resolution.deliverLaunchRun.bind(
+      f.engine.resolution,
+    );
+    let runId: string | null = null;
+    f.engine.resolution.deliverLaunchRun = async (_task, _role, { run }) => {
+      runId = run.id;
+    };
+    f.plantReview();
+    await f.engine.wake();
+    f.engine.resolution.deliverLaunchRun = deliver;
+    const run = f.store.run(runId!)!;
+    assert.equal(run.status, "intent");
+    f.foundAgents.set(run.id, []);
+    await sweepCreation(f);
+    const wait = resolutionCreationWait("reviewer");
+    assert.equal(
+      f.current().resolution.stop?.detail,
+      wait,
+      "the sweep names the missing fact for a producer that could still send",
+    );
+    assert.ok(!f.store.run(run.id)?.absentProvenAt);
+    assert.equal(reviewerRestartOffer(f)?.refusal, wait);
+    const pi = addReviewerProfile(f);
+    await assert.rejects(
+      routeReviewerNow(f, pi, "Owner route"),
+      /until an exact lookup proves absence/,
+    );
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(liveReviewers(f).length, 1);
+    assert.equal(f.creates.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("an ambiguous lookup keeps a stored intent owned with one named refusal", async () => {
+  const f = fixture(50_000);
+  try {
+    const run = await storedReviewerCreationIntent(f);
+    f.foundAgents.set(run.id, [
+      { id: "first", workspaceId: run.workspaceId },
+      { id: "second", workspaceId: run.workspaceId },
+    ]);
+    await sweepCreation(f);
+    const current = f.current();
+    assert.equal(current.resolution.attention, true);
+    assert.match(current.reason, /partial or ambiguous \(2 matching agents\)/);
+    assert.ok(!f.store.run(run.id)?.absentProvenAt);
+    const restart = reviewerRestartOffer(f);
+    assert.equal(restart?.available, false);
+    assert.equal(restart?.refusal, current.resolution.stop?.detail);
+    await assert.rejects(restartReviewer(f, "Resume the review"), {
+      message: restart!.refusal,
+    });
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(liveReviewers(f).length, 1);
+    assert.equal(f.creates.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test("proved absence at the old PR head cannot authorize replacement after the head moves", async () => {
   const f = fixture(50_000);
   try {
