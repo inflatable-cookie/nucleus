@@ -1,7 +1,7 @@
 import type { Task } from "../../shared/contracts";
 import { digest, type Store } from "../store/store";
 import { plannerEscalations } from "../questions/ladder/records";
-import { escalationWaitDetail } from "../questions/ladder/waits";
+import { taskDecisionFact, taskStopRecordSchema } from "../../shared/task-stop";
 
 type OccurrenceStore = Pick<Store, "eventsAll" | "run" | "runs">;
 
@@ -357,7 +357,10 @@ export function legacyRecoveryOwnsStop(
   )
     return false;
   try {
-    return JSON.stringify(JSON.parse(wait.detail)) === JSON.stringify(stop);
+    const recorded = taskStopRecordSchema.parse(JSON.parse(wait.detail));
+    const fact = recorded.fact ?? taskDecisionFact(recorded.detail);
+    return recorded.since === stop.since && recorded.reason === stop.reason &&
+      fact?.code === "escalation" && fact.subject === id;
   } catch {
     return false;
   }

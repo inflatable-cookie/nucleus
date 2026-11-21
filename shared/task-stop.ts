@@ -113,50 +113,51 @@ export const taskDecisionFactSchema = z.object({
 }).strict();
 export type TaskDecisionFact = z.infer<typeof taskDecisionFactSchema>;
 
-/** Decode old text at the persistence boundary and for writers that take an upstream diagnostic. */
+const decisionPatterns: ReadonlyArray<[TaskDecisionFact["code"], RegExp]> = [
+  ["integration_turn", /^Waiting for repository integration turn/],
+  ["workspace_absent", /^Workspace creation is absent from inventory/],
+  ["workspace_orphan", / left an orphan .*base-identical and unpublished/],
+  ["creation_lookup", /^(?:Exact (?!worker )\w+ creation lookup is unavailable|The \w+ creation lookup for run |The \w+ creation .+ is still uncertain: a complete lookup)/],
+  ["worker_lookup", /^(?:Exact worker creation lookup is unavailable|Worker creation lookup is partial)/],
+  ["callback_expired", /^The (\w+) (?:callback reminder expired|thread stopped and its one callback reminder expired)/],
+  ["callback_missing", /^The (\w+) thread stopped(?: without a callback| after its transient provider continuation)/],
+  ["callback_missing", /^(worker) stopped without a completion callback/i],
+  ["thread_running", /^(\w+) thread running$/],
+  ["creating_worker", /^Creating worker$/],
+  ["profile_unavailable", /^No eligible/],
+  ["retained_profile", /^Retained worker profile is disabled or unavailable/],
+  ["host_read_exhausted", /could not read host state after \d+ attempts|Owner: host-read recovery\./],
+  ["coordinator_unavailable", /^No coordinator profile is available for recovery/],
+  ["provider_retry", /^Transient provider error/],
+  ["provider_refusal", /^Reviewer run (\S+) provider refusal is unverified/],
+  ["external_merge_check", /^External merge check:/],
+  ["external_merge_recovered", /^External merge check recovered; resuming task$/],
+  ["check_deadline", /has been pending past its deadline.*job URL:/s],
+  ["review_effect_wait", /^(?:Ordinary review|Review-entry) waits for /],
+  ["hook_hold", /^Repository hook .+ holds this transition: /s],
+  ["pr_head_changed", /^PR head changed after the completion callback$/],
+  ["pr_identity", /PR must be open/],
+  ["accepted_pr", /^Operator requested accepted-PR workspace reconciliation$/],
+  ["closeout_base_refresh", /^Refreshing main before retrying closeout$/],
+  ["review_delivery", /^Reviewer delivery (ns-review-[a-f0-9]{64}) (?:is reserved|is uncertain)/],
+  ["deferred_verb", /^Owner (\w+) recorded; it is delivered once Nucleus is (?:unpaused|released)$/],
+  ["prerequisite", /^Waiting for prerequisites:/],
+  ["qa_capacity", /^Waiting for QA capacity \(position /],
+  ["slot_capacity", /^Waiting for a project slot…/],
+  ["dispatch", /^Waiting for dispatch$/],
+  ["dispatch_hold", /^Dispatch held(?:[ ;]|$)/],
+  ["usage_gate", /^Waiting for the operator: the Low usage level needs permission/],
+  ["progressing", /^No stop or wait; the task is progressing\.$/],
+  ["bb_connect", /^BB host operation was not sent: Service socket connect failed: /],
+  ["pre_send_refused", /refused before send/i],
+  ["escalation", /^(?:Waiting with the (?:planner|operator).*?escalation |Escalation |Blocker escalation )([\w-]+)/],
+  ["consult", /^Waiting with the retained reviewer: consult ([\w-]+)/],
+];
+
+/** Decode old text at the persistence boundary and typed upstream diagnostics at their write. */
 export function taskDecisionFact(text: string): TaskDecisionFact | null {
-  const patterns: ReadonlyArray<[TaskDecisionFact["code"], RegExp]> = [
-    ["integration_turn", /^Waiting for repository integration turn/],
-    ["workspace_absent", /^Workspace creation is absent from inventory/],
-    ["workspace_orphan", / left an orphan .*base-identical and unpublished/],
-    ["creation_lookup", /^(?:Exact (?!worker )\w+ creation lookup is unavailable|The \w+ creation lookup for run |The \w+ creation .+ is still uncertain: a complete lookup)/],
-    ["worker_lookup", /^(?:Exact worker creation lookup is unavailable|Exact worker creation lookup is partial)/],
-    ["callback_expired", /^The (\w+) (?:callback reminder expired|thread stopped and its one callback reminder expired)/],
-    ["callback_missing", /^The (\w+) thread stopped(?: without a callback| after its transient provider continuation)/],
-    ["callback_missing", /^(worker) stopped without a completion callback/i],
-    ["thread_running", /^(\w+) thread running$/],
-    ["creating_worker", /^Creating worker$/],
-    ["profile_unavailable", /^No eligible/],
-    ["retained_profile", /^Retained worker profile is disabled or unavailable/],
-    ["host_read_exhausted", /could not read host state after \d+ attempts|Owner: host-read recovery\./],
-    ["coordinator_unavailable", /^No coordinator profile is available for recovery/],
-    ["provider_retry", /^Transient provider error/],
-    ["provider_refusal", /^Reviewer run (\S+) provider refusal is unverified/],
-    ["external_merge_check", /^External merge check:/],
-    ["external_merge_recovered", /^External merge check recovered; resuming task$/],
-    ["check_deadline", /has been pending past its deadline.*job URL:/s],
-    ["review_effect_wait", /^(?:Ordinary review|Review-entry) waits for /],
-    ["hook_hold", /^Repository hook .+ holds this transition: /s],
-    ["pr_head_changed", /^PR head changed after the completion callback$/],
-    ["pr_identity", /PR must be open/],
-    ["accepted_pr", /^Operator requested accepted-PR workspace reconciliation$/],
-    ["closeout_base_refresh", /^Refreshing main before retrying closeout$/],
-    ["review_delivery", /^Reviewer delivery (ns-review-[a-f0-9]{64}) (?:is reserved|is uncertain)/],
-    ["deferred_verb", /^Owner (\w+) recorded; it is delivered once Nucleus is (?:unpaused|released)$/],
-    ["prerequisite", /^Waiting for prerequisites:/],
-    ["qa_capacity", /^Waiting for QA capacity \(position /],
-    ["slot_capacity", /^Waiting for a project slot…/],
-    ["dispatch", /^Waiting for dispatch$/],
-    ["dispatch_hold", /^Dispatch held(?:[ ;]|$)/],
-    ["usage_gate", /^Waiting for the operator: the Low usage level needs permission/],
-    ["progressing", /^No stop or wait; the task is progressing\.$/],
-    ["bb_connect", /^BB host operation was not sent: Service socket connect failed: /],
-    ["pre_send_refused", /refused before send/i],
-    ["escalation", /^(?:Waiting with the (?:planner|operator).*?escalation |Escalation |Blocker escalation )([\w-]+)/],
-    ["consult", /^Waiting with the retained reviewer: consult ([\w-]+)/],
-  ];
   if (isSshAuthExhausted(text)) return { code: "ssh_auth" };
-  for (const [code, pattern] of patterns) {
+  for (const [code, pattern] of decisionPatterns) {
     const match = pattern.exec(text);
     if (match) return { code, ...(match[1] ? { subject: (code === "callback_missing" ? match[1].toLowerCase() : match[1]).slice(0, 240) } : {}) };
   }

@@ -2,7 +2,7 @@ import { isDispositionActive, isDispositionComplete, type Incident, type Run, ty
 import { dispatchBlocked } from "../dispatch/capacity";
 import { escalationWaitDetail, findOpenPlannerEscalation, plannerEscalations, PLANNER_ESCALATION_CHOICES, type LadderEvent } from "../questions/ladder";
 import { incidentKey } from "../recovery/incident";
-import { ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON } from "../recovery/task-reasons";
+import { ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX } from "../recovery/task-reasons";
 import { digest, type Store } from "../store/store";
 import type { Resolution } from "../resolution";
 

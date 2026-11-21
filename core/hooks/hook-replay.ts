@@ -7,7 +7,7 @@ import { AUTOMATIC_REPLAY_LIMIT, AUTOMATIC_REPLAY_RETRY_MS, hookReplayLineageSch
 import { isDispositionActive, type Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitRun } from "../git/git-command";
-import { HookObservationMap, isHookHoldReason, type HeldAutomaticReplay, type AutomaticReplayAttempt } from "./hook-context";
+import { HookObservationMap, type HeldAutomaticReplay, type AutomaticReplayAttempt } from "./hook-context";
 import { isStaleBaseRefusal } from "./hook-refusal";
 import type { Resolution } from "../resolution";
 /** Task-history kinds for automatic exact-identity base-advance replay. */

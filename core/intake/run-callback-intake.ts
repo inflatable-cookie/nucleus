@@ -41,7 +41,6 @@ import {
 } from "./proof-settlement";
 import {
   threadReleasePendingReason,
-  threadRunningReason,
 } from "./thread-waits";
 import { reportRunBinding } from "./report-run-binding";
 import { reportRunFor } from "../dispatch/acting-run";

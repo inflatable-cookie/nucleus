@@ -301,7 +301,7 @@ function failedChecks(
     }) as never;
 }
 for (const role of ["reviewer", "recovery"] as const) {
-  test(`authenticated ${role} force settles its own effect; critical refuses`, async () => {
+  test(`authenticated ${role} can force a move until the task becomes critical`, async () => {
     const f = await fixture();
     try {
       const run = bindRole(f, role);
@@ -310,20 +310,14 @@ for (const role of ["reviewer", "recovery"] as const) {
         "owned_tool_hold",
         JSON.stringify({ runId: "tool", reason: "idle" }),
       );
-      await selfApply(
-        f,
-        { action: "retry_effect", effect: "owned_tool.tool" },
-        run.id,
-      );
-      assert.equal(
-        f.task().resolution.ownerSettlements.at(-1)?.source,
-        `task_${role}`,
-      );
       f.store.update(f.task().id, { critical: true });
       await assert.rejects(
         selfApply(f, { action: "move", to: "work" }, run.id),
         /critical/,
       );
+      f.store.update(f.task().id, { critical: false });
+      await selfApply(f, { action: "move", to: "work" }, run.id);
+      assert.equal(f.task().resolution.ownerSettlements.at(-1)?.source, `task_${role}`);
     } finally {
       f.store.close();
     }

@@ -5,13 +5,11 @@ import {
   reviewFenceHoldsCoordinators,
   reviewerCannotFinish,
 } from "../review/review-continuation";
-import { isSshAuthExhausted } from "../../shared/ssh-auth";
 import { randomBytes, randomUUID } from "node:crypto";
 import { digest, now } from "../store/store";
 import type { Completion, Run, Task } from "../../shared/contracts";
 import {
   incidentBindsCurrentWork,
-  isRetainedProfileReason,
 } from "../../shared/contracts";
 import {
   isDispositionActive,

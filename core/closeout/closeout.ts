@@ -27,7 +27,6 @@ import {
 import type { Resolution } from "../resolution";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { plannerEscalations } from "../questions/ladder/records";
-import { escalationWaitDetail } from "../questions/ladder/waits";
 import { CLOSEOUT_BASE_REFRESH_REASON } from "../recovery/task-reasons";
 import { EXTERNAL_MERGE_CHECK_REASON_PREFIX } from "../recovery/task-reasons";
 import { settlementHeld } from "./queue-drain";

@@ -58,19 +58,7 @@ async function setup() {
   await engine.stop();
   store.setMeta("paused", false);
   const current = () => store.task(task.id);
-  const force = (effect: string) =>
-    engine.performTaskControl(
-      taskControlInputSchema.parse({
-        taskId: task.id,
-        version: current().version,
-        action: "retry_effect",
-        effect,
-        force: true,
-        caller: "operator (board)",
-        reason: "Owner settled",
-      }),
-    );
-  return { store, engine, current, force, observations: () => observations };
+  return { store, engine, current, observations: () => observations };
 }
 
 test("forced merged closeout supersedes only the recorded participant identities", async () => {

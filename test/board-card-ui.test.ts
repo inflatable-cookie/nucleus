@@ -678,7 +678,7 @@ test("waits, holds and progress stops use operator words in visible and accessib
       ...summaries[1]!,
       stop: "run" as const,
       stopRecord: {
-        reason: "run_stalled" as const,
+        reason: "lifecycle" as const,
         detail: "lifecycle: Reviewer continuing from checkpoint 2",
         since: at,
         suggestedVerbs: [],

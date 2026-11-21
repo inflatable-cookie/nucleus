@@ -3878,6 +3878,7 @@ test("qualified owner verb callers keep planner force authority scoped to the sa
   const f = fixture();
   try {
     f.store.setMeta("hostRegistry", [{ id: "host", endpoint: "synthetic" }]);
+    Object.assign(f.engine.adapter, { hostId: "host", isConnected: () => true });
     f.store.upsertProject({
       key: "caller-project",
       name: "Caller project",

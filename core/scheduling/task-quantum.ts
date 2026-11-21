@@ -17,7 +17,6 @@ import { archiveSupersededWorkers } from "../workspaces/thread-archive-replaceme
 import type { Task } from "../../shared/contracts";
 import { missingOriginHasPlanner } from "../questions/origin";
 import {
-  isSettledWaitProse,
   taskStopClassification,
   taskStopRecord,
   taskStopVerbsFor,

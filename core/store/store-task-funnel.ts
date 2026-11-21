@@ -416,6 +416,7 @@ export class StoreTaskFunnel {
         prerequisiteWait: null,
         phase: "queued",
         reason: DISPATCH_WAIT_REASON,
+        reasonFact: { code: "dispatch" },
         held: false,
         mergeHold: false,
         budgetSince: null,

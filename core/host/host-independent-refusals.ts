@@ -77,13 +77,8 @@ export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 're
 }
 
 /**
- * `force: true` settles one of two effects, and every gate below is the one
- * `forceMove`/`forceSettleEffect` makes: the caller (the board, a recorded
- * planner, or the authenticated self-force run this operation carries), the
- * reason, which actions force settles, the forced move's own facts, and the
- * recorded effect a forced settle names. The two adapter gates are presence
- * checks on the resolution adapter the engine already holds, not host reads, so
- * they belong here too; every check that would observe the host still waits.
+ * A forced move checks the same authority, reason and stored move facts here
+ * as it does at execution. Adapter availability is a capability check.
  */
 async function forcedControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, task: Task, input: TaskControlInput): Promise<string | null> {
   if (!await engine.forceCallerAuthorized(task, input.caller))

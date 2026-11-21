@@ -1,8 +1,6 @@
 import { MISSING_CALLBACK_CAUSE } from "../../shared/incident";
 import {
   stages,
-  ACCEPTED_PR_RECONCILIATION_REASON,
-  missingCallbackStopReasonFor,
 } from "../recovery/task-reasons";
 import {
   blockingRecoveryEffects,

@@ -2356,7 +2356,10 @@ export class QueueRuntime {
         if (task.removedAt) return "The scheduler leaves this removed task alone.";
         const next = this.taskNext({ taskId: task.id });
         if (next.paused) return "The scheduler waits for Nucleus to resume.";
-        if (next.stop) return `The scheduler sees ${next.stop.reason}: ${next.stop.detail}`;
+        if (next.stop) return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
+        if (["awaiting_review", "reviewing"].includes(task.phase) && !next.activeRun)
+          return "The scheduler rechecks reviewer admission at the recorded PR head.";
+        if (next.activeRun) return `The scheduler checks the ${next.activeRun.role} run for progress.`;
         return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
       });
     const input = this.engine.resolveTaskControl(request);

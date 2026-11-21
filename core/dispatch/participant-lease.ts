@@ -2,7 +2,6 @@ import { assignedThreadWaitReason, coordinative, participantToolRunIds } from '.
 import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import { executionParticipants } from '../machine/execution-participants';
 import { runBindsCurrentWork, type Run, type Task } from '../../shared/contracts';
-import { CLOSEOUT_BASE_REFRESH_REASON } from '../recovery/task-reasons';
 import { isStaleIntegrationBaseRefusal } from '../hooks/hooks';
 import { agentSettled } from '../machine/agent-settled';
 import { isAgentGoneRefusal } from '../host/errors';

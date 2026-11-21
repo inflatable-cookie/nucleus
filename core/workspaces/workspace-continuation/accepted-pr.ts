@@ -1,5 +1,5 @@
 import type { Resolution } from "../../resolution";
-import { ACCEPTED_PR_RECONCILIATION_REASON, readyReviewAtHead } from "../../recovery/task-reasons";
+import { readyReviewAtHead } from "../../recovery/task-reasons";
 import { now } from "../../store/store";
 import type { Task } from "../../../shared/contracts";
 

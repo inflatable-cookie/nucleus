@@ -16,7 +16,6 @@ import {
   hasUnresolvedHostReadExhaustionEvent,
   hostReadTransientEscalationReason,
   hostReadTransientKey,
-  isHostReadExhaustedReason,
   nextHostReadTransientAttempt,
   readHostReadTransientEpisode,
   taskHostReadContext,

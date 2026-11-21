@@ -10,7 +10,6 @@ import {
   routeUnavailableStop,
   taskStopRecord,
 } from "../../shared/task-stop";
-import { CAPACITY_WAIT_PREFIX, waitReasonFor } from "../../shared/wait-state";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import {
   DISPATCH_HELD_REASON,

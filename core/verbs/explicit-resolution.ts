@@ -1,15 +1,18 @@
 import { sameCallerIdentity } from "../../shared/agent-identity";
 import { holdsOf, OPERATOR_BOARD_CALLER, syncHoldProjection, type Task } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
+import type { QueueOperation } from "../../shared/operations";
 import type { ExplicitResolution, ResolutionWarningId, TaskControlTask } from "../../shared/schema/task-control";
 import { TASK_PROGRESSING_REASON, isWaitingTaskStop } from "../../shared/task-stop";
 import type { Engine } from "../engine";
 import { signalProcessGroupByLeader } from "../machine/process-group";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { plannerEscalations } from "../questions/ladder/records";
+import { blockingRecoveryEffects } from "../recovery/recovery-effects";
 import { plannerIdMatches } from "../recovery/task-reasons";
 import { reviewPublicationKey } from "../review/review-publication";
-import { now } from "../store/store";
+import { now, type Store } from "../store/store";
+import { threadServesAnotherTask } from "../workspaces/thread-ownership";
 import { collectOwnerVerbFacts, ownerPendingEffects } from "./owner-verbs";
 import { splitOwnerEffectKey } from "./owner-effects";
 
@@ -20,6 +23,15 @@ type Plan = { warnings: Warning[]; apply(): Change; finish?(): Promise<string[]>
 
 const plannerWarnings = new Set<ResolutionWarningId>(["hold_owner", "route_policy", "two_writers"]);
 const missing = (kind: string, id: string): never => { throw Error(`No current ${kind} ${id} belongs to this task`); };
+const unfinished = (operation: QueueOperation) => ["pending", "running", "needs_attention"].includes(operation.state);
+
+function settleOperation(store: Store, operation: QueueOperation, reason: string) {
+  const at = now();
+  store.putOperation({ ...operation, state: "failed", settledAt: at, diagnostic: reason,
+    settlement: { id: operation.id, inputHash: operation.inputHash, attempt: operation.attempts,
+      intentAt: operation.effect?.intentAt ?? operation.startedAt, evidence: reason, kind: "superseded" },
+    effect: operation.effect ? { ...operation.effect, status: "reconciled", result: reason.slice(0, 2000), resultAt: at } : null });
+}
 
 export async function livePlannerMatches(engine: Engine, task: Task, caller: string, queue = false): Promise<boolean> {
   const project = queue ? engine.store.queueProject()
@@ -100,6 +112,11 @@ function releasePlan(engine: Engine, task: Task, input: Extract<ExplicitResoluti
       const resolution = { ...task.resolution };
       const patch: Partial<Task> = { resolution };
       if (run) {
+        for (const delivery of run.reviewDeliveries ?? []) {
+          if (delivery.status !== "reserved" && delivery.status !== "uncertain") continue;
+          const operation = store.operation(delivery.operationId);
+          if (operation?.taskId === task.id && unfinished(operation)) settleOperation(store, operation, input.reason);
+        }
         store.putRun({
           ...run, active: false, released: true, explicitlyReleasedAt: now(), status: run.completion ? "finished" : "superseded",
           reviewDeliveries: run.reviewDeliveries?.map(delivery => delivery.status === "reserved" || delivery.status === "uncertain"
@@ -138,8 +155,8 @@ function releasePlan(engine: Engine, task: Task, input: Extract<ExplicitResoluti
       }
       if (agentId && (live || input.archive)) {
         const current = store.task(task.id);
-        const newer = current.agentId === agentId || store.runs(task.id).some(other => !other.released && other.agentId === agentId);
-        if (newer) return [...issues, "The thread still belongs to another live run; its turn and archive state were left alone."];
+        if (current.agentId === agentId || threadServesAnotherTask(store, current, agentId))
+          return [...issues, "Another live assignment still owns this thread."];
         const onHost = async () => {
           if (live) await attempt("Turn cancellation", () => engine.host.stopAgentTurn(agentId));
           if (input.archive) await attempt("Thread archive", () => engine.host.archiveAgent(agentId));
@@ -231,20 +248,16 @@ function clearEffect(engine: Engine, task: Task, id: string, reason: string): Pl
     } };
   }
   const operation = (!kind || kind === "operation" || kind === "task_control_operation") ? store.operation(key) : null;
-  if (operation?.taskId === task.id && ["pending", "running", "needs_attention"].includes(operation.state)) {
+  if (operation?.taskId === task.id && unfinished(operation)) {
     return { warnings: [warning], apply() {
-      const at = now();
-      store.putOperation({ ...operation, state: "failed", settledAt: at, diagnostic: reason,
-        settlement: { id: operation.id, inputHash: operation.inputHash, attempt: operation.attempts,
-          intentAt: operation.effect?.intentAt ?? operation.startedAt, evidence: reason, kind: "superseded" },
-        effect: operation.effect ? { ...operation.effect, status: "reconciled", result: reason.slice(0, 2000), resultAt: at } : null });
+      settleOperation(store, operation, reason);
       return { before: operation };
     } };
   }
   const notice = (!kind || kind === "attention-notice") && store.notices(task.id).find(item => item.id === key);
   if (notice && ["pending", "intent", "uncertain"].includes(notice.status)) {
     return { warnings: [warning], apply() {
-      store.putNotice({ ...notice, status: "superseded", error: reason });
+      store.putNotice({ ...notice, status: "superseded", error: reason, explicitlyClearedAt: now() });
       return { before: notice };
     } };
   }
@@ -275,7 +288,7 @@ function clearEffect(engine: Engine, task: Task, id: string, reason: string): Pl
   }
   if (kind === "review_publication" || kind === "publication") {
     const publication = store.getMeta(reviewPublicationKey(key));
-    if (publication && (store.run(key)?.taskId === task.id || task.runId === key || task.completion?.runId === key))
+    if (publication && blockingRecoveryEffects(store, task, { kinds: ["publication"], runId: key }).some(effect => effect.identity === key))
       return { warnings: [warning], apply() {
         store.deleteMeta(reviewPublicationKey(key));
         return { before: publication };

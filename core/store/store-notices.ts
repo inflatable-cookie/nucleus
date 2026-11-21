@@ -20,7 +20,9 @@ export class StoreNotices {
   }
 
   putNotice(n: Notice) {
-    this.core.db.prepare("INSERT INTO notices VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data").run(n.id, n.taskId, JSON.stringify(n));
+    const saved = this.core.db.prepare(`INSERT INTO notices VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data
+      WHERE json_extract(notices.data,'$.explicitlyClearedAt') IS NULL`).run(n.id, n.taskId, JSON.stringify(n));
+    if (!saved.changes) return;
     this.core.advanceRevision();
     this.access.taskChanged(n.taskId);
   }

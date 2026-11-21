@@ -5,12 +5,10 @@ import {
   episodeBindsCurrentWork,
   isDispositionActive,
   isDispositionComplete,
-  isRetainedProfileReason,
   noticeTaskLine,
   taskOwner,
 } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { isSshAuthExhausted } from "../../shared/ssh-auth";
 import { isHostReadRecoveryHeld } from "../recovery/host-read-transient";
 import { isWaitingTaskStop, recordedStopIsWait } from "../../shared/task-stop";
 import { parseHostOutageNoticeId } from "../../shared/host-outage";

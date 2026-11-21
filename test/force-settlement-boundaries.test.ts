@@ -46,19 +46,7 @@ async function setup() {
   await engine.stop();
   store.setMeta("paused", false);
   const current = () => store.task(task.id);
-  const force = (effect: string) =>
-    engine.performTaskControl(
-      taskControlInputSchema.parse({
-        taskId: task.id,
-        version: current().version,
-        action: "retry_effect",
-        effect,
-        force: true,
-        caller: "operator (board)",
-        reason: "Owner settled this occurrence",
-      }),
-    );
-  return { store, task: current, force, engine, calls: () => calls };
+  return { store, task: current, engine, calls: () => calls };
 }
 
 test("stop releases a held turn even when participant observation fails", async () => {

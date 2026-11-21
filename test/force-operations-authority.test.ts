@@ -69,6 +69,8 @@ async function fixture(origin = QUEUE_REPOSITORY_ORIGIN) {
   let sends = 0;
   const adapter = {
     hostId: "host",
+    client: { isConnected: true },
+    isConnected: () => true,
     listLiveAgents: async () => [
       { id: "queue-planner", title: "Queue planner", workspaceId: null, directory: "/queue" },
       { id: "project-planner", title: "Project planner", workspaceId: null, directory: "/repo" },
@@ -157,7 +159,7 @@ test("Queue planner closes a merged task blocked by an uncertain operation in on
         action: "move",
         to: "closeout",
         force: true,
-        caller: "queue-planner",
+        caller: formatAgentId("host", "queue-planner"),
       }),
     );
     assert.equal(result.phase, "syncing");
@@ -179,7 +181,7 @@ test("Queue planner closes a merged task blocked by an uncertain operation in on
 
 test("Queue planner force closeout succeeds on an project-c-shaped row (prefix id, other project planner, historical participant)", async () => {
   const queuePlanner = "d070792d-65b7-4f0e-8175-34c56f88dc40";
-  const caller = "d070792d";
+  const caller = formatAgentId("host", "d070792d");
   const f = await fixture();
   try {
     f.store.upsertProject({

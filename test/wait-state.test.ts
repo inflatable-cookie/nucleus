@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Store } from '../core/store/store';
 import { submissionSchema, summarizeTask, taskHoldKind, taskDetailView } from '../shared/contracts';
 import {
-  CAPACITY_WAIT_PREFIX, PROJECT_IN_FLIGHT_WAIT_PREFIX, PREREQUISITE_WAIT_PREFIX, deriveWaitState, inFlightSlotWaitReason, prerequisiteCannotComplete, qaCapacityWaitReason,
+  CAPACITY_WAIT_PREFIX, PROJECT_IN_FLIGHT_WAIT_PREFIX, PREREQUISITE_WAIT_PREFIX, QA_CAPACITY_WAIT_PREFIX, deriveWaitState, inFlightSlotWaitReason, prerequisiteCannotComplete, qaCapacityWaitReason,
   waitDeclarationSchema, waitReasonFor, waitReasonStates, waitStateForReason, waitStateLabels, waitStateViewSchema, waitStates,
 } from '../shared/wait-state';
 
@@ -68,7 +68,9 @@ test('Spec 043 (a): every current waiting reason maps to exactly one state with 
     assert.equal(waitStateForReason(reason), reason.startsWith('Waiting for QA capacity') ? state : null);
     const context = reason.startsWith(CAPACITY_WAIT_PREFIX) || reason.startsWith(PROJECT_IN_FLIGHT_WAIT_PREFIX) ? { slotAdmissionReason: reason }
       : reason.startsWith(PREREQUISITE_WAIT_PREFIX) ? { dependencyWait: reason } : {};
-    const wait = deriveWaitState({ phase: 'queued', reason, holdKind: null, holdOwner: null, originAgentId: 'origin' }, context);
+    const wait = deriveWaitState({ phase: 'queued', reason, holdKind: null, holdOwner: null, originAgentId: 'origin',
+      ...(reason.startsWith(QA_CAPACITY_WAIT_PREFIX) ? { reasonFact: { code: 'qa_capacity' as const } } : {}),
+    }, context);
     assert.ok(wait, `${reason} must derive a wait state`);
     assert.equal(wait.state, state);
     assert.equal(wait.owner, owner, `${reason} must name the reason's owner`);

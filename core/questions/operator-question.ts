@@ -6,7 +6,7 @@ import { collectOwnerVerbFacts, ownerVerbViews, qualifiedAcceptanceEligibility, 
 import { proofWaitApplies, proofWorkerRequests } from '../qa/proof-wait';
 import { isForgeCheckProofText } from '../forge/checks';
 import { openProofOnlyGo, proofOnlyGoQuestionId } from '../qa/proof-only-go';
-import { isHostReadExhaustedReason, isHostReadRecoveryHeld } from '../recovery/host-read-transient';
+import { isHostReadRecoveryHeld } from '../recovery/host-read-transient';
 
 /**
  * Spec 058 (task 523): which stops a responsible task cannot clear without a

@@ -24,7 +24,7 @@ async function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), "explicit-resolution-"));
   const calls: string[] = [];
   const adapter = {
-    hostId: host, socketPath: join(root, "callback.sock"),
+    hostId: host, socketPath: join(root, "callback.sock"), helperPath: join(root, "helper.mjs"),
     client: { isConnected: true }, isConnected: () => true,
     connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }),
     listLiveAgents: async () => [{ id: "live-planner", title: "Planner", directory: repo, workspaceId: null }],
@@ -110,6 +110,7 @@ test("record.clear settles a route operation and a notice on the underlying reco
   }
   assert.deepEqual(blockers(), []);
   assert.equal(store.operation(operation.id)?.state, "failed");
+  store.putNotice({ ...store.notices(task.id)[0]!, status: "uncertain", error: "Late response" });
   assert.equal(store.notices(task.id)[0]?.status, "superseded");
   assert.ok(audit().every(event => JSON.parse(event.detail).source === "project_planner"));
 });

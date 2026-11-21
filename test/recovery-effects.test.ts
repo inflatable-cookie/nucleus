@@ -1115,7 +1115,7 @@ test("the blocked-review wait is read from the stop Queue itself records", () =>
     const stopFor = (
       detail: string,
       reason: "lifecycle" | "operator_needed" = "lifecycle",
-    ) =>
+    ) => {
       store.update(
         task.id,
         {
@@ -1127,6 +1127,8 @@ test("the blocked-review wait is read from the stop Queue itself records", () =>
         "fixture_stop",
         detail,
       );
+      return store.task(task.id);
+    };
     assert.deepEqual(
       reviewEffectWait(
         stopFor(

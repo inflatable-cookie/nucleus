@@ -1,9 +1,8 @@
-import { isRetainedProfileReason, type Run, type Task } from '../../shared/contracts';
+import { type Run, type Task } from '../../shared/contracts';
 import { digest } from '../store/store';
-import { PR_HEAD_CHANGED_REASON, readyReviewAtHead, revisionPhases } from './task-reasons';
+import { readyReviewAtHead, revisionPhases } from './task-reasons';
 import { NO_RESOLUTION_RUN_REFUSAL } from '../verbs/verb-refusal-text';
-import { isCloseoutHookHold, isHookHoldReason } from '../hooks/hooks';
-import { WORKER_PR_IDENTITY_REFUSAL } from '../git/index';
+import { isCloseoutHookHold } from '../hooks/hooks';
 import { revisionContinuationAction, revisionReviewFindings } from '../dispatch/prompts';
 
 /**
