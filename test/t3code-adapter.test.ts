@@ -677,7 +677,11 @@ test("observations distinguish idle, active run, permissions, archived and expli
   const pending = await host.observe(created.id);
   assert.equal(pending.permissions, true);
   assert.equal(pending.pendingRequest?.id, "approval");
-  await host.stopAgentTurn(created.id);
+  await assert.rejects(
+    host.stopAgentTurn(created.id, "stale-run-id"),
+    (error: unknown) => error instanceof ProvenPreSendRefusalError,
+  );
+  await host.stopAgentTurn(created.id, "synthetic-run");
   assert.equal((await host.observe(created.id)).active, false);
   await host.archiveAgent(created.id);
   const archivedCommands = server.commands.length;

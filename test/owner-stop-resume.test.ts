@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { Adapter, AgentObservation } from "../core/host";
+import { ProvenPreSendRefusalError } from "../core/host";
 import { Store } from "../core/store/store";
 import { QueueRuntime } from "../service/runtime-owner";
 import {
@@ -30,9 +31,11 @@ type StopHarness = {
   dir: string;
   observations: Map<string, AgentObservation>;
   stops: string[];
+  stopCalls: Array<{ id: string; expectedTurnId?: string }>;
   dispatched: string[];
   hostOnline: boolean;
-  stopImpl: (id: string) => Promise<void>;
+  observeImpl: ((id: string) => Promise<AgentObservation>) | null;
+  stopImpl: (id: string, expectedTurnId?: string) => Promise<void>;
   runtime: QueueRuntime;
   openRuntime: () => Promise<QueueRuntime>;
   insertTask: (overrides?: Partial<Task>) => Task;
@@ -43,11 +46,27 @@ async function makeHarness(): Promise<StopHarness> {
   const dir = mkdtempSync(join(tmpdir(), "ns-owner-stop-resume-"));
   const observations = new Map<string, AgentObservation>();
   const stops: string[] = [];
+  const stopCalls: Array<{ id: string; expectedTurnId?: string }> = [];
   const dispatched: string[] = [];
-  const state = {
+  const defaultObserve = async (id: string): Promise<AgentObservation> =>
+    observations.get(id) ?? {
+      id,
+      workspaceId: "workspace",
+      status: "idle",
+      active: false,
+      permissions: false,
+      error: "",
+    };
+  const state: {
+    hostOnline: boolean;
+    observeImpl: ((id: string) => Promise<AgentObservation>) | null;
+    stopImpl: (id: string, expectedTurnId?: string) => Promise<void>;
+  } = {
     hostOnline: true,
-    stopImpl: async (id: string) => {
+    observeImpl: null,
+    stopImpl: async (id: string, expectedTurnId?: string) => {
       stops.push(id);
+      stopCalls.push({ id, expectedTurnId });
       const current = observations.get(id);
       if (current) {
         observations.set(id, {
@@ -79,14 +98,7 @@ async function makeHarness(): Promise<StopHarness> {
       catalog: async () => ({ providers: [] }),
       profiles: async () => [workerProfile, reviewerProfile],
       observe: async (id: string) =>
-        observations.get(id) ?? {
-          id,
-          workspaceId: "workspace",
-          status: "idle",
-          active: false,
-          permissions: false,
-          error: "",
-        },
+        state.observeImpl ? state.observeImpl(id) : defaultObserve(id),
       findAgents: async () => [],
       findRunAgents: async () => [],
       verifyWorkspace: async () => {},
@@ -102,7 +114,8 @@ async function makeHarness(): Promise<StopHarness> {
       sendRun: async (_task: Task, run: { id: string }) => {
         dispatched.push(run.id);
       },
-      stopAgentTurn: async (id: string) => state.stopImpl(id),
+      stopAgentTurn: async (id: string, expectedTurnId?: string) =>
+        state.stopImpl(id, expectedTurnId),
     } as unknown as Adapter;
   };
 
@@ -131,6 +144,7 @@ async function makeHarness(): Promise<StopHarness> {
     dir,
     observations,
     stops,
+    stopCalls,
     dispatched,
     get hostOnline() {
       return state.hostOnline;
@@ -138,10 +152,16 @@ async function makeHarness(): Promise<StopHarness> {
     set hostOnline(value: boolean) {
       state.hostOnline = value;
     },
+    get observeImpl() {
+      return state.observeImpl;
+    },
+    set observeImpl(fn: ((id: string) => Promise<AgentObservation>) | null) {
+      state.observeImpl = fn;
+    },
     get stopImpl() {
       return state.stopImpl;
     },
-    set stopImpl(fn: (id: string) => Promise<void>) {
+    set stopImpl(fn: (id: string, expectedTurnId?: string) => Promise<void>) {
       state.stopImpl = fn;
     },
     get runtime() {
@@ -858,6 +878,186 @@ test("disposition active check and terminal cancel check with ownerStop absent a
       }),
       /stop applies to unfinished work/,
     );
+  } finally {
+    await h.close();
+  }
+});
+
+test("pre-boundary re-observation settles newer turn untouched or idle without calling stopAgentTurn", async () => {
+  const h = await makeHarness();
+  try {
+    // 1. Turn advances from turn-1 to turn-2 between preflight and cancelParticipantBoundary.
+    let observeCalls = 0;
+    h.observeImpl = async (id: string) => {
+      observeCalls += 1;
+      return {
+        id,
+        workspaceId: "workspace",
+        status: "busy",
+        active: true,
+        activeTurnId: observeCalls === 1 ? "turn-1" : "turn-2",
+        permissions: false,
+        error: "",
+      };
+    };
+    const tNewer = h.insertTask();
+    const resNewer = await h.runtime.taskControl({
+      action: "stop",
+      taskId: tNewer.id,
+      version: tNewer.version,
+      reason: "Stop stale turn",
+      caller: CALLER,
+    });
+    assert.ok(!("accepted" in resNewer) && !("backpressured" in resNewer));
+    assert.equal(observeCalls, 2, "must re-observe right before crossing stopAgentTurn");
+    assert.deepEqual(h.stopCalls, [], "newer turn-2 must never receive stopAgentTurn");
+    assert.equal(resNewer.resolution.ownerStop, null);
+    assert.equal(resNewer.resolution.stop?.reason, "held");
+    assert.ok(holdsOf(resNewer).dispatch);
+    const newerStopped = JSON.parse(
+      h.runtime.store.eventsAll(tNewer.id).find((e) => e.kind === "owner_stopped")!.detail,
+    );
+    assert.deepEqual(newerStopped.cancelled, []);
+    assert.deepEqual(newerStopped.settled, [
+      {
+        runId: "worker-run",
+        role: "revision",
+        agentId: "worker-agent",
+        kind: "newer_turn_untouched",
+        untouchedTurnId: "turn-2",
+      },
+    ]);
+
+    // 2. Turn finishes (becomes idle) between preflight and cancelParticipantBoundary.
+    let idleCalls = 0;
+    h.observeImpl = async (id: string) => {
+      idleCalls += 1;
+      if (idleCalls === 1) {
+        return {
+          id,
+          workspaceId: "workspace",
+          status: "busy",
+          active: true,
+          activeTurnId: "turn-1",
+          permissions: false,
+          error: "",
+        };
+      }
+      return {
+        id,
+        workspaceId: "workspace",
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+      };
+    };
+    const tIdle = h.insertTask({ agentId: "worker-idle-race", runId: "worker-run-2" });
+    const resIdle = await h.runtime.taskControl({
+      action: "stop",
+      taskId: tIdle.id,
+      version: tIdle.version,
+      reason: "Stop finished turn",
+      caller: CALLER,
+    });
+    assert.ok(!("accepted" in resIdle) && !("backpressured" in resIdle));
+    assert.equal(idleCalls, 2);
+    assert.deepEqual(h.stopCalls, [], "finished turn must settle without calling stopAgentTurn");
+    assert.equal(resIdle.resolution.ownerStop, null);
+    assert.equal(resIdle.agentActive, false);
+    const idleStopped = JSON.parse(
+      h.runtime.store.eventsAll(tIdle.id).find((e) => e.kind === "owner_stopped")!.detail,
+    );
+    assert.deepEqual(idleStopped.cancelled, []);
+    assert.deepEqual(idleStopped.settled, [
+      {
+        runId: "worker-run-2",
+        role: "revision",
+        agentId: "worker-idle-race",
+        kind: "observed_inactive",
+        untouchedTurnId: null,
+      },
+    ]);
+  } finally {
+    await h.close();
+  }
+});
+
+test("stopAgentTurn passes expectedTurnId and settles newer_turn_untouched on host ProvenPreSendRefusalError", async () => {
+  const h = await makeHarness();
+  try {
+    h.observations.set("worker-agent", {
+      id: "worker-agent",
+      workspaceId: "workspace",
+      status: "busy",
+      active: true,
+      activeTurnId: "turn-1",
+      permissions: false,
+      error: "",
+    });
+    const tMatch = h.insertTask();
+    await h.runtime.taskControl({
+      action: "stop",
+      taskId: tMatch.id,
+      version: tMatch.version,
+      reason: "Scoped stop",
+      caller: CALLER,
+    });
+    assert.deepEqual(h.stopCalls, [{ id: "worker-agent", expectedTurnId: "turn-1" }]);
+
+    // Host adapter detects turn changed to turn-2 after pre-boundary observe and throws ProvenPreSendRefusalError.
+    h.stopCalls.length = 0;
+    h.observations.set("worker-agent-2", {
+      id: "worker-agent-2",
+      workspaceId: "workspace",
+      status: "busy",
+      active: true,
+      activeTurnId: "turn-1",
+      permissions: false,
+      error: "",
+    });
+    h.stopImpl = async (id: string, expectedTurnId?: string) => {
+      h.stopCalls.push({ id, expectedTurnId });
+      h.observations.set(id, {
+        id,
+        workspaceId: "workspace",
+        status: "busy",
+        active: true,
+        activeTurnId: "turn-2",
+        permissions: false,
+        error: "",
+      });
+      throw new ProvenPreSendRefusalError("Expected turn turn-1 changed to turn-2");
+    };
+    const tRace = h.insertTask({ agentId: "worker-agent-2", runId: "worker-run-race" });
+    const settled = await h.runtime.taskControl({
+      action: "stop",
+      taskId: tRace.id,
+      version: tRace.version,
+      reason: "Turn changed inside host call",
+      caller: CALLER,
+    });
+    assert.ok(!("accepted" in settled) && !("backpressured" in settled));
+    assert.deepEqual(h.stopCalls, [{ id: "worker-agent-2", expectedTurnId: "turn-1" }]);
+    assert.equal(settled.resolution.ownerStop, null);
+    assert.equal(
+      h.runtime.store.eventsAll(tRace.id).some((e) => e.kind === "owner_stop_sent"),
+      false,
+      "refused turn-scoped stop must never record owner_stop_sent",
+    );
+    const stoppedEvent = JSON.parse(
+      h.runtime.store.eventsAll(tRace.id).find((e) => e.kind === "owner_stopped")!.detail,
+    );
+    assert.deepEqual(stoppedEvent.cancelled, []);
+    assert.deepEqual(stoppedEvent.settled, [
+      {
+        runId: "worker-run-race",
+        role: "revision",
+        agentId: "worker-agent-2",
+        kind: "newer_turn_untouched",
+        untouchedTurnId: "turn-2",
+      },
+    ]);
   } finally {
     await h.close();
   }

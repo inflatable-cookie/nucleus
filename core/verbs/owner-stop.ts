@@ -15,6 +15,7 @@ import type { Engine } from "../engine";
 import { holdPatch, OPERATOR_HOLD_OWNER, OWNER_STOP_HOLD_PREFIX, releasePatch } from "../merge/merge-hold";
 import { ownerControlEventDetail, type RouteRole } from "./owner-verbs";
 import { ownerStoppedRunIds } from "./owner-facts";
+import { ProvenPreSendRefusalError } from "../host";
 import { DurableFenceRefusal, matchingInactiveParticipant } from "../intake/run-settlement";
 import { observationAdvanceSince, runsUnchangedSince } from "../recovery/observation-advance";
 import type { Adapter } from "../host/adapter";
@@ -219,6 +220,17 @@ export class OwnerStop {
     taskId: string,
     cancellation: OwnerStopCancellation,
   ): Promise<void> {
+    if (!this.adapter.stopAgentTurn) {
+      await this.executePreBoundarySend(taskId, cancellation);
+      return;
+    }
+    await this.observeOrResumeParticipant(taskId, cancellation);
+  }
+
+  private async executePreBoundarySend(
+    taskId: string,
+    cancellation: OwnerStopCancellation,
+  ): Promise<void> {
     // Revalidate inside the transaction right before marking the send boundary.
     let shouldSend = true;
     this.store.transaction(() => {
@@ -342,7 +354,10 @@ export class OwnerStop {
       operationId: latestStop?.operationId ?? null,
     };
     try {
-      await this.engine.host.stopAgentTurn(cancellation.agentId);
+      await this.engine.host.stopAgentTurn(
+        cancellation.agentId,
+        ...(cancellation.turnId !== null ? [cancellation.turnId] : []),
+      );
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
       this.store.transaction(() => {
@@ -366,6 +381,14 @@ export class OwnerStop {
           `Owner stop cancellation uncertain on ${cancellation.runId}: ${message}`,
         );
       });
+      if (error instanceof ProvenPreSendRefusalError) {
+        const refreshed = this.store.task(taskId).resolution.ownerStop?.cancellations.find(
+          (c) => c.effectId === cancellation.effectId,
+        );
+        if (refreshed && refreshed.status !== "sent" && refreshed.status !== "settled") {
+          await this.observeOrResumeParticipant(taskId, refreshed);
+        }
+      }
       return;
     }
     this.store.transaction(() => {
@@ -509,6 +532,24 @@ export class OwnerStop {
             ? { ...c, status: "uncertain" as const, note: reason.slice(0, 2000) }
             : c,
         );
+        if (cancellation.boundaryStartedAt === null && prev.status !== "uncertain") {
+          this.store.event(
+            taskId,
+            "owner_stop_uncertain",
+            JSON.stringify({
+              verb: "stop",
+              runId: cancellation.runId,
+              role: cancellation.role,
+              agentId: cancellation.agentId,
+              workspaceId: cancellation.workspaceId,
+              turnId: cancellation.turnId,
+              effectId: cancellation.effectId,
+              operationId: curStop.operationId,
+              status: "uncertain",
+              message: reason.slice(0, 2000),
+            }),
+          );
+        }
         this.store.update(
           taskId,
           { resolution: { ...cur.resolution, ownerStop: { ...curStop, cancellations: updated } } },
@@ -711,7 +752,7 @@ export class OwnerStop {
     }
 
     // Exact pre-boundary turn/run/workspace match proven; execute cancellation now.
-    await this.cancelParticipantBoundary(taskId, cancellation);
+    await this.executePreBoundarySend(taskId, cancellation);
   }
 
   private async driveOwnerStop(

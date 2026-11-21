@@ -288,8 +288,10 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     steerOrNotify(id: string, messageId: string, text: string) {
       return this.native.steerOrNotify(id, { messageId, text });
     }
-    stopAgentTurn(id: string) {
-      return this.native.stopAgentTurn(id);
+    stopAgentTurn(id: string, expectedTurnId?: string) {
+      return expectedTurnId !== undefined
+        ? this.native.stopAgentTurn(id, expectedTurnId)
+        : this.native.stopAgentTurn(id);
     }
     archiveAgent(id: string) {
       return this.native.archiveAgent(id);
