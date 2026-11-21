@@ -883,12 +883,6 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     method: "configureProjectDispatchLimit",
     mutating: true,
   },
-];
-
-export const RPC_METHOD_NAMES = RPC_CATALOGUE.map((entry) => entry.name);
-
-/** Bridge-side contracts: answered by the thin bridge itself, not the service. */
-export const BRIDGE_CATALOGUE: RpcCatalogueEntry[] = [
   {
     name: "queue.service-state",
     contract: contracts.serviceState,
@@ -897,7 +891,4 @@ export const BRIDGE_CATALOGUE: RpcCatalogueEntry[] = [
   },
 ];
 
-export const ALL_METHOD_NAMES = [
-  ...RPC_METHOD_NAMES,
-  ...BRIDGE_CATALOGUE.map((entry) => entry.name),
-];
+export const RPC_METHOD_NAMES = RPC_CATALOGUE.map((entry) => entry.name);

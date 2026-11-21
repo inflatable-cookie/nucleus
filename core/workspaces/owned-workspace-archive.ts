@@ -12,6 +12,7 @@ import {
 } from "./barge-allocator";
 import type { WorkspaceAllocationBridge } from "./workspace-allocation-bridge";
 import { intakeOwnedReviewWorkspace } from "../../shared/workspace-ownership";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import type { TimelinePage } from "../recovery/stall";
@@ -125,6 +126,8 @@ export class OwnedWorkspaceArchive {
       participantRuns,
       displacedBranch,
     } = options;
+    const hostLabel =
+      HOST_KIND_LABELS[hostKindOf(this.host.hostId ?? task.hostId)];
     const isTaskCheckout = id === task.workspaceId || Boolean(displacedBranch);
     const matchingBargeAllocation = (): WorkspaceAllocation | null => {
       const latest = this.host.workspaceAllocationBridge?.task?.(task.id) ?? task;
@@ -158,9 +161,9 @@ export class OwnedWorkspaceArchive {
       if (workspaceRef.current() && allowed()) {
         const res = await workspaceRef.archive(`ns-archive-${task.id}-${id}`);
         if (res.error)
-          throw Error(`Paseo workspace.archive failed: ${res.error}`);
+          throw Error(`${hostLabel} workspace.archive failed: ${res.error}`);
         if (!res.archivedAt)
-          throw Error("Paseo workspace.archive was not confirmed");
+          throw Error(`${hostLabel} workspace.archive was not confirmed`);
       }
       return [];
     }
@@ -317,8 +320,10 @@ export class OwnedWorkspaceArchive {
           if (current) {
             if (!allowed()) throw Error("Workspace archive cancelled before missing Barge cleanup");
             const res = await workspace.archive(`ns-archive-${task.id}-${id}`);
-            if (res.error) throw Error(`Paseo workspace.archive failed: ${res.error}`);
-            if (!res.archivedAt) throw Error("Paseo workspace.archive was not confirmed");
+            if (res.error)
+              throw Error(`${hostLabel} workspace.archive failed: ${res.error}`);
+            if (!res.archivedAt)
+              throw Error(`${hostLabel} workspace.archive was not confirmed`);
           }
           await returnBargeAllocation({
             allocation: activeBarge,
@@ -748,13 +753,13 @@ export class OwnedWorkspaceArchive {
         result = await workspace.archive(`ns-archive-${task.id}-${id}`);
       } catch (error) {
         throw Error(
-          `Paseo workspace.archive failed: ${error instanceof Error ? error.message : String(error)}`,
+          `${hostLabel} workspace.archive failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
       if (result.error)
-        throw Error(`Paseo workspace.archive failed: ${result.error}`);
+        throw Error(`${hostLabel} workspace.archive failed: ${result.error}`);
       if (!result.archivedAt)
-        throw Error("Paseo workspace.archive was not confirmed");
+        throw Error(`${hostLabel} workspace.archive was not confirmed`);
     }
     if (existsSync(directory)) {
       // Observe again after native delivery/cleanup. Never replay native archive
@@ -911,6 +916,7 @@ export class OwnedWorkspaceArchive {
 }
 
 export interface OwnedWorkspaceArchiveHost extends WorkspaceContinuationHost {
+  readonly hostId?: string;
   readonly workspaceHost: WorkspaceContinuationHost["workspaceHost"] & {
     workspaceIdAccepted?(id: unknown): boolean;
     archiveThreadPage(options: {

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import type { HostWorkspaceRef, HostThreadInventory, HostTerminalInventory } from "../../shared/host";
 import type { WorkspaceContinuationHostCalls } from "./workspace-continuation";
 import type { AgentObservation, ExternalWorkspacePlacement, ExternalWorktreeSource, ExternalWorkspaceCatalog, ExternalWorkspaceArchiveInput, ExternalWorkspaceArchiveOutcome, ExternalWorkspaceSourceExpectation } from "../host/adapter";
@@ -160,22 +161,23 @@ export class ExternalWorkspaceArchive {
     // source identity.
     const identityBefore = await this.host.preservedGitIdentity(input.directory);
     if (!input.allowed(observed, participants, source)) return { status: 'declined', reason: 'Workspace catalog archive held by task identity, ownership or a hold' };
+    const hostLabel = HOST_KIND_LABELS[hostKindOf(this.host.hostId)];
     let result: { archivedAt?: string | null; error?: string | null } | null = null;
     try { result = await workspace.archive(input.requestId); }
-    catch (error) { return { status: 'uncertain', reason: `Paseo workspace.archive failed: ${errorMessage(error)}`, observed, participants }; }
+    catch (error) { return { status: 'uncertain', reason: `${hostLabel} workspace.archive failed: ${errorMessage(error)}`, observed, participants }; }
     const native = { archivedAt: result?.archivedAt ?? null, error: result?.error ?? null };
     const present = await this.host.catalogEntryPresent(workspace);
-    if (present) return { status: 'uncertain', reason: native.error ? `Paseo workspace.archive failed: ${native.error}` : 'Paseo workspace.archive left the catalog entry listed', observed, participants, native };
+    if (present) return { status: 'uncertain', reason: native.error ? `${hostLabel} workspace.archive failed: ${native.error}` : `${hostLabel} workspace.archive left the catalog entry listed`, observed, participants, native };
     const folderPresent = existsSync(input.directory);
     if (!folderPresent) {
       // A removal is accepted only under the freshly proved worktree permission
       // (or the durable chain of one); a non-worktree folder must survive.
-      if (!worktree) return fail(`Paseo workspace.archive removed the preserved folder ${input.directory}`, { observed, participants });
+      if (!worktree) return fail(`${hostLabel} workspace.archive removed the preserved folder ${input.directory}`, { observed, participants });
       return { status: 'archived', observed, participants, native, folderPresent: false };
     }
     const identityAfter = await this.host.preservedGitIdentity(input.directory);
     if (identityAfter !== identityBefore || (source && identityAfter !== sourceIdentity(source)))
-      return fail(`Paseo workspace.archive changed the preserved Git identity of ${input.directory}`, { observed, participants });
+      return fail(`${hostLabel} workspace.archive changed the preserved Git identity of ${input.directory}`, { observed, participants });
     return { status: 'archived', observed, participants, native, folderPresent: true };
   }
   /**
@@ -275,6 +277,7 @@ export class ExternalWorkspaceArchive {
 }
 
 export interface ExternalWorkspaceArchiveHost {
+  readonly hostId?: string;
   readonly workspaceHost: WorkspaceContinuationHostCalls & {
     workspaceThreads(ids: string[]): Promise<HostThreadInventory>;
     workspaceTerminals(id: string): Promise<HostTerminalInventory>;

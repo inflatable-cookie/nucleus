@@ -83,6 +83,7 @@ import type { ReviewPolicyHost } from "../review/review-policy";
 
 /** Core policy delegates, injected when the service composes a host. */
 export abstract class HostPolicies extends MachinePorts {
+  hostId?: string;
   abstract readonly socketPath: string;
   abstract readonly helperPath: string;
   abstract readonly reportingViaMcp: boolean;

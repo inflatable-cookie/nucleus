@@ -57,6 +57,10 @@ export default function contribute(server: PluginServerContext) {
   // passing typecheck; the plugin itself (bridge and UI) waits for a reload.
   bridge.watch();
   for (const entry of RPC_CATALOGUE) {
+    // Paseo's bridge answers `queue.service-state` directly so the plugin board
+    // sees bridge states (`absent`, `incompatible`, `pluginBuildId`) even when
+    // the service is down; the service itself answers socket and web callers.
+    if (entry.name === "queue.service-state") continue;
     server.handle(entry.contract as AnyRpcContract, (input) =>
       bridge.forward(entry, input),
     );
