@@ -57,7 +57,7 @@ export type CompletionPolicy = Pick<
   | "originAgentId"
   | "creatorCompletionRecipients"
   | "completionSubscriptionOverrides"
-> & { notificationAgentId?: string | null };
+> & { notificationAgentId?: string | null; originHostId?: string | null };
 
 export const taskSchema = submissionSchema
   .extend({

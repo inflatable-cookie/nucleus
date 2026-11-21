@@ -1,5 +1,4 @@
 import { parseAgentId, sameCallerIdentity } from '../../../shared/agent-identity';
-import { hostKindOf } from '../../../shared/host-kind';
 import type { Run, Task } from '../../../shared/contracts';
 import type { Adapter } from '../../host/adapter';
 
@@ -52,13 +51,15 @@ export function participantToolRunIds(task: Task, runs: Run[], agentId: string, 
 }
 
 /** Queue planner ids are stored as full UUIDs; callers sometimes arrive as the 8-char prefix. */
-export function plannerIdMatches(planner: string | undefined, caller: string): boolean {
+export function plannerIdMatches(planner: string | undefined, caller: string,
+  plannerHostId?: string | null, callerHostId?: string | null): boolean {
   if (!planner) return false;
-  if (sameCallerIdentity(planner, caller)) return true;
+  if (sameCallerIdentity(planner, caller, plannerHostId, callerHostId)) return true;
   const plannerRef = parseAgentId(planner), callerRef = parseAgentId(caller);
-  if (plannerRef && callerRef && plannerRef.hostId !== callerRef.hostId) return false;
-  if (plannerRef && !callerRef && hostKindOf(plannerRef.hostId) !== 'paseo'
-    || callerRef && !plannerRef && hostKindOf(callerRef.hostId) !== 'paseo') return false;
+  const plannerHost = plannerRef?.hostId ?? plannerHostId;
+  const callerHost = callerRef?.hostId ?? callerHostId;
+  if ((plannerHost || callerHost) && (!plannerHost || !callerHost || plannerHost !== callerHost)) return false;
+  if (Boolean(plannerRef) !== Boolean(callerRef) && (!plannerHost || !callerHost)) return false;
   planner = plannerRef?.nativeAgentId ?? planner;
   caller = callerRef?.nativeAgentId ?? caller;
   if (!/^[0-9a-f-]+$/i.test(planner) || !/^[0-9a-f-]+$/i.test(caller)) return false;

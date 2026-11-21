@@ -665,7 +665,7 @@ export class QueueRuntime {
       createAdmission,
       this.dataDir,
     );
-    const recordedHost = this.hostRegistry.primary()?.id;
+    const recordedHost = this.hostRegistry.legacyPaseoPrimary()?.id;
     this.admission = recordedHost
       ? this.hostRegistry.resource(recordedHost, createAdmission)
       : createAdmission();
@@ -784,7 +784,7 @@ export class QueueRuntime {
       (task) => this.engine.queuedExternalWait(task),
       () => this.engine.queuedWaitSignature(),
       () =>
-        this.hostSession?.id || this.hostRegistry.primary()?.id || "unknown",
+        this.hostSession?.id || this.hostRegistry.legacyPaseoPrimary()?.id || "unknown",
     );
     this.questions = new RuntimeQuestions({
       store: this.store,
@@ -807,7 +807,7 @@ export class QueueRuntime {
       get hostId() {
         return (
           runtime.hostSession?.id ||
-          runtime.hostRegistry.primary()?.id ||
+          runtime.hostRegistry.legacyPaseoPrimary()?.id ||
           "host"
         );
       },
@@ -877,7 +877,7 @@ export class QueueRuntime {
       get hostId() {
         return (
           runtime.hostSession?.id ||
-          runtime.hostRegistry.primary()?.id ||
+          runtime.hostRegistry.legacyPaseoPrimary()?.id ||
           "unknown"
         );
       },

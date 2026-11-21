@@ -1,3 +1,4 @@
+import { recordedLegacyPaseoHost } from "./host/host-registry";
 import { enginePorts, portsContext } from "./port-context";
 import { onOwnerHost } from "./host/host-ports";
 import { TaskControlLifecycle } from "./verbs/task-control-lifecycle";
@@ -24,6 +25,7 @@ import type { GitTransientEpisode } from "./git/git-transient-backoff";
 import { type WorkspaceDiscard } from "./workspaces/orphan-worktree";
 import {
   HOST_KIND_LABELS,
+  effectiveDefaultHostKind,
   hostKindOf,
   type HostKind,
   type IdentitySource,
@@ -397,6 +399,9 @@ export class Engine {
   hostOnline(id: string): boolean {
     return Boolean(this.resolveHostAdapter(id));
   }
+  /** The recorded legacy Paseo primary, never a guess from the caller's ID. */
+  legacyPaseoHostId: () => string | undefined = () =>
+    recordedLegacyPaseoHost(this.store);
   /** Runtime supplies the authenticated live-host selection at acceptance. */
   selectIngressHost: (
     explicit?: string,
@@ -1419,7 +1424,7 @@ export class Engine {
   ): { kind: HostKind; source: "repository" | "operator_default" } | null {
     const repository = this.store.repositoryFor(task.repoPath)?.hostKind;
     if (repository) return { kind: repository, source: "repository" };
-    const kind = this.store.getMeta<HostKind | null>("operatorDefaultHostKind");
+    const kind = effectiveDefaultHostKind(this.store.getMeta<HostKind | null>("operatorDefaultHostKind"));
     return kind ? { kind, source: "operator_default" } : null;
   }
   /**
@@ -1452,9 +1457,9 @@ export class Engine {
   ): (import("../shared/host-kind").HostKind | null | undefined)[] {
     return [
       this.store.repositoryFor(task.repoPath)?.hostKind,
-      this.store.getMeta<import("../shared/host-kind").HostKind | null>(
+      effectiveDefaultHostKind(this.store.getMeta<HostKind | null>(
         "operatorDefaultHostKind",
-      ),
+      )),
     ];
   }
   workerHostCatalogPending(task: { hostId?: string | null }): boolean {
@@ -1911,6 +1916,9 @@ export class Engine {
   }
   selfForceRole(task: Task): "worker" | "reviewer" | "recovery" | null {
     return this.forceVerbs.selfForceRole(task);
+  }
+  forcePlannerMatches(task: Task, caller: string, projectOnly = false): boolean {
+    return this.forceVerbs.forcePlannerMatches(task, caller, projectOnly);
   }
   forcePlanners(task: Task): Array<string | undefined> {
     return this.forceVerbs.forcePlanners(task);

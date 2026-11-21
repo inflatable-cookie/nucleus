@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { coordinatorActionSchema, taskControlInputSchema } from '../shared/contracts';
@@ -123,5 +124,25 @@ test('force review binds an unbound PR at the observed head', async () => {
     assert.equal(result.prUrl, 'https://github.com/example/repo/pull/4918');
     assert.equal(result.phase, 'awaiting_review');
     await assert.rejects(f.apply({ action: 'move', to: 'review', force: true, prNumber: 4919 }), /differs/);
+  } finally { f.store.close(); }
+});
+
+test('planner authorization binds legacy and abbreviated callers to the recorded Paseo host', async () => {
+  const f = await fixture();
+  try {
+    const project = f.store.ensureProject('/repo', null);
+    const native = '12345678-abcd-ef01-1234-123456789abc';
+    f.store.setProjectPlanner({ key: project.key, agentId: native, setBy: 'operator' });
+    f.store.setMeta('hostRegistry', [
+      { id: 'legacy-paseo', endpoint: 'paseo' },
+      { id: 't3code:other', endpoint: 't3' },
+    ]);
+    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('legacy-paseo', native)), true);
+    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('legacy-paseo', '12345678')), true);
+    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('t3code:other', native)), false);
+    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('unknown-opaque-host', '12345678')), false);
+    f.store.setMeta('hostRegistry', [{ id: 't3code:other', endpoint: 't3' }]);
+    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('unknown-opaque-host', native)), false);
+    assert.equal(f.engine.forceCallerAuthorized(f.task(), native), true);
   } finally { f.store.close(); }
 });

@@ -1,3 +1,4 @@
+import { recordedLegacyPaseoHost } from "../host/host-registry";
 import { randomUUID } from "node:crypto";
 import { isT3OperatorIdentity } from "../../shared/operator-identity";
 import { clipDecisionQuestion, DECISION_QUESTION_MAX, decisionLinksSchema, decisionSchema, storedDecisionSchema, decisionVersionSchema, type Decision, type DecisionVersion, type DecisionView, type Project, type Task } from "../../shared/contracts";
@@ -480,7 +481,7 @@ export class Decisions {
       const hosts = new Set<string | null>();
       for (const task of this.store.liveTasks()) {
         if (![task.agentId, task.coordinatorAgentId, task.resolution?.reviewerAgentId]
-          .some(value => value && sameCallerIdentity(askedBy, value))) continue;
+          .some(value => value && sameCallerIdentity(askedBy, value, recordedLegacyPaseoHost(this.store), task.hostId))) continue;
         ids.add(task.id);
         hosts.add(task.hostId ?? null);
       }
@@ -492,13 +493,13 @@ export class Decisions {
     if (!tasks.length) return null;
     if (tasks.length === 1) { const task = tasks[0]!; return { task, role: this.roleForAsker(task, askedBy) }; }
     const live = tasks.filter(task => this.store.runs(task.id)
-      .some(run => !run.released && run.agentId && sameCallerIdentity(askedBy, run.agentId)));
+      .some(run => !run.released && run.agentId && sameCallerIdentity(askedBy, run.agentId, recordedLegacyPaseoHost(this.store), run.hostId ?? task.hostId)));
     if (live.length === 1) { const task = live[0]!; return { task, role: this.roleForAsker(task, askedBy) }; }
     return { ambiguous: true };
   }
 
   private roleForAsker(task: Task, askedBy: string): DecisionAskerRole {
-    const runs = this.store.runs(task.id).filter(run => run.agentId && sameCallerIdentity(askedBy, run.agentId));
+    const runs = this.store.runs(task.id).filter(run => run.agentId && sameCallerIdentity(askedBy, run.agentId, recordedLegacyPaseoHost(this.store), run.hostId ?? task.hostId));
     const run = runs.find(candidate => !candidate.released) ?? runs.at(-1);
     if (run) {
       if (run.role === "reviewer") return "reviewer";
@@ -506,8 +507,8 @@ export class Decisions {
       if (run.role === "recovery" || run.role === "verification" || run.role === "closeout") return "coordinator";
       return "worker";
     }
-    if (task.coordinatorAgentId && sameCallerIdentity(askedBy, task.coordinatorAgentId)) return "coordinator";
-    if (task.resolution?.reviewerAgentId && sameCallerIdentity(askedBy, task.resolution.reviewerAgentId)) return "reviewer";
+    if (task.coordinatorAgentId && sameCallerIdentity(askedBy, task.coordinatorAgentId, recordedLegacyPaseoHost(this.store), task.hostId)) return "coordinator";
+    if (task.resolution?.reviewerAgentId && sameCallerIdentity(askedBy, task.resolution.reviewerAgentId, recordedLegacyPaseoHost(this.store), task.hostId)) return "reviewer";
     return "worker";
   }
 
@@ -515,10 +516,10 @@ export class Decisions {
   private participantScopeFor(askedBy: string): { scope: "planner" | "agent"; project: Project; label: string } | { ambiguous: true } | null {
     const matches: Array<{ scope: "planner" | "agent"; project: Project; label: string }> = [];
     for (const project of this.store.projects()) {
-      if (project.planner?.agentId && sameCallerIdentity(askedBy, project.planner.agentId))
+      if (project.planner?.agentId && sameCallerIdentity(askedBy, project.planner.agentId, recordedLegacyPaseoHost(this.store), project.agents?.find(agent => agent.agentId === project.planner?.agentId)?.hostId ?? recordedLegacyPaseoHost(this.store)))
         matches.push({ scope: "planner", project, label: `${project.name} planner` });
       for (const agent of project.agents ?? [])
-        if (sameCallerIdentity(askedBy, agent.agentId)) matches.push({ scope: "agent", project, label: agent.name });
+        if (sameCallerIdentity(askedBy, agent.agentId, recordedLegacyPaseoHost(this.store), agent.hostId)) matches.push({ scope: "agent", project, label: agent.name });
     }
     if (new Set(matches.map(match => match.project.key)).size > 1) return { ambiguous: true };
     if (!matches.length) return null;
@@ -529,7 +530,7 @@ export class Decisions {
   private plannedScopeFor(askedBy: string): { project: Project } | { ambiguous: true } | null {
     const projects: Project[] = [];
     for (const task of this.store.liveTasks()) {
-      if (!sameCallerIdentity(askedBy, taskPlanner(task))) continue;
+      if (!sameCallerIdentity(askedBy, taskPlanner(task), recordedLegacyPaseoHost(this.store), task.originHostId ?? recordedLegacyPaseoHost(this.store))) continue;
       const project = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ""));
       if (project && !projects.some(candidate => candidate.key === project.key)) projects.push(project);
     }

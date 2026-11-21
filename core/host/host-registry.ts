@@ -10,6 +10,15 @@ export const HOST_IDLE_GRACE_MS = 10 * 60_000;
 /** Live host sessions are separate from the durable catalogue. A disconnect never
  * removes a known identity or proves anything about its outstanding effects. */
 export interface KnownHost { id: string; endpoint: string }
+/** Read old registry rows deliberately; only registered identities can bind legacy callers. */
+export function legacyPaseoPrimaryId(hosts: readonly KnownHost[]): string | undefined {
+  return hosts.find(entry => hostKindOf(entry.id) === 'paseo')?.id;
+}
+
+export function recordedLegacyPaseoHost(store: { getMeta<T>(key: string): T | undefined }): string | undefined {
+  return legacyPaseoPrimaryId(store.getMeta<KnownHost[]>('hostRegistry') ?? []);
+}
+
 export interface HostRegistryStore {
   read(): readonly KnownHost[];
   write(hosts: readonly KnownHost[]): void;
@@ -59,7 +68,8 @@ export function identitySourceHostEvidence(agentId: string, identitySource: Iden
   try {
     const qualified = parseAgentId(identitySource.agent);
     if (qualified && qualified.hostId !== identitySource.hostId) return undefined;
-    if (!sameCallerIdentity(identitySource.agent, agentId, identitySource.hostId)) return undefined;
+    const legacyHost = knownHostIds.find(id => hostKindOf(id) === 'paseo');
+    if (!sameCallerIdentity(identitySource.agent, agentId, identitySource.hostId, legacyHost)) return undefined;
   } catch { return undefined; }
   return knownHostIds.includes(identitySource.hostId) ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined;
 }
@@ -83,10 +93,12 @@ export async function resolveOriginHost<T>(registry: HostRegistry<T>, agentId: s
   evidence?: OriginHostEvidence): Promise<string | undefined> {
   const qualified = parseAgentId(agentId);
   const known = registry.known().map(entry => entry.id);
+  if (qualified) return known.includes(qualified.hostId) && registry.get(qualified.hostId)
+    ? qualified.hostId : undefined;
   // Bare caller fields predate host-qualified identities and belong to Paseo.
   // An unrelated T3 host must not make a legacy Paseo identity ambiguous or
   // prevent its checks while T3 is offline.
-  const candidates = qualified ? known : known.filter(id => hostKindOf(id) === 'paseo');
+  const candidates = known.filter(id => hostKindOf(id) === 'paseo');
   const online = registry.onlineIds().filter(id => candidates.includes(id));
   // Stale evidence (a host this registry never knew) decides nothing.
   const named = evidence && known.includes(evidence.hostId) ? evidence.hostId : undefined;
@@ -224,12 +236,13 @@ export class HostRegistry<T> {
    * T3Code, or BB (Spec 062) — is never that primary, whatever order it registered
    * in, so an older record still answers for the host it was written for.
    */
-  primary(): KnownHost | undefined {
+  legacyPaseoPrimary(): KnownHost | undefined {
     // Only the Paseo entry is primary. A secondary host that registered first (a BB
     // plugin can connect before the daemon bootstrap) is never that entry: falling
     // back to whichever host is first would let the daemon's own identity guard read a
     // BB host as "the configured daemon" and refuse the Paseo connection that follows.
-    return this.store.read().find((entry) => hostKindOf(entry.id) === "paseo");
+    const id = legacyPaseoPrimaryId(this.store.read());
+    return this.store.read().find(entry => entry.id === id);
   }
   /** The last host close this registry knows about, or null before any host left. */
   disconnectedAt(): number | null { return this.lastDisconnect; }

@@ -1,3 +1,4 @@
+import { parseAgentId } from "../../shared/agent-identity";
 import { FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL, FORCE_EFFECT_REQUIRED_REFUSAL, FORCE_PUBLICATION_REFUSAL, missingForcedEffectRefusal } from './verb-refusal-text';
 import { randomUUID } from "node:crypto";
 import type { OwnerAcceptanceRecord, RepositoryChecksPolicy, Run, Task, TaskControlInput } from "../../shared/contracts";
@@ -160,7 +161,7 @@ export class ForceVerbs {
     if (this.engine.selfForceRunId.getStore()) return Boolean(this.engine.selfForceRole(task));
     if (!caller) return false;
     if (caller === OPERATOR_BOARD_CALLER) return true;
-    return this.engine.forcePlanners(task).some(id => plannerIdMatches(id, caller));
+    return this.forcePlannerMatches(task, caller);
   }
   selfForceRole(task: Task): 'worker' | 'reviewer' | 'recovery' | null {
     const id = this.engine.selfForceRunId.getStore();
@@ -178,6 +179,17 @@ export class ForceVerbs {
     }
     return task.runId === id && !task.completion ? 'worker' : null;
   }
+  forcePlannerMatches(task: Task, caller: string, projectOnly = false): boolean {
+    const project = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
+    const legacyHost = this.engine.legacyPaseoHostId();
+    const projects = projectOnly ? [project] : [project, this.store.queueProject()];
+    return projects.some(entry => {
+      const planner = entry?.planner?.agentId;
+      const recordedHost = entry?.agents?.find(agent => agent.agentId === planner)?.hostId;
+      if (planner && recordedHost && parseAgentId(planner)?.hostId && parseAgentId(planner)?.hostId !== recordedHost) return false;
+      return plannerIdMatches(planner, caller, recordedHost ?? legacyHost, legacyHost);
+    });
+  }
   forcePlanners(task: Task): Array<string | undefined> {
     const project = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
     return [project?.planner?.agentId, this.store.queueProject()?.planner?.agentId];
@@ -188,8 +200,7 @@ export class ForceVerbs {
     const role = run?.role === 'reviewer' ? 'reviewer' : run?.role === 'recovery' ? 'recovery' : 'worker';
     if (authenticatedRunId) return `task_${role}`;
     if (caller === OPERATOR_BOARD_CALLER) return 'operator_board';
-    const projectPlanner = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))?.planner?.agentId;
-    return plannerIdMatches(projectPlanner, caller) ? 'project_planner' : 'queue_planner';
+    return this.forcePlannerMatches(task, caller, true) ? 'project_planner' : 'queue_planner';
   }
   async forceMove(task: Task, input: TaskControlInput, operationId?: string): Promise<Task> {
     this.engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');

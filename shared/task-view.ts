@@ -1,5 +1,5 @@
 import { taskAttention } from "./task-attention";
-import { sameCallerIdentity } from "./agent-identity";
+import { legacyIdentityObservedOn, sameCallerIdentity } from "./agent-identity";
 import type {
   Task,
   Run,
@@ -68,6 +68,12 @@ export * from "./task-stop";
 export function completionMembership(
   policy: CompletionPolicy,
 ): CompletionMembership[] {
+  // Older membership rows are native IDs from the task origin host. Without
+  // that recorded host they cannot be joined to a qualified recipient.
+  const legacyHost = policy.originHostId && legacyIdentityObservedOn(policy.originHostId)
+    ? policy.originHostId : undefined;
+  const matches = (a: string, b: string) =>
+    sameCallerIdentity(a, b, legacyHost, legacyHost);
   const members = new Map<
     string,
     {
@@ -84,7 +90,7 @@ export function completionMembership(
     originEntry = false,
   ) => {
     const key =
-      [...members.keys()].find((id) => sameCallerIdentity(id, agentId)) ??
+      [...members.keys()].find((id) => matches(id, agentId)) ??
       agentId;
     const member = members.get(key) ?? {
       agentId: key,
@@ -104,7 +110,7 @@ export function completionMembership(
   const owner = taskOwner(policy),
     origin = policy.originAgentId,
     ownerEntry = (agentId: string) =>
-      sameCallerIdentity(agentId, origin) || sameCallerIdentity(agentId, owner);
+      matches(agentId, origin) || matches(agentId, owner);
   if (policy.notifyOriginOnCloseout && policy.originWorkspaceId)
     add(origin, policy.originWorkspaceId, "origin", true);
   for (const recipient of policy.creatorCompletionRecipients) {
@@ -130,7 +136,7 @@ export function completionMembership(
       );
     else
       for (const id of members.keys())
-        if (sameCallerIdentity(id, key)) members.delete(id);
+        if (matches(id, key)) members.delete(id);
   }
   return [...members.values()]
     .sort((a, b) => a.agentId.localeCompare(b.agentId))

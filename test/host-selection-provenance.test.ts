@@ -497,7 +497,7 @@ test("a BB host verified before the Paseo bootstrap never becomes the primary ho
       "the BB host is recorded first",
     );
     assert.equal(
-      runtime.hostRegistry.primary(),
+      runtime.hostRegistry.legacyPaseoPrimary(),
       undefined,
       "no Paseo host means no primary host yet",
     );
@@ -515,7 +515,7 @@ test("a BB host verified before the Paseo bootstrap never becomes the primary ho
       runtime.hostRegistry.known().map((host) => host.id),
       [bbHostId, "paseo-primary"],
     );
-    assert.equal(runtime.hostRegistry.primary()?.id, "paseo-primary");
+    assert.equal(runtime.hostRegistry.legacyPaseoPrimary()?.id, "paseo-primary");
     const health = runtime.health();
     assert.equal(
       health.hostId,

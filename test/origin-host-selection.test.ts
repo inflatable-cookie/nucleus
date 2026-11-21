@@ -116,3 +116,11 @@ test('a bare recorded origin resolves on Paseo with or without caller evidence w
   assert.equal(await resolveOriginHost(registry, 'planner', lookup, evidence), 'paseo:alpha');
   assert.equal(await resolveOriginHost(registry, 'planner', lookup), 'paseo:alpha');
 });
+
+test('qualified origins resolve only their recorded online host', async () => {
+  const { registry, lookup, sessions } = fixture([['paseo:alpha', { knows: ['planner'] }]]);
+  assert.equal(await resolveOriginHost(registry, formatAgentId('unknown:host', 'planner'), lookup), undefined);
+  assert.equal(await resolveOriginHost(registry, formatAgentId('paseo:alpha', 'planner'), lookup), 'paseo:alpha');
+  registry.disconnect('paseo:alpha', sessions.get('paseo:alpha')!);
+  assert.equal(await resolveOriginHost(registry, formatAgentId('paseo:alpha', 'planner'), lookup), undefined);
+});
