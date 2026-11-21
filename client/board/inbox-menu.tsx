@@ -6,13 +6,13 @@ import { muted, type Colors } from "../controls";
 import { radius, space, type as typeScale } from "../design";
 
 export type InboxMenuCounts = {
-  needs: number; leads: number; queue: number; active: number;
+  needs: number; leads: number; papercuts: number; queue: number; active: number;
   activeBySection: Record<ActiveSection, number>;
 };
 
 /**
- * The board menu (Tom, 2026-11-21): Needs you, Planning, Leads, Queue and Active
- * with its three sections. Counts are real totals; only Needs you is highlighted,
+ * The board menu (Tom, 2026-11-21): Needs you, Planning, Leads, Papercuts, Queue and
+ * Active with its three sections. Counts are real totals; only Needs you is highlighted,
  * because only it asks the operator to act. A count is hidden until the board loads.
  */
 export function InboxMenu({ c, view, activeSection, counts, loaded, onSelect }: {

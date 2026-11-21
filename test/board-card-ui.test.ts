@@ -1258,23 +1258,22 @@ test("a long papercut and a long lead render as one-line rows with a project and
       "the papercut card keeps its accessible label",
     );
     assert.match(text, /Open · board/, "a papercut states its area");
-    // The Leads tabs name the kind, so the rows inside them do not repeat it (nucleus#1511).
-    openView(tree, "Leads");
+    // Papercuts and Leads are their own lists, so their rows do not repeat the kind (nucleus#1511).
+    openView(tree, "Papercuts");
     const cutRow = tree.raw.query(`Triage: ${LONG_CUT}`);
-    assert.ok(cutRow, "the papercut row is listed on its tab");
+    assert.ok(cutRow, "the papercut row is listed on its own view");
     assert.doesNotMatch(
       nodeText(cutRow as HostNode),
       /\bPapercut\b/,
-      "no kind chip repeats the tab",
+      "no kind chip repeats the list",
     );
     assert.ok(
       !text.includes("What happened"),
       "the body passage stays in the record",
     );
-    // Leads and papercuts are the Leads view's two tabs.
-    for (const [title, tab] of [[LONG_CUT, /^Papercuts tab, /], [LONG_TITLE, /^Leads tab, /]] as const) {
-      openView(tree, "Leads");
-      tree.press(tab);
+    // Leads and papercuts are separate menu views, each a list of one-line rows.
+    for (const [title, view] of [[LONG_CUT, "Papercuts"], [LONG_TITLE, "Leads"]] as const) {
+      openView(tree, view);
       const lines = tree
         .ofType("Text")
         .filter((node) => node.children.join("") === title)
@@ -1291,8 +1290,8 @@ test("a long papercut and a long lead render as one-line rows with a project and
   }
 });
 
-// Tom, 2026-11-07: Triage pages; on the inbox the Leads view keeps the pages of eight.
-test("Leads show a page of eight, an in-list row loads the rest, and the tab shows the real total", async () => {
+// Tom, 2026-11-07: Triage pages; on the inbox the Leads and Papercuts lists keep the pages of eight.
+test("Papercuts show a page of eight, an in-list row loads the rest, and the menu shows the real total", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1305,8 +1304,8 @@ test("Leads show a page of eight, an in-list row loads the rest, and the tab sho
       ),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Papercuts tab, 10")));
-    tree.press("Papercuts tab, 10");
+    await settle(() => Boolean(tree.query("Papercuts, 10")));
+    openView(tree, "Papercuts");
     assert.equal(
       tree.all(/^Triage: Papercut /).length,
       8,
@@ -1323,15 +1322,15 @@ test("Leads show a page of eight, an in-list row loads the rest, and the tab sho
       undefined,
       "no overflow row once every card shows",
     );
-    assert.ok(tree.query("Papercuts tab, 10"), "paging leaves the total alone");
-    assert.ok(tree.query("Leads, 10"), "the menu counts every lead and papercut");
+    assert.ok(tree.query("Papercuts, 10"), "paging leaves the total alone");
+    assert.ok(tree.query("Leads, 0"), "the Leads entry counts only leads");
   } finally {
     mounted?.update(h("View", null));
     store.close();
   }
 });
 
-test("the Leads tag filter narrows the cards and the paging; the menu count stays the inbox total", async () => {
+test("the Leads tag filter narrows the leads and their paging; papercuts have no filter and the menu count stays the inbox total", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1339,28 +1338,30 @@ test("the Leads tag filter narrows the cards and the paging; the menu count stay
     const leads = [
       ...triagePapercuts(10),
       triageLead("idea-lead", "Idea lead", { tags: ["idea"] }),
+      triageLead("plain-lead", "Plain lead", { tags: ["research"] }),
     ];
     mounted = mountBoard(
       invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Leads, 11")));
+    await settle(() => Boolean(tree.query("Leads, 2")));
     openView(tree, "Leads");
-    tree.press("Filter leads by tag, All tags (11)");
+    // The reserved papercut tag is not offered: papercuts are their own list (Tom, 2026-11-21).
+    tree.press("Filter leads by tag, All tags (2)");
+    assert.equal(tree.query("Filter leads by tag: Papercut (10)"), undefined);
     tree.press("Filter leads by tag: idea (1)");
     await settle(() => Boolean(tree.query("Triage: Idea lead")));
-    tree.press("Papercuts tab, 0");
     assert.equal(
-      tree.all(/^Triage: Papercut /).length,
+      tree.all(/^Triage: (Papercut|Plain)/).length,
       0,
-      "the idea tag filters the papercuts out",
+      "the idea tag narrows the leads to the idea lead",
     );
-    assert.equal(
-      tree.query("Show 2 more papercuts"),
-      undefined,
-      "a filtered list that fits one page has no overflow row",
-    );
-    assert.ok(tree.query("Leads, 11"), "the menu count ignores the list filter");
+    assert.ok(tree.query("Leads, 2"), "the menu count ignores the list filter");
+    // Papercuts keep every card, with no filter header (Tom, 2026-11-21).
+    openView(tree, "Papercuts");
+    assert.equal(tree.raw.query(/^Filter leads by tag/), undefined, "the papercut list has no tag filter");
+    assert.ok(tree.query("Papercuts, 10"), "the papercut total is unaffected by the Leads filter");
+    assert.equal(tree.all(/^Triage: Papercut /).length, 8, "the first page of papercuts shows eight");
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -1368,7 +1369,7 @@ test("the Leads tag filter narrows the cards and the paging; the menu count stay
 });
 
 // #1042 review: the list's view state lives in the shell, so a visit to another view keeps it.
-test("the Leads tag, Leads page and open queued-more page survive a round trip to Planning", async () => {
+test("the Leads tag, Papercuts page and open queued-more page survive a round trip to Planning", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1376,6 +1377,7 @@ test("the Leads tag, Leads page and open queued-more page survive a round trip t
     const leads = [
       ...triagePapercuts(10),
       triageLead("idea-lead", "Idea lead", { tags: ["idea"] }),
+      triageLead("plain-lead", "Plain lead", { tags: ["research"] }),
     ];
     mounted = mountBoard(
       invokeWith(
@@ -1387,11 +1389,10 @@ test("the Leads tag, Leads page and open queued-more page survive a round trip t
     const tree = mounted;
     await settle(
       () =>
-        Boolean(tree.query("Leads, 11")) &&
+        Boolean(tree.query("Papercuts, 10")) &&
         Boolean(tree.query("3 more queued in app")),
     );
-    openView(tree, "Leads");
-    tree.press("Papercuts tab, 10");
+    openView(tree, "Papercuts");
     tree.press("Show 2 more papercuts");
     await settle(() => tree.raw.all(/^Triage: Papercut /).length === 10);
     openView(tree, "Queue");
@@ -1402,16 +1403,18 @@ test("the Leads tag, Leads page and open queued-more page survive a round trip t
     openView(tree, "Queue");
     await settle(() => Boolean(tree.raw.query("Queue list")));
     assert.ok(tree.raw.query("Previous"), "the open queued-more page is kept");
-    // The Leads view reopens on the papercuts tab it was left on.
-    openView(tree, "Leads");
+    // The Papercuts view reopens on the page it was left on.
+    openView(tree, "Papercuts");
     assert.equal(
       tree.raw.all(/^Triage: Papercut /).length,
       10,
-      "the expanded Leads page is kept",
+      "the expanded Papercuts page is kept",
     );
-    tree.press("Filter leads by tag, All tags (11)");
+    // The Leads filter is kept too.
+    openView(tree, "Leads");
+    tree.press("Filter leads by tag, All tags (2)");
     tree.press("Filter leads by tag: idea (1)");
-    await settle(() => tree.raw.all(/^Triage: Papercut /).length === 0);
+    await settle(() => tree.raw.all(/^Triage: Plain /).length === 0);
     openView(tree, "Planning");
     await settle(() => !tree.raw.query("Leads list"));
     openView(tree, "Leads");
@@ -1525,13 +1528,13 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
     };
     t3Mounted = mountBoard(rpcFor(t3Snapshot));
     await settle(() => Boolean(t3Mounted?.query("Triage: Lead without tasks")));
-    /** Badge text nodes on both Leads tabs: the lead card and the papercut card. */
+    /** Badge text nodes on the Leads and Papercuts lists: the lead card and the papercut card. */
     const tabMonograms = (mounted: ReturnType<typeof mountBoard>) => {
       openView(mounted, "Leads");
       const found = mounted.ofType("Text").filter((node) => node.children.join("") === "BA");
-      mounted.press(/^Papercuts tab, /);
+      openView(mounted, "Papercuts");
       found.push(...mounted.ofType("Text").filter((node) => node.children.join("") === "BA"));
-      mounted.press(/^Leads tab, /);
+      openView(mounted, "Leads");
       return found;
     };
     const monograms = tabMonograms(t3Mounted);
@@ -1559,9 +1562,9 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
       const tabCards = () => mounted.raw.all(/^Triage: /).reduce((sum, card) => sum + count(card), 0);
       openView(mounted, "Leads");
       let total = tabCards();
-      mounted.press(/^Papercuts tab, /);
+      openView(mounted, "Papercuts");
       total += tabCards();
-      mounted.press(/^Leads tab, /);
+      openView(mounted, "Leads");
       return total;
     };
     assert.equal(cardFolderCount(t3Mounted), 0);
@@ -1946,7 +1949,7 @@ test("a host-waiting task keeps an owner-facing stop's detail in its one row lin
   }
 });
 
-test("the Leads tabs hide the kind chip the tab already names", async () => {
+test("the Leads and Papercuts lists hide the kind chip their list already names", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1966,15 +1969,15 @@ test("the Leads tabs hide the kind chip the tab already names", async () => {
     assert.doesNotMatch(
       nodeText(card as HostNode),
       /\bLead\b/,
-      "the Lead chip repeats nothing inside the Leads tab",
+      "the Lead chip repeats nothing inside the Leads list",
     );
-    tree.raw.press(/^Papercuts tab, /);
+    openView(tree, "Papercuts");
     const cut = tree.raw.query("Triage: Tiny papercut");
     assert.ok(cut, "the papercut row is listed");
     assert.doesNotMatch(
       nodeText(cut as HostNode),
       /\bPapercut\b/,
-      "the Papercut chip repeats nothing inside the Papercuts tab",
+      "the Papercut chip repeats nothing inside the Papercuts list",
     );
   } finally {
     mounted?.update(h("View", null));

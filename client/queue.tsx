@@ -34,7 +34,6 @@ import {
   inboxMenuWidth,
   type ActiveSection,
   type InboxView,
-  type LeadsTab,
 } from "../shared/inbox-board";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
@@ -118,7 +117,6 @@ export function MainSurface({
   const queryClient = useQueryClient();
   const [view, setView] = useState<InboxView>("needs");
   const [activeSection, setActiveSection] = useState<ActiveSection | null>(null);
-  const [leadsTab, setLeadsTab] = useState<LeadsTab>("leads");
   const [menuOpen, setMenuOpen] = useState(false);
   // The reads still key on the two data shapes: Planning's, and the card lists'.
   const tab: BoardTab = view === "planning" ? "planning" : "queue";
@@ -649,8 +647,6 @@ export function MainSurface({
                     inbox={inbox}
                     view={view}
                     activeSection={activeSection}
-                    leadsTab={leadsTab}
-                    onLeadsTab={setLeadsTab}
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}
                     queuedHidden={queuedHidden}

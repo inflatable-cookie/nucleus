@@ -13,6 +13,7 @@ import {
 } from "../../shared/contracts";
 import {
   pipelineBoard,
+  triageKind,
   triagePage,
   triagePageSize,
   type PipelineCard,
@@ -23,7 +24,6 @@ import {
   leadsCards,
   type ActiveSection,
   type InboxView,
-  type LeadsTab,
 } from "../../shared/inbox-board";
 import { isGeneralDecision } from "../../shared/decision-project";
 import { useRpc, Icon } from "../shell";
@@ -45,16 +45,18 @@ import { space, type as typeScale, radius } from "../design";
 type Project = UiQueueState["projects"][number];
 
 /**
- * The list's view state: the Leads tag filter and page, and the open queued-more
- * page and its read. The shell holds it, so leaving a view and coming back keeps them.
+ * The list's view state: the Leads tag filter, the pages of Leads and Papercuts, and
+ * the open queued-more page and its read. The shell holds it, so leaving a view and
+ * coming back keeps them.
  */
 export function usePipelineState() {
   const fetchQueuedPage = useRpc(api.queuePage);
   const [queueRepo, setQueueRepo] = useState<string | null>(null);
   const [queueOffset, setQueueOffset] = useState(0);
   const [triageTag, setTriageTag] = useState<string | null>(null);
-  // Leads shown (Tom, 2026-11-07: one page at a time); a tag change starts it back at one page.
+  // Leads and papercuts shown (Tom, 2026-11-07: one page at a time); a tag change starts Leads back at one page.
   const [triageShown, setTriageShown] = useState(triagePageSize);
+  const [papercutShown, setPapercutShown] = useState(triagePageSize);
   const queuedPage = useQuery({
     queryKey: ["nucleus", "queued-page", queueRepo, queueOffset],
     queryFn: () =>
@@ -72,6 +74,8 @@ export function usePipelineState() {
     setTriageTag,
     triageShown,
     setTriageShown,
+    papercutShown,
+    setPapercutShown,
   };
 }
 export type PipelineState = ReturnType<typeof usePipelineState>;
@@ -107,25 +111,27 @@ export function useInboxBoard({ state, selection, boardLeads, leadLinks, decisio
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [state?.projects, state?.lanes, state?.tasks, state?.pendingSubmissions, selectionKey, boardLeads, leadLinks, decisions],
   );
-  const triageScopeLeads = columns.cards.Triage.flatMap((card) => card.kind === "lead" ? [card.value] : []);
+  // The tag filter narrows Leads only: papercuts are their own list with no filter (Tom, 2026-11-21).
   const board = {
     counts: columns.counts,
-    cards: { ...columns.cards, Triage: columns.cards.Triage.filter((card) => card.kind !== "lead" || !triageTag || card.value.tags.includes(triageTag)) },
+    cards: { ...columns.cards, Triage: columns.cards.Triage.filter((card) => card.kind !== "lead" || triageKind(card.value) === "papercut" || !triageTag || card.value.tags.includes(triageTag)) },
   };
+  const scopeLeads = leadsCards(columns).flatMap((card) => card.kind === "lead" ? [card.value] : []);
   // The tag filter lists only tags on leads in the current scope, with counts;
   // tags from other projects or briefed leads matched nothing (Tom, 2026-10-15).
+  // A papercut-tagged lead is never in this list, so the reserved papercut tag is not offered.
   const tagCounts = new Map<string, number>();
-  for (const lead of triageScopeLeads) for (const tag of lead.tags) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+  for (const lead of scopeLeads) for (const tag of lead.tags) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
   if (triageTag && !tagCounts.has(triageTag)) tagCounts.set(triageTag, 0);
   // Reserved tags lead under their display names; free-form tags follow alphabetically.
   const triageTagOptions = [
-    { value: "", label: `All tags (${triageScopeLeads.length})` },
+    { value: "", label: `All tags (${scopeLeads.length})` },
     ...[...tagCounts]
       .sort(([a], [b]) => Number(!api.RESERVED_LEAD_TAGS[a]) - Number(!api.RESERVED_LEAD_TAGS[b]) || a.localeCompare(b))
       .map(([tag, count]) => ({ value: tag, label: `${api.RESERVED_LEAD_TAGS[tag] ?? tag} (${count})`, group: api.RESERVED_LEAD_TAGS[tag] ? "Reserved" : "Tags" })),
   ];
   // The menu counts ignore the tag filter: it narrows the list, not the inbox. The list's
-  // own header and tabs count what it shows, as the Triage header did.
+  // own header counts what it shows.
   const counts = useMemo(() => inboxCounts(columns, hiddenQueued), [columns, hiddenQueued]);
   const listCounts = triageTag ? inboxCounts(board, hiddenQueued) : counts;
   return { board, counts, listCounts, triageTagOptions };
@@ -139,8 +145,6 @@ export type InboxListProps = {
   inbox: InboxBoard;
   view: Exclude<InboxView, "planning">;
   activeSection: ActiveSection | null;
-  leadsTab: LeadsTab;
-  onLeadsTab: (tab: LeadsTab) => void;
   leadsLoading: boolean;
   decisions: DecisionView[] | undefined;
   /** Per project, the queued tasks the board holds back for its "…and N more" row. */
@@ -163,26 +167,28 @@ export type InboxListProps = {
   pipeline: PipelineState;
 };
 
-const viewTitles: Record<Exclude<InboxView, "planning">, string> = { needs: "Needs you", leads: "Leads", queue: "Queue", active: "Active" };
+const viewTitles: Record<Exclude<InboxView, "planning">, string> = { needs: "Needs you", leads: "Leads", papercuts: "Papercuts", queue: "Queue", active: "Active" };
 const sectionTitles: Record<ActiveSection, string> = { working: "Working", review: "In review", closing: "Closing" };
+/** The kind label a Needs you card shows, so each card says what it is at a glance (Tom, 2026-11-21). */
+const needsKindLabels: Partial<Record<PipelineCard["kind"], string>> = { decision: "Decision", raised: "Hold", lane_drain: "Lane", task: "Task" };
 
 /**
  * The inbox list (Tom, 2026-11-21): the open menu view's cards in one scrolling
- * list, grouped under section headers, each card drawn as a row. A card's own
- * content and actions are unchanged from the kanban board.
+ * list, each card drawn as a row. Needs you is a single list; Active keeps its
+ * section headers. A card's own content and actions are unchanged from the kanban board.
  */
 export function InboxList({
-  c, state, stateError, inbox, view, activeSection, leadsTab, onLeadsTab, leadsLoading, decisions, queuedHidden,
+  c, state, stateError, inbox, view, activeSection, leadsLoading, decisions, queuedHidden,
   parkedRepository, projectForRepository, selected, selectedLeadId, openPapercutId, openDecisionId,
   onSelectTask, onSelectDecision, onSelectLead, onSelectPapercut, onOpenLane, busy, act, pipeline,
 }: InboxListProps) {
   const setTask = useRpc(api.taskControl);
   const changeLaneStatus = useRpc(api.laneStatus);
   const keepLaneRpc = useRpc(api.laneKeep);
-  const { queueRepo, setQueueRepo, queueOffset, setQueueOffset, queuedPage, triageTag, setTriageTag, triageShown, setTriageShown } = pipeline;
+  const { queueRepo, setQueueRepo, queueOffset, setQueueOffset, queuedPage, triageTag, setTriageTag, triageShown, setTriageShown, papercutShown, setPapercutShown } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
   const boardRead = state ? "loaded" : stateError ? "failed" : "loading";
-  const sections = inboxSections(board, view, { active: activeSection, leads: leadsTab });
+  const sections = inboxSections(board, view, { active: activeSection });
   const releaseHold = (task: TaskSummary) => void act(() => setTask({ taskId: task.id, version: task.version, action: "release" }));
   const keepHold = (task: TaskSummary, reason: string) => void act(() => setTask({ taskId: task.id, version: task.version, action: "keep_hold", reason }));
   // Close finishes the drained step; Keep records the operator's reason and ends the episode.
@@ -218,18 +224,19 @@ export function InboxList({
   );
   const renderCard = (card: PipelineCard) => {
     const key = `${card.kind}:${card.id}`;
+    const kind = view === "needs" ? needsKindLabels[card.kind] : undefined;
     switch (card.kind) {
       case "decision":
-        return <DecisionCard key={key} decision={card.value} linkedTaskLabels={decisionLinkedTaskLabels(card.value)}
+        return <DecisionCard key={key} decision={card.value} linkedTaskLabels={decisionLinkedTaskLabels(card.value)} kind={kind}
           linkedTaskProjects={decisionLinkedTaskProjects(card.value)} c={c} selected={openDecisionId === card.id} onPress={() => onSelectDecision(card.id)} />;
       case "raised":
-        return <HoldPromptCard key={key} busy={busy} onRelease={() => releaseHold(card.value)} onKeep={(reason) => keepHold(card.value, reason)}
+        return <HoldPromptCard key={key} busy={busy} onRelease={() => releaseHold(card.value)} onKeep={(reason) => keepHold(card.value, reason)} kind={kind}
           task={card.value} c={c} selected={selected === card.id} onPress={() => onSelectTask(card.id)} />;
       case "lane_drain":
-        return <LaneDrainCard key={key} lane={card.value} c={c} busy={busy} selected={false} onPress={() => onOpenLane(card.value.key)}
+        return <LaneDrainCard key={key} lane={card.value} c={c} busy={busy} selected={false} onPress={() => onOpenLane(card.value.key)} kind={kind}
           onClose={() => closeDrainedLane(card.value)} onKeep={(reason) => keepDrainedLane(card.value, reason)} />;
       case "task":
-        return <TaskCard key={key} task={card.value} defaultHostId={state?.hostId}
+        return <TaskCard key={key} task={card.value} defaultHostId={state?.hostId} kind={kind}
           projectBadge={card.value.hostId ? (state?.projectBadges?.[card.value.hostId]?.[card.value.repoPath] ?? null) : null}
           board selected={selected === card.id} onPress={() => onSelectTask(card.id)} prState={state?.prStates[card.id]} c={c}
           parked={parkedRepository(card.value.repoPath, card.value.repository)} decisions={decisionLinkCounts.has(card.id)} decisionTitle={decisionTitle(card.value)} />;
@@ -240,8 +247,7 @@ export function InboxList({
           title={<Text numberOfLines={2} style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>{card.value.title}</Text>}
           chips={<RecordChips c={c} chips={["Submitting"]} />} snippet={metaText("Accepted; creating its task", 2)} selected={false} onPress={() => {}} />;
       case "lead":
-        // The Leads view's tabs already split leads from papercuts, so the kind chip
-        // would repeat the tab on every row (nucleus#1511).
+        // Leads and Papercuts are separate lists, so the kind chip would repeat the list on every row (nucleus#1511).
         return <TriageLeadCard key={key} lead={card.value} c={c} showKind={false} projectForRepository={projectForRepository} repositoryBadges={state?.repositoryBadges}
           selected={selectedLeadId === card.id || openPapercutId === card.id} onSelectLead={(id) => onSelectLead(id, null)} onSelectPapercut={onSelectPapercut} />;
       default:
@@ -273,60 +279,53 @@ export function InboxList({
       </View>}
     </View>
   )) : null;
-  const viewCount = view === "needs" ? counts.needs : view === "leads" ? counts.leads : view === "queue" ? counts.queue
-    : activeSection ? counts.activeBySection[activeSection] : counts.active;
+  const viewCount = view === "needs" ? counts.needs : view === "leads" ? counts.leads : view === "papercuts" ? counts.papercuts
+    : view === "queue" ? counts.queue : activeSection ? counts.activeBySection[activeSection] : counts.active;
   const title = view === "active" && activeSection ? sectionTitles[activeSection] : viewTitles[view];
   const total = sections.reduce((sum, section) => sum + section.cards.length, 0) + (view === "queue" ? queuedHidden.length : 0);
   const grouped = sections.length > 1;
+  const countText = boardRead === "loaded" ? `${viewCount} item${viewCount === 1 ? "" : "s"}` : boardRead === "failed" ? "Not loaded" : "Loading…";
   return (
     <View accessibilityLabel={`${title} list`} style={{ flex: 1, minHeight: 0 }}>
       <View style={{ gap: space.sm, paddingHorizontal: space.md, paddingTop: space.md, paddingBottom: space.sm }}>
-        <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between" }}>
-          <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: typeScale.section.fontSize, lineHeight: typeScale.section.lineHeight, fontWeight: "600" }}>{title}</Text>
-          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-            {boardRead === "loaded" ? `${viewCount} item${viewCount === 1 ? "" : "s"}` : boardRead === "failed" ? "Not loaded" : "Loading…"}
-          </Text>
-        </View>
-        {view === "leads" && <View style={{ ...row, flexWrap: "nowrap", gap: space.xs }}>
-          <View accessibilityRole="tablist" accessibilityLabel="Leads and papercuts" style={{ flexDirection: "row", flex: 1, padding: 2, gap: 2, borderRadius: radius.control, backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border }}>
-            {(["leads", "papercuts"] as const).map((tab) => {
-              const on = leadsTab === tab;
-              return <Pressable key={tab} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={`${tab === "leads" ? "Leads" : "Papercuts"} tab, ${counts.leadsByTab[tab]}`}
-                onPress={() => { onLeadsTab(tab); setTriageShown(triagePageSize); }}
-                style={{ flex: 1, minHeight: 28, alignItems: "center", justifyContent: "center", borderRadius: radius.control - 2, backgroundColor: on ? c.surface2 : "transparent" }}>
-                <Text style={{ color: on ? c.foreground : c.foregroundMuted, fontSize: typeScale.metadata.fontSize, fontWeight: on ? "600" : "400" }}>{`${tab === "leads" ? "Leads" : "Papercuts"} ${counts.leadsByTab[tab]}`}</Text>
-              </Pressable>;
-            })}
+        {/* The header row: the title, then the item count, then the Leads tag filter at the row's end. */}
+        <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between", gap: space.sm }}>
+          <Text accessibilityRole="header" numberOfLines={1} style={{ flexShrink: 1, color: c.foreground, fontSize: typeScale.section.fontSize, lineHeight: typeScale.section.lineHeight, fontWeight: "600" }}>{title}</Text>
+          <View style={{ ...row, flexWrap: "nowrap", gap: space.sm, flexShrink: 0 }}>
+            <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{countText}</Text>
+            {view === "leads" && <DropdownSelect compact c={c} label="Filter leads by tag" value={triageTag ?? ""} options={triageTagOptions}
+              onChange={(value) => { setTriageTag(value || null); setTriageShown(triagePageSize); }} minWidth={110} />}
           </View>
-          <DropdownSelect compact c={c} label="Filter leads by tag" value={triageTag ?? ""} options={triageTagOptions}
-            onChange={(value) => { setTriageTag(value || null); setTriageShown(triagePageSize); }} minWidth={110} />
-        </View>}
+        </View>
       </View>
       <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ borderTopWidth: 1, borderTopColor: c.border }}>
         <BoardCardVariantContext.Provider value="row">
           {sections.map((section) => {
-            // Leads show one page at a time; the "…and N more" row loads the next.
-            const page = view === "leads" ? triagePage(section.cards, triageShown) : null;
+            // Leads and papercuts show one page at a time; the "…and N more" row loads the next.
+            const paged = view === "leads" || view === "papercuts";
+            const shown = view === "papercuts" ? papercutShown : triageShown;
+            const page = paged ? triagePage(section.cards, shown) : null;
             const visible = page ? page.visible : section.cards;
-            return <View key={section.id} accessibilityLabel={`${section.label} section, ${section.cards.length}`}>
+            return <View key={section.id} accessibilityLabel={grouped ? `${section.label} section, ${section.cards.length}` : undefined}>
               {grouped && <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between", paddingHorizontal: space.md, paddingTop: space.sm, paddingBottom: space.xxs, borderBottomWidth: 1, borderBottomColor: c.border, backgroundColor: c.surface0 }}>
                 <Text accessibilityRole="header" style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase" }}>{section.label}</Text>
                 <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{boardRead === "loaded" ? section.cards.length : "…"}</Text>
               </View>}
               {visible.map(renderCard)}
-              {page && page.hidden > 0 && moreRow(`${section.id}-more`, `Show ${page.hidden} more ${section.label.toLowerCase()}`, `…and ${page.hidden} more`, () => setTriageShown(triageShown + triagePageSize))}
+              {page && page.hidden > 0 && moreRow(`${section.id}-more`, `Show ${page.hidden} more ${section.label.toLowerCase()}`, `…and ${page.hidden} more`,
+                () => (view === "papercuts" ? setPapercutShown : setTriageShown)(shown + triagePageSize))}
               {grouped && boardRead === "loaded" && !section.cards.length && <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, paddingHorizontal: space.md, paddingVertical: space.sm }}>Nothing here.</Text>}
             </View>;
           })}
           {queuedMore}
         </BoardCardVariantContext.Provider>
-        {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). */}
+        {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
         {(boardRead !== "loaded" || (!grouped && total === 0)) && <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>
           {boardRead === "failed"
             ? "The board could not be read; see the error above."
-            : boardRead === "loading" || (view === "leads" && leadsLoading)
+            : boardRead === "loading" || ((view === "leads" || view === "papercuts") && leadsLoading)
               ? "Loading…"
-              : view === "leads" && triageTag && leadsCards(board, leadsTab).length === 0
+              : view === "leads" && triageTag && leadsCards(board).length === 0
                 ? "No records carry this tag."
                 : "Nothing here."}
         </Text>}

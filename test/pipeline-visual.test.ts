@@ -720,9 +720,6 @@ const findCard = (
   }
   return undefined;
 };
-/** Leads' Leads | Papercuts switch. */
-const leadsTab = (ui: ReturnType<typeof mount>, name: "Leads" | "Papercuts") =>
-  ui.press(new RegExp(`^${name} tab, \\d+$`));
 /** Close an open record: its modal backdrop below the wide layout, its pane's close control at it. */
 const closeRecord = (ui: ReturnType<typeof mount>, backdrop: string) =>
   ui.press(ui.query(backdrop) ? backdrop : "Close detail");
@@ -771,6 +768,7 @@ async function verifyViewport(compact: boolean) {
       "Needs you",
       "Planning",
       "Leads",
+      "Papercuts",
       "Queue",
       "Active",
       "Working",
@@ -828,10 +826,13 @@ async function verifyViewport(compact: boolean) {
     openView(ui, "Closing");
     assert.equal(countText(ui, "Task working"), 0, "a section shows only its own cards");
     assert.equal(countText(ui, "Task closing"), 1);
-    // This fixture has no decisions: Needs you names its empty Decisions section with a real zero.
+    // This fixture has no decisions: Needs you is one list with one empty state and a real zero.
     openView(ui, "Needs you");
-    assert.ok(ui.query("Decisions section, 0"), "the empty Decisions section keeps its real total");
-    assert.ok(ui.text().includes("Nothing here."));
+    assert.ok(ui.query("Needs you list"), "Needs you is one list");
+    assert.equal(ui.query(/ section, \d+$/), undefined, "Needs you has no section headers");
+    const needs = Number(String(ui.get(/^Needs you, \d+$/).props.accessibilityLabel).split(", ")[1]);
+    assert.equal(countText(ui, `${needs} items`), 1, "the list counts its real total");
+    assert.equal(ui.text().includes("Nothing here."), needs === 0, "an empty list says so, and a populated one does not");
     assert.equal(
       ui.query("Filter by project"),
       undefined,
@@ -844,14 +845,15 @@ async function verifyViewport(compact: boolean) {
       0,
       "the board holds no switch",
     );
-    // Leads split into leads and papercuts, each with the tag filter.
+    // Leads and Papercuts are menu entries of their own; only Leads has the tag filter (Tom, 2026-11-21).
     openView(ui, "Leads");
     await settleUntil(
       ui,
       () => countText(ui, "Lead one") === 1,
       "the Leads list did not render",
     );
-    assert.equal(countText(ui, "Cut one"), 0, "papercuts sit behind their own switch");
+    assert.equal(countText(ui, "Cut one"), 0, "papercuts sit in their own menu view");
+    assert.equal(ui.query(/^(Leads|Papercuts) tab, /), undefined, "no tab switch remains");
     for (const label of ["Promote", "Approve", "Drop", "Check again"])
       assert.equal(ui.query(label), undefined, `list rows render no ${label} button`);
     assert.equal(
@@ -861,14 +863,14 @@ async function verifyViewport(compact: boolean) {
       0,
       "no row action toolbar",
     );
-    ui.press("Filter leads by tag, All tags (2)");
-    ui.press("Filter leads by tag: Papercut (1)");
-    assert.equal(countText(ui, "Lead one"), 0);
-    leadsTab(ui, "Papercuts");
+    // The reserved papercut tag is not offered on Leads; the papercut list has no filter.
+    ui.press("Filter leads by tag, All tags (1)");
+    assert.equal(ui.query("Filter leads by tag: Papercut (1)"), undefined);
+    ui.press("Filter leads by tag: All tags (1)");
+    openView(ui, "Papercuts");
     assert.equal(countText(ui, "Cut one"), 1);
-    ui.press("Filter leads by tag, Papercut (1)");
-    ui.press("Filter leads by tag: All tags (2)");
-    leadsTab(ui, "Leads");
+    assert.equal(ui.query(/^Filter leads by tag/), undefined, "papercuts have no tag filter");
+    openView(ui, "Leads");
     assert.equal(countText(ui, "Lead one"), 1);
     ui.press("Triage: Lead one");
     await settleUntil(
@@ -887,7 +889,7 @@ async function verifyViewport(compact: boolean) {
     assertDarkTheme(ui);
     closeRecord(ui, "Close lead detail");
     assert.equal(ui.query("Lead detail"), undefined);
-    leadsTab(ui, "Papercuts");
+    openView(ui, "Papercuts");
     ui.press("Triage: Cut one");
     await settleUntil(
       ui,
@@ -1197,24 +1199,20 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
   const ui = mount(tree(MainSurface, false, rpc));
   try {
     await settle(ui);
-    // Needs you's Decisions section carries four agent decisions and one
-    // Nucleus-raised merge hold, without a separate navigation entry.
-    assert.ok(
-      ui.query("Decisions section, 5"),
-      "the Decisions section includes agent decisions and the escalated hold",
+    // Needs you is one list: four agent decisions and one Nucleus-raised merge hold, with the
+    // attention tasks after them. Each card names its kind; there are no section headers (Tom, 2026-11-21).
+    assert.equal(countText(ui, "Hold"), 1, "the escalated merge hold names its kind");
+    assert.equal(ui.query(/ section, \d+$/), undefined, "Needs you has no section headers");
+    const needsTotal = Number(
+      String(ui.get(/^Needs you, \d+$/).props.accessibilityLabel).split(", ")[1],
     );
-    const attentionCount = Number(
-      String(ui.get(/^Tasks needing attention section, \d+$/).props.accessibilityLabel).split(", ")[1],
-    );
-    assert.ok(
-      ui.query(`Needs you, ${5 + attentionCount}`),
-      `the menu counts both sections: ${navigationLabels(ui).join(" | ")}`,
-    );
+    assert.ok(needsTotal >= 5, `the menu counts every Needs you card: ${navigationLabels(ui).join(" | ")}`);
+    assert.equal(countText(ui, `${needsTotal} items`), 1, "the list header counts the same total");
     // A Triage lead card carries no decision chip any more (Tom, 2026-11-07): its card is title, kind, project and state.
     assert.equal(
       countAcross(ui, "Decision"),
-      7,
-      `the four decision cards plus chips on the linked shared, unlaned and Project-D cards; project selector:${ui
+      11,
+      `the four decision cards, each naming its kind, plus chips on the linked shared, unlaned and Project-D cards; project selector:${ui
         .all(/^Projects,/)
         .map((node) => node.props.accessibilityLabel)
         .join(", ")}; decisions: ${ui
@@ -1243,7 +1241,7 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
     assert.ok(ui.get("Keep"));
     assert.ok(
       ui.query(/^Decision: Where should this decision live\?/),
-      "a General decision is present in the Decisions section",
+      "a General decision is present under Needs you",
     );
     assert.equal(
       countText(ui, "General"),
@@ -1367,7 +1365,7 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       () => ui.query(/^Decision: Which branch do we cut\?/) === undefined,
       "the answered decision stayed on the board",
     );
-    assert.ok(ui.query("Decisions section, 4"), "the section count dropped");
+    assert.equal(countText(ui, `${needsTotal - 1} items`), 1, "the list count dropped");
     await settleUntil(
       ui,
       () => ui.text().includes("operator authority"),
@@ -1411,22 +1409,19 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       () => ui.query(/^Decision: Rename the lane\?/) === undefined,
       "the withdrawn decision stayed on the board",
     );
-    assert.ok(
-      ui.query("Decisions section, 3"),
-      "the section count dropped again",
-    );
+    assert.equal(countText(ui, `${needsTotal - 2} items`), 1, "the list count dropped again");
     closeRecord(ui, "Close decision detail");
     // The stale decision stays open on the board until a human withdraws it.
     assert.ok(ui.query(/^Decision: Still worth splitting\?/));
     assert.equal(countText(ui, "Stale"), 1);
     assert.equal(
       countAcross(ui, "Decision"),
-      3,
-      "the stale and General decision cards keep their chips, as does the linked Project-D task",
+      5,
+      "the stale and General decision cards keep their chips and kind labels, as does the linked Project-D task",
     );
     openView(ui, "Needs you");
     assertDarkTheme(ui);
-    // A specific project filter keeps General in the count and the Decisions section.
+    // A specific project filter keeps General and the held merge under Needs you.
     ui.press("Projects, All projects");
     assert.ok(ui.query("Project selector"));
     ui.press(/^Project App/);
@@ -1434,22 +1429,19 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       ui.get(/^Projects, /).props.accessibilityLabel,
       "Projects, App",
     );
-    assert.ok(
-      ui.query("Decisions section, 3"),
-      "the project filter count includes the remaining project decision, General and held merge",
+    assert.equal(
+      countText(ui, "Hold"),
+      1,
+      "the project filter keeps the held merge under Needs you",
     );
     assert.equal(
       countText(ui, "linked: project-d"),
       1,
       "the General task hint survives its linked project being filtered out",
     );
-    assert.equal(
-      ui
-        .ofType("View")
-        .find((node) => node.props.accessibilityLabel === "Decisions section, 3")?.props
-        .accessibilityLabel,
-      "Decisions section, 3",
-      "the Decisions section keeps General and the held merge under a specific project filter",
+    assert.ok(
+      ui.query("Needs you list"),
+      "the Needs you list keeps General and the held merge under a specific project filter",
     );
     assert.equal(
       ui.query(/^Decisions \(/),
@@ -1898,7 +1890,7 @@ test("026-15a bundled inbox records run each action and report in their detail",
       "drop result stayed out of the modal",
     );
     closeRecord(ui, "Close lead detail");
-    leadsTab(ui, "Papercuts");
+    openView(ui, "Papercuts");
     ui.press("Triage: Cut one");
     await settleUntil(
       ui,
@@ -2338,7 +2330,7 @@ for (const compact of [false, true]) {
       );
       assert.deepEqual(
         navigationLabels(ui),
-        ["Needs you", "Planning", "Leads", "Queue", "Active", "Working", "In review", "Closing"],
+        ["Needs you", "Planning", "Leads", "Papercuts", "Queue", "Active", "Working", "In review", "Closing"],
         "menu counts stay hidden until the board loads",
       );
       assertDarkTheme(ui);
@@ -2404,7 +2396,7 @@ for (const compact of [false, true]) {
       await settle(empty);
       assert.deepEqual(
         navigationLabels(empty),
-        ["Needs you, 0", "Planning", "Leads, 0", "Queue, 0", "Active, 0", "Working, 0", "In review, 0", "Closing, 0"],
+        ["Needs you, 0", "Planning", "Leads, 0", "Papercuts, 0", "Queue, 0", "Active, 0", "Working, 0", "In review, 0", "Closing, 0"],
         "every menu entry reads its real zero total",
       );
       assert.ok(empty.text().includes("Nothing here."), "an empty list says so");
@@ -2437,7 +2429,7 @@ for (const compact of [false, true]) {
     try {
       await settle(ui);
       openView(ui, "Queue");
-      assert.ok(ui.query("Queued section, 41"), "the list counts each card once");
+      assert.equal(countText(ui, "41 items"), 1, "the list counts each card once");
       assert.ok(ui.query("Queue, 41"), "and so does the menu");
       for (let index = 0; index < 40; index++)
         assert.equal(

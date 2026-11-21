@@ -90,6 +90,7 @@ export const BoardCard = React.memo(function BoardCard({
   selected,
   c,
   board = true,
+  kind,
   eyebrow,
   accessory,
   title,
@@ -103,6 +104,8 @@ export const BoardCard = React.memo(function BoardCard({
   selected: boolean;
   c: Colors;
   board?: boolean;
+  /** What the card is, drawn first in its eyebrow so a Needs you card says its kind (Tom, 2026-11-21). */
+  kind?: string;
   eyebrow: React.ReactNode;
   accessory?: React.ReactNode;
   title: React.ReactNode;
@@ -136,6 +139,20 @@ export const BoardCard = React.memo(function BoardCard({
             flex: 1,
           }}
         >
+          {kind && (
+            <Text
+              numberOfLines={1}
+              style={{
+                color: c.foreground,
+                fontSize: typeScale.metadata.fontSize,
+                fontWeight: "600",
+                letterSpacing: 0.4,
+                textTransform: "uppercase",
+              }}
+            >
+              {kind}
+            </Text>
+          )}
           {plainCardNode(eyebrow)}
         </View>
         {plainCardNode(accessory)}
@@ -483,6 +500,7 @@ export const TaskCard = React.memo(function TaskCard({
   decisionTitle,
   defaultHostId,
   projectBadge = null,
+  kind,
 }: {
   task: TaskSummary;
   selected: boolean;
@@ -490,6 +508,8 @@ export const TaskCard = React.memo(function TaskCard({
   prState?: "OPEN" | "CLOSED" | "MERGED";
   c: Colors;
   board?: boolean;
+  /** The kind label a Needs you card shows (Tom, 2026-11-21); other lists draw none. */
+  kind?: string;
   parked?: boolean;
   decisions?: boolean;
   decisionTitle?: string | null;
@@ -873,6 +893,7 @@ export const TaskCard = React.memo(function TaskCard({
       selected={selected}
       c={c}
       board={board}
+      kind={kind}
       eyebrow={
         <>
           {projectBadge ? (
@@ -1112,6 +1133,7 @@ export const DecisionCard = React.memo(function DecisionCard({
   onPress,
   c,
   board = true,
+  kind,
   linkedTaskProjects = [],
   linkedTaskLabels = [],
 }: {
@@ -1120,6 +1142,7 @@ export const DecisionCard = React.memo(function DecisionCard({
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  kind?: string;
   linkedTaskProjects?: string[];
   linkedTaskLabels?: string[];
 }) {
@@ -1139,6 +1162,7 @@ export const DecisionCard = React.memo(function DecisionCard({
       selected={selected}
       c={c}
       board={board}
+      kind={kind}
       eyebrow={
         <>
           <Icon name="Folder" size={12} color={c.foregroundMuted} />
@@ -1251,6 +1275,7 @@ function RaisedCard({
   onPress,
   c,
   board = true,
+  kind,
   actions,
 }: {
   task: TaskSummary;
@@ -1258,6 +1283,7 @@ function RaisedCard({
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  kind?: string;
   /** The operator's controls, drawn inside the row below the card's content. */
   actions?: React.ReactNode;
 }) {
@@ -1273,6 +1299,7 @@ function RaisedCard({
       selected={selected}
       c={c}
       board={board}
+      kind={kind}
       eyebrow={
         <>
           <Icon name="Folder" size={12} color={c.foregroundMuted} />
@@ -1347,6 +1374,7 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
   onPress,
   c,
   board = true,
+  kind,
   busy,
   onRelease,
   onKeep,
@@ -1356,6 +1384,7 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  kind?: string;
   busy: boolean;
   onRelease: () => void;
   onKeep: (reason: string) => void;
@@ -1373,6 +1402,7 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
         onPress={onPress}
         c={c}
         board={board}
+        kind={kind}
         actions={
           <View style={{ gap: space.xs }}>
             <View style={{ ...row, gap: space.xs }}>
@@ -1429,6 +1459,7 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   onPress,
   c,
   board = true,
+  kind,
   busy,
   onClose,
   onKeep,
@@ -1438,6 +1469,7 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  kind?: string;
   busy: boolean;
   onClose: () => void;
   onKeep: (reason: string) => void;
@@ -1451,6 +1483,7 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
         selected={selected}
         c={c}
         board={board}
+        kind={kind}
         eyebrow={
           <>
             <Icon name="Folder" size={12} color={c.foregroundMuted} />

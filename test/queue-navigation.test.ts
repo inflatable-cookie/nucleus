@@ -15,10 +15,10 @@ const settingsScreen = readFileSync(
   "utf8",
 );
 
-test("the menu is Needs you, Planning, Leads, Queue and Active with its three sections; QA runs is not a board view", () => {
+test("the menu is Needs you, Planning, Leads, Papercuts, Queue and Active with its three sections; QA runs is not a board view", () => {
   assert.deepEqual(
     inboxViews.map((view) => view.label),
-    ["Needs you", "Planning", "Leads", "Queue", "Active"],
+    ["Needs you", "Planning", "Leads", "Papercuts", "Queue", "Active"],
   );
   assert.deepEqual(
     activeSections.map((section) => section.label),

@@ -9,27 +9,20 @@ type Tree = {
 };
 
 const menuEntry = (name: string) => new RegExp(`^${name}(, \\d+)?$`);
-const PAPERCUTS_TAB = /^Papercuts tab, \d+$/;
-const LEADS_TAB = /^Leads tab, \d+$/;
-/** The list views, in menu order; Leads is read on both its tabs. */
-export const INBOX_LIST_VIEWS = ["Needs you", "Leads", "Queue", "Active"] as const;
+/** The list views, in menu order. Leads and Papercuts are menu entries of their own (Tom, 2026-11-21). */
+export const INBOX_LIST_VIEWS = ["Needs you", "Leads", "Papercuts", "Queue", "Active"] as const;
 
 /** Opens one menu view. */
 export function openView(tree: Tree, name: string): void {
   tree.press(menuEntry(name));
 }
 
-/** Visits each list view (Leads on both tabs) until `visit` returns true; returns whether one did. */
+/** Visits each list view until `visit` returns true; returns whether one did. */
 function eachView(tree: Tree, visit: () => boolean): boolean {
   for (const name of INBOX_LIST_VIEWS) {
     if (!tree.all(menuEntry(name)).length) continue;
     openView(tree, name);
     if (visit()) return true;
-    if (name === "Leads" && tree.all(PAPERCUTS_TAB).length) {
-      tree.press(PAPERCUTS_TAB);
-      if (visit()) return true;
-      tree.press(LEADS_TAB);
-    }
   }
   return false;
 }
