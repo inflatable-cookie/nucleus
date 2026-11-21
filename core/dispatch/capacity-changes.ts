@@ -53,12 +53,40 @@ import type { Store } from "../store/store";
 /** The durable record of applied changes; Queue-internal meta, never exported. */
 export const CAPACITY_CHANGE_LOG_META_KEY = "capacityChanges";
 
+/**
+ * The Paseo-era meta key for the host-call limit. Every write mirrors the
+ * canonical `hostCallLimit` here so a build that predates the rename reads the
+ * same bound; the canonical key is the authority (see `configuredHostCallLimit`).
+ */
+export const LEGACY_HOST_CALL_LIMIT_META_KEY = "paseoCallLimit";
+
+/** What `apply` accepts: the canonical limit names, and the legacy `paseoCallLimit` alias. */
+export type CapacityWriteInput = Partial<CapacityAuthorityValues> & {
+  paseoCallLimit?: number;
+};
+
+/**
+ * A record entry written before the rename names `paseoCallLimit` in its before
+ * and after states. It is read under `hostCallLimit` so the applied-change history
+ * survives the roll; nothing is rewritten in the store.
+ */
+function canonicalChangeEntry(entry: unknown): unknown {
+  if (!entry || typeof entry !== "object") return entry;
+  const side = (state: unknown) => {
+    if (!state || typeof state !== "object") return state;
+    const { paseoCallLimit, ...rest } = state as Record<string, unknown>;
+    return { ...rest, hostCallLimit: rest.hostCallLimit ?? paseoCallLimit };
+  };
+  const change = entry as Record<string, unknown>;
+  return { ...change, before: side(change.before), after: side(change.after) };
+}
+
 /** The capacity meta keys, in the order every reader and record names them. */
 export const CAPACITY_AUTHORITY_KEYS = [
   "globalLimit",
   "projectLimit",
   "papercutProjectLimit",
-  "paseoCallLimit",
+  "hostCallLimit",
   "stallThresholdMinutes",
   "holdReminderMinutes",
   "holdEscalationMinutes",
@@ -80,7 +108,7 @@ export function capacityAuthorityEffective(
     papercutProjectLimit:
       store.getMeta<number>("papercutProjectLimit") ??
       DEFAULT_PAPERCUT_PROJECT_LIMIT,
-    paseoCallLimit: store.configuredPaseoCallLimit(),
+    hostCallLimit: store.configuredHostCallLimit(),
     stallThresholdMinutes:
       store.getMeta<number>("stallThresholdMinutes") ??
       DEFAULT_STALL_THRESHOLD_MINUTES,
@@ -138,11 +166,26 @@ export class CapacityChangeJournal {
    * older caller never resets a limit it does not know about.
    */
   apply(
-    input: Partial<CapacityAuthorityValues>,
+    input: CapacityWriteInput,
     surface: CapacityWriteSurface = CAPACITY_WRITE_SURFACE,
   ): CapacityWriteResult {
+    // One authoritative value per write: the legacy alias may stand in for the
+    // canonical name, but two different values in one write are refused, not
+    // guessed between.
+    const { paseoCallLimit: legacyHostCallLimit, ...named } = input;
+    if (
+      legacyHostCallLimit !== undefined &&
+      named.hostCallLimit !== undefined &&
+      legacyHostCallLimit !== named.hostCallLimit
+    )
+      throw new Error(
+        `hostCallLimit (${named.hostCallLimit}) and the legacy paseoCallLimit (${legacyHostCallLimit}) disagree; send one value`,
+      );
     const supplied = Object.fromEntries(
-      Object.entries(input).filter(([, value]) => value !== undefined),
+      Object.entries({
+        ...named,
+        hostCallLimit: named.hostCallLimit ?? legacyHostCallLimit,
+      }).filter(([, value]) => value !== undefined),
     );
     for (const key of Object.keys(supplied)) {
       if (!(CAPACITY_AUTHORITY_KEYS as readonly string[]).includes(key))
@@ -175,6 +218,7 @@ export class CapacityChangeJournal {
       });
       for (const key of CAPACITY_AUTHORITY_KEYS)
         this.store.setMeta(key, after[key]);
+      this.store.setMeta(LEGACY_HOST_CALL_LIMIT_META_KEY, after.hostCallLimit);
       this.store.setMeta(
         CAPACITY_CHANGE_LOG_META_KEY,
         [...log, change].slice(-CAPACITY_CHANGE_LOG_LIMIT),
@@ -202,7 +246,7 @@ export class CapacityChangeJournal {
     if (!Array.isArray(raw)) return [];
     const changes: CapacityChange[] = [];
     for (const entry of raw) {
-      const parsed = capacityChangeSchema.safeParse(entry);
+      const parsed = capacityChangeSchema.safeParse(canonicalChangeEntry(entry));
       if (parsed.success) changes.push(parsed.data);
     }
     return changes.slice(-CAPACITY_CHANGE_LOG_LIMIT);

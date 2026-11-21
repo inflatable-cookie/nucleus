@@ -97,7 +97,7 @@ test('host environment gate rejects planted core literals and confines each host
   assert.deepEqual(hostEnvironmentNames('hosts/paseo/environment.mjs', "const id = process.env.PASEO_AGENT_ID;"), []);
   assert.deepEqual(hostEnvironmentNames('hosts/t3code/environment.mjs', "const id = process.env.T3_THREAD_ID;"), []);
   assert.deepEqual(hostEnvironmentNames('hosts/paseo/environment.mjs', "const id = process.env.T3_THREAD_ID;"), ['T3_THREAD_ID']);
-  assert.deepEqual(hostEnvironmentNames('core/constants.ts', 'const MAX_PASEO_CALL_LIMIT = 4; const value = MAX_PASEO_CALL_LIMIT;'), []);
+  assert.deepEqual(hostEnvironmentNames('core/constants.ts', 'const MAX_HOST_CALL_LIMIT = 4; const value = MAX_HOST_CALL_LIMIT;'), []);
   assert.deepEqual(hostEnvironmentNames('core/escaped.ts', "const key = 'PASEO_\\u0041GENT_ID';"), ['PASEO_AGENT_ID']);
   assert.deepEqual(hostEnvironmentNames('core/env.ts', '// PASEO_AGENT_ID must stay in its host\nconst x = { PASEO_HOME: "x" };'), ['PASEO_AGENT_ID', 'PASEO_HOME']);
 });

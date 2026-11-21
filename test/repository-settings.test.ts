@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   capacitySchema,
-  DEFAULT_PASEO_CALL_LIMIT,
+  DEFAULT_HOST_CALL_LIMIT,
   DEFAULT_PROCESS_TERMINATION_GRACE_MS,
   DEFAULT_REPOSITORY_CHECKS_POLICY,
   projectDispatchLimitSchema,
@@ -648,7 +648,7 @@ test("Settings-only capacity writes apply and record the change, refuse every ot
     globalLimit: 20,
     projectLimit: 4,
     papercutProjectLimit: 3,
-    paseoCallLimit: 12,
+    hostCallLimit: 12,
     stallThresholdMinutes: 50,
     holdReminderMinutes: 90,
     holdEscalationMinutes: 180,
@@ -660,11 +660,11 @@ test("Settings-only capacity writes apply and record the change, refuse every ot
   };
   try {
     assert.equal(
-      runtime.store.configuredPaseoCallLimit(),
-      DEFAULT_PASEO_CALL_LIMIT,
+      runtime.store.configuredHostCallLimit(),
+      DEFAULT_HOST_CALL_LIMIT,
       "the default is sized to Paseo interactive capacity",
     );
-    assert.equal(runtime.admission.totalLimit, DEFAULT_PASEO_CALL_LIMIT);
+    assert.equal(runtime.admission.totalLimit, DEFAULT_HOST_CALL_LIMIT);
     // Every setting the change does not own, written before the capacity write.
     const project = runtime.store.ensureProject(
       "/fixture/project-a",
@@ -726,7 +726,7 @@ test("Settings-only capacity writes apply and record the change, refuse every ot
         meta,
         availability: runtime.store.availability(),
         overrides: runtime.store.projectDispatchLimitOverrides(),
-        paseo: runtime.store.configuredPaseoCallLimit(),
+        paseo: runtime.store.configuredHostCallLimit(),
         operation: runtime.store.configuredOperationLimit(),
         revision: runtime.store.telemetryRevision(),
       };
@@ -838,7 +838,7 @@ test("Settings-only capacity writes apply and record the change, refuse every ot
     assert.deepEqual(second.changes[1]!.before, change.after);
     assert.equal(second.changes[1]!.after.globalLimit, 21);
     assert.equal(
-      second.changes[1]!.after.paseoCallLimit,
+      second.changes[1]!.after.hostCallLimit,
       12,
       "an omitted field keeps its value",
     );
@@ -849,7 +849,7 @@ test("Settings-only capacity writes apply and record the change, refuse every ot
         capacitySchema.safeParse({
           globalLimit: 24,
           projectLimit: 4,
-          paseoCallLimit: value,
+          hostCallLimit: value,
         }).success,
         true,
         String(value),
@@ -859,7 +859,7 @@ test("Settings-only capacity writes apply and record the change, refuse every ot
         capacitySchema.safeParse({
           globalLimit: 24,
           projectLimit: 4,
-          paseoCallLimit: value,
+          hostCallLimit: value,
         }).success,
         false,
         String(value),
@@ -915,7 +915,7 @@ test("a store still carrying the retired applied capacity record keeps the Setti
       globalLimit: 9,
       projectLimit: 2,
       papercutProjectLimit: 2,
-      paseoCallLimit: 6,
+      hostCallLimit: 6,
       stallThresholdMinutes: 30,
       holdReminderMinutes: 120,
       holdEscalationMinutes: 240,

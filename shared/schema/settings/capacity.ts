@@ -26,11 +26,15 @@ export const DEFAULT_UNCERTAIN_MERGE_RETRY_MS = 2 * 60 * 1000;
 /** The proof/reconciliation window cannot be configured beyond this operator-attention bound. */
 export const UNCERTAIN_MERGE_PROOF_TIMEOUT_MS = 30 * 60 * 1000;
 
-// The Paseo-call bound is an operator setting beside the dispatch limits (Spec 012):
-// the total concurrent calls Queue makes to the Paseo daemon. There is no global lane cap.
-export const DEFAULT_PASEO_CALL_LIMIT = 6;
+// The host-call bound is an operator setting beside the dispatch limits (Spec 012):
+// the concurrent calls Queue makes to each host (Paseo, T3 Code, BB). It is a
+// ceiling per host, not a total across hosts, and there is no global lane cap.
+// Saved as `hostCallLimit`; the Paseo-era `paseoCallLimit` is a legacy alias read
+// only at the write boundary and as a mirror for older readers (see the
+// service-boundary contract, "Host-call limit").
+export const DEFAULT_HOST_CALL_LIMIT = 6;
 
-export const MAX_PASEO_CALL_LIMIT = 32;
+export const MAX_HOST_CALL_LIMIT = 32;
 
 // Mid-turn stall threshold (Queue reliability): minutes of no agent activity
 // while Paseo still reports the run running before Queue routes it to recovery.
@@ -78,10 +82,10 @@ export const capacityBounds = {
     max: 32,
     fallback: DEFAULT_PAPERCUT_PROJECT_LIMIT,
   },
-  paseoCallLimit: {
+  hostCallLimit: {
     min: 1,
-    max: MAX_PASEO_CALL_LIMIT,
-    fallback: DEFAULT_PASEO_CALL_LIMIT,
+    max: MAX_HOST_CALL_LIMIT,
+    fallback: DEFAULT_HOST_CALL_LIMIT,
   },
   stallThresholdMinutes: {
     min: 1,
@@ -136,7 +140,11 @@ export const capacitySchema = z
     projectLimit: z.number().int().min(1).max(32),
     // Optional so an older caller saving one group never resets the others.
     papercutProjectLimit: capacityValue("papercutProjectLimit").optional(),
-    paseoCallLimit: capacityValue("paseoCallLimit").optional(),
+    hostCallLimit: capacityValue("hostCallLimit").optional(),
+    // Legacy alias for `hostCallLimit`, from before the limit was host-neutral. An
+    // older caller's write still lands; both names in one write must agree, and
+    // the write boundary refuses a disagreement (see the journal's apply).
+    paseoCallLimit: capacityValue("hostCallLimit").optional(),
     stallThresholdMinutes: capacityValue("stallThresholdMinutes").optional(),
     holdReminderMinutes: capacityValue("holdReminderMinutes").optional(),
     holdEscalationMinutes: capacityValue("holdEscalationMinutes").optional(),
@@ -158,18 +166,21 @@ export const capacitySchema = z
  * required and bounded exactly like `capacitySchema`, because an applied change
  * is recorded as a whole before-and-after state, never as a patch.
  */
-export const capacityAuthorityValuesSchema = capacitySchema.extend({
-  papercutProjectLimit: capacityValue("papercutProjectLimit"),
-  paseoCallLimit: capacityValue("paseoCallLimit"),
-  stallThresholdMinutes: capacityValue("stallThresholdMinutes"),
-  holdReminderMinutes: capacityValue("holdReminderMinutes"),
-  holdEscalationMinutes: capacityValue("holdEscalationMinutes"),
-  laneDrainMinutes: capacityValue("laneDrainMinutes"),
-  laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes"),
-  hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes"),
-  threadRetentionDays: capacityValue("threadRetentionDays"),
-  operatorDefaultHostKind: hostKindSchema.nullable(),
-});
+// The applied state never carries the legacy alias: one name, one value.
+export const capacityAuthorityValuesSchema = capacitySchema
+  .omit({ paseoCallLimit: true })
+  .extend({
+    papercutProjectLimit: capacityValue("papercutProjectLimit"),
+    hostCallLimit: capacityValue("hostCallLimit"),
+    stallThresholdMinutes: capacityValue("stallThresholdMinutes"),
+    holdReminderMinutes: capacityValue("holdReminderMinutes"),
+    holdEscalationMinutes: capacityValue("holdEscalationMinutes"),
+    laneDrainMinutes: capacityValue("laneDrainMinutes"),
+    laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes"),
+    hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes"),
+    threadRetentionDays: capacityValue("threadRetentionDays"),
+    operatorDefaultHostKind: hostKindSchema.nullable(),
+  });
 
 export type CapacityAuthorityValues = z.infer<
   typeof capacityAuthorityValuesSchema
@@ -184,8 +195,8 @@ export const capacityStateFields = {
   papercutProjectLimit: capacityValue("papercutProjectLimit").default(
     capacityBounds.papercutProjectLimit.fallback,
   ),
-  paseoCallLimit: capacityValue("paseoCallLimit").default(
-    capacityBounds.paseoCallLimit.fallback,
+  hostCallLimit: capacityValue("hostCallLimit").default(
+    capacityBounds.hostCallLimit.fallback,
   ),
   stallThresholdMinutes: capacityValue("stallThresholdMinutes").default(
     capacityBounds.stallThresholdMinutes.fallback,

@@ -27,7 +27,7 @@ import * as api from "../shared/contracts";
 import {
   MAX_HOLD_MINUTES,
   MAX_HOST_OUTAGE_NOTICE_MINUTES,
-  MAX_PASEO_CALL_LIMIT,
+  MAX_HOST_CALL_LIMIT,
   MAX_STALL_THRESHOLD_MINUTES,
   MAX_THREAD_RETENTION_DAYS,
   usageLevels,
@@ -369,7 +369,7 @@ const CAPACITY_FIELD_LABELS: Record<keyof api.CapacityAuthorityValues, string> =
     globalLimit: "Global",
     projectLimit: "Per project",
     papercutProjectLimit: "Papercuts",
-    paseoCallLimit: "Paseo calls",
+    hostCallLimit: "Concurrent host calls",
     stallThresholdMinutes: "Stall threshold",
     holdReminderMinutes: "Hold reminder",
     holdEscalationMinutes: "Hold escalation",
@@ -389,17 +389,20 @@ type LimitSpec = {
   max: number;
   unit: "slots" | "calls" | "minutes" | "days";
   advanced?: true;
+  /** Explained under a (?) beside the label, for a limit whose meaning the label cannot carry. */
+  help?: string;
 };
 const CAPACITY_FIELDS: LimitSpec[] = [
   { key: "globalLimit", min: 1, max: 64, unit: "slots" },
   { key: "projectLimit", min: 1, max: 32, unit: "slots" },
   { key: "papercutProjectLimit", min: 1, max: 32, unit: "slots" },
   {
-    key: "paseoCallLimit",
+    key: "hostCallLimit",
     min: 1,
-    max: MAX_PASEO_CALL_LIMIT,
+    max: MAX_HOST_CALL_LIMIT,
     unit: "calls",
     advanced: true,
+    help: "A ceiling for each host, not a total across hosts: Paseo, T3 Code and BB each run up to this many calls at once, and each keeps its own count.",
   },
   {
     key: "stallThresholdMinutes",
@@ -566,6 +569,7 @@ function TaskSlots({
         stacked={spec.advanced}
         c={c}
         label={name}
+        help={spec.help}
         a11yLabel={`${name} dispatch limit (${spec.unit}, ${spec.min}–${spec.max})`}
         value={draft}
         min={spec.min}

@@ -319,7 +319,7 @@ effect.
 
 `queue.capacity` takes nine bounded numbers (`capacitySchema`,
 `shared/contracts.ts`) and no caller claim. `RuntimeOwner.configureCapacity`
-writes the global, project, papercut-project, Paseo-call, stall-threshold, hold
+writes the global, project, papercut-project, host-call, stall-threshold, hold
 and lane-drain meta keys in one transaction. The scheduler, admission
 controller, stall detector and timers read them live, so one write changes
 admission for every project without a restart. Owner verbs
@@ -344,8 +344,8 @@ refuse with a clear message, every applied change is recorded, and nothing needs
 a privileged install.
 
 - **Settings writes.** Settings → Dispatch limits saves all nine limits (global,
-  per project, papercuts per project, Paseo calls, stall threshold, hold reminder
-  and escalation, lane drain and escalation) as they change. No document,
+  per project, papercuts per project, concurrent host calls, stall threshold, hold
+  reminder and escalation, lane drain and escalation) as they change. No document,
   root-owned writer or host prerequisite exists.
 - **Provenance comes from the transport.** The bridge sets
   `ServiceRequest.via: "paseo"` on the frame it forwards
@@ -372,6 +372,25 @@ a privileged install.
 - **A no-op is a no-op.** Saving the values in force writes nothing, spends no
   version and advances no revision, and still answers `{ok: true}`. A refused or
   invalid call records nothing.
+- **Host-call limit (nucleus#1478).** The concurrent-call ceiling is
+  `hostCallLimit` (default 6, 1–32) and it is a ceiling per host: Paseo, T3 Code
+  and BB each run up to that many calls at once and each keeps its own admission
+  partition, so no host draws on another's share. Settings labels it "Concurrent
+  host calls" and says the ceiling is per host under a (?). The canonical meta key
+  is `hostCallLimit`, read through `configuredHostCallLimit()`. The Paseo-era name
+  `paseoCallLimit` is a compatibility boundary only: a write may carry it as an
+  alias, and two different values for the two names in one write refuse the whole
+  write. Every write mirrors the value to the `paseoCallLimit` meta key, so a build
+  from before the rename reads the same bound after a roll back. Once
+  `hostCallLimit` has been saved it is the only authority; a stale mirror never
+  overrides it. A store saved only under the old name keeps its value, and its
+  first write saves the canonical key. Applied-change records written under the old
+  names read under `hostCallLimit` without rewriting the store, so the history is
+  kept. The board state and `queue.capacity-state` name the field `hostCallLimit`
+  only. An older Settings client that still sends `paseoCallLimit` is accepted; a
+  newer client against an older build is refused by that build's strict input
+  schema, with nothing changed. Mixed-version reads of the board are not a
+  supported interface: the plugin and the service roll together.
 - **The read.** `queue.capacity-state` takes no input and returns the values in
   force and the recorded changes, newest last. Reading never writes. The log is
   kept and read here, by the CLI and agents; Settings has no view of it (Tom,
@@ -1114,8 +1133,8 @@ authorizes a fleet scan or delivery.
 
 The service coalesces equivalent observations and title updates by identity and
 limits concurrent and per-window SDK requests through admission classes (total
-concurrent calls is the Paseo-call limit, default 6, 1–32, applied without
-restart); workspace creation and archive have explicit admission. A coalesced
+concurrent calls to each host is the host-call limit (`hostCallLimit`, default 6,
+1–32, per host, applied without restart); workspace creation and archive have explicit admission. A coalesced
 observation's identity carries the observation epoch that every invalidation
 bumps, so a read that starts after a send never joins the stale pre-send read
 still in flight before it, and a read that straddles an invalidation caches

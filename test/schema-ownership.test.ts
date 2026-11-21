@@ -14,8 +14,8 @@ import {
   reviewEntryInputSchema,
   submissionSchema,
   taskSchema,
-  DEFAULT_PASEO_CALL_LIMIT,
-  MAX_PASEO_CALL_LIMIT,
+  DEFAULT_HOST_CALL_LIMIT,
+  MAX_HOST_CALL_LIMIT,
   RETAINED_WORKER_PROFILE_REASON,
   isRetainedProfileReason,
   retainedProfileReason,
@@ -143,7 +143,7 @@ test("the capacity catalogue is the only place a limit is bounded and defaulted"
     "globalLimit",
     "projectLimit",
     "papercutProjectLimit",
-    "paseoCallLimit",
+    "hostCallLimit",
     "stallThresholdMinutes",
     "holdReminderMinutes",
     "holdEscalationMinutes",
@@ -155,18 +155,18 @@ test("the capacity catalogue is the only place a limit is bounded and defaulted"
   ]);
   // An absent field keeps the catalogue's default, and the bound is the catalogue's.
   assert.equal(
-    capacityStateFields.paseoCallLimit.parse(undefined),
-    DEFAULT_PASEO_CALL_LIMIT,
+    capacityStateFields.hostCallLimit.parse(undefined),
+    DEFAULT_HOST_CALL_LIMIT,
   );
   assert.equal(
-    capacityStateFields.paseoCallLimit.parse(MAX_PASEO_CALL_LIMIT),
-    MAX_PASEO_CALL_LIMIT,
+    capacityStateFields.hostCallLimit.parse(MAX_HOST_CALL_LIMIT),
+    MAX_HOST_CALL_LIMIT,
   );
   assert.throws(() =>
     capacitySchema.parse({
       globalLimit: 1,
       projectLimit: 1,
-      paseoCallLimit: capacityBounds.paseoCallLimit.max + 1,
+      hostCallLimit: capacityBounds.hostCallLimit.max + 1,
     }),
   );
   // A settings write is the whole state: every bounded limit is required, not patched.

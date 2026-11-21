@@ -2582,8 +2582,8 @@ export class Store {
   configuredOperationLimit(): number {
     return this.operationsStore.configuredOperationLimit();
   }
-  configuredPaseoCallLimit(): number {
-    return this.operationsStore.configuredPaseoCallLimit();
+  configuredHostCallLimit(): number {
+    return this.operationsStore.configuredHostCallLimit();
   }
   putOperation(operation: QueueOperation, payload?: unknown): QueueOperation {
     return this.operationsStore.putOperation(operation, payload);

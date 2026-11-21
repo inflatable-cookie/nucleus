@@ -80,7 +80,7 @@ test("slow observation, title and archive-thread calls still trip the breaker", 
   assert.equal(f.backpressure().degraded, false, "two slow calls are a warning, not a trip");
   await f.adapter.observe!("z");
   assert.equal(f.backpressure().degraded, true);
-  assert.match(f.backpressure().reason, /3 slow critical Paseo calls in 60s: observation 10000 ms, observation 10000 ms, observation 10000 ms/);
+  assert.match(f.backpressure().reason, /3 slow critical host calls in 60s: observation 10000 ms, observation 10000 ms, observation 10000 ms/);
   assert.equal(f.admission.workspaceAdmission(0).admitted, false, "a genuinely slow Paseo still defers new workspaces");
   // An archive thread answers in under a second; its slowness is still Paseo's.
   const threads = fixture();

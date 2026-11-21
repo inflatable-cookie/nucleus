@@ -38,7 +38,7 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const base = 'b'.repeat(40);
 
 const CAPACITY = {
-  globalLimit: 7, projectLimit: 3, papercutProjectLimit: 2, paseoCallLimit: 9,
+  globalLimit: 7, projectLimit: 3, papercutProjectLimit: 2, hostCallLimit: 9,
   stallThresholdMinutes: 5, holdReminderMinutes: 90, holdEscalationMinutes: 150,
   laneDrainMinutes: 45, laneDrainEscalationMinutes: 75, hostOutageNoticeMinutes: 120, operatorDefaultHostKind: "paseo",
 } as const;
@@ -136,7 +136,7 @@ async function liveView(dataDir: string) {
       paused: state.paused,
       limits: {
         globalLimit: state.globalLimit, projectLimit: state.projectLimit, papercutProjectLimit: state.papercutProjectLimit,
-        paseoCallLimit: state.paseoCallLimit, stallThresholdMinutes: state.stallThresholdMinutes,
+        hostCallLimit: state.hostCallLimit, stallThresholdMinutes: state.stallThresholdMinutes,
         holdReminderMinutes: state.holdReminderMinutes, holdEscalationMinutes: state.holdEscalationMinutes,
         laneDrainMinutes: state.laneDrainMinutes, laneDrainEscalationMinutes: state.laneDrainEscalationMinutes,
         hostOutageNoticeMinutes: state.hostOutageNoticeMinutes,

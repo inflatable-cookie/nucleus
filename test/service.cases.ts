@@ -659,7 +659,7 @@ function lostDelivery(socketPath: string, payload: unknown): Promise<void> {
 }
 
 /** The whole dispatch-limit state a Settings write carries. */
-const CAPACITY_STATE = { globalLimit: 20, projectLimit: 4, papercutProjectLimit: 2, paseoCallLimit: 6,
+const CAPACITY_STATE = { globalLimit: 20, projectLimit: 4, papercutProjectLimit: 2, hostCallLimit: 6,
   stallThresholdMinutes: 30, holdReminderMinutes: 120, holdEscalationMinutes: 240,
   laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120, operatorDefaultHostKind: "paseo" };
 interface CapacityStateView {
@@ -778,8 +778,8 @@ test('Settings-only capacity: every other surface refuses with zero mutation, an
     const refusals = [
       client.request('queue.capacity', { globalLimit: 24, projectLimit: 4 }),
       client.request('queue.capacity', { globalLimit: 24, projectLimit: 4 }),
-      client.request('queue.capacity', { globalLimit: 24, projectLimit: 4, papercutProjectLimit: 3, paseoCallLimit: 6 }),
-      taskClient.request('queue.capacity', { globalLimit: 64, projectLimit: 32, papercutProjectLimit: 32, paseoCallLimit: 32,
+      client.request('queue.capacity', { globalLimit: 24, projectLimit: 4, papercutProjectLimit: 3, hostCallLimit: 6 }),
+      taskClient.request('queue.capacity', { globalLimit: 64, projectLimit: 32, papercutProjectLimit: 32, hostCallLimit: 32,
         stallThresholdMinutes: 240, holdReminderMinutes: 10080, holdEscalationMinutes: 10080, laneDrainMinutes: 10080, laneDrainEscalationMinutes: 10080, hostOutageNoticeMinutes: 10080, operatorDefaultHostKind: "paseo" }),
       taskClient.request('queue.capacity', { globalLimit: 1, projectLimit: 1 }),
     ];

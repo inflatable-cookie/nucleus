@@ -176,10 +176,10 @@ test('degraded admission defers new workspaces, and clears after bounded healthy
   assert.equal(admission.degradedNow, false);
   await slowObserve();
   assert.equal(admission.degradedNow, true, 'three slow observations within a minute trip degraded admission');
-  assert.match(admission.snapshot().backpressure.reason, /3 slow critical Paseo calls.*observation 22000 ms/);
+  assert.match(admission.snapshot().backpressure.reason, /3 slow critical host calls.*observation 22000 ms/);
   const deferred = admission.workspaceAdmission(0);
   assert.equal(deferred.admitted, false);
-  if (!deferred.admitted) assert.match(deferred.reason, /Paseo admission breaker.*re-check after/);
+  if (!deferred.admitted) assert.match(deferred.reason, /Host admission breaker.*re-check after/);
   // Nonessential workspace mutation (titles) is deferred while degraded.
   assert.equal(admissionOf(admitAdapter(fakeAdapter(), admission)) !== null, true);
 
@@ -288,7 +288,7 @@ test('degraded admission defers one workspace intent and resumes it after bounde
     assert.equal(deferred.phase, 'queued', 'a deferred creation leaves the task visibly queued');
     assert.equal(deferred.workspaceIntent, false, 'no durable creation intent was recorded while deferred');
     // The wait is derived when read, so a queued task takes no durable write for it.
-    assert.match(engine.queuedExternalWait(deferred), /Paseo admission breaker.*re-check after/);
+    assert.match(engine.queuedExternalWait(deferred), /Host admission breaker.*re-check after/);
     assert.equal(workspaces, 0, 'no workspace was created while Paseo was degraded');
     assert.equal(admission.snapshot().workspaceDeferrals >= 1, true);
 

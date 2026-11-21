@@ -74,7 +74,7 @@ const CAPACITY_LIMITS = {
   globalLimit: 32,
   projectLimit: 5,
   papercutProjectLimit: 2,
-  paseoCallLimit: 6,
+  hostCallLimit: 6,
   stallThresholdMinutes: 30,
   holdReminderMinutes: 120,
   holdEscalationMinutes: 240,
@@ -773,7 +773,7 @@ test("dark bundled Dispatch limits: three task slots first, Advanced reveals six
       "Advanced starts collapsed",
     );
     assert.equal(
-      ui.query("Paseo calls dispatch limit (calls, 1–32)"),
+      ui.query("Concurrent host calls dispatch limit (calls, 1–32)"),
       undefined,
       "a collapsed Advanced hides its fields",
     );
@@ -810,7 +810,7 @@ test("dark bundled Dispatch limits: three task slots first, Advanced reveals six
       "the revealer announces its expanded state",
     );
     for (const [label, value] of [
-      ["Paseo calls dispatch limit (calls, 1–32)", "6"],
+      ["Concurrent host calls dispatch limit (calls, 1–32)", "6"],
       ["Stall threshold dispatch limit (minutes, 1–240)", "30"],
       ["Hold reminder dispatch limit (minutes, 1–10080)", "120"],
       ["Hold escalation dispatch limit (minutes, 1–10080)", "240"],

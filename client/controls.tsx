@@ -210,12 +210,12 @@ const fieldBox = (c: Colors, focused: boolean, multiline = false, invalid = fals
  * value may be null: the field is empty and shows `placeholder` (an inherited
  * value) in the muted colour; − and + step from it, and emptying the field clears.
  */
-export function NumberStepper({ c, a11yLabel, value, min, max, onChange, onCommit, onClear, placeholder, label, card = false, stacked = false, format, unit, disabled = false, decreaseLabel, increaseLabel, style, children }: {
+export function NumberStepper({ c, a11yLabel, value, min, max, onChange, onCommit, onClear, placeholder, label, help, card = false, stacked = false, format, unit, disabled = false, decreaseLabel, increaseLabel, style, children }: {
   c: Colors; a11yLabel: string; /** Null only with `onClear`: empty, showing `placeholder`. */ value: number | null; min: number; max: number; onChange: (value: number) => void;
   /** Emptying the field clears the value (an inherited setting); without it an empty field restores the value. */ onClear?: () => void;
   /** The value in force while empty, shown muted. */ placeholder?: number;
   /** Typing ended (blur or Enter): flush a pending save. */ onCommit?: () => void;
-  label?: string; card?: boolean; /** The label on its own line, the control below it. */ stacked?: boolean; /** How the number reads at rest, e.g. a signed offset. */ format?: (value: number) => string;
+  label?: string; /** Explained under a (?) beside the label, for a value whose meaning the label cannot carry. */ help?: string; card?: boolean; /** The label on its own line, the control below it. */ stacked?: boolean; /** How the number reads at rest, e.g. a signed offset. */ format?: (value: number) => string;
   /** A unit word after the control, e.g. "min". */ unit?: string; disabled?: boolean; decreaseLabel?: string; increaseLabel?: string;
   style?: ViewStyle; /** Shown under the row, inside the card: a note such as the value in force. */ children?: React.ReactNode;
 }) {
@@ -271,14 +271,26 @@ export function NumberStepper({ c, a11yLabel, value, min, max, onChange, onCommi
   if (!label && !card && !children) return style ? <View style={style}>{stepper}</View> : stepper;
   return <View style={{ ...(card ? { ...sectionCard(c), flexGrow: 1, flexBasis: 200 } : {}), gap: space.xxs, ...style }}>
     {stacked ? <>
-      {label && <Text style={{ color: r.foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight }}>{label}</Text>}
+      {label && <StepperLabel c={c} label={label} help={help} />}
       <View style={{ flexDirection: "row", justifyContent: "flex-start" }}>{stepper}</View>
     </> : <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: space.xs }}>
       {/* The label keeps its words whole: it never shrinks below its own width, so a tight card wraps the control instead. */}
-      {label && <Text style={{ color: r.foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight, flexGrow: 1, flexShrink: 0, maxWidth: "100%" }}>{label}</Text>}
+      {label && <StepperLabel c={c} label={label} help={help} inline />}
       <View style={{ marginLeft: "auto" }}>{stepper}</View>
     </View>}
     {children}
+  </View>;
+}
+/** A stepper's label, with its (?) explanation beside it when the field needs one. */
+function StepperLabel({ c, label, help, inline = false }: { c: Colors; label: string; help?: string; inline?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<View | null>(null);
+  const text = <Text style={{ color: roles(c).foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight, ...(inline ? { flexGrow: 1, flexShrink: 0, maxWidth: "100%" } : {}) }}>{label}</Text>;
+  if (!help) return text;
+  return <View ref={anchor} style={{ ...row, flexWrap: "nowrap", ...(inline ? { flexGrow: 1, flexShrink: 0, maxWidth: "100%" } : {}) }}>
+    {text}
+    <HelpTip c={c} label={label} text={help} open={open} onOpenChange={setOpen} />
+    {open && <HelpPopover c={c} anchor={anchor} label={label} text={help} />}
   </View>;
 }
 /**

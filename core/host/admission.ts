@@ -32,7 +32,7 @@ export interface AdmissionOptions {
   limits?: Partial<Record<AdmissionClass, number>>;
   /** Total in-flight bound across every class. A function is read live, so an operator change applies without a restart. */
   totalLimit?: number | (() => number);
-  /** Minimum delay between starts across all Paseo calls. */
+  /** Minimum delay between starts across one host's calls. */
   startIntervalMs?: number;
   /** Stable-idle observation cache window; defaults to two seconds. */
   observationCacheMs?: number;
@@ -126,10 +126,19 @@ export class AdmissionDeferred extends Error {
   }
 }
 /** Prefix of a breaker deferral, as stored in a durable retry record's reason. */
-export const BACKPRESSURE_DEFERRAL = "Paseo admission backpressure: ";
-/** A stored retry reason that records only a breaker deferral: no call reached Paseo. */
+export const BACKPRESSURE_DEFERRAL = "Host admission backpressure: ";
+/**
+ * The prefix before the admission was shared by every host (Paseo-only wording).
+ * Retry records written under it are still deferrals: a roll must not turn a
+ * stored wait into a failed archive attempt.
+ */
+export const LEGACY_PASEO_BACKPRESSURE_DEFERRAL = "Paseo admission backpressure: ";
+/** A stored retry reason that records only a breaker deferral: no call reached the host. */
 export const isBackpressureDeferral = (reason: string | null | undefined) =>
-  Boolean(reason?.startsWith(BACKPRESSURE_DEFERRAL));
+  Boolean(
+    reason?.startsWith(BACKPRESSURE_DEFERRAL) ||
+      reason?.startsWith(LEGACY_PASEO_BACKPRESSURE_DEFERRAL),
+  );
 
 interface CacheEntry {
   at: number;
@@ -362,7 +371,7 @@ export class Admission {
   private readonly limits: Record<AdmissionClass, number>;
   private readonly totalLimitSource: number | (() => number);
   /**
-   * The operator's concurrent-Paseo-call bound. Read on every pump so a saved
+   * The operator's per-host concurrent-call bound. Read on every pump so a saved
    * setting takes effect live; it is the one bound the Settings view owns.
    */
   get totalLimit(): number {
@@ -653,7 +662,7 @@ export class Admission {
         this.lastAbandoned = call;
         this.abandonedAt = this.now();
         this.log(
-          `Paseo ${call.cls} call ${call.holder} abandoned as unknown after ${Math.round(ageMs)} ms (deadline ${deadlineMs} ms): its admission slot is free and the call is not resent`,
+          `Host ${call.cls} call ${call.holder} abandoned as unknown after ${Math.round(ageMs)} ms (deadline ${deadlineMs} ms): its admission slot is free and the call is not resent`,
         );
         const error = new HostCallAbandonedError({
           call: call.cls,
@@ -712,7 +721,7 @@ export class Admission {
     if (this.heldSlotLoggedAt.size > 64) this.heldSlotLoggedAt.clear();
     this.heldSlotLoggedAt.set(key, at);
     this.log(
-      `Paseo ${cls} call ${holder} waited ${Math.round(waitMs)} ms for a slot` +
+      `Host ${cls} call ${holder} waited ${Math.round(waitMs)} ms for a slot` +
         `${blockedBy ? `; oldest held slot: ${blockedBy.cls} ${blockedBy.holder} for ${Math.round(at - blockedBy.started)} ms (deadline ${blockedBy.deadlineMs} ms)` : ""}` +
         `; ${queuedAtWait} queued behind ${runningAtWait}/${this.totalLimit} in flight when it queued`,
     );
@@ -825,7 +834,7 @@ export class Admission {
           return result;
         } catch (error) {
           if (isTransportFailure(error))
-            this.trip(`Paseo ${cls} transport is unavailable`);
+            this.trip(`Host ${cls} transport is unavailable`);
           throw error;
         } finally {
           open = false;
@@ -940,7 +949,7 @@ export class Admission {
    */
   workspaceAdmissionReason(active: number): string {
     if (this.degradedNow)
-      return `Paseo admission breaker: ${this.degradedReason}; re-check after ${new Date(this.recoveryAfter).toISOString()} with healthy samples`;
+      return `Host admission breaker: ${this.degradedReason}; re-check after ${new Date(this.recoveryAfter).toISOString()} with healthy samples`;
     if (active >= this.workspaceBudget)
       return `Queue workspace admission budget reached (${active}/${this.workspaceBudget}); waiting for a retained workspace to finish`;
     return "";
@@ -979,7 +988,7 @@ export class Admission {
         critical.length >= SLOW_TRIP_SAMPLES
       )
         this.trip(
-          `${critical.length} slow critical Paseo calls in ${SLOW_WINDOW_MS / 1000}s: ${critical
+          `${critical.length} slow critical host calls in ${SLOW_WINDOW_MS / 1000}s: ${critical
             .slice(-SLOW_TRIP_SAMPLES)
             .map((sample) => `${sample.cls} ${Math.round(sample.ms)} ms`)
             .join(", ")} (threshold ${this.degradedLatencyMs} ms)`,
@@ -1012,9 +1021,9 @@ export class Admission {
     const exemption = (breaker: boolean) =>
       breaker ? "" : "; a workspace archive is breaker-exempt";
     const warning = pending
-      ? `Paseo ${pending.cls} call pending for ${Math.round(this.now() - pending.started)} ms (threshold ${this.degradedLatencyMs} ms${exemption(pending.breaker)})`
+      ? `Host ${pending.cls} call pending for ${Math.round(this.now() - pending.started)} ms (threshold ${this.degradedLatencyMs} ms${exemption(pending.breaker)})`
       : latest
-        ? `Paseo ${latest.cls} call observed at ${Math.round(latest.ms)} ms (threshold ${this.degradedLatencyMs} ms${exemption(latest.breaker)})`
+        ? `Host ${latest.cls} call observed at ${Math.round(latest.ms)} ms (threshold ${this.degradedLatencyMs} ms${exemption(latest.breaker)})`
         : "";
     const state = (cls: AdmissionClass) => {
       const gate = this.gate(cls);

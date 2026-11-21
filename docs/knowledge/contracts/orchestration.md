@@ -343,8 +343,11 @@ on Engine. `workspaceAdmissionGapMs` and `queuedDispatchOrder` stay exported
 from `engine.ts` because tests import them there.
 
 **Admission** (`core/host/admission.ts`). Admits, coalesces and measures every
-Paseo call by class. A breaker deferral is a wait-and-retry, never operator
-attention (`AdmissionDeferred`). Control-flow string: `BACKPRESSURE_DEFERRAL`.
+host call by class, with one admission per host sharing the same per-host ceiling
+(`hostCallLimit`, service-boundary contract). A breaker deferral is a wait-and-retry,
+never operator attention (`AdmissionDeferred`). Control-flow string: `BACKPRESSURE_DEFERRAL`;
+`isBackpressureDeferral` also recognises the Paseo-era prefix, so a stored wait from
+before the rename still reads as a deferral.
 Enforces [Admission, limits and priority](#admission-limits-and-priority). No
 Engine or Resolution delegate: owners read `admissionOf(this.adapter)`.
 
@@ -990,7 +993,7 @@ detail, and the class of an error decides how an operation settles. The pin is
 - `CAPACITY_WAIT_PREFIX` `'Waiting for a project slot…'` — defined in `shared/wait-state.ts`; SlotAdmission compares it
 - `QA_CAPACITY_WAIT_PREFIX` `'Waiting for QA capacity (position '` — defined in `shared/wait-state.ts`; SlotAdmission compares it
 - `RETAINED_WORKER_PROFILE_REASON` `'Retained worker profile is disabled or unavailable'` — defined in `shared/retained-profile.ts`, with the one reader `isRetainedProfileReason`; Notices, CoordinatorRoute, RetryRoutes, `task-reasons/parks.ts` and RunLaunchSource call it instead of matching the text themselves
-- `BACKPRESSURE_DEFERRAL` `'Paseo admission backpressure: '` — Admission (`core/host/admission.ts`)
+- `BACKPRESSURE_DEFERRAL` `'Host admission backpressure: '` (legacy `'Paseo admission backpressure: '` still read) — Admission (`core/host/admission.ts`)
 - `EXTERNAL_MERGE_CHECK_REASON_PREFIX` `'External merge check:'` — ExternalMerge
 - `EXTERNAL_MERGE_CHECK_RECOVERED_REASON` `'External merge check recovered; resuming task'` — ExternalMerge
 - `ACCEPTED_PR_RECONCILIATION_REASON` `'Operator requested accepted-PR workspace reconciliation'` — Resolution.owns
@@ -3341,8 +3344,8 @@ movement invalidates source approval and preserves the normal readiness gates.
   Other unknown writes keep their existing recovery path. The external-merge
   sweep advances a positively merged PR only at its recorded head and after its
   participant and effect leases are settled.
-- Every outbound Paseo call passes through admission classes with concurrency
-  bounds, identity coalescing and a short cache of quiet observations. A latency
+- Every outbound host call (Paseo, T3 Code, BB) passes through its host's admission
+  classes with concurrency bounds, identity coalescing and a short cache of quiet observations. A latency
   breaker defers new workspace creation and nonessential mutation, and the
   workspace budget equals the global task-slot limit.
 - Every external effect (workspace, agent, message, comment, review, merge,

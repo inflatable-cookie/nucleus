@@ -138,8 +138,8 @@ function buildFixture(): Fixture {
   // Paseo-call bound. Lanes are unbounded, so this admission is the resource
   // bound that keeps the fixture's measurement window short and the event loop
   // free while a five-second effect is in flight.
-  store.setMeta('paseoCallLimit', PASEO_CALL_BOUND);
-  const admission = new Admission({ totalLimit: () => store.configuredPaseoCallLimit(), startIntervalMs: 0, observationCacheMs: 0 });
+  store.setMeta('hostCallLimit', PASEO_CALL_BOUND);
+  const admission = new Admission({ totalLimit: () => store.configuredHostCallLimit(), startIntervalMs: 0, observationCacheMs: 0 });
   const engine = new Engine(store, admitAdapter(adapter, admission), 60000);
   engine.profiles = [profile];
   store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: 1, scopes: ['general'] }]);

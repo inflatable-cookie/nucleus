@@ -45,7 +45,7 @@ const capacity = {
     globalLimit: 32,
     projectLimit: 5,
     papercutProjectLimit: 2,
-    paseoCallLimit: 6,
+    hostCallLimit: 6,
     stallThresholdMinutes: 30,
     holdReminderMinutes: 120,
     holdEscalationMinutes: 240,

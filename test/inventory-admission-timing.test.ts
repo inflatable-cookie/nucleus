@@ -56,7 +56,7 @@ test('genuinely slow inventory page requests still trip workspace admission', as
   const f = fixture(10_000, 3);
   await f.adapter.observationInventory!(['wanted']);
   assert.equal(f.admission.snapshot().latency.inventory.samples, 3);
-  assert.match(f.admission.snapshot().backpressure.reason, /3 slow critical Paseo calls/);
+  assert.match(f.admission.snapshot().backpressure.reason, /3 slow critical host calls/);
   assert.equal(f.admission.workspaceAdmission(0).admitted, false);
 });
 
