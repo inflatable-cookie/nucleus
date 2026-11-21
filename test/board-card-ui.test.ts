@@ -1740,7 +1740,7 @@ test("a task row in the inbox list shows its T3 project badge from its own host,
     );
     const tree = mounted;
     await settle(() => tree.text().includes("badged-task"));
-    openView(tree, "Active");
+    openView(tree, "Working");
     const badge = tree.raw
       .ofType("Text")
       .filter((node) => node.children.join("") === "BA");
@@ -1757,7 +1757,7 @@ test("a task row in the inbox list shows its T3 project badge from its own host,
     );
     const plain = mounted;
     await settle(() => plain.text().includes("badged-task"));
-    openView(plain, "Active");
+    openView(plain, "Working");
     assert.equal(
       plain.raw.ofType("Text").filter((node) => node.children.join("") === "BA")
         .length,

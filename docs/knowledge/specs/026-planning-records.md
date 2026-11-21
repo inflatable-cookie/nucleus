@@ -513,9 +513,14 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   plan in the list pane, the open lane in the detail pane, or a modal without one),
   **Leads** (open leads, with the tag filter and pages of eight), **Papercuts** (open
   papercuts, with pages of eight and no tag filter; Tom, 2026-11-21), **Queue**
-  (queued tasks, pending submissions and the per-project "…and N more" rows) and
-  **Active** (Working, In review and Closing, together or one at a time from its
-  three sub-entries). Each entry shows its real total; only Needs you is highlighted.
+  (queued tasks, pending submissions and the per-project "…and N more" rows),
+  **Working** (working tasks), **In review** (tasks awaiting or under review) and
+  **Closing** (verifying, merging and closing tasks). The menu reads Needs you, a
+  divider, Planning, Leads, Papercuts, Queue, a divider, Working, In review and
+  Closing; both dividers read at half the border's contrast against the menu
+  background. Each entry shows its real total; only Needs you is highlighted.
+  An entry whose count is 0 renders dimmed but stays selectable; the selected
+  entry keeps its selected styling, and Planning (which carries no count) never dims.
   Opening a view clears the open record. The card-once projection below decides where
   a card goes; the menu groups its columns. Milestone QA is not a board surface: QA
   runs as an ordinary task, and the QA runs tab is gone.

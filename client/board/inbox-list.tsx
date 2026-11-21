@@ -22,7 +22,6 @@ import {
   inboxCounts,
   inboxSections,
   leadsCards,
-  type ActiveSection,
   type InboxView,
 } from "../../shared/inbox-board";
 import { isGeneralDecision } from "../../shared/decision-project";
@@ -186,7 +185,6 @@ export type InboxListProps = {
   stateError: unknown;
   inbox: InboxBoard;
   view: Exclude<InboxView, "planning">;
-  activeSection: ActiveSection | null;
   leadsLoading: boolean;
   decisions: DecisionView[] | undefined;
   /** Per project, the queued tasks the board holds back for its "…and N more" row. */
@@ -217,9 +215,6 @@ const viewTitles: Record<Exclude<InboxView, "planning">, string> = {
   leads: "Leads",
   papercuts: "Papercuts",
   queue: "Queue",
-  active: "Active",
-};
-const sectionTitles: Record<ActiveSection, string> = {
   working: "Working",
   review: "In review",
   closing: "Closing",
@@ -234,8 +229,8 @@ const needsKindLabels: Partial<Record<PipelineCard["kind"], string>> = {
 
 /**
  * The inbox list (Tom, 2026-11-21): the open menu view's cards in one scrolling
- * list, each card drawn as a row. Needs you is a single list; Active keeps its
- * section headers. A card's own content and actions are unchanged from the kanban board.
+ * list, each card drawn as a row. Every view is one list with no section headers.
+ * A card's own content and actions are unchanged from the kanban board.
  */
 export function InboxList({
   c,
@@ -243,7 +238,6 @@ export function InboxList({
   stateError,
   inbox,
   view,
-  activeSection,
   leadsLoading,
   decisions,
   queuedHidden,
@@ -280,7 +274,7 @@ export function InboxList({
   } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
   const boardRead = state ? "loaded" : stateError ? "failed" : "loading";
-  const sections = inboxSections(board, view, { active: activeSection });
+  const sections = inboxSections(board, view);
   const releaseHold = (task: TaskSummary) =>
     void act(() =>
       setTask({ taskId: task.id, version: task.version, action: "release" }),
@@ -573,26 +567,11 @@ export function InboxList({
           </View>
         ))
       : null;
-  const viewCount =
-    view === "needs"
-      ? counts.needs
-      : view === "leads"
-        ? counts.leads
-        : view === "papercuts"
-          ? counts.papercuts
-          : view === "queue"
-            ? counts.queue
-            : activeSection
-              ? counts.activeBySection[activeSection]
-              : counts.active;
-  const title =
-    view === "active" && activeSection
-      ? sectionTitles[activeSection]
-      : viewTitles[view];
+  const viewCount = counts[view];
+  const title = viewTitles[view];
   const total =
     sections.reduce((sum, section) => sum + section.cards.length, 0) +
     (view === "queue" ? queuedHidden.length : 0);
-  const grouped = sections.length > 1;
   const countText =
     boardRead === "loaded"
       ? `${viewCount} item${viewCount === 1 ? "" : "s"}`
@@ -671,50 +650,7 @@ export function InboxList({
             const page = paged ? triagePage(section.cards, shown) : null;
             const visible = page ? page.visible : section.cards;
             return (
-              <View
-                key={section.id}
-                accessibilityLabel={
-                  grouped
-                    ? `${section.label} section, ${section.cards.length}`
-                    : undefined
-                }
-              >
-                {grouped && (
-                  <View
-                    style={{
-                      ...row,
-                      flexWrap: "nowrap",
-                      justifyContent: "space-between",
-                      paddingHorizontal: space.md,
-                      paddingTop: space.sm,
-                      paddingBottom: space.xxs,
-                      borderBottomWidth: 1,
-                      borderBottomColor: c.border,
-                      backgroundColor: c.surface0,
-                    }}
-                  >
-                    <Text
-                      accessibilityRole="header"
-                      style={{
-                        ...muted(c),
-                        fontSize: typeScale.metadata.fontSize,
-                        fontWeight: "600",
-                        letterSpacing: 0.4,
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {section.label}
-                    </Text>
-                    <Text
-                      style={{
-                        ...muted(c),
-                        fontSize: typeScale.metadata.fontSize,
-                      }}
-                    >
-                      {boardRead === "loaded" ? section.cards.length : "…"}
-                    </Text>
-                  </View>
-                )}
+              <View key={section.id}>
                 {visible.map(renderCard)}
                 {page &&
                   page.hidden > 0 &&
@@ -727,25 +663,13 @@ export function InboxList({
                         ? setPapercutShown
                         : setTriageShown)(shown + triagePageSize),
                   )}
-                {grouped && boardRead === "loaded" && !section.cards.length && (
-                  <Text
-                    style={{
-                      ...muted(c),
-                      fontSize: typeScale.metadata.fontSize,
-                      paddingHorizontal: space.md,
-                      paddingVertical: space.sm,
-                    }}
-                  >
-                    Nothing here.
-                  </Text>
-                )}
               </View>
             );
           })}
           {queuedMore}
         </BoardCardVariantContext.Provider>
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
-        {(boardRead !== "loaded" || (!grouped && total === 0)) && (
+        {(boardRead !== "loaded" || total === 0) && (
           <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>
             {boardRead === "failed"
               ? "The board could not be read; see the error above."

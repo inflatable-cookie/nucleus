@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { boardSource } from "./support/board-source";
 import { headerControls, settingsViews } from "../shared/queue-navigation";
-import { activeSections, inboxViews } from "../shared/inbox-board";
+import { inboxViews } from "../shared/inbox-board";
 
 const ui = boardSource();
 const entry = readFileSync(
@@ -15,14 +15,19 @@ const settingsScreen = readFileSync(
   "utf8",
 );
 
-test("the menu is Needs you, Planning, Leads, Papercuts, Queue and Active with its three sections; QA runs is not a board view", () => {
+test("the menu is Needs you, Planning, Leads, Papercuts, Queue, Working, In review and Closing; QA runs is not a board view", () => {
   assert.deepEqual(
     inboxViews.map((view) => view.label),
-    ["Needs you", "Planning", "Leads", "Papercuts", "Queue", "Active"],
-  );
-  assert.deepEqual(
-    activeSections.map((section) => section.label),
-    ["Working", "In review", "Closing"],
+    [
+      "Needs you",
+      "Planning",
+      "Leads",
+      "Papercuts",
+      "Queue",
+      "Working",
+      "In review",
+      "Closing",
+    ],
   );
   // One menu for the main surface and the workspace panel; QA runs as an ordinary task (Tom, 2026-11-21).
   assert.match(ui, /inboxViews\.map\(\(entry\) =>/);

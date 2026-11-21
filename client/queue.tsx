@@ -32,7 +32,6 @@ import {
   inboxLayout,
   inboxListWidth,
   inboxMenuWidth,
-  type ActiveSection,
   type InboxView,
 } from "../shared/inbox-board";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
@@ -117,9 +116,6 @@ export function MainSurface({
   const changeLaneStatus = useRpc(api.laneStatus);
   const queryClient = useQueryClient();
   const [view, setView] = useState<InboxView>("needs");
-  const [activeSection, setActiveSection] = useState<ActiveSection | null>(
-    null,
-  );
   const [menuOpen, setMenuOpen] = useState(false);
   // The reads still key on the two data shapes: Planning's, and the card lists'.
   const tab: BoardTab = view === "planning" ? "planning" : "queue";
@@ -294,10 +290,9 @@ export function MainSurface({
     setPlanningStep("plan");
   };
   /** A menu pick opens that view with nothing selected, so the detail pane never shows a record the list hides. */
-  const openView = (next: InboxView, section: ActiveSection | null = null) => {
-    if (next !== view || section !== activeSection) clearSelection();
+  const openView = (next: InboxView) => {
+    if (next !== view) clearSelection();
     setView(next);
-    setActiveSection(next === "active" ? section : null);
     setMenuOpen(false);
   };
   /** The drained-lane card's press opens its lane in Planning (nucleus#1511). */
@@ -428,7 +423,6 @@ export function MainSurface({
     <InboxMenu
       c={c}
       view={view}
-      activeSection={activeSection}
       counts={inbox.counts}
       loaded={Boolean(state)}
       onSelect={openView}
@@ -689,7 +683,6 @@ export function MainSurface({
                     stateError={stateQuery.error}
                     inbox={inbox}
                     view={view}
-                    activeSection={activeSection}
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}
                     queuedHidden={queuedHidden}

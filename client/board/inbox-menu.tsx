@@ -1,43 +1,31 @@
 import React from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import {
-  activeSections,
-  inboxViews,
-  type ActiveSection,
-  type InboxView,
-} from "../../shared/inbox-board";
+import { inboxViews, type InboxView } from "../../shared/inbox-board";
 import { Icon } from "../shell";
 import { muted, type Colors } from "../controls";
 import { radius, space, type as typeScale } from "../design";
 
-export type InboxMenuCounts = {
-  needs: number;
-  leads: number;
-  papercuts: number;
-  queue: number;
-  active: number;
-  activeBySection: Record<ActiveSection, number>;
-};
+export type InboxMenuCounts = Record<Exclude<InboxView, "planning">, number>;
 
 /**
- * The board menu (Tom, 2026-11-21): Needs you, Planning, Leads, Papercuts, Queue and
- * Active with its three sections. Counts are real totals; only Needs you is highlighted,
- * because only it asks the operator to act. A count is hidden until the board loads.
+ * The board menu (Tom, 2026-11-21): Needs you, a divider, Planning, Leads,
+ * Papercuts, Queue, a divider, then Working, In review and Closing. Counts are
+ * real totals; only Needs you is highlighted, because only it asks the operator
+ * to act. A count is hidden until the board loads. An entry whose count is 0
+ * renders dimmed but stays selectable; the selected entry keeps its styling.
  */
 export function InboxMenu({
   c,
   view,
-  activeSection,
   counts,
   loaded,
   onSelect,
 }: {
   c: Colors;
   view: InboxView;
-  activeSection: ActiveSection | null;
   counts: InboxMenuCounts;
   loaded: boolean;
-  onSelect: (view: InboxView, section?: ActiveSection | null) => void;
+  onSelect: (view: InboxView) => void;
 }) {
   const count = (id: InboxView) => (id === "planning" ? null : counts[id]);
   const item = (
@@ -46,7 +34,7 @@ export function InboxMenu({
     on: boolean,
     value: number | null,
     onPress: () => void,
-    options: { icon?: string; hot?: boolean; sub?: boolean } = {},
+    options: { icon?: string; hot?: boolean; dimmed?: boolean } = {},
   ) => (
     <Pressable
       key={key}
@@ -60,11 +48,13 @@ export function InboxMenu({
         flexDirection: "row",
         alignItems: "center",
         gap: space.sm,
-        minHeight: options.sub ? 32 : 36,
+        minHeight: 36,
         paddingHorizontal: space.sm,
-        paddingLeft: options.sub ? space.sm + 16 + space.sm : space.sm,
         borderRadius: radius.control,
         backgroundColor: on ? c.surface2 : "transparent",
+        // A zero-count entry reads quieter without leaving the muted token; the
+        // selected entry keeps its full styling.
+        opacity: options.dimmed && !on ? 0.55 : 1,
       }}
     >
       {options.icon && (
@@ -79,9 +69,7 @@ export function InboxMenu({
         style={{
           flex: 1,
           color: on ? c.foreground : c.foregroundMuted,
-          fontSize: options.sub
-            ? typeScale.metadata.fontSize
-            : typeScale.body.fontSize,
+          fontSize: typeScale.body.fontSize,
         }}
       >
         {label}
@@ -116,6 +104,20 @@ export function InboxMenu({
         ))}
     </Pressable>
   );
+  // The dimmer dividers read at half the border's contrast against the menu
+  // background: the same border token, drawn translucent.
+  const divider = (key: string) => (
+    <View
+      key={key}
+      style={{
+        height: 1,
+        backgroundColor: c.border,
+        opacity: 0.5,
+        marginVertical: space.xs,
+        marginHorizontal: space.xs,
+      }}
+    />
+  );
   return (
     <ScrollView
       accessibilityRole="tablist"
@@ -125,35 +127,16 @@ export function InboxMenu({
     >
       {inboxViews.map((entry) => (
         <React.Fragment key={entry.id}>
-          {item(
-            entry.id,
-            entry.label,
-            view === entry.id && !(entry.id === "active" && activeSection),
-            count(entry.id),
-            () => onSelect(entry.id, null),
-            { icon: entry.icon, hot: entry.id === "needs" },
-          )}
-          {entry.id === "active" &&
-            activeSections.map((section) =>
-              item(
-                `active-${section.id}`,
-                section.label,
-                view === "active" && activeSection === section.id,
-                counts.activeBySection[section.id],
-                () => onSelect("active", section.id),
-                { sub: true },
-              ),
-            )}
-          {entry.id === "needs" && (
-            <View
-              style={{
-                height: 1,
-                backgroundColor: c.border,
-                marginVertical: space.xs,
-                marginHorizontal: space.xs,
-              }}
-            />
-          )}
+          {(entry.id === "planning" || entry.id === "working") &&
+            divider(`${entry.id}-divider`)}
+          {item(entry.id, entry.label, view === entry.id, count(entry.id), () =>
+            onSelect(entry.id),
+          {
+            icon: entry.icon,
+            hot: entry.id === "needs",
+            // Planning carries no count, so its null never dims; unloaded counts stay hidden.
+            dimmed: loaded && count(entry.id) === 0,
+          })}
         </React.Fragment>
       ))}
     </ScrollView>

@@ -232,7 +232,7 @@ test("the card and detail show the live dispatch hold, and next names the same f
     };
     const tree = mountBoard(invoke);
     mounted = tree;
-    // The inbox lists one view at a time; the cards span Needs you, Queue and Active.
+    // The inbox lists one view at a time; the cards span Needs you, Queue, Working, In review and Closing.
     await settle(() => {
       const all = inboxText(tree);
       return all.includes("stale-hold") && all.includes("unheld");

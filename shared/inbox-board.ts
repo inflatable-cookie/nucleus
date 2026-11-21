@@ -18,17 +18,11 @@ export const inboxViews = [
   { id: "leads", label: "Leads", icon: "Lightbulb" },
   { id: "papercuts", label: "Papercuts", icon: "Scissors" },
   { id: "queue", label: "Queue", icon: "ListOrdered" },
-  { id: "active", label: "Active", icon: "Activity" },
+  { id: "working", label: "Working", icon: "Hammer", column: "Working" },
+  { id: "review", label: "In review", icon: "Eye", column: "Review" },
+  { id: "closing", label: "Closing", icon: "Check", column: "Closing" },
 ] as const;
 export type InboxView = (typeof inboxViews)[number]["id"];
-
-/** Active's three sections, each also a menu entry of its own. */
-export const activeSections = [
-  { id: "working", label: "Working", column: "Working" },
-  { id: "review", label: "In review", column: "Review" },
-  { id: "closing", label: "Closing", column: "Closing" },
-] as const;
-export type ActiveSection = (typeof activeSections)[number]["id"];
 
 export type InboxSection = { id: string; label: string; cards: PipelineCard[] };
 
@@ -83,7 +77,6 @@ export function needsCards(board: PipelineBoard): PipelineCard[] {
 export function inboxSections(
   board: PipelineBoard,
   view: InboxView,
-  options: { active?: ActiveSection | null } = {},
 ): InboxSection[] {
   const column = (
     id: string,
@@ -101,10 +94,12 @@ export function inboxSections(
       ];
     case "queue":
       return [column("queued", "Queued", "Queued")];
-    case "active":
-      return activeSections
-        .filter((section) => !options.active || section.id === options.active)
-        .map((section) => column(section.id, section.label, section.column));
+    case "working":
+      return [column("working", "Working", "Working")];
+    case "review":
+      return [column("review", "In review", "Review")];
+    case "closing":
+      return [column("closing", "Closing", "Closing")];
     case "planning":
       return [];
   }
@@ -121,12 +116,9 @@ export function inboxCounts(board: PipelineBoard, hiddenQueued = 0) {
     leads: leadsCards(board).length,
     papercuts: papercutCards(board).length,
     queue: n("Queued") + hiddenQueued,
-    active: n("Working") + n("Review") + n("Closing"),
-    activeBySection: {
-      working: n("Working"),
-      review: n("Review"),
-      closing: n("Closing"),
-    },
+    working: n("Working"),
+    review: n("Review"),
+    closing: n("Closing"),
   };
 }
 
