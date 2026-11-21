@@ -35,6 +35,90 @@ function prNamesMerge(task: Task, number: number): boolean {
   }
 }
 
+type IncidentRecord = { id: string; status: string };
+
+/** The incident an `incident` journal record names, or null when it is unreadable. */
+function incidentRecord(detail: string): IncidentRecord | null {
+  try {
+    const value = JSON.parse(detail) as { id?: unknown; status?: unknown };
+    if (typeof value.id !== "string" || typeof value.status !== "string")
+      return null;
+    return { id: value.id, status: value.status };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the journal proves this no-run episode's own escalation derived
+ * `incidentId`. The escalation writer attaches an incident and then opens the
+ * episode's recovery-pending question in one synchronous step (see
+ * `coordinator-pass`). So the proof needs that incident's creation record to be
+ * the last incident record before the question, a fresh reconciling record, the
+ * episode's opening to precede it, and no earlier record of the same
+ * incident. A question another cause opened, or an incident recorded before the
+ * opening, proves nothing; its incident keeps its own exit.
+ */
+function escalationDerivedIncident(
+  store: OccurrenceStore,
+  task: Task,
+  episodeId: string,
+  incidentId: string,
+): boolean {
+  const events = store.eventsAll(task.id);
+  const cause = digest(`recovery-pending:${task.id}:${episodeId}`);
+  const questions = plannerEscalations(events).filter(
+    (item) => item.cause === cause && item.runId === null,
+  );
+  if (questions.length !== 1) return false;
+  const question = events.find(
+    (event) =>
+      event.kind === "planner_escalation" &&
+      event.detail.startsWith(`${questions[0]!.id}:`),
+  );
+  if (!question) return false;
+  const created = events
+    .filter((event) => event.kind === "incident" && event.id < question.id)
+    .at(-1);
+  const record = created ? incidentRecord(created.detail) : null;
+  if (
+    !created ||
+    !record ||
+    record.id !== incidentId ||
+    record.status !== "reconciling"
+  )
+    return false;
+  const opening = events.findLast(
+    (event) => event.kind === "recovery_pending" && event.id < created.id,
+  );
+  if (!opening) return false;
+  return !events.some(
+    (event) =>
+      event.kind === "incident" &&
+      event.id < opening.id &&
+      incidentRecord(event.detail)?.id === incidentId,
+  );
+}
+
+/**
+ * The incident a no-run episode holds. Its opening witness is the immutable
+ * authority for the incident it began with. The episode's attachment can differ
+ * from that only after its own escalation attached a derived incident, which
+ * counts only when the journal proves the derivation.
+ */
+function openingIncidentHolds(
+  store: OccurrenceStore,
+  task: Task,
+  recovery: NonNullable<Task["resolution"]["recovery"]>,
+  openedWith: string | null,
+): boolean {
+  if (openedWith === recovery.incidentId) return true;
+  return (
+    recovery.incidentId !== null &&
+    escalationDerivedIncident(store, task, recovery.id, recovery.incidentId)
+  );
+}
+
 /**
  * An episode that never launched a run. Its unbound pre-merge witness must name
  * this exact episode, key, generation, PR and head, and no recovery run of its
@@ -57,7 +141,7 @@ function noRunEpisodeOvertaken(
     return false;
   if (
     witness.episodeId !== recovery.id ||
-    witness.incidentId !== recovery.incidentId ||
+    !openingIncidentHolds(store, task, recovery, witness.incidentId) ||
     witness.stopKey !== recovery.key ||
     witness.runId !== null ||
     witness.generation !== recovery.generation ||

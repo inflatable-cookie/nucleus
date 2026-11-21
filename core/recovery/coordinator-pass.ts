@@ -445,6 +445,9 @@ export class CoordinatorPass {
               continue;
           }
           const summary = recoveryPendingEscalation(t);
+          // Escalation attaches an incident, then opens this episode's question in the
+          // same synchronous step. The later verified-merge proof reads that order
+          // (`escalationDerivedIncident` in merge-occurrence), so keep them adjacent.
           this.episode.escalate(t, summary);
           this.resolution.openPlannerEscalation(this.store.task(t.id), {
             cause: digest(`recovery-pending:${t.id}:${incident.id}`),
