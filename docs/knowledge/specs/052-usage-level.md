@@ -86,6 +86,13 @@ profiles.
   never read) with the reason naming the host, the fields that host spells
   differently and the values a launch there sends; `routingPolicy.host.effects`
   lists each enabled profile a task's host rules out or translates.
+  Pool saves (`queue.profile`, `queue.pool`) check identity against the stored
+  profile records, never the routing snapshot, which is empty until a host
+  catalog is read (nucleus#1492). A stored profile saves with or without a
+  catalog read, and the catalog still alone decides whether it can launch on a
+  host. A new or changed entry naming no stored profile is refused as `Unknown
+  profile <id>`; an unchanged entry for a removed profile is kept as inert.
+  Duplicate and reserved-group checks are unchanged.
   `profile.vocabulary` answers Settings' form: every registered host's catalog in
   canonical values, merged, so each dropdown offers what at least one host can
   run. Settings → Profiles edits canonical values only; a row shows one quiet
