@@ -630,7 +630,7 @@ test("026-12a every pipeline card renders through the shared board card, and eac
   );
   assert.match(
     ui,
-    /\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 \}\}>\s*<PipelineBoard /,
+    /\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space\.sm, zIndex: 0 \}\}>\s*<PipelineBoard\b/,
   );
   // One card component: TaskCard renders through BoardCard, and leads render BoardCard too.
   assert.match(ui, /function BoardCard\(/);
@@ -699,15 +699,15 @@ test("026-13 Tasks keeps Pipeline with no Lanes switch; the Lanes destination is
   );
   assert.match(
     ui,
-    /<ProjectSelector\s+enabled=\{scope\.statusFilter\}\s+onEnabledChange=/,
-    "the project filter switch moved into the selector",
+    /<ProjectSelector\s+projects=\{state\?\.projects \?\? \[\]\}/,
+    "the selector holds the project selection",
   );
-  assert.match(controls, /export function ProjectFilterSwitch\(/);
-  assert.match(controls, /accessibilityLabel="Enabled"/);
+  assert.doesNotMatch(controls, /ProjectFilterSwitch/);
+  assert.doesNotMatch(controls, /accessibilityLabel="Enabled"/);
   // A lane opened from Planning's lane search keeps the plan and lane columns.
   assert.match(
     ui,
-    /const selectPlanningLane = \(key:string\) => \{setPlanningPin\(key\);/,
+    /const selectPlanningLane = \(key: string\) => \{\s*setPlanningPin\(key\);/,
   );
   assert.doesNotMatch(ui, /setPipelineTarget/);
   assert.match(
@@ -769,7 +769,7 @@ test("026-15a pipeline cards open a record modal and carry no action buttons", (
   );
   assert.match(
     ui,
-    /\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 \}\}>\s*<PipelineBoard /,
+    /\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space\.sm, zIndex: 0 \}\}>\s*<PipelineBoard\b/,
   );
   assert.doesNotMatch(pipeline, /setTab\('papercuts'\)/);
   assert.doesNotMatch(pipeline, /text="Approve"/);
@@ -936,7 +936,7 @@ test("377 planning lists read the narrow lead.board projection, never every full
   const ui = boardSource();
   assert.match(
     ui,
-    /queryFn:\(\)=>fetchLeadBoard\(\{\}\)/,
+    /queryFn: \(\) => fetchLeadBoard\(\{\}\)/,
     "one narrow read replaces the open-then-promoted page walk",
   );
   assert.doesNotMatch(

@@ -7,20 +7,21 @@ import {
 } from "./contracts";
 import { projectPlanningCounts } from "./planning-tab";
 import { hiddenQueuedByProject } from "./queued-more";
-import { projectDormantByActivity, type ProjectActivity } from "./project-activity";
+import {
+  projectDormantByActivity,
+  type ProjectActivity,
+} from "./project-activity";
 
 /**
  * Spec 026 Board "Scope": one project selector scopes Pipeline, Lanes,
  * Papercuts and Planning. It is single-select by default (nucleus#1421): a
  * plain press replaces the selection, Shift-press toggles one project. An
- * empty selection means all projects. The
- * Pipeline view has its own filter switch; off shows everything and keeps the selection.
+ * empty selection means all projects, and it is the only filter state
+ * (nucleus#1476): there is no separate switch that shows everything while
+ * keeping a selection.
  */
-export type ProjectScope = { projects: string[]; statusFilter: boolean };
-export const defaultProjectScope: ProjectScope = {
-  projects: [],
-  statusFilter: true,
-};
+export type ProjectScope = { projects: string[] };
+export const defaultProjectScope: ProjectScope = { projects: [] };
 
 /** Selected keys that still name a project; unknown keys are ignored once projects load. */
 export function effectiveSelection(
@@ -79,20 +80,6 @@ export function scopeContains(
     selected.some((project) => projectHasRepository(project, repoPath, origin));
 }
 
-/** The Pipeline view's selection: the kept selection when its filter switch is on, all projects when off. */
-/**
- * The selection every scoped view uses. The selector's "Enabled" switch (Tom,
- * 2026-09-28; formerly the Pipeline-only "Filter by project") turns filtering off
- * everywhere without clearing the selection. `statusFilter` is the stored field.
- */
-export function activeSelection(scope: ProjectScope): string[] {
-  return scope.statusFilter ? scope.projects : [];
-}
-/** Kept for callers written before the switch moved into the selector. */
-export const pipelineSelection = activeSelection;
-/** Kept for callers written before the 2026-09-27 board retirement: the Pipeline filter switch owns this now. */
-export const statusSelection = pipelineSelection;
-
 export function toggleProject(
   selection: readonly string[],
   key: string,
@@ -112,15 +99,6 @@ export function selectProject(
 ): string[] {
   if (selection.length === 1 && selection[0] === key) return [...selection];
   return [key];
-}
-
-/** The scope after an explicit pick in the project selector (a plain or Shift press, All,
- * None): the picked keys and, when the pick leaves projects selected, the filter back on
- * (Tom, 2026-11-20, nucleus#1432), so the board filters at once. An empty pick (None, or
- * Shift-clearing the last key) keeps the switch as it was. One value, so the scope owner
- * commits and persists both together. */
-export function pickProjects(scope: ProjectScope, projects: string[]): ProjectScope {
-  return { ...scope, projects, statusFilter: projects.length > 0 || scope.statusFilter };
 }
 
 /** The display-name rule Settings → Projects applies (nucleus#1430 reuses it from the board): trimmed,
@@ -202,7 +180,8 @@ export function projectSelectorRows(
   const needle = search.trim().toLowerCase();
   const hiddenQueued = hiddenQueuedByProject(queuedCounts, tasks);
   const activityByKey = new Map(activity.map((item) => [item.key, item]));
-  const dormantOf = (project: Project) => projectDormantByActivity(project, activityByKey.get(project.key), nowMs);
+  const dormantOf = (project: Project) =>
+    projectDormantByActivity(project, activityByKey.get(project.key), nowMs);
   return [...projects]
     .sort(
       (a, b) =>
@@ -257,15 +236,20 @@ export function readProjectScope(
       storageKey,
       legacyStorageKey,
       (raw) => {
-        const value = JSON.parse(raw) as Partial<ProjectScope>;
+        const value = JSON.parse(raw) as {
+          projects?: unknown;
+          /** The retired switch (nucleus#1476). A stored `false` showed every
+           * project while keeping a selection; selection is now the only filter
+           * state, so that preference opens as no selection (all projects). */
+          statusFilter?: unknown;
+        };
+        if (value.statusFilter === false) return { projects: [] };
         return {
           projects: Array.isArray(value.projects)
             ? value.projects.filter(
                 (key): key is string => typeof key === "string",
               )
             : [],
-          statusFilter:
-            typeof value.statusFilter === "boolean" ? value.statusFilter : true,
         };
       },
     );

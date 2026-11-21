@@ -81,7 +81,7 @@ export function usePanelScope(
 ): [ProjectScope | null, (scope: ProjectScope) => void] {
   const [scope, setScope] = useState<ProjectScope | null>(null);
   useEffect(() => {
-    setScope(preset ? { projects: [preset], statusFilter: true } : null);
+    setScope(preset ? { projects: [preset] } : null);
   }, [preset]);
   return [scope, setScope];
 }
@@ -105,55 +105,6 @@ export function usePlanningLane(
   return { lane, setLane, step, setStep };
 }
 
-/** The project selector's "Enabled" switch (Tom, 2026-09-28): off shows every project
- * in every scoped view and keeps the selection; on applies it. */
-export function ProjectFilterSwitch({
-  value,
-  onChange,
-  c,
-}: {
-  value: boolean;
-  onChange: (value: boolean) => void;
-  c: Colors;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="switch"
-      accessibilityLabel="Enabled"
-      accessibilityState={{ checked: value }}
-      onPress={() => onChange(!value)}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: space.xs,
-        minHeight: 32,
-      }}
-    >
-      <View
-        style={{
-          width: 30,
-          height: 18,
-          borderRadius: radius.control,
-          padding: space.xxs / 2,
-          backgroundColor: value ? c.accent : c.surface2,
-          alignItems: value ? "flex-end" : "flex-start",
-        }}
-      >
-        <View
-          style={{
-            width: 14,
-            height: 14,
-            borderRadius: radius.control,
-            backgroundColor: value ? c.accentForeground : c.foregroundMuted,
-          }}
-        />
-      </View>
-      <Text style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>
-        Enabled
-      </Text>
-    </Pressable>
-  );
-}
 /** Hosts with a DOM (the Paseo settings page, the web board) dismiss an open chooser on an outside press or Escape; native hosts skip the listeners. */
 type DocumentHost = {
   addEventListener: (
@@ -390,7 +341,10 @@ function PanelAction({
 
 /** Spec 026 Board "Scope": the header's project selector (nucleus#1421:
  * single-select by default, Shift-click toggles one project). A popover at the
- * wide size, a modal at the compact size. An empty selection means all projects.
+ * wide size, a modal at the compact size. An empty selection means all projects,
+ * and selection is the only filter state (nucleus#1476): the picker's top row is
+ * the project search with Clear project selection beside Settings, so the rows get
+ * the rest of the height.
  * Each row's disclosure chevron (nucleus#1430, #1432) opens a panel attached to the
  * row with Park or Unpark, Rename and Remove from Nucleus, inside the picker so no
  * nested popover takes an outside press; Rename edits the name in its own slot. Project
@@ -407,8 +361,6 @@ export function ProjectSelector({
   onOpenChange,
   compact,
   c,
-  enabled = true,
-  onEnabledChange,
   onSettings,
   projectActions,
 }: {
@@ -420,8 +372,6 @@ export function ProjectSelector({
   projectActivity?: readonly ProjectActivity[];
   value: string[];
   onChange: (keys: string[]) => void;
-  enabled?: boolean;
-  onEnabledChange?: (enabled: boolean) => void;
   /** Opens Settings at Projects; absent on a host without Settings. */ onSettings?: () => void;
   /** The row panel's actions; absent, rows have no disclosure chevron. */ projectActions?: ProjectSelectorActions;
   onOpenChange: (open: boolean) => void;
@@ -476,11 +426,8 @@ export function ProjectSelector({
       documentHost.removeEventListener("keydown", onKey);
     };
   }, [open, compact]);
-  const filtering = enabled && value.length > 0;
-  const label =
-    enabled || !value.length
-      ? selectionLabel(projects, value)
-      : `${selectionLabel(projects, value)} · filter off`;
+  const filtering = value.length > 0;
+  const label = selectionLabel(projects, value);
   const rows = projectSelectorRows(
     projects,
     value,
@@ -751,72 +698,44 @@ export function ProjectSelector({
       // Shrinks inside the compact modal's card so the project list scrolls there instead of overflowing it.
       style={{ gap: space.xs, padding: space.sm, flexShrink: 1, minHeight: 0 }}
     >
-      {(onEnabledChange || onSettings) && (
-        <View style={{ ...row, justifyContent: "space-between" }}>
-          {onEnabledChange ? (
-            <ProjectFilterSwitch
-              value={enabled}
-              onChange={onEnabledChange}
-              c={c}
-            />
-          ) : (
-            <View />
-          )}
-          {onSettings && (
-            <Button
-              iconOnly
-              c={c}
-              icon="Settings"
-              text="Project settings"
-              label="Project settings"
-              onPress={() => {
-                setOpen(false);
-                onSettings();
-              }}
-            />
-          )}
-        </View>
-      )}
-      <TextInput
-        accessibilityLabel="Filter projects"
-        value={search}
-        onChangeText={setSearch}
-        placeholder="Filter projects"
-        placeholderTextColor={c.foregroundMuted}
-        style={{ ...controlFrame(c), ...controlText(c) }}
-      />
-      <View style={row}>
-        <Button
-          small
-          c={c}
-          text="All"
-          label="Select all projects"
-          onPress={() =>
-            onChange(
-              projects
-                .filter((project) => project.visibility !== "parked")
-                .map((project) => project.key),
-            )
-          }
+      <View style={{ ...row, gap: space.xs }}>
+        <TextInput
+          accessibilityLabel="Filter projects"
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Filter projects"
+          placeholderTextColor={c.foregroundMuted}
+          style={{
+            ...controlFrame(c),
+            ...controlText(c),
+            flex: 1,
+            minWidth: 0,
+          }}
         />
+        {/* The only filter state is the selection (nucleus#1476), so clearing it
+          restores every project and keeps the picker open. It shares the row with
+          the search and stands alone when the host has no Settings to open. */}
         <Button
-          small
+          iconOnly
           c={c}
-          text="None"
+          icon="FolderX"
+          text="Clear project selection"
           label="Clear project selection"
           onPress={() => onChange([])}
         />
-        <Text
-          style={{
-            ...muted(c),
-            fontSize: typeScale.metadata.fontSize,
-            flexShrink: 1,
-          }}
-        >
-          {value.length
-            ? `${value.length} selected`
-            : "None selected · showing all projects"}
-        </Text>
+        {onSettings && (
+          <Button
+            iconOnly
+            c={c}
+            icon="Settings"
+            text="Project settings"
+            label="Project settings"
+            onPress={() => {
+              setOpen(false);
+              onSettings();
+            }}
+          />
+        )}
       </View>
       <ScrollView
         nestedScrollEnabled

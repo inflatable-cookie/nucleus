@@ -248,9 +248,9 @@ test("026-14c the panel reuses the main surface board; there is no second copy o
     "the shared input feeds the one board projection",
   );
   // The panel's scope is preset in the panel and never touches the main surface's persisted scope.
-  assert.match(ui, /usePanelScope\(workspaceBoard\?\.key \?\? null\)/);
+  assert.match(ui, /usePanelScope\(\s*workspaceBoard\?\.key \?\? null,?\s*\)/);
   assert.match(
     ui,
-    /const scope = workspaceBoard \? panelScope \?\? \{ projects: \[workspaceBoard\.key\], statusFilter: true \} : surfaceScope;/,
+    /const scope = workspaceBoard\s*\? \(?panelScope \?\? \{ projects: \[workspaceBoard\.key\] \}\)?\s*: surfaceScope;/,
   );
 });

@@ -1,0 +1,3 @@
+The board's project selector now has one compact top row: the project search takes the remaining width, with a Clear project selection icon button beside the Settings icon. The Enabled switch, the All and None buttons and the selection-count row are gone.
+
+The selection is the only filter state. An empty selection shows every project, a plain click replaces it and a Shift-click toggles one project, and clearing the last project (with Clear or Shift) restores all projects without closing the picker. A stored selection whose retired switch was off opens as all projects after the upgrade; active stored selections and workspace presets are kept.

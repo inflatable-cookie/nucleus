@@ -565,11 +565,17 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **No side pane.** The board shows only its columns; planning lives on
   its own tab (Tom, 2026-09-27: a pane beside the board made it unreadable).
 - **Scope: one project selector, single-select by default** (Tom, 2026-09-27;
-  single-select nucleus#1421). A single project
+  single-select nucleus#1421; compact header nucleus#1476). A single project
   selector in the header replaces the single-project filter everywhere. It is a
   dropdown that opens a large popover (a modal at the compact viewport) listing
   every project with a filter box, its primary repository and counts of live tasks
-  and open leads, with a checkbox per project, plus All and None. The live-task
+  and open leads, with a checkbox per project. The picker's one top row holds the
+  project search at its remaining width and, beside it, a Clear project selection
+  icon button (a folder with an X, the same icon-only `Button` style and height as
+  the Settings button next to it, its name as accessible label and tooltip, with a
+  visible focus state) and the Settings icon;
+  Clear sits alone on a host with no Settings action. There is no Enabled switch,
+  no All or None row, and no selection-count row (nucleus#1476). The live-task
   total covers every non-terminal task in the project's member repositories and
   adds the hidden portion of each repository's queued snapshot after subtracting
   rendered queued cards, so it includes work beyond the first queue page without
@@ -644,21 +650,18 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   reads these facts store-wide and ships each project's recent items (`projectActivity`) on the board
   snapshot, so the selection, task paging and visible rows never change a project's group. Planner
   routing and drain rules are unchanged.
-- **Project filter switch.** An "Enabled" switch at the top of the project
-  selector's dropdown (Tom, 2026-09-28; it was the Pipeline view's "Filter by
-  project" switch). Off shows every project in every view the selector scopes
-  (Pipeline, Papercuts, Planning) without clearing the selection; on applies
-  it. While it's off, the closed selector reads "… · filter off" and loses its
-  accent.
-  An explicit pick in the selector that leaves projects selected (a plain click,
-  a Shift-click, or All) turns the switch back on with the new selection, saved
-  together as one scope (Tom, 2026-11-20, nucleus#1432). None and Shift-clearing the
-  last project keep the switch as it was; opening the selector, a row's panel,
-  Rename and project management never turn it on, and other scope entry points
-  (such as opening a lane's plan) leave it alone.
-  The selection and this switch persist across plugin reloads in the surface's
-  local storage where it has one, otherwise for the session; neither is written
-  to Nucleus's store.
+- **Selection is the only filter state** (nucleus#1476, replacing the "Enabled"
+  switch of Tom, 2026-09-28; it came from the Pipeline view's "Filter by
+  project" switch). An empty selection shows every project in every view the
+  selector scopes (Pipeline, Papercuts, Planning), and a selection scopes them.
+  The selection persists across plugin reloads in the surface's local storage
+  where it has one, otherwise for the session; it is never written to Nucleus's
+  store, and the workspace panel's preset (its own project) lives in the panel.
+  A legacy stored preference is read once, in `readProjectScope`: a stored
+  selection whose retired switch was off opens as an empty selection, so the
+  board shows all projects after the upgrade, and a stored active selection is
+  kept as it is. Only the selection is written back, so the retired field is
+  gone after the first save.
 - **Record modal; actions live there** (Tom, 2026-09-27). Clicking a Triage (lead)
   or Papercuts card opens a detail modal, the same way a task card opens task
   detail; the board no longer switches tabs or expands the card. Cards carry no
@@ -765,13 +768,13 @@ control. Editing uses the existing dark-theme styling.
 | 10 | Brief-bearing lead versions: a failing version, approval, then a new version | The failing version can't be approved; approval binds to the passing version's digest; the new version clears it |
 | 11 | Follow a lead to its merged outcome | Lead → task → outcome row links resolve through `lead.get`, task detail and `queue.outcome` |
 | 12 | A card in two lanes, and finished or cancelled tasks | One card, counted once, keeping both lanes; no Done column, and finished or cancelled tasks absent; no switch, lane rows or lane chips (revision 2026-11-08) |
-| 13 | A task in each phase, and the project filter switch | One row of columns, each card once; every phase lands in its column (Working, Attention, Review, Closing as mapped); no Status view; filter switch off shows all projects and on restores the selection |
+| 13 | A task in each phase, and an empty project selection | One row of columns, each card once; every phase lands in its column (Working, Attention, Review, Closing as mapped); no Status view; no selection shows all projects and a selection scopes them |
 | 12a | A column with 300 cards | Every card in a full-height column that scrolls on its own, the header counting all 300; cards are the standard task card size |
 | 14 | Planning tab edits: reorder, move between Now and Later, add a listed lane, save a lane document | Plan and document saved as operator versions with the horizon kept; stale save refused |
 | 14a | Planning tab navigation at both viewport sizes | Plan and lane columns at the wide size; plan, lane drill-down with back at the compact size; the pipeline board has no side pane |
 | 14c | Open the Nucleus board in a workspace of a project's repository, and in a workspace outside every project | Scoped to that project's Pipeline and Planning; outside every project, a plain message |
-| 14d | Open a project row's chevron: Park asks first, Unpark, Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection, filter and counts are unchanged by disclosure or a re-sorting rename |
-| 14b | Click one project, Shift-click a second, Shift-click the first off, then none; switch the Pipeline project filter off and on | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; none means all; the filter switch off shows all projects and on restores the kept selection; with the switch off, a click, Shift-click or All turns it on with the new selection, while None or clearing the last project leaves it off |
+| 14d | Open a project row's chevron: Park asks first, Unpark, Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection and counts are unchanged by disclosure or a re-sorting rename |
+| 14b | Click one project, Shift-click a second, Shift-click the first off, then Clear or Shift-clear the last one | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; an empty selection means all projects, and Clear (beside Settings, or alone on a host without it) or Shift-clearing the last project restores them while the picker stays open |
 | 15 | Board dark theme at both viewport sizes, with a busy board | Legible; checked after merge by the Nucleus Chatterbox |
 | 15a | Click a lead card and a papercut card on the Pipeline view; run each modal action | The modal opens with the record's full detail; the cards show no buttons; each action works from the modal and reports its result there; inapplicable actions are disabled with the reason |
 | 15b | Open a checked, approved lead, then a new version of it; open a lead from Triage and from a lane with more than eight open leads | The brief sits beside its checked version and approval, which names the approver and any relayed authority; Check, Approve and Promote each report their own result or refusal; the new version shows the check and approval as out of date and asks for the existing recheck; drop, reopen and question or knowledge promotion sit in More actions with their reasons; raw ids and every version stay behind Details; the lane's lead list pages eight at a time with its true total |
