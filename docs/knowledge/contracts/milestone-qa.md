@@ -115,23 +115,22 @@ a launch.
    and accepts `{"qa":{"schedule":null}}`; a repository that still has a
    schedule records one notice naming this recipe instead of admitting a run.
    In-flight runs, their recovery and all settled history are untouched.
-2. **Per-consumer replacements.** Each consumer below needs its own authorized
-   change; none of them is edited here.
+2. **Per-consumer replacements.**
 
-| Consumer | Today | Replacement |
+| Consumer | Retired state | Current state |
 | --- | --- | --- |
 | Planner habit and prompts | `project.qa.run` on `main` | a report-only task with this recipe |
 | CLI `nucleus project.qa.run --wait` | managed run and settled summary | selector slices under named Effigy runs, record in the lane document |
-| Board QA runs tab and QA card | "Run QA" reaches the refusal | read-only history; launching moves to a task |
+| Board Runs tab and QA card (nucleus#1498) | `QA runs` tab with `Run QA`, project picker, and card `Re-run` | `Runs` tab with read-only legacy QA history and cleanup (`Cancel QA`, `Retry teardown`, `Dismiss`, `Details`), plus ordinary task validation and client host runs |
 | `qa.schedule` per repository | automatic milestone admission | a planner-submitted report-only task per milestone |
-| Settings QA schedule toggle | turns automatic admission on | it now refuses to turn on and still turns a leftover schedule off |
+| Settings → Projects QA fields (nucleus#1498) | `Schedule`, `After N merges`, and milestone `Timeout` controls | schedule and timeout controls removed; `QA` command (`qa.argv` / `qa.stages` for worktree validation evidence) and `Merge check` (`validation`) kept; `repository.set` still clears a leftover schedule via `{"qa":{"schedule":null}}` |
 | Scheduled QA notices and reminders | planner notices from the schedule pass | ordinary task reporting; the leftover schedule notice is cleared by removing `qa.schedule` |
 | Release and roll runbooks | "milestone QA remains `project.qa.run`" | this recipe at the release SHA |
 | Cross-repository planners | briefs that call `project.qa.run` | a report-only task in that repository, same recipe |
 
 3. **Deferred removal.** After no live install has an unsettled run or a
    schedule, a later change removes the supervisor and pipeline, the
-   QA-only scheduling pass and its notices, the board launch control, and the
+   QA-only scheduling pass and its notices, and the
    managed-run storage and host-run classes. Historical runs stay readable until
    retention ages them, and removing the runner never removes the record of a
    qualification that already happened.

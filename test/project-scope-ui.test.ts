@@ -459,12 +459,12 @@ test("Spec 035/022 rendered: Planning carries no QA launch or cancel, and links 
   assert.equal(
     ui.query("Run full QA for consumer-b-v2 on current main"),
     undefined,
-    "launching QA lives in the QA runs tab only",
+    "milestone QA launching is retired",
   );
   assert.equal(
     ui.query("Cancel full QA for consumer-b-v2"),
     undefined,
-    "cancelling QA lives in the QA runs tab only",
+    "cancelling QA lives in the Runs tab only",
   );
   assert.match(ui.text(), /Latest QA/, "the plan keeps one compact result");
   ui.press("View the latest QA run for consumer-b-v2");
@@ -957,7 +957,7 @@ test("136 rendered: log-write failures show apart from the output on the task an
   );
   assert.match(
     qaSource,
-    /<ProjectQaLogWriteErrors run=\{qa\}/,
+    /<ProjectQaLogWriteErrors\s+run=\{qa\}/,
     "the QA run detail renders log-write failures",
   );
 });
@@ -1100,5 +1100,8 @@ test("1476: the board's selector commits the selection it reports; the other sco
     /onChange=\{\(projects\) => setScope\(\{ projects \}\)\}/,
   );
   // A lane's "Show plan" writes the same selection (Planning has no chooser of its own since 2026-11-21).
-  assert.match(source, /const showLanePlan = \(project: string\) => \{\s*setScope\(\{ projects: \[project\] \}\);/);
+  assert.match(
+    source,
+    /const showLanePlan = \(project: string\) => \{\s*setScope\(\{ projects: \[project\] \}\);/,
+  );
 });

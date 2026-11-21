@@ -3422,20 +3422,52 @@ test("a staged QA run publishes its result after a long final burst", async (t) 
   const scope = scopedQaFixture(t, [f.root, f.dataDir]);
   f.store.putRepository({ origin: null, path: f.repo }, null, "", null, null, {
     stages: [
-      { name: "first", argv: [process.execPath, "-e", "console.log('first')"], timeoutMs: 30_000 },
-      { name: "last", argv: [process.execPath, "-e", "process.stdout.write('x'.repeat(1024 * 1024) + '\\nfinal burst complete\\n')"], timeoutMs: 30_000 },
-    ], maxOutputBytes: 4096, terminationGraceMs: 1000,
+      {
+        name: "first",
+        argv: [process.execPath, "-e", "console.log('first')"],
+        timeoutMs: 30_000,
+      },
+      {
+        name: "last",
+        argv: [
+          process.execPath,
+          "-e",
+          "process.stdout.write('x'.repeat(1024 * 1024) + '\\nfinal burst complete\\n')",
+        ],
+        timeoutMs: 30_000,
+      },
+    ],
+    maxOutputBytes: 4096,
+    terminationGraceMs: 1000,
   });
-  const runner = new ProjectQaRunner(f.store, { dataDir: f.dataDir, supervisionPollMs: 50 });
+  const runner = new ProjectQaRunner(f.store, {
+    dataDir: f.dataDir,
+    supervisionPollMs: 50,
+  });
   scope(runner);
   const started = await runner.run({ repository: f.repo });
-  await waitFor(() => !["queued", "running"].includes(f.store.qaRun(started.id)?.state ?? ""), 60_000, "the staged burst run to settle");
+  await waitFor(
+    () =>
+      !["queued", "running"].includes(f.store.qaRun(started.id)?.state ?? ""),
+    60_000,
+    "the staged burst run to settle",
+  );
   const settled = f.store.qaRun(started.id)!;
   assert.equal(settled.state, "passed", settled.outputTail);
-  assert.deepEqual(settled.steps.map(step => step.name), ["first", "last"]);
+  assert.deepEqual(
+    settled.steps.map((step) => step.name),
+    ["first", "last"],
+  );
   assert.equal(settled.hostSettlement?.outcome, "passed");
-  const runRoot = join(await realpath(f.dataDir), "project-qa", digest(started.key).slice(0, 24));
-  assert.match(await readFile(qaRunLiveOutputPath(runRoot, started.id), "utf8"), /final burst complete\n$/);
+  const runRoot = join(
+    await realpath(f.dataDir),
+    "project-qa",
+    digest(started.key).slice(0, 24),
+  );
+  assert.match(
+    await readFile(qaRunLiveOutputPath(runRoot, started.id), "utf8"),
+    /final burst complete\n$/,
+  );
   await runner.attachSupervisor(started.id, started.key);
 });
 
@@ -3443,21 +3475,50 @@ test("a killed QA supervisor records its signal and phase on the real run", asyn
   const f = await fixture(t);
   const scope = scopedQaFixture(t, [f.root, f.dataDir]);
   f.store.putRepository({ origin: null, path: f.repo }, null, "", null, null, {
-    stages: [{ name: "build", argv: ["/bin/sh", "-c", "printf 'building\\n'; sleep 60"], timeoutMs: 120_000 }],
-    maxOutputBytes: 4096, terminationGraceMs: 1000,
+    stages: [
+      {
+        name: "build",
+        argv: ["/bin/sh", "-c", "printf 'building\\n'; sleep 60"],
+        timeoutMs: 120_000,
+      },
+    ],
+    maxOutputBytes: 4096,
+    terminationGraceMs: 1000,
   });
-  const runner = new ProjectQaRunner(f.store, { dataDir: f.dataDir, supervisionPollMs: 50 });
+  const runner = new ProjectQaRunner(f.store, {
+    dataDir: f.dataDir,
+    supervisionPollMs: 50,
+  });
   scope(runner);
   const started = await runner.run({ repository: f.repo });
-  const runRoot = join(await realpath(f.dataDir), "project-qa", digest(started.key).slice(0, 24));
+  const runRoot = join(
+    await realpath(f.dataDir),
+    "project-qa",
+    digest(started.key).slice(0, 24),
+  );
   const paths = qaSupervisionPaths(runRoot, started.id);
-  await waitFor(() => Boolean(readQaSupervision(paths.statePath)?.activeProcess), 60_000, "the supervisor and stage to start");
+  await waitFor(
+    () => Boolean(readQaSupervision(paths.statePath)?.activeProcess),
+    60_000,
+    "the supervisor and stage to start",
+  );
   const state = readQaSupervision(paths.statePath)!;
   const group = state.activeProcess!.processGroupId;
-  t.after(() => { try { process.kill(-group, "SIGKILL"); } catch { /* already gone */ } });
+  t.after(() => {
+    try {
+      process.kill(-group, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  });
   process.kill(state.pid, "SIGKILL");
   process.kill(-group, "SIGKILL");
-  await waitFor(() => !["queued", "running"].includes(f.store.qaRun(started.id)?.state ?? ""), 60_000, "the run to settle after supervisor death");
+  await waitFor(
+    () =>
+      !["queued", "running"].includes(f.store.qaRun(started.id)?.state ?? ""),
+    60_000,
+    "the run to settle after supervisor death",
+  );
   const settled = f.store.qaRun(started.id)!;
   assert.match(settled.outputTail, /supervisor exit: signal SIGKILL/);
   assert.match(settled.outputTail, /Last supervisor phase: step-output/);
@@ -3476,11 +3537,7 @@ test("#1393: a staged QA step whose group is killed from outside settles failed 
     stages: [
       {
         name: "build",
-        argv: [
-          "/bin/sh",
-          "-c",
-          "printf 'build output line\\n'; sleep 60",
-        ],
+        argv: ["/bin/sh", "-c", "printf 'build output line\\n'; sleep 60"],
         timeoutMs: 120_000,
       },
     ],
@@ -3522,7 +3579,8 @@ test("#1393: a staged QA step whose group is killed from outside settles failed 
   await new Promise((resolve) => setTimeout(resolve, 300));
   process.kill(-active.processGroupId, "SIGKILL");
   await waitFor(
-    () => !["queued", "running"].includes(f.store.qaRun(started.id)?.state ?? ""),
+    () =>
+      !["queued", "running"].includes(f.store.qaRun(started.id)?.state ?? ""),
     60_000,
     "the externally killed run to settle",
   );
@@ -3547,7 +3605,11 @@ test("#1393: a staged QA step whose group is killed from outside settles failed 
   assert.doesNotMatch(settled.outputTail, /lost/i);
   assert.match(settled.outputTail, /build terminated by SIGKILL/);
   const hostRun = runner.hostRuns.get(started.id)!;
-  assert.equal(hostRun.state, "settled", "capacity is released by the settlement");
+  assert.equal(
+    hostRun.state,
+    "settled",
+    "capacity is released by the settlement",
+  );
   assert.equal(hostRun.settlement?.outcome, "failed");
   assert.equal(hostRun.settlement?.result?.signal, "SIGKILL");
   // project.qa.get carries the same cause without another reconciliation.
@@ -3564,8 +3626,11 @@ test("#1393: a staged QA step whose group is killed from outside settles failed 
     false,
     "the Queue-owned checkout is released",
   );
-  assert.equal(readQaStepExit(paths.stepExitPath, { runId: started.id, step: "build" }), null,
-    "the settled run removes its per-step exit record with its other supervision files");
+  assert.equal(
+    readQaStepExit(paths.stepExitPath, { runId: started.id, step: "build" }),
+    null,
+    "the settled run removes its per-step exit record with its other supervision files",
+  );
 });
 
 test("stale heartbeat ages under the watchdog threshold and heartbeat progress do not confirm a hung supervisor", () => {
@@ -4216,7 +4281,7 @@ test("a staged QA setting validates its names, count and total timeout; a single
       }),
     /replaces/,
   );
-  assert.throws(() => projectQaSchema.parse({}), /argv and timeoutMs/);
+  assert.throws(() => projectQaSchema.parse({}), /argv or 1 to 8 stages/);
 
   const single = projectQaSchema.parse({
     argv: ["effigy", "qa"],

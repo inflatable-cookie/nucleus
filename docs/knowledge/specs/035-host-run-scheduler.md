@@ -37,9 +37,9 @@ per repository (`core/qa/qa-board.ts`), and the project and lane filters apply.
 Placement follows state: queued in Queued with its position, running in Working
 with its open step and elapsed time, and any finished run that is not passing in
 Attention with its failed step, exit code and last output lines. A passing run
-sits in Closing and leaves the board five minutes after it finishes; the QA runs
+sits in Closing and leaves the board five minutes after it finishes; the Runs
 page keeps the history ("Pass fades, fail stays"). A failure stays until a
-passing re-run of the same repository replaces it or an operator dismisses it.
+later passing run of the same repository replaces it or an operator dismisses it.
 Failed, timed-out and held cards also show a Stale marker when their recorded
 `base` is an ancestor of the checkout's local `refs/remotes/origin/<baseBranch>`.
 The marker gives commits since the run and the run date. Missing refs and
@@ -47,10 +47,10 @@ rewritten or unrelated history show no marker. The board projection caches
 branch heads and base/head comparisons, with a short head refresh window; it
 does not fetch from the network.
 Dismissal is `project.qa.dismiss { id, reason, caller }`: it records who
-dismissed which run and never deletes the record. Card actions are cancel
-(`project.qa.cancel`, live runs), re-run (a fresh `project.qa.run` with the same
-repository and base and a new request ID), dismiss (finished, not passing) and
-open details, which opens the QA runs page on that run. The fade is read from
+dismissed which run and never deletes the record. Legacy card actions are cancel
+(`project.qa.cancel`, live runs), dismiss (finished, not passing) and
+open details, which opens the Runs page on that run (card `Re-run` launch was
+removed in nucleus#1498). The fade is read from
 the clock, so a card leaves with no store write: the projection advances the
 board revision when the set of visible cards changes.
 
@@ -2654,19 +2654,20 @@ the same day took signals by hand, and Nucleus recorded the cancel as `failed`.
   `adopt_running`, launch, escape, classification, container reports and
   settlement.
 - **Operator view.**
-  - **QA runs tab.** A "QA runs (N)" tab beside Decisions presents one
-    project-scoped list: Now shows running, admitted, queued and capacity-held
-    host runs oldest first; Results shows settled runs newest first, starting
-    with the past 24 hours. Rows identify project, kind, task when named by the
-    caller, selector, commit when present in joined QA or validation data, and
-    outcome. A failed row includes its failing step and a short failure summary.
-    Failed-only filtering, a project picker for Run QA, and row details preserve
-    step output, settlement, caller and epoch identity, cancel, teardown retry,
-    and capacity release. The bounded `project.qa.list` read supplies only the
-    latest QA run per repository, so an older milestone host run can lack QA
-    metadata such as its commit; arbitrary client runs also have no commit in
-    the host-run record. It's its own tab, not a panel above the Pipeline, which
-    pushed the task columns out of view (Tom, 2026-10-01).
+  - **Runs tab.** A "Runs (N)" tab beside Planning presents one
+    project-scoped list (nucleus#1498 renamed it from "QA runs" and removed
+    "Run QA" and its project picker): Now shows running, admitted, queued and
+    capacity-held host runs oldest first; Results shows settled runs newest
+    first, starting with the past 24 hours. Rows identify project, kind, task
+    when named by the caller, selector, commit when present in joined QA or
+    validation data, and outcome. A failed row includes its failing step and a
+    short failure summary. Failed-only filtering and row details preserve step
+    output, settlement, caller and epoch identity, legacy QA cancel, teardown
+    retry, and capacity release. The bounded `project.qa.list` read supplies
+    only the latest QA run per repository, so an older milestone host run can
+    lack QA metadata such as its commit; arbitrary client runs also have no
+    commit in the host-run record. It's its own tab, not a panel above the
+    Pipeline, which pushed the task columns out of view (Tom, 2026-10-01).
   - **Task detail.** A task's validation shows "Waiting for QA capacity
     (position N)" from Nucleus's own scheduler, not from Effigy's status.
 

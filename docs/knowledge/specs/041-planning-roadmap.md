@@ -145,14 +145,16 @@ Replaces the Plan column in Spec 026's Planning tab.
   empty plan. A refresh failure keeps the last version and says it may be out of
   date. Loading shows its own state.
 - **Done:** collapsed, with a count, newest first.
-- **Latest QA** (nucleus#869): the plan ends with the project's latest milestone
-  QA result on one line — state, failing step, short commit and time — linked to
-  that run in the QA runs tab, which owns the steps, failure, output, teardown
-  retry, launch and cancel. Planning duplicates none of those controls. A queued
-  run reads as waiting for a slot, never as running. A first read, a failed read
-  and a stale result stay distinct from no run: loading and failure say so, a
-  refresh failure keeps the last result and says it may be out of date, and only
-  a completed read with no run says there is none.
+- **Latest QA** (nucleus#869, updated nucleus#1498): the plan ends with the
+  project's latest legacy milestone QA result on one line — state, failing step,
+  short commit and time — linked to that run in the Runs tab, which owns the
+  steps, failure, output, teardown retry, and legacy cancel. Planning duplicates
+  none of those controls, and managed QA launching is retired (milestone QA runs
+  as an ordinary report-only task). A queued run reads as waiting for a slot,
+  never as running. A first read, a failed read and a stale result stay distinct
+  from no run: loading and failure say so, a refresh failure keeps the last
+  result and says it may be out of date, and only a completed read with no run
+  says no legacy QA run is recorded.
 - Lanes that list the project's repositories but sit outside the plan go behind
   "N unplanned lanes", each with Add to plan and Close.
 - Selecting a step opens the existing Lane view: document, history, leads, plus
@@ -222,4 +224,4 @@ Times are first guesses and are settings, not constants (Tom, 2026-10-03).
 | 9 | Project has no unfinished task or queued/running milestone QA | Next-aim notice with the top `now` step and first `next` step |
 | 10 | Project with no `now` or `next` step drains | Notice asks for a plan |
 | 11 | Pipeline view | Unchanged; existing pipeline tests pass as they are |
-| 15 | The plan's latest QA: a queued run, a failed run, a loading read, a failed read, a refresh failure and no run | Each says its own state; the queued run reads as waiting and never as running; the link opens that run in the QA runs tab; Planning offers no QA launch, cancel or teardown retry |
+| 15 | The plan's latest QA: a queued run, a failed run, a loading read, a failed read, a refresh failure and no run | Each says its own state; the queued run reads as waiting and never as running; the link opens that run in the Runs tab; neither Planning nor Runs offers a QA launch |

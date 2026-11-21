@@ -94,7 +94,7 @@ test("026-14a Planning has a plan pane and a lane pane wide, and opens the lane 
   );
   assert.match(
     panel,
-    /accessibilityLabel=\{searching \? "Lane search results" : "Planning plan"\}/,
+    /accessibilityLabel=\{\s*searching \? "Lane search results" : "Planning plan",?\s*\}/,
   );
   assert.match(panel, /accessibilityLabel="Planning lane"/);
   assert.match(
@@ -104,14 +104,14 @@ test("026-14a Planning has a plan pane and a lane pane wide, and opens the lane 
   );
   assert.match(
     panel,
-    /onClose=\{\(\)=>onStep\('plan'\)\}/,
+    /onClose=\{\(\)\s*=>\s*onStep\(["']plan["']\)\}/,
     "closing the lane modal returns to the plan",
   );
   assert.match(panel, /Back to plan/);
   assert.doesNotMatch(panel, /picker/i);
   assert.match(
     panel,
-    /action="add" label=\{`Add \$\{item.lane\} to \$\{name\} plan`\}/,
+    /action="add"\s+label=\{`Add \$\{item.lane\} to \$\{name\} plan`\}/,
   );
   assert.match(ui, /<PlanningTab\b/);
   assert.match(

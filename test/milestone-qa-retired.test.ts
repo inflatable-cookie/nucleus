@@ -136,6 +136,30 @@ test("a schedule can be cleared but never enabled or replaced", async (t) => {
     null,
     "clearing a leftover schedule stays the exit",
   );
+  f.runtime.store.patchRepository(
+    { origin: f.origin, path: f.repo },
+    {
+      qa: {
+        argv: ["effigy", "qa"],
+        timeoutMs: 60_000,
+        schedule: { afterMerges: 3, maxIntervalHours: 24 },
+      },
+    },
+  );
+  const patchCleared = await f.runtime.setRepository({
+    repository: f.origin,
+    qa: { schedule: null },
+  });
+  assert.equal(
+    patchCleared.qa?.schedule ?? null,
+    null,
+    "schedule-only null patch clears a stored legacy schedule",
+  );
+  assert.deepEqual(
+    patchCleared.qa?.argv,
+    ["effigy", "qa"],
+    "schedule-only null patch preserves the stored QA argv",
+  );
 });
 
 test("old history stays readable and an unsettled run is not orphaned by the refusal", async (t) => {
