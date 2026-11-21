@@ -23,7 +23,11 @@
  * wasted spawn. Lifecycle is unchanged: the daemon's own host registry, ten-minute
  * grace and active-run fence decide when it exits.
  */
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -92,7 +96,8 @@ interface Claim {
 function readClaim(path: string): Claim | null {
   try {
     const claim = JSON.parse(readFileSync(path, "utf8")) as Claim;
-    if (typeof claim.pid !== "number" || typeof claim.at !== "string") return null;
+    if (typeof claim.pid !== "number" || typeof claim.at !== "string")
+      return null;
     return claim;
   } catch {
     return null;
@@ -131,9 +136,13 @@ export function ensureDaemonForT3(
   const env = options.env ?? process.env;
 
   const connection = readT3Connection(options.dataDir);
-  if (!connection) return { status: "no-t3-host", reason: "no T3Code connection is stored" };
+  if (!connection)
+    return { status: "no-t3-host", reason: "no T3Code connection is stored" };
   if (!isLoopbackEndpoint(connection.endpoint))
-    return { status: "no-t3-host", reason: "the stored T3Code endpoint is not local" };
+    return {
+      status: "no-t3-host",
+      reason: "the stored T3Code endpoint is not local",
+    };
 
   const info = readServiceInfo(options.dataDir);
   if (info && alive(info.pid)) return { status: "running", pid: info.pid };
@@ -155,7 +164,9 @@ export function ensureDaemonForT3(
   let logFd: number | null = null;
   try {
     const installed = existsSync(join(options.root, "manifest.json"));
-    const command = installed ? join(options.root, "runtime", "node") : process.execPath;
+    const command = installed
+      ? join(options.root, "runtime", "node")
+      : process.execPath;
     const args = [
       ...(installed ? [] : runtimeNodeArgs()),
       join(options.root, "bin", "queue-service.mjs"),
@@ -182,7 +193,14 @@ export function ensureDaemonForT3(
   child.on("error", () => rmSync(claimPath, { force: true }));
   child.unref();
   // The claim now names the daemon, so a probe that arrives during its boot waits on it.
-  writeFileSync(claimPath, JSON.stringify({ pid: child.pid, at: new Date(now).toISOString() } satisfies Claim), { mode: 0o600 });
+  writeFileSync(
+    claimPath,
+    JSON.stringify({
+      pid: child.pid,
+      at: new Date(now).toISOString(),
+    } satisfies Claim),
+    { mode: 0o600 },
+  );
   return { status: "started", pid: child.pid };
 }
 
@@ -196,7 +214,10 @@ function claimExclusively(
   now: number,
   alive: (pid: number) => boolean,
 ): boolean {
-  const body = JSON.stringify({ pid, at: new Date(now).toISOString() } satisfies Claim);
+  const body = JSON.stringify({
+    pid,
+    at: new Date(now).toISOString(),
+  } satisfies Claim);
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       writeFileSync(path, body, { mode: 0o600, flag: "wx" });

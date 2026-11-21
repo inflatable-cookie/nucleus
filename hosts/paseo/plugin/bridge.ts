@@ -31,7 +31,10 @@ import {
   rollWaitWorthy,
 } from "../../../shared/service/roll-recovery";
 import { lifecycleSignalSchema } from "../../../shared/lifecycle-signal";
-import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "../../../shared/service/roll/options";
+import {
+  CONNECT_ATTEMPT_TIMEOUT_MS,
+  type BridgeOptions,
+} from "../../../shared/service/roll/options";
 import {
   BridgeSession,
   ServiceBridgeUnavailable,
@@ -60,7 +63,10 @@ import { startupFailureSummary } from "../../../shared/service/roll/startup-outp
  * Forwarding decides which of them a failure needs; the bridge only starts and
  * reports the owner, and reloads the plugin once a landed roll is recorded.
  */
-export type { BridgeState, StandbyReadiness } from "../../../shared/service/roll/session";
+export type {
+  BridgeState,
+  StandbyReadiness,
+} from "../../../shared/service/roll/session";
 export { ServiceBridgeUnavailable } from "../../../shared/service/roll/session";
 export type { BridgeOptions } from "../../../shared/service/roll/options";
 export type { BridgeProcessActions } from "../../../shared/service/bridge-process";
@@ -100,7 +106,8 @@ export class ServiceBridge {
     // module location for fixtures and direct runs.
     const sourcePath =
       options.sourcePath ?? readInstalledSourcePath(this.paseoHome());
-    const { expected, digest, pluginBuild } = this.resolveExpectedBuild(sourcePath);
+    const { expected, digest, pluginBuild } =
+      this.resolveExpectedBuild(sourcePath);
     this.session = new BridgeSession(expected, pluginBuild, sourcePath, digest);
     // An unresolvable build is a typed state, not a throw: every call reports it.
     if (expected instanceof Error)
@@ -494,7 +501,10 @@ export class ServiceBridge {
   private ensureOwner() {
     if (!this.options.rollOwnerLaunch) return;
     try {
-      this.options.processActions.ensureRollOwner({ dataDir: this.dataDir, root: this.session.sourcePath ?? sourcePathFromModule() });
+      this.options.processActions.ensureRollOwner({
+        dataDir: this.dataDir,
+        root: this.session.sourcePath ?? sourcePathFromModule(),
+      });
     } catch {
       /* the owner's roll record names any failure it reaches; a missing entry is not a service failure */
     }
@@ -506,15 +516,25 @@ export class ServiceBridge {
    */
   private followLandedRoll() {
     const roll = readServiceRoll(this.dataDir);
-    if (roll?.status === "rolled" && roll.toBuild) this.reloadPlugin(roll.toBuild);
+    if (roll?.status === "rolled" && roll.toBuild)
+      this.reloadPlugin(roll.toBuild);
   }
 
   private reloadPlugin(buildId: string) {
     const command = this.options.reloadPluginCommand?.();
-    if (!command || this.session.reloadedFor === buildId || buildId === this.session.pluginBuild) return;
+    if (
+      !command ||
+      this.session.reloadedFor === buildId ||
+      buildId === this.session.pluginBuild
+    )
+      return;
     this.session.reloadedFor = buildId;
     try {
-      const child = this.options.processActions.spawn(command.command, command.args, { detached: true, stdio: "ignore", env: process.env });
+      const child = this.options.processActions.spawn(
+        command.command,
+        command.args,
+        { detached: true, stdio: "ignore", env: process.env },
+      );
       child.on("error", () => {
         /* the header notice still asks for a manual reload */
       });

@@ -2,10 +2,19 @@ import type { ServiceClient } from "../client";
 import type { StandbyWaitCause } from "../standby-wait";
 
 /** The typed state the bridge reports for the service it forwards to. */
-export type BridgeState = "absent" | "starting" | "running" | "incompatible" | "upgrading" | "unhealthy";
+export type BridgeState =
+  | "absent"
+  | "starting"
+  | "running"
+  | "incompatible"
+  | "upgrading"
+  | "unhealthy";
 
 export class ServiceBridgeUnavailable extends Error {
-  constructor(readonly state: BridgeState, detail: string) {
+  constructor(
+    readonly state: BridgeState,
+    detail: string,
+  ) {
     super(`Queue service ${state}: ${detail}`);
   }
 }
@@ -65,7 +74,12 @@ export class BridgeSession {
   /** A closed bridge is a released fixture or plugin owner: it never spawns again. */
   closed = false;
 
-  constructor(expected: string | Error, pluginBuild: string | null, sourcePath: string | null, sourceDigest: string | null) {
+  constructor(
+    expected: string | Error,
+    pluginBuild: string | null,
+    sourcePath: string | null,
+    sourceDigest: string | null,
+  ) {
     this.expected = expected;
     this.pluginBuild = pluginBuild;
     this.sourcePath = sourcePath;
@@ -73,20 +87,34 @@ export class BridgeSession {
   }
 
   /** Report the typed state a caller will see; the detail always names what was observed. */
-  report(state: BridgeState, detail: string) { this.state = state; this.detail = detail; }
+  report(state: BridgeState, detail: string) {
+    this.state = state;
+    this.detail = detail;
+  }
 
-  markRunning() { this.state = "running"; this.detail = ""; }
+  markRunning() {
+    this.state = "running";
+    this.detail = "";
+  }
 
-  markUnhealthy(detail: string) { this.state = "unhealthy"; this.detail = detail; }
+  markUnhealthy(detail: string) {
+    this.state = "unhealthy";
+    this.detail = detail;
+  }
 
   /** The build id this bridge insists on, or a typed refusal when it has none. */
   buildId(): string {
-    if (this.expected instanceof Error) throw new ServiceBridgeUnavailable("unhealthy", this.expected.message);
+    if (this.expected instanceof Error)
+      throw new ServiceBridgeUnavailable("unhealthy", this.expected.message);
     return this.expected;
   }
 
   /** Keep the authenticated connection and the one presence claim it holds. */
-  attach(client: ServiceClient, health: Record<string, unknown>, presenceClaimed: boolean) {
+  attach(
+    client: ServiceClient,
+    health: Record<string, unknown>,
+    presenceClaimed: boolean,
+  ) {
     this.client = client;
     this.health = health;
     this.presenceClaimed = presenceClaimed;

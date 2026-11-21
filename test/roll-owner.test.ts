@@ -6,10 +6,22 @@
  */
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ensureRollOwner, RollOwner, ROLL_OWNER_FILE, ROLL_OWNER_LAUNCH_FILE } from "../service/roll/owner";
+import {
+  ensureRollOwner,
+  RollOwner,
+  ROLL_OWNER_FILE,
+  ROLL_OWNER_LAUNCH_FILE,
+} from "../service/roll/owner";
 import { writeServiceRoll } from "../service/transport/identity";
 import { backendSourceDigest } from "../shared/service/build";
 
@@ -27,7 +39,10 @@ function fixtureEnvironment(prefix: string, mainChannel: boolean) {
   mkdirSync(join(home, ".local", "share", "nucleus"), { recursive: true });
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   if (mainChannel) {
-    writeFileSync(join(home, ".local", "share", "nucleus", "channel.json"), JSON.stringify({ channel: "main", repository: "/synthetic/repository" }));
+    writeFileSync(
+      join(home, ".local", "share", "nucleus", "channel.json"),
+      JSON.stringify({ channel: "main", repository: "/synthetic/repository" }),
+    );
   }
   return { root, home, dataDir };
 }
@@ -35,7 +50,8 @@ function fixtureEnvironment(prefix: string, mainChannel: boolean) {
 /** A fixture source tree the owner can compute a backend identity for. */
 function fixtureCheckout(root: string): string {
   const checkout = join(root, "checkout");
-  for (const dir of ["core", "service", "shared", "hosts", "bin"]) mkdirSync(join(checkout, dir), { recursive: true });
+  for (const dir of ["core", "service", "shared", "hosts", "bin"])
+    mkdirSync(join(checkout, dir), { recursive: true });
   writeFileSync(join(checkout, "core", "entry.ts"), "export {};");
   writeFileSync(join(checkout, "shared", "entry.ts"), "export {};");
   writeFileSync(join(checkout, "bin", "queue-service.mjs"), "");
@@ -45,15 +61,25 @@ function fixtureCheckout(root: string): string {
 function withHome<T>(home: string, body: () => T): T {
   const previous = process.env.HOME;
   process.env.HOME = home;
-  try { return body(); }
-  finally { if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous; }
+  try {
+    return body();
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
 }
 
 function fakeSpawn(pid = 4343) {
   const calls: Array<{ command: string; args: string[] }> = [];
   const spawnProcess = (command: string, args: string[]) => {
     calls.push({ command, args });
-    return { pid, unref() {}, on() { return this; } } as unknown as ChildProcess;
+    return {
+      pid,
+      unref() {},
+      on() {
+        return this;
+      },
+    } as unknown as ChildProcess;
   };
   return { calls, spawnProcess };
 }
@@ -63,7 +89,9 @@ test("without a configured main channel, no owner is started", () => {
   mkdirSync(join(root, "bin"), { recursive: true });
   writeFileSync(join(root, "bin", "queue-roll-owner.mjs"), "");
   const { calls, spawnProcess } = fakeSpawn();
-  const launch = withHome(home, () => ensureRollOwner({ dataDir, root, spawnProcess, pidAlive: () => false }));
+  const launch = withHome(home, () =>
+    ensureRollOwner({ dataDir, root, spawnProcess, pidAlive: () => false }),
+  );
   assert.equal(launch.status, "no-main-channel");
   assert.equal(calls.length, 0);
 });
@@ -79,16 +107,28 @@ test("a cold start spawns one owner, and concurrent starters share its launch cl
   assert.deepEqual(first, { status: "started", pid: 4343 });
   assert.equal(calls.length, 1);
   assert.ok(calls[0]!.args.includes(`--data-dir=${dataDir}`));
-  assert.ok(calls[0]!.args.some(arg => arg.endsWith("queue-roll-owner.mjs")));
-  assert.equal(JSON.parse(readFileSync(join(dataDir, ROLL_OWNER_LAUNCH_FILE), "utf8")).pid, 4343);
+  assert.ok(calls[0]!.args.some((arg) => arg.endsWith("queue-roll-owner.mjs")));
+  assert.equal(
+    JSON.parse(readFileSync(join(dataDir, ROLL_OWNER_LAUNCH_FILE), "utf8")).pid,
+    4343,
+  );
 
   // A second starter while the owner boots waits on its launch claim and spawns nothing.
-  assert.deepEqual(withHome(home, () => ensureRollOwner(options)), { status: "claimed", pid: 4343 });
+  assert.deepEqual(
+    withHome(home, () => ensureRollOwner(options)),
+    { status: "claimed", pid: 4343 },
+  );
   assert.equal(calls.length, 1);
 
   // Once the owner has written its heartbeat, starters report it running.
-  writeFileSync(join(dataDir, ROLL_OWNER_FILE), JSON.stringify({ pid: 4343, at: new Date().toISOString() }));
-  assert.deepEqual(withHome(home, () => ensureRollOwner(options)), { status: "running", pid: 4343 });
+  writeFileSync(
+    join(dataDir, ROLL_OWNER_FILE),
+    JSON.stringify({ pid: 4343, at: new Date().toISOString() }),
+  );
+  assert.deepEqual(
+    withHome(home, () => ensureRollOwner(options)),
+    { status: "running", pid: 4343 },
+  );
   assert.equal(calls.length, 1);
 });
 
@@ -96,9 +136,14 @@ test("a stale launch claim from a dead starter is reclaimed", () => {
   const { home, dataDir, root } = fixtureEnvironment("owner-stale-", true);
   mkdirSync(join(root, "bin"), { recursive: true });
   writeFileSync(join(root, "bin", "queue-roll-owner.mjs"), "");
-  writeFileSync(join(dataDir, ROLL_OWNER_LAUNCH_FILE), JSON.stringify({ pid: 999_999, at: new Date(0).toISOString() }));
+  writeFileSync(
+    join(dataDir, ROLL_OWNER_LAUNCH_FILE),
+    JSON.stringify({ pid: 999_999, at: new Date(0).toISOString() }),
+  );
   const { calls, spawnProcess } = fakeSpawn(4444);
-  const launch = withHome(home, () => ensureRollOwner({ dataDir, root, spawnProcess, pidAlive: () => false }));
+  const launch = withHome(home, () =>
+    ensureRollOwner({ dataDir, root, spawnProcess, pidAlive: () => false }),
+  );
   assert.equal(launch.status, "started");
   assert.equal(calls.length, 1);
 });
@@ -106,26 +151,200 @@ test("a stale launch claim from a dead starter is reclaimed", () => {
 test("an owner with no service and nothing pending exits after its idle window and releases its heartbeat", async () => {
   const { home, dataDir, root } = fixtureEnvironment("owner-idle-", true);
   const checkout = fixtureCheckout(root);
-  const owner = withHome(home, () => new RollOwner({ dataDir, sourcePath: checkout, rollCheckMs: 0, ownerIdleExitMs: 50 }));
+  const owner = withHome(
+    home,
+    () =>
+      new RollOwner({
+        dataDir,
+        sourcePath: checkout,
+        rollCheckMs: 0,
+        ownerIdleExitMs: 50,
+      }),
+  );
   assert.equal(owner.pending(), false);
   const reason = await owner.run();
   assert.match(reason, /idle exit/);
-  assert.equal(existsSync(join(dataDir, ROLL_OWNER_FILE)), false, "the heartbeat is released on exit");
+  assert.equal(
+    existsSync(join(dataDir, ROLL_OWNER_FILE)),
+    false,
+    "the heartbeat is released on exit",
+  );
 });
 
 test("an owner with an unfinished roll stays pending rather than exiting, and a second owner yields to a live heartbeat", async () => {
   const { home, dataDir, root } = fixtureEnvironment("owner-pending-", true);
   const checkout = fixtureCheckout(root);
   writeServiceRoll(dataDir, {
-    status: "replacing", fromBuild: "a".repeat(16), toBuild: "b".repeat(16),
-    digest: backendSourceDigest(checkout), at: new Date().toISOString(), detail: "Typecheck passed; replacing the service", deferrals: [],
+    status: "replacing",
+    fromBuild: "a".repeat(16),
+    toBuild: "b".repeat(16),
+    digest: backendSourceDigest(checkout),
+    at: new Date().toISOString(),
+    detail: "Typecheck passed; replacing the service",
+    deferrals: [],
   });
-  const owner = withHome(home, () => new RollOwner({ dataDir, sourcePath: checkout, rollCheckMs: 0, ownerIdleExitMs: 50 }));
-  assert.equal(owner.pending(), true, "a replacing record keeps the owner until it settles");
+  const owner = withHome(
+    home,
+    () =>
+      new RollOwner({
+        dataDir,
+        sourcePath: checkout,
+        rollCheckMs: 0,
+        ownerIdleExitMs: 50,
+      }),
+  );
+  assert.equal(
+    owner.pending(),
+    true,
+    "a replacing record keeps the owner until it settles",
+  );
 
   // A live owner (this test's parent process) holds the heartbeat: a newcomer refuses to run beside it.
-  writeFileSync(join(dataDir, ROLL_OWNER_FILE), JSON.stringify({ pid: process.ppid, at: new Date().toISOString() }));
-  const second = withHome(home, () => new RollOwner({ dataDir, sourcePath: checkout, rollCheckMs: 0, ownerIdleExitMs: 50 }));
+  writeFileSync(
+    join(dataDir, ROLL_OWNER_FILE),
+    JSON.stringify({ pid: process.ppid, at: new Date().toISOString() }),
+  );
+  const second = withHome(
+    home,
+    () =>
+      new RollOwner({
+        dataDir,
+        sourcePath: checkout,
+        rollCheckMs: 0,
+        ownerIdleExitMs: 50,
+      }),
+  );
   assert.match(await second.run(), /another roll owner/);
-  assert.equal(JSON.parse(readFileSync(join(dataDir, ROLL_OWNER_FILE), "utf8")).pid, process.ppid, "the held heartbeat is not taken over");
+  assert.equal(
+    JSON.parse(readFileSync(join(dataDir, ROLL_OWNER_FILE), "utf8")).pid,
+    process.ppid,
+    "the held heartbeat is not taken over",
+  );
+});
+
+test("starter death between spawn and launch-claim transfer cannot produce two active roll owners", async () => {
+  const { home, dataDir, root } = fixtureEnvironment(
+    "owner-crash-window-",
+    true,
+  );
+  const checkout = fixtureCheckout(root);
+  mkdirSync(join(root, "bin"), { recursive: true });
+  writeFileSync(join(root, "bin", "queue-roll-owner.mjs"), "");
+
+  // Simulate starter 1 having claimed the launch file, spawned owner 1, and died
+  // before overwriting the launch claim with owner 1's PID.
+  const deadStarterPid = 999_998;
+  writeFileSync(
+    join(dataDir, ROLL_OWNER_LAUNCH_FILE),
+    JSON.stringify({ pid: deadStarterPid, at: new Date().toISOString() }),
+  );
+
+  // Starter 2 arrives before owner 1 claims the heartbeat, reclaims the dead starter's
+  // launch file, and spawns owner 2.
+  const { calls, spawnProcess } = fakeSpawn(4545);
+  const launch2 = withHome(home, () =>
+    ensureRollOwner({
+      dataDir,
+      root,
+      spawnProcess,
+      pidAlive: (pid) => pid === 4545,
+    }),
+  );
+  assert.deepEqual(launch2, { status: "started", pid: 4545 });
+  assert.equal(calls.length, 1);
+
+  // Both owner 1 and owner 2 start on the same data home. Exactly one acquires
+  // ROLL_OWNER_FILE exclusively and runs; the loser exits immediately without
+  // overwriting or releasing the winner's claim.
+  const owner1 = withHome(
+    home,
+    () =>
+      new RollOwner({
+        dataDir,
+        sourcePath: checkout,
+        rollCheckMs: 0,
+        ownerIdleExitMs: 120,
+      }),
+  );
+  const owner2 = withHome(
+    home,
+    () =>
+      new RollOwner({
+        dataDir,
+        sourcePath: checkout,
+        rollCheckMs: 0,
+        ownerIdleExitMs: 120,
+      }),
+  );
+  const [reason1, reason2] = await Promise.all([owner1.run(), owner2.run()]);
+  const reasons = [reason1, reason2];
+  assert.equal(
+    reasons.filter((r) => /another roll owner/.test(r)).length,
+    1,
+    `expected one owner to yield, got: ${reasons.join(" | ")}`,
+  );
+  assert.equal(
+    reasons.filter((r) => /idle exit/.test(r)).length,
+    1,
+    `expected one owner to run until idle exit, got: ${reasons.join(" | ")}`,
+  );
+  assert.equal(
+    existsSync(join(dataDir, ROLL_OWNER_FILE)),
+    false,
+    "winner releases heartbeat on exit",
+  );
+});
+
+test("stale heartbeat from a dead owner is reclaimed by exactly one concurrent newcomer", async () => {
+  const { home, dataDir, root } = fixtureEnvironment(
+    "owner-stale-reclaim-",
+    true,
+  );
+  const checkout = fixtureCheckout(root);
+  writeFileSync(
+    join(dataDir, ROLL_OWNER_FILE),
+    JSON.stringify({
+      pid: 999_997,
+      at: new Date(0).toISOString(),
+      token: "dead-owner",
+    }),
+  );
+
+  const owner1 = withHome(
+    home,
+    () =>
+      new RollOwner({
+        dataDir,
+        sourcePath: checkout,
+        rollCheckMs: 0,
+        ownerIdleExitMs: 120,
+      }),
+  );
+  const owner2 = withHome(
+    home,
+    () =>
+      new RollOwner({
+        dataDir,
+        sourcePath: checkout,
+        rollCheckMs: 0,
+        ownerIdleExitMs: 120,
+      }),
+  );
+  const [reason1, reason2] = await Promise.all([owner1.run(), owner2.run()]);
+  const reasons = [reason1, reason2];
+  assert.equal(
+    reasons.filter((r) => /another roll owner/.test(r)).length,
+    1,
+    `expected one newcomer to yield, got: ${reasons.join(" | ")}`,
+  );
+  assert.equal(
+    reasons.filter((r) => /idle exit/.test(r)).length,
+    1,
+    `expected one newcomer to reclaim and run, got: ${reasons.join(" | ")}`,
+  );
+  assert.equal(
+    existsSync(join(dataDir, ROLL_OWNER_FILE)),
+    false,
+    "reclaimed heartbeat is released on exit",
+  );
 });

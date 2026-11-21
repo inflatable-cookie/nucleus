@@ -1,17 +1,28 @@
 import { bridgeProcessActions } from "../../service/install/bridge-process-actions";
-import {mkdtempSync, rmSync, realpathSync, writeFileSync, readFileSync, mkdirSync, readdirSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {spawnSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
-import {after} from 'node:test';
-import assert from 'node:assert/strict';
-import { ServiceBridge } from '../../hosts/paseo/plugin/bridge';
-import { RollOwner } from '../../service/roll/owner';
-import type { Adapter } from '../../core/host';
-import { processCommandLine } from '../../core/machine/process-identity';
-import { processGroupEmpty } from '../../core/machine/process-group';
-import { hostRunProcessStartIdentity, startIdentityMatches } from '../../core/machine/start-identity';
+import {
+  mkdtempSync,
+  rmSync,
+  realpathSync,
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { after } from "node:test";
+import assert from "node:assert/strict";
+import { ServiceBridge } from "../../hosts/paseo/plugin/bridge";
+import { RollOwner } from "../../service/roll/owner";
+import type { Adapter } from "../../core/host";
+import { processCommandLine } from "../../core/machine/process-identity";
+import { processGroupEmpty } from "../../core/machine/process-group";
+import {
+  hostRunProcessStartIdentity,
+  startIdentityMatches,
+} from "../../core/machine/start-identity";
 
 /** `ours` is the only verdict that authorizes a signal; `unknown` is never a clean teardown. */
 export type ServiceProof = "ours" | "gone" | "foreign" | "unknown";
@@ -43,18 +54,27 @@ export type ServiceProof = "ours" | "gone" | "foreign" | "unknown";
  * teardown fails rather than returning clean beside it.
  */
 export function serviceOwnershipVerdict(input: {
-  alive: boolean; zombie: boolean; pid: number;
+  alive: boolean;
+  zombie: boolean;
+  pid: number;
   /** This file spawned the pid itself (the bridge's `onSpawn`, or an explicit claim). */
   spawned: boolean;
-  recordedIdentity: string | null; liveIdentity: string | null;
+  recordedIdentity: string | null;
+  liveIdentity: string | null;
   groupId: number | null;
 }): ServiceProof {
   if (!input.alive || input.zombie) return "gone";
   // Only a recorded spawn owns a process and can ever be signalled.
   if (!input.spawned) return "unknown";
-  if (input.recordedIdentity === null || input.liveIdentity === null
-    || input.recordedIdentity.endsWith("@unknown") || input.liveIdentity.endsWith("@unknown")) return "unknown";
-  if (!startIdentityMatches(input.recordedIdentity, input.liveIdentity)) return "foreign";
+  if (
+    input.recordedIdentity === null ||
+    input.liveIdentity === null ||
+    input.recordedIdentity.endsWith("@unknown") ||
+    input.liveIdentity.endsWith("@unknown")
+  )
+    return "unknown";
+  if (!startIdentityMatches(input.recordedIdentity, input.liveIdentity))
+    return "foreign";
   // Bridge-spawned services are detached group leaders, so the process that owns
   // the record also leads the group teardown signals.
   if (input.groupId === null) return "unknown";
@@ -70,7 +90,11 @@ export function serviceOwnershipVerdict(input: {
  * under teardown's signal (review 5723330718). An unreadable first observation
  * stays `@unknown`: it is reported, never signalled and never settled.
  */
-export function recordSpawnIdentity(record: Map<number, string>, pid: number, identity: string): boolean {
+export function recordSpawnIdentity(
+  record: Map<number, string>,
+  pid: number,
+  identity: string,
+): boolean {
   if (record.has(pid)) return false;
   record.set(pid, identity);
   return true;
@@ -86,13 +110,27 @@ export function recordSpawnIdentity(record: Map<number, string>, pid: number, id
  * reads the two promises it keeps; a rename makes the seam unreadable, which
  * teardown reports instead of assuming settlement.
  */
-export function bridgeInFlightWork(bridge: ServiceBridge | RollOwner): Promise<unknown>[] {
+export function bridgeInFlightWork(
+  bridge: ServiceBridge | RollOwner,
+): Promise<unknown>[] {
   // The bridge keeps its own single-flight connect; the roll owner keeps only the roll.
-  const internals = bridge as unknown as { ensurePromise?: Promise<unknown> | null; roll?: { rolling?: Promise<unknown> | null } };
-  if (bridge instanceof RollOwner) return [internals.roll?.rolling].filter((pending): pending is Promise<unknown> => Boolean(pending));
-  if (!("ensurePromise" in internals)) return [Promise.reject(new Error("the fixture cannot observe this bridge's in-flight work"))];
-  return [internals.ensurePromise, internals.roll?.rolling]
-    .filter((pending): pending is Promise<unknown> => Boolean(pending));
+  const internals = bridge as unknown as {
+    ensurePromise?: Promise<unknown> | null;
+    roll?: { rolling?: Promise<unknown> | null };
+  };
+  if (bridge instanceof RollOwner)
+    return [internals.roll?.rolling].filter(
+      (pending): pending is Promise<unknown> => Boolean(pending),
+    );
+  if (!("ensurePromise" in internals))
+    return [
+      Promise.reject(
+        new Error("the fixture cannot observe this bridge's in-flight work"),
+      ),
+    ];
+  return [internals.ensurePromise, internals.roll?.rolling].filter(
+    (pending): pending is Promise<unknown> => Boolean(pending),
+  );
 }
 
 /**
@@ -103,15 +141,25 @@ export function bridgeInFlightWork(bridge: ServiceBridge | RollOwner): Promise<u
  */
 export function processLiveness(pid: number): "alive" | "gone" | "unknown" {
   if (!Number.isInteger(pid) || pid <= 0) return "unknown";
-  try { process.kill(pid, 0); return "alive"; }
-  catch (error) { return livenessFromProbeError((error as NodeJS.ErrnoException).code); }
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    return livenessFromProbeError((error as NodeJS.ErrnoException).code);
+  }
 }
 
 /** A failed liveness probe: `ESRCH` is the only code that proves the process is gone. */
-export function livenessFromProbeError(code: string | undefined): "gone" | "unknown" {
+export function livenessFromProbeError(
+  code: string | undefined,
+): "gone" | "unknown" {
   return code === "ESRCH" ? "gone" : "unknown";
 }
-export interface ServiceSettlement { pid: number; proof: ServiceProof; groupEmpty: boolean | null }
+export interface ServiceSettlement {
+  pid: number;
+  proof: ServiceProof;
+  groupEmpty: boolean | null;
+}
 
 /** Bound on proving a signalled fixture service and its group have exited. */
 const TEARDOWN_WAIT_MS = 10_000;
@@ -119,14 +167,17 @@ const TEARDOWN_WAIT_MS = 10_000;
  * Shared bridge fixtures. Each test file passes its own temp-dir prefix, so the
  * files run in parallel and one file's cleanup never kills another's services.
  */
-export function bridgeSupport(prefix: string, options: {
-  teardownWaitMs?: number;
-  /** Test seam for the start-identity source; production uses the host reader. */
-  startIdentity?: (pid: number) => string;
-} = {}) {
+export function bridgeSupport(
+  prefix: string,
+  options: {
+    teardownWaitMs?: number;
+    /** Test seam for the start-identity source; production uses the host reader. */
+    startIdentity?: (pid: number) => string;
+  } = {},
+) {
   const teardownWaitMs = options.teardownWaitMs ?? TEARDOWN_WAIT_MS;
   /** The checkout under test: every fixture service runs its entry from here. */
-  const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
+  const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
   /**
    * Pids this file spawned itself, with the identity read at that moment. This
    * is the positive ownership record: a spawn is owned even when the process
@@ -137,8 +188,11 @@ export function bridgeSupport(prefix: string, options: {
   const spawnedIdentities = new Map<number, string>();
   const readStartIdentity = (pid: number): string => {
     if (options.startIdentity) return options.startIdentity(pid);
-    try { return hostRunProcessStartIdentity(pid); }
-    catch { return `${pid}@unknown`; }
+    try {
+      return hostRunProcessStartIdentity(pid);
+    } catch {
+      return `${pid}@unknown`;
+    }
   };
   /**
    * Service pids this file spawned through a tracked bridge, for leak-free
@@ -194,15 +248,34 @@ export function bridgeSupport(prefix: string, options: {
   /** Old-backend-shaped fake adapter for the first-cutover fixture. */
   function fakeAdapter(dir: string): Adapter {
     return {
-      client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host',
-      socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'worker-helper.mjs'),
-      connect: async () => {}, close: async () => {}, profiles: async () => [],
-      observe: async () => ({ id: 'w', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
+      client: { isConnected: true },
+      isConnected: () => true,
+      hostId: "fixture-host",
+      socketPath: join(dir, "callback.sock"),
+      helperPath: join(dir, "worker-helper.mjs"),
+      connect: async () => {},
+      close: async () => {},
+      profiles: async () => [],
+      observe: async () => ({
+        id: "w",
+        workspaceId: "ws",
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+      }),
     } as unknown as Adapter;
   }
 
   function serviceCommand() {
-    return { command: process.execPath, args: ['--import', 'tsx', fileURLToPath(new URL('../../bin/queue-service.mjs', import.meta.url))] };
+    return {
+      command: process.execPath,
+      args: [
+        "--import",
+        "tsx",
+        fileURLToPath(new URL("../../bin/queue-service.mjs", import.meta.url)),
+      ],
+    };
   }
 
   /**
@@ -213,32 +286,67 @@ export function bridgeSupport(prefix: string, options: {
    * a live options object between calls and the bridge reads it lazily.
    */
   /** A roll owner the fixture tracks the same way: its spawns, its roll and its close. */
-  function trackedOwner(options: Partial<ConstructorParameters<typeof RollOwner>[0]> = {}): RollOwner {
+  function trackedOwner(
+    options: Partial<ConstructorParameters<typeof RollOwner>[0]> = {},
+  ): RollOwner {
     const previous = options.onSpawn;
-    options.onSpawn = pid => { spawnedPids.recordOwnSpawn(pid); previous?.(pid); };
-    const owner = new RollOwner({ processActions: bridgeProcessActions, ...options });
+    options.onSpawn = (pid) => {
+      spawnedPids.recordOwnSpawn(pid);
+      previous?.(pid);
+    };
+    const owner = new RollOwner({
+      processActions: bridgeProcessActions,
+      ...options,
+    });
     trackedBridges.add(owner);
     return owner;
   }
-  function trackedBridge(options: Partial<ConstructorParameters<typeof ServiceBridge>[0]> = {}): ServiceBridge {
+  function trackedBridge(
+    options: Partial<ConstructorParameters<typeof ServiceBridge>[0]> = {},
+  ): ServiceBridge {
     const previous = options.onSpawn;
-    options.onSpawn = pid => { spawnedPids.recordOwnSpawn(pid); previous?.(pid); };
-    const bridge = new ServiceBridge({ processActions: bridgeProcessActions, ...options });
+    options.onSpawn = (pid) => {
+      spawnedPids.recordOwnSpawn(pid);
+      previous?.(pid);
+    };
+    const bridge = new ServiceBridge({
+      processActions: bridgeProcessActions,
+      ...options,
+    });
     trackedBridges.add(bridge);
     return bridge;
   }
 
-  async function bridgeFixture(): Promise<{ bridge: ServiceBridge; dataDir: string; paseoHome: string; root: string }> {
+  async function bridgeFixture(): Promise<{
+    bridge: ServiceBridge;
+    dataDir: string;
+    paseoHome: string;
+    root: string;
+  }> {
     const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-    const paseoHome = root, dataDir = join(root, 'northstar-queue');
+    const paseoHome = root,
+      dataDir = join(root, "northstar-queue");
     mkdirSync(paseoHome, { recursive: true, mode: 0o700 });
     // The spawned service and bridge both use this checkout's source root.
-    writeFileSync(join(paseoHome, 'config.json'), JSON.stringify({ plugins: { nucleus: { path: fileURLToPath(new URL('../..', import.meta.url)) } } }), { mode: 0o600 });
+    writeFileSync(
+      join(paseoHome, "config.json"),
+      JSON.stringify({
+        plugins: {
+          nucleus: { path: fileURLToPath(new URL("../..", import.meta.url)) },
+        },
+      }),
+      { mode: 0o600 },
+    );
     // Tracked like every other fixture bridge: a service this bridge starts is
     // owned by the file's spawn record, and teardown can close its admission
     // (review 5722890385). An untracked fixture bridge left its services to be
     // discovered from an identity file, which is not ownership.
-    const bridge = trackedBridge({ dataDir, paseoHome, serviceCommand, readinessBudgetMs: 60_000 });
+    const bridge = trackedBridge({
+      dataDir,
+      paseoHome,
+      serviceCommand,
+      readinessBudgetMs: 60_000,
+    });
     return { bridge, dataDir, paseoHome, root };
   }
 
@@ -247,24 +355,33 @@ export function bridgeSupport(prefix: string, options: {
    * uncollected zombie, in one host read. Null when this host cannot say: an
    * unreadable process is `unknown`, never a different process.
    */
-  function liveProcessState(pid: number): { zombie: boolean; groupId: number } | null {
-    if (process.platform === 'linux') {
+  function liveProcessState(
+    pid: number,
+  ): { zombie: boolean; groupId: number } | null {
+    if (process.platform === "linux") {
       try {
-        const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-        const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
         const groupId = Number(fields[2]);
         if (!Number.isInteger(groupId) || groupId <= 0) return null;
-        return { zombie: fields[0] === 'Z', groupId };
-      } catch { return null; }
+        return { zombie: fields[0] === "Z", groupId };
+      } catch {
+        return null;
+      }
     }
     try {
-      const result = spawnSync('ps', ['-o', 'stat=,pgid=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000 });
-      const match = /^\s*(\S+)\s+(\d+)\s*$/.exec(result.stdout ?? '');
+      const result = spawnSync("ps", ["-o", "stat=,pgid=", "-p", String(pid)], {
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+      const match = /^\s*(\S+)\s+(\d+)\s*$/.exec(result.stdout ?? "");
       if (result.status !== 0 || !match) return null;
       const groupId = Number(match[2]);
       if (!Number.isInteger(groupId) || groupId <= 0) return null;
-      return { zombie: match[1].startsWith('Z'), groupId };
-    } catch { return null; }
+      return { zombie: match[1].startsWith("Z"), groupId };
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -295,7 +412,7 @@ export function bridgeSupport(prefix: string, options: {
       zombie: live?.zombie ?? false,
       pid,
       spawned,
-      recordedIdentity: spawned ? spawnedIdentities.get(pid) ?? null : null,
+      recordedIdentity: spawned ? (spawnedIdentities.get(pid) ?? null) : null,
       liveIdentity: spawned ? readStartIdentity(pid) : null,
       groupId: live?.groupId ?? null,
     });
@@ -320,8 +437,12 @@ export function bridgeSupport(prefix: string, options: {
    */
   function stopServiceGroup(pid: number, signal: NodeJS.Signals): boolean {
     if (serviceProof(pid) !== "ours") return false;
-    try { process.kill(-pid, signal); return true; }
-    catch { return false; }
+    try {
+      process.kill(-pid, signal);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -330,9 +451,12 @@ export function bridgeSupport(prefix: string, options: {
    * are proof; elapsed time never is, which is why this is bounded and reports
    * what it could not prove rather than assuming it.
    */
-  async function waitForExit(targets: Set<number>, deadline: number): Promise<void> {
+  async function waitForExit(
+    targets: Set<number>,
+    deadline: number,
+  ): Promise<void> {
     while (Date.now() < deadline) {
-      const pending = [...targets].filter(pid => {
+      const pending = [...targets].filter((pid) => {
         const proof = serviceProof(pid);
         if (proof === "ours" || proof === "unknown") return true;
         return proof === "gone" && ownedGroupEmpty(pid) === false;
@@ -350,10 +474,14 @@ export function bridgeSupport(prefix: string, options: {
    * 5723080357).
    */
   async function drainBridgeWork(deadline: number): Promise<boolean> {
-    const pending = () => [...trackedBridges].flatMap(bridge => bridgeInFlightWork(bridge));
+    const pending = () =>
+      [...trackedBridges].flatMap((bridge) => bridgeInFlightWork(bridge));
     while (pending().length && Date.now() < deadline) {
       const wait = Math.max(0, deadline - Date.now());
-      await Promise.race([Promise.all(pending().map(promise => promise.catch(() => null))), sleep(wait)]);
+      await Promise.race([
+        Promise.all(pending().map((promise) => promise.catch(() => null))),
+        sleep(wait),
+      ]);
     }
     return pending().length === 0;
   }
@@ -374,7 +502,10 @@ export function bridgeSupport(prefix: string, options: {
    * apparently clean report while the owned process or its group was still
    * alive (review 5722842535).
    */
-  async function settleServices(): Promise<{ settlements: ServiceSettlement[]; bridgeWorkSettled: boolean }> {
+  async function settleServices(): Promise<{
+    settlements: ServiceSettlement[];
+    bridgeWorkSettled: boolean;
+  }> {
     for (const bridge of trackedBridges) bridge.close();
     const deadline = Date.now() + teardownWaitMs;
     const targets = new Set<number>();
@@ -386,12 +517,14 @@ export function bridgeSupport(prefix: string, options: {
       for (const pid of retainedTargets) targets.add(pid);
       for (const name of readdirSync(tmpdir())) {
         if (!name.startsWith(prefix)) continue;
-        const dir = join(tmpdir(), name, 'northstar-queue');
+        const dir = join(tmpdir(), name, "northstar-queue");
         try {
-          const info = JSON.parse(readFileSync(join(dir, 'queue-service.json'), 'utf8')) as { pid: number };
+          const info = JSON.parse(
+            readFileSync(join(dir, "queue-service.json"), "utf8"),
+          ) as { pid: number };
           if (info.pid !== process.pid) targets.add(info.pid);
-          rmSync(join(dir, 'queue-service.sock'), { force: true });
-          rmSync(join(dir, 'queue-service.json'), { force: true });
+          rmSync(join(dir, "queue-service.sock"), { force: true });
+          rmSync(join(dir, "queue-service.json"), { force: true });
         } catch {}
       }
       for (const pid of targets) observedPids.add(pid);
@@ -401,9 +534,11 @@ export function bridgeSupport(prefix: string, options: {
     let bridgeWorkSettled = false;
     for (let round = 0; round < 3; round += 1) {
       const before = targets.size;
-      for (const pid of targets) stopServiceGroup(pid, 'SIGTERM');
+      for (const pid of targets) stopServiceGroup(pid, "SIGTERM");
       await waitForExit(targets, deadline);
-      for (const pid of targets) { if (serviceProof(pid) === "ours") stopServiceGroup(pid, 'SIGKILL'); }
+      for (const pid of targets) {
+        if (serviceProof(pid) === "ours") stopServiceGroup(pid, "SIGKILL");
+      }
       await waitForExit(targets, deadline);
       // The exit ends any readiness wait; letting it settle also surfaces a spawn
       // that wait made before it gave up, which the next round sweeps.
@@ -411,24 +546,36 @@ export function bridgeSupport(prefix: string, options: {
       discover();
       if (targets.size === before && bridgeWorkSettled) break;
     }
-    const settlements = [...targets].map(pid => {
+    const settlements = [...targets].map((pid) => {
       const proof = serviceProof(pid);
       // A group is only this service's own while the pid still names it: a
       // recycled number now leads someone else's group and says nothing.
-      return { pid, proof, groupEmpty: proof === "gone" || proof === "ours" ? ownedGroupEmpty(pid) : null };
+      return {
+        pid,
+        proof,
+        groupEmpty:
+          proof === "gone" || proof === "ours" ? ownedGroupEmpty(pid) : null,
+      };
     });
     // Only a proved settlement releases a target; anything still ours, unknown
     // or holding its own non-empty group is swept and reported again next time.
     for (const settlement of settlements) {
       if (settlementUnproved(settlement)) retainedTargets.add(settlement.pid);
-      else { retainedTargets.delete(settlement.pid); spawnedPids.delete(settlement.pid); }
+      else {
+        retainedTargets.delete(settlement.pid);
+        spawnedPids.delete(settlement.pid);
+      }
     }
     return { settlements, bridgeWorkSettled };
   }
 
   /** A settlement this file cannot call clean: still ours, unknown, or a group of its own that is not empty. */
   function settlementUnproved(settlement: ServiceSettlement): boolean {
-    return settlement.proof === "ours" || settlement.proof === "unknown" || settlement.groupEmpty === false;
+    return (
+      settlement.proof === "ours" ||
+      settlement.proof === "unknown" ||
+      settlement.groupEmpty === false
+    );
   }
 
   /**
@@ -443,9 +590,19 @@ export function bridgeSupport(prefix: string, options: {
     const { settlements, bridgeWorkSettled } = await settleServices();
     const unsettled = settlements.filter(settlementUnproved);
     if (!bridgeWorkSettled || unsettled.length) {
-      const work = bridgeWorkSettled ? "" : " in-flight bridge work did not settle (a spawn readiness wait, claim refresh, marker clear or startup-failure write may still run);";
-      throw new Error(`fixture teardown could not prove ${unsettled.length} service(s) exited:${work} ${unsettled.map(settlement =>
-        `pid ${settlement.pid} proof ${settlement.proof}${settlement.groupEmpty === null ? "" : ` group empty ${settlement.groupEmpty}`} ${processCommandLine(settlement.pid) ?? ""}`.slice(0, 300)).join("; ")}`);
+      const work = bridgeWorkSettled
+        ? ""
+        : " in-flight bridge work did not settle (a spawn readiness wait, claim refresh, marker clear or startup-failure write may still run);";
+      throw new Error(
+        `fixture teardown could not prove ${unsettled.length} service(s) exited:${work} ${unsettled
+          .map((settlement) =>
+            `pid ${settlement.pid} proof ${settlement.proof}${settlement.groupEmpty === null ? "" : ` group empty ${settlement.groupEmpty}`} ${processCommandLine(settlement.pid) ?? ""}`.slice(
+              0,
+              300,
+            ),
+          )
+          .join("; ")}`,
+      );
     }
     return settlements;
   }
@@ -460,14 +617,19 @@ export function bridgeSupport(prefix: string, options: {
   try {
     after(async () => {
       await killServices();
-      const survivors = [...observedPids].filter(pid => {
+      const survivors = [...observedPids].filter((pid) => {
         const proof = serviceProof(pid);
         return proof === "ours" || proof === "unknown";
       });
-      assert.equal(survivors.length, 0,
-        `leaked queue-service processes from this test file: ${survivors.map(pid => `pid ${pid} ${serviceProof(pid)} ${processCommandLine(pid) ?? ""}`.slice(0, 300)).join("; ")}`);
+      assert.equal(
+        survivors.length,
+        0,
+        `leaked queue-service processes from this test file: ${survivors.map((pid) => `pid ${pid} ${serviceProof(pid)} ${processCommandLine(pid) ?? ""}`.slice(0, 300)).join("; ")}`,
+      );
     });
-  } catch { /* Imported outside a test file: per-test finally blocks still apply. */ }
+  } catch {
+    /* Imported outside a test file: per-test finally blocks still apply. */
+  }
 
   /**
    * Dispose one fixture's disposable root, but only after the guard has proved
@@ -485,6 +647,21 @@ export function bridgeSupport(prefix: string, options: {
     return pidLiveness(pid) !== "gone";
   }
 
-  function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
-  return { spawnedPids, fakeAdapter, serviceCommand, trackedBridge, trackedOwner, bridgeFixture, killServices, dispose, serviceProof, ownedGroupEmpty, pidAliveNumber, sleep };
+  function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  return {
+    spawnedPids,
+    fakeAdapter,
+    serviceCommand,
+    trackedBridge,
+    trackedOwner,
+    bridgeFixture,
+    killServices,
+    dispose,
+    serviceProof,
+    ownedGroupEmpty,
+    pidAliveNumber,
+    sleep,
+  };
 }

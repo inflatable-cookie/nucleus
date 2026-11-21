@@ -20,9 +20,16 @@ import type {
 } from "../../shared/service-roll";
 import type { ServiceClient } from "../../shared/service/client";
 import type { BridgeMainChannel } from "../../shared/service/bridge-process";
-import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "../../shared/service/roll/options";
+import {
+  CONNECT_ATTEMPT_TIMEOUT_MS,
+  type BridgeOptions,
+} from "../../shared/service/roll/options";
 import type { BridgeSession } from "../../shared/service/roll/session";
-import { SPAWN_CLAIM_FILE, StandbyStartupError, claimIsFresh } from "../../shared/service/roll/spawn";
+import {
+  SPAWN_CLAIM_FILE,
+  StandbyStartupError,
+  claimIsFresh,
+} from "../../shared/service/roll/spawn";
 
 /** Wait this long after the last main revision change before rolling (Spec 035). */
 export const ROLL_SETTLE_MS = 60_000;
