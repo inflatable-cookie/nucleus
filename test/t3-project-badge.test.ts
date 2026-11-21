@@ -6,11 +6,13 @@ import {
   generatedProjectBadge,
   isDarkSurface,
   matchProjectBadges,
+  matchRepositoryBadges,
   projectBadgeColor,
   projectBadgeFor,
   projectBadgeMapSchema,
   projectBadgeMonogram,
   projectBadgeText,
+  repositoryBadgeMapSchema,
   type ObservedT3Project,
 } from "../shared/t3/project-badge";
 import { boardForSurface } from "../service/web/web-board";
@@ -41,7 +43,10 @@ const PARITY: Array<[title: string, monogram: string, color: string]> = [
 ];
 
 test("the renderer rules reproduce the installed nightly's monograms and colours", () => {
-  assert.equal(T3_PROJECT_BADGE_RENDERER, "t3code-0.1.12-nightly.20261120.4994");
+  assert.equal(
+    T3_PROJECT_BADGE_RENDERER,
+    "t3code-0.1.12-nightly.20261120.4994",
+  );
   for (const [title, monogram, color] of PARITY) {
     assert.deepEqual(
       generatedProjectBadge(title),
@@ -90,25 +95,59 @@ const project = (patch: Partial<ObservedT3Project>): ObservedT3Project => ({
 
 test("a T3 project's own monogram icon is reused, and other icons keep the normal label", () => {
   assert.deepEqual(
-    projectBadgeFor(project({ projectIcon: { kind: "monogram", text: "BX", color: "teal" } })),
+    projectBadgeFor(
+      project({ projectIcon: { kind: "monogram", text: "BX", color: "teal" } }),
+    ),
     { monogram: "BX", color: "teal" },
   );
-  assert.equal(projectBadgeFor(project({ projectIcon: { kind: "lucide", name: "rocket", color: "red" } })), null);
-  assert.equal(projectBadgeFor(project({ projectIcon: { kind: "emoji", emoji: "🚀" } })), null);
-  assert.equal(projectBadgeFor(project({ faviconPath: "assets/favicon.svg" })), null);
   assert.equal(
-    projectBadgeFor(project({ projectIcon: { kind: "monogram", text: "bad text!", color: "teal" } })),
+    projectBadgeFor(
+      project({
+        projectIcon: { kind: "lucide", name: "rocket", color: "red" },
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    projectBadgeFor(project({ projectIcon: { kind: "emoji", emoji: "🚀" } })),
+    null,
+  );
+  assert.equal(
+    projectBadgeFor(project({ faviconPath: "assets/favicon.svg" })),
+    null,
+  );
+  assert.equal(
+    projectBadgeFor(
+      project({
+        projectIcon: { kind: "monogram", text: "bad text!", color: "teal" },
+      }),
+    ),
     null,
     "stored monogram text must match the renderer's text rule",
   );
   assert.equal(
-    projectBadgeFor(project({ projectIcon: { kind: "monogram", text: "BX", color: "mauve" } })),
+    projectBadgeFor(
+      project({
+        projectIcon: { kind: "monogram", text: "BX", color: "mauve" },
+      }),
+    ),
     null,
     "an unknown palette colour is not a badge",
   );
-  assert.equal(projectBadgeFor(project({ projectIcon: "legacy-icon" })), null, "an icon of an unknown shape is not a generated badge");
-  assert.equal(projectBadgeFor(project({ faviconPath: 42 })), null, "any favicon value keeps the normal label");
-  assert.deepEqual(projectBadgeFor(project({ title: "biock-aase" })), { monogram: "BA", color: "fuchsia" });
+  assert.equal(
+    projectBadgeFor(project({ projectIcon: "legacy-icon" })),
+    null,
+    "an icon of an unknown shape is not a generated badge",
+  );
+  assert.equal(
+    projectBadgeFor(project({ faviconPath: 42 })),
+    null,
+    "any favicon value keeps the normal label",
+  );
+  assert.deepEqual(projectBadgeFor(project({ title: "biock-aase" })), {
+    monogram: "BA",
+    color: "fuchsia",
+  });
   assert.deepEqual(
     projectBadgeFor(project({})),
     { monogram: "BA", color: "teal" },
@@ -116,27 +155,42 @@ test("a T3 project's own monogram icon is reused, and other icons keep the norma
   );
 });
 
-const observation = (projects: ObservedT3Project[], hostId = "t3code:env-a") => ({ hostId, projects });
-const task = (repoPath: string, hostId = "t3code:env-a") => ({ hostId, repoPath });
+const observation = (
+  projects: ObservedT3Project[],
+  hostId = "t3code:env-a",
+) => ({ hostId, projects });
+const task = (repoPath: string, hostId = "t3code:env-a") => ({
+  hostId,
+  repoPath,
+});
 
 test("a badge matches the repository by its recorded root and uses the T3 title", () => {
   const map = matchProjectBadges({
     tasks: [task("/synthetic/repos/display-name")],
     observations: [
       observation([
-        project({ title: "Biock Aase", workspaceRoot: "/synthetic/repos/display-name" }),
+        project({
+          title: "Biock Aase",
+          workspaceRoot: "/synthetic/repos/display-name",
+        }),
       ]),
     ],
   });
   assert.deepEqual(map, {
-    "t3code:env-a": { "/synthetic/repos/display-name": { monogram: "BA", color: "teal" } },
+    "t3code:env-a": {
+      "/synthetic/repos/display-name": { monogram: "BA", color: "teal" },
+    },
   });
 });
 
 test("a title-only match is never used, and an absent or ambiguous root keeps the normal label", () => {
   const titled = matchProjectBadges({
     tasks: [task("/repos/other")],
-    observations: [observation([project({ title: "biock-aase", workspaceRoot: "/repos/else" })])],
+    observations: [
+      observation([
+        project({ title: "biock-aase", workspaceRoot: "/repos/else" }),
+      ]),
+    ],
   });
   assert.deepEqual(titled, {});
   const ambiguous = matchProjectBadges({
@@ -156,37 +210,179 @@ test("archived and deleted projects never badge a card, and an unobserved host g
     tasks: [task("/repos/app"), task("/repos/gone", "t3code:env-b")],
     observations: [
       observation([
-        project({ title: "archived", workspaceRoot: "/repos/app", archivedAt: "2026-11-01T00:00:00.000Z" }),
-        project({ title: "deleted", workspaceRoot: "/repos/gone", deletedAt: "2026-11-01T00:00:00.000Z" }),
+        project({
+          title: "archived",
+          workspaceRoot: "/repos/app",
+          archivedAt: "2026-11-01T00:00:00.000Z",
+        }),
+        project({
+          title: "deleted",
+          workspaceRoot: "/repos/gone",
+          deletedAt: "2026-11-01T00:00:00.000Z",
+        }),
       ]),
     ],
   });
   assert.deepEqual(map, {});
-  assert.deepEqual(matchProjectBadges({ tasks: [task("/repos/app", "paseo:x")], observations: [observation([project({ workspaceRoot: "/repos/app" })])] }), {});
+  assert.deepEqual(
+    matchProjectBadges({
+      tasks: [task("/repos/app", "paseo:x")],
+      observations: [observation([project({ workspaceRoot: "/repos/app" })])],
+    }),
+    {},
+  );
 });
 
 test("paths compare canonically, so a symlinked repository still matches its project", () => {
-  const canonical = (path: string) => (path.startsWith("/link/") ? path.replace("/link/", "/real/") : path);
+  const canonical = (path: string) =>
+    path.startsWith("/link/") ? path.replace("/link/", "/real/") : path;
   const map = matchProjectBadges({
     tasks: [task("/link/app")],
-    observations: [observation([project({ title: "ncock-iase", workspaceRoot: "/real/app" })])],
+    observations: [
+      observation([
+        project({ title: "ncock-iase", workspaceRoot: "/real/app" }),
+      ]),
+    ],
     canonical,
   });
-  assert.deepEqual(map["t3code:env-a"]?.["/link/app"], { monogram: "NI", color: "blue" });
+  assert.deepEqual(map["t3code:env-a"]?.["/link/app"], {
+    monogram: "NI",
+    color: "blue",
+  });
 });
 
 test("the wire schema accepts only a palette colour and a bounded monogram", () => {
-  assert.ok(projectBadgeMapSchema.safeParse({ "t3code:env-a": { "/repo": { monogram: "BA", color: "fuchsia" } } }).success);
-  assert.equal(projectBadgeMapSchema.safeParse({ h: { "/repo": { monogram: "BA", color: "mauve" } } }).success, false);
-  assert.equal(projectBadgeMapSchema.safeParse({ h: { "/repo": { monogram: "", color: "blue" } } }).success, false);
+  assert.ok(
+    projectBadgeMapSchema.safeParse({
+      "t3code:env-a": { "/repo": { monogram: "BA", color: "fuchsia" } },
+    }).success,
+  );
+  assert.equal(
+    projectBadgeMapSchema.safeParse({
+      h: { "/repo": { monogram: "BA", color: "mauve" } },
+    }).success,
+    false,
+  );
+  assert.equal(
+    projectBadgeMapSchema.safeParse({
+      h: { "/repo": { monogram: "", color: "blue" } },
+    }).success,
+    false,
+  );
+  assert.ok(
+    repositoryBadgeMapSchema.safeParse({
+      "/repo": { monogram: "BA", color: "fuchsia" },
+    }).success,
+  );
+  assert.equal(
+    repositoryBadgeMapSchema.safeParse({
+      "/repo": { monogram: "BA", color: "mauve" },
+    }).success,
+    false,
+  );
+  assert.equal(
+    repositoryBadgeMapSchema.safeParse({
+      "/repo": { monogram: "", color: "blue" },
+    }).success,
+    false,
+  );
 });
 
 test("the standalone board never carries project badges; the T3 surface keeps them", () => {
-  const board = { revision: 3, projectBadges: { h: { "/repo": { monogram: "BA", color: "fuchsia" } } }, tasks: [] };
-  assert.equal("projectBadges" in boardForSurface(board, false), false);
+  const board = {
+    revision: 3,
+    projectBadges: { h: { "/repo": { monogram: "BA", color: "fuchsia" } } },
+    repositoryBadges: { "/repo": { monogram: "BA", color: "fuchsia" } },
+    tasks: [],
+  };
+  const standalone = boardForSurface(board, false);
+  assert.equal("projectBadges" in standalone, false);
+  assert.equal("repositoryBadges" in standalone, false);
   assert.deepEqual(boardForSurface(board, true), board);
   const ack = { unchanged: true, revision: 3 };
   assert.equal(boardForSurface(ack, false), ack);
   const list = [1, 2];
   assert.equal(boardForSurface(list, false), list);
+});
+
+test("hostless repository matching resolves unambiguous active T3 projects by canonical root", () => {
+  const canonical = (path: string) =>
+    path.startsWith("/link/") ? path.replace("/link/", "/real/") : path;
+  const badges = matchRepositoryBadges({
+    repoPaths: [
+      "/link/biock",
+      "/repos/custom",
+      "/repos/emoji",
+      "/repos/missing",
+      "/repos/ambig-same",
+      "/repos/ambig-hosts",
+      "/repos/archived",
+    ],
+    observations: [
+      observation(
+        [
+          project({
+            id: "a",
+            title: "biock-aase",
+            workspaceRoot: "/real/biock",
+          }),
+          project({
+            id: "b",
+            title: "Custom",
+            workspaceRoot: "/repos/custom",
+            projectIcon: { kind: "monogram", text: "CU", color: "teal" },
+          }),
+          project({
+            id: "c",
+            title: "Emoji",
+            workspaceRoot: "/repos/emoji",
+            projectIcon: { kind: "emoji", emoji: "🚀" },
+          }),
+          project({
+            id: "d1",
+            title: "One",
+            workspaceRoot: "/repos/ambig-same",
+          }),
+          project({
+            id: "d2",
+            title: "Two",
+            workspaceRoot: "/repos/ambig-same",
+          }),
+          project({
+            id: "e1",
+            title: "Cross Host A",
+            workspaceRoot: "/repos/ambig-hosts",
+          }),
+          project({
+            id: "f1",
+            title: "Archived",
+            workspaceRoot: "/repos/archived",
+            archivedAt: "2026-11-01T00:00:00.000Z",
+          }),
+        ],
+        "t3code:env-a",
+      ),
+      observation(
+        [
+          project({
+            id: "e2",
+            title: "Cross Host B",
+            workspaceRoot: "/repos/ambig-hosts",
+          }),
+          project({
+            id: "f2",
+            title: "Deleted",
+            workspaceRoot: "/repos/archived",
+            deletedAt: "2026-11-01T00:00:00.000Z",
+          }),
+        ],
+        "t3code:env-b",
+      ),
+    ],
+    canonical,
+  });
+  assert.deepEqual(badges, {
+    "/link/biock": { monogram: "BA", color: "fuchsia" },
+    "/repos/custom": { monogram: "CU", color: "teal" },
+  });
 });

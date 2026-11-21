@@ -1524,18 +1524,24 @@ active run and cannot be set from outside.
 
 ## Board project badges
 
-A task card on the Nucleus board that T3 opens shows its project with the same
-generated monogram and colour as the T3 project it belongs to (nucleus#1450: a T3 project
-whose title gives the fuchsia BA). The rules copy the installed T3
-nightly's `ProjectMonogram` (renderer `t3code-0.1.12-nightly.20261120.4994`); they live
-in `shared/t3/project-badge.ts`, and the parity table in `test/t3-project-badge.test.ts`
+Task, lead and papercut cards on the Nucleus board that T3 opens show their project with
+the same generated monogram and colour as the T3 project they belong to (nucleus#1450: a
+T3 project whose title gives the fuchsia BA; nucleus#1490: lead and papercut cards share
+the same badge rendering). The rules copy the installed T3 nightly's `ProjectMonogram`
+(renderer `t3code-0.1.12-nightly.20261120.4994`); they live in
+`shared/t3/project-badge.ts`, and the parity table in `test/t3-project-badge.test.ts`
 is the evidence, produced by running that renderer's own functions on the same titles.
 
-- **Identity, not names.** A badge matches a Nucleus task only by its own T3 host
-  and the repository path, against the T3 project's recorded `workspaceRoot`
-  (canonical paths). A title lookup never matches. Archived and deleted projects
-  do not count. A repository matched by no project, or by more than one, keeps its
-  normal label.
+- **Identity, not names.** Task cards match only by their own T3 host and canonical
+  repository path (`projectBadges`). Lead and papercut cards have repository references
+  without a dispatched task host, so they match across live T3 observations by canonical
+  `workspaceRoot` (`repositoryBadges`), including repositories with no displayed task
+  card. A title lookup, a task on another host or the dispatch default never counts as
+  identity evidence. Archived and deleted projects do not count. A repository matched by
+  no active T3 project, or by more than one (including across live T3 hosts), keeps its
+  folder icon. On a card spanning different projects, each project keeps its own name
+  and shows a badge only where its own project association is unambiguous, never choosing
+  a badge by repository order.
 - **The text comes from the T3 title.** The monogram and colour derive from the exact
   T3 project title, not the Nucleus display name. An operator's own monogram icon
   (`projectIcon` of kind `monogram`, with a palette colour) is reused as stored. A
@@ -1548,10 +1554,11 @@ is the evidence, produced by running that renderer's own functions on the same t
   the next publication.
 - **Only the T3 surface.** The board link the T3 host asks for (`service.ui-link` with
   `surface: "t3code"`, issued when the inbox's `ui` opens the board) pairs a session that
-  receives `projectBadges`. The token and session record the surface, persisted beside the
-  session digest; a session without one, `nucleus ui`, any browser, and the Paseo and BB
-  plugin boards never receive the field. The badge map is keyed by host and then by
-  repository path, and a card looks up only its own task's host.
+  receives `projectBadges` and `repositoryBadges`. The token and session record the
+  surface, persisted beside the session digest; a session without one, `nucleus ui`, any
+  browser, and the Paseo and BB plugin boards never receive either field. `projectBadges`
+  is keyed by host and then by repository path (a task card looks up only its own host);
+  `repositoryBadges` is keyed by repository path for hostless lead and papercut records.
 - **Rendering.** The card draws the badge in place of the folder icon, in the renderer's
   text colour for the surface's mode (600 on light, 400 on dark, judged from the
   surface colour) over the 14% tint. It is decorative: the project name is the label, and

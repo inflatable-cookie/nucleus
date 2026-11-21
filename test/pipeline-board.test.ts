@@ -712,7 +712,7 @@ test("026-13 Tasks keeps Pipeline with no Lanes switch; the Lanes destination is
   assert.doesNotMatch(ui, /setPipelineTarget/);
   assert.match(
     ui,
-    /const columns = useMemo\(\(\) => pipelineBoard\(pipelineInput\),/,
+    /const columns = useMemo\(\s*\(\) => pipelineBoard\(pipelineInput\),/,
   );
   assert.equal(
     (ui.match(/pipelineBoard\(/g) ?? []).length,
@@ -722,7 +722,10 @@ test("026-13 Tasks keeps Pipeline with no Lanes switch; the Lanes destination is
   // The filter switch scopes the Pipeline view only: off shows all, on restores
   // the kept selection. Lanes and Planning keep the selection.
   assert.match(ui, /const pipelineFilterSelection = selection;/);
-  assert.match(ui, /selection:pipelineFilterSelection,leads:boardLeads/);
+  assert.match(
+    ui,
+    /selection:\s*pipelineFilterSelection,\s*leads:\s*boardLeads/,
+  );
   // #866 retired the Lanes table and its second projection.
   assert.doesNotMatch(ui, /tablePipeline|laneTableRows/);
 });
@@ -956,7 +959,7 @@ test("377 planning lists read the narrow lead.board projection, never every full
   );
   assert.match(
     ui,
-    /linkedLeads:leadLinks/,
+    /linkedLeads:\s*leadLinks/,
     "open decisions resolve linked promoted leads from link facts",
   );
 });

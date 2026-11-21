@@ -20,8 +20,24 @@ export const T3_PROJECT_BADGE_RENDERER = "t3code-0.1.12-nightly.20261120.4994";
 
 /** The ordered palette the title hash indexes. Order is part of the rule. */
 export const T3_PROJECT_BADGE_COLORS = [
-  "gray", "red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal",
-  "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose",
+  "gray",
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "rose",
 ] as const;
 export type ProjectBadgeColor = (typeof T3_PROJECT_BADGE_COLORS)[number];
 
@@ -29,29 +45,66 @@ export type ProjectBadgeColor = (typeof T3_PROJECT_BADGE_COLORS)[number];
  * The renderer's text colours: `text-<name>-600` for light surfaces and
  * `text-<name>-400` for dark ones (Tailwind v4 oklch values, as the nightly ships them).
  */
-export const T3_PROJECT_BADGE_TEXT: Record<ProjectBadgeColor, { light: string; dark: string }> = {
-  gray: { light: "oklch(44.6% .03 256.802)", dark: "oklch(70.7% .022 261.325)" },
+export const T3_PROJECT_BADGE_TEXT: Record<
+  ProjectBadgeColor,
+  { light: string; dark: string }
+> = {
+  gray: {
+    light: "oklch(44.6% .03 256.802)",
+    dark: "oklch(70.7% .022 261.325)",
+  },
   red: { light: "oklch(57.7% .245 27.325)", dark: "oklch(70.4% .191 22.216)" },
   orange: { light: "oklch(64.6% .222 41.116)", dark: "oklch(75% .183 55.934)" },
-  amber: { light: "oklch(66.6% .179 58.318)", dark: "oklch(82.8% .189 84.429)" },
-  yellow: { light: "oklch(68.1% .162 75.834)", dark: "oklch(85.2% .199 91.936)" },
+  amber: {
+    light: "oklch(66.6% .179 58.318)",
+    dark: "oklch(82.8% .189 84.429)",
+  },
+  yellow: {
+    light: "oklch(68.1% .162 75.834)",
+    dark: "oklch(85.2% .199 91.936)",
+  },
   lime: { light: "oklch(64.8% .2 131.684)", dark: "oklch(84.1% .238 128.85)" },
-  green: { light: "oklch(62.7% .194 149.214)", dark: "oklch(79.2% .209 151.711)" },
-  emerald: { light: "oklch(59.6% .145 163.225)", dark: "oklch(76.5% .177 163.223)" },
+  green: {
+    light: "oklch(62.7% .194 149.214)",
+    dark: "oklch(79.2% .209 151.711)",
+  },
+  emerald: {
+    light: "oklch(59.6% .145 163.225)",
+    dark: "oklch(76.5% .177 163.223)",
+  },
   teal: { light: "oklch(60% .118 184.704)", dark: "oklch(77.7% .152 181.912)" },
-  cyan: { light: "oklch(60.9% .126 221.723)", dark: "oklch(78.9% .154 211.53)" },
+  cyan: {
+    light: "oklch(60.9% .126 221.723)",
+    dark: "oklch(78.9% .154 211.53)",
+  },
   sky: { light: "oklch(58.8% .158 241.966)", dark: "oklch(74.6% .16 232.661)" },
-  blue: { light: "oklch(54.6% .245 262.881)", dark: "oklch(70.7% .165 254.624)" },
-  indigo: { light: "oklch(51.1% .262 276.966)", dark: "oklch(67.3% .182 276.935)" },
-  violet: { light: "oklch(54.1% .281 293.009)", dark: "oklch(70.2% .183 293.541)" },
-  purple: { light: "oklch(55.8% .288 302.321)", dark: "oklch(71.4% .203 305.504)" },
-  fuchsia: { light: "oklch(59.1% .293 322.896)", dark: "oklch(74% .238 322.16)" },
+  blue: {
+    light: "oklch(54.6% .245 262.881)",
+    dark: "oklch(70.7% .165 254.624)",
+  },
+  indigo: {
+    light: "oklch(51.1% .262 276.966)",
+    dark: "oklch(67.3% .182 276.935)",
+  },
+  violet: {
+    light: "oklch(54.1% .281 293.009)",
+    dark: "oklch(70.2% .183 293.541)",
+  },
+  purple: {
+    light: "oklch(55.8% .288 302.321)",
+    dark: "oklch(71.4% .203 305.504)",
+  },
+  fuchsia: {
+    light: "oklch(59.1% .293 322.896)",
+    dark: "oklch(74% .238 322.16)",
+  },
   pink: { light: "oklch(59.2% .249 .584)", dark: "oklch(71.8% .202 349.761)" },
   rose: { light: "oklch(58.6% .253 17.585)", dark: "oklch(71.2% .194 13.428)" },
 };
 
 /** The renderer's subdued background: the text colour at 14% over transparent. */
-export const T3_PROJECT_BADGE_TINT = "color-mix(in srgb, currentColor 14%, transparent)";
+export const T3_PROJECT_BADGE_TINT =
+  "color-mix(in srgb, currentColor 14%, transparent)";
 
 /** A badge as the board draws it: two code points at most, and one palette colour. */
 export interface ProjectBadge {
@@ -59,7 +112,9 @@ export interface ProjectBadge {
   readonly color: ProjectBadgeColor;
 }
 
-const PROJECT_ICON_COLORS: ReadonlySet<string> = new Set(T3_PROJECT_BADGE_COLORS);
+const PROJECT_ICON_COLORS: ReadonlySet<string> = new Set(
+  T3_PROJECT_BADGE_COLORS,
+);
 /** T3's stored monogram text rule: letters and numbers, with marks and joiners, at most 32. */
 const MONOGRAM_TEXT = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}‌‍]*$/u;
 
@@ -81,7 +136,9 @@ export function projectBadgeMonogram(title: string): string {
   const head = characters[0] ?? "P";
   const second =
     characters.slice(1).find((character) => /\p{N}/u.test(character)) ??
-    (runs.length > 1 ? Array.from(runs[runs.length - 1] ?? "")[0] : characters[characters.length - 1]) ??
+    (runs.length > 1
+      ? Array.from(runs[runs.length - 1] ?? "")[0]
+      : characters[characters.length - 1]) ??
     head;
   return Array.from(`${head}${second}`.toUpperCase()).slice(0, 2).join("");
 }
@@ -94,13 +151,18 @@ export function projectBadgeColor(title: string): ProjectBadgeColor {
   const text = normalised(title).toLocaleLowerCase("en-US") || "project";
   let index = 0;
   for (const character of text)
-    index = (index * 31 + (character.codePointAt(0) ?? 0)) % T3_PROJECT_BADGE_COLORS.length;
+    index =
+      (index * 31 + (character.codePointAt(0) ?? 0)) %
+      T3_PROJECT_BADGE_COLORS.length;
   return T3_PROJECT_BADGE_COLORS[index] ?? "blue";
 }
 
 /** The generated badge for a T3 project title. Derive from the exact T3 title, never a display name. */
 export function generatedProjectBadge(title: string): ProjectBadge {
-  return { monogram: projectBadgeMonogram(title), color: projectBadgeColor(title) };
+  return {
+    monogram: projectBadgeMonogram(title),
+    color: projectBadgeColor(title),
+  };
 }
 
 /**
@@ -126,10 +188,16 @@ export interface ObservedT3Project {
  * The badge a T3 project shows, or null when T3's own metadata means the card must
  * keep its normal label.
  */
-export function projectBadgeFor(project: ObservedT3Project): ProjectBadge | null {
+export function projectBadgeFor(
+  project: ObservedT3Project,
+): ProjectBadge | null {
   const icon = project.projectIcon;
   if (icon !== undefined && icon !== null) {
-    if (typeof icon !== "object" || (icon as { kind?: unknown }).kind !== "monogram") return null;
+    if (
+      typeof icon !== "object" ||
+      (icon as { kind?: unknown }).kind !== "monogram"
+    )
+      return null;
     const { text, color } = icon as { text?: unknown; color?: unknown };
     if (
       typeof text !== "string" ||
@@ -141,7 +209,8 @@ export function projectBadgeFor(project: ObservedT3Project): ProjectBadge | null
       return null;
     return { monogram: text, color: color as ProjectBadgeColor };
   }
-  if (project.faviconPath !== undefined && project.faviconPath !== null) return null;
+  if (project.faviconPath !== undefined && project.faviconPath !== null)
+    return null;
   return generatedProjectBadge(project.title);
 }
 
@@ -160,6 +229,9 @@ export interface BadgeTaskRef {
 /** Badges by host, then by repository path. */
 export type ProjectBadgeMap = Record<string, Record<string, ProjectBadge>>;
 
+/** Badges by repository path, for records without a dispatched task host (nucleus#1490). */
+export type RepositoryBadgeMap = Record<string, ProjectBadge>;
+
 /** The board's wire shape for a badge map, validated wherever a board is parsed. */
 export const projectBadgeSchema = z
   .object({
@@ -167,7 +239,39 @@ export const projectBadgeSchema = z
     color: z.enum(T3_PROJECT_BADGE_COLORS),
   })
   .strict();
-export const projectBadgeMapSchema = z.record(z.string(), z.record(z.string(), projectBadgeSchema));
+export const projectBadgeMapSchema = z.record(
+  z.string(),
+  z.record(z.string(), projectBadgeSchema),
+);
+export const repositoryBadgeMapSchema = z.record(
+  z.string(),
+  projectBadgeSchema,
+);
+
+interface ActiveObservedProject {
+  readonly project: ObservedT3Project;
+  readonly root: string;
+}
+
+function activeObservedProjects(
+  projects: readonly ObservedT3Project[],
+  canonical: (path: string) => string,
+): ActiveObservedProject[] {
+  return projects
+    .filter(
+      (project) => project.archivedAt == null && project.deletedAt == null,
+    )
+    .map((project) => ({ project, root: canonical(project.workspaceRoot) }));
+}
+
+function unambiguousBadgeForRoot(
+  active: readonly ActiveObservedProject[],
+  root: string,
+): ProjectBadge | null {
+  const matches = active.filter((candidate) => candidate.root === root);
+  if (matches.length !== 1) return null;
+  return projectBadgeFor(matches[0]!.project);
+}
 
 /**
  * Match each task's repository to its host's T3 project by canonical `workspaceRoot`.
@@ -182,7 +286,9 @@ export function matchProjectBadges(input: {
 }): ProjectBadgeMap {
   const canonical = input.canonical ?? ((path: string) => path);
   const out: ProjectBadgeMap = {};
-  const observed = new Map(input.observations.map((observation) => [observation.hostId, observation]));
+  const observed = new Map(
+    input.observations.map((observation) => [observation.hostId, observation]),
+  );
   const repos = new Map<string, Set<string>>();
   for (const task of input.tasks) {
     if (!observed.has(task.hostId)) continue;
@@ -191,18 +297,39 @@ export function matchProjectBadges(input: {
     repos.set(task.hostId, set);
   }
   for (const [hostId, repoPaths] of repos) {
-    const active = observed
-      .get(hostId)!
-      .projects.filter((project) => project.archivedAt == null && project.deletedAt == null)
-      .map((project) => ({ project, root: canonical(project.workspaceRoot) }));
+    const active = activeObservedProjects(
+      observed.get(hostId)!.projects,
+      canonical,
+    );
     for (const repoPath of repoPaths) {
-      const root = canonical(repoPath);
-      const matches = active.filter((candidate) => candidate.root === root);
-      if (matches.length !== 1) continue;
-      const badge = projectBadgeFor(matches[0]!.project);
+      const badge = unambiguousBadgeForRoot(active, canonical(repoPath));
       if (!badge) continue;
       (out[hostId] ??= {})[repoPath] = badge;
     }
+  }
+  return out;
+}
+
+/**
+ * Match each repository path against all live T3 project observations by canonical
+ * `workspaceRoot`, without a dispatched task host (nucleus#1490). Only active T3
+ * projects count (not archived or deleted); zero matches or more than one match across
+ * all live observations leaves the repository without a badge.
+ */
+export function matchRepositoryBadges(input: {
+  readonly repoPaths: readonly string[];
+  readonly observations: readonly ProjectObservation[];
+  readonly canonical?: (path: string) => string;
+}): RepositoryBadgeMap {
+  const canonical = input.canonical ?? ((path: string) => path);
+  const active = input.observations.flatMap((observation) =>
+    activeObservedProjects(observation.projects, canonical),
+  );
+  const out: RepositoryBadgeMap = {};
+  for (const repoPath of new Set(input.repoPaths)) {
+    if (!repoPath) continue;
+    const badge = unambiguousBadgeForRoot(active, canonical(repoPath));
+    if (badge) out[repoPath] = badge;
   }
   return out;
 }
@@ -216,7 +343,8 @@ export function isDarkSurface(hex: string): boolean {
     const c = ((value >> shift) & 0xff) / 255;
     return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   };
-  const luminance = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
+  const luminance =
+    0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
   return luminance < 0.4;
 }
 
@@ -235,7 +363,11 @@ export function projectBadgeText(badge: ProjectBadge, dark: boolean): string {
 const OKLCH_PATTERN = /^oklch\(\s*([0-9.]+)%\s+([0-9.]+)\s+([0-9.]+)\s*\)$/;
 
 /** The sRGB channels of one pinned OKLCH entry, each 0-255. Out-of-gamut clamps. */
-export function oklchToRgbChannels(oklch: string): { r: number; g: number; b: number } {
+export function oklchToRgbChannels(oklch: string): {
+  r: number;
+  g: number;
+  b: number;
+} {
   const match = OKLCH_PATTERN.exec(oklch.trim());
   if (!match) throw new Error(`Unsupported OKLCH colour: ${oklch}`);
   const light = parseFloat(match[1]!) / 100;
@@ -253,7 +385,10 @@ export function oklchToRgbChannels(oklch: string): { r: number; g: number; b: nu
   };
   const encode = (value: number): number => {
     const clamped = Math.min(1, Math.max(0, value));
-    const gamma = clamped <= 0.0031308 ? 12.92 * clamped : 1.055 * Math.pow(clamped, 1 / 2.4) - 0.055;
+    const gamma =
+      clamped <= 0.0031308
+        ? 12.92 * clamped
+        : 1.055 * Math.pow(clamped, 1 / 2.4) - 0.055;
     return Math.round(Math.min(1, Math.max(0, gamma)) * 255);
   };
   return { r: encode(linear.r), g: encode(linear.g), b: encode(linear.b) };
@@ -263,18 +398,30 @@ export function oklchToRgbChannels(oklch: string): { r: number; g: number; b: nu
 export const PROJECT_BADGE_TINT_ALPHA = 0.14;
 
 /** The browser-safe foreground for a badge: the pinned entry converted to sRGB. */
-export function projectBadgeWebForeground(badge: ProjectBadge, dark: boolean): string {
+export function projectBadgeWebForeground(
+  badge: ProjectBadge,
+  dark: boolean,
+): string {
   const { r, g, b } = oklchToRgbChannels(projectBadgeText(badge, dark));
   return `rgb(${r}, ${g}, ${b})`;
 }
 
 /** The browser-safe tint for a badge: the same converted entry at 14% alpha. */
-export function projectBadgeWebTint(badge: ProjectBadge, dark: boolean): string {
+export function projectBadgeWebTint(
+  badge: ProjectBadge,
+  dark: boolean,
+): string {
   const { r, g, b } = oklchToRgbChannels(projectBadgeText(badge, dark));
   return `rgba(${r}, ${g}, ${b}, ${PROJECT_BADGE_TINT_ALPHA})`;
 }
 
 /** The browser-safe badge style: converted foreground plus the explicit 14% tint. */
-export function projectBadgeWebStyle(badge: ProjectBadge, dark: boolean): { color: string; backgroundColor: string } {
-  return { color: projectBadgeWebForeground(badge, dark), backgroundColor: projectBadgeWebTint(badge, dark) };
+export function projectBadgeWebStyle(
+  badge: ProjectBadge,
+  dark: boolean,
+): { color: string; backgroundColor: string } {
+  return {
+    color: projectBadgeWebForeground(badge, dark),
+    backgroundColor: projectBadgeWebTint(badge, dark),
+  };
 }

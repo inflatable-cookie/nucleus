@@ -382,11 +382,20 @@ export const QaRunCard = React.memo(function QaRunCard({
  * the T3 renderer's colours for the surface's mode and is decorative: the project name
  * beside it is the label.
  */
-function ProjectBadgeMark({ badge, c }: { badge: ProjectBadge; c: Colors }) {
+export function ProjectBadgeMark({
+  badge,
+  c,
+}: {
+  badge: ProjectBadge;
+  c: Colors;
+}) {
   // A Text box in converted sRGB: react-native-web drops the pinned `oklch()` text
   // and the `color-mix()` tint through its normalizeColor, so the boundary converts
   // the assigned palette entry to rgb and the same entry at 14% alpha (nucleus#1487).
-  const { color, backgroundColor } = projectBadgeWebStyle(badge, isDarkSurface(c.surface0));
+  const { color, backgroundColor } = projectBadgeWebStyle(
+    badge,
+    isDarkSurface(c.surface0),
+  );
   return (
     <Text
       numberOfLines={1}
