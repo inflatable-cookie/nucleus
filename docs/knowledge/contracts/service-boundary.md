@@ -1484,6 +1484,18 @@ and admission pressure are separate for each registered identity; reconnecting
 keeps that host's admission state. The local service credential remains a
 same-user accident-prevention boundary, not adversarial per-host authentication.
 
+`host.list` reads each host's live tasks and unreleased runs by partial index seek
+(`tasks_live_host`, `runs_unreleased_host`, keyed on `COALESCE(hostId, '')`) and its
+pending thread-cleanup candidates by host seek (`tasks_identity_host`, nucleus#1495),
+so a small Settings read no longer scans settled history on the executor. Results are
+unchanged: the primary host still counts unqualified legacy records, and `host.remove`
+rechecks current dependents inside its own write. Settings tracks in-flight project
+override removals across tab switches, showing save versus refresh progress and
+surfacing a post-write refresh failure without retrying the write. Remaining executor
+cost is `finishedTasksOwingThreadCleanup`'s per-host finished-task pass, `backup.list`'s
+one stat per retained snapshot, and the shared executor queue that serialises every read
+behind them; none is cached.
+
 The runtime retains one admission and breaker state for each observed host ID.
 Paseo remains the default connection. Optional owner-only `settings.json`
 configuration `t3code: {endpoint, bearer, probeThreadId?}` registers a second

@@ -41,10 +41,14 @@ export function hostDependents(
 ): HostDependency[] {
   const { db } = source;
   const ref = (taskId: string) => source.numberFor(taskId)?.reference ?? taskId;
-  // `?2` admits unqualified legacy records for the primary host only.
+  // Unqualified legacy records belong to the primary host only. Spelling the match over
+  // COALESCE(..., '') lets SQLite seek the partial live-task and unreleased-run indexes
+  // for both primary and non-primary hosts (nucleus#1495), never scanning settled history.
   const hostMatch = (column: string) =>
-    `(${column}=?1 OR (?2=1 AND COALESCE(${column},'')=''))`;
-  const params = [host.id, host.primary ? 1 : 0] as const;
+    host.primary
+      ? `COALESCE(${column},'') IN (?1,'')`
+      : `COALESCE(${column},'')=?1`;
+  const params = [host.id] as const;
   const out: HostDependency[] = [];
 
   const tasks = db
