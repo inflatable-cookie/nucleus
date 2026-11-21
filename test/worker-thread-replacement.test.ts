@@ -105,8 +105,8 @@ test('decideWorkerReplacement allows an approved route to a different model', ()
 
 test('isWorkerRouteApproved needs board sign-off only for by-request or above-level routes', () => {
   const pool = [
-    { profileId: 'terra', enabled: true, group: 'terra', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'frontier' },
+    { profileId: 'terra', enabled: true, group: 'terra', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker'], weight: "default", scopes: ['general'], capability: 'frontier' },
   ] as never;
   assert.equal(isWorkerRouteApproved({}, 'terra', pool, 'normal'), true, 'a within-level route needs no sign-off');
   assert.equal(isWorkerRouteApproved({}, 'sol', pool, 'normal'), false, 'a by-request route without sign-off is not approved');
@@ -125,8 +125,8 @@ function sweepFixture() {
   const author = terra('author', 'terra-model');
   const sol = terra('sol', 'sol-model');
   store.setMeta('pool', [
-    { profileId: 'author', enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker'], weight: 1, scopes: ['general'] },
+    { profileId: 'author', enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker'], weight: "default", scopes: ['general'] },
   ]);
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Worker thread', repoPath: '/repo', planningCommit: base,
@@ -266,8 +266,8 @@ test('a route waiting on sign-off records the request and replaces nothing', asy
   const author = terra('author', 'author-model');
   const sol = terra('sol', 'sol-model');
   store.setMeta('pool', [
-    { profileId: 'author', enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'frontier' },
+    { profileId: 'author', enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker'], weight: "default", scopes: ['general'], capability: 'frontier' },
   ]);
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Route waits', repoPath: '/repo', planningCommit: base,

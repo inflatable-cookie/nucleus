@@ -29,9 +29,9 @@ const head = 'a'.repeat(40), base = 'b'.repeat(40);
 
 const profiles = [profile('author', 'author-model'), profile('sol', 'sol-model'), profile('luna', 'luna-model')];
 const pool = [
-  { profileId: 'author', enabled: true, group: 'author', roles: ['worker', 'reviewer'] as const, weight: 1, scopes: ['general'] as const },
-  { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'] as const, weight: 1, scopes: ['general'] as const },
-  { profileId: 'luna', enabled: true, group: 'luna', roles: ['worker', 'reviewer'] as const, weight: 1, scopes: ['general'] as const },
+  { profileId: 'author', enabled: true, group: 'author', roles: ['worker', 'reviewer'] as const, weight: "default", scopes: ['general'] as const },
+  { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'] as const, weight: "default", scopes: ['general'] as const },
+  { profileId: 'luna', enabled: true, group: 'luna', roles: ['worker', 'reviewer'] as const, weight: "default", scopes: ['general'] as const },
 ];
 
 function routeFixture() {
@@ -166,8 +166,8 @@ test('papercut ca2dfcdc: a second request for the same approved task and profile
   const dir = mkdtempSync(join(tmpdir(), 'ns-no-reask-'));
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('pool', [
-    { profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'low' },
-    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'high', capability: 'frontier' },
+    { profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], },
+    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'frontier' },
   ]);
   const cheap = profile('cheap', 'cheap-model'), sol = profile('sol', 'sol-model');
   const catalog = [cheap, sol];
@@ -201,8 +201,8 @@ test('papercut ca2dfcdc control: a later decline wins, so a re-request asks agai
   const dir = mkdtempSync(join(tmpdir(), 'ns-reask-decline-'));
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('pool', [
-    { profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'low' },
-    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'high', capability: 'frontier' },
+    { profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], },
+    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'frontier' },
   ]);
   const catalog = [profile('cheap', 'cheap-model'), profile('sol', 'sol-model')];
   const decisions = new Decisions(store);
@@ -227,7 +227,7 @@ test('papercut d9c61c02: an independence-filtered profile is reported as filtere
       preferredProfileId: 'special', requirePreferred: true }), 'host', 'handoff', 'a'.repeat(40));
     const catalog = [profile('normal', 'normal-model'), profile('special', 'special-model')];
     const view = [catalog[0]!];
-    const rated = catalog.map(item => ({ profileId: item.id, enabled: true, group: item.id, roles: ['worker'] as const, weight: 1, scopes: ['general'] as const }));
+    const rated = catalog.map(item => ({ profileId: item.id, enabled: true, group: item.id, roles: ['worker'] as const, weight: "default", scopes: ['general'] as const }));
     const routed = store.update(task.id, { resolution: { ...store.task(task.id).resolution,
       reviewerProfile: { ...catalog[1]!, name: 'special' } } });
     const message = eligibilityReasons(routed, view, rated as never,
@@ -239,7 +239,7 @@ test('papercut d9c61c02: an independence-filtered profile is reported as filtere
       view, rated as never, [{ group: 'normal', unavailable: false, reason: '', retryAt: null }], 'normal', catalog);
     assert.match(excludedMessage, /special: excluded for this task/);
     const missing = eligibilityReasons(routed, view,
-      [...rated, { profileId: 'ghost', enabled: true, group: 'ghost', roles: ['worker'], weight: 1, scopes: ['general'] }] as never,
+      [...rated, { profileId: 'ghost', enabled: true, group: 'ghost', roles: ['worker'], weight: "default", scopes: ['general'] }] as never,
       [{ group: 'normal', unavailable: false, reason: '', retryAt: null }], 'normal', catalog);
     assert.match(missing, /ghost: absent from catalog/, 'a profile truly outside the catalog is still reported as absent');
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
@@ -253,7 +253,7 @@ test('the general rule: a required honoured route supersedes the recorded select
   assert.equal(supersedingRouteProfile({ ...honoured, required: false }, 'author', pool as never, 'normal'), null,
     'a soft request never displaces a recorded selection');
   assert.equal(supersedingRouteProfile({ profileId: 'sol', reason: 'Pending', required: true }, 'author', [
-    { profileId: 'sol', enabled: true, group: 'sol', capability: 'frontier', cost: 'high' },
+    { profileId: 'sol', enabled: true, group: 'sol', capability: 'frontier', },
   ] as never, 'normal'), null, 'an unsigned request for a by-request profile pins nothing');
   assert.equal(supersedingRouteProfile({ profileId: 'sol', reason: 'Within level', required: true }, 'author',
     pool as never, 'normal'), 'sol', 'a required within-level request is honoured at once');

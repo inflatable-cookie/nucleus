@@ -72,7 +72,7 @@ function fixture() {
             ? "coordinator"
             : "worker",
       ],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     })),
   );

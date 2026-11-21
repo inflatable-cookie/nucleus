@@ -175,30 +175,30 @@ function fixture(
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: "worker",
-      cost: "low",
+      
     },
     {
       profileId: reviewer.id,
       enabled: true,
       group: "review",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: "worker",
-      cost: "medium",
+      
     },
     {
       profileId: coordinator.id,
       enabled: true,
       group: "coordinate",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: "mechanical",
-      cost: "very_low",
+      
     },
   ]);
   const submitted = store.insert(
@@ -1320,7 +1320,7 @@ test("operator rereview preflights a requested reviewer profile and binds it to 
         enabled: true,
         group: "same-model",
         roles: ["reviewer"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -2081,10 +2081,10 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         enabled: true,
         group: "worker-high",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        cost: "low",
+        
       },
     ]);
     await f.engine.wake();
@@ -2159,10 +2159,10 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         enabled: true,
         group: "reviewer-high",
         roles: ["reviewer"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        cost: "medium",
+        
       },
     ]);
     f.store.setMeta("usageLevel", {
@@ -2221,9 +2221,9 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         enabled: true,
         group: "reviewer-unrated",
         roles: ["reviewer"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
-        cost: "medium",
+        
       },
     ]);
     assert.match(
@@ -2240,10 +2240,10 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         enabled: true,
         group: "reviewer-top",
         roles: ["reviewer"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "frontier",
-        cost: "medium",
+        
       },
     ]);
     assert.equal(
@@ -2335,7 +2335,7 @@ test("re-review replaces a retained reviewer whose profile or subscription becam
           enabled: true,
           roles: ["reviewer"],
           group: `review-backup-${unavailable}`,
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
         },
       ]);
@@ -2432,7 +2432,7 @@ test("a stopped callback-free reviewer is replaced when its stored subscription 
         enabled: true,
         roles: ["reviewer"],
         group: "review-backup",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -3082,20 +3082,20 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         enabled: true,
         group: "alternate",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "worker",
-        cost: "low",
+        
       },
       {
         profileId: frontier.id,
         enabled: true,
         group: "frontier",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "worker",
-        cost: "very_high",
+        
       },
     ]);
     // Spec 052 (Tom, 2026-11-17): Maximum reserves workers for the top two tiers;
@@ -3272,20 +3272,20 @@ test("Spec 052: a non-delivery alternate keeps the climbed bracket in its permis
         enabled: true,
         group: "top",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        cost: "high",
+        
       },
       {
         profileId: alt.id,
         enabled: true,
         group: "alt",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        cost: "high",
+        
       },
     ]);
     store.setMeta("usageLevel", {
@@ -3959,10 +3959,10 @@ test("versioned worker exclusion is shown to recovery coordinators and replaces 
         enabled: true,
         group: "replacement",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "worker",
-        cost: "low",
+        
       },
     ]);
     f.adapter.verifyResume = async () => {};
@@ -4591,7 +4591,7 @@ test("an owner restart of a profile-unavailable park remaps the retained worker 
         enabled: true,
         group: "backup",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -4668,7 +4668,7 @@ test("operator retry remaps an unavailable retained worker and preserves the lat
         enabled: true,
         group: "backup",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -4801,7 +4801,7 @@ test("a named worker replacement keeps the worker request thinking level (review
         enabled: true,
         group: "backup",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -4874,7 +4874,7 @@ test("a retained-worker remap takes a fresh operator instruction over a stale pe
         enabled: true,
         group: "backup",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -4956,7 +4956,7 @@ test("an operator stopped-revision replacement never resumes the excluded retain
         enabled: true,
         group: "backup",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -8013,7 +8013,7 @@ test("quota error during revision replaces worker, preserves PR and re-reviews t
         profileId: "replacement",
         enabled: true,
         group: "replacement",
-        weight: 1,
+        weight: "default",
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -8091,7 +8091,7 @@ test("reviewer quota failure replaces only the reviewer, keeps workspace and rej
         enabled: true,
         roles: ["reviewer"],
         group: "review-backup",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -8363,10 +8363,10 @@ test("coordinator exhaustion is stored while paused, then replaced with a fenced
         enabled: true,
         roles: ["coordinator"],
         group: "coord-backup",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "mechanical",
-        cost: "very_low",
+        
       },
     ]);
     f.store.setMeta("paused", true);
@@ -8434,10 +8434,10 @@ test("closeout provider replacement refreshes main without repeating merge", asy
         enabled: true,
         roles: ["coordinator"],
         group: "backup",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "mechanical",
-        cost: "very_low",
+        
       },
     ]);
     f.idle(old.agentId!);
@@ -10978,7 +10978,7 @@ test("a coordinator route for an unavailable required reviewer applies although 
         enabled: true,
         group: "backup",
         roles: ["reviewer"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -17039,7 +17039,6 @@ function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
   f.store.setMeta("pool", [
     ...f.store.pool().map((p) => ({
       ...p,
-      cost: p.profileId === frontier ? ("very_high" as const) : p.cost,
       capability:
         p.profileId === frontier ? ("frontier" as const) : p.capability,
     })),
@@ -17048,9 +17047,9 @@ function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
       enabled: true,
       group: "cheap-review",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
-      cost: "low",
+      
       capability: "worker",
     },
     {
@@ -17058,9 +17057,9 @@ function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
       enabled: true,
       group: "cheap-coordinate",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
-      cost: "very_low",
+      
       capability: "mechanical",
     },
   ]);
@@ -17209,15 +17208,15 @@ test("sign-off: replacement selection never carries an unsigned worker request's
     const frontier = { ...profile("frontier"), supportedThinking: ["xhigh"] };
     f.engine.profiles.push(frontier);
     f.store.setMeta("pool", [
-      ...f.store.pool().map((p) => ({ ...p, cost: "low" as const })),
+      ...f.store.pool().map((p) => ({ ...p, })),
       {
         profileId: "frontier",
         enabled: true,
         group: "frontier",
         roles: ["worker"],
         scopes: ["general"],
-        weight: 1,
-        cost: "very_high",
+        weight: "default",
+        
         capability: "frontier",
       },
     ]);
@@ -17266,10 +17265,6 @@ test("sign-off: once the operator approves, the requested reviewer takes over fr
     f.store.setMeta("pool", [
       ...f.store.pool().map((p) => ({
         ...p,
-        cost:
-          p.profileId === "reviewer"
-            ? ("very_high" as const)
-            : ("low" as const),
         capability:
           p.profileId === "reviewer" ? ("frontier" as const) : p.capability,
       })),
@@ -17279,8 +17274,8 @@ test("sign-off: once the operator approves, the requested reviewer takes over fr
         group: "cheap-review",
         roles: ["reviewer"],
         scopes: ["general"],
-        weight: 1,
-        cost: "low",
+        weight: "default",
+        
       },
     ]);
     const t = f.store.update(f.task.id, {
@@ -17345,9 +17340,9 @@ test("sign-off: an unsigned coordinator request does not narrow automatic coordi
         enabled: true,
         group: "specialist",
         roles: ["coordinator"],
-        weight: 1,
+        weight: "default",
         scopes: ["complex"],
-        cost: "high",
+        
         capability: "frontier",
       },
     ]);
@@ -17379,15 +17374,15 @@ test('sign-off: a worker "Use" answer carries into a pending replacement aimed a
       chosen = profile("chosen");
     f.engine.profiles.push(requested, chosen);
     f.store.setMeta("pool", [
-      ...f.store.pool().map((p) => ({ ...p, cost: "low" as const })),
+      ...f.store.pool().map((p) => ({ ...p, })),
       ...["frontier", "chosen"].map((id) => ({
         profileId: id,
         enabled: true,
         group: id,
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
-        cost: "very_high" as const,
+        
         capability: "frontier",
       })),
     ]);

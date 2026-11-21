@@ -1,3 +1,5 @@
+import { legacyWeightStop } from "./capability";
+
 /**
  * The two field renames the stored and wire records still carry, applied at the
  * one read or import boundary that needs them. A record carrying both spellings
@@ -25,7 +27,22 @@ export function submissionRecordFromLegacy(raw: unknown, where = "submission"): 
 /** Stored or wire pool entries before the `capabilities` → `scopes` rename parse through here. */
 export function poolRecordFromLegacy(raw: unknown, where = "pool entry"): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
-  return withoutRetiredPoolFields(renameLegacyKey(raw as Record<string, unknown>, "capabilities", "scopes", where));
+  return retiredCostAndNumericWeight(withoutRetiredPoolFields(renameLegacyKey(raw as Record<string, unknown>, "capabilities", "scopes", where)));
+}
+
+/**
+ * Nucleus#1488 (Tom, 2026-11-21): the Cost rating is retired and the integer
+ * weight became the five-stop rotation weight. A stored or wire record read here
+ * drops `cost` (never used for migration or routing) and maps a numeric weight
+ * through `legacyWeightStop`; every other field is kept as it came. Stored bytes
+ * never change here: the next profile write emits the canonical form.
+ */
+export function retiredCostAndNumericWeight(record: Record<string, unknown>): Record<string, unknown> {
+  const hasCost = "cost" in record;
+  const mapped = legacyWeightStop(record.weight);
+  if (!hasCost && mapped === record.weight) return record;
+  const { cost: _retired, ...rest } = record;
+  return "weight" in rest ? { ...rest, weight: mapped } : rest;
 }
 
 /**

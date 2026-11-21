@@ -226,7 +226,7 @@ export function ownerRevisionFixture(){
 export async function ownedRevisableTask(f:ReturnType<typeof ownerRevisionFixture>,options:{acceptedReview?:boolean;blockedReport?:boolean;blockedCompletion?:Partial<Completion>;projectOwner?:string;briefText?:string}={}){
   const store=f.store,{engine,adapter}=f.buildEngine();
   store.setMeta('paused',false);
-  store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
+  store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:"default",scopes:['general']}]);
   const operation=queueOperationSchema.parse({id:'c'.repeat(64),key:'owner-revision-intake',kind:'review_entry',inputHash:'d'.repeat(64),hostId:'host',state:'running',taskId:null,expectedVersion:null,repoPath:f.repo,submissionId:'owner-revision',createdAt:now(),startedAt:now(),settledAt:null,attempts:1,diagnostic:'',result:null,effect:null});
   // A Queue-held brief replaces the committed handoff: exactly one instruction
   // source with the operator's approved lead, bound through the same real

@@ -227,7 +227,7 @@ function withCoordinator(f: ReturnType<typeof fixture>) {
       enabled: true,
       group: "coordinate",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

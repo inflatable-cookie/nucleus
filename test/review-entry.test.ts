@@ -644,7 +644,7 @@ test("review admission rechecks dependencies after the awaited pre-dispatch hook
       enabled: true,
       group: "reviewers",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -908,7 +908,7 @@ test("changes requested creates the first worker in the retained workspace and r
       enabled: true,
       group: "workers",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -916,7 +916,7 @@ test("changes requested creates the first worker in the retained workspace and r
       enabled: true,
       group: "reviewers",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -1053,7 +1053,7 @@ test("a review-entry callback from outside the task workspace cannot gain approv
       enabled: true,
       group: "reviewers",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

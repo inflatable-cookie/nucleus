@@ -683,7 +683,7 @@ async function closeoutFixture(
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -691,7 +691,7 @@ async function closeoutFixture(
       enabled: true,
       group: "coordinate",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

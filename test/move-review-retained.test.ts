@@ -67,7 +67,7 @@ function fixture() {
   const worker = profile('worker', 'test/worker'), reviewer = profile('reviewer', 'test/reviewer');
   const all = [worker, reviewer];
   store.setMeta('pool', all.map(item => ({ profileId: item.id, enabled: true, group: item.id,
-    roles: [item.id === 'reviewer' ? 'reviewer' : 'worker'], weight: 1, scopes: ['general'] })));
+    roles: [item.id === 'reviewer' ? 'reviewer' : 'worker'], weight: "default", scopes: ['general'] })));
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Retained review across a new head', repoPath: repo, planningCommit: base,
     handoffPath: 'handoff.md', originAgentId: 'origin',

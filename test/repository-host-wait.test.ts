@@ -30,10 +30,10 @@ function fixture(store: Store) {
         profileId: p.id,
         enabled: true,
         group: p.id,
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "worker",
-        cost: "medium",
+        
       }),
     ),
   );
@@ -357,10 +357,10 @@ function poolFor(profileIds: string[]) {
       profileId,
       enabled: true,
       group: profileId,
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: "worker",
-      cost: "medium",
+      
     }),
   );
 }

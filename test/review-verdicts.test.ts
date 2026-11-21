@@ -315,9 +315,9 @@ function engineFixture() {
   store.putRepository({ origin: null, path: '/repo' }, 'agent', 'review verdicts fixture');
   const worker = profile('author'), reviewer = profile('reviewer'), coordinator = profile('coordinator');
   store.setMeta('pool', [
-    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
-    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: 1, scopes: ['general'] },
+    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] },
+    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: "default", scopes: ['general'] },
   ]);
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Task', repoPath: '/repo', planningCommit: base, handoffPath: 'handoff.md', originAgentId: 'origin',

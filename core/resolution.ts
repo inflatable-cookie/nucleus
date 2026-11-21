@@ -18,7 +18,7 @@ import {
   type ResponsibleThread,
 } from "./questions/responsible-thread-cache";
 import { observationTimeout } from "./recovery/observation-timeout";
-import type { Project } from "../shared/contracts";
+import type { Project, ProfileCapability } from "../shared/contracts";
 import { sameCallerIdentity } from "../shared/agent-identity";
 import { OrphanRuns } from "./recovery/orphan-runs";
 import { ProgressContinuation } from "./review/progress-continuation";
@@ -2351,7 +2351,7 @@ export class Resolution {
     excludedProfiles?: ReadonlySet<string>,
     widened?: () => {
       profile: Profile;
-      entry: { cost?: string | null };
+      entry: { capability?: ProfileCapability | null };
     } | null,
   ): string {
     return this.selection.usageCeilingNote(

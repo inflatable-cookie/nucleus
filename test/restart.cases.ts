@@ -107,7 +107,7 @@ function fixture(hostId = "host") {
             ? "coordinator"
             : "worker",
       ],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     })),
   );
@@ -1338,7 +1338,7 @@ for (const fresh of [false, true])
           enabled: true,
           group: f.profiles.worker.id,
           roles: ["worker"],
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
         },
         {
@@ -1346,7 +1346,7 @@ for (const fresh of [false, true])
           enabled: true,
           group: alternate.id,
           roles: ["worker"],
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
         },
       ]);
@@ -1840,7 +1840,7 @@ for (const timeline of ["unavailable", "gap", "interrupted tool"] as const) {
                 enabled: true,
                 group: f.profiles.worker.id,
                 roles: ["worker"],
-                weight: 1,
+                weight: "default",
                 scopes: ["general"],
               },
               {
@@ -1848,7 +1848,7 @@ for (const timeline of ["unavailable", "gap", "interrupted tool"] as const) {
                 enabled: true,
                 group: alternate.id,
                 roles: ["worker"],
-                weight: 1,
+                weight: "default",
                 scopes: ["general"],
               },
             ]);
@@ -2457,7 +2457,7 @@ test("the sweep settles a real lost restart after its old worker is isolated and
         enabled: true,
         group: f.profiles.worker.id,
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
       {
@@ -2465,7 +2465,7 @@ test("the sweep settles a real lost restart after its old worker is isolated and
         enabled: true,
         group: alternate.id,
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -5241,7 +5241,7 @@ test("stalled worker: fresh restart continues the same worker on its route (Spec
         enabled: true,
         group: alternative.id,
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -5638,7 +5638,7 @@ async function originBusyAdmissionScenario(): Promise<void> {
       enabled: true,
       group: "reviewers",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -6007,9 +6007,9 @@ async function coordinatorRouteCostScenario(): Promise<void> {
           enabled: true,
           group: sol.id,
           roles: ["worker"],
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
-          cost: "very_high",
+          
           capability: "frontier",
         },
         {
@@ -6017,9 +6017,9 @@ async function coordinatorRouteCostScenario(): Promise<void> {
           enabled: true,
           group: alt.id,
           roles: ["worker"],
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
-          cost: "low",
+          
         },
       ]);
       f.store.update(f.taskId, {
@@ -6384,7 +6384,7 @@ test("fresh worker restart pins the owner's required worker route, not the profi
         enabled: true,
         group: sol.id,
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -6458,7 +6458,7 @@ test("a soft worker request does not override the profile that last ran on a fre
         enabled: true,
         group: alt.id,
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);

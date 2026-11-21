@@ -10,7 +10,7 @@ const profile = (id: string, model = `${id}-model`): Profile => ({
 } as Profile);
 const worker = profile('worker'), reviewer = profile('reviewer'), coordinator = profile('coordinator');
 const pool = ['worker', 'reviewer', 'coordinator', 'executor'].map(profileId => ({
-  profileId, enabled: true, group: `${profileId}-group`, roles: [], weight: 1, scopes: ['general'], capability: 'worker', cost: 'low',
+  profileId, enabled: true, group: `${profileId}-group`, roles: [], weight: "default", scopes: ['general'], capability: 'worker', 
 }));
 
 const task = (overrides: Partial<Task> = {}): Task => taskSchema.parse({

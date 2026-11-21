@@ -25,13 +25,22 @@ import {
 } from "../shared/profile-vocabulary";
 import { HOST_VOCABULARIES } from "../hosts/vocabularies";
 
-export const COST_LEVELS = [
-  "very_low",
-  "low",
-  "medium",
-  "high",
-  "very_high",
-] as const;
+/** The five rotation-weight stops and the plain words each reads as; Default is the centre (Spec 053). */
+export const WEIGHT_STOP_LABELS: Record<api.ProfileWeight, string> = {
+  fewest: "Fewest",
+  fewer: "Fewer",
+  default: "Default",
+  more: "More",
+  most: "Most",
+};
+/** Each stop's accessible name: what it does to this profile's turn in rotation, never a number. */
+export const WEIGHT_STOP_SPEECH: Record<api.ProfileWeight, string> = {
+  fewest: "Weight: fewest assignments",
+  fewer: "Weight: fewer assignments",
+  default: "Weight: default",
+  more: "Weight: more assignments",
+  most: "Weight: most assignments",
+};
 export const levelLabel = (level: string) =>
   level.charAt(0).toUpperCase() + level.slice(1).replaceAll("_", " ");
 /** Below this editor width (a phone) paired fields stack; Paseo's settings column keeps them side by side. */
@@ -264,7 +273,7 @@ export function defaultPoolEntry(
       profile.provider === "omp"
         ? `omp-${profile.model.split("/")[0]}`
         : profile.provider,
-    weight: 1,
+    weight: api.DEFAULT_PROFILE_WEIGHT,
     scopes: ["general"],
   };
 }

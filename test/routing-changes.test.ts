@@ -14,9 +14,9 @@ import { assertCompleted, cleanupDiagnostic, observeOutcome, type BackgroundOutc
 const profile=(id:string):Profile=>({id,name:id,provider:'test',model:id,available:true,problem:'',notes:'',supportedThinking:['low']});
 const profiles=[profile('normal'),profile('strong'),profile('special')];
 const pool=[
- {profileId:'normal',enabled:true,group:'normal',roles:['worker'] as const,weight:1,scopes:['general'] as const},
- {profileId:'strong',enabled:true,group:'strong',roles:['worker'] as const,weight:1,scopes:['general','complex'] as const},
- {profileId:'special',enabled:true,group:'special',roles:['worker'] as const,weight:1,scopes:['complex'] as const,capability:'frontier'},
+ {profileId:'normal',enabled:true,group:'normal',roles:['worker'] as const,weight:"default",scopes:['general'] as const},
+ {profileId:'strong',enabled:true,group:'strong',roles:['worker'] as const,weight:"default",scopes:['general','complex'] as const},
+ {profileId:'special',enabled:true,group:'special',roles:['worker'] as const,weight:"default",scopes:['complex'] as const,capability:'frontier'},
 ];
 function fixture(){
  const dir=mkdtempSync(join(tmpdir(),'queue-routing-')),path=join(dir,'queue.sqlite'),store=new Store(path);

@@ -52,8 +52,8 @@ function fixture() {
     handoffPath: 'handoff.md', originAgentId: 'origin',
   }), 'host', 'handoff', base);
   store.setMeta('pool', [
-    { profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: reviewerProfile.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
+    { profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: reviewerProfile.id, enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] },
   ]);
   const observations = new Map<string, AgentObservation>();
   const archived = new Set<string>();

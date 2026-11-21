@@ -25,10 +25,10 @@ const briefV1='Brief v1: implement the author loop';
 function fixture(options:{brief?:boolean;gateWait?:string}={}) {
  const dir=mkdtempSync(join(tmpdir(),'ns-author-loop-'));mkdirSync(join(dir,'source'));const store=new Store(join(dir,'db'));
  const profiles=['author','higher','top','reviewer','coordinator'].map(profile);
- const pool:PoolEntry[]=profiles.map(p=>({profileId:p.id,enabled:true,group:p.id,roles:p.id==='reviewer'?['reviewer']:p.id==='coordinator'?['coordinator']:['worker'],scopes:['general'],weight:1,
+ const pool:PoolEntry[]=profiles.map(p=>({profileId:p.id,enabled:true,group:p.id,roles:p.id==='reviewer'?['reviewer']:p.id==='coordinator'?['coordinator']:['worker'],scopes:['general'],weight:"default",
   // Spec 053: ratings, not role switches, give the reviewer and coordinator their profiles.
   capability:p.id==='author'?'mechanical':p.id==='higher'?'worker':p.id==='reviewer'?'worker':p.id==='coordinator'?'mechanical':'heavyweight',
-  ...(p.id==='reviewer'?{cost:'low' as const}:p.id==='coordinator'?{cost:'very_low' as const}:{})}));
+  ...(p.id==='reviewer'?{}:p.id==='coordinator'?{}:{})}));
  store.setMeta('pool',pool);store.setMeta('paused',false);
  // Keep progress receipts and the author task-row binding for retained-work recovery cases.
  const submitted=store.insert(submissionSchema.parse({submissionId:randomUUID(),title:'Author loop',repoPath:join(dir,'source','repo'),siblings:false,planningCommit:base,...(options.brief?{brief:{text:briefV1}}:{handoffPath:'brief.md'}),originAgentId:'origin',responsible:false}),'host',options.brief?briefV1:'brief',base);

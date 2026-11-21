@@ -55,8 +55,8 @@ function lightFixture() {
     handoffPath: 'handoff.md', originAgentId: 'origin',
   }), 'host', 'handoff', lightBase);
   store.setMeta('pool', [
-    { profileId: lightWorker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: lightReviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
+    { profileId: lightWorker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: lightReviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] },
   ]);
   const adapter = {
     profiles: async () => [lightWorker, lightReviewer],

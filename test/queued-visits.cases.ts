@@ -77,7 +77,7 @@ function fixture() {
       profileId: profile.id,
       enabled: true,
       group: "test",
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -462,7 +462,7 @@ test("routing epochs notice catalog, pool, subscription, usage and demand change
             profileId: profile.id,
             enabled: true,
             group: "test",
-            weight: 2,
+            weight: "more",
             scopes: ["general"],
           },
         ]),
@@ -746,7 +746,7 @@ weighted(8)(
           profileId: profile.id,
           enabled: true,
           group: "test",
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
         },
       ]);

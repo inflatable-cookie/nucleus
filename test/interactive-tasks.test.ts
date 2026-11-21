@@ -26,9 +26,9 @@ function fixture(graceMs = 0) {
   const worker = profile('author'), reviewer = profile('reviewer'), coordinator = profile('coordinator');
   store.setMeta('paused', false);
   store.setMeta('pool', [
-    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
-    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: 1, scopes: ['general'] },
+    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] },
+    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: "default", scopes: ['general'] },
   ]);
   const states = new Map<string, AgentObservation>();
   const idle = (id: string, workspaceId = 'workspace') => states.set(id, { id, workspaceId, status: 'idle', active: false, permissions: false, error: '' });
@@ -172,7 +172,7 @@ test('an accepted blocked or error report during the session leaves the interact
 test('a replacement worker after submission and review does not reopen the interactive session',async()=>{
  const f=fixture();try{
  const replacement=profile('replacement');f.engine.profiles.push(replacement);
- f.store.setMeta('pool',[...f.store.pool(),{profileId:replacement.id,enabled:true,group:'replacement',roles:['worker'],weight:1,scopes:['general']}]);
+ f.store.setMeta('pool',[...f.store.pool(),{profileId:replacement.id,enabled:true,group:'replacement',roles:['worker'],weight:"default",scopes:['general']}]);
  interactive(f,{phase:'changes_requested',prUrl:'https://github.com/example/repo/pull/1',completion:{taskId:f.task.id,runId:f.current().runId!,eventId:'submitted',status:'ready_for_review',summary:'Operator submitted',prNumber:1}});
  const revision:Run={id:'revision-failover',taskId:f.task.id,role:'revision',generation:1,head,base,workspaceId:'workspace',agentId:'worker',profile:f.current().profile!,profileGroup:'author',status:'running',createdAt:old,lastObservedAt:old,active:false,idleSince:old,completion:null,released:false};
  f.store.putRun(revision);f.store.update(f.task.id,{resolution:{...f.current().resolution,currentRunId:revision.id}});
@@ -218,7 +218,7 @@ test('a transport outage keeps and then resumes the interactive wait',async()=>{
 test('a quota failover before submission keeps the interactive session',async()=>{
  const f=fixture();try{
  const replacement=profile('replacement');f.engine.profiles.push(replacement);
- f.store.setMeta('pool',[...f.store.pool(),{profileId:replacement.id,enabled:true,group:'replacement',roles:['worker'],weight:1,scopes:['general']}]);
+ f.store.setMeta('pool',[...f.store.pool(),{profileId:replacement.id,enabled:true,group:'replacement',roles:['worker'],weight:"default",scopes:['general']}]);
  interactive(f);f.states.set('worker',{id:'worker',workspaceId:'workspace',status:'error',active:false,permissions:false,error:'usage limit reached'});
  await (f.engine as any).recoverExhaustedWorkers();await f.engine.scheduleTaskQuantum(f.task.id);
  assert.equal(f.events('worker_replacement').length,1,f.current().reason);
@@ -230,7 +230,7 @@ test('a quota failover before submission keeps the interactive session',async()=
 test('a replacement after a pre-PR administrative revision receives ordinary reporting instructions',async()=>{
  const f=fixture();try{
  const replacement=profile('replacement');f.engine.profiles.push(replacement);
- f.store.setMeta('pool',[...f.store.pool(),{profileId:replacement.id,enabled:true,group:'replacement',roles:['worker'],weight:1,scopes:['general']}]);
+ f.store.setMeta('pool',[...f.store.pool(),{profileId:replacement.id,enabled:true,group:'replacement',roles:['worker'],weight:"default",scopes:['general']}]);
  interactive(f,{phase:'changes_requested',completion:{taskId:f.task.id,runId:f.current().runId!,eventId:'blocked-before-pr',status:'blocked',summary:'Provider quota exhausted'}});
  const revision:Run={id:'revision-failover',taskId:f.task.id,role:'revision',generation:1,head,base,workspaceId:'workspace',agentId:'worker',profile:f.current().profile!,profileGroup:'author',status:'running',createdAt:old,lastObservedAt:old,active:false,idleSince:old,completion:null,released:false};
  f.store.putRun(revision);f.store.update(f.task.id,{resolution:{...f.current().resolution,currentRunId:revision.id}});

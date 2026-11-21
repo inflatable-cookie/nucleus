@@ -2,8 +2,11 @@ import { z } from "zod";
 import {
   capabilityLevelSchema,
   demandLevelSchema,
+  legacyWeightStop,
   profileCapabilitySchema,
+  profileWeightSchema,
   scopeSchema,
+  weightShare,
 } from "./capability";
 import { usageViewSchema } from "./usage";
 
@@ -22,13 +25,41 @@ import { usageViewSchema } from "./usage";
  * relabelled by today's level). `gates` lists pool gates beyond the usage
  * policy; catalog availability is checked at dispatch.
  */
-export const routePolicySchema = z
+const isRecord = (raw: unknown): raw is Record<string, unknown> =>
+  Boolean(raw) && typeof raw === "object" && !Array.isArray(raw);
+
+/** A recorded diagnostic row that carried the retired `cost` reads without it (nucleus#1488). */
+const routePolicyFromLegacy = (raw: unknown): unknown => {
+  if (!isRecord(raw) || !("cost" in raw)) return raw;
+  const { cost: _retired, ...rest } = raw;
+  return rest;
+};
+
+/**
+ * A recorded selection row read before nucleus#1488: `cost` and `effectiveWeight`
+ * are dropped, a numeric weight reads as its stop, and the share is derived from
+ * that stop. Nothing recorded is rewritten.
+ */
+const selectionFromLegacy = (raw: unknown): unknown => {
+  if (!isRecord(raw) || !Array.isArray(raw.met)) return raw;
+  return {
+    ...raw,
+    met: raw.met.map((row) => {
+      if (!isRecord(row)) return row;
+      const { cost: _cost, effectiveWeight: _effective, ...rest } = row;
+      const weight = legacyWeightStop(rest.weight);
+      const stop = profileWeightSchema.safeParse(weight);
+      return { ...rest, weight, ...(!("share" in rest) && stop.success ? { share: weightShare(stop.data) } : {}) };
+    }),
+  };
+};
+
+const routePolicyShape = z
   .object({
     role: z.enum(["worker", "reviewer", "coordinator"]),
     profileId: z.string(),
     source: z.enum(["request", "preference", "dispatched"]),
     inPool: z.boolean(),
-    cost: capabilityLevelSchema.nullable(),
     /** The pool entry's capability; a top-tier profile needs permission at Low and Normal (Spec 052). */
     capability: profileCapabilitySchema.nullable().optional(),
     /** Null when the profile is not in the pool: automatic selection never reaches it. */
@@ -49,6 +80,8 @@ export const routePolicySchema = z
       .optional(),
   })
   .strict();
+
+export const routePolicySchema = z.preprocess(routePolicyFromLegacy, routePolicyShape) as unknown as typeof routePolicyShape;
 
 export type RoutePolicy = z.infer<typeof routePolicySchema>;
 
@@ -73,7 +106,7 @@ export type HostEffect = z.infer<typeof hostEffectSchema>;
  * demand it computes, the profiles that meet it on the task's host, and why the
  * leading one wins. Read-only: selection itself is `chooseProfile`.
  */
-export const selectionExplanationSchema = z
+const selectionExplanationShape = z
   .object({
     role: z.literal("worker"),
     complexity: capabilityLevelSchema,
@@ -85,16 +118,16 @@ export const selectionExplanationSchema = z
     demand: demandLevelSchema,
     /** No eligible profile met the demand, so the most capable eligible ones form the set. */
     shortfall: z.boolean(),
-    /** The set rotation chooses from, best placed first: recent use over effective weight. */
+    /** The set rotation chooses from, best placed first: recent use over relative share. */
     met: z.array(
       z
         .object({
           profileId: z.string(),
           name: z.string(),
           capability: z.string().nullable(),
-          cost: z.string().nullable(),
-          weight: z.number(),
-          effectiveWeight: z.number(),
+          weight: profileWeightSchema,
+          /** The weight stop's relative rotation share (Default is 1); never an admission rule. */
+          share: z.number(),
           recent: z.number(),
         })
         .strict(),
@@ -106,6 +139,7 @@ export const selectionExplanationSchema = z
       .nullable(),
   })
   .strict();
+export const selectionExplanationSchema = z.preprocess(selectionFromLegacy, selectionExplanationShape) as unknown as typeof selectionExplanationShape;
 export type SelectionExplanation = z.infer<typeof selectionExplanationSchema>;
 
 export const routingPolicySchema = z

@@ -79,7 +79,7 @@ function engineFor(t: TestContext, store: Store, dir: string) {
   engine.profiles = [profile];
   engine.siblingDataDir = dir;
   t.after(() => engine.stop());
-  store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: "default", scopes: ['general'] }]);
   store.setMeta('paused', false);
   return engine;
 }

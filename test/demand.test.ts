@@ -1,22 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { complexityBracket, demandPick, requestedTier, reviewerDemand, runDemand, taskDemandPreview, workerClimbTarget, workerStartTier, workerStepUp, type DemandCandidate } from '../shared/demand';
-import { poolSchema, profileCapabilityLevels, submissionSchema, usageLevelSchema, usageLevels, type CapabilityLevel, type DemandLevel, type PoolEntry, type Profile, type ProfileCapability, type Task, type UsageLevel } from '../shared/contracts';
-import { chooseProfile } from '../core/dispatch/routing';
+import { poolRecordFromLegacy, poolSchema, profileCapabilityLevels, profileWeightLevels, weightShare, type ProfileWeight, submissionSchema, usageLevelSchema, usageLevels, type CapabilityLevel, type DemandLevel, type PoolEntry, type Profile, type ProfileCapability, type Task, type UsageLevel } from '../shared/contracts';
+import { chooseProfile, workerSelectionExplanation } from '../core/dispatch/routing';
 import { requestOnly } from '../shared/pool';
 import { poolShapes } from './support/pool-shapes';
 
 /** Spec 053 rows against the live pool's ratings, in brackets (Tom, 2026-11-19). */
-const entry = (profileId: string, cost: CapabilityLevel, capability: ProfileCapability) =>
-  poolSchema.parse({ profileId, enabled: true, group: profileId, roles: ['worker'], weight: 1, scopes: ['general'], cost, capability });
+const entry = (profileId: string, capability: ProfileCapability, weight: ProfileWeight = 'default') =>
+  poolSchema.parse({ profileId, enabled: true, group: profileId, roles: ['worker'], weight, scopes: ['general'], capability });
 const pool = [
-  entry('opus', 'very_high', 'frontier'),
-  entry('sol', 'very_high', 'heavyweight'),
-  entry('deepseek', 'medium', 'worker'),
-  entry('haiku', 'medium', 'worker'),
-  entry('grok', 'high', 'worker'),
-  entry('glm', 'low', 'mechanical'),
-  entry('muse', 'very_low', 'mechanical'),
+  entry('opus', 'frontier'),
+  entry('sol', 'heavyweight'),
+  entry('deepseek', 'worker'),
+  entry('haiku', 'worker'),
+  entry('grok', 'worker'),
+  entry('glm', 'mechanical'),
+  entry('muse', 'mechanical'),
 ];
 const profiles = pool.map(item => ({ id: item.profileId, model: `vendor/${item.profileId}-model`, available: true }));
 const candidates: DemandCandidate[] = pool.map(item => ({ ...item, model: `vendor/${item.profileId}-model`, available: true }));
@@ -43,8 +43,8 @@ test('052 brackets: four capability brackets; every five-point rating reads as i
   assert.deepEqual([...profileCapabilityLevels], ['mechanical', 'worker', 'heavyweight', 'frontier']);
   const legacy = { very_low: 'mechanical', low: 'mechanical', medium: 'worker', high: 'worker', very_high: 'heavyweight', frontier: 'frontier' } as const;
   for (const [from, to] of Object.entries(legacy))
-    assert.equal(entry('p', 'medium', from as ProfileCapability).capability, to, `${from} → ${to}`);
-  assert.throws(() => entry('p', 'medium', 'ultra' as ProfileCapability), 'an unknown rating is not guessed');
+    assert.equal(entry('p', from as ProfileCapability).capability, to, `${from} → ${to}`);
+  assert.throws(() => entry('p', 'ultra' as ProfileCapability), 'an unknown rating is not guessed');
 });
 
 test('052: a task\'s own bracket and the bracket it may climb to; medium and high share Worker and differ in the climb', () => {
@@ -71,7 +71,7 @@ test('052: the reviewer runs one bracket below the worker at Low and Normal and 
 });
 
 test('052: the reviewer reads the worker\'s actual profile; a critical task floors it at the worker', () => {
-  const rated = [entry('w', 'medium', 'worker'), entry('h', 'high', 'heavyweight'), entry('m', 'low', 'mechanical'), entry('f', 'very_high', 'frontier')];
+  const rated = [entry('w', 'worker'), entry('h', 'heavyweight'), entry('m', 'mechanical'), entry('f', 'frontier')];
   const on = (id: string, critical = false) => ({ complexity: 'medium' as const, critical, profile: { id } });
   assert.equal(reviewerDemand(on('h'), rated, 'normal'), 'worker', 'Heavyweight author → Worker reviewer at Normal');
   assert.equal(reviewerDemand(on('w'), rated, 'normal'), 'mechanical', 'Worker author → Mechanical reviewer at Normal');
@@ -83,7 +83,7 @@ test('052: the reviewer reads the worker\'s actual profile; a critical task floo
 });
 
 test('052: the climb is one bracket from the worker\'s actual profile, capped at the bracket the task may climb to', () => {
-  const rated = [entry('m', 'low', 'mechanical'), entry('w', 'medium', 'worker'), entry('h', 'high', 'heavyweight')];
+  const rated = [entry('m', 'mechanical'), entry('w', 'worker'), entry('h', 'heavyweight')];
   const climb = (complexity: CapabilityLevel, profileId: string | null, usage: UsageLevel = 'normal') => workerClimbTarget({ complexity, profile: profileId ? { id: profileId } : null,
     resolution: { review: { status: 'changes_required', runId: 'review-1' }, workerClimb: null } }, rated, usage);
   assert.deepEqual(climb('high', 'w'), { from: 'worker', to: 'heavyweight', reviewRunId: 'review-1' });
@@ -107,12 +107,12 @@ test('052 permission: Frontier needs sign-off below Extra high; Heavyweight at L
     ['extra_high', 'frontier', 'worker', null, false], ['maximum', 'frontier', 'worker', null, false],
   ] as const;
   for (const [level, capability, requested, climb, gated] of cases)
-    assert.equal(requestOnly({ cost: 'very_high', capability }, level, requested, climb), gated, `${level}/${capability}/${requested}/${climb}`);
+    assert.equal(requestOnly({ capability }, level, requested, climb), gated, `${level}/${capability}/${requested}/${climb}`);
   for (const capability of ['mechanical', 'worker'] as const) for (const level of usageLevels)
-    assert.equal(requestOnly({ cost: 'very_high', capability }, level, 'mechanical'), false, `${level}/${capability}`);
+    assert.equal(requestOnly({ capability }, level, 'mechanical'), false, `${level}/${capability}`);
 });
 
-test('053 rows: only profiles the level covers form the automatic set; gated ones meet the demand as sign-off only, and cost never excludes', () => {
+test('053 rows: only profiles the level covers form the automatic set; gated ones meet the demand as sign-off only, and weight never excludes', () => {
   assert.deepEqual(pick('worker', 'normal', [], 'worker'), { profileIds: ['deepseek', 'haiku', 'grok'], shortfall: false, signoffOnly: ['opus', 'sol'] },
     'a medium task selects the Worker pool; Heavyweight is above it and held');
   assert.deepEqual(pick('worker', 'normal', ['haiku'], 'worker').profileIds, ['deepseek', 'grok'], 'an excluded author model leaves the set');
@@ -176,12 +176,34 @@ function simulate(task: Task, selectionProfiles: Profile[], selectionPool: PoolE
   return Object.fromEntries(Object.entries(counts).filter(([key]) => key.startsWith('profile:')).map(([key, n]) => [key.slice('profile:'.length), n]));
 }
 
-test('053 cost lean: cost shifts the share within the Worker pool, never removes a profile', () => {
-  const live = [['glm', 'low'], ['grok', 'medium'], ['haiku', 'medium']] as const;
-  const leanProfiles: Profile[] = live.map(([id]) => ({ id, name: id, provider: 'test', model: `vendor/${id}-model`, available: true, problem: '', notes: '', supportedThinking: [] }));
-  const leanPool = [...live.map(([id, cost]) => entry(id, cost, 'worker')), entry('sol', 'high', 'heavyweight')];
-  const shares = simulate({ complexity: 'medium' } as Task, leanProfiles.concat({ ...leanProfiles[0]!, id: 'sol', name: 'sol', model: 'vendor/sol-model' }), leanPool, 100);
-  assert.deepEqual(shares, { glm: 50, grok: 25, haiku: 25 }, 'GLM (low cost, lean 8) takes half; Heavyweight sits above a medium task');
+test('053 rotation weight: equal weights rotate equally whatever the legacy rating, and a Heavyweight sits above a medium task', () => {
+  // Legacy saved profiles carried differently rated Cost; reading them drops it, so the shares are equal.
+  const legacy = [['glm', 'very_low'], ['grok', 'medium'], ['haiku', 'very_high']] as const;
+  const leanProfiles: Profile[] = legacy.map(([id]) => ({ id, name: id, provider: 'test', model: `vendor/${id}-model`, available: true, problem: '', notes: '', supportedThinking: [] }));
+  const leanPool = [...legacy.map(([id, cost]) => poolSchema.parse(poolRecordFromLegacy({ profileId: id, enabled: true, group: id, roles: ['worker'], weight: 1, scopes: ['general'], cost, capability: 'worker' }))),
+    entry('sol', 'heavyweight')];
+  const shares = simulate({ complexity: 'medium' } as Task, leanProfiles.concat({ ...leanProfiles[0]!, id: 'sol', name: 'sol', model: 'vendor/sol-model' }), leanPool, 99);
+  assert.deepEqual(shares, { glm: 33, grok: 33, haiku: 33 }, 'prior cost gives no profile more of the rotation');
+});
+
+test('053 rotation weight: each notch moves the share one fixed step from Default, and the diagnostic names the same pick', () => {
+  assert.deepEqual(profileWeightLevels.map(weightShare), [0.8, 0.9, 1, 1.1, 1.2]);
+  const stops = ['fewest', 'fewer', 'default', 'more', 'most'] as const;
+  const stepProfiles: Profile[] = stops.map(id => ({ id, name: id, provider: 'test', model: `vendor/${id}-model`, available: true, problem: '', notes: '', supportedThinking: [] }));
+  const stepPool = stops.map(id => entry(id, 'worker', id));
+  const shares = simulate({ complexity: 'medium' } as Task, stepProfiles, stepPool, 1000);
+  const total = Object.values(shares).reduce((sum, n) => sum + n, 0);
+  assert.equal(total, 1000);
+  // 0.8 : 0.9 : 1.0 : 1.1 : 1.2 of 5.0 → 160, 180, 200, 220, 240.
+  for (const [id, expected] of Object.entries({ fewest: 160, fewer: 180, default: 200, more: 220, most: 240 }))
+    assert.ok(Math.abs((shares[id] ?? 0) - expected) <= 2, `${id} took ${shares[id]} of 1000, expected about ${expected}`);
+  // Diagnostics read the same rotation: the set lists shares, never a cost, and its leader is the dispatched pick.
+  const task = { ...submissionSchema.parse({ submissionId: 's-diag', title: 'T', repoPath: '/r', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'o', complexity: 'medium' }) } as Task;
+  const recent: Record<string, number> = { 'profile:fewest': 1, 'profile:fewer': 1, 'profile:default': 1, 'profile:more': 1, 'profile:most': 1 };
+  const explained = workerSelectionExplanation(task, stepPool, stepProfiles, 'normal', new Set(), { counts: recent, recent });
+  assert.deepEqual(explained.met.map(row => [row.profileId, row.weight, row.share]), [['most', 'most', 1.2], ['more', 'more', 1.1], ['default', 'default', 1], ['fewer', 'fewer', 0.9], ['fewest', 'fewest', 0.8]]);
+  assert.equal(explained.met.some(row => 'cost' in row || 'effectiveWeight' in row), false);
+  assert.equal(explained.choice?.profileId, chooseProfile(task, stepProfiles, stepPool, {}, new Set(), 'worker', recent, 'normal')?.profile.id);
 });
 
 /** The real pool shape (synthetic IDs), with its live ratings migrated to brackets. */

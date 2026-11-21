@@ -27,7 +27,7 @@ function fixture(profiles: Profile[], pool: Array<{ profileId: string; group: st
   const dir = mkdtempSync(join(tmpdir(), 'ns-rate-limit-'));
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('paused', false);
-  store.setMeta('pool', pool.map(entry => ({ ...entry, enabled: true, roles: ['worker'], weight: 1, scopes: ['general'] })));
+  store.setMeta('pool', pool.map(entry => ({ ...entry, enabled: true, roles: ['worker'], weight: "default", scopes: ['general'] })));
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Rate limit', repoPath: '/repo', planningCommit: base,
     handoffPath: 'handoff.md', originAgentId: 'origin',

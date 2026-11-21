@@ -51,7 +51,7 @@ async function fixture(t: any) {
   const head = await git(repo, 'rev-parse', 'HEAD');
   const store = new Store(join(root, 'queue.sqlite'));
   store.setMeta('paused', false); store.setMeta('lastRetentionAt', Date.now());
-  store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: "default", scopes: ['general'] }]);
   let workspaces = 0;
   const adapter = fakeAdapter({
     profiles: async () => [profile], validate: async () => git(repo, 'rev-parse', 'HEAD'),

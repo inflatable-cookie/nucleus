@@ -117,7 +117,7 @@ const board = (tasks: ReturnType<typeof summaryOf>[]) => ({
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ],

@@ -36,7 +36,7 @@ import {
 } from "../../shared/pool";
 import {
   climbedTier,
-  effectiveWeight,
+  rotationShare,
   requestedTier,
   reviewerDemand,
   runDemand,
@@ -584,7 +584,7 @@ export function chooseProfile(
     inTier.has(candidate.entry.profileId),
   );
   const share = (candidate: (typeof ranked)[number]) =>
-    effectiveWeight(candidate.entry.weight, candidate.entry.cost);
+    rotationShare(candidate.entry.weight);
   ranked.sort(
     (a, b) =>
       (recent[`profile:${a.profile.id}`] ?? 0) / share(a) -
@@ -687,7 +687,6 @@ export function taskRoutingPolicy(
         profileId,
         source,
         inPool: Boolean(entry),
-        cost: entry?.cost ?? null,
         capability: entry?.capability ?? null,
         automatic: entry
           ? automaticSelection(entry, usage.level, taskTier, climbTier, role)
@@ -780,14 +779,13 @@ export function workerSelectionExplanation(
       profileId: entry.profileId,
       name: nameOf(entry.profileId),
       capability: entry.capability ?? null,
-      cost: entry.cost ?? null,
       weight: entry.weight,
-      effectiveWeight: effectiveWeight(entry.weight, entry.cost),
+      share: rotationShare(entry.weight),
       recent: recent[`profile:${entry.profileId}`] ?? 0,
     }))
     .sort(
       (a, b) =>
-        a.recent / a.effectiveWeight - b.recent / b.effectiveWeight ||
+        a.recent / a.share - b.recent / b.share ||
         a.profileId.localeCompare(b.profileId),
     );
   const picked = chooseProfile(
@@ -810,14 +808,14 @@ export function workerSelectionExplanation(
     : picked.profile.id === named
       ? "named by the task's request or preference"
       : row
-        ? `fewest recent assignments per effective weight in the set: ${row.recent} of the last 50 over weight ${row.weight} × cost lean ${row.effectiveWeight / row.weight} (cost ${row.cost ?? "unset"})${
+        ? `fewest recent assignments per rotation share in the set: ${row.recent} of the last 50 over a ${row.weight} weight share of ${row.share}${
             met.length > 1
               ? `; next ${met
                   .filter((item) => item.profileId !== row.profileId)
                   .slice(0, 2)
                   .map(
                     (item) =>
-                      `${item.name} ${item.recent} over ${item.effectiveWeight}`,
+                      `${item.name} ${item.recent} over ${item.share}`,
                   )
                   .join(", ")}`
               : ""
@@ -1140,7 +1138,7 @@ export class RoleSelection {
       : "";
   }
   /**
-   * Spec 052: when the usage level's cost ceiling, not the pool, leaves a role
+   * Spec 052: when the usage level's ceiling, not the pool, leaves a role
    * with no profile, say so and name the way out. Empty when the pool itself is
    * the cause.
    */
@@ -1151,7 +1149,7 @@ export class RoleSelection {
     excludedProfiles: ReadonlySet<string> = new Set(),
     widened?: () => {
       profile: Profile;
-      entry: { cost?: string | null; capability?: ProfileCapability | null };
+      entry: { capability?: ProfileCapability | null };
     } | null,
   ): string {
     const usage = this.store.usageLevel();

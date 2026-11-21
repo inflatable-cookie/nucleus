@@ -232,7 +232,6 @@ export class TransientResume {
             (oldEntry?.capability
               ? entry.capability === oldEntry.capability
               : true) &&
-            entry.cost !== "very_high" &&
             !requestOnly(
               entry,
               this.store.usageLevel(),

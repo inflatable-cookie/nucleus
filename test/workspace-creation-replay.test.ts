@@ -57,7 +57,7 @@ function fixture(found: { id: string; directory: string }[]) {
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

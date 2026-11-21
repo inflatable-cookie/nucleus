@@ -45,7 +45,7 @@ function fixture(graceMs = 0) {
     handoffPath: 'handoff.md', originAgentId: 'origin',
   }), 'host', 'handoff', base);
   store.setMeta('pool', [
-    { profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
+    { profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
   ]);
   const observations = new Map<string, AgentObservation>();
   // Round 4: verbs cancel a live turn through Paseo's active-turn cancellation.

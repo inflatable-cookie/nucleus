@@ -125,10 +125,10 @@ const pool = (): PoolEntry[] =>
       enabled: true,
       group: `group-${index}`,
       roles: ["worker", "coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: "worker",
-      cost: "medium",
+      
     }),
   );
 

@@ -288,7 +288,7 @@ test("long subscription group names stay in their row with accessible controls",
       },
     ],
     pool: [
-      { profileId: "p", group, enabled: true, scopes: ["general"], weight: 1 },
+      { profileId: "p", group, enabled: true, scopes: ["general"], weight: "default" },
     ],
     availability: [
       { group, unavailable: true, reason: "weekly limit", retryAt: null },

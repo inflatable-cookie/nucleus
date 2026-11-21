@@ -60,7 +60,7 @@ function fixture() {
   } as unknown as Adapter);
   const engine = new Engine(store, adapter, 0);
   engine.profiles = [profile];
-  store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: "default", scopes: ['general'] }]);
   engine.store.setMeta('paused', true);
   return {
     dir, path, store, calls, adapter, engine,

@@ -95,8 +95,8 @@ function fixture() {
   const setupTask = (target: Store, options: { dispatchHeld?: boolean; brief?: { text: string; operative: boolean } } = {}) => {
     target.setMeta('paused', false);
     target.setMeta('pool', [
-      { profileId: executorProfile.id, enabled: true, group: 'proof', roles: ['worker'], weight: 1, scopes: ['general'] },
-      { profileId: reviewerProfile.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
+      { profileId: executorProfile.id, enabled: true, group: 'proof', roles: ['worker'], weight: "default", scopes: ['general'] },
+      { profileId: reviewerProfile.id, enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] },
     ]);
     const brief = options.brief ?? null;
     const submission = submissionSchema.parse({

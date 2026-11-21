@@ -384,8 +384,8 @@ async function resolutionFixture(t: any, script: string) {  const f = await revi
   f.store.setMeta('paused', false);
   f.store.setMeta('lastRetentionAt', Date.now());
   f.store.setMeta('pool', [
-    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: 1, scopes: ['general'] },
+    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: "default", scopes: ['general'] },
   ]);
   const submitted = f.store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Reviewed-head gate', repoPath: f.repo, baseBranch: 'main',

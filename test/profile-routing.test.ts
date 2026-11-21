@@ -48,7 +48,7 @@ test('imported profiles preserve the former Paseo list and routing selection', a
     const defined = (value: object) => Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
     const routed = legacy.map(p => ({ ...defined(p), ...(p.modeId ? { translated: ['mode'] } : {}) }) as typeof p);
     assert.deepEqual(engine.profiles, routed);
-    const pool = hostProfiles.map(p => poolSchema.parse({ profileId: p.id, enabled: true, group: p.id, roles: ['worker'], weight: 1, scopes: ['general'] }));
+    const pool = hostProfiles.map(p => poolSchema.parse({ profileId: p.id, enabled: true, group: p.id, roles: ['worker'], weight: "default", scopes: ['general'] }));
     const task = submissionSchema.parse({ submissionId: 's', title: 't', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'o' }) as Task;
     assert.deepEqual(chooseProfile(task, engine.profiles, pool, {}, new Set()), chooseProfile(task, routed, pool, {}, new Set()));
     assert.ok(chooseProfile(task, legacy, pool, {}, new Set()));

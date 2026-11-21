@@ -1284,7 +1284,7 @@ test("an Inbox routing sign-off authorizes the requested role without releasing 
     fixture.setParent(false);
     const requested = profile("frontier", "synthetic-frontier", "pi");
     fixture.store.setMeta("pool", [poolSchema.parse({ profileId: requested.id, enabled: true,
-      group: "frontier", roles: ["reviewer"], weight: 1, scopes: ["general"], cost: "very_high", capability: "frontier" })]);
+      group: "frontier", roles: ["reviewer"], weight: "default", scopes: ["general"], capability: "frontier" })]);
     fixture.store.update(fixture.taskId, { phase: "queued", held: true, profileRequests: {
       reviewer: { profileId: requested.id, reason: "Independent review", required: true, requestedBy: "planner" },
     } });

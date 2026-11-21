@@ -61,7 +61,7 @@ function fixture(validate?: (task: Task) => Promise<string>) {
       profileId: worker.id,
       enabled: true,
       group: "test",
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

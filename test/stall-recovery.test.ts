@@ -152,7 +152,7 @@ async function fixture(t: {
       enabled: true,
       group: worker.id,
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -160,7 +160,7 @@ async function fixture(t: {
       enabled: true,
       group: coordinator.id,
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -168,7 +168,7 @@ async function fixture(t: {
       enabled: true,
       group: reviewer.id,
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

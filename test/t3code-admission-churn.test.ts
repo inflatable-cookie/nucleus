@@ -197,9 +197,9 @@ function makeEngineFixture(
     ),
   );
   store.setMeta("pool", [
-    { profileId: "worker", enabled: true, group: "worker", roles: ["worker"], weight: 1, scopes: ["general"] },
-    { profileId: "reviewer", enabled: true, group: "reviewer", roles: ["reviewer"], weight: 1, scopes: ["general"] },
-    { profileId: "coord", enabled: true, group: "coord", roles: ["coordinator"], weight: 1, scopes: ["general"] },
+    { profileId: "worker", enabled: true, group: "worker", roles: ["worker"], weight: "default", scopes: ["general"] },
+    { profileId: "reviewer", enabled: true, group: "reviewer", roles: ["reviewer"], weight: "default", scopes: ["general"] },
+    { profileId: "coord", enabled: true, group: "coord", roles: ["coordinator"], weight: "default", scopes: ["general"] },
   ]);
 
   let currentAdapter = {} as Adapter;

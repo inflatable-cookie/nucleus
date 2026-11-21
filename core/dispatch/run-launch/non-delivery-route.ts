@@ -32,7 +32,7 @@ export async function resolveNonDeliveryRoute(ctx: LaunchThreadContext, t: Task,
   const oldEntry = pool.find(entry => entry.profileId === old?.id);
   const profiles = ctx.profiles().filter(candidate => candidate.provider !== old?.provider
     && !workerProfileIsExcluded(t, candidate.id)
-    && pool.some(entry => entry.profileId === candidate.id && entry.capability === oldEntry?.capability && entry.cost !== 'very_high'
+    && pool.some(entry => entry.profileId === candidate.id && entry.capability === oldEntry?.capability
       && !requestOnly(entry, ctx.store.usageLevel(), requestedTier(t.complexity), climbedTier(t))));
   const routeTask = { ...t, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '',
     profileRequests: { ...t.profileRequests, worker: undefined } };

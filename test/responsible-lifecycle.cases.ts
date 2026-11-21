@@ -274,8 +274,8 @@ test('a responsible task routes an exhausted worker model by code, with no coord
   const store = new Store(join(dir, 'queue.sqlite'));
   const first = profile('first-worker', 'test/first'), second = profile('second-worker', 'test/second');
   store.setMeta('pool', [
-    { profileId: first.id, enabled: true, group: 'first', roles: ['worker'], scopes: ['general'], weight: 1 },
-    { profileId: second.id, enabled: true, group: 'second', roles: ['worker'], scopes: ['general'], weight: 1 },
+    { profileId: first.id, enabled: true, group: 'first', roles: ['worker'], scopes: ['general'], weight: "default" },
+    { profileId: second.id, enabled: true, group: 'second', roles: ['worker'], scopes: ['general'], weight: "default" },
   ] as PoolEntry[]);
   store.setMeta('paused', false);
   const task = store.insert(submissionSchema.parse({

@@ -19,9 +19,9 @@ import type { Adapter } from '../core/host';
 const profile = (id: string): Profile => ({ id, name: id === 'sol' ? 'Sol oracle' : id, provider: 'test', model: `test/${id}`, available: true, problem: '', notes: '', supportedThinking: id === 'opus' ? ['xhigh'] : [] });
 const profiles = ['cheap', 'sol', 'opus'].map(profile);
 const pool = [
-  poolSchema.parse({ profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer', 'coordinator'], weight: 1, scopes: ['general'], cost: 'low' }),
-  poolSchema.parse({ profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'high', capability: 'frontier' }),
-  poolSchema.parse({ profileId: 'opus', enabled: true, group: 'opus', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'frontier' }),
+  poolSchema.parse({ profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer', 'coordinator'], weight: "default", scopes: ['general'], }),
+  poolSchema.parse({ profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'frontier' }),
+  poolSchema.parse({ profileId: 'opus', enabled: true, group: 'opus', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'frontier' }),
 ];
 
 function fixture() {
@@ -58,7 +58,7 @@ test('an unsigned request for a frontier profile pins nothing and never waits; a
 test('Spec 052: a recorded climb carries the tier exception into request reconciliation', () => {
   const f = fixture(); try {
     const wide = profile('wide');
-    f.store.setMeta('pool', [...pool, poolSchema.parse({ profileId: 'wide', enabled: true, group: 'wide', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'medium', capability: 'heavyweight' })]);
+    f.store.setMeta('pool', [...pool, poolSchema.parse({ profileId: 'wide', enabled: true, group: 'wide', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'heavyweight' })]);
     const reconcile = (id: string) => reconcileRoutingSignoffs(f.store, f.decisions, id, [...profiles, wide]);
     const task = f.submit({ complexity: 'high', profileRequests: { worker: { profileId: 'wide', reason: 'The next round needs it', required: false } } });
     reconcile(task.id);

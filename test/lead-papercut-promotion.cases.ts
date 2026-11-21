@@ -208,7 +208,7 @@ weighted(3)('Spec 043 retired: a declared stage profile is refused at brief chec
   const f=await fixture(t);
   const reviewer={id:'deepseek',name:'deepseek',provider:'test',model:'deepseek/deepseek-v3',notes:'',available:true,problem:'',supportedThinking:[]};
   f.runtime.engine.profiles=[reviewer];
-  f.runtime.store.setMeta('pool',[{profileId:'deepseek',enabled:true,group:'review',roles:['reviewer'],weight:1,scopes:['mechanical']}]);
+  f.runtime.store.setMeta('pool',[{profileId:'deepseek',enabled:true,group:'review',roles:['reviewer'],weight:"default",scopes:['mechanical']}]);
   const stageFields=`  stages:
     - id: final-verify
       kind: verify

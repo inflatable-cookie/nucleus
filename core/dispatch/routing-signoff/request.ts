@@ -1,7 +1,7 @@
 import { isOperatorBoardOrT3 } from "../../../shared/operator-identity";
 /**
  * Spec 052 routing sign-off (Tom, 2026-10-21). A request for a profile above
- * the usage level's cost ceiling, or rated frontier below Maximum, applies only once the operator signs
+ * the usage level's ceiling, or rated frontier below Maximum, applies only once the operator signs
  * it off on the board. Queue asks through an operator decision linked to the
  * task; until it is answered the role runs on automatic selection within the
  * level, so nothing waits on the operator. The answer approves the requested
@@ -187,7 +187,7 @@ export function priorApprovedSignoff(store: Store, taskId: string, role: Role, p
 export function signoffQuestion(store: Store, profiles: readonly Profile[], task: Task, role: Role, request: Request) {
   const entry = store.pool().find(item => item.profileId === request.profileId)!;
   const usage = store.usageLevel();
-  // The question names the tier, not a cost (Tom, 2026-11-17); a request only
+  // The question names the tier, not a rating (Tom, 2026-11-17); a request only
   // reaches a gated profile, so the tier is one the level's permission rule holds.
   const why = `is rated ${(entry.capability ?? "unrated").replaceAll("_", " ")}, which needs the operator's permission at the ${USAGE_LABELS[usage].label} usage level`;
   const name = nameOf(profiles, request.profileId);

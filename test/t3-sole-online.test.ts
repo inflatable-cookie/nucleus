@@ -270,7 +270,7 @@ async function planRepository(f: Fixture, runtime: QueueRuntime) {
       profileId: workerProfile.id,
       enabled: true,
       group: "test",
-      weight: 1,
+      weight: "default",
       roles: ["worker" as const],
       scopes: ["general" as const],
     },

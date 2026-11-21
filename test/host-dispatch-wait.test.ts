@@ -186,7 +186,7 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
         profileId: worker.id,
         enabled: true,
         group: "workers",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -440,7 +440,7 @@ test("a refused BB origin holds only its review while Paseo and T3 use real admi
       profileId: worker.id,
       enabled: true,
       group: "workers",
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -567,7 +567,7 @@ test("a recovered cross-host review rejoins fair slot order before admission", a
       enabled: true,
       group: "reviewers",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

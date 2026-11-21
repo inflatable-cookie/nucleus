@@ -50,9 +50,9 @@ function fixture(options: { review?: ReviewShape; mergePipeline?: boolean } = {}
     handoffPath: 'handoff.md', originAgentId: 'origin',
   }), 'host', 'handoff', base);
   store.setMeta('pool', [
-    { profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: reviewerProfile.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
-    { profileId: coordinatorProfile.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: 1, scopes: ['general'] },
+    { profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: reviewerProfile.id, enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] },
+    { profileId: coordinatorProfile.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: "default", scopes: ['general'] },
   ]);
   const observations = new Map<string, AgentObservation>();
   const idle = (id: string, workspaceId = 'workspace') => observations.set(id, { id, workspaceId, status: 'idle', active: false, permissions: false, error: '' });

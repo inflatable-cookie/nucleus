@@ -70,7 +70,7 @@ function setupMultiHostFixture(options?: {
         profileId: p.id,
         enabled: true,
         group: p.id,
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability:
           p.id === "t3-frontier"
@@ -78,7 +78,7 @@ function setupMultiHostFixture(options?: {
             : workerIds.has(p.id)
               ? "heavyweight"
               : "worker",
-        cost: p.id === "t3-frontier" ? "very_high" : "medium",
+        
         roles: workerIds.has(p.id) ? ["worker"] : ["reviewer"],
       }),
     ),
@@ -489,10 +489,10 @@ test("route without now, route now, and board-approved route move dispatched tas
         profileId: "paseo-only",
         enabled: true,
         group: "paseo-only",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: "frontier",
-        cost: "very_high",
+        
         roles: ["worker"],
       }),
     ];

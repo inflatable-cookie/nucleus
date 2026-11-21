@@ -768,7 +768,7 @@ test("each host's routing snapshot carries its translation, selection and routin
       ...entry,
       enabled: entry.profileId === "shape-4" || entry.profileId === "shape-10",
       ...(entry.profileId === "shape-4"
-        ? { capability: "worker" as const, cost: "medium" as const }
+        ? { capability: "worker" as const, }
         : {}),
     }));
     store.setProfiles(poolShapes.map((_, index) => stored(index)));
@@ -974,8 +974,7 @@ test("routingPolicy explains a medium task landing on the cheapest profile that 
   const dir = mkdtempSync(join(tmpdir(), "profile-vocabulary-selection-"));
   const store = new Store(join(dir, "db"));
   try {
-    // Two Worker profiles on different costs: the cost lean decides between
-    // them, and a Mechanical profile is not in the set at all (Normal starts a
+    // Two equally weighted Worker profiles rotate by name on a tie, and a Mechanical profile is not in the set at all (Normal starts a
     // medium task on Worker, Tom 2026-11-19).
     const pool = [
       poolSchema.parse({
@@ -983,9 +982,9 @@ test("routingPolicy explains a medium task landing on the cheapest profile that 
         enabled: true,
         group: "g1",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
-        cost: "very_high",
+        
         capability: "worker",
       }),
       poolSchema.parse({
@@ -993,9 +992,9 @@ test("routingPolicy explains a medium task landing on the cheapest profile that 
         enabled: true,
         group: "g2",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
-        cost: "very_low",
+        
         capability: "worker",
       }),
       poolSchema.parse({
@@ -1003,9 +1002,9 @@ test("routingPolicy explains a medium task landing on the cheapest profile that 
         enabled: true,
         group: "g3",
         roles: ["worker"],
-        weight: 4,
+        weight: "most",
         scopes: ["general"],
-        cost: "very_low",
+        
         capability: "mechanical",
       }),
     ];
@@ -1058,11 +1057,11 @@ test("routingPolicy explains a medium task landing on the cheapest profile that 
     assert.equal(
       selection.choice?.profileId,
       "cheap",
-      "the cost lean favours the very-low-cost profile",
+      "equal weights tie on recent use, so the first by name leads",
     );
     assert.match(
       selection.choice!.reason,
-      /fewest recent assignments per effective weight/,
+      /fewest recent assignments per rotation share/,
     );
   } finally {
     store.close();

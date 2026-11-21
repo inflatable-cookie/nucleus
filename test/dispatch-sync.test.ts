@@ -212,7 +212,7 @@ async function reviewLockfileFixture(
       enabled: true,
       group: "workers",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -220,7 +220,7 @@ async function reviewLockfileFixture(
       enabled: true,
       group: "reviewers",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -717,7 +717,7 @@ test("a new task gets a private install from the lockfile advanced by dispatch",
       profileId: "worker",
       enabled: true,
       group: "test",
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

@@ -124,7 +124,7 @@ async function fixture(): Promise<Fixture> {
   const planner = formatAgentId(paseoHost, 'planner');
   runtime.store.setProjectPlanner({ key: 'trial', agentId: planner, setBy: 'operator (board)' });
   runtime.store.setProfiles([{ id: testProfile.id, name: testProfile.name, provider: testProfile.provider, model: testProfile.model, notes: '' }]);
-  runtime.store.setMeta('pool', [{ profileId: testProfile.id, enabled: true, group: 'test', weight: 1, roles: ['worker' as const], scopes: ['general' as const] }]);
+  runtime.store.setMeta('pool', [{ profileId: testProfile.id, enabled: true, group: 'test', weight: "default", roles: ['worker' as const], scopes: ['general' as const] }]);
   // A fresh store starts paused with an empty catalog; this fixture runs the service unpaused with the profile routed.
   runtime.store.setMeta('paused', false);
   await runtime.engine.refresh();

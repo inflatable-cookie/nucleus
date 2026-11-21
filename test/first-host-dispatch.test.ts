@@ -37,10 +37,10 @@ test("first dispatch binds the selected profile host before workspace creation",
         profileId: p.id,
         enabled: true,
         group: p.id,
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
         capability: workers.includes(p) ? "heavyweight" : "worker",
-        cost: "medium",
+        
       }),
     ),
   );

@@ -11,7 +11,6 @@ import {
   DropdownSelect,
   Field,
   FieldCaption,
-  NumberStepper,
   StopSlider,
   controlText,
   muted,
@@ -46,7 +45,8 @@ import type {
   UiQueueState,
 } from "../shared/contracts";
 import {
-  COST_LEVELS,
+  WEIGHT_STOP_LABELS,
+  WEIGHT_STOP_SPEECH,
   HOST_DEFAULT,
   PAIRED_MIN_WIDTH,
   defaultPoolEntry,
@@ -703,6 +703,7 @@ export function ProfileEditor({
     label: string,
     help: string,
     value: string | null | undefined,
+    labels?: Record<string, string>,
   ) => (
     <View style={{ ...row, flexWrap: "nowrap" }}>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -712,7 +713,7 @@ export function ProfileEditor({
         accessibilityLabel={`${label} value`}
         style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
       >
-        {value ? levelLabel(value) : "Unset"}
+        {value ? (labels?.[value] ?? levelLabel(value)) : "Unset"}
       </Text>
     </View>
   );
@@ -791,42 +792,17 @@ export function ProfileEditor({
           {saveStatus}
         </Text>
       ) : null}
-      {/* Subscription and Weight take half the row each; on a phone each takes the full row. */}
+      {/* Subscription takes the row; Weight now sits beside Capability. */}
       {entry && onChangePool && state && (
-        <View
-          accessibilityLabel="Profile dispatch row"
-          style={{ ...pair, alignItems: "flex-end" }}
-        >
-          <View style={half}>
-            <Field
-              c={c}
-              label="Subscription"
-              invalid={saveStatus === "Subscription is required"}
-              value={entry.group}
-              onChange={(group) => onChangePool({ group }, 600)}
-              onBlur={onFlushPool}
-            />
-          </View>
-          <View style={{ ...half, gap: space.xxs }}>
-            <FieldCaption
-              c={c}
-              text="Weight"
-              help={`Weight 2 receives roughly twice the assignments of weight 1.${initial ? ` Recent assignments: ${state.recentAssignments[`profile:${initial.id}`] ?? 0}; total assignments: ${state.assignments[`profile:${initial.id}`] ?? 0}.` : ""}`}
-            />
-            <NumberStepper
-              c={c}
-              a11yLabel={`Weight for ${name}`}
-              value={entry.weight}
-              min={1}
-              max={10}
-              disabled={busy}
-              decreaseLabel={`Decrease weight for ${name}`}
-              increaseLabel={`Increase weight for ${name}`}
-              onChange={(weight) => onChangePool({ weight })}
-              onCommit={onFlushPool}
-              style={{ minHeight: control.height, justifyContent: "center" }}
-            />
-          </View>
+        <View accessibilityLabel="Profile dispatch row">
+          <Field
+            c={c}
+            label="Subscription"
+            invalid={saveStatus === "Subscription is required"}
+            value={entry.group}
+            onChange={(group) => onChangePool({ group }, 600)}
+            onBlur={onFlushPool}
+          />
         </View>
       )}
       <View style={{ ...pair, alignItems: "stretch" }}>
@@ -927,21 +903,23 @@ export function ProfileEditor({
         <View style={{ ...pair, alignItems: "flex-start" }}>
           <View style={{ ...half, gap: space.xs }}>
             {sliderLabel(
-              "Cost",
-              "Each cost step down doubles this profile's share. Cost is only the rotation lean and never needs a request. Unset ranks as medium and is never cost-gated.",
-              entry.cost,
+              "Weight",
+              `Moves this profile's turn in rotation among profiles already eligible for the work: fewer or more assignments than Default, one step at a time. It never makes a profile eligible or ineligible.${initial ? ` Recent assignments: ${state.recentAssignments[`profile:${initial.id}`] ?? 0}; total assignments: ${state.assignments[`profile:${initial.id}`] ?? 0}.` : ""}`,
+              entry.weight,
+              WEIGHT_STOP_LABELS,
             )}
             <StopSlider
               captions={false}
+              markStop="default"
               c={c}
-              a11yLabel="Cost"
-              stops={COST_LEVELS}
-              value={entry.cost ?? null}
-              labelFor={levelLabel}
-              stopLabel={(cost) => `Cost ${cost.replaceAll("_", " ")}`}
-              onChange={(cost) =>
-                onChangePool({ cost: entry.cost === cost ? null : cost })
-              }
+              a11yLabel="Weight"
+              stops={api.profileWeightLevels}
+              unsetStop="default"
+              disabled={busy}
+              value={entry.weight}
+              labelFor={(stop) => WEIGHT_STOP_LABELS[stop]}
+              stopLabel={(stop) => WEIGHT_STOP_SPEECH[stop]}
+              onChange={(weight) => onChangePool({ weight })}
             />
           </View>
           <View style={{ ...half, gap: space.xs }}>

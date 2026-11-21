@@ -56,7 +56,7 @@ function fixture() {
   }) as Adapter & Partial<ResolutionAdapter>;
   const engine = new Engine(store, adapter, 0);
   engine.profiles = [profile];
-  store.setMeta("pool", [{ profileId: profile.id, enabled: true, group: "test", weight: 1, scopes: ["general"] }]);
+  store.setMeta("pool", [{ profileId: profile.id, enabled: true, group: "test", weight: "default", scopes: ["general"] }]);
   const task = store.insert(
     submissionSchema.parse({
       submissionId: randomUUID(),

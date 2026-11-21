@@ -40,7 +40,7 @@ test('availability removal over RPC preserves active settings and history, is id
     await assert.rejects(client!.request('queue.availability', { ...active, action: 'bogus' }), /./,
       'an action key on an otherwise ordinary payload is ambiguous and refused');
     assert.deepEqual(await availability(), [active, obsolete]);
-    const pool = [{ profileId: 'fixture', group: 'active', enabled: false, roles: ['worker'], scopes: ['general'], weight: 1 }];
+    const pool = [{ profileId: 'fixture', group: 'active', enabled: false, roles: ['worker'], scopes: ['general'], weight: "default" }];
     await service.debug({ target: 'store', method: 'setMeta', args: ['pool', pool] });
     await client!.request('queue.control', { paused: true });
     const before = await availability();

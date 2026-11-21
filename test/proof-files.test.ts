@@ -33,7 +33,7 @@ function fixture(options: { branchPrs?: { number: number; url: string; head: str
   const store = new Store(join(dir, "queue.sqlite"));
   store.setMeta("paused", false);
   const worker = profile("worker");
-  store.setMeta("pool", [{ profileId: worker.id, enabled: true, group: "author", roles: ["worker"], weight: 1, scopes: ["general"] }]);
+  store.setMeta("pool", [{ profileId: worker.id, enabled: true, group: "author", roles: ["worker"], weight: "default", scopes: ["general"] }]);
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: "Visual proof", repoPath: worktree, planningCommit: base, handoffPath: "handoff.md",
     originAgentId: "origin", baseBranch: "main",

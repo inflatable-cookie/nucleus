@@ -2,13 +2,12 @@
  * Spec 053: demand-based profile selection. Each run's demand is a capability
  * bracket: the task's complexity moved by the usage level and, for a worker,
  * the one step-up; selection takes the available profiles at that bracket and
- * rotates among them, cost leaning the share toward cheaper ones (Spec 053,
- * Tom 2026-11-04). There are no role offsets (Tom, 2026-11-19): the reviewer's
+ * rotates among them by each profile's weight share (Spec 053, Tom 2026-11-21). There are no role offsets (Tom, 2026-11-19): the reviewer's
  * bracket follows the usage level and the coordinator runs on Mechanical.
  * This module is the formula, shared by selection (core/dispatch/routing.ts)
  * and the board's preview.
  */
-import type { CapabilityLevel, DemandLevel, PoolEntry, ProfileCapability, UsageLevel } from "./contracts";
+import { weightShare, type CapabilityLevel, type DemandLevel, type PoolEntry, type ProfileCapability, type ProfileWeight, type UsageLevel } from "./contracts";
 import { CAPABILITY_LEVELS, DEMAND_LEVELS, USAGE_LABELS, capabilityRank, demandRank, honouredRequest, requestOnly } from "./pool";
 import { taskAuthorModelKeys } from "./authors";
 
@@ -181,26 +180,20 @@ export function workerStepLabel(usage: UsageLevel, reviewed: boolean): string {
 }
 
 /**
- * Spec 053 cost lean (Tom, 2026-11-04: "lean towards a lower cost model in the
- * capability tier, not exclude all other options"). Each cost step down doubles
- * a profile's effective weight, so at equal configured weight a very_low-cost
- * profile gets 16 times the share of a very_high-cost one, and a medium-cost
- * one gets twice a high-cost one. One constant; Spec 053 states it.
+ * Spec 053 rotation share (Tom, 2026-11-21): a profile's weight stop sets its
+ * relative share within the eligible set, 80% to 120% of Default in fixed
+ * 10-point steps (`weightShare`). It orders rotation only and never admits or
+ * excludes a profile; no cost rating enters it.
  */
-export const COST_LEAN = 2;
-/** An unrated cost counts as medium. */
-const rated = (value: CapabilityLevel | null | undefined): number => capabilityRank(value ?? "medium");
 /** A profile's rank on the bracket scale; unrated counts as Worker. */
 export const profileRank = (value: ProfileCapability | null | undefined): number => demandRank(value ?? "worker");
-/** The cost lean for a profile: COST_LEAN per step below very_high. */
-export const costLean = (cost: CapabilityLevel | null | undefined): number => COST_LEAN ** (CAPABILITY_LEVELS.length - 1 - rated(cost));
-/** The divisor rotation uses: configured weight times the cost lean. */
-export const effectiveWeight = (weight: number, cost: CapabilityLevel | null | undefined): number => weight * costLean(cost);
+/** The divisor rotation uses: the profile's relative share for its weight stop. */
+export const rotationShare = (weight: ProfileWeight): number => weightShare(weight);
 
 /**
  * The tier set one run selects from (Spec 052, Tom 2026-11-17; Spec 053
  * rotation). Automatic selection reaches the run's own tier: profiles rated at
- * that tier rotate by the cost lean. When none carries the tier, the nearest
+ * that tier rotate by weight share. When none carries the tier, the nearest
  * tier above is the bail-out, and a shortfall takes the most capable profile at
  * or below the ceiling. Maximum is its own rule: workers and reviewers use
  * Heavyweight and Frontier whatever the complexity, and no lower tier is a substitute.
@@ -229,9 +222,9 @@ export function selectionTier<T extends { capability?: ProfileCapability | null 
   return { tier: within.filter(entry => profileRank(entry.capability) === best), shortfall: true };
 }
 
-export type DemandCandidate = Pick<PoolEntry, "profileId" | "enabled" | "group" | "cost" | "capability"> & { model: string; available: boolean };
+export type DemandCandidate = Pick<PoolEntry, "profileId" | "enabled" | "group" | "capability"> & { model: string; available: boolean };
 export type DemandPick = {
-  /** Every profile rated at or above the demand (rotation and the cost lean decide among them), or the most capable available on a shortfall. */
+  /** Every profile rated at or above the demand (rotation by weight share decides among them), or the most capable available on a shortfall. */
   profileIds: string[];
   shortfall: boolean;
   /** Profiles that would meet the demand but need a signed-off request at this level (a top-tier profile above the task's own requested tier, or frontier at High). */

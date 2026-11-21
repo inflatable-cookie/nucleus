@@ -39,21 +39,20 @@ import { automaticReachable, automaticSelection, automaticSelectionTag, demandRa
 import { requestedTier, workerStartTier } from '../shared/demand';
 import { configurePool, poolSchema, submissionSchema, usageLevels, type Profile, type Task, type UsageLevel, type UsageView } from '../shared/contracts';
 
-const costs = ['very_low', 'low', 'medium', 'high', 'very_high', null] as const;
 const policyProfile = (id: string): Profile => ({ id, name: id, provider: 'test', model: `test/${id}`, available: true, problem: '', notes: '', supportedThinking: [] });
 const capabilities = [null, 'mechanical', 'worker', 'heavyweight', 'frontier'] as const;
-const policyEntry = (profileId: string, cost: typeof costs[number], capability: typeof capabilities[number], extra: Record<string, unknown> = {}) =>
-  poolSchema.parse({ profileId, enabled: true, group: profileId, roles: ['worker', 'reviewer', 'coordinator'], weight: 1, scopes: ['general'], cost, capability, ...extra });
+const policyEntry = (profileId: string, capability: typeof capabilities[number], extra: Record<string, unknown> = {}) =>
+  poolSchema.parse({ profileId, enabled: true, group: profileId, roles: ['worker', 'reviewer', 'coordinator'], weight: 'default', scopes: ['general'], capability, ...extra });
 
 test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for every level, tier and requested tier', () => {
   const store = new Store(':memory:');
   try {
     const task = store.insert(submissionSchema.parse({ submissionId: 'matrix', title: 'Matrix', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
-    for (const level of usageLevels) for (const cost of costs) for (const capability of capabilities) for (const complexity of ['medium', 'high', 'very_high'] as const) {
+    for (const level of usageLevels) for (const capability of capabilities) for (const complexity of ['medium', 'high', 'very_high'] as const) {
       const requested = requestedTier(complexity);
-      const entry = policyEntry('p', cost, capability), profiles = [policyProfile('p')];
+      const entry = policyEntry('p', capability), profiles = [policyProfile('p')];
       const automatic = automaticSelection(entry, level, requested);
-      const label = `${level}/${cost}/${capability}/${complexity}`;
+      const label = `${level}/${capability}/${complexity}`;
       const adopt = task.complexity === complexity ? task : store.update(task.id, { complexity });
       for (const role of ['worker', 'reviewer', 'coordinator'] as const) {
         const automaticRole = automaticSelection(entry, level, requested, undefined, role);
@@ -95,7 +94,7 @@ test('dispatch usage level drives routing with subscription gauge storage remove
   try {
     assert.equal(store.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='usage_samples'").get(), undefined);
     const task = store.insert(submissionSchema.parse({ submissionId: 'level-without-gauge', title: 'Level without gauge', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', preferredProfileId: 'frontier', complexity: 'medium' }), 'host', 'handoff', 'a'.repeat(40));
-    const entry = policyEntry('frontier', 'very_high', 'frontier');
+    const entry = policyEntry('frontier', 'frontier');
     store.setMeta('pool', [entry]);
     store.setMeta('usageLevel', { level: 'maximum', until: null, setAt: '2026-11-17T00:00:00.000Z' });
     const maximum = store.routingPolicy(task, Date.now(), [policyProfile('frontier')]);
@@ -111,10 +110,10 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
   const store = new Store(':memory:');
   try {
     store.setMeta('pool', [
-      policyEntry('frontier', 'very_high', 'frontier'),
-      policyEntry('cheap-flag', 'low', 'frontier'),
-      policyEntry('pricey', 'high', 'heavyweight'),
-      policyEntry('off', 'very_high', 'frontier', { enabled: false }),
+      policyEntry('frontier', 'frontier'),
+      policyEntry('cheap-flag', 'frontier'),
+      policyEntry('pricey', 'heavyweight'),
+      policyEntry('off', 'frontier', { enabled: false }),
     ]);
     const inserted = store.insert(submissionSchema.parse({ submissionId: 'policy', title: 'Policy', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'medium',
       preferredProfileId: 'cheap-flag', profileRequests: { reviewer: { profileId: 'off', reason: 'Owner route', required: false }, coordinator: { profileId: 'gone', reason: 'Owner route', required: false } } }), 'host', 'handoff', 'a'.repeat(40));
@@ -176,7 +175,7 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
 test('Spec 052: the board explains a recorded climb at the bracket it earned', () => {
   const store = new Store(':memory:');
   try {
-    store.setMeta('pool', [policyEntry('wide', 'medium', 'heavyweight'), policyEntry('frontier', 'very_high', 'frontier')]);
+    store.setMeta('pool', [policyEntry('wide', 'heavyweight'), policyEntry('frontier', 'frontier')]);
     const inserted = store.insert(submissionSchema.parse({ submissionId: 'climbed-board', title: 'Climbed', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
     const task = store.update(inserted.id, { profile: policyProfile('wide'), completion: null });
     store.setMeta('usageLevel', { level: 'normal', until: null, setAt: '2026-11-17T00:00:00.000Z' });
@@ -225,9 +224,9 @@ test('052: on Low, submitting a high or very-high complexity task opens a decisi
   const store = new Store(':memory:');
   try {
     const entries = [
-      policyEntry('a-worker', 'medium', 'worker'),
-      policyEntry('z-heavyweight', 'medium', 'heavyweight'),
-      policyEntry('frontier', 'very_high', 'frontier'),
+      policyEntry('a-worker', 'worker'),
+      policyEntry('z-heavyweight', 'heavyweight'),
+      policyEntry('frontier', 'frontier'),
     ];
     const profiles = entries.map(entry => policyProfile(entry.profileId));
     store.setMeta('pool', entries);
@@ -266,7 +265,7 @@ test('052: on Low, submitting a high or very-high complexity task opens a decisi
 test('052: a declined Low gate keeps the task held, and lowering its complexity releases it and withdraws the question', () => {
   const store = new Store(':memory:');
   try {
-    const entries = [policyEntry('a-worker', 'medium', 'worker'), policyEntry('z-heavyweight', 'medium', 'heavyweight')];
+    const entries = [policyEntry('a-worker', 'worker'), policyEntry('z-heavyweight', 'heavyweight')];
     store.setMeta('pool', entries);
     store.setMeta('usageLevel', { level: 'low', until: null, setAt: '2026-11-17T00:00:00.000Z' });
     const task = store.insert(submissionSchema.parse({ submissionId: 'gated-declined', title: 'Gated', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
@@ -354,10 +353,10 @@ test('task 1002 and nucleus#1385: the store step drops stored By request flags a
       const raw = reopened.getMeta<Record<string, unknown>[]>('pool')!;
       assert.equal(raw.some(entry => 'byRequest' in entry), false, 'no stored profile carries a by-request flag after the store step');
       assert.deepEqual(raw.map(entry => entry.capability), ['heavyweight', 'worker', 'mechanical', 'worker']);
-      assert.deepEqual(reopened.pool().map(entry => [entry.profileId, entry.cost, entry.capability]),
-        [['sol', 'very_high', 'heavyweight'], ['deepseek', 'low', 'worker'], ['muse', 'very_low', 'mechanical'], ['glm', 'low', 'worker']]);
+      assert.deepEqual(reopened.pool().map(entry => [entry.profileId, entry.capability]),
+        [['sol', 'heavyweight'], ['deepseek', 'worker'], ['muse', 'mechanical'], ['glm', 'worker']]);
       assert.equal(automaticSelection(reopened.pool().find(entry => entry.profileId === 'sol')!, 'high'), 'allowed', 'Heavyweight is automatic at High');
-      assert.equal(automaticSelection({ cost: 'very_high', capability: 'frontier' }, 'high'), 'request_tier', 'a Frontier profile still needs permission at High');
+      assert.equal(automaticSelection({ capability: 'frontier' }, 'high'), 'request_tier', 'a Frontier profile still needs permission at High');
     } finally { reopened.close(); }
     const stale = configurePool.input.parse({ entries: [{ profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], byRequest: true, capability: 'very_low' }] });
     assert.deepEqual([('byRequest' in stale.entries[0]!), stale.entries[0]!.capability], [false, 'mechanical'], 'an older client write reads without the flag, on its bracket');
