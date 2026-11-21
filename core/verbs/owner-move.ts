@@ -22,6 +22,7 @@ import {
   MOVE_REVIEW_PR_REFUSAL,
 } from "./control-refusals";
 import { groupIsUnavailable } from "../../shared/pool";
+import { refusedRevisionReservation } from "../recovery/refused-launch";
 import {
   unreviewedMergeRoute,
   unreviewedMergeRouteRefusal,
@@ -61,7 +62,10 @@ import type { OwnerVerbFacts } from "./owner-facts";
 import { verbInput } from "./owner-shared";
 import type { OwnerVerbApplicability, OwnerVerb } from "./owner-shared";
 import { interactiveSessionOpen } from "../dispatch/interactive";
-import { absentWorkerRestartRefusal, retainedContinuationPlan } from "./owner-restart";
+import {
+  absentWorkerRestartRefusal,
+  retainedContinuationPlan,
+} from "./owner-restart";
 import { reviewRequiredForTask } from "../review/reviewer-setting";
 import { publishedReviewDecision } from "../intake/result-application";
 
@@ -252,13 +256,23 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     // An uncertain creation is answered by the same owed observation `restart`
     // reports. Naming restart as the cure is circular while restart is refused, so
     // the cause is named here and restart is named only once it is available.
-    if (task.agentIntent)
+    if (task.agentIntent) {
+      // nucleus#1449: a PR-bearing author whose revision launch was refused before
+      // send has an obsolete intent that no lookup can settle. Work continues the
+      // existing author, so the owner's move offers it.
+      if (refusedRevisionReservation(task, runs, facts.events))
+        return {
+          available: true,
+          args: {},
+          note: "The author revision was refused before send and never reached the worker. Move to work resumes this author on its PR with the pending instruction and retires the obsolete creation intent.",
+        };
       return {
         available: false,
         refusal:
           absentWorkerRestartRefusal(facts) ??
           "The worker creation settled as absent; restart launches its fresh worker from the current route",
       };
+    }
     if (task.profile && task.workspaceId) return running;
     return { available: false, refusal: MOVE_WORK_AUTHOR_REFUSAL };
   })();

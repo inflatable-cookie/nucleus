@@ -2042,6 +2042,13 @@ review or merge credit; live participants and unsettled effects remain fences.
   service roll answers it. `partial` is attention bound to the exact run and
   attempt, never a second agent. Repeating the pass converges with no extra
   event, launch or release.
+- A PR-anchored author revision whose own launch was refused before send (its
+  `creation_refused_before_send` names a released, superseded revision run with
+  no agent or completion, and no other run is live) is a proven refusal. Its
+  leftover worker-creation intent is obsolete. `move to=work` offers the
+  continuation and retires the intent in the same transaction, keeping the PR,
+  head, pending instruction and review. An uncertain send, another refused run
+  or a live recovery run is not proof and keeps the intent owned.
 - A reviewer report request resends one delivered review occurrence, so it must
   name one: a delivered continuation turn or the run's accepted dispatch at the
   exact head. A creation its exact lookup bound is not proof the dispatch

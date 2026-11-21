@@ -5,6 +5,7 @@ import { DurableFenceRefusal } from "../../intake/run-settlement";
 import { evidenceOnlyPr, ForeignPrIdentity, taskHasPr, taskPrNumber } from "../../forge/index";
 import { runsUnchangedSince } from "../../recovery/observation-advance";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
+import { refusedRevisionReservation } from "../../recovery/refused-launch";
 import { OPERATOR_WORKER_REMAP_REASON, operatorReplacementPending } from "../../recovery/task-reasons";
 import type { ContinuedPrBinding } from "../../resolution";
 import { currentRouteProfile } from "../owner-verbs";
@@ -103,6 +104,20 @@ export async function moveToWork(engine: Engine, input: WorkMoveInput): Promise<
     const current = store.task(task.id);
     engine.requireOwnerControlCurrent(current, expected, 'Task or run changed; refresh before retrying');
     if (!runsUnchangedSince(runsBeforeMove, store.runs(task.id))) throw Error('Task or run changed; refresh before retrying');
+    // A worker-creation intent is answered only by its exact observation or by a
+    // proven refused revision (nucleus#1449); the preview refuses the same shapes.
+    if (
+      current.agentIntent &&
+      !current.agentId &&
+      !refusedRevisionReservation(
+        current,
+        store.runs(task.id),
+        store.eventsAll(task.id),
+      )
+    )
+      throw Error(
+        "Worker creation remains uncertain; settle it before moving to work",
+      );
     // The fresh-author refusal derives from the recorded route and profile,
     // which the settlement never touches: check it before anything is written.
     if (!current.agentId) {
@@ -196,8 +211,24 @@ function replaceAbsentAuthor(engine: Engine, taskId: string, input: WorkMoveInpu
     const failoverReason = `${OPERATOR_WORKER_REMAP_REASON}. Continue the existing task: ${instruction}`.slice(0, 2000);
     if (routeProfileId && settledTask.profileRequests?.worker?.ownerRoute)
       store.event(taskId, 'worker_route_honoured', `move to=work selected pending worker route ${routeProfileId}`);
+    // nucleus#1449: the refused revision's creation intent is obsolete proof-wise; retire it with the move.
+    const obsoleteRevision = refusedRevisionReservation(
+      settledTask,
+      store.runs(taskId),
+      store.eventsAll(taskId),
+    );
+    if (obsoleteRevision)
+      store.event(
+        taskId,
+        "refused_revision_reservation_retired",
+        JSON.stringify({
+          runId: obsoleteRevision.id,
+          reason: input.reason.slice(0, 1000),
+        }),
+      );
     const result = store.update(latest.id, {
       phase: 'changes_requested', ...(settledTask.completion?.status === 'report_ready' ? { completion: null } : {}),
+      ...(obsoleteRevision ? { agentIntent: false, runId: null } : {}),
       reason: 'Owner moved the task to a fresh author revision on the worker route',
       failoverReason,
       replacementProfile: { profileId: routeProfileId ?? latest.profile!.id, reason: input.reason.slice(0, 4000) },
