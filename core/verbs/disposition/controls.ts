@@ -152,11 +152,7 @@ export class Dispositions {
     });
   }
   async continueWithdrawnWorker(task: Task): Promise<void> {
-    if (
-      !task.agentId ||
-      (!this.adapter.interruptAndContinue && !this.adapter.enqueueMessage)
-    )
-      return;
+    if (!task.agentId) return;
     if (
       !this.store
         .events(task.id)
@@ -167,14 +163,16 @@ export class Dispositions {
         )
     )
       return;
-    const messageId = `ns-withdraw-${task.id}-${task.version}`;
-    const text =
-      "Nucleus: cancellation was withdrawn. Your assignment and authority are unchanged: continue exactly where you left off within your original instructions.";
-    try {
+    const deliver = async () => {
+      if (!this.adapter.interruptAndContinue && !this.adapter.enqueueMessage)
+        return;
+      const messageId = `ns-withdraw-${task.id}-${task.version}`;
+      const text =
+        "Nucleus: cancellation was withdrawn. Your assignment and authority are unchanged: continue exactly where you left off within your original instructions.";
       if (this.adapter.interruptAndContinue) {
         try {
           await this.adapter.interruptAndContinue(
-            task.agentId,
+            task.agentId!,
             messageId,
             text,
           );
@@ -188,15 +186,26 @@ export class Dispositions {
           )
             throw error;
           await this.adapter.enqueueMessage(
-            task.agentId,
+            task.agentId!,
             `${messageId}-queued`,
             text,
           );
         }
       } else {
-        await this.adapter.enqueueMessage!(task.agentId, messageId, text);
+        await this.adapter.enqueueMessage!(task.agentId!, messageId, text);
       }
-      this.store.event(task.id, "disposition_withdraw_continued", task.agentId);
+      this.store.event(
+        task.id,
+        "disposition_withdraw_continued",
+        task.agentId!,
+      );
+    };
+    try {
+      if (task.hostId && typeof this.engine.onTaskHost === "function") {
+        await this.engine.onTaskHost(task, deliver);
+      } else {
+        await deliver();
+      }
     } catch (error) {
       this.store.event(
         task.id,

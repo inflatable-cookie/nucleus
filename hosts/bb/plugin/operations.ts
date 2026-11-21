@@ -603,15 +603,33 @@ export function createHostOperations(
         "threads.list did not answer an array for live threads",
       );
     const merged = new Map<string, ThreadRow>();
-    for (const row of live) {
-      if (
-        row &&
-        typeof row.id === "string" &&
-        uniqueIds.includes(row.id) &&
-        !merged.has(row.id)
-      )
-        merged.set(row.id, row);
-    }
+    const addRows = (rows: unknown[], allowedIds: string[]) => {
+      for (const row of rows) {
+        if (
+          !row ||
+          typeof row !== "object" ||
+          typeof (row as ThreadRow).id !== "string" ||
+          !(row as ThreadRow).id
+        )
+          throw new HostOperationError(
+            "unavailable",
+            "threads.list returned a malformed thread row",
+          );
+        const typed = row as ThreadRow;
+        if (!allowedIds.includes(typed.id))
+          throw new HostOperationError(
+            "unavailable",
+            "threads.list returned an unexpected thread row",
+          );
+        if (merged.has(typed.id))
+          throw new HostOperationError(
+            "unavailable",
+            "threads.list returned a duplicate thread row",
+          );
+        merged.set(typed.id, typed);
+      }
+    };
+    addRows(live, uniqueIds);
     const missing = uniqueIds.filter((id) => !merged.has(id));
     if (missing.length > 0) {
       const archived = await call("threads.list", () =>
@@ -627,15 +645,7 @@ export function createHostOperations(
           "unavailable",
           "threads.list did not answer an array for archived threads",
         );
-      for (const row of archived) {
-        if (
-          row &&
-          typeof row.id === "string" &&
-          missing.includes(row.id) &&
-          !merged.has(row.id)
-        )
-          merged.set(row.id, row);
-      }
+      addRows(archived, missing);
     }
     return [...merged.values()];
   }

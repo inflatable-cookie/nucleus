@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -38,6 +39,8 @@ import {
 } from "../hosts/bb/plugin/operations";
 import type { BbWorkspaceRecord } from "../hosts/bb/threads";
 import { Store } from "../core/store/store";
+import { AcpSessions } from "../core/acp/sessions";
+import { acpBindingPath, readAcpBinding } from "../shared/acp/binding";
 import { RunUsageTracker } from "../core/telemetry/run-usage-tracker";
 import { QuestionRaiseRoutes } from "../core/questions/question-raise-routes";
 import { Dispositions } from "../core/verbs/disposition/controls";
@@ -792,4 +795,324 @@ test("kept fallbacks are explicit and visible: run usage, native decisions, and 
     "t3code:synthetic",
   ]);
   assert.match(mixedHealth.liveRunPresence?.reason ?? "", /t3code:synthetic/);
+});
+
+test("T3 closeout recovery binds ACP to closeoutDirectory, retains old parent on archive failure, and resumes prepared replacement parent", async (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "ns-t3-closeout-handoff-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const { repoPath, head } = initRepo(scratch);
+  const worktreeDir = join(scratch, "task-wt");
+  execFileSync(
+    "git",
+    ["worktree", "add", "-b", "ns-task-wt", worktreeDir, head],
+    { cwd: repoPath },
+  );
+  const realWorktreeDir = realpathSync(worktreeDir);
+  const dataDir = join(scratch, "data");
+  mkdirSync(dataDir, { recursive: true });
+
+  const server = await t3Fake(t, repoPath);
+  server.controls.providers = [
+    {
+      instanceId: PARENT_PROVIDER,
+      displayName: "Nucleus",
+      driver: "acpRegistry",
+      enabled: true,
+      status: "ready",
+      models: [{ slug: PARENT_MODEL, name: "Nucleus" }],
+    },
+    {
+      instanceId: "codex",
+      displayName: "Codex",
+      driver: "codex",
+      enabled: true,
+      status: "ready",
+      models: [{ slug: "synthetic-model", name: "Synthetic" }],
+      supportedRuntimeModes: ["full-access"],
+    },
+  ];
+  server.controls.runOnLaunch = true;
+  server.controls.parentHeldTurn = true;
+
+  const store = new Store(join(dataDir, "queue.sqlite"));
+  const acp = new AcpSessions({ store } as never, {
+    dataHome: dataDir,
+    socketPath: join(dataDir, "callback.sock"),
+  });
+
+  const statePath = join(dataDir, "hosts", "t3code.json");
+  const native = new T3CodeHost({
+    endpoint: server.endpoint,
+    bearer: "synthetic-bearer",
+    statePath,
+    timeoutMs: 1_000,
+    probeThreadId: "synthetic-probe",
+    acp: () => acp,
+    reentryTimeoutMs: 300,
+  });
+  await native.connect();
+  let resumed: T3CodeHost | undefined;
+  t.after(() => {
+    resumed?.close();
+    native.close();
+    store.close();
+  });
+
+  const adapter = createT3Adapter(
+    HostPolicies as unknown as HostPolicyConstructor,
+    native,
+    {
+      socketPath: join(dataDir, "callback.sock"),
+      helperPath: join(dataDir, "worker-report.mjs"),
+    },
+  );
+
+  const ws = await native.createWorkspace({
+    title: "Synthetic task",
+    requestId: "req-ws-handoff-1",
+    directory: realWorktreeDir,
+    project: { workspaceRoot: repoPath },
+  });
+
+  const task = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "T3 closeout handoff task",
+      repoPath,
+      planningCommit: head,
+      handoffPath: "/synthetic/handoff.md",
+      originAgentId: "origin",
+    }),
+    native.hostId,
+    "/synthetic/handoff.md",
+    head,
+  );
+  store.update(task.id, {
+    workspaceId: ws.id,
+    directory: realWorktreeDir,
+    resolution: { ...task.resolution, closeoutWorkspaceHead: head },
+  });
+
+  // Launch original parent via consult reviewer.
+  await adapter.createConsultReviewer!(store.task(task.id), {
+    profile,
+    id: "consult-handoff",
+  });
+  const readState = () =>
+    JSON.parse(readFileSync(statePath, "utf8")) as {
+      parents?: Record<
+        string,
+        {
+          threadId: string;
+          sessionId: string;
+          workspaceId: string;
+          directory: string;
+          launchCommandId?: string;
+        }
+      >;
+      intents: Record<string, unknown>;
+    };
+  const originalParent = readState().parents?.[task.id];
+  assert.ok(originalParent, "original parent persisted");
+
+  // Create recovered closeout worktree and record closeoutDirectory (keeping task.directory).
+  const preCreatedDir = await createOwnedCloseoutWorktree(null, dataDir, {
+    title: `Closeout: ${store.task(task.id).title}`,
+    requestId: `ns-closeout-workspace-${task.id}`,
+    source: {
+      kind: "worktree",
+      cwd: repoPath,
+      action: "branch-off",
+      baseBranch: head,
+      branchName: `ns-closeout-${task.id}`,
+      worktreeSlug: `ns-closeout-${task.id}`,
+    },
+  });
+  assert.ok(existsSync(preCreatedDir));
+  const adopted = await adapter.findCloseoutWorkspaces(store.task(task.id));
+  assert.equal(adopted.length, 1);
+  const closeout = adopted[0]!;
+  store.update(task.id, {
+    resolution: {
+      ...store.task(task.id).resolution,
+      closeoutDirectory: closeout.directory,
+      closeoutWorkspaceId: closeout.id,
+    },
+  });
+
+  // Unrecorded directory is refused by AcpSessions.bind.
+  assert.throws(
+    () => acp.bind({ taskId: task.id, directory: join(scratch, "unrecorded") }),
+    /unrecorded checkout/,
+  );
+
+  // 1. Archive failure retains the old parent binding and refuses to launch a replacement.
+  server.controls.refuseMutation = true;
+  const closeoutSpec = (requestId: string): HostAgentSpec => ({
+    workspaceId: closeout.id,
+    profile,
+    title: "Closeout run",
+    taskNumber: store.task(task.id).number,
+    mcpBindingPath: null,
+    attempt: () => ({
+      prompt: "Finish closeout",
+      requestId,
+      labels: wireLabels({
+        task: task.id,
+        run: `run-${requestId}`,
+        role: "closeout",
+      }),
+      environment: {},
+    }),
+  });
+  await assert.rejects(
+    native.createAgent(closeoutSpec("req-closeout-handoff-1")),
+  );
+  assert.equal(
+    readState().parents?.[task.id]?.threadId,
+    originalParent.threadId,
+    "old parent binding retained when archive fails",
+  );
+  server.controls.refuseMutation = false;
+
+  // 2. Once archive succeeds, replacement parent binds ACP in closeoutDirectory and persists launchCommandId.
+  const closeoutChild = await native.createAgent(
+    closeoutSpec("req-closeout-handoff-2"),
+  );
+  assert.ok(closeoutChild.id);
+  const replacementParent = readState().parents?.[task.id];
+  assert.ok(replacementParent, "replacement parent persisted");
+  assert.notEqual(replacementParent.threadId, originalParent.threadId);
+  assert.equal(replacementParent.directory, closeout.directory);
+  assert.ok(
+    replacementParent.launchCommandId,
+    "replacement parent persists scoped launchCommandId",
+  );
+  const boundPointer = readAcpBinding(
+    acpBindingPath(dataDir, closeout.directory),
+  );
+  assert.notEqual(boundPointer.kind, "inbox");
+  if (boundPointer.kind !== "inbox") {
+    assert.equal(boundPointer.taskId, task.id);
+    assert.equal(boundPointer.sessionId, replacementParent.sessionId);
+  }
+
+  // 3. Restart recovery while replacement parent is prepared (no launch intent reserved yet)
+  //    resumes the exact same threadId and launchCommandId.
+  server.threads.delete(replacementParent.threadId);
+  const preparedState = readState();
+  delete preparedState.intents[replacementParent.launchCommandId!];
+  writeFileSync(statePath, JSON.stringify(preparedState, null, 2));
+
+  resumed = new T3CodeHost({
+    endpoint: server.endpoint,
+    bearer: "synthetic-bearer",
+    statePath,
+    timeoutMs: 1_000,
+    probeThreadId: "synthetic-probe",
+    acp: () => acp,
+    reentryTimeoutMs: 300,
+  });
+  await resumed.connect();
+  await resumed.createAgent(closeoutSpec("req-closeout-handoff-3"));
+  const resumedParent = readState().parents?.[task.id];
+  assert.equal(resumedParent?.threadId, replacementParent.threadId);
+  assert.equal(
+    resumedParent?.launchCommandId,
+    replacementParent.launchCommandId,
+  );
+});
+
+test("BB listExactThreads rejects malformed or unexpected rows instead of treating them as absent", async () => {
+  const fake = bbFake();
+  for (const badRows of [[null], [{ id: "thr_unexpected" }]]) {
+    const badSdk: BbHostSdk = {
+      ...fake.sdk,
+      threads: {
+        ...fake.sdk.threads,
+        experimental_listCascade: async () => ({
+          threads: [{ threadId: "thr_target", cascadeThreadIds: [] }],
+        }),
+        delete: async () => ({ ok: true as const }),
+        list: async () => badRows as never,
+      },
+    };
+    const ops = createHostOperations({
+      sdk: badSdk,
+      pluginId: "nucleus",
+      sdkVersion: "0.6.132",
+      dataDir: () => "/synthetic/bb",
+    });
+    await assert.rejects(
+      ops.execute("thread.delete", {
+        threadId: "thr_target",
+        expectedCascadeThreadIds: [],
+      }),
+      (error: unknown) =>
+        error instanceof HostOperationError && error.code === "unavailable",
+    );
+  }
+});
+
+test("Dispositions.continueWithdrawnWorker routes through the withdrawn task's recorded host rather than the ambient adapter", async (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "ns-withdraw-host-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const store = new Store(join(scratch, "queue.sqlite"));
+  t.after(() => store.close());
+
+  const task = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Cross-host withdrawal task",
+      repoPath: "/synthetic/repo",
+      planningCommit: "a".repeat(40),
+      handoffPath: "/synthetic/handoff.md",
+      originAgentId: "origin",
+    }),
+    "t3code:remote",
+    "/synthetic/handoff.md",
+    "a".repeat(40),
+  );
+  store.update(task.id, { agentId: "thr-t3-worker" });
+  store.event(task.id, "disposition_turn_interrupted", "thr-t3-worker");
+
+  const ambientCalls: string[] = [];
+  const taskHostCalls: Array<{ id: string; messageId: string }> = [];
+  const ambientAdapter = {
+    interruptAndContinue: async (id: string) => {
+      ambientCalls.push(id);
+    },
+  } as unknown as Adapter;
+  const taskHostAdapter = {
+    interruptAndContinue: async (id: string, messageId: string) => {
+      taskHostCalls.push({ id, messageId });
+    },
+  } as unknown as Adapter;
+
+  let activeAdapter = ambientAdapter;
+  const engineStub = {
+    store,
+    get adapter() {
+      return activeAdapter;
+    },
+    async onTaskHost<T>(
+      target: { hostId?: string | null },
+      fn: () => Promise<T>,
+    ) {
+      assert.equal(target.hostId, "t3code:remote");
+      const previous = activeAdapter;
+      activeAdapter = taskHostAdapter;
+      try {
+        return await fn();
+      } finally {
+        activeAdapter = previous;
+      }
+    },
+  };
+  const dispositions = new Dispositions(engineStub as never);
+  await dispositions.continueWithdrawnWorker(store.task(task.id));
+
+  assert.deepEqual(ambientCalls, []);
+  assert.equal(taskHostCalls.length, 1);
+  assert.equal(taskHostCalls[0]!.id, "thr-t3-worker");
 });
