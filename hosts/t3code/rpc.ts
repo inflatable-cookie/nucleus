@@ -82,6 +82,7 @@ const METHOD_STREAM_VALUES: Readonly<Record<string, number>> = {
 type Pending = {
   method: string;
   command?: string;
+  threadId?: string;
   accept?: (value: unknown) => boolean;
   resolve(value: unknown): void;
   reject(error: unknown): void;
@@ -127,6 +128,9 @@ const DEFECT_SHAPES: readonly { shape: RegExp; name: string }[] = [
   { shape: /^Expected/, name: "schema_expected" },
   { shape: /^Failed to encode response for RPC/, name: "encoder_rejected" },
 ];
+export const T3_THREAD_NOT_FOUND_PROJECTION_REASON =
+  "OrchestrationV2GetThreadProjectionError:thread_not_found";
+
 const TYPED_SHAPES: readonly { tag: string; shape: RegExp; name: string }[] = [
   {
     tag: "ProjectMutationError",
@@ -144,10 +148,61 @@ const TYPED_SHAPES: readonly { tag: string; shape: RegExp; name: string }[] = [
     name: "scope_missing",
   },
 ];
+
+/**
+ * The installed nightly wraps `ProjectionStoreThreadNotFoundError` (often inside
+ * `OrchestratorProjectionError`) in `OrchestrationV2GetThreadProjectionError`
+ * when `subscribeThread` reads an absent thread. Match only that exact missing-thread
+ * cause for the requested thread so read errors and missing fork sources stay transient.
+ */
+function isProjectionThreadNotFound(
+  error: Record<string, unknown>,
+  requestedThreadId?: string,
+): boolean {
+  const errorThreadId =
+    typeof error.threadId === "string" && error.threadId
+      ? error.threadId
+      : undefined;
+  if (
+    requestedThreadId !== undefined &&
+    errorThreadId !== undefined &&
+    errorThreadId !== requestedThreadId
+  )
+    return false;
+  const targetThreadId = requestedThreadId ?? errorThreadId;
+  if (!targetThreadId) return false;
+  let cause: unknown = error.cause;
+  if (
+    object(cause) &&
+    (cause.name === "OrchestratorProjectionError" ||
+      cause._tag === "OrchestratorProjectionError")
+  ) {
+    if (
+      cause.message !== undefined &&
+      cause.message !==
+        `Failed to load orchestration projection for thread ${targetThreadId}.`
+    )
+      return false;
+    cause = cause.cause;
+  }
+  if (!object(cause)) return false;
+  if (
+    cause.name !== "ProjectionStoreThreadNotFoundError" &&
+    cause._tag !== "ProjectionStoreThreadNotFoundError"
+  )
+    return false;
+  return (
+    cause.message ===
+      `No orchestration projection exists for thread ${targetThreadId}.` ||
+    (cause.message === undefined && cause.threadId === targetThreadId)
+  );
+}
+
 function remoteFailure(
   method: string,
   cause: unknown,
   command?: string,
+  requestedThreadId?: string,
 ): Error {
   if (!Array.isArray(cause) || cause.length !== 1 || !object(cause[0]))
     return new T3RpcError("remote", method, undefined, "unknown", { command });
@@ -193,6 +248,15 @@ function remoteFailure(
   if (!tag)
     return new T3RpcError("remote", method, undefined, "unknown", {
       command: reportedCommand ?? command,
+    });
+  if (
+    tag === "OrchestrationV2GetThreadProjectionError" &&
+    object(reason.error) &&
+    isProjectionThreadNotFound(reason.error, requestedThreadId)
+  )
+    return new T3RpcError("remote", method, tag, "unknown", {
+      command: reportedCommand ?? command,
+      reason: T3_THREAD_NOT_FOUND_PROJECTION_REASON,
     });
   const typed = TYPED_SHAPES.find(
     (entry) =>
@@ -531,11 +595,16 @@ export class T3RpcClient {
         this.requestTimeoutMs ?? METHOD_TIMEOUT_MS[method] ?? this.timeoutMs,
       );
       const command = object(payload) ? safeCommand(payload.type) : undefined;
+      const threadId =
+        object(payload) && typeof payload.threadId === "string"
+          ? payload.threadId
+          : undefined;
       this.pending.set(id, {
         method,
         command:
           command ??
           (method === "orchestration.launchThread" ? method : undefined),
+        threadId,
         accept,
         resolve,
         reject,
@@ -608,7 +677,12 @@ export class T3RpcClient {
       if (object(frame.exit) && frame.exit._tag === "Failure")
         return this.settle(
           id,
-          remoteFailure(pending.method, frame.exit.cause, pending.command),
+          remoteFailure(
+            pending.method,
+            frame.exit.cause,
+            pending.command,
+            pending.threadId,
+          ),
           true,
         );
       if (object(frame.exit) && frame.exit._tag === "Success")

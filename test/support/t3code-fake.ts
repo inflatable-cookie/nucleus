@@ -598,14 +598,19 @@ export async function t3Fake(t: TestContext, directory: string) {
     interruptThreadReads: 0,
     /** The next N thread projection reads fail with `OrchestrationV2GetThreadProjectionError`. */
     threadProjectionErrors: 0,
+    /** Optional `cause` payload attached to injected `threadProjectionErrors`. */
+    threadProjectionErrorCause: undefined as unknown,
     /**
      * The answer a projection read gives for a thread T3 does not hold. The installed
-     * nightly's absent read is the generic incomplete projection error, not
-     * `ThreadNotFoundError` (nucleus#1460 evidence); the default keeps the #1458 shape.
+     * nightly's absent read wraps `ProjectionStoreThreadNotFoundError` inside
+     * `OrchestrationV2GetThreadProjectionError` (`OrchestratorProjectionError` cause);
+     * `"OrchestrationV2GetThreadProjectionError"` models a cause-less generic failure,
+     * and the default keeps the #1458 `ThreadNotFoundError` tag.
      */
     absentThreadError: "ThreadNotFoundError" as
       | "ThreadNotFoundError"
-      | "OrchestrationV2GetThreadProjectionError",
+      | "OrchestrationV2GetThreadProjectionError"
+      | "ProjectionStoreThreadNotFoundError",
     archivedThreadNotFound: false,
     disconnectMutation: false,
     disconnectAfterEffect: false,
@@ -1185,7 +1190,14 @@ export async function t3Fake(t: TestContext, directory: string) {
             controls.threadProjectionErrors--;
             return failure({
               _tag: "Fail",
-              error: { _tag: "OrchestrationV2GetThreadProjectionError" },
+              error: {
+                _tag: "OrchestrationV2GetThreadProjectionError",
+                threadId: payload.threadId,
+                message: `Failed to load orchestration V2 thread ${payload.threadId}`,
+                ...(controls.threadProjectionErrorCause === undefined
+                  ? {}
+                  : { cause: controls.threadProjectionErrorCause }),
+              },
             });
           }
           // The nightly refuses a removed thread's projection outright.
@@ -1193,13 +1205,31 @@ export async function t3Fake(t: TestContext, directory: string) {
             !p ||
             p.thread.deletedAt !== null ||
             (controls.archivedThreadNotFound && p.thread.archivedAt)
-          )
+          ) {
+            if (!p && controls.absentThreadError === "ProjectionStoreThreadNotFoundError")
+              return failure({
+                _tag: "Fail",
+                error: {
+                  _tag: "OrchestrationV2GetThreadProjectionError",
+                  threadId: payload.threadId,
+                  message: `Failed to load orchestration V2 thread ${payload.threadId}`,
+                  cause: {
+                    name: "OrchestratorProjectionError",
+                    message: `Failed to load orchestration projection for thread ${payload.threadId}.`,
+                    cause: {
+                      name: "ProjectionStoreThreadNotFoundError",
+                      message: `No orchestration projection exists for thread ${payload.threadId}.`,
+                    },
+                  },
+                },
+              });
             return failure({
               _tag: "Fail",
               error: {
                 _tag: !p ? controls.absentThreadError : "ThreadNotFoundError",
               },
             });
+          }
           // A lagging unsettle becomes visible only after this many thread reads.
           if (p.unsettleLagReads !== undefined && --p.unsettleLagReads <= 0) {
             delete p.unsettleLagReads;
@@ -1210,7 +1240,14 @@ export async function t3Fake(t: TestContext, directory: string) {
             controls.threadProjectionErrors--;
             return failure({
               _tag: "Fail",
-              error: { _tag: "OrchestrationV2GetThreadProjectionError" },
+              error: {
+                _tag: "OrchestrationV2GetThreadProjectionError",
+                threadId: payload.threadId,
+                message: `Failed to load orchestration V2 thread ${payload.threadId}`,
+                ...(controls.threadProjectionErrorCause === undefined
+                  ? {}
+                  : { cause: controls.threadProjectionErrorCause }),
+              },
             });
           }
           if (controls.interruptThreadReads > 0) {

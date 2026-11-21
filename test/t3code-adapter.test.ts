@@ -311,46 +311,52 @@ async function reviewerCreationFixture(t: TestContext) {
 }
 
 for (const action of ["restart", "route"] as const) {
-  test(`T3 reviewer launch that never creates its child can be replaced by ${action}`, async (t) => {
-    const f = await reviewerCreationFixture(t);
-    f.server.controls.timeoutDelegatedLaunch = true;
-    // The producer could not finish adoption before the roll. The launch record remains.
-    f.server.controls.mutationObserver = () => {
-      if (f.server.commands.at(-1)?.type === "delegated_task.request")
-        f.server.controls.threadProjectionErrors = 1;
-    };
-    await assert.rejects(f.launch(), /OrchestrationV2GetThreadProjectionError/);
-    assert.equal(f.host.state.read().intents[f.requestId]?.status, "unknown");
-    assert.ok(f.host.state.read().agents[f.threadId]);
-    assert.equal(f.server.threads.has(f.threadId), false);
-    f.rollProducer();
+  for (const absentShape of [
+    "ThreadNotFoundError",
+    "ProjectionStoreThreadNotFoundError",
+  ] as const) {
+    test(`T3 reviewer launch that never creates its child can be replaced by ${action} (${absentShape})`, async (t) => {
+      const f = await reviewerCreationFixture(t);
+      f.server.controls.absentThreadError = absentShape;
+      f.server.controls.timeoutDelegatedLaunch = true;
+      // The producer could not finish adoption before the roll. The launch record remains.
+      f.server.controls.mutationObserver = () => {
+        if (f.server.commands.at(-1)?.type === "delegated_task.request")
+          f.server.controls.threadProjectionErrors = 1;
+      };
+      await assert.rejects(f.launch(), /OrchestrationV2GetThreadProjectionError/);
+      assert.equal(f.host.state.read().intents[f.requestId]?.status, "unknown");
+      assert.ok(f.host.state.read().agents[f.threadId]);
+      assert.equal(f.server.threads.has(f.threadId), false);
+      f.rollProducer();
 
-    const result =
-      action === "restart"
-        ? await f.restart()
-        : await f.engine.performTaskControl({
-            taskId: f.run.taskId,
-            version: f.store.task(f.run.taskId).version,
-            action: "route",
-            role: "reviewer",
-            now: true,
-            profileId: profile.id,
-            reason: "Replace the missing reviewer",
-          });
-    assert.equal(result.phase, "awaiting_review");
-    assert.equal(result.resolution.currentRunId, null);
-    assert.equal(f.store.run(f.run.id)?.status, "superseded");
-    assert.equal(f.store.run(f.run.id)?.released, true);
-    assert.throws(
-      () => f.store.authenticate(f.run.id, "synthetic-token"),
-      /Unauthorized/,
-    );
-    assert.equal(
-      f.server.commands.filter((cmd) => cmd.type === "delegated_task.request")
-        .length,
-      1,
-    );
-  });
+      const result =
+        action === "restart"
+          ? await f.restart()
+          : await f.engine.performTaskControl({
+              taskId: f.run.taskId,
+              version: f.store.task(f.run.taskId).version,
+              action: "route",
+              role: "reviewer",
+              now: true,
+              profileId: profile.id,
+              reason: "Replace the missing reviewer",
+            });
+      assert.equal(result.phase, "awaiting_review");
+      assert.equal(result.resolution.currentRunId, null);
+      assert.equal(f.store.run(f.run.id)?.status, "superseded");
+      assert.equal(f.store.run(f.run.id)?.released, true);
+      assert.throws(
+        () => f.store.authenticate(f.run.id, "synthetic-token"),
+        /Unauthorized/,
+      );
+      assert.equal(
+        f.server.commands.filter((cmd) => cmd.type === "delegated_task.request")
+          .length,
+        1,
+      );
+    });
+  }
 }
 
 test("T3 reviewer creation stays partial in another workspace and binds in the retained workspace", async (t) => {
@@ -404,6 +410,36 @@ test("T3 creation lookup retries churn and keeps an unreadable launch owned", as
     (await f.restart()).resolution.stop?.detail ?? "",
     /lookup is unavailable.*OrchestrationV2GetThreadProjectionError/,
   );
+
+  // Real T3 read failures (ProjectionStoreReadError) and missing-ancestor errors stay transient.
+  f.server.controls.threadProjectionErrorCause = {
+    name: "OrchestratorProjectionError",
+    message: `Failed to load orchestration projection for thread ${created.id}.`,
+    cause: {
+      name: "ProjectionStoreReadError",
+      message: `Failed to read orchestration projection for thread ${created.id}.`,
+    },
+  };
+  f.server.controls.threadProjectionErrors = 1;
+  assert.match(
+    (await f.restart()).resolution.stop?.detail ?? "",
+    /lookup is unavailable.*OrchestrationV2GetThreadProjectionError/,
+  );
+
+  f.server.controls.threadProjectionErrorCause = {
+    name: "OrchestratorProjectionError",
+    message: `Failed to load orchestration projection for thread ${created.id}.`,
+    cause: {
+      name: "ProjectionStoreThreadNotFoundError",
+      message: "No orchestration projection exists for thread thread:other-fork-source.",
+    },
+  };
+  f.server.controls.threadProjectionErrors = 1;
+  assert.match(
+    (await f.restart()).resolution.stop?.detail ?? "",
+    /lookup is unavailable.*OrchestrationV2GetThreadProjectionError/,
+  );
+  f.server.controls.threadProjectionErrorCause = undefined;
 
   let archiveReads = 0;
   f.server.controls.beforeArchiveRead = () => {
