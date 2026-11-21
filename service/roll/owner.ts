@@ -416,8 +416,10 @@ export class RollOwner {
     this.tickTimer = this.heartbeatTimer = null;
     this.session.dropClient();
     if (this.handedOver()) {
-      // Clear our heartbeat so the current version's starter can take the owner.
+      // Clear our heartbeat and any launch claim naming this process: this process is
+      // still alive while it hands over, so its own claim would read as a fresh launch.
       rmSync(join(this.dataDir, ROLL_OWNER_FILE), { force: true });
+      if (readClaim(join(this.dataDir, ROLL_OWNER_LAUNCH_FILE))?.pid === process.pid) rmSync(join(this.dataDir, ROLL_OWNER_LAUNCH_FILE), { force: true });
       try {
         ensureRollOwner({ dataDir: this.dataDir, root: join(installBase(), "current") });
       } catch (error) {
