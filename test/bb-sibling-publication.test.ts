@@ -32,15 +32,15 @@ async function fixture(t: TestContext) {
   const base = await realpath(await mkdtemp(join(tmpdir(), "nsq-bbsib-")));
   t.after(() => rm(base, { recursive: true, force: true }));
   const primary = join(base, "repos", "primary");
-  const poodle = join(base, "repos", "poodle");
+  const siblingB = join(base, "repos", "siblingB");
   const data = join(base, "data");
-  await repo(poodle, { "README.md": "poodle\n" });
+  await repo(siblingB, { "README.md": "siblingB\n" });
   await repo(primary, {
-    "paseo.json": JSON.stringify({ worktree: { setup: "nucleus worktree prepare ../poodle" } }),
+    "paseo.json": JSON.stringify({ worktree: { setup: "nucleus worktree prepare ../siblingB" } }),
   });
   await mkdir(data);
   const commonDir = await repoCommonDir(primary);
-  return { base, primary, poodle, data, commonDir };
+  return { base, primary, siblingB, data, commonDir };
 }
 
 test(
@@ -48,10 +48,10 @@ test(
   { timeout: HOOK_TEST_TIMEOUT_MS },
   async (t) => {
     const f = await fixture(t);
-    // The project records poodle under a symlinked alias; the checkout is the real path.
-    const alias = join(f.base, "aliases", "poodle");
+    // The project records siblingB under a symlinked alias; the checkout is the real path.
+    const alias = join(f.base, "aliases", "siblingB");
     await mkdir(dirname(alias), { recursive: true });
-    await symlink(f.poodle, alias);
+    await symlink(f.siblingB, alias);
     const configured: ConfiguredCheckout[] = [
       { origin: null, path: f.primary },
       { origin: null, path: alias },
@@ -60,13 +60,13 @@ test(
     const directory = ownedBbWorkspacePath(f.data, f.commonDir, taskId);
     await mkdir(dirname(directory), { recursive: true });
     await git(f.primary, "worktree", "add", "-b", `ns-${taskId}`, directory, "HEAD");
-    const pinPath = siblingPathFor(f.data, taskId, "poodle");
+    const pinPath = siblingPathFor(f.data, taskId, "siblingB");
     await mkdir(dirname(pinPath), { recursive: true });
-    await git(f.poodle, "worktree", "add", "--detach", pinPath, "HEAD");
+    await git(f.siblingB, "worktree", "add", "--detach", pinPath, "HEAD");
     const pin = {
       repository: alias,
       path: pinPath,
-      commit: await git(f.poodle, "rev-parse", "HEAD"),
+      commit: await git(f.siblingB, "rev-parse", "HEAD"),
     };
     const placed = await provisionWorktreeLinks({
       dataDir: f.data,
@@ -76,7 +76,7 @@ test(
     });
     assert.deepEqual(
       placed.links.map((link) => [link.name, link.outcome, link.reason]),
-      [["poodle", "created", undefined]],
+      [["siblingB", "created", undefined]],
       `findings: ${JSON.stringify(placed.findings)}`,
     );
     const view = {
