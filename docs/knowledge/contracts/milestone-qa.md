@@ -121,7 +121,7 @@ a launch.
 | --- | --- | --- |
 | Planner habit and prompts | `project.qa.run` on `main` | a report-only task with this recipe |
 | CLI `nucleus project.qa.run --wait` | managed run and settled summary | selector slices under named Effigy runs, record in the lane document |
-| Board Runs tab and QA card (nucleus#1498) | `QA runs` tab with `Run QA`, project picker, and card `Re-run` | `Runs` tab with read-only legacy QA history and cleanup (`Cancel QA`, `Retry teardown`, `Dismiss`, `Details`), plus ordinary task validation and client host runs |
+| Board QA runs tab and QA card (PR #403, nucleus#1498) | `QA runs` tab with `Run QA`, project picker, and board `QaRunCard` (`Re-run`, `Dismiss`, `Cancel`, `Details`) | removed from the board (inbox board dropped the QA runs surface and filters QA cards; `QaRunsTab`/`QaRunCard` are deleted); legacy history and cleanup use `project.qa.list`, `project.qa.get`, `project.qa.cancel`, `project.qa.dismiss`, and `project.qa.retry-teardown`, while Planning keeps a read-only `ProjectQaLatest` summary without launch, cancel, or tab-link controls |
 | `qa.schedule` per repository | automatic milestone admission | a planner-submitted report-only task per milestone |
 | Settings → Projects QA fields (nucleus#1498) | `Schedule`, `After N merges`, and milestone `Timeout` controls | schedule and timeout controls removed; `QA` command (`qa.argv` / `qa.stages` for worktree validation evidence) and `Merge check` (`validation`) kept; `repository.set` still clears a leftover schedule via `{"qa":{"schedule":null}}` |
 | Scheduled QA notices and reminders | planner notices from the schedule pass | ordinary task reporting; the leftover schedule notice is cleared by removing `qa.schedule` |

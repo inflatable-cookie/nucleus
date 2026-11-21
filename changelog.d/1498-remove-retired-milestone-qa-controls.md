@@ -1,5 +1,5 @@
-Removed the retired managed milestone QA launch and schedule controls from the runs surface, QA cards, and Settings:
+Removed the retired managed milestone QA controls and dead board UI after the inbox board cutover:
 
-- Removed the **Run QA** button, project picker modal, and `QaRunCard` **Re-run** launch control while presenting the shared run list as **Runs** and keeping non-QA host runs, legacy managed QA history, and legacy `Cancel QA`, `Dismiss`, `Retry teardown`, and `Release capacity` controls accessible.
+- Deleted the unmounted `QaRunsTab` and `QaRunCard` UI components (and their retired UI tests) following PR #403's removal of the QA runs board surface, and removed the dead Runs-tab link from Planning's read-only `ProjectQaLatest` summary; legacy managed QA history and cleanup remain accessible through the `project.qa` CLI/RPC verbs (`project.qa.list`, `project.qa.get`, `project.qa.cancel`, `project.qa.dismiss`, `project.qa.retry-teardown`).
 - Removed the milestone QA schedule (`Schedule`, `After N merges`) and milestone `Timeout` controls from **Settings → Projects** while keeping ordinary task **Merge check** validation, the `QA` worktree-validation command setting (`qa.argv` / `qa.stages`), and the `repository.set` `{"qa":{"schedule":null}}` compatibility path for clearing a stored legacy schedule.
-- Updated Planning's empty-QA copy and the milestone QA / UI contracts and skill guidance to point to the ordinary report-only task recipe instead of launching from the board.
+- Updated Planning's empty-QA copy and the milestone QA / UI contracts and skill guidance to reflect the post-inbox-board state and point to the ordinary report-only task recipe.

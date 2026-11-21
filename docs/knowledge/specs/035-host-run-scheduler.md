@@ -32,27 +32,9 @@ card (2026-11-01: 464 leaked Effigy admission records had filled the strip).
 
 ### Milestone QA cards (Tom, 2026-11-01)
 
-Each milestone QA run is a card, not a task. The board projects the latest run
-per repository (`core/qa/qa-board.ts`), and the project and lane filters apply.
-Placement follows state: queued in Queued with its position, running in Working
-with its open step and elapsed time, and any finished run that is not passing in
-Attention with its failed step, exit code and last output lines. A passing run
-sits in Closing and leaves the board five minutes after it finishes; the Runs
-page keeps the history ("Pass fades, fail stays"). A failure stays until a
-later passing run of the same repository replaces it or an operator dismisses it.
-Failed, timed-out and held cards also show a Stale marker when their recorded
-`base` is an ancestor of the checkout's local `refs/remotes/origin/<baseBranch>`.
-The marker gives commits since the run and the run date. Missing refs and
-rewritten or unrelated history show no marker. The board projection caches
-branch heads and base/head comparisons, with a short head refresh window; it
-does not fetch from the network.
+Each milestone QA run is a projected record (`core/qa/qa-board.ts`). After PR #403 (`inbox-board`), milestone QA is retired as a board surface: `shared/inbox-board.ts` filters `card.kind !== "qa"` out of every inbox view and nucleus#1498 removed the unmounted `QaRunCard` and `QaRunsTab` UI (Tom, 2026-11-21). During transition, legacy runs remain accessible and manageable through the `project.qa.list`, `project.qa.get`, `project.qa.cancel`, `project.qa.dismiss`, and `project.qa.retry-teardown` CLI/RPC verbs.
 Dismissal is `project.qa.dismiss { id, reason, caller }`: it records who
-dismissed which run and never deletes the record. Legacy card actions are cancel
-(`project.qa.cancel`, live runs), dismiss (finished, not passing) and
-open details, which opens the Runs page on that run (card `Re-run` launch was
-removed in nucleus#1498). The fade is read from
-the clock, so a card leaves with no store write: the projection advances the
-board revision when the set of visible cards changes.
+dismissed which run and never deletes the record. Legacy stale/failed comparison continues in `core/qa/qa-board.ts`, while board `QaRunCard` UI is removed.
 
 Tom (2026-09-30): "Effigy should be the runtime that executes QA, Queue and
 Nucleus should manage who runs what when." Tom ruled the same day that heavy
@@ -2654,20 +2636,14 @@ the same day took signals by hand, and Nucleus recorded the cancel as `failed`.
   `adopt_running`, launch, escape, classification, container reports and
   settlement.
 - **Operator view.**
-  - **Runs tab.** A "Runs (N)" tab beside Planning presents one
-    project-scoped list (nucleus#1498 renamed it from "QA runs" and removed
-    "Run QA" and its project picker): Now shows running, admitted, queued and
-    capacity-held host runs oldest first; Results shows settled runs newest
-    first, starting with the past 24 hours. Rows identify project, kind, task
-    when named by the caller, selector, commit when present in joined QA or
-    validation data, and outcome. A failed row includes its failing step and a
-    short failure summary. Failed-only filtering and row details preserve step
-    output, settlement, caller and epoch identity, legacy QA cancel, teardown
-    retry, and capacity release. The bounded `project.qa.list` read supplies
-    only the latest QA run per repository, so an older milestone host run can
-    lack QA metadata such as its commit; arbitrary client runs also have no
-    commit in the host-run record. It's its own tab, not a panel above the
-    Pipeline, which pushed the task columns out of view (Tom, 2026-10-01).
+  - **Board runs surface retired (PR #403, nucleus#1498).** PR #403 removed the
+    QA runs tab from board navigation ("QA runs tab is gone", Spec 026) and
+    filtered `card.kind !== "qa"` out of the inbox board; nucleus#1498 deleted the
+    unmounted `QaRunsTab` and `QaRunCard` UI components (Tom, 2026-11-21). Host
+    run records and retired-accounting reads remain exposed over the `host.run`
+    and `project.qa` RPC/CLI endpoints (`project.qa.list`, `project.qa.get`,
+    `project.qa.cancel`, `project.qa.dismiss`, `project.qa.retry-teardown`,
+    `host-run.board`).
   - **Task detail.** A task's validation shows "Waiting for QA capacity
     (position N)" from Nucleus's own scheduler, not from Effigy's status.
 

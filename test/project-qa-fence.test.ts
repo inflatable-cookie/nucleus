@@ -894,14 +894,7 @@ test("the board shows the fence with its reason, setter and countdown, the opera
     board,
     /<QaFenceNotice\s+fence=\{qaFence\}[\s\S]*?writeQaFence\(\{\s*action: "clear",\s*expectedRevision: state\.qaFence\.revision,\s*caller: "operator \(board\)",?\s*\}\)/,
   );
-  assert.doesNotMatch(
-    read("qa-runs-tab.tsx"),
-    /Run QA|QA fenced|Choose a project for Run QA/,
-  );
-  assert.match(
-    read("qa-runs-tab.tsx"),
-    /<QaFenceNotice fence=\{fence\} inventory=\{fenceInventory\}/,
-  );
+  assert.doesNotMatch(board, /Run full QA|Run QA/);
   assert.doesNotMatch(read("planning-panel.tsx"), /Run full QA|Run QA/);
   assert.match(
     read("qa-fence-notice.tsx"),

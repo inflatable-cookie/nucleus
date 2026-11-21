@@ -119,15 +119,17 @@ and a new or replaced `qa.schedule` now refuse with the replacement named.
 
 Full QA no longer runs per task, and managed milestone launches (`project.qa.run`,
 board `Run QA`, card `Re-run`, and Settings schedule/timeout controls) are
-retired (nucleus#1475, nucleus#1498). Milestone QA runs on `main` as an ordinary
-report-only task ([milestone QA](../contracts/milestone-qa.md)). Legacy managed
-results remain readable in the **Runs** tab (whose run detail keeps legacy
-`Cancel QA` and `Retry teardown` during transition), and the project plan
-carries the latest legacy result as one compact line linked to it
-(`project.qa.get`, `project.qa.list`). The repository's `QA` command setting
-(`qa.argv` / `qa.stages`) remains editable in Settings → Projects because
-worktree validation evidence (`repositoryQaArgv`) still uses it to recognize
-non-Effigy validation commands running in a task worktree.
+retired; PR #403 removed the QA runs surface from the inbox board and
+nucleus#1498 deleted the unmounted `QaRunsTab`/`QaRunCard` UI (Tom, 2026-11-21).
+Milestone QA runs on `main` as an ordinary report-only task
+([milestone QA](../contracts/milestone-qa.md)). Legacy managed history and
+cleanup remain available via `project.qa.get`, `project.qa.list`,
+`project.qa.cancel`, `project.qa.dismiss`, and `project.qa.retry-teardown`, and
+Planning carries a concise read-only `ProjectQaLatest` status line with no board
+launch or tab-link controls. The repository's `QA` command setting (`qa.argv` /
+`qa.stages`) remains editable in Settings → Projects because worktree validation
+evidence (`repositoryQaArgv`) still uses it to recognize non-Effigy validation
+commands running in a task worktree.
 
 ### Scheduled milestones
 
@@ -211,8 +213,8 @@ Chatterbox shaped the constraints below.
   settlement. The release contract says what an install owner does about them.
 - **Board.** The header shows the fence in force with its reason, setter and
   countdown, and a Clear button that writes as "operator (board)" on the
-  current revision. The Runs tab shows the inventory while a legacy fence is in
-  force; `Run QA` and its project picker are removed (nucleus#1498).
+  current revision. The board's QA runs tab and `Run QA` picker are removed
+  (PR #403, nucleus#1498); fence inventory inspection uses `project.qa.fence-status`.
 
 A host-local index records main-branch merged outcomes; cancellation and
 release-branch merges do not count. Existing retained tasks can establish the
@@ -459,8 +461,7 @@ an independently gated live attempt.
 - **Teardown retry (task 134):** when a run settles `hold` with
   `failedStep: teardown` — teardown failed but its `qa` step's result is
   intact — the operator can retry teardown alone (`project.qa.retry-teardown
-  {id, reason}`, RPC and CLI, and a "Retry teardown" control with a required
-  reason in the Runs tab). It is refused unless the run is settled, its
+  {id, reason}`, RPC and CLI). It is refused unless the run is settled, its
   `failedStep` is `teardown`, its Nucleus-owned checkout is still retained and no
   supervisor is live. The retry spawns the same detached supervisor in a
   `teardown_retry` mode that runs only the *recorded* teardown command, through

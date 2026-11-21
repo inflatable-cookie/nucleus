@@ -680,8 +680,10 @@ worktree validation detection), and the optional hosted-check policy
 requires for the PR's base branch and record the rest as advisory evidence).
 The operator edits these fields in Settings → Projects, inside each project's
 repository rows (milestone QA schedule and timeout controls are retired and
-removed from Settings and the board Runs view; milestone QA runs as an ordinary
-report-only task per [milestone QA](../../docs/knowledge/contracts/milestone-qa.md)). Worker, revision and reviewer prompts include the affected-test
+removed from Settings, and the QA runs board surface is removed after PR #403 /
+nucleus#1498; milestone QA runs as an ordinary report-only task per
+[milestone QA](../../docs/knowledge/contracts/milestone-qa.md), while legacy
+history and cleanup use the `project.qa` CLI/RPC verbs). Worker, revision and reviewer prompts include the affected-test
 rule only when `repository.get` shows an `affectedTests.command` for that repository.
 Formal reviews need macOS: the reviewer token is read at call
 time from the macOS login keychain (service `nucleus.github-reviewer`, account

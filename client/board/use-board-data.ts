@@ -20,11 +20,10 @@ import { useRetainedRead } from "../retained-read";
 import { readDecisions, clearDecisionRead } from "../decision-read";
 import { errorText } from "../error-text";
 import { usePlanningLane } from "../project-scope-controls";
-import { runAccounting } from "../qa-runs-tab";
 import type { RecordNoticeValue } from "../task/parts";
 
-/** The board's tabs. #866 folded Lanes into Planning. */
-export type BoardTab = "queue" | "planning" | "qa";
+/** The board's tabs. #866 folded Lanes into Planning; PR #403 removed QA runs. */
+export type BoardTab = "queue" | "planning";
 type BoardStateQuery = ReturnType<typeof useBoardState>["stateQuery"];
 
 /** The open task's detail and next reads, polled while it is selected. */
@@ -243,55 +242,23 @@ export function usePlanningData({
   };
 }
 
-/** Milestone QA, host runs with their accounting, and the QA fence inventory. */
+/** Latest legacy milestone QA per repository for Planning and task telemetry. */
 export function useQaData({
   tab,
   selected,
-  state,
 }: {
   tab: BoardTab;
   selected: string | null;
-  state: UiQueueState | undefined;
+  state?: UiQueueState | undefined;
 }) {
   const fetchQaList = useRpc(api.projectQaList);
-  const fetchHostRunBoard = useRpc(api.hostRunBoard);
-  const fetchQaFence = useRpc(api.projectQaFenceStatus);
   const qaQuery = useQuery({
     queryKey: ["nucleus", "project-qa"],
     queryFn: () => fetchQaList({}),
-    enabled: tab === "planning" || tab === "qa" || Boolean(selected),
+    enabled: tab === "planning" || Boolean(selected),
     refetchInterval: 4000,
   });
-  // Audit A8: one Queue-private combined read answers the pinned host-run list and
-  // the retired-accounting join from the same list call, so the QA tab polls once.
-  const hostRunBoardQuery = useQuery({
-    queryKey: ["nucleus", "host-run-board"],
-    queryFn: () => fetchHostRunBoard({}),
-    refetchInterval: tab === "qa" ? 3000 : 15000,
-  });
-  const hostRunQuery = {
-    data: hostRunBoardQuery.data?.runs,
-    error: hostRunBoardQuery.error,
-    isLoading: hostRunBoardQuery.isLoading,
-    refetch: hostRunBoardQuery.refetch,
-  };
-  const runAccountingState = useMemo(
-    () =>
-      runAccounting(
-        hostRunBoardQuery.data?.runs,
-        hostRunBoardQuery.data?.accounting,
-        hostRunBoardQuery.error,
-      ),
-    [hostRunBoardQuery.data, hostRunBoardQuery.error],
-  );
-  const qaFence = state?.qaFence.fence ?? null;
-  const qaFenceQuery = useQuery({
-    queryKey: ["nucleus", "qa-fence"],
-    queryFn: () => fetchQaFence({}),
-    enabled: tab === "qa" && Boolean(qaFence),
-    refetchInterval: 4000,
-  });
-  return { qaQuery, hostRunQuery, runAccountingState, qaFence, qaFenceQuery };
+  return { qaQuery };
 }
 
 /** The open records an action refreshes once it lands. */

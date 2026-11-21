@@ -1,9 +1,10 @@
 /**
- * Step 8 of the UI lane: QA detail lives in the QA runs tab and Planning links to
- * it; decisions and native questions use the shared controls. These tests pin the
- * states the lane asks for (empty, loading, error, long content, accessible
- * labels), the touch and layout sizes, and that every refusal and unknown-delivery
- * case still reads as unconfirmed rather than safe to retry.
+ * Step 8 of the UI lane: Planning carries a read-only legacy QA summary (the
+ * QA runs tab and board QA cards are removed); decisions and native questions use
+ * the shared controls. These tests pin the states the lane asks for (empty,
+ * loading, error, long content, accessible labels), the touch and layout sizes,
+ * and that every refusal and unknown-delivery case still reads as unconfirmed
+ * rather than safe to retry.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,9 +12,7 @@ import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import { recentProjectActivity } from "./support/fakes";
 import {
-  hostRunRecordSchema,
   type DecisionView,
-  type HostRunRecord,
   type Project,
   type ProjectQaRun,
 } from "../shared/contracts";
@@ -76,43 +75,7 @@ function qaRun(over: Partial<ProjectQaRun> = {}): ProjectQaRun {
   } as ProjectQaRun;
 }
 
-const hostRun = (
-  id: string,
-  state: "queued" | "running" | "settled",
-): HostRunRecord =>
-  hostRunRecordSchema.parse({
-    id,
-    epoch: 1,
-    caller: "queue:milestone:consumer-b-v2:run",
-    repository,
-    selector: "qa",
-    runClass: "heavy",
-    classSource: "manifest",
-    priority: "milestone",
-    state,
-    submittedAt: at,
-    capacityDeadlineAt: at,
-    runTimeoutMs: 60_000,
-    budgetFallback: { cpu: 1, memoryBytes: 100 },
-    budget: { cpu: 1, memoryBytes: 100, wallMs: null, source: "fallback" },
-    position: state === "queued" ? 2 : null,
-    admittedAt: state === "queued" ? null : at,
-    launchedAt: state === "queued" ? null : at,
-    settledAt: state === "settled" ? at : null,
-    capacitySample: null,
-    pid: 4242,
-    processGroupId: 4242,
-    startIdentity: "start-1",
-    settlement: null,
-    wallMs: null,
-    cpuMs: null,
-    containers: [],
-    capacityReleasedAt: state === "settled" ? at : null,
-    capacityReleaseReason: state === "settled" ? "settled" : null,
-    capacityReleaseKind: state === "settled" ? "automatic" : null,
-  });
-
-// ---- Planning: the latest result, linked to the QA runs tab ----------------
+// ---- Planning: the read-only latest legacy result ------------------------
 
 const plan = {
   project: project.key,
@@ -179,7 +142,7 @@ function renderPlan(props: Record<string, unknown>) {
   );
 }
 
-test("Planning shows the latest QA result in one line and opens its run in the QA runs tab", async () => {
+test("Planning shows the latest legacy QA result in one line without board launch, cancel or Runs tab links", async () => {
   const { ProjectQaLatest } = await import("../client/planning-panel");
   const failed = qaRun({
     id: "qa-failed",
@@ -188,12 +151,10 @@ test("Planning shows the latest QA result in one line and opens its run in the Q
     outputTail: "teardown failed",
     steps: [{ name: "teardown", exitCode: 1 } as never],
   });
-  const opened: string[] = [];
   const ui = mount(
     h(ProjectQaLatest, {
       project,
       runs: [failed],
-      onOpenRun: (id: string) => opened.push(id),
       c,
     } as never),
   );
@@ -210,18 +171,21 @@ test("Planning shows the latest QA result in one line and opens its run in the Q
   assert.doesNotMatch(
     ui.text(),
     /Commit a{12}/,
-    "commit identity is kept in the linked run detail",
+    "commit identity stays in project.qa.get rather than Planning",
   );
   assert.equal(
     ui.query("Retry teardown for consumer-b-v2"),
     undefined,
-    "teardown retry is consolidated into the QA runs tab",
+    "teardown retry stays off Planning",
   );
-  ui.press("View the latest QA run for consumer-b-v2");
-  assert.deepEqual(opened, ["qa-failed"]);
+  assert.equal(
+    ui.query("View the latest QA run for consumer-b-v2"),
+    undefined,
+    "no Runs tab link remains",
+  );
 });
 
-test("a queued milestone run reads as waiting, never running, and Planning offers no launch or cancel of its own", async () => {
+test("a queued milestone run reads as waiting, never running, and Planning offers no launch, cancel or Runs link", async () => {
   const { ProjectQaLatest } = await import("../client/planning-panel");
   const queued = qaRun({
     id: "qa-queued",
@@ -229,9 +193,7 @@ test("a queued milestone run reads as waiting, never running, and Planning offer
     finishedAt: null,
     exitCode: null,
   });
-  const ui = mount(
-    h(ProjectQaLatest, { project, runs: [queued], onOpenRun() {}, c } as never),
-  );
+  const ui = mount(h(ProjectQaLatest, { project, runs: [queued], c } as never));
   assert.match(ui.text(), /Queued · waiting, not running/);
   assert.doesNotMatch(
     ui.text(),
@@ -241,24 +203,23 @@ test("a queued milestone run reads as waiting, never running, and Planning offer
   assert.equal(
     ui.query(/^Run full QA/),
     undefined,
-    "starting QA belongs to the QA runs tab",
+    "milestone QA launching is retired",
   );
   assert.equal(
     ui.query(/^Cancel full QA/),
     undefined,
-    "cancelling QA belongs to the QA runs tab",
+    "Planning offers no QA cancel",
   );
-  assert.ok(
+  assert.equal(
     ui.query("View the latest QA run for consumer-b-v2"),
-    "a waiting run still links to its shared detail",
+    undefined,
+    "no Runs tab link remains",
   );
 });
 
 test("Planning with no milestone run says so without telling people to launch from the board, and nothing links to a run that does not exist", async () => {
   const { ProjectQaLatest } = await import("../client/planning-panel");
-  const ui = mount(
-    h(ProjectQaLatest, { project, runs: [], onOpenRun() {}, c } as never),
-  );
+  const ui = mount(h(ProjectQaLatest, { project, runs: [], c } as never));
   assert.match(
     ui.text(),
     /No legacy QA run recorded\. Milestone QA runs as a report-only task\./,
@@ -270,7 +231,7 @@ test("Planning with no milestone run says so without telling people to launch fr
 test("a first QA read is loading, not an empty result, and a failed read names itself with a retry", async () => {
   const { ProjectQaLatest } = await import("../client/planning-panel");
   const loading = mount(
-    h(ProjectQaLatest, { project, loading: true, onOpenRun() {}, c } as never),
+    h(ProjectQaLatest, { project, loading: true, c } as never),
   );
   assert.match(loading.text(), /Loading the latest QA run…/);
   assert.doesNotMatch(
@@ -287,7 +248,6 @@ test("a first QA read is loading, not an empty result, and a failed read names i
     h(ProjectQaLatest, {
       project,
       error: "socket closed",
-      onOpenRun() {},
       onRetry: () => {
         retried++;
       },
@@ -312,7 +272,6 @@ test("a refresh failure keeps the last QA result and says it may be out of date"
       project,
       runs: [passed],
       error: "socket closed",
-      onOpenRun() {},
       c,
     } as never),
   );
@@ -335,7 +294,6 @@ test("Planning names capacity waits, unavailable capacity and escaped descendant
     h(ProjectQaLatest, {
       project,
       runs: [waiting],
-      onOpenRun() {},
       c,
     } as never),
   );
@@ -350,7 +308,6 @@ test("Planning names capacity waits, unavailable capacity and escaped descendant
     h(ProjectQaLatest, {
       project,
       runs: [unavailable],
-      onOpenRun() {},
       c,
     } as never),
   );
@@ -367,21 +324,18 @@ test("Planning names capacity waits, unavailable capacity and escaped descendant
     h(ProjectQaLatest, {
       project,
       runs: [escaped],
-      onOpenRun() {},
       c,
     } as never),
   );
   assert.match(escapedUi.text(), /Escaped descendants not proven dead: 1/);
 });
 
-test("the latest QA sits in the project plan at the wide and the narrow size, linked to the shared detail", async () => {
+test("the latest QA sits in the project plan at the wide and the narrow size without launch or Runs tab controls", async () => {
   const failed = qaRun({ id: "qa-plan", state: "failed", failedStep: "qa" });
   for (const compact of [false, true]) {
-    const opened: string[] = [];
     const ui = await renderPlan({
       compact,
       qaRuns: [failed],
-      onOpenQaRun: (id: string) => opened.push(id),
     });
     const planBox = ui.get("Plan for consumer-b-v2");
     assert.ok(planBox, "the plan is on screen");
@@ -395,16 +349,15 @@ test("the latest QA sits in the project plan at the wide and the narrow size, li
       /Latest QA[\s\S]*qa failed · consumer-b-v2/,
       "the concise failure and project sit inside the plan",
     );
-    ui.press("View the latest QA run for consumer-b-v2");
-    assert.deepEqual(
-      opened,
-      ["qa-plan"],
-      "the link opens the run in the QA runs tab",
+    assert.equal(
+      ui.query("View the latest QA run for consumer-b-v2"),
+      undefined,
+      "the retired Runs tab link is absent",
     );
     assert.equal(
       ui.query(/^Run full QA/),
       undefined,
-      "the plan never duplicates the QA runs tab launch control",
+      "the plan carries no QA launch control",
     );
   }
 });
@@ -435,248 +388,6 @@ test("the plan keeps a loading QA read, a failed one and no run apart", async ()
   assert.match(failedRead.text(), /Couldn’t load QA runs: socket closed/);
   const empty = await renderPlan({ qaRuns: [] });
   assert.match(empty.text(), /No legacy QA run recorded/);
-});
-
-// ---- Runs tab: the one place run detail lives ----------------------------
-
-async function renderTab(props: Record<string, unknown>) {
-  const { QaRunsTab } = await import("../client/qa-runs-tab");
-  const calls = {
-    retry: [] as Array<[string, string]>,
-    cancel: [] as Array<[string, string]>,
-    opened: [] as string[],
-  };
-  const runs = (props.runs as HostRunRecord[] | undefined) ?? [];
-  const ui = mount(
-    h(QaRunsTab, {
-      runs,
-      qaRuns: [],
-      projects: [project],
-      tasks: [],
-      selectedProjects: [],
-      busy: false,
-      onCancelQa(id: string, reason: string) {
-        calls.cancel.push([id, reason]);
-      },
-      onRetryTeardownQa(id: string, reason: string) {
-        calls.retry.push([id, reason]);
-      },
-      onReleaseCapacity() {},
-      onOpenTask(id: string) {
-        calls.opened.push(id);
-      },
-      ...props,
-      c,
-    } as never),
-  );
-  return { ui, calls };
-}
-
-test("a Planning link opens its run on the Runs tab, with the teardown retry, a required reason, and no Run QA launch", async () => {
-  const failed = qaRun({
-    id: "qa-failed",
-    state: "failed",
-    failedStep: "teardown",
-  });
-  const { ui, calls } = await renderTab({
-    runs: [hostRun("qa-failed", "settled")],
-    qaRuns: [failed],
-    focusRunId: "qa-failed",
-  });
-  assert.equal(ui.query("Run QA"), undefined, "Run QA is removed from Runs");
-  assert.equal(
-    ui.query("QA fenced"),
-    undefined,
-    "no fenced Run QA button remains",
-  );
-  assert.equal(
-    ui.query("Choose a project for Run QA"),
-    undefined,
-    "no Run QA project picker remains",
-  );
-  assert.ok(
-    ui.query("Run detail qa-failed"),
-    "the detail opens on the focused run",
-  );
-  assert.equal(
-    ui.get("Retry teardown for run qa-failed").props.accessibilityState
-      .disabled,
-    true,
-    "disabled until a reason is entered",
-  );
-  ui.type("Teardown retry reason for run qa-failed", "colima restarted");
-  ui.press("Retry teardown for run qa-failed");
-  assert.deepEqual(calls.retry, [["qa-failed", "colima restarted"]]);
-});
-
-test("PID, epoch and the output tail are behind a diagnostics disclosure, closed by default", async () => {
-  const running = qaRun({
-    id: "qa-live",
-    state: "running",
-    finishedAt: null,
-    outputTail: "compiling crate wibble",
-  });
-  const { ui } = await renderTab({
-    runs: [hostRun("qa-live", "running")],
-    qaRuns: [running],
-    focusRunId: "qa-live",
-  });
-  const toggle = "Diagnostics: identity, host process and output";
-  assert.equal(ui.get(toggle).props.accessibilityState.expanded, false);
-  assert.equal(
-    ui.query("Run identity"),
-    undefined,
-    "identity is hidden until asked for",
-  );
-  assert.doesNotMatch(ui.text(), /PID 4242/);
-  ui.press(toggle);
-  assert.equal(ui.get(toggle).props.accessibilityState.expanded, true);
-  assert.match(ui.text(), /Host process · PID 4242/);
-  assert.ok(
-    ui.query("QA output tail"),
-    "the output tail opens with the identity",
-  );
-});
-
-test("the detail sheet is full width on a narrow screen and capped at 720 on a wide one; the failed-only switch is 44 points", async () => {
-  const failed = qaRun({
-    id: "qa-failed",
-    state: "failed",
-    failedStep: "test",
-  });
-  const { ui } = await renderTab({
-    runs: [hostRun("qa-failed", "settled")],
-    qaRuns: [failed],
-    focusRunId: "qa-failed",
-  });
-  const sheet = ui.get("Run detail qa-failed").props.style;
-  assert.equal(sheet.width, "100%");
-  assert.equal(sheet.maxWidth, 720);
-  assert.equal(ui.get("Failed only").props.style.minHeight, 44);
-});
-
-test("empty, loading and error states say what is absent, what is loading, and that a failed list may be stale", async () => {
-  const empty = await renderTab({ runs: [] });
-  assert.match(empty.ui.text(), /Nothing is running or waiting\./);
-  assert.match(empty.ui.text(), /No settled runs in the past 24 hours\./);
-  const loading = await renderTab({ runs: [], loading: true });
-  assert.match(loading.ui.text(), /Loading runs…/);
-  const failed = await renderTab({
-    runs: [],
-    loadError: "service unavailable",
-  });
-  assert.match(
-    failed.ui.text(),
-    /Could not load runs: service unavailable\. The list may be out of date\./,
-  );
-});
-
-test("a long failure line is cut to a readable summary and stays in the row", async () => {
-  const long = `${"expected value ".repeat(40)}end`;
-  const failed = qaRun({
-    id: "qa-long",
-    state: "failed",
-    failedStep: "test",
-    outputTail: long,
-  });
-  const { ui } = await renderTab({
-    runs: [hostRun("qa-long", "settled")],
-    qaRuns: [failed],
-  });
-  const summary = ui.get("Failure summary for qa-long");
-  const text = summary.children.join("");
-  assert.ok(text.length < 240, `the summary is bounded, got ${text.length}`);
-  assert.match(text, /…/);
-  const row = ui
-    .all(/.*/)
-    .find(
-      (node) =>
-        node.props.accessibilityRole === "button" &&
-        String(node.props.accessibilityLabel).includes("Open run details"),
-    );
-  assert.ok(row, "the row stays a single pressable target");
-  assert.match(
-    row!.props.accessibilityLabel,
-    /consumer-b-v2, Failed, Milestone QA, expected value/,
-  );
-  assert.match(row!.props.accessibilityLabel, /Open run details/);
-  assert.doesNotMatch(row!.props.accessibilityLabel, /qa-long/);
-});
-
-test("unknown QA results and capacity waits remain distinct from failed runs", async () => {
-  const unknown = await renderTab({ runs: [hostRun("qa-unknown", "settled")] });
-  assert.match(unknown.ui.text(), /Unknown result/);
-  const waiting = await renderTab({ runs: [hostRun("qa-waiting", "queued")] });
-  assert.match(waiting.ui.text(), /Queued #2/);
-  assert.doesNotMatch(waiting.ui.text(), /Failure summary for qa-waiting/);
-});
-
-test("board QA cards keep legacy Cancel, Dismiss and Details without a Re-run launch button", async () => {
-  const { QaRunCard } = await import("../client/board/cards");
-  const card = (state: "running" | "failed") => ({
-    id: `card-${state}`,
-    repository: { origin: "owner/consumer", path: "/consumer" },
-    key: "owner/consumer",
-    selector: "qa",
-    baseBranch: "main",
-    state,
-    queuePosition: null,
-    startedAt: at,
-    submittedAt: at,
-    finishedAt: state === "failed" ? at : null,
-    currentStep: state === "running" ? "qa" : null,
-    failedStep: state === "failed" ? "qa" : null,
-    exitCode: state === "failed" ? 1 : null,
-    outputLines: state === "failed" ? ["1 failed"] : [],
-    cancelReason: null,
-    stale: null,
-  });
-  let opened = 0,
-    cancelled = 0,
-    dismissed = 0;
-  const failedUi = mount(
-    h(QaRunCard, {
-      run: card("failed"),
-      busy: false,
-      onOpen: () => {
-        opened++;
-      },
-      onCancel: () => {
-        cancelled++;
-      },
-      onDismiss: () => {
-        dismissed++;
-      },
-      c,
-    }),
-  );
-  assert.equal(
-    failedUi.query("Re-run milestone QA qa for owner/consumer"),
-    undefined,
-    "Re-run launch button is removed",
-  );
-  failedUi.press("Dismiss milestone QA run qa");
-  failedUi.press("Open details for milestone QA run qa");
-  assert.equal(dismissed, 1);
-  assert.equal(opened, 1);
-  const liveUi = mount(
-    h(QaRunCard, {
-      run: card("running"),
-      busy: false,
-      onOpen: () => {},
-      onCancel: () => {
-        cancelled++;
-      },
-      onDismiss: () => {},
-      c,
-    }),
-  );
-  assert.equal(
-    liveUi.query("Re-run milestone QA qa for owner/consumer"),
-    undefined,
-  );
-  liveUi.press("Cancel milestone QA run qa");
-  assert.equal(cancelled, 1);
 });
 
 // ---- Decisions: the pill popover on the shared controls -------------------

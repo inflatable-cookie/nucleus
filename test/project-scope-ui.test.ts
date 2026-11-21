@@ -441,7 +441,6 @@ test("Spec 035/022 rendered: Planning carries no QA launch or cancel, and links 
       lanePanel: null,
       qaRuns: [run],
       qaFenced: true,
-      onOpenQaRun: (id: string) => opened.push(id),
       onCancelQa: () => {
         throw new Error("Planning must not cancel QA");
       },
@@ -464,14 +463,17 @@ test("Spec 035/022 rendered: Planning carries no QA launch or cancel, and links 
   assert.equal(
     ui.query("Cancel full QA for consumer-b-v2"),
     undefined,
-    "cancelling QA lives in the Runs tab only",
+    "Planning must not cancel QA",
+  );
+  assert.equal(
+    ui.query("View the latest QA run for consumer-b-v2"),
+    undefined,
+    "the QA runs board tab is retired",
   );
   assert.match(ui.text(), /Latest QA/, "the plan keeps one compact result");
-  ui.press("View the latest QA run for consumer-b-v2");
-  assert.deepEqual(opened, ["qa-run-1"], "the link opens the shared QA detail");
 });
 
-test("Spec 022 rendered: Planning links a settled teardown failure to its QA run; the retry lives in the QA runs tab", async () => {
+test("Spec 022 rendered: Planning shows a concise read-only legacy QA state without teardown retry or board link controls", async () => {
   const { ProjectQaLatest } = await import("../client/planning-panel");
   const run = {
     id: "qa-run-2",
@@ -499,22 +501,24 @@ test("Spec 022 rendered: Planning links a settled teardown failure to its QA run
     cancelReason: null,
     logWriteErrors: [],
   } as ProjectQaRun;
-  const opened: string[] = [];
   const ui = mount(
     h(ProjectQaLatest, {
       project: projects[0],
       runs: [run],
-      onOpenRun: (id: string) => opened.push(id),
       c,
     } as never),
   );
   assert.equal(
     ui.query("Retry teardown for consumer-b-v2"),
     undefined,
-    "Planning no longer carries the teardown retry",
+    "Planning does not carry teardown retry",
   );
-  ui.press("View the latest QA run for consumer-b-v2");
-  assert.deepEqual(opened, ["qa-run-2"]);
+  assert.equal(
+    ui.query("View the latest QA run for consumer-b-v2"),
+    undefined,
+    "no Runs tab link remains",
+  );
+  assert.match(ui.text(), /Needs attention/, "legacy status remains readable");
   const passed = { ...run, state: "passed", failedStep: null } as ProjectQaRun;
   const other = mount(
     h(ProjectQaLatest, { project: projects[0], runs: [passed], c } as never),
@@ -891,8 +895,8 @@ test("121 rendered: milestone QA stages render as named steps, and the task deta
   );
   assert.match(
     source,
-    /enabled: tab === "planning" \|\| tab === "qa" \|\| Boolean\(selected\),/,
-    "the QA list loads for Planning, the QA tab and an open task",
+    /enabled: tab === "planning" \|\| Boolean\(selected\),/,
+    "the QA list loads for Planning and an open task",
   );
 });
 
@@ -944,21 +948,12 @@ test("136 rendered: log-write failures show apart from the output on the task an
     "",
     "a run without failures renders nothing",
   );
-  // The task detail and QA run detail both render the same component.
+  // Task detail renders log-write failures for validation runs.
   const source = boardSource();
   assert.match(
     source,
     /<ProjectQaLogWriteErrors\s+run=\{taskQaRun\}/,
     "the task detail renders log-write failures",
-  );
-  const qaSource = readFileSync(
-    new URL("../client/qa-runs-tab.tsx", import.meta.url),
-    "utf8",
-  );
-  assert.match(
-    qaSource,
-    /<ProjectQaLogWriteErrors\s+run=\{qa\}/,
-    "the QA run detail renders log-write failures",
   );
 });
 
