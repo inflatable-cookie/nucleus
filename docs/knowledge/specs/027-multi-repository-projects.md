@@ -81,7 +81,7 @@ nothing.
   Opening a project edits its name, planner (`project.set-planner` as the
   operator), Slots (the same per-project override the Dispatch limits list
   shows; empty inherits) and park state, and each repository's operator
-  settings through `repository.set`: validation policy, milestone QA command,
+  settings through `repository.set`: validation policy, worktree validation evidence commands,
   timeout and schedule, checks policy, reviewer login and merge check. QA
   stages, output caps, termination grace, the schedule's interval ceiling,
   closeout, scratch namespace and note stay CLI-only and are kept as they are.

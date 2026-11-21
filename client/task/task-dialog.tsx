@@ -27,8 +27,6 @@ import { space, radius, type as typeScale, overlay } from "../design";
 
 /** What `queue.detail` returns for the open task. */
 export type TaskDetailRead = ZodOutput<typeof api.detail.output>;
-/** The milestone QA run for the task's repository (#121). */
-export type TaskQaRun = ZodOutput<typeof api.projectQaList.output>[number];
 
 /**
  * The task detail dialog: its frame, header and tabs. Each tab owns its own form state,
@@ -41,7 +39,6 @@ export function TaskDialog({
   nextQuery,
   state,
   decisions,
-  qaRuns,
   spansRepositories: taskSpansRepositories,
   compact,
   busy,
@@ -58,7 +55,6 @@ export function TaskDialog({
   nextQuery: UseQueryResult<TaskNext>;
   state: UiQueueState | undefined;
   decisions: readonly DecisionView[] | undefined;
-  qaRuns: readonly TaskQaRun[] | undefined;
   spansRepositories: boolean;
   compact: boolean;
   busy: boolean;
@@ -86,16 +82,6 @@ export function TaskDialog({
     task,
     detailQuery.data?.runs.some((run) => !run.released) ?? false,
   );
-  // #121: the task detail shows the milestone QA run for the task's repository,
-  // so its stages are visible from the task, not only from Planning.
-  const taskQaRun = qaRuns
-    ? qaRuns.find(
-        (run) =>
-          run.repository.path === task.repoPath ||
-          run.key === task.repository ||
-          run.key === task.repoPath,
-      )
-    : undefined;
   // Task 538: the summary's elapsed clock runs from the first dispatch.
   const taskElapsedMs = taskElapsed(detailQuery.data?.runs ?? []);
   const pendingOperation = (detailQuery.data?.operations ?? []).some(
@@ -273,7 +259,6 @@ export function TaskDialog({
           detailTab={detailTab}
           nextQuery={nextQuery}
           detailQuery={detailQuery}
-          qaRun={taskQaRun}
           c={c}
         />
         {task && (
@@ -315,7 +300,6 @@ export function TaskDialog({
             detailQuery={detailQuery}
             nextQuery={nextQuery}
             state={state}
-            qaRun={taskQaRun}
             pendingOperation={pendingOperation}
             compact={compact}
             busy={busy}

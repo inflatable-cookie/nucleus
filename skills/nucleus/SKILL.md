@@ -1,6 +1,6 @@
 ---
 name: nucleus
-description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, hand over planner ownership, and read milestone QA history. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.get, project.qa.list, project.qa.cancel, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment. Milestone QA itself is a report-only task, not a Nucleus launch.
+description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, hand over planner ownership, and read milestone QA history. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.get, project.qa.list, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment. Milestone QA itself is a report-only task, not a Nucleus launch.
 ---
 
 The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
@@ -775,14 +775,16 @@ Planned briefs run the responsible lifecycle. Explicit `queue.responsible: false
 
 `next` is the read-before-steer call. Run it first, then call what it lists.
 
-**When something is stuck:** read `next`, then use `force: true` on `retry_effect` or `move` when
-it is the obvious exit, with a reason naming observed evidence. An authenticated task worker,
-reviewer or recovery run can force only its own task, including recovery bookkeeping stops;
-`critical` tasks refuse every such self-force. Self-force moves also refuse existing holds and
-active dispositions, which remain with their planner or operator. The project planner, Nucleus planner and operator
-keep their force authority. A forced retry settles the named uncertainty without observing or
-sending it. A workspace archive settled this way stays visible as left on disk; use its ordinary
-retry to observe and archive it with the existing proofs.
+**When a run or record is stuck:** the task's coordinator, responsible planner
+or operator can use `nucleus run.release -` or `nucleus record.clear -`. Use the
+task version from `next` and include a reason. Repeat a warning response with
+the warning IDs you accept. Critical tasks require a planner or the operator.
+Workers and reviewers ask one of those roles to release or clear.
+
+An authenticated task worker, reviewer or recovery run can still use `move`
+with `force: true` on its own task. Critical tasks, owner holds and active
+dispositions refuse that self-force.
+
 
 A forced merge needs an applied verdict at the exact head or explicit operator source acceptance,
 with a relayed note quoting Tom when the operator is not calling directly. Worker and recovery
@@ -1352,25 +1354,9 @@ runner-neutral Northstar milestone-qa skill: named runs per slice, evidence
 exported into the lane document as each slice finishes, then `report_ready` with
 the exact `artifact`. The refusal text names the same recipe.
 
-Old runs are history, not work to resume. `project.qa.get` and
-`project.qa.list` answer for stored runs, `project.qa.cancel { id, reason }`
-stops a live one, `project.qa.retry-teardown` reruns a failed teardown,
-`project.qa.dismiss { id, reason, caller }` clears a finished failure from the
-board without deleting its record, and `project.qa.request-status` reads a
-durable request identity. A run admitted before the cutover is still recovered
-by its supervisor, so a roll neither loses it nor replays it.
-
-**QA admission fence** (Tom, 2026-10-22): during a shared-tool install the
-operator, or an agent relaying the operator's recorded ruling (`relayed: true`
-plus the authorization `note`), fences new project QA admissions with
-`project.qa.fence` (`action: "set"`, `expectedRevision`, `reason`, `minutes`
-default 10, at most 120, and `caller`: the calling agent's identity; a relayed
-`set` or `clear` also needs `note`). Clear with `action: "clear"` and the
-current `expectedRevision`. It covers project QA only, never task validation or
-Effigy client runs, and Nucleus has no per-task pause for those. Never set or
-clear a fence without that authority. `project.qa.fence-status` reads the fence
-and the complete list of unsettled QA; an install is QA-safe only while the same
-fence is in force and that list is empty.
+Read legacy history through `project.qa.get`, `project.qa.list` and
+`project.qa.request-status`. For a roll deferred by unresolved legacy custody,
+follow the [compatibility-build handoff](../../docs/knowledge/contracts/milestone-qa.md#legacy-history-and-upgrades).
 
 `backup.now`/`backup.list` make and list verified store snapshots. The
 portable-record export/import and the shadow stream are retired; nothing
@@ -1434,7 +1420,7 @@ Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({t
 
 Continue until you deliver or hit a concrete impediment. Push finished work before reporting blocked. For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Unfinished work and context pressure call for continued work or a checkpoint where allowed. A blocked or error report without an impediment or new commit can continue the same thread at most twice before the planner ladder.
 
-For a push or PR creation, observe the branch or PR before each retry and back off from 5 to 60 seconds for about 15 minutes on transient forge failures. Report the observed failure and elapsed wait if the retries are exhausted. For an obvious stuck thread or bookkeeping stop, request move or retry_effect with `nucleus task -`, force:true and observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
+For a push or PR creation, observe the branch or PR before each retry and back off from 5 to 60 seconds for about 15 minutes on transient forge failures. Report the observed failure and elapsed wait if the retries are exhausted. For an obvious stuck thread or bookkeeping stop, request explicit resolution from the coordinator or planner, with the recorded run or effect identity. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
 
 ## Reviewer rules
 
@@ -1442,7 +1428,7 @@ Own the review judgment within the brief. Ask the planner once in the current tu
 
 For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Use a review checkpoint for unfinished reading within the checkpoint allowance.
 
-For an obvious stuck thread or bookkeeping stop, request move or retry_effect with `nucleus task -`, force:true and observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
+For an obvious stuck thread or bookkeeping stop, request explicit resolution from the coordinator or planner, with the recorded run or effect identity. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
 
 ## Recovery rules
 

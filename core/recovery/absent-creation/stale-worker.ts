@@ -24,8 +24,7 @@ const workerLookupPartial =
 export function workerLookupWait(task: Task): string | null {
   const stop = task.resolution.stop;
   return stop?.reason === "lifecycle" &&
-    (stop.detail === workerLookupPartial ||
-      stop.detail.startsWith(workerLookupUnavailable))
+    stop.fact?.code === "worker_lookup"
     ? stop.detail
     : null;
 }

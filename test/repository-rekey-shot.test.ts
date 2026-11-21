@@ -1,3 +1,4 @@
+import { seedLegacyQaRun } from "./support/legacy-qa";
 /**
  * Spec 056: one operator-invoked repository namespace re-key.
  *
@@ -132,7 +133,7 @@ test('Spec 056 single rename re-keys every current family and leaves history byt
     });
     assert.ok(qaParsed.success, JSON.stringify(qaParsed.error?.issues));
     const qaRun = qaParsed.data;
-    store.putQaRun(qaRun);
+    seedLegacyQaRun(store, qaRun);
     store.db.prepare('INSERT INTO qa_schedule_merges(taskId,repository,coveredRun,attemptedRun,checkedGreenRun) VALUES(?,?,?,?,?)')
       .run(sourceTasks[1].id, SOURCE.origin, null, null, null);
 
@@ -229,7 +230,7 @@ test('Spec 056 single rename re-keys every current family and leaves history byt
     assert.equal(store.decision('decision-1').askedBy.project?.origin, TARGET.origin);
     assert.equal(store.latestQaRun(TARGET.origin)?.id, 'qa-1');
     assert.equal(store.latestQaRun(SOURCE.origin), null);
-    assert.equal(store.qaScheduleMerges(TARGET.origin).length, 1);
+    assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM qa_schedule_merges WHERE repository=?").get(TARGET.origin)?.count), 1);
     // Task 445: the submitted key is recorded with the move, in the same
     // transaction, so the immutable host-run caller can still be verified.
     assert.equal(store.qaRun('qa-1')?.key, TARGET.origin);

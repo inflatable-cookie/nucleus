@@ -7,6 +7,8 @@
  */
 import { z } from "zod";
 
+export const LEGACY_QA_ROLL_DEFERRED = "Legacy milestone QA upgrade deferred.";
+
 export const serviceRollDeferralSchema = z.object({
   at: z.string(),
   reason: z.enum(["settle_window", "heavy_follower"]),

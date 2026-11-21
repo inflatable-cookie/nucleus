@@ -14,9 +14,10 @@ import {
   bbPluginRollSchema,
   type BbPluginRollRecord,
 } from "../../shared/bb-plugin-roll";
-import type {
-  ServiceRoll,
-  ServiceRollDeferral,
+import {
+  LEGACY_QA_ROLL_DEFERRED,
+  type ServiceRoll,
+  type ServiceRollDeferral,
 } from "../../shared/service-roll";
 import type { ServiceClient } from "../../shared/service/client";
 import type { BridgeMainChannel } from "../../shared/service/bridge-process";
@@ -445,15 +446,17 @@ export class RollScheduler {
       this.reloadPlugin(identity.buildId);
       return rolled;
     } catch (error) {
-      if (error instanceof StandbyStartupError) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const deferred = detail.includes(LEGACY_QA_ROLL_DEFERRED);
+      if (error instanceof StandbyStartupError || deferred) {
         this.session.expected = fromBuild;
         this.session.sourceDigest = previousDigest;
         this.session.sourcePath = previousSourcePath;
         this.activateInstalled = previousActivation;
-        this.session.failedDigest = digest;
+        this.session.failedDigest = deferred ? null : digest;
         await channel.abandon(staged);
         this.session.markRunning();
-        return record("failed", identity.buildId, error.message);
+        return record(deferred ? "deferred" : "failed", identity.buildId, detail);
       }
       // The new build is now the expected one; the next request or check retries the replace.
       const activationError = await this.convergeActivation();

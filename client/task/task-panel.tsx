@@ -40,7 +40,7 @@ export function TaskDetailPanel({ theme, layout, navigation, taskId }: BoardSurf
         <Button small c={c} text="Back" label="Back to this thread's task" onPress={() => setShownId(taskId)} />
       </View>}
       {error !== "" && <Text accessibilityRole="alert" onPress={() => setError("")} style={{ color: roles(c).danger, padding: space.sm }}>{error}</Text>}
-      <TaskDialog inline task={task} detailQuery={detailQuery} nextQuery={nextQuery} state={state} decisions={undefined} qaRuns={undefined}
+      <TaskDialog inline task={task} detailQuery={detailQuery} nextQuery={nextQuery} state={state} decisions={undefined}
         spansRepositories={(project?.repositories.length ?? 1) > 1} compact={layout.compact} busy={busy} act={act} drafts={drafts}
         navigation={navigation} onClose={() => {}} onSelectTask={setShownId} c={c} />
     </View>

@@ -40,10 +40,9 @@ and live startup and origin-agent access. It never imports or receives
 decision operations through `QuestionsContext`. `core/runtime/settings.ts`
 owns profiles, the host catalog, queue controls and capacity settings through
 `SettingsContext`. `core/runtime/repositories.ts` owns repository and project
-operations, QA requests and host-run reads and accounting through
+operations, legacy QA history and host-run reads and accounting through
 `RepositoriesContext`. Each context restricts engine dependencies to the methods
-it uses; startup and active host access stay lazy. The retained QA runner and
-lifecycle recovery stay in the owner, exposed through a context accessor.
+it uses. Startup and active host access stay lazy.
 These modules never import or receive `QueueRuntime`.
 
 `service/roll/` owns the main-channel roll (nucleus#1454): `roll.ts` is the roll state
@@ -89,8 +88,7 @@ and persistence seams downward. `store-core.ts` owns the database handle, cached
 statements, transactions, events, meta and revisions. Explicit callbacks keep
 post-commit cleanup in `Store` and connect it to projection rollback restoration.
 `store-host-runs.ts` owns host-run rows, identities, accounting reads, output
-failures, journals and the QA fence and custody inventory. `store-project-qa.ts`
-owns QA history, latest-run reads and schedule-merge coverage. The seams depend
+failures and journals. `store-project-qa.ts` owns legacy QA history reads. The seams depend
 on the core, never on `Store`; projection access is supplied through callbacks.
 `store-planning.ts` owns papercuts, plans, leads, decisions and their history caches, with explicit
 callbacks for project and lane access and lane-activity invalidation.
@@ -639,23 +637,9 @@ proof lands with its task.
        and remove `retainedWorkspaceRoots` once a read-only check confirms zero
        remaining references to `<workRoot>/worktrees/nucleus`.
 
-- A new project QA run records its checkout path before scheduling. Plan, logs
-  and state stay in the internal data directory; the checkout and its declared
-  sibling links use the external root. Runs without a recorded path keep their
-  internal checkout, and a roll never derives a new location for them. Storage
-  identity is rechecked at launch, checkout creation, hook and cleanup, and an
-  uncertain creation is retained rather than removed or recreated.
-- Project members without a local checkout are recorded on the QA run with
-  their origin, configured path and a `No local checkout` reason, then skipped.
-  Setup-declared siblings and dependency-ledger sources remain required and
-  refuse launch when they cannot be resolved.
-- Settled project QA history, step logs and failures logs stay in `project-qa/`;
-  the hourly retention pass removes the run's exact Queue-owned checkout after
-  settlement, including legacy checkouts copied into the current data home.
-  Only the latest run per repository keeps a checkout when teardown failed and
-  an explicit retry can still consume it; pending checkout cleanup also keeps
-  its checkout. The board reads every run's stored result and logs, so it needs
-  no other checkout retention.
+- The [milestone QA handoff](milestone-qa.md#legacy-history-and-upgrades)
+  verifies custody of legacy checkouts before replacement.
+
 - The live data-home backup resolver writes verified snapshots to the external
   configured work volume. An hourly retention pass prunes only regular snapshot files in
   the live data home's old `backups/` and `.external-backups/` copies, and only
@@ -1757,8 +1741,7 @@ paused-resume counters read an episode-range index over resume events.
 Schema 57 stores independent board and telemetry counters in one publication-clock
 row. Each mutation advances that row once, and a publication compares against the
 last successfully posted revision, including on forced mutation acknowledgements.
-Lane drains resolve project membership from one project read per pass. QA runners
-are retained per runtime, legacy QA budget samples use repository indexes, and
+Lane drains resolve project membership from one project read per pass. Legacy QA budget samples use repository indexes.
 hook cleanup measures bytes only for checkouts it selects for reaping.
 The board cursor advances when either its durable revision or its display facts
 change, so a clock-driven card change cannot hide the next durable mutation.
@@ -1781,13 +1764,11 @@ Startup no longer infers a host for historical hostless operations or task
 origins. The one-time host attribution migrations are complete; new records
 must carry their own host identity, and unknown attribution stays unknown.
 
-### QA artifact housekeeping
+### Legacy QA artifact retention
 
-The hourly QA retention sweep removes recognized per-run logs, results and
-sidecars after the four-day history window. Active runs, pending checkout
-cleanup and the latest retryable teardown evidence stay retained; orphan files
-expire by modification time. QA execution paths share step records, escapee
-merging and failure classification; streamed output shares one token redactor.
+The hourly retention pass expires recognized legacy QA logs and results
+under the existing four-day evidence policy. See
+[milestone QA](milestone-qa.md#legacy-history-and-upgrades).
 
 Agents use the installed `nucleus` command from any directory; repository CLI files are internal implementation (Tom, 2026-11-16).
 

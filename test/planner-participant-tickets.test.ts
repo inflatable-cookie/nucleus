@@ -68,7 +68,7 @@ test('startup with an archived recorded planner sends nothing and records the ti
     assert.ok(f.tickets.pendingPlanners().has('example'));
     // The board's project entry says so, not just the store.
     const settings = projectSettingsSchema.parse(buildProjectSettings({ projects: f.store.projects(), repositories: [],
-      overrides: {}, defaultSlots: 4, liveAgentIds: new Set(), liveKnown: false, latestQaRuns: [],
+      overrides: {}, defaultSlots: 4, liveAgentIds: new Set(), liveKnown: false,
       plannerTicketPending: f.tickets.pendingPlanners() }));
     assert.equal(settings.projects[0]?.plannerTicket, 'pending');
     assert.equal(settings.projects[0]?.problems.includes('Planner ticket pending'), false);

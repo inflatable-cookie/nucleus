@@ -122,18 +122,10 @@ export function RepositoryFields({
       saves.hold(key("qa"), "QA takes at most 32 words");
       return;
     }
-    const kept =
-      qa && !qa.stages
-        ? {
-            maxOutputBytes: qa.maxOutputBytes,
-            terminationGraceMs: qa.terminationGraceMs,
-          }
-        : {};
     patch(
       "qa",
       {
         qa: {
-          ...kept,
           argv: parsed.argv,
           ...(qa?.schedule ? { schedule: null } : {}),
         },

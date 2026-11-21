@@ -105,9 +105,8 @@ export function operatorDecisionApplied(ladder: Ladder, taskId: string, id: stri
       } catch { return false; }
     })());
   if (!waitEvent) return false;
-  const stopDetail = escalationWaitDetail.operator(id, decisionId);
   const stop = ladder.store.task(taskId).resolution.stop;
-  if (stop?.reason !== 'escalated' || stop.detail !== stopDetail) return false;
+  if (stop?.reason !== 'escalated' || stop.fact?.subject !== id) return false;
   try {
     const stored = ladder.store.decision(decisionId);
     if (stored.status === 'withdrawn' || isPlaceholderDecisionRecord(stored)) return false;

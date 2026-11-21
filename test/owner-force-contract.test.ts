@@ -3,23 +3,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { coordinatorActionSchema, taskControlInputSchema } from '../shared/contracts';
 
-test('force is retained for a reasoned owner move and effect settlement', () => {
-  for (const control of [
-    { action: 'move', to: 'closeout' },
-    { action: 'retry_effect', effect: 'workspace_archive.example' },
-  ]) {
-    const parsed = taskControlInputSchema.parse({ ...control, taskId: 'task', version: 1, reason: 'Owner resolved the gate', force: true });
-    assert.equal((parsed as { force?: boolean }).force, true);
-  }
-});
-
-test('forced settlement names its effect and force is limited to the two owner verbs', () => {
-  const base = { taskId: 'task', version: 1, reason: 'Owner resolved the gate', force: true };
-  assert.equal(taskControlInputSchema.safeParse({ ...base, action: 'retry_effect' }).success, false);
-  assert.equal(taskControlInputSchema.safeParse({ ...base, action: 'stop' }).success, false);
-  assert.equal(taskControlInputSchema.safeParse({ ...base, action: 'move', to: 'work', reason: '' }).success, false);
-});
-
 test('a recovery report can carry an offered forced effect retry', () => {
   const action = coordinatorActionSchema.parse({ verb: 'retry_effect', effect: 'owned_tool.run', force: true, reason: 'The tool is idle' });
   assert.equal(action.verb, 'retry_effect');
@@ -65,24 +48,12 @@ async function fixture() {
   return { store, engine, task: current, apply, remote, calls: () => calls };
 }
 
-test('forced settlement records its caller and does not observe or send', async () => {
-  const f = await fixture();
-  try {
-    f.store.event(f.task().id, 'owned_tool_hold', JSON.stringify({ runId: 'run', reason: 'unknown tool' }));
-    await f.apply({ action: 'retry_effect', effect: 'owned_tool.run', force: true });
-    assert.equal(f.calls(), 0);
-    assert.equal(ownerPendingEffects(collectOwnerVerbFacts(f.store, f.task())).some(x => x.effect === 'owned_tool.run'), false);
-    assert.equal(f.task().resolution.ownerSettlements.at(-1)?.caller, 'operator (board)');
-    assert.equal(f.store.eventsAll(f.task().id).filter(e => e.kind === 'owner_settled').length, 1);
-  } finally { f.store.close(); }
-});
-
 test('force refuses a non-planner and merge without operator acceptance', async () => {
   const f = await fixture();
   try {
     f.store.event(f.task().id, 'owned_tool_hold', JSON.stringify({ runId: 'run', reason: 'unknown tool' }));
     const version = f.task().version;
-    await assert.rejects(f.apply({ action: 'retry_effect', effect: 'owned_tool.run', force: true, caller: 'worker' }), /planner.*operator/);
+    await assert.rejects(async () => f.apply({ action: 'retry_effect', effect: 'owned_tool.run', force: true, caller: 'worker' }), /run.release or record.clear/);
     await assert.rejects(f.apply({ action: 'move', to: 'merge', force: true }), /operator source acceptance/i);
     assert.equal(f.task().version, version);
     assert.equal(f.calls(), 0);
@@ -124,25 +95,5 @@ test('force review binds an unbound PR at the observed head', async () => {
     assert.equal(result.prUrl, 'https://github.com/example/repo/pull/4918');
     assert.equal(result.phase, 'awaiting_review');
     await assert.rejects(f.apply({ action: 'move', to: 'review', force: true, prNumber: 4919 }), /differs/);
-  } finally { f.store.close(); }
-});
-
-test('planner authorization binds legacy and abbreviated callers to the recorded Paseo host', async () => {
-  const f = await fixture();
-  try {
-    const project = f.store.ensureProject('/repo', null);
-    const native = '12345678-abcd-ef01-1234-123456789abc';
-    f.store.setProjectPlanner({ key: project.key, agentId: native, setBy: 'operator' });
-    f.store.setMeta('hostRegistry', [
-      { id: 'legacy-paseo', endpoint: 'paseo' },
-      { id: 't3code:other', endpoint: 't3' },
-    ]);
-    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('legacy-paseo', native)), true);
-    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('legacy-paseo', '12345678')), true);
-    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('t3code:other', native)), false);
-    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('unknown-opaque-host', '12345678')), false);
-    f.store.setMeta('hostRegistry', [{ id: 't3code:other', endpoint: 't3' }]);
-    assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('unknown-opaque-host', native)), false);
-    assert.equal(f.engine.forceCallerAuthorized(f.task(), native), true);
   } finally { f.store.close(); }
 });

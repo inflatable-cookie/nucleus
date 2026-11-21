@@ -33,7 +33,7 @@ export const operatorReplacementPending = (t: Task): boolean =>
  * `next` and the handler both send restart there (review #539).
  */
 export function retainedProfileRemapPark(t: Task, events: Array<{ id: number; kind: string; detail: string }>): boolean {
-  if (isRetainedProfileReason(t.reason)) return true;
+  if (t.reasonFact?.code === "retained_profile") return true;
   if (!['blocked', 'error'].includes(t.phase) || t.resolution.recovery?.status !== 'escalated') return false;
   const latest = (match: (event: { kind: string; detail: string }) => boolean) => events.reduce((max, event) => match(event) ? Math.max(max, event.id) : max, -1);
   const park = latest(event => event.kind === 'needs_attention' && isRetainedProfileReason(event.detail));

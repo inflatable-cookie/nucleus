@@ -72,7 +72,7 @@ export class CheckSettlement {
    */
   private legacyEpisodeIncident(t: Task): string | null {
     if (!t.resolution.attention) return null;
-    const deadline = t.reason.includes('has been pending past its deadline') && t.reason.includes('job URL:');
+    const deadline = t.reasonFact?.code === "check_deadline";
     return deadline ? t.resolution.incident?.id ?? null : null;
   }
   /** Re-observe checks without the repository turn. A settled result returns to the ordinary

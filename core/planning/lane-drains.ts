@@ -10,8 +10,6 @@ export type FinishedDrainTask = {
   finishedAt: string;
   originAgentId: string;
 };
-/** One repository with a queued or running milestone QA run; the pass counts them per project. */
-export type ActiveQaRunRepository = { path: string; origin: string | null };
 
 /**
  * The store facts a drain pass reads and the writes it applies, each typed at the owner
@@ -38,7 +36,6 @@ export interface LaneDrainStore {
   /** Records one lane's drain episode; an unknown lane refuses rather than dropping the episode. */
   setLaneDrain(key: string, drain: Lane["drain"]): void;
   drainSettings(): { drainMinutes: number; escalationMinutes: number };
-  activeQaRunRepositories(): ActiveQaRunRepository[];
   finishedDrainTasks(): FinishedDrainTask[];
 }
 
@@ -69,13 +66,6 @@ export class LaneDrainPass {
       const laneInputs: LaneDrainInput[] = [];
       const projectInputs: ProjectDrainInput[] = [];
       const claimed = new Set<string>();
-      // Read every active run, not just the latest per repository: a newer
-      // settled row must not hide an older milestone still in progress.
-      const activeQaRuns = new Map<string, number>();
-      for (const repository of this.store.activeQaRunRepositories()) {
-        const key = projectKey({ repoPath: repository.path, repository: repository.origin });
-        if (key) activeQaRuns.set(key, (activeQaRuns.get(key) ?? 0) + 1);
-      }
       // Latest task finishes per project; finished tasks are not in uiTasks.
       // The general drain still counts any project task. An explicit idle mark
       // is answered only by its planner's submission or an operator submission.
@@ -138,7 +128,6 @@ export class LaneDrainPass {
         projectInputs.push({
           key: project.key, name: project.name, drain: project.drain, lastFinishedAt: lastFinished.get(project.key) ?? null,
           idleSubmittedFinishedAt: idleSubmittedFinished.get(project.key) ?? null, idleSince: saved.idle?.at ?? null,
-          activeQaRuns: activeQaRuns.get(project.key) ?? 0,
           liveTasks: tasks.filter(task => !["done", "cancelled"].includes(task.phase) && !task.removedAt
             && projectKey({ repoPath: task.repoPath, repository: task.repository && normalizeRepositoryOrigin(task.repository) ? task.repository : null }) === project.key).length,
           topNow: topNow && topNowEntry ? {

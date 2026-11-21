@@ -197,9 +197,9 @@ export const hookModeSchema = z.enum(["read_only", "integration_write"]);
 export const hookDeliverySchema = z.enum(["required", "advisory"]);
 export type HookMode = z.infer<typeof hookModeSchema>;
 export type HookDelivery = z.infer<typeof hookDeliverySchema>;
-export const hookStateSchema = z.enum(["intent", "workspace_intent", "running", "result", "commit_intent", "committed", "push_intent", "sync_intent", "synced", "cleanup_intent", "published", "blocked", "failed", "uncertain"]);
+export const hookStateSchema = z.enum(["intent", "workspace_intent", "running", "result", "commit_intent", "committed", "push_intent", "sync_intent", "synced", "cleanup_intent", "published", "blocked", "failed", "uncertain", "superseded"]);
 export type HookState = z.infer<typeof hookStateSchema>;
-export const TERMINAL_HOOK_STATES: readonly HookState[] = ["result", "published", "blocked", "failed"];
+export const TERMINAL_HOOK_STATES: readonly HookState[] = ["result", "published", "blocked", "failed", "superseded"];
 export const hookStateIsTerminal = (state: HookState) => TERMINAL_HOOK_STATES.includes(state);
 
 export const hookIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,62}$/);

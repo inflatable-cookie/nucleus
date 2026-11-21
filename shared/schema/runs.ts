@@ -293,6 +293,7 @@ export const runSchema = z.object({
   idleSince: z.string().nullable(),
   completion: completionSchema.nullable(),
   released: z.boolean(),
+  explicitlyReleasedAt: z.string().datetime({ offset: true }).optional(),
   /** Spec 058 slice 1: usage observed on this run's agent; absent until Queue observes a turn. */
   usage: runUsageSchema.optional(),
 });
@@ -305,6 +306,7 @@ export const noticeSchema = z.object({
   agentId: z.string(),
   text: z.string(),
   status: z.enum(["pending", "intent", "delivered", "uncertain", "superseded"]),
+  explicitlyClearedAt: z.string().datetime({ offset: true }).optional(),
   error: z.string(),
   // `owner_change` has no writer or delivery; it stays so historical rows parse.
   kind: z

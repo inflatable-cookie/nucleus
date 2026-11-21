@@ -5,12 +5,10 @@ import {
   episodeBindsCurrentWork,
   isDispositionActive,
   isDispositionComplete,
-  isRetainedProfileReason,
   noticeTaskLine,
   taskOwner,
 } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { isSshAuthExhausted } from "../../shared/ssh-auth";
 import { isHostReadRecoveryHeld } from "../recovery/host-read-transient";
 import { isWaitingTaskStop, recordedStopIsWait } from "../../shared/task-stop";
 import { parseHostOutageNoticeId } from "../../shared/host-outage";
@@ -29,11 +27,6 @@ import {
   ProvenPreSendRefusalError,
   isAgentGoneRefusal,
 } from "../host/errors";
-import { qaSettlementHostMessageId } from "../qa/project-qa-notice";
-import {
-  qaNoticeOwner,
-  qaScheduleNoticeProject,
-} from "../qa/project-qa-schedule";
 import { triageNoticeProject } from "../planning/triage";
 import { rowHiddenKey, type RowHiddenEpisode } from "../scheduling/hidden-row";
 import type { Resolution } from "../resolution";
@@ -534,7 +527,6 @@ export class Notices {
       if (
         n.kind !== "lane_drain" &&
         n.kind !== "next_aim" &&
-        n.kind !== "qa" &&
         n.kind !== "triage"
       )
         continue;
@@ -549,7 +541,7 @@ export class Notices {
             return this.store.laneByKey(key)?.drain?.since === since;
           if (scope === "next-aim")
             return this.store.projectByKey(key)?.drain?.since === since;
-          return n.kind === "qa";
+          return false;
         } catch {
           return false;
         }
@@ -563,13 +555,8 @@ export class Notices {
         });
         continue;
       }
-      const scheduledQa =
-        n.kind === "qa" && !n.id.startsWith("project-qa-settled:");
-      const qaProject = scheduledQa
-        ? qaScheduleNoticeProject(this.store, n)
-        : null;
       if (n.kind === "triage") {
-        // The planner is the project's current responsible thread, resolved at delivery like a scheduled QA prompt.
+        // The planner is the project's current responsible thread, resolved at delivery.
         const project = triageNoticeProject(this.store, n);
         if (!project) {
           this.store.putNotice({
@@ -595,33 +582,7 @@ export class Notices {
           this.store.putNotice(n);
         }
       }
-      let live = episodeLive();
-      if (n.kind === "qa") {
-        live = scheduledQa
-          ? Boolean(qaProject)
-          : Boolean(qaNoticeOwner(this.store, n));
-        if (qaProject) {
-          const { thread } = await this.resolution.responsibleThread(qaProject);
-          if (!thread) {
-            if (n.error !== "No live responsible thread")
-              this.store.putNotice({
-                ...n,
-                error: "No live responsible thread",
-              });
-            continue;
-          }
-          if (n.agentId !== thread.agentId || n.error) {
-            n = {
-              ...n,
-              agentId: thread.agentId,
-              recipientAgentId: thread.agentId,
-              error: "",
-            };
-            this.store.putNotice(n);
-          }
-        }
-      }
-      if (!live) {
+      if (!episodeLive()) {
         this.store.putNotice({
           ...n,
           status: "superseded",
@@ -629,7 +590,7 @@ export class Notices {
         });
         continue;
       }
-      if (n.status === "pending" && n.kind !== "qa" && n.kind !== "triage") {
+      if (n.status === "pending" && n.kind !== "triage") {
         const project =
           n.kind === "next_aim"
             ? this.store.projectByKey(key)
@@ -683,44 +644,17 @@ export class Notices {
             if (n.error !== reason)
               this.store.putNotice({ ...n, error: reason });
           },
-          gone: () =>
-            this.store.putNotice(
-              n.kind === "qa" && !scheduledQa
-                ? {
-                    ...n,
-                    status: "superseded",
-                    error: "The QA recipient is no longer available",
-                  }
-                : {
-                    ...n,
-                    error: "The responsible thread is no longer available",
-                  },
-            ),
+          gone: () => this.store.putNotice({ ...n, error: "The responsible thread is no longer available" }),
           confirm: () => {
             // Plan saves and lane-document edits may land while the owner is finishing
             // another run. Refresh at the delivery boundary and retain the episode ID.
-            if (n.kind !== "qa" && n.kind !== "triage")
+            if (n.kind !== "triage")
               this.store.evaluateLaneDrains();
             const current = this.store
               .notices(n.taskId)
               .find((notice) => notice.id === n.id);
             if (!current || current.status !== "pending") return null;
-            let stillLive = episodeLive();
-            if (qaProject) {
-              const latest = qaScheduleNoticeProject(this.store, current);
-              stillLive = Boolean(latest);
-              if (
-                latest &&
-                (latest.key !== qaProject.key ||
-                  latest.version !== qaProject.version ||
-                  latest.planner?.agentId !== qaProject.planner?.agentId ||
-                  qaNoticeOwner(this.store, current) !== n.agentId)
-              )
-                return null;
-            } else if (n.kind === "qa") {
-              stillLive = Boolean(qaNoticeOwner(this.store, current));
-            }
-            if (!stillLive) {
+            if (!episodeLive()) {
               this.store.putNotice({
                 ...current,
                 status: "superseded",
@@ -731,26 +665,7 @@ export class Notices {
             }
             return current;
           },
-          target: (current) => {
-            if (
-              current.kind === "qa" &&
-              current.id.startsWith("project-qa-settled:")
-            ) {
-              const runId = current.taskId.startsWith("qa:")
-                ? current.taskId.slice(3)
-                : "";
-              return {
-                agentId: current.agentId,
-                id: qaSettlementHostMessageId(runId, current.agentId),
-                text: current.text,
-              };
-            }
-            return {
-              agentId: current.agentId,
-              id: current.id,
-              text: current.text,
-            };
-          },
+          target: (current) => ({ agentId: current.agentId, id: current.id, text: current.text }),
           mark: (current, status, error) =>
             this.store.putNotice({ ...current, error, status }),
         }),
@@ -838,7 +753,7 @@ export class Notices {
       const locallyActionable =
         awaitingProof ||
         isCloseoutHookHold(task) ||
-        isSshAuthExhausted(task.reason) ||
+        task.reasonFact?.code === "ssh_auth" ||
         hostReadExhausted;
       // A recorded stop whose reason is not a wait is attention whatever the
       // phase says: Queue has stopped and named an owner verb it cannot apply
@@ -884,7 +799,7 @@ export class Notices {
       const suggested = stop?.suggestedVerbs.length
         ? `\nSuggested verbs: ${stop.suggestedVerbs.join(", ")}`
         : "";
-      const remapHint = isRetainedProfileReason(task.reason)
+      const remapHint = task.reasonFact?.code === "retained_profile"
         ? "\nOwner action: restart remaps the retained worker to an eligible profile, with an optional instruction as its continuation; route role=worker chooses the profile."
         : "";
       const proofOwner = awaitingProof
@@ -1002,7 +917,7 @@ export class Notices {
         ownerActionNeeded,
         awaitingProof: task.resolution.stop?.reason === "awaiting_proof",
         closeoutHookHold: isCloseoutHookHold(task),
-        sshAuthExhausted: isSshAuthExhausted(task.reason),
+        sshAuthExhausted: task.reasonFact?.code === "ssh_auth",
         hostReadExhausted:
           isHostReadRecoveryHeld(this.store, task) === "exhausted",
         recoveryEscalated: task.resolution.recovery?.status === "escalated",

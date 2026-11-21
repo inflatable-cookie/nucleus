@@ -68,7 +68,7 @@ const READ_ONLY_METHODS = new Set([
   // Read-only on the catalogue since ed40faa8; its deliberate read-only entry landed late (2026-10-14).
   "project.management-preview",
   "project.qa.request-status",
-  "project.qa.fence-status",
+  "project.qa.run",
   "queue.service-state",
   // Spec 062 decision 5b: the forked sidebar's one batched task-group read.
   "bb.sidebar-groups",

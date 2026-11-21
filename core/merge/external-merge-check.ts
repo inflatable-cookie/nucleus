@@ -2,7 +2,7 @@ import { isDispositionActive, isDispositionComplete, type Incident, type Run, ty
 import { dispatchBlocked } from "../dispatch/capacity";
 import { escalationWaitDetail, findOpenPlannerEscalation, plannerEscalations, PLANNER_ESCALATION_CHOICES, type LadderEvent } from "../questions/ladder";
 import { incidentKey } from "../recovery/incident";
-import { ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON } from "../recovery/task-reasons";
+import { ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX } from "../recovery/task-reasons";
 import { digest, type Store } from "../store/store";
 import type { Resolution } from "../resolution";
 
@@ -49,7 +49,7 @@ function incidentFingerprintUnchanged(task: Task, run: Run, incident: Incident, 
 
 /** Attention, when it is raised at all, is this same check — not a second, unrelated park. */
 function attentionOnlyOnThisCheck(task: Task): boolean {
-  return !task.resolution.attention || task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX);
+  return !task.resolution.attention || task.reasonFact?.code === "external_merge_check";
 }
 
 /** No recovery episode or stalled turn is still open over the park. */
@@ -185,7 +185,7 @@ export function resumeClearedAttention(
   if (task.phase !== "needs_attention" || task.resolution.attention || task.resolution.currentRunId) return null;
   if (context.store.runs(task.id).some(run => !run.released)) return null;
   const pre = task.resolution.externalMergePreAttention;
-  const checkReason = task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || task.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON;
+  const checkReason = task.reasonFact?.code === "external_merge_check" || task.reasonFact?.code === "external_merge_recovered";
   // A record beside any other reason was superseded by the action that wrote that
   // reason; restoring an old phase over it would undo the pending resolution.
   if (!checkReason) {
@@ -196,7 +196,7 @@ export function resumeClearedAttention(
   // A strand from before the record existed carries the recovered reason on a
   // task whose accepted PR is still final: resume the accepted-PR reconciliation
   // that was pending when the check failed, and let advance() route it.
-  if (task.reason !== EXTERNAL_MERGE_CHECK_RECOVERED_REASON) return null;
+  if (task.reasonFact?.code !== "external_merge_recovered") return null;
   if (task.completion?.status !== "ready_for_review" || !task.prHead || !task.workspaceId) return null;
   return context.resolution.update(task, { attention: false }, { reason: ACCEPTED_PR_RECONCILIATION_REASON }, "external_merge_check_recovered_resumed");
 }

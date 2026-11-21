@@ -7,7 +7,7 @@
 // line of refusal. Everything else lives in the owner named there; this file
 // keeps no per-method branch of its own.
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPayload } from './payload.mjs';
@@ -67,8 +67,10 @@ async function main() {
   const uiCommand = requestedMethod === 'ui';
   const file = uiCommand ? undefined : rest.find(arg => !['--wait', '--dry-run'].includes(arg));
   // Spec 050: the CLI verb name for the task.next read RPC.
-  const method = uiCommand ? 'service.ui-link' : requestedMethod === 'next' ? 'task.next' : requestedMethod;
+  const explicit = ['run.release', 'record.clear'].includes(requestedMethod);
+  const method = uiCommand ? 'service.ui-link' : requestedMethod === 'next' ? 'task.next' : explicit ? 'task' : requestedMethod;
   const input = uiCommand ? { action: rest.includes('--revoke') ? 'revoke' : 'issue' } : readPayload(file);
+  if (explicit) input.action = requestedMethod;
   if (rest.includes('--wait')) {
     if (method !== 'project.qa.run') throw new Error('--wait is supported by project.qa.run; lead.submit always waits');
     input.wait = true;
@@ -108,10 +110,6 @@ async function main() {
       callerSource: () => cliCallerSource(),
       readTicket: () => readRunTicket(),
       credentialFor,
-      newRequestId: () => randomUUID(),
-      onQaRequestId(requestId) {
-        console.error(`QA request ID: ${requestId}; reconcile with project.qa.request-status, never repeat with a new ID after unknown delivery.`);
-      },
       async answerThroughTicket(ticket, payload) {
         const { callbackRequest } = await import('../shared/service/callback-client.mjs');
         const body = { ...payload, eventId: createHash('sha256').update(JSON.stringify(payload)).digest('hex') };

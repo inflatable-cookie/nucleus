@@ -51,9 +51,37 @@ export const taskControlRequestSchema = z.preprocess(raw => {
 export type TaskControlRequest = z.infer<typeof taskControlRequestSchema>;
 export type TaskControlInput = z.infer<typeof taskControlInputSchema>;
 
+const resolutionId = z.string().trim().min(1).max(240);
+const resolutionWarningId = z.enum(["live_turn", "unreported_result", "hold_owner", "effect_may_land", "owned_tool", "route_policy", "two_writers"]);
+const resolutionFields = {
+  taskId: resolutionId,
+  version: z.number().int().positive(),
+  reason: z.string().trim().min(1).max(4000),
+  accept: z.array(resolutionWarningId).max(resolutionWarningId.options.length).default([]),
+  caller: resolutionId.optional(),
+};
+export const explicitResolutionSchema = z.preprocess(raw => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || !("reference" in raw)) return raw;
+  const { reference, ...input } = raw;
+  return "taskId" in input ? raw : { ...input, taskId: reference };
+}, z.discriminatedUnion("action", [
+  z.object({ ...resolutionFields, action: z.literal("run.release"), run: resolutionId, archive: z.boolean().optional() }).strict(),
+  z.object({ ...resolutionFields, action: z.literal("record.clear"), kind: z.enum([
+    "stop", "wait", "hold", "escalation", "incident", "effect", "host_wait", "owner_stop", "deferred_verb",
+  ]), id: resolutionId }).strict(),
+]));
+export type ExplicitResolution = z.infer<typeof explicitResolutionSchema>;
+export type ResolutionWarningId = z.infer<typeof resolutionWarningId>;
+const resolutionResultSchema = z.object({
+  status: z.enum(["applied", "warnings", "stale"]),
+  warnings: z.array(z.object({ id: resolutionWarningId, text: z.string() })),
+  next: z.string(),
+});
+
 /** A task control response is the updated task (the 23 narrow-action aliases and their deprecation notes were deleted on 2026-10-15). */
 export const taskControlTaskSchema = taskSchema.extend({
   changes: z.array(z.string()).optional(),
+  explicitResolution: resolutionResultSchema.optional(),
 });
 
 export type TaskControlTask = z.infer<typeof taskControlTaskSchema>;

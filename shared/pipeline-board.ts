@@ -1,7 +1,6 @@
 import type {
   BoardLead,
   BoardLeadLink,
-  BoardQaRun,
   DecisionView,
   PendingSubmission,
   Project,
@@ -36,7 +35,6 @@ export type PipelineCard =
   | { kind: "raised"; id: string; lanes: string[]; value: TaskSummary }
   | { kind: "lane_drain"; id: string; lanes: string[]; value: LaneView }
   /** Tom, 2026-11-01: a milestone QA run is its own card, not a task. It carries no lanes. */
-  | { kind: "qa"; id: string; lanes: string[]; value: BoardQaRun }
   | { kind: "task"; id: string; lanes: string[]; value: TaskSummary };
 
 /** Spec 032: a decision card's age, coarse on purpose — the board never
@@ -202,16 +200,6 @@ export function pipelineColumn(card: PipelineCard): PipelineColumn {
     return "Decisions";
   // Spec 026: an accepted submission shows queued until its task exists.
   if (card.kind === "submission") return "Queued";
-  // Milestone QA (Tom, 2026-11-01): queued waits in Queued, running works in Working, a passing run
-  // finishes in Closing until it fades, and any other finished run needs attention.
-  if (card.kind === "qa")
-    return card.value.state === "queued"
-      ? "Queued"
-      : card.value.state === "running"
-        ? "Working"
-        : card.value.state === "passed"
-          ? "Closing"
-          : "Attention";
   // A plain task card sits where the one attention projection says it does.
   if (card.kind === "task") return taskCardColumn(card.value);
   // Untyped fixtures may omit the phase; live summaries always carry one.
@@ -233,8 +221,6 @@ export type PipelineScope = {
   lanes?: readonly LaneView[];
   /** Promoted leads outside the card set, carried so an open decision they link keeps its lanes and scoping. */
   linkedLeads?: readonly BoardLeadLink[];
-  /** Milestone QA cards (Tom, 2026-11-01), already projected by the server; the project and lane filters apply. */
-  qaRuns?: readonly BoardQaRun[];
 };
 
 function collectPipelineCards(input: PipelineScope): PipelineCard[] {
@@ -405,19 +391,6 @@ function collectPipelineCards(input: PipelineScope): PipelineCard[] {
         kind: "lane_drain" as const,
         id: `lane-drain:${value.key}`,
         lanes: [value.key],
-        value,
-      })),
-  );
-  // A milestone QA run belongs to its repository's project, so the project filter scopes it like a task.
-  cards.push(
-    ...(input.qaRuns ?? [])
-      .filter((run) =>
-        inScope(run.repository.origin ?? "", run.repository.path),
-      )
-      .map((value) => ({
-        kind: "qa" as const,
-        id: `qa:${value.id}`,
-        lanes: [],
         value,
       })),
   );

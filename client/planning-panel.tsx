@@ -13,7 +13,6 @@ import type {
   PlanningTriage,
   Project,
   ProjectPlan,
-  ProjectQaRun,
 } from "../shared/contracts";
 import {
   laneFinderCount,
@@ -78,340 +77,6 @@ export type PlanSection = {
 /** A draft: the order, horizons and idle change the operator is making, and the version it was based on. See `PlanDraft`. */
 export type PlanEdit = PlanDraft;
 
-/** #121: one QA/validation run's steps, each stage named with its outcome; shown
- * on the task detail. */
-export function ProjectQaSteps({
-  run,
-  c,
-  label = "QA steps",
-}: {
-  run: ProjectQaRun;
-  c: Colors;
-  label?: string;
-}) {
-  if (!run.steps.length) return null;
-  return (
-    <View accessibilityLabel={label} style={{ gap: space.xxs / 2 }}>
-      {run.steps.map((step) => (
-        <Text
-          key={step.name}
-          style={{ ...muted(c), fontSize: type.metadata.fontSize }}
-        >
-          {step.name} ·{" "}
-          {step.timedOut
-            ? "timed out"
-            : step.signal
-              ? step.signal
-              : step.exitCode === 0
-                ? "passed"
-                : `exit ${step.exitCode ?? "—"}`}
-          {step.wallMs === undefined
-            ? ""
-            : ` · ${formatTelemetryDuration(step.wallMs)}`}
-        </Text>
-      ))}
-    </View>
-  );
-}
-/**
- * #136: a run's full-output log-write failures, kept apart from its output tail so
- * later output can never truncate them. Shown on the task detail.
- */
-export function ProjectQaLogWriteErrors({
-  run,
-  c,
-  label = "QA log-write errors",
-}: {
-  run: ProjectQaRun;
-  c: Colors;
-  label?: string;
-}) {
-  const errors = run.logWriteErrors ?? [];
-  if (!errors.length) return null;
-  return (
-    <View accessibilityLabel={label} style={{ gap: space.xxs / 2 }}>
-      {errors.map((entry, index) => (
-        <Text
-          key={`${entry.step}-${entry.stream}-${index}`}
-          selectable
-          accessibilityLabel={`Log-write failure ${entry.step} ${entry.stream}`}
-          style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}
-        >
-          {entry.step} {entry.stream} log could not be written: {entry.error}
-        </Text>
-      ))}
-    </View>
-  );
-}
-/**
- * Task 191: a run's extracted TAP failures, kept apart from the output tail so
- * a failure stays visible however much later output the byte cap keeps. Shown
- * on the task detail.
- */
-export function ProjectQaFailures({
-  run,
-  c,
-  label = "QA failures",
-}: {
-  run: ProjectQaRun;
-  c: Colors;
-  label?: string;
-}) {
-  const indexes = run.failureIndexes ?? [];
-  if (!run.failuresLog && !indexes.length) return null;
-  return (
-    <View accessibilityLabel={label} style={{ gap: space.xxs / 2 }}>
-      {indexes.map((index) => (
-        <View
-          key={index.stage}
-          accessibilityLabel={`QA failure index ${index.stage}`}
-          style={{ gap: space.xxs / 2 }}
-        >
-          <Text
-            selectable
-            style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}
-          >
-            {index.stage}: {index.failed ?? "unknown"} failed,{" "}
-            {index.cancelled ?? "unknown"} cancelled; {index.identities.length}{" "}
-            identities retained, {index.omittedIdentities} omitted
-            {index.truncated ? " (index truncated)" : ""}
-            {index.diagnosticsTruncated ? " (diagnostics truncated)" : ""}
-          </Text>
-          {index.identities.map((identity, entry) => (
-            <Text
-              key={`${identity.id ?? "unknown"}-${entry}`}
-              selectable
-              style={{
-                color: c.statusWarning,
-                fontSize: type.metadata.fontSize,
-              }}
-            >
-              {identity.status} {identity.id === null ? "" : `${identity.id} `}
-              {identity.title}
-              {identity.location ? ` — ${identity.location}` : ""}
-            </Text>
-          ))}
-        </View>
-      ))}
-      {run.failuresLog && (
-        <Text
-          selectable
-          accessibilityLabel="QA failures log"
-          style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}
-        >
-          {run.failuresLog}
-        </Text>
-      )}
-    </View>
-  );
-}
-/** A settled teardown failure can be retried without rerunning setup or QA (task 134). */
-export function canRetryTeardown(
-  run: ProjectQaRun | undefined,
-): run is ProjectQaRun {
-  const lastTeardown = run?.steps
-    .filter((step) => step.name === "teardown")
-    .at(-1);
-  return Boolean(
-    run &&
-      (run.failedStep === "teardown" ||
-        run.checkoutCleanupPending ||
-        (lastTeardown &&
-          (lastTeardown.exitCode !== 0 ||
-            lastTeardown.signal != null ||
-            lastTeardown.timedOut ||
-            lastTeardown.terminationError != null ||
-            lastTeardown.processGroupEmpty === false))) &&
-      run.state !== "running" &&
-      run.state !== "queued",
-  );
-}
-/** The milestone QA state in the operator's words. A queued run is waiting for a slot, never running. */
-const milestoneStateLabel: Record<ProjectQaRun["state"], string> = {
-  queued: "Queued · waiting, not running",
-  running: "Running",
-  passed: "Passed",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  timed_out: "Timed out",
-  lost: "Lost",
-  hold: "Needs attention",
-};
-function latestQaFailure(run: ProjectQaRun): string {
-  const lines = [
-    run.outputTail,
-    ...run.steps.flatMap((step) => [step.stderrTail, step.stdoutTail]),
-  ]
-    .flatMap((value) => value?.split(/\r?\n/) ?? [])
-    .map((value) => value.trim().replace(/\s+/g, " "))
-    .filter(Boolean);
-  const summary = lines.at(-1);
-  if (summary)
-    return summary.length > 160 ? `${summary.slice(0, 157)}…` : summary;
-  return run.failedStep
-    ? `${run.failedStep} failed`
-    : "QA failed without a recorded summary.";
-}
-/**
- * The project plan's latest milestone QA (nucleus#869, updated nucleus#1498): one
- * read-only summary line with no board launch, cancel, teardown-retry, or Runs-tab
- * navigation controls; legacy history and cleanup run via `project.qa` verbs
- * (`project.qa.get`, `project.qa.list`, `project.qa.cancel`, `project.qa.dismiss`,
- * `project.qa.retry-teardown`). `project.qa.list` returns the latest run per
- * repository, so the line is that run's own record and never a first page passed
- * off as a total. A first read, a failed read and a stale result stay distinct from
- * having no run, and a queued run waits rather than runs.
- */
-export function ProjectQaLatest({
-  project,
-  runs,
-  loading = false,
-  error,
-  onRetry,
-  c,
-}: {
-  project: Project;
-  runs?: ProjectQaRun[];
-  loading?: boolean;
-  error?: string;
-  onRetry?: () => void;
-  c: Colors;
-}) {
-  const identity = project.primary.origin ?? project.primary.path;
-  const r = roles(c);
-  const run = runs?.find(
-    (candidate) =>
-      candidate.key === identity ||
-      (project.primary.origin &&
-        candidate.repository.origin === project.primary.origin) ||
-      (project.primary.path &&
-        candidate.repository.path === project.primary.path),
-  );
-  // A read still in flight, or one that has not answered yet, is not an empty result.
-  const reading = loading || (!runs && !error);
-  const when = run?.finishedAt
-    ? `Finished ${new Date(run.finishedAt).toLocaleString()}`
-    : run
-      ? `Started ${new Date(run.startedAt).toLocaleString()}`
-      : "";
-  const meta = {
-    fontSize: typeScale.metadata.fontSize,
-    lineHeight: typeScale.metadata.lineHeight,
-  } as const;
-  const retry = onRetry && (
-    <View style={row}>
-      <Button
-        small
-        c={c}
-        text="Retry QA"
-        label={`Retry the latest QA read for ${project.name}`}
-        onPress={onRetry}
-      />
-    </View>
-  );
-  return (
-    <View
-      accessibilityLabel={`Latest QA for ${project.name}`}
-      style={{ gap: space.xxs }}
-    >
-      <View style={{ ...row, justifyContent: "space-between" }}>
-        <Text
-          accessibilityRole="header"
-          style={{
-            color: r.foreground,
-            fontWeight: "600",
-            fontSize: typeScale.body.fontSize,
-            lineHeight: typeScale.body.lineHeight,
-          }}
-        >
-          Latest QA
-        </Text>
-      </View>
-      {!run && reading && (
-        <Text style={muted(c)}>Loading the latest QA run…</Text>
-      )}
-      {!run && !reading && error && (
-        <View accessibilityRole="alert" style={{ gap: space.xxs }}>
-          <Text style={{ color: r.foreground }}>
-            Couldn’t load QA runs: {error}
-          </Text>
-          <Text style={{ ...muted(c), ...meta }}>
-            Nothing here is an empty result until that read succeeds.
-          </Text>
-          {retry}
-        </View>
-      )}
-      {!run && !reading && !error && (
-        <Text style={muted(c)}>
-          No legacy QA run recorded. Milestone QA runs as a report-only task.
-        </Text>
-      )}
-      {run && (
-        <View style={{ gap: space.xxs }}>
-          {run.state === "failed" && !run.capacityUnavailable ? (
-            <Text
-              accessibilityLabel={`QA failure for ${project.name}`}
-              numberOfLines={2}
-              style={{
-                color: r.danger,
-                fontSize: typeScale.body.fontSize,
-                lineHeight: typeScale.body.lineHeight,
-              }}
-            >
-              {latestQaFailure(run)} · {project.name}
-            </Text>
-          ) : (
-            <Text
-              style={{
-                color: r.foreground,
-                fontSize: typeScale.body.fontSize,
-                lineHeight: typeScale.body.lineHeight,
-              }}
-            >
-              {project.name}
-            </Text>
-          )}
-          <Text style={{ ...muted(c), ...meta }}>
-            {run.capacityUnavailable
-              ? "Capacity unavailable"
-              : milestoneStateLabel[run.state]}
-            {run.capacityWait
-              ? ` · waiting for QA capacity (position ${run.capacityWait.position})`
-              : ""}{" "}
-            · {when}
-          </Text>
-          {run.capacityUnavailable && (
-            <Text
-              accessibilityRole="alert"
-              style={{ color: r.warning, ...meta }}
-            >
-              QA capacity unavailable: Nucleus's capacity deadline lapsed. This
-              is not a QA failure.
-            </Text>
-          )}
-          {run.escapedDescendants.length > 0 && (
-            <Text
-              accessibilityRole="alert"
-              style={{ color: r.warning, ...meta }}
-            >
-              Escaped descendants not proven dead:{" "}
-              {run.escapedDescendants.length}
-            </Text>
-          )}
-          {error && (
-            <View accessibilityRole="alert" style={{ gap: space.xxs }}>
-              <Text style={{ color: r.warning, ...meta }}>
-                Showing the last result read. The QA runs could not be
-                refreshed: {error}. It may be out of date.
-              </Text>
-              {retry}
-            </View>
-          )}
-        </View>
-      )}
-    </View>
-  );
-}
 const HORIZONS = ["now", "next", "later"] as const;
 const horizonTitle = (horizon: PlanEntry["horizon"]) =>
   horizon[0].toUpperCase() + horizon.slice(1);
@@ -432,10 +97,6 @@ function ProjectRoadmap({
   selectedLane,
   busy,
   saveErrors,
-  qaRuns,
-  qaLoading = false,
-  qaError,
-  onRetryQa,
   onOpenLane,
   onOpenTask,
   onEdit,
@@ -452,10 +113,6 @@ function ProjectRoadmap({
   selectedLane: string;
   busy: boolean;
   saveErrors?: Record<string, string>;
-  qaRuns?: ProjectQaRun[];
-  qaLoading?: boolean;
-  qaError?: string;
-  onRetryQa?: () => void;
   onOpenLane: (lane: string) => void;
   onOpenTask?: (id: string) => void;
   onEdit: (project: string, edit: PlanEdit) => void;
@@ -1150,23 +807,6 @@ function ProjectRoadmap({
           c={c}
         />
       )}
-      <View
-        style={{
-          gap: space.xs,
-          borderTopColor: c.border,
-          borderTopWidth: 1,
-          paddingTop: space.sm,
-        }}
-      >
-        <ProjectQaLatest
-          project={project}
-          runs={qaRuns}
-          loading={qaLoading}
-          error={qaError}
-          onRetry={onRetryQa}
-          c={c}
-        />
-      </View>
     </View>
   );
 }
@@ -1567,10 +1207,6 @@ export function PlanningTab({
   compact,
   busy,
   lanePanel,
-  qaRuns,
-  qaLoading = false,
-  qaError,
-  onRetryQa,
   onRetryPlans,
   onRetryLanes,
   onStep,
@@ -1595,11 +1231,6 @@ export function PlanningTab({
   compact: boolean;
   busy: boolean;
   lanePanel: ReactNode;
-  /** The latest milestone QA per repository; `qaLoading` and `qaError` keep a first and a failed read apart from no run. */
-  qaRuns?: ProjectQaRun[];
-  qaLoading?: boolean;
-  qaError?: string;
-  onRetryQa?: () => void;
   /** Every project and its plan, so the chooser and the lane search see past the tab's own scope. */
   projects?: Project[];
   selection?: readonly string[];
@@ -1675,10 +1306,6 @@ export function PlanningTab({
     saveErrors,
     selectedLane,
     busy,
-    qaRuns,
-    qaLoading,
-    qaError,
-    onRetryQa,
     onOpenLane,
     onOpenTask,
     onEdit,

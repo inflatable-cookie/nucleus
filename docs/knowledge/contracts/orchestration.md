@@ -109,105 +109,12 @@ import downward without importing the scheduler. Shared call types live in
 execution and never imports the scheduler owners or Store. Admission order,
 refusal text and journal facts remain unchanged.
 
-### Milestone QA
+### Run supervision and milestone QA
 
-`core/qa/project-qa.ts` owns dispatch, reconciliation and settlement, with delegates
-for run reads and supervisor inspection in `project-qa-inspection.ts`, escaped
-descendant capacity tracking in `project-qa-escapees.ts`, and file pruning in
-`project-qa-supervision-files.ts`. The supervision-files module also owns durable
-schemas, run paths, owner-only reads and writes, step logs and file removal.
-The detached supervisor is three owners: `project-qa-pipeline.ts` runs the ordered
-stages and records every step, `project-qa-teardown.ts` reruns a settled run's
-recorded teardown, and `project-qa-detached-io.ts` holds the real executors and
-durable writes. `project-qa-worktree.ts` owns the run's linked checkout, its
-sibling links, the `paseo.json` worktree hooks and the checkout's removal. A
-checkout that dies mid-creation (its clone or worktree add exits non-zero, or
-is killed under load, before the run starts) is removed under the same
-ownership proof and created once more after a bounded backoff; two failures
-settle the run as a plain failure, never as an uncertain checkout retained for
-reconciliation. `project-qa-tap-failures.ts` owns failure parsing, identities
-and truncation.
-The supervisor awaits asynchronous durable lifecycle, step-log and result writes;
-its separate atomic heartbeat has no fsync and does not wait behind those writes.
-The heartbeat still comes from the supervisor event loop, so a hung loop remains
-subject to the unchanged stale-heartbeat watchdog. Lost-run detail retains the
-last heartbeat, pre-stop supervisor liveness, in-flight step and process-group
-state, plus starts and rolls in the heartbeat gap; incomplete service history
-is reported as unknown.
-
-The supervisor records its last pipeline phase around step output, post-exit
-settlement (`step-exit-group-wait`, `step-exit-descendants`,
-`step-exit-output-drain`, `step-exit-termination`, `step-spawn-persist`), step
-logs, TAP finalization, teardown, cleanup and result publication. Post-exit
-escaped-descendant observation (when `settleOnEscapedDescendants` is unset),
-post-exit pipe drain, live-output flush, spawn-state wait, diagnostic phase
-writes and step-log writes are bounded so stalled observation or output work
-cannot block normal step completion, teardown or result publication, while
-preserving strict `settleOnEscapedDescendants` custody and cancellation. A
-detached monitor records the supervisor's exit code or signal independently of
-the service; abandoned-run detail names that exit, the last recorded phase and
-the explicit teardown state, or says when either is unknown. The live-output
-projection flushes retained output per step and keeps the newest bytes across
-truncation, including the redactor's final flush; if the supervisor dies before
-closing it, recovery warns that final bytes up to the token's length may have
-been withheld. A phase is diagnostic evidence, not proof that an operation
-completed or authority to retry it.
-
-After result publication, inspection gives the supervisor the same bounded
-settlement window to finish its live-output close. If it remains live, inspection
-rechecks the result and process identities, stops only that supervisor and
-settles from the published result once its process group is proven empty.
-
-The executor publishes the direct child's exit the moment the kernel reports it
-(`onChildExit`), and `project-qa-detached-io.ts` writes that step's exit code or
-terminating signal, time, pid and group to its own `<run>.stepexit.json` ahead of
-the step log, the lifecycle state and the result. That record is how a run names
-how its command ended when the supervisor's own settlement never lands: the
-executor's seam owns the exit fact, and the supervision file owns keeping it
-beside the run. A stage that ends by a signal is a settled `failed` step, not an
-uncertain hold.
-
-When the supervisor is alive and the step it says is in flight has no process
-group left, `project-qa-inspection.ts` watches that emptiness for a short bound
-(`QA_STEP_EXIT_SETTLE_BOUND_MS`), then hands the run to
-`project-qa-recovery.ts`. The stale-heartbeat stop and proven-dead supervisor
-inspection also read the step's recorded exit after the stop or exit, so a hung
-or dead supervisor never discards an outcome it had already written. With a
-recorded non-zero exit or signal, the run settles `failed` from that exit with
-`interruptedStep` and `failedStep` naming the step; with a clean recorded exit
-(`exitCode === 0`, no signal) whose run finalization is unproved, the run
-settles `hold` with the step's direct exit `0` preserved, `interruptedStep`
-naming the step and `failedStep` left clear unless teardown fails, because a
-clean step exit alone never certifies skipped stages, teardown or full pipeline
-completion (including across teardown retries). Both carry the live-output
-pointer, any retained step logs and explicit teardown state; with no recorded
-exit the outcome is genuinely unobservable and the run settles `lost`. `lost`
-therefore means a dead supervisor or an unobservable outcome, never a run that
-simply waited for its capacity deadline. Existing terminal QA receipts clear
-through normal follow-up runs without rewriting historical run rows.
-
-A takeover is ordered so it can only ever stop what its own proof names.
-`supervisor-process.ts` stops the supervisor first and alone
-(`stopSupervisorProcess`); nothing can start a step after that. Only then is the
-step group the record still names stopped (`stopRecordedProcessGroup`, which
-signals nothing outside that group), and only then is the rest of the run's own
-tree swept (`stopRunTokenProcesses`): with the supervisor dead, a process still
-carrying the run token is a leftover of this run — a pending step whose record
-never landed, an escaped descendant, a group the record does not describe — and
-never a step the run would describe later. The record is re-read before each
-decision and the answer must be positive: a record that advanced or cannot be
-read holds the run and the next poll re-inspects. A sweep that cannot prove the
-token gone is not proof either, so it holds the run rather than settling while
-work of the run's own may still be live. Every read the sweep makes is the
-spawned listing owner rather than the synchronous one, spaced by a waiting
-cadence, because a takeover runs on the service's own loop: a polling loop of
-host-wide environment scans would hold the accepting loop for seconds under load.
-
-`supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
-launch shape and the stale stop with its proof — for milestone QA, project
-validation and the host-run endpoint alike, so neither family keeps its own copy.
-These modules import downward; none imports its former parent, and file helpers
-have no runtime store dependency.
+`supervisor-process.ts` owns detached supervisor launch and identity-scoped
+stop for project validation and generic host runs.
+[Milestone QA](milestone-qa.md) runs as an ordinary report-only task and owns
+the legacy custody boundary and history reads.
 
 ### Shared task reads
 
@@ -438,7 +345,7 @@ extension, `no-automatic-retry-record.ts` records the durable retry rule, and
 [Verbs](#verbs). Delegates remain on Engine.
 
 **ForceVerbs** (`core/verbs/force.ts`). Applies `force: true` on
-`retry_effect` and `move`: who may force, the settlement record, and the forced
+`move`: who may force, the settlement record, and the forced
 move. Enforces the force rules in [Verbs](#verbs). Pures:
 `forceMergeSourceRefusal`, `forceMergeAcceptance`, `forceMergeAdmission`,
 `forceMovePatch`. Delegates remain on Engine.
@@ -1184,7 +1091,7 @@ request identities and stored committed-handoff rows are not rewritten.
   and board-question notices — reach its task planner first: the thread a brief
   named, else its owner. The project planner is the fallback rung (task 1109).
 - Project-level notices that once followed the Spec 042 owner — origin
-  fallbacks, proof-wait attention, scheduled-milestone-QA reminders and the
+  fallbacks, proof-wait attention and the
   drain prompts — follow the project's planner (`project.set-planner`) and then
   the Nucleus planner. A project with no planner and no live owner record is
   dormant: silent, with no drain episodes.
@@ -1227,7 +1134,6 @@ request identities and stored committed-handoff rows are not rewritten.
   Owner verbs and task-specific holds keep their existing meaning. Releasing the
   board hold clears no task hold and uses the existing dispatch order and capacity
   gates. Each dispatch pass reads this setting once, with no additional task scan.
-  Scheduled and manual project QA are unaffected: QA has its own fence.
 - A new store starts paused with an empty worker pool, so nothing dispatches
   until the operator adds profiles and resumes. Pause survives restarts.
 - Pause stores submissions and defers new dispatch; existing work drains (Tom,
@@ -1805,15 +1711,6 @@ request identities and stored committed-handoff rows are not rewritten.
   component down to the scratch root is canonical on that device, so an absent,
   redirected or boot-disk mount refuses the launch instead of creating the tree
   on the internal disk. It never falls back to the daemon's own `TMPDIR`.
-  A milestone QA run uses the same placement: each new run gets a leaf under its
-  repository namespace, stages see it as `TMPDIR`, `TMP` and `TEMP`, and Nucleus
-  removes the leaf when the run settles and its checkout is cleaned up. A QA run
-  already in flight keeps the environment it launched with; an absent volume waits
-  or refuses as other admission does and never falls back to the service process's
-  `TMPDIR`.
-- Shared Rust build and cache policy belongs to Project-c (Tom, 2026-10-09); no
-  reusable compiler-cache manager is built in Nucleus, and no shared
-  `CARGO_TARGET_DIR` is introduced.
 
 ## Worker run
 
@@ -3106,6 +3003,15 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 ### Verbs
 
+[Explicit resolution](../specs/067-explicit-resolution.md) has a separate
+version-fenced transaction. An applied command records one `owner_resolution`
+event with the target's prior state, the caller, the reason and the warnings
+the caller accepted. Release revokes the run credential and retires its
+delivery records before any best-effort host cancellation or archive. Clear
+changes the stored fact the fence reads. Ordinary scheduling evaluates the
+resulting state on its own cadence.
+
+
 - The owner verbs and reconciliation act on current forge, checkout,
   integration and participant observations. Exact-head review or operator
   source acceptance, preservation of uncommitted work, exclusive writers,
@@ -3116,8 +3022,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   observation changes nothing. An absent terminal cleanup target is settled
   only when storage and the host archive are observed; this claims no removal.
 - A settled escalation closes its refusal follow-up. Reviewer-side answers
-  stay with the reviewer, and a coordinator may report an offered forced move
-  or effect retry under its own authenticated recovery binding.
+  stay with the reviewer. A coordinator can report an offered forced move
+  under its authenticated recovery binding and use explicit resolution for a
+  run or effect it needs to clear.
 - A required worker preference needing board sign-off enters the same routing
   request and decision lifecycle as an explicit role request; unsigned requests
   use automatic selection until the decision is answered.
@@ -3936,29 +3843,6 @@ after the task finishes.
 Client render tests share `test/support/board-shell.ts` for source and bundled
 renders. The render harness binds source imports; its `boardShellPlugin` routes
 bundled shell imports to the same host hooks and native stand-ins.
-
-- `project.qa.run`, its `wait: true` (CLI `--wait`) settlement summary and the
-  `qa.schedule` admission are retired (nucleus#1475) and refuse with the
-  replacement named; [milestone QA](milestone-qa.md) owns the report-only
-  recipe and the migration order. Stored runs keep only their history and
-  cleanup verbs.
-- A milestone QA run admitted before the cutover still settles the way it did:
-  an idempotent agent-channel message to the
-  registered project planner and, when available, the submitting agent. It
-  reports state, failed and cancelled counts, and run ID. Non-TAP failures may
-  have no test identities; the failed step's retained output path is the
-  diagnostic pointer. The recorded QA timeout is the scheduler envelope; each
-  step uses its configured timeout, and staged envelopes include all stage
-  limits plus setup and teardown limits. An explicit QA limit wins over a
-  historical wall-time estimate, which never lengthens the enforced limit.
-  Staged notices name each stage's failed and cancelled counts; the timing
-  stage may be inconclusive under host saturation only when every failure is a
-  measured wall-clock or CPU assertion marked with `performanceAssert` in
-  `test/support/timing.ts`. Functional failures, cancellations, runner faults and
-  missing classification evidence fail the lane regardless of load. A passed
-  notice with inconclusive timing names the failed performance oracles and says
-  "timing inconclusive under load: N performance oracles failed"; TAP TODO
-  failures are not counted as failures.
 
 - The affected-test selection (`scripts/test-affected.mjs`, `effigy test:affected`)
   reads the committed head only: changed paths come from `git diff --no-renames`

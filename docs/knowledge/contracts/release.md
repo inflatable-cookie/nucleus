@@ -69,15 +69,11 @@ against an isolated scratch store; failure is a failed build.
 
 ## Swapping a shared tool
 
-An install that replaces a tool Nucleus's QA runs (the Effigy binary, an
-installed skill) uses the QA admission fence (Spec 022): the operator, or an
-agent relaying the operator's recorded ruling, sets it with a reason and a
-bounded duration, then installs once `project.qa.fence-status` shows no
-unsettled QA while that same fence is in force, and clears it afterwards. The
-fence covers project QA only. Task validation runs and Effigy client host runs
-keep running; the install owner coordinates or waits for them through the
-owners of that work and the routes they already have. The fence does not pause
-or cancel anyone else's work, and Nucleus has no global per-task pause for this.
+The release owner coordinates any live task validation, Effigy runs or
+report-only milestone work using the tool being replaced through their owners.
+For an install with managed QA history, the
+[milestone QA handoff](milestone-qa.md#legacy-history-and-upgrades) describes how
+the existing roll defers until the compatibility build settles custody.
 
 ## Rules
 

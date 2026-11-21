@@ -648,7 +648,7 @@ function tree(
 /** Yield until the board read lands: the menu carries real counts and the open list has rendered. */
 async function settle(ui: ReturnType<typeof mount>) {
   for (let attempt = 0; attempt < 400; attempt++) {
-    if (ui.query(/^Active, \d+$/) && ui.query(/ list$/)) return;
+    if (ui.query(/^Closing, \d+$/) && ui.query(/ list$/)) return;
     await tick();
   }
   assert.fail("the inbox board did not render");
@@ -690,11 +690,17 @@ const navigationButton = (ui: ReturnType<typeof mount>, name: string) => {
   assert.ok(button, `missing ${name} menu entry`);
   return button;
 };
-/** Open a menu view (or one of Active's sections) by name. */
+/** Open a menu view by name. */
 const openView = (ui: ReturnType<typeof mount>, name: string) =>
   navigationButton(ui, name).props.onPress();
 /** The views that list task and decision cards. */
-const cardViews = ["Needs you", "Queue", "Active"] as const;
+const cardViews = [
+  "Needs you",
+  "Queue",
+  "Working",
+  "In review",
+  "Closing",
+] as const;
 /** A text's count summed over the card views; each card lives in exactly one. */
 const countAcross = (
   ui: ReturnType<typeof mount>,
@@ -774,7 +780,6 @@ async function verifyViewport(compact: boolean) {
       "Leads",
       "Papercuts",
       "Queue",
-      "Active",
       "Working",
       "In review",
       "Closing",
@@ -828,18 +833,22 @@ async function verifyViewport(compact: boolean) {
     );
     openView(ui, "Queue");
     assert.equal(countText(ui, "Task queued"), 1, "queued work is in Queue");
-    openView(ui, "Active");
-    for (const section of ["Working", "In review", "Closing"])
-      assert.ok(
-        ui.query(new RegExp(`^${section} section, \\d+$`)),
-        `Active lists its ${section} section`,
-      );
-    assert.equal(countText(ui, "Task closing"), 1, "closing work is in Active");
+    openView(ui, "Working");
+    assert.equal(
+      countText(ui, "Task working"),
+      1,
+      "working tasks open in Working",
+    );
     openView(ui, "Closing");
+    assert.equal(
+      countText(ui, "Task closing"),
+      1,
+      "closing work is in Closing",
+    );
     assert.equal(
       countText(ui, "Task working"),
       0,
-      "a section shows only its own cards",
+      "an entry shows only its own cards",
     );
     assert.equal(countText(ui, "Task closing"), 1);
     // This fixture has no decisions: Needs you is one list with one empty state and a real zero.
@@ -1324,8 +1333,8 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       /Your answer · asked by project-a-accelerator#5747 worker/,
       "the row names the task reference and role that asked",
     );
-    // The linked shared task is working, so its card is in Active.
-    openView(ui, "Active");
+    // The linked shared task is working, so its card is in Working.
+    openView(ui, "Working");
     assert.ok(
       ui.text().includes("Waiting on you · Which branch do we cut?"),
       "linked operator waits name the decision",
@@ -2349,8 +2358,8 @@ test("051 bundled dark-theme board marks an interactive task, and says when it i
     const ui = mount(tree(MainSurface, false, rpc));
     try {
       await settle(ui);
-      // Both sessions are working, so Active lists them.
-      openView(ui, "Active");
+      // Both sessions are working, so Working lists them.
+      openView(ui, "Working");
       assert.equal(
         countText(ui, "Interactive"),
         1,
@@ -2405,13 +2414,18 @@ for (const compact of [false, true]) {
           "Leads",
           "Papercuts",
           "Queue",
-          "Active",
           "Working",
           "In review",
           "Closing",
         ],
         "menu counts stay hidden until the board loads",
       );
+      for (const button of navigationButtons(ui))
+        assert.equal(
+          button.props.style.opacity,
+          1,
+          "no entry dims before its count loads",
+        );
       assertDarkTheme(ui);
     } finally {
       unmount(ui);
@@ -2474,7 +2488,7 @@ for (const compact of [false, true]) {
       tree(
         MainSurface,
         compact,
-        respond({ ...board, tasks: [], pendingSubmissions: [], qaRuns: [] }),
+        respond({ ...board, tasks: [], pendingSubmissions: [] }),
       ),
     );
     try {
@@ -2487,7 +2501,6 @@ for (const compact of [false, true]) {
           "Leads, 0",
           "Papercuts, 0",
           "Queue, 0",
-          "Active, 0",
           "Working, 0",
           "In review, 0",
           "Closing, 0",
@@ -2563,4 +2576,220 @@ for (const compact of [false, true]) {
       unmount(ui);
     }
   });
+
+  // nucleus#1525: Working, In review and Closing are top-level menu entries with
+  // their own counts and lists, behind dimmer dividers; zero-count entries dim.
+  test(`the inbox menu splits Working, In review and Closing top-level with dimmer dividers at the ${viewport} viewport`, async () => {
+    const respond =
+      (uiBoard: unknown) => async (method: string, input: unknown) => {
+        if (method === "queue.ui-snapshot") return uiBoard;
+        if (method === "papercut.list") return [];
+        if (method === "lead.board") return { cards: [], links: [] };
+        return invoke(method, input);
+      };
+    const MainSurface = await bundleMainSurface();
+    const ui = mount(
+      tree(
+        MainSurface,
+        compact,
+        respond({
+          ...board,
+          tasks: [
+            summary("w1", "Working one", ["first"], "working"),
+            summary("r1", "Review one", ["first"], "reviewing"),
+          ],
+          pendingSubmissions: [],
+          qaRuns: [],
+        }),
+      ),
+    );
+    try {
+      await settle(ui);
+      const menu = ui
+        .get("Nucleus navigation")
+        .children.filter((node): node is HostNode => typeof node !== "string");
+      const kinds = menu.map((node) =>
+        node.type === "Pressable"
+          ? `entry:${viewName(String(node.props.accessibilityLabel))}`
+          : node.type === "View" && node.props.style?.height === 1
+            ? "divider"
+            : `other:${node.type}`,
+      );
+      assert.deepEqual(
+        kinds,
+        [
+          "entry:Needs you",
+          "divider",
+          "entry:Planning",
+          "entry:Leads",
+          "entry:Papercuts",
+          "entry:Queue",
+          "divider",
+          "entry:Working",
+          "entry:In review",
+          "entry:Closing",
+        ],
+        "two dividers split Needs you and the Working entries off",
+      );
+      // The dividers read at half the border's contrast: the same border token, translucent.
+      const dividers = menu.filter(
+        (node) => node.type === "View" && node.props.style?.height === 1,
+      );
+      assert.equal(dividers.length, 2);
+      for (const divider of dividers)
+        assert.deepEqual(
+          {
+            backgroundColor: divider.props.style.backgroundColor,
+            opacity: divider.props.style.opacity,
+          },
+          { backgroundColor: dark.border, opacity: 0.5 },
+        );
+      assert.ok(ui.query("Working, 1"), "Working carries its own count");
+      assert.ok(ui.query("In review, 1"), "In review carries its own count");
+      assert.ok(ui.query("Closing, 0"), "Closing reads its real zero");
+      assert.equal(ui.query(/^Active/), undefined, "no Active entry remains");
+      // Dimming: a zero-count entry dims, while the selected zero entry, the
+      // uncounted Planning entry and non-zero entries do not.
+      const opacityOf = (name: string) =>
+        navigationButton(ui, name).props.style.opacity;
+      assert.equal(
+        opacityOf("Planning"),
+        1,
+        "Planning carries no count and never dims",
+      );
+      assert.equal(opacityOf("Working"), 1, "a non-zero entry never dims");
+      assert.equal(opacityOf("Closing"), 0.55, "a zero-count entry dims");
+      assert.equal(
+        opacityOf("Needs you"),
+        1,
+        "the selected entry keeps its selected styling",
+      );
+      // Each entry opens its own list with its real count.
+      openView(ui, "Working");
+      assert.ok(ui.query("Working list"), "Working opens its own list");
+      assert.equal(countText(ui, "1 item"), 1);
+      assert.ok(ui.text().includes("Working one"));
+      openView(ui, "In review");
+      assert.ok(ui.text().includes("Review one"));
+      assert.ok(
+        !ui.text().includes("Working one"),
+        "an entry lists only its own cards",
+      );
+      openView(ui, "Closing");
+      assert.ok(ui.query("Closing list"), "Closing opens its own list");
+      assert.equal(
+        countText(ui, "0 items"),
+        1,
+        "an empty entry counts its real zero",
+      );
+      assert.ok(ui.text().includes("Nothing here."));
+      assertDarkTheme(ui);
+    } finally {
+      unmount(ui);
+    }
+  });
 }
+
+// nucleus#1525: at a narrow panel the same split menu lives in the drawer; each
+// entry opens its own list and closes the drawer.
+test("the narrow drawer lists Working, In review and Closing top-level with dimmer dividers", async () => {
+  const respond = async (method: string, input: unknown) => {
+    if (method === "queue.ui-snapshot")
+      return {
+        ...board,
+        tasks: [
+          summary("w1", "Working one", ["first"], "working"),
+          summary("r1", "Review one", ["first"], "reviewing"),
+        ],
+        pendingSubmissions: [],
+        qaRuns: [],
+      };
+    if (method === "papercut.list") return [];
+    if (method === "lead.board") return { cards: [], links: [] };
+    return invoke(method, input);
+  };
+  const MainSurface = await bundleMainSurface();
+  const ui = mount(tree(MainSurface, false, respond));
+  try {
+    await settle(ui);
+    // A 600-point panel folds the menu into a drawer behind a menu button.
+    const panel = ui
+      .ofType("View")
+      .find((node) => typeof node.props.onLayout === "function");
+    assert.ok(panel, "the board measures its panel");
+    (panel as HostNode).props.onLayout({
+      nativeEvent: { layout: { width: 600, height: 800 } },
+    });
+    assert.equal(
+      ui.query("Nucleus navigation"),
+      undefined,
+      "the drawer starts closed",
+    );
+    assert.ok(ui.query("Open the board menu"), "the header offers the menu");
+    ui.press("Open the board menu");
+    assert.ok(ui.get("Board menu"), "the drawer opens");
+    const menu = ui
+      .get("Nucleus navigation")
+      .children.filter((node): node is HostNode => typeof node !== "string");
+    assert.deepEqual(
+      menu.map((node) =>
+        node.type === "Pressable"
+          ? `entry:${viewName(String(node.props.accessibilityLabel))}`
+          : node.type === "View" && node.props.style?.height === 1
+            ? "divider"
+            : `other:${node.type}`,
+      ),
+      [
+        "entry:Needs you",
+        "divider",
+        "entry:Planning",
+        "entry:Leads",
+        "entry:Papercuts",
+        "entry:Queue",
+        "divider",
+        "entry:Working",
+        "entry:In review",
+        "entry:Closing",
+      ],
+      "the drawer carries the same split menu",
+    );
+    const dividers = menu.filter(
+      (node) => node.type === "View" && node.props.style?.height === 1,
+    );
+    assert.equal(dividers.length, 2);
+    for (const divider of dividers)
+      assert.deepEqual(
+        {
+          backgroundColor: divider.props.style.backgroundColor,
+          opacity: divider.props.style.opacity,
+        },
+        { backgroundColor: dark.border, opacity: 0.5 },
+        "the drawer dividers read at half the border's contrast",
+      );
+    assert.ok(ui.query("Working, 1"), "Working carries its own count");
+    assert.ok(ui.query("Closing, 0"), "Closing reads its real zero");
+    assert.equal(ui.query(/^Active/), undefined, "no Active entry remains");
+    // Each entry opens its own list and closes the drawer.
+    openView(ui, "Working");
+    assert.ok(ui.query("Working list"), "Working opens its own list");
+    assert.equal(
+      ui.query("Board menu"),
+      undefined,
+      "picking an entry closes the drawer",
+    );
+    assert.equal(countText(ui, "1 item"), 1);
+    assert.ok(ui.text().includes("Working one"));
+    ui.press("Open the board menu");
+    openView(ui, "Closing");
+    assert.ok(ui.query("Closing list"), "Closing opens its own list");
+    assert.equal(
+      ui.query("Board menu"),
+      undefined,
+      "picking an entry closes the drawer",
+    );
+    assert.equal(countText(ui, "0 items"), 1);
+    assertDarkTheme(ui);
+  } finally {
+    unmount(ui);
+  }
+});

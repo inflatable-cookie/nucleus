@@ -68,15 +68,60 @@ const task = (id: string, since: string | null): PipelineCard =>
     value: { id, hold: since === null ? undefined : { since } },
   }) as unknown as PipelineCard;
 
-test("the menu lists Leads and Papercuts as separate entries, between Planning and Queue", () => {
+test("the menu lists Needs you, Planning, Leads, Papercuts, Queue, Working, In review and Closing, with no Active entry", () => {
   assert.deepEqual(
     inboxViews.map((view) => view.id),
-    ["needs", "planning", "leads", "papercuts", "queue", "active"],
+    [
+      "needs",
+      "planning",
+      "leads",
+      "papercuts",
+      "queue",
+      "working",
+      "review",
+      "closing",
+    ],
   );
   assert.deepEqual(
     inboxViews.map((view) => view.label),
-    ["Needs you", "Planning", "Leads", "Papercuts", "Queue", "Active"],
+    [
+      "Needs you",
+      "Planning",
+      "Leads",
+      "Papercuts",
+      "Queue",
+      "Working",
+      "In review",
+      "Closing",
+    ],
   );
+  for (const view of inboxViews)
+    assert.ok(view.icon, `${view.id} carries its own icon`);
+});
+
+test("Working, In review and Closing each list their own column, with their own counts", () => {
+  const cards = board({
+    Working: [task("working", null)],
+    Review: [task("review", null)],
+    Closing: [task("closing", null)],
+  });
+  assert.deepEqual(
+    inboxSections(cards, "working").map((section) => section.id),
+    ["working"],
+  );
+  assert.deepEqual(
+    inboxSections(cards, "review")[0]!.cards.map((card) => card.id),
+    ["review"],
+  );
+  assert.deepEqual(
+    inboxSections(cards, "closing")[0]!.cards.map((card) => card.id),
+    ["closing"],
+  );
+  const counts = inboxCounts(cards);
+  assert.equal(counts.working, 1);
+  assert.equal(counts.review, 1);
+  assert.equal(counts.closing, 1);
+  assert.ok(!("active" in counts), "no Active aggregate remains");
 });
 
 test("Leads and Papercuts split the Triage column by tag, each with its own total", () => {

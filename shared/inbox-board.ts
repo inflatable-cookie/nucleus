@@ -18,26 +18,13 @@ export const inboxViews = [
   { id: "leads", label: "Leads", icon: "Lightbulb" },
   { id: "papercuts", label: "Papercuts", icon: "Scissors" },
   { id: "queue", label: "Queue", icon: "ListOrdered" },
-  { id: "active", label: "Active", icon: "Activity" },
+  { id: "working", label: "Working", icon: "Hammer", column: "Working" },
+  { id: "review", label: "In review", icon: "Eye", column: "Review" },
+  { id: "closing", label: "Closing", icon: "Check", column: "Closing" },
 ] as const;
 export type InboxView = (typeof inboxViews)[number]["id"];
 
-/** Active's three sections, each also a menu entry of its own. */
-export const activeSections = [
-  { id: "working", label: "Working", column: "Working" },
-  { id: "review", label: "In review", column: "Review" },
-  { id: "closing", label: "Closing", column: "Closing" },
-] as const;
-export type ActiveSection = (typeof activeSections)[number]["id"];
-
 export type InboxSection = { id: string; label: string; cards: PipelineCard[] };
-
-/**
- * Milestone QA is retired as a board surface (Tom, 2026-11-21): QA runs as an
- * ordinary task, so a leftover QA card is not listed anywhere.
- */
-const listed = (cards: readonly PipelineCard[]) =>
-  cards.filter((card) => card.kind !== "qa");
 
 /** Leads: the Triage column's leads. A papercut-tagged lead is a papercut, never a lead here. */
 export function leadsCards(board: PipelineBoard): PipelineCard[] {
@@ -74,8 +61,8 @@ export function needsActionAt(card: PipelineCard): number {
 /** Needs you: decisions, Nucleus-raised holds, drained-lane prompts and attention tasks in one list, newest needing action first. */
 export function needsCards(board: PipelineBoard): PipelineCard[] {
   return [
-    ...listed(board.cards.Decisions),
-    ...listed(board.cards.Attention),
+    ...board.cards.Decisions,
+    ...board.cards.Attention,
   ].sort((a, b) => needsActionAt(b) - needsActionAt(a));
 }
 
@@ -83,13 +70,12 @@ export function needsCards(board: PipelineBoard): PipelineCard[] {
 export function inboxSections(
   board: PipelineBoard,
   view: InboxView,
-  options: { active?: ActiveSection | null } = {},
 ): InboxSection[] {
   const column = (
     id: string,
     label: string,
     name: PipelineColumn,
-  ): InboxSection => ({ id, label, cards: listed(board.cards[name]) });
+  ): InboxSection => ({ id, label, cards: board.cards[name] });
   switch (view) {
     case "needs":
       return [{ id: "needs", label: "Needs you", cards: needsCards(board) }];
@@ -101,10 +87,12 @@ export function inboxSections(
       ];
     case "queue":
       return [column("queued", "Queued", "Queued")];
-    case "active":
-      return activeSections
-        .filter((section) => !options.active || section.id === options.active)
-        .map((section) => column(section.id, section.label, section.column));
+    case "working":
+      return [column("working", "Working", "Working")];
+    case "review":
+      return [column("review", "In review", "Review")];
+    case "closing":
+      return [column("closing", "Closing", "Closing")];
     case "planning":
       return [];
   }
@@ -115,18 +103,15 @@ export function inboxSections(
  * "…and N more" rows, so the count is the real total, never the loaded page.
  */
 export function inboxCounts(board: PipelineBoard, hiddenQueued = 0) {
-  const n = (name: PipelineColumn) => listed(board.cards[name]).length;
+  const n = (name: PipelineColumn) => board.cards[name].length;
   return {
     needs: needsCards(board).length,
     leads: leadsCards(board).length,
     papercuts: papercutCards(board).length,
     queue: n("Queued") + hiddenQueued,
-    active: n("Working") + n("Review") + n("Closing"),
-    activeBySection: {
-      working: n("Working"),
-      review: n("Review"),
-      closing: n("Closing"),
-    },
+    working: n("Working"),
+    review: n("Review"),
+    closing: n("Closing"),
   };
 }
 

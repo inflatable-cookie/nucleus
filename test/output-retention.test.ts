@@ -28,13 +28,9 @@ import {
   tailWithTruncationMarker,
   wasTruncated,
 } from "../core/machine/output-retention";
-import {
-  PROJECT_QA_STEP_OUTPUT_BYTES,
-  streamHeadTail,
-} from "../core/qa/project-qa-pipeline";
-import { StreamingTapFailures } from "../core/qa/project-qa-tap-failures";
-import { writeQaStepLog } from "../core/qa/project-qa-supervision-files";
 import { redactHostRunToken } from "../service/callbacks/host-run-endpoint";
+
+const STEP_OUTPUT_BYTES = 2000;
 
 const markerPattern =
   /\[queue: output truncated: observed=(\d+) retained=(\d+) omitted=(\d+)(?: cap=(\d+))?; beginning and end kept\]/;
@@ -181,7 +177,7 @@ test("a bounded head and tail excerpt carries the marker inside the existing fie
     `${"start of output\n"}${"ordinary diagnostic line\n".repeat(400)}the failing assertion\n`,
   );
   const { rendered, retention } = retentionOf([payload], cap);
-  const excerpt = boundedHeadTail(rendered, PROJECT_QA_STEP_OUTPUT_BYTES, {
+  const excerpt = boundedHeadTail(rendered, STEP_OUTPUT_BYTES, {
     observedBytes: retention.observedBytes,
     omittedBytes: retention.omittedBytes,
   });
@@ -204,29 +200,21 @@ test("a bounded head and tail excerpt carries the marker inside the existing fie
     "the tail says the stream was cut",
   );
   assert.ok(
-    Buffer.byteLength(excerpt.head) <= PROJECT_QA_STEP_OUTPUT_BYTES,
+    Buffer.byteLength(excerpt.head) <= STEP_OUTPUT_BYTES,
     "the head stays inside its bound",
   );
   assert.ok(
-    Buffer.byteLength(excerpt.tail) <= PROJECT_QA_STEP_OUTPUT_BYTES,
+    Buffer.byteLength(excerpt.tail) <= STEP_OUTPUT_BYTES,
     "the tail stays inside its bound",
   );
   const counts = markerCounts(excerpt.tail);
   assert.equal(counts.observed, payload.length);
   assert.equal(counts.retained + counts.omitted, payload.length);
-  // The step projection is the same helper the pipeline records.
-  assert.deepEqual(
-    streamHeadTail(rendered, PROJECT_QA_STEP_OUTPUT_BYTES, {
-      observedBytes: retention.observedBytes,
-      omittedBytes: retention.omittedBytes,
-    }),
-    excerpt,
-  );
 });
 
 test("an uncapped stream's excerpts are unchanged: no marker and no counts", () => {
   const payload = Buffer.from("compiled\n");
-  const excerpt = boundedHeadTail(payload, PROJECT_QA_STEP_OUTPUT_BYTES);
+  const excerpt = boundedHeadTail(payload, STEP_OUTPUT_BYTES);
   assert.deepEqual(excerpt, { head: "compiled\n", tail: "" });
   assert.equal(wasTruncated(null), false);
 });
@@ -414,55 +402,6 @@ test("a hook's output-limit kill keeps its contiguous prefix and invents no mark
     /output truncated/,
     "a rejected hook result gains no diagnostic marker: its output is never accepted as a result",
   );
-});
-
-test("the step's full-output log holds the marked beginning and end, not a silent tail", async () => {
-  const root = mkdtempSync(join(tmpdir(), "nsq-388-log-"));
-  try {
-    const cap = 2048;
-    const payload = `LOG-BEGIN\n${"step output line\n".repeat(300)}LOG-FAILURE\n`;
-    const outcome = await executeHookProgram({
-      root: tmpdir(),
-      executable: process.execPath,
-      argv: ["-e", `process.stdout.write(${JSON.stringify(payload)})`],
-      stdin: Buffer.alloc(0),
-      timeoutMs: 20_000,
-      maxOutputBytes: cap,
-      overflow: "tail",
-      env: {},
-    });
-    const path = join(root, "step.stdout.log");
-    const written = writeQaStepLog(path, outcome.stdout);
-    assert.equal(written.error, null);
-    assert.equal(written.bytes, outcome.stdout.length);
-    assert.ok(written.bytes! <= cap, "the log stays inside the step's cap");
-    const logged = readFileSync(path, "utf8");
-    assert.ok(
-      logged.startsWith("LOG-BEGIN"),
-      "the log keeps the step's beginning",
-    );
-    assert.ok(
-      logged.trimEnd().endsWith("LOG-FAILURE"),
-      "the log keeps the step's end",
-    );
-    assert.match(
-      logged,
-      markerPattern,
-      "the log states that it is not the complete output",
-    );
-    const counts = markerCounts(logged);
-    assert.equal(
-      counts.observed,
-      Buffer.byteLength(payload),
-      "the log names the observed byte count",
-    );
-    assert.ok(
-      counts.retained < counts.observed,
-      "the log never claims to retain the whole stream",
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test("a durable finding keeps a bounded beginning and end around the marker", () => {
@@ -715,86 +654,6 @@ test("a large stream of short ordinary lines trims its tail without quadratic sh
   assert.ok(rendered.length <= 64 * 1024);
   assert.equal(retention.observedBytes, line.length * 50_000);
   assert.ok(retention.omittedBytes > 0);
-});
-
-test("a draining QA stream with split redaction and a final partial line settles within the bound", async (t) => {
-  // The stream producer below is one non-forking fixture process.
-  scopedIdentityListing(t);
-  const root = mkdtempSync(join(tmpdir(), "nsq-qa-stream-drain-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const token = "host-run-token-0123456789-abcdefghijklmnopqrstuvwxyz";
-  const passing = Array.from(
-    { length: 5_595 },
-    (_, index) =>
-      `ok ${index + 1} - ordinary diagnostic output with padding ${"x".repeat(10)}\n`,
-  ).join("");
-  const output = `TAP version 13\n${passing}not ok 5596 - ${token}\n  error: final unterminated diagnostic`;
-  const script = [
-    "let input = '';",
-    "process.stdin.setEncoding('utf8');",
-    "process.stdin.on('data', chunk => { input += chunk; });",
-    "process.stdin.on('end', () => { for (let at = 0; at < input.length; at += 997) process.stdout.write(input.slice(at, at + 997)); });",
-  ].join("\n");
-  const live = openLiveOutputLog(join(root, "live.log"), token)!;
-  t.after(() => live.close());
-  const failures = new StreamingTapFailures(token);
-  const started = Date.now();
-  const outcome = await executeHookProgram({
-    root: tmpdir(),
-    executable: process.execPath,
-    argv: ["-e", script],
-    stdin: Buffer.from(output),
-    timeoutMs: 30_000,
-    maxOutputBytes: 64 * 1024,
-    overflow: "tail",
-    trimPassingFirst: true,
-    settleOnProcessGroup: true,
-    terminationGraceMs: 100,
-    env: { PATH: process.env.PATH ?? "" },
-    onOutput: (_stream, chunk) => {
-      // Model fragmented pipe reads so both streaming redactors carry a token
-      // that crosses chunk boundaries while the child exits and the pipes drain.
-      for (let at = 0; at < chunk.length; at += 17) {
-        const piece = chunk.subarray(at, at + 17);
-        failures.push(piece);
-        live.write(piece);
-      }
-    },
-  });
-  live.close();
-  const failureLog = failures.result();
-  const liveText = readFileSync(join(root, "live.log"), "utf8");
-  assert.equal(outcome.code, 0);
-  assert.equal(
-    outcome.processGroupEmpty,
-    true,
-    "exit-while-draining still proves the child group empty",
-  );
-  assert.equal(
-    outcome.stdoutObservedBytes,
-    Buffer.byteLength(output),
-    "every child byte is drained",
-  );
-  assert.ok(
-    Date.now() - started < 10_000,
-    "the evidence-shaped stream completes in bounded time",
-  );
-  assert.ok(
-    failureLog?.includes("not ok 5596"),
-    "the streamed TAP failure survives the passing flood",
-  );
-  assert.ok(
-    failureLog?.includes("final unterminated diagnostic"),
-    "the final partial line is flushed",
-  );
-  assert.ok(
-    !failureLog?.includes(token) && !liveText.includes(token),
-    "redaction carry keeps the token out of both records",
-  );
-  assert.ok(
-    liveText.endsWith("final unterminated diagnostic"),
-    "the live output log flushes its final partial bytes",
-  );
 });
 
 test("one chunk larger than the cap without a newline is also held only in cap-sized pieces", () => {

@@ -195,9 +195,6 @@ test("the public owner route retires an old unbound running row's accounting and
   // "Both release"), so its task can archive while custody stays unknown.
   assert.ok((publicList(h) as Array<{ id: string }>).some(record => record.id === run.id));
   assert.equal(h.store.hostRunHoldingWorkspace(repository.path), null);
-  const inventory = h.store.qaUnsettledInventory().find(item => item.kind === "host_run" && item.id === run.id);
-  assert.ok(inventory, "the unsettled run is still an inventory item");
-  assert.match(inventory!.detail, /retired its accounting.*custody stay unknown/);
 });
 
 test("authority and the separate exact-run acceptance are both required, and a forged relay refuses", t => {

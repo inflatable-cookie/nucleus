@@ -1,3 +1,4 @@
+import { seedLegacyQaRun } from "./support/legacy-qa";
 /**
  * Spec 056: the repository namespace re-key's sequence, swap, refusal,
  * fault-injection and restart proofs.
@@ -52,7 +53,7 @@ function fixture(label = 'seq') {
         startedAt: '2026-01-01T00:00:00.000Z', finishedAt: '2026-01-01T00:10:00.000Z', exitCode: 0, durationMs: 600_000,
         steps: [], escapedDescendants: [], outputTail: 'green', submittedAt: '2026-01-01T00:00:00.000Z', hostRunEpoch: 1,
       });
-      store.putQaRun(run);
+      seedLegacyQaRun(store, run);
       return run;
     },
     reopen() { store.close(); store = new Store(path); },
@@ -400,8 +401,8 @@ test('Spec 056 a path match never absorbs another known-origin repository (putRe
       startedAt: '2026-01-01T00:00:00.000Z', finishedAt: '2026-01-01T00:10:00.000Z', exitCode: 0, durationMs: 600000,
       steps: [], escapedDescendants: [], outputTail: 'green', submittedAt: '2026-01-01T00:00:00.000Z',
     });
-    store.putQaRun(qaRun('qa-alpha', { origin: alpha.origin, path: shared }));
-    store.putQaRun(qaRun('qa-beta', { origin: beta.origin, path: shared }));
+    seedLegacyQaRun(store, qaRun('qa-alpha', { origin: alpha.origin, path: shared }));
+    seedLegacyQaRun(store, qaRun('qa-beta', { origin: beta.origin, path: shared }));
 
     // Naming the shared checkout path cannot choose between two origin-known
     // repositories: it refuses instead of guessing.
@@ -541,7 +542,7 @@ test('Spec 056 a path-only step moves every family\'s path hint, including an em
     assert.equal(store.qaRun('qa-path')?.repository.origin, origin);
     assert.equal(store.qaRun('qa-path')?.repository.path, newPath);
     assert.equal(store.qaRun('qa-path')?.key, origin, 'a path-only step does not move the QA key');
-    assert.equal(store.qaScheduleMerges(origin).length, 1);
+    assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM qa_schedule_merges WHERE repository=?").get(origin)?.count), 1);
 
     assert.equal(store.task(otherTask.id).repository, other.origin);
     assert.equal(store.task(otherTask.id).repoPath, oldPath, 'another origin at the old path is untouched');

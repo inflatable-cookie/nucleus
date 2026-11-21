@@ -83,8 +83,19 @@ thread on a host this process is not connected to is `unknown`.
 Cross-project messages use a short-lived project shortlist from every active
 host. A candidate is live and is the project's registered planner, a thread
 `agent.register` names, a thread that has dispatched or owns project tasks, or a
-thread that works in a project checkout or worktree; a task-role thread is left
-out unless it is registered. Nucleus ranks a live registered planner first,
+thread that works in a project checkout or worktree; a task-role thread
+(including a T3 task parent, the T3 inbox, or a T3 subagent thread identified by
+explicit `subagent` lineage or subagent/delegated-task ID — ordinary T3 forks
+stay eligible) is left out unless it is explicitly registered. Linked-worktree
+matching reads `.git` directly rather than spawning `git`, and an incomplete
+host inventory (timeout or read failure) still serves surviving hosts for that
+call, marks the shortlist for fresh inventory on the next lookup, and keeps a
+project-addressed `tell` or `ask` pending (rather than expiring it or recording
+permanent self-handling when no candidate is picked) until a complete inventory
+answers (nucleus#1518); automatic recovery for a chosen fallback archived
+between shortlist observation and send while another host's inventory is
+incomplete is out of scope, and the existing no-replay fence for unknown
+delivery stays unchanged. Nucleus ranks a live registered planner first,
 then a thread that dispatched or owns project tasks, then a named agent, then a
 thread that only works in the checkout, breaking ties by the most recent host
 activity or Nucleus call (Tom, 2026-11-19; nucleus#1379). A design or support
@@ -157,7 +168,8 @@ the self handover, the board handover, unknown delivery and offline hosts.
 `test/planner-participant-tickets.test.ts` proves the ticket handover model the
 registry reuses. `test/settings-project-editor.test.ts` renders the board list. The resolver,
 cache and routing cases are in `test/responsible-thread-resolver.test.ts`,
-`test/responsible-thread-cache.test.ts` and `test/responsible-thread-routing.test.ts`.
+`test/responsible-thread-cache.test.ts`, `test/responsible-thread-routing.test.ts`
+and `test/t3code-responsible-thread.test.ts`.
 `test/t3code-settled-delivery.test.ts` proves the T3 delivery gate on the private
 server: the unsettle is recorded under the message identity and precedes the send; an
 already-visible thread gets no unsettle; an archived thread is fenced; a delayed

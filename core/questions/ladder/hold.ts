@@ -51,9 +51,9 @@ export function establishEscalationWait(ladder: Ladder, taskId: string, id: stri
       })());
     if (!recordedWait) ladder.store.event(taskId, 'planner_escalation_wait', `${id}: ${JSON.stringify({ ...wait, stopDetail, stopReason })}`);
     const stop = ladder.store.task(taskId).resolution.stop;
-    if (stop?.reason !== stopReason || stop.detail !== stopDetail)
-      ladder.resolution.waiting(ladder.store.task(taskId), stopDetail, stopReason);
+    if (stop?.reason !== stopReason || stop.fact?.subject !== id)
+      ladder.resolution.waiting(ladder.store.task(taskId), stopDetail, stopReason, { fact: { code: "escalation", subject: id } });
     const established = ladder.store.task(taskId).resolution.stop;
-    return established?.reason === stopReason && established.detail === stopDetail;
+    return established?.reason === stopReason && established.fact?.subject === id;
   });
 }

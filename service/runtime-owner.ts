@@ -1,4 +1,4 @@
-import { recordQaServiceLifecycle } from "../core/qa/project-qa-diagnostics";
+import { pruneLegacyQaEvidence } from "../core/qa/legacy-qa-retention";
 import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
 import { registerServiceRollRequest } from "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
@@ -16,8 +16,6 @@ import { sourcePathFromModule } from "../shared/service/build";
 import { readBbPluginRoll, readServiceRoll } from "../shared/service/discovery";
 import type { QueueServiceState } from "../shared/schema/service";
 import { pluginRegistration } from "../shared/plugin-discovery.mjs";
-import { qaFenceStatus } from "../core/qa/qa-fence";
-import type { ProjectQaFenceInput } from "../shared/contracts";
 import { pidAlive } from "../core/machine/process-identity";
 import {
   defaultDataDir,
@@ -124,6 +122,8 @@ import type {
   OutcomeSearchInput,
 } from "../shared/contracts";
 import { taskControlChanges } from "../shared/task-control-changes";
+import type { ExplicitResolution } from "../shared/schema/task-control";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   type OperationAcceptance,
   type OperationResult,
@@ -147,7 +147,6 @@ import {
 import { RunUsageTracker } from "../core/telemetry/run-usage-tracker";
 import { createTaskDetailCache } from "../core/telemetry/task-detail";
 import { createUiSnapshotFactsCache } from "../core/telemetry/ui-snapshot";
-import { QA_BOARD_PASS_FADE_MS } from "../core/qa/qa-board";
 
 import { type CheckRequirementTransport } from "../core/forge/index";
 import { now, operationInputHash } from "../core/store/store";
@@ -178,8 +177,6 @@ import { Papercuts } from "../core/planning/papercut-operations";
 import { Leads } from "../core/planning/leads";
 import { Decisions } from "../core/planning/decisions";
 
-import { ProjectQaRunner } from "../core/qa/project-qa";
-import { ProjectQaSchedules } from "../core/qa/project-qa-schedule";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
 import { captureCpuProfile } from "../core/telemetry/cpu-profile";
 import { EventLoopDelayMonitor } from "../core/telemetry/event-loop-delay";
@@ -457,7 +454,6 @@ export class QueueRuntime {
   /** The lifecycle sweep cadence this instance runs (production default, fixture override). */
   private readonly sweepIntervalMs: number;
   private readonly eventLoopDelay = new EventLoopDelayMonitor();
-  private scheduledQa: ProjectQaSchedules | null = null;
   /**
    * Task 530: the live run set's terminal tabs and workspace labels. A
    * best-effort projection; it never admits, schedules, settles or changes a task.
@@ -656,7 +652,6 @@ export class QueueRuntime {
         pid: process.pid,
         owner: this.owner,
       });
-      recordQaServiceLifecycle(this.store, "start");
     });
     this.hostRegistry = new HostRegistry(
       {
@@ -846,10 +841,6 @@ export class QueueRuntime {
       (tasks, runs) =>
         this.engine.resolution.slotAdmissionReader(tasks, runs, true),
       () => this.hostRuns.liveRuns(),
-      (nowMs) =>
-        this.store.qaBoardRuns(
-          new Date(nowMs - QA_BOARD_PASS_FADE_MS).toISOString(),
-        ),
       (task) => this.engine.queuedExternalWait(task),
       () => this.engine.queuedWaitSignature(),
       () =>
@@ -916,7 +907,6 @@ export class QueueRuntime {
       hostRuns: this.hostRuns,
       requiredCheckTransport: this.requiredCheckTransport,
       markStoreAccess: () => this.markStoreAccess(),
-      projectQaRunner: () => this.projectQaRunner(),
       plannerChanged: (projectKey) => this.plannerTickets.assigned(projectKey),
       agentChanged: (projectKey, name, caller) =>
         this.plannerTickets.agentChanged(projectKey, name, caller),
@@ -1035,22 +1025,6 @@ export class QueueRuntime {
         // The endpoint is the first thing a serving process owes its clients; a
         // lost or refused bind must never wait for a request to be retried.
         void this.ensureHostRunEndpoint();
-        // A milestone QA run survives a Queue roll in its detached supervisor
-        // (task 114). Pick up any running run this process does not yet own, so
-        // a restarted service settles it without waiting for a board read.
-        void this.recoverProjectQa();
-        if (this.anyHostConnected() && !this.store.getMeta("paused")) {
-          this.scheduledQa ??= new ProjectQaSchedules(
-            this.store,
-            this.projectQaRunner(),
-            {
-              canAdmit: () => !this.closing && this.anyHostConnected(),
-              refreshResponsibleThread: (project) =>
-                this.engine.resolution.responsibleThread(project),
-            },
-          );
-          void this.scheduledQa.tick();
-        }
         // Bootstrap in the background and never await it here. Awaiting it is what
         // wedged the runtime: one hung daemon call inside the shared bootstrap promise
         // stopped every tick from reaching its own sweep for thirteen minutes, with
@@ -1113,13 +1087,7 @@ export class QueueRuntime {
           void (async () => {
             try {
               await this.store.pruneRetainedHistory();
-            } catch {
-              /* retried next hour */
-            }
-            // Milestone QA retention is its own owner now: settled checkouts and
-            // expired per-run files age out here, never on a board read.
-            try {
-              await this.projectQaRunner().sweepRetention();
+              await pruneLegacyQaEvidence(this.store, this.dataDir);
             } catch {
               /* retried next hour */
             }
@@ -1970,7 +1938,6 @@ export class QueueRuntime {
   }
 
   recordServiceRoll(input: unknown): { recorded: number } {
-    recordQaServiceLifecycle(this.store, "roll");
     const roll = input as { fromBuild?: unknown; toBuild?: unknown } | null;
     const from = String(roll?.fromBuild ?? "unknown").slice(0, 64),
       to = String(roll?.toBuild ?? "unknown").slice(0, 64);
@@ -2345,10 +2312,21 @@ export class QueueRuntime {
   }
 
   async taskControl(
-    request: TaskControlRequest,
+    request: TaskControlRequest | ExplicitResolution,
   ): Promise<
     import("../shared/contracts").TaskControlTask | OperationAcceptance
   > {
+    if (request.action === "run.release" || request.action === "record.clear")
+      return resolveExplicitly(this.engine, request, task => {
+        if (task.removedAt) return "The scheduler leaves this removed task alone.";
+        const next = this.taskNext({ taskId: task.id });
+        if (next.paused) return "The scheduler waits for Nucleus to resume.";
+        if (next.stop) return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
+        if (["awaiting_review", "reviewing"].includes(task.phase) && !next.activeRun)
+          return "The scheduler rechecks reviewer admission at the recorded PR head.";
+        if (next.activeRun) return `The scheduler checks the ${next.activeRun.role} run for progress.`;
+        return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
+      });
     const input = this.engine.resolveTaskControl(request);
     const before = this.store.task(input.taskId);
     if (!controlHasExternalEffect(input)) {
@@ -2571,39 +2549,10 @@ export class QueueRuntime {
       runs: () => this.hostRuns.liveRuns(),
       settledRun: (id) => this.hostRuns.get(id),
       tasks: () => this.store.activeUiTasks(),
-      qaRun: (id) => this.store.qaRun(id),
       daemon,
     });
   }
 
-  /** Milestone QA (task 104): one Queue-owned full-QA run per repository on current `main`. */
-  private retainedQaRunner: ProjectQaRunner | null = null;
-  private projectQaRunner(): ProjectQaRunner {
-    return (this.retainedQaRunner ??= new ProjectQaRunner(this.store, {
-      dataDir: this.dataDir,
-      hostRunStateDir: this.hostRunStateDir,
-      ownerInstance: this.owner,
-      responsibleThread: async (project) =>
-        (await this.engine.resolution.responsibleThread(project)).thread
-          ?.agentId ?? null,
-      notify: async (agentId, messageId, text) => {
-        const identity = parseAgentId(agentId);
-        const hostId =
-          identity?.hostId ?? (await this.engine.identifyOriginHost(agentId));
-        if (
-          !hostId ||
-          !this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))
-        )
-          throw new Error("QA notification host is unavailable");
-        await this.engine.withHost(hostId, () =>
-          this.engine.host.sendMessage(identity?.nativeAgentId ?? agentId, {
-            messageId,
-            text,
-          }),
-        );
-      },
-    }));
-  }
   async runProjectQa(input: {
     repository: string;
     baseBranch?: string;
@@ -2613,19 +2562,6 @@ export class QueueRuntime {
   }) {
     return this.repositories.runProjectQa(input);
   }
-  async cancelProjectQa(input: { id: string; reason: string }) {
-    return this.repositories.cancelProjectQa(input);
-  }
-  async retryProjectQaTeardown(input: { id: string; reason: string }) {
-    return this.repositories.retryProjectQaTeardown(input);
-  }
-  async dismissProjectQa(input: {
-    id: string;
-    reason: string;
-    caller: string;
-  }) {
-    return this.repositories.dismissProjectQa(input);
-  }
   async getProjectQa(input: { id: string } | { repository: string }) {
     return this.repositories.getProjectQa(input);
   }
@@ -2634,16 +2570,10 @@ export class QueueRuntime {
       | { requestId: string }
       | { repository: string; since: string; expectedHead: string },
   ) {
-    return this.repositories.projectQaRequestStatus(input);
+    return { ownerInstance: this.owner, ownerPid: process.pid, ...this.repositories.projectQaRequestStatus(input) };
   }
   async listProjectQa() {
     return this.repositories.listProjectQa();
-  }
-  configureQaFence(input: ProjectQaFenceInput) {
-    return this.repositories.configureQaFence(input);
-  }
-  qaFenceStatus() {
-    return this.repositories.qaFenceStatus();
   }
   listHostRuns() {
     return this.repositories.listHostRuns();
@@ -2662,17 +2592,6 @@ export class QueueRuntime {
   }
   hostRunBoard() {
     return this.repositories.hostRunBoard();
-  }
-  /** Re-attach to or heal running milestone QA runs after a service roll; best-effort and bounded. */
-  private async recoverProjectQa() {
-    if (this.closing) return;
-    // A failure here leaves the run running for the next tick or board read; it
-    // must never masquerade as a bootstrap or connection fault.
-    try {
-      await this.projectQaRunner().list();
-    } catch {
-      /* retried by the next sweep */
-    }
   }
   async upsertProject(input: ProjectUpsertInput) {
     return this.repositories.upsertProject(input);

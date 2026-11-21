@@ -21,12 +21,10 @@ Gates serve normal operation. No gate, fence, stale record or uncertain effect m
 
 ### When something is stuck
 
-Read `next`, then use `retry_effect` or `move` with `force: true` and a reason.
-The project planner, Nucleus planner and operator may force; workers, reviewers
-and coordinators cannot. A planner may force even when they also appear as a
-historical participant of the task. Callers match the stored planner id, including
-the 8-character UUID prefix Nucleus uses in planner references. A forced retry
-records owner settlement without observing or sending the effect. A forced move
+Read `next` for ordinary progress. The live project planner, Nucleus planner
+and operator can still use `move` with `force: true` and a reason. A planner
+may also be a past participant on the task. Use the explicit commands below to
+release a run or clear a stuck effect. A forced move
 records the blockers it settles and releases the merge turn; stop releases the
 turn too. A forced move to review may bind an unbound PR supplied as `prNumber` after verifying its task branch, base and canonical repository; a different bound number is refused. The resulting head still needs independent review. A blocked or errored revision's verified PR is identity only and leaves its block unresolved. `next`, the stop and the coordinator snapshot show the latest author report. A forced move to work, or an ordinary move to work, returns the retained author with the owner's instruction. Force to merge still uses GitHub's exact-head guard. When no applied
 verdict exists at that head, only explicit operator source acceptance can replace
@@ -41,6 +39,29 @@ may still be running. New participant identities remain subject to their gates.
 Nucleus trusts local processes: the caller and its board or planner source are
 recorded policy claims, not cryptographic identity. A local process can claim
 another identity. Callback authentication remains separate and unchanged.
+
+
+## Explicit resolution
+
+[Spec 067](067-explicit-resolution.md) defines the explicit command contract.
+Send `run.release` or `record.clear` as `action` on `queue.task`, or run
+`nucleus run.release -` or `nucleus record.clear -` with JSON on stdin. Each
+call carries `taskId` or `reference`, the task `version`, a `reason` and
+optional `accept` listing the warning IDs. The updated task includes
+`explicitResolution` with the result, warnings and what the scheduler does next.
+
+`run.release` takes `run` and optional `archive`. `record.clear` takes `kind`
+and `id`. Use the stop's `since` for a stop or stop-backed wait, the retained
+prerequisite wait ID for a retained wait, `dispatch` or `merge` for a hold,
+the escalation or incident ID for those records, and the named effect key
+for an effect. A host wait uses its host ID, an owner stop uses its operation
+ID or `recordedAt` when it has none, and a deferred verb uses its `at`.
+
+The board, the task's live responsible project planner and its coordinator
+may use the explicit commands. Only the board or planner may override
+another owner's hold or resolve a critical task. Explicit resolution updates
+the named record and preserves its previous state in the audit history.
+
 
 ## Problem
 
@@ -205,7 +226,7 @@ otherwise accept enters that wait: a stale version, a missing or foreign
 invocation, an active disposition, a terminal or removed task and every other
 refusal that reads the store run before it (`core/host/host-independent-refusals.ts`).
 A forced control owes the same order with force's own gates — the authenticated
-caller, the reason, which actions force settles, the recorded effect it names,
+caller, the reason, and the target step it names,
 and the guarded-merge and merge-observation methods the resolution adapter
 reports — so an unauthorized or stale force refuses too. Those two adapter
 gates are presence checks on an adapter the engine already holds, not host

@@ -1,13 +1,11 @@
 import { MISSING_CALLBACK_CAUSE } from "../../shared/incident";
 import {
   stages,
-  ACCEPTED_PR_RECONCILIATION_REASON,
-  missingCallbackStopReasonFor,
 } from "../recovery/task-reasons";
 import {
   blockingRecoveryEffects,
   recoveryEffectsRefusal,
-  reviewEffectWaitRefusal,
+  matchesReviewEffectWait,
 } from "../recovery/recovery-effects";
 import { blockedEffectAttentionRecorded } from "../recovery/effect-gates";
 import { proofWaitApplies } from "../qa/proof-wait";
@@ -91,7 +89,7 @@ export class SchedulingLifecycle {
     // (project-a #1672, 2026-09-29).
     if (
       t.phase === "needs_attention" &&
-      t.reason === ACCEPTED_PR_RECONCILIATION_REASON &&
+      t.reasonFact?.code === "accepted_pr" &&
       !t.resolution.currentRunId
     )
       return true;
@@ -221,7 +219,7 @@ export class SchedulingLifecycle {
     // pass asks that owner whether the recorded reason is one of them.
     const missingCallback =
       completed &&
-      (missingCallbackStopReasonFor(t.reason, completed.role) ||
+      ((t.reasonFact?.subject === completed.role && ["callback_missing", "callback_expired"].includes(t.reasonFact.code)) ||
         (t.resolution.incident?.runId === completed.id &&
           (t.resolution.incident.cause === MISSING_CALLBACK_CAUSE ||
             t.resolution.incident.action === "callback_reminder")));
@@ -356,7 +354,7 @@ export class SchedulingLifecycle {
       // The recorded wait is `recovery-effects`' sentence: it decodes the blocking
       // set it named, so this pass compares the set read now with it instead of
       // rebuilding the writer's words.
-      if (refusal && reviewEffectWaitRefusal(t) === refusal) return;
+      if (refusal && matchesReviewEffectWait(t, effects)) return;
       // Nucleus#1159: once this blocked phase is the recorded attention, only
       // later evidence or the owner's observation-first retry changes it;
       // relaunching would rewrite the wait and hide the attention again.

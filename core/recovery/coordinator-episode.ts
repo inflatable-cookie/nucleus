@@ -83,7 +83,7 @@ export const needsAttention = (t: Task, store: Store) =>
   Boolean(t.originError && !missingOriginHasPlanner(store, t)) ||
   ["blocked", "error", "needs_attention"].includes(t.phase) ||
   t.resolution.attention ||
-  Boolean(t.resolution.roleReplacements && t.reason.startsWith("No eligible"));
+  Boolean(t.resolution.roleReplacements && t.reasonFact?.code === "profile_unavailable");
 export const cause = (t: Task, runs: Run[]) => {
   const c = ["blocked", "error", "needs_attention"].includes(t.phase)
     ? (latestRunCompletion(runs, ["blocked", "error"]) ??

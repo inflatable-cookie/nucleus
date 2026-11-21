@@ -26,7 +26,8 @@ import {
   blockingTaskOperations,
   observedHostEffectEvidence,
   reviewEffectWait,
-  reviewEffectWaitRefusal,
+  matchesReviewEffectWait,
+  reviewEffectWaitKey,
 } from "../core/recovery/recovery-effects";
 import { settleObservedHostEffectOperations } from "../core/recovery/effect-gates";
 import {
@@ -1114,7 +1115,7 @@ test("the blocked-review wait is read from the stop Queue itself records", () =>
     const stopFor = (
       detail: string,
       reason: "lifecycle" | "operator_needed" = "lifecycle",
-    ) =>
+    ) => {
       store.update(
         task.id,
         {
@@ -1126,6 +1127,8 @@ test("the blocked-review wait is read from the stop Queue itself records", () =>
         "fixture_stop",
         detail,
       );
+      return store.task(task.id);
+    };
     assert.deepEqual(
       reviewEffectWait(
         stopFor(
@@ -1162,47 +1165,17 @@ test("the blocked-review wait is read from the stop Queue itself records", () =>
       ),
       null,
     );
-    // nucleus#1257: the lifecycle pass compares the set this wait named with the
-    // set it reads now, so the decoder is the reader's whole text dependency.
-    assert.equal(
-      reviewEffectWaitRefusal(
-        stopFor(
-          `Ordinary review waits for ${refusal}; settle it with retry_effect before continuing`,
-        ),
-      ),
-      refusal,
-    );
-    assert.equal(
-      reviewEffectWaitRefusal(
-        stopFor(
-          `Review-entry waits for ${refusal}; settle it with retry_effect before continuing`,
-        ),
-      ),
-      refusal,
-    );
-    assert.equal(
-      reviewEffectWaitRefusal(
-        stopFor(
-          `Ordinary review waits for ${refusal}; settle it with retry_effect before continuing`,
-          "operator_needed",
-        ),
-      ),
-      null,
-      "a stop that is not the review wait decodes nothing",
-    );
-    assert.equal(
-      reviewEffectWaitRefusal(
-        stopFor(
-          "Another unresolved task operation fences reviewer continuation",
-        ),
-      ),
-      null,
-    );
-    assert.equal(
-      reviewEffectWaitRefusal(store.task(task.id)),
-      null,
-      "a task with no recorded wait decodes nothing",
-    );
+    const effect = {
+      version: 2, kind: "operation" as const, identity: "a", taskId: task.id,
+      runId: null, state: "uncertain" as const, reason: "Delivery unknown", publication: null,
+    };
+    const recorded = stopFor("Reviewer is waiting");
+    const rebound = { ...recorded, resolution: { ...recorded.resolution,
+      stop: { ...recorded.resolution.stop!, fact: { code: "review_effect_wait" as const, subject: reviewEffectWaitKey([effect]) } },
+    } };
+    assert.equal(matchesReviewEffectWait(rebound, [effect]), true);
+    assert.equal(matchesReviewEffectWait(rebound, [{ ...effect, identity: "b" }]), false);
+    assert.equal(matchesReviewEffectWait(rebound, [{ ...effect, reason: "The effect was reworded" }]), true);
   } finally {
     store.close();
   }

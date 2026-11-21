@@ -197,8 +197,7 @@ export async function acceptWorkerResult(
   const stopAttention =
     current.resolution.attention &&
     (awaitedReminder ||
-      current.reason ===
-        "Worker stopped without a completion callback; inspect the thread");
+      (current.reasonFact?.code === "callback_missing" && current.reasonFact.subject === "worker"));
   // The blocked hook above waited on I/O: a push-back recorded meanwhile owns this return.
   if (
     c.status !== "ready_for_review" &&
