@@ -44,6 +44,10 @@ import { acpBindingPath, readAcpBinding } from "../shared/acp/binding";
 import { RunUsageTracker } from "../core/telemetry/run-usage-tracker";
 import { QuestionRaiseRoutes } from "../core/questions/question-raise-routes";
 import { Dispositions } from "../core/verbs/disposition/controls";
+import { fenceDisposition } from "../core/verbs/disposition/requests";
+import { resumeDispositions } from "../core/verbs/disposition/effects";
+import { BriefAmendmentDelivery } from "../core/verbs/brief-amendment";
+import { createUnboundAdapter } from "../core/host/unbound-adapter";
 import { QueueRuntime } from "../service/runtime-owner";
 import { submissionSchema, type Profile, type Run } from "../shared/contracts";
 import type { AcpSessionSurface } from "../shared/acp/surface";
@@ -1176,4 +1180,168 @@ test("Dispositions.continueWithdrawnWorker routes through the withdrawn task's r
   assert.deepEqual(ambientCalls, []);
   assert.equal(taskHostCalls.length, 1);
   assert.equal(taskHostCalls[0]!.id, "thr-t3-worker");
+});
+
+test("Unbound fleet sweep still delivers queued brief amendments and interrupts resumed cancellations on the task host", async (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "ns-unbound-fleet-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const store = new Store(join(scratch, "queue.sqlite"));
+  t.after(() => store.close());
+
+  const taskHostId = "t3code:connected";
+  const enqueued: Array<{ id: string; messageId: string; text: string }> = [];
+  const interrupted: Array<{ id: string; messageId: string; text: string }> =
+    [];
+  const connectedHostAdapter = {
+    enqueueMessage: async (id: string, messageId: string, text: string) => {
+      enqueued.push({ id, messageId, text });
+    },
+    interruptAndContinue: async (
+      id: string,
+      messageId: string,
+      text: string,
+    ) => {
+      interrupted.push({ id, messageId, text });
+    },
+  } as unknown as Adapter;
+
+  let activeAdapter: Adapter = createUnboundAdapter();
+  const withHost = async <T>(hostId: string, fn: () => Promise<T> | T) => {
+    assert.equal(hostId, taskHostId);
+    const previous = activeAdapter;
+    activeAdapter = connectedHostAdapter;
+    try {
+      return await fn();
+    } finally {
+      activeAdapter = previous;
+    }
+  };
+
+  // 1. BriefAmendments.deliverPending enters withHost before checking enqueueMessage.
+  const amendedTask = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Queued amendment task",
+      repoPath: "/synthetic/repo",
+      planningCommit: "b".repeat(40),
+      handoffPath: "/synthetic/handoff.md",
+      originAgentId: "origin",
+    }),
+    taskHostId,
+    "/synthetic/handoff.md",
+    "b".repeat(40),
+  );
+  store.update(amendedTask.id, {
+    phase: "working",
+    agentId: "thr-amend-worker",
+    briefVersions: [
+      {
+        version: 2,
+        text: "Updated brief text",
+        digest: `sha256:${"c".repeat(64)}`,
+        mediaType: "text/markdown",
+        pinnedAt: new Date().toISOString(),
+        reason: "clarification",
+      },
+    ],
+  });
+  store.event(
+    amendedTask.id,
+    "brief_amendment_delivery_intent",
+    JSON.stringify({
+      version: 2,
+      agentId: "thr-amend-worker",
+      hostId: taskHostId,
+      role: "worker",
+      messageId: "ns-amend-v2",
+    }),
+  );
+
+  const engineStub = {
+    store,
+    stopped: false,
+    get adapter() {
+      return activeAdapter;
+    },
+    resolution: {
+      originHostAvailable: (hostId: string) => hostId === taskHostId,
+      withHost,
+    },
+    taskHostAvailable: (task: { hostId?: string | null }) =>
+      task.hostId === taskHostId,
+    withHost,
+    hooks: {
+      emit: async () => {},
+    },
+    host: {
+      observe: async () => ({
+        active: true,
+        permissions: false,
+        status: "running",
+      }),
+      archiveAgent: async () => {},
+    },
+    removeSiblings: async () => {},
+  };
+
+  const amendments = new BriefAmendmentDelivery(engineStub as never);
+  await amendments.deliverPending();
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0]!.id, "thr-amend-worker");
+  assert.equal(enqueued[0]!.messageId, "ns-amend-v2");
+  assert.ok(
+    store
+      .eventsAll(amendedTask.id)
+      .some((event) => event.kind === "brief_amendment_delivered"),
+    "queued amendment recorded delivered on the task host",
+  );
+
+  // 2. resumeDispositions builds dispositionDeps() on the unbound default adapter,
+  //    yet resolves interruptTurn dynamically inside withHost(task.hostId).
+  const cancelledTask = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Resumed cancellation task",
+      repoPath: "/synthetic/repo",
+      planningCommit: "d".repeat(40),
+      handoffPath: "/synthetic/handoff.md",
+      originAgentId: "origin",
+    }),
+    taskHostId,
+    "/synthetic/handoff.md",
+    "d".repeat(40),
+  );
+  store.update(cancelledTask.id, {
+    phase: "working",
+    agentId: "thr-cancel-worker",
+  });
+  fenceDisposition(store, {
+    taskId: cancelledTask.id,
+    version: store.task(cancelledTask.id).version,
+    action: "cancel",
+    reason: "operator cancel",
+    workDisposition: "preserve",
+    requestedBy: "operator",
+  });
+
+  const dispositions = new Dispositions(engineStub as never);
+  const deps = dispositions.dispositionDeps();
+  assert.equal(
+    deps.interruptTurn,
+    undefined,
+    "unbound ambient adapter exposes no interruptTurn outside withHost",
+  );
+  await resumeDispositions(store, deps);
+  assert.equal(interrupted.length, 1);
+  assert.equal(interrupted[0]!.id, "thr-cancel-worker");
+  assert.ok(
+    store
+      .eventsAll(cancelledTask.id)
+      .some(
+        (event) =>
+          event.kind === "disposition_turn_interrupted" &&
+          event.detail === "thr-cancel-worker",
+      ),
+    "resumed cancellation interrupted active turn on the task host",
+  );
 });

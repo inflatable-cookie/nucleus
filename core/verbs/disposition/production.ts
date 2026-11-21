@@ -33,15 +33,13 @@ export function productionDeps(options: {
   listRemoteRefs?(task: Task): Promise<DispositionRef[]>;
 }): DispositionDeps {
   const { store } = options;
-  return {
+  const deps: DispositionDeps = {
     hooks: options.hooks,
     hostAvailable: options.hostAvailable,
-    readProcesses: options.readProcesses,
     withHost: options.withHost,
     ...(options.archiveSiblings
       ? { archiveSiblings: options.archiveSiblings }
       : {}),
-    ...(options.interruptTurn ? { interruptTurn: options.interruptTurn } : {}),
     listRemoteRefs: options.listRemoteRefs ?? listOriginRefs,
     observeAgent: async (id) => {
       try {
@@ -73,4 +71,13 @@ export function productionDeps(options: {
     observeWorkspaceArchived: options.observeWorkspaceArchived,
     settleCancelledPr,
   };
+  Object.defineProperty(deps, "readProcesses", {
+    enumerable: true,
+    get: () => options.readProcesses,
+  });
+  Object.defineProperty(deps, "interruptTurn", {
+    enumerable: true,
+    get: () => options.interruptTurn,
+  });
+  return deps;
 }

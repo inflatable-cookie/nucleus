@@ -32,12 +32,14 @@ export class Dispositions {
     return this.engine.adapter;
   }
   dispositionDeps() {
+    const controls = this;
     return productionDeps({
       store: this.store,
       hooks: this.engine.hooks,
-      readProcesses: this.adapter.hostProcessListing
-        ? () => this.adapter.hostProcessListing!()
-        : undefined,
+      get readProcesses() {
+        const list = controls.adapter.hostProcessListing;
+        return list ? () => list.call(controls.adapter) : undefined;
+      },
       hostAvailable: (task) => this.engine.taskHostAvailable(task),
       withHost: (id, fn) => this.engine.withHost(id, fn),
       observe: (id) => this.engine.host.observe(id),
@@ -145,10 +147,13 @@ export class Dispositions {
         );
       },
       archiveSiblings: (task) => this.engine.removeSiblings(task.id),
-      interruptTurn: this.adapter.interruptAndContinue
-        ? (agentId, messageId, text) =>
-            this.adapter.interruptAndContinue!(agentId, messageId, text)
-        : undefined,
+      get interruptTurn() {
+        const interrupt = controls.adapter.interruptAndContinue;
+        return interrupt
+          ? (agentId: string, messageId: string, text: string) =>
+              interrupt.call(controls.adapter, agentId, messageId, text)
+          : undefined;
+      },
     });
   }
   async continueWithdrawnWorker(task: Task): Promise<void> {
