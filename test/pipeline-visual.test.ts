@@ -829,9 +829,17 @@ async function verifyViewport(compact: boolean) {
     openView(ui, "Queue");
     assert.equal(countText(ui, "Task queued"), 1, "queued work is in Queue");
     openView(ui, "Working");
-    assert.equal(countText(ui, "Task working"), 1, "working tasks open in Working");
+    assert.equal(
+      countText(ui, "Task working"),
+      1,
+      "working tasks open in Working",
+    );
     openView(ui, "Closing");
-    assert.equal(countText(ui, "Task closing"), 1, "closing work is in Closing");
+    assert.equal(
+      countText(ui, "Task closing"),
+      1,
+      "closing work is in Closing",
+    );
     assert.equal(
       countText(ui, "Task working"),
       0,
@@ -2648,16 +2656,8 @@ for (const compact of [false, true]) {
         1,
         "Planning carries no count and never dims",
       );
-      assert.equal(
-        opacityOf("Working"),
-        1,
-        "a non-zero entry never dims",
-      );
-      assert.equal(
-        opacityOf("Closing"),
-        0.55,
-        "a zero-count entry dims",
-      );
+      assert.equal(opacityOf("Working"), 1, "a non-zero entry never dims");
+      assert.equal(opacityOf("Closing"), 0.55, "a zero-count entry dims");
       assert.equal(
         opacityOf("Needs you"),
         1,
@@ -2688,3 +2688,107 @@ for (const compact of [false, true]) {
     }
   });
 }
+
+// nucleus#1525: at a narrow panel the same split menu lives in the drawer; each
+// entry opens its own list and closes the drawer.
+test("the narrow drawer lists Working, In review and Closing top-level with dimmer dividers", async () => {
+  const respond = async (method: string, input: unknown) => {
+    if (method === "queue.ui-snapshot")
+      return {
+        ...board,
+        tasks: [
+          summary("w1", "Working one", ["first"], "working"),
+          summary("r1", "Review one", ["first"], "reviewing"),
+        ],
+        pendingSubmissions: [],
+        qaRuns: [],
+      };
+    if (method === "papercut.list") return [];
+    if (method === "lead.board") return { cards: [], links: [] };
+    return invoke(method, input);
+  };
+  const MainSurface = await bundleMainSurface();
+  const ui = mount(tree(MainSurface, false, respond));
+  try {
+    await settle(ui);
+    // A 600-point panel folds the menu into a drawer behind a menu button.
+    const panel = ui
+      .ofType("View")
+      .find((node) => typeof node.props.onLayout === "function");
+    assert.ok(panel, "the board measures its panel");
+    (panel as HostNode).props.onLayout({
+      nativeEvent: { layout: { width: 600, height: 800 } },
+    });
+    assert.equal(
+      ui.query("Nucleus navigation"),
+      undefined,
+      "the drawer starts closed",
+    );
+    assert.ok(ui.query("Open the board menu"), "the header offers the menu");
+    ui.press("Open the board menu");
+    assert.ok(ui.get("Board menu"), "the drawer opens");
+    const menu = ui
+      .get("Nucleus navigation")
+      .children.filter((node): node is HostNode => typeof node !== "string");
+    assert.deepEqual(
+      menu.map((node) =>
+        node.type === "Pressable"
+          ? `entry:${viewName(String(node.props.accessibilityLabel))}`
+          : node.type === "View" && node.props.style?.height === 1
+            ? "divider"
+            : `other:${node.type}`,
+      ),
+      [
+        "entry:Needs you",
+        "divider",
+        "entry:Planning",
+        "entry:Leads",
+        "entry:Papercuts",
+        "entry:Queue",
+        "divider",
+        "entry:Working",
+        "entry:In review",
+        "entry:Closing",
+      ],
+      "the drawer carries the same split menu",
+    );
+    const dividers = menu.filter(
+      (node) => node.type === "View" && node.props.style?.height === 1,
+    );
+    assert.equal(dividers.length, 2);
+    for (const divider of dividers)
+      assert.deepEqual(
+        {
+          backgroundColor: divider.props.style.backgroundColor,
+          opacity: divider.props.style.opacity,
+        },
+        { backgroundColor: dark.border, opacity: 0.5 },
+        "the drawer dividers read at half the border's contrast",
+      );
+    assert.ok(ui.query("Working, 1"), "Working carries its own count");
+    assert.ok(ui.query("Closing, 0"), "Closing reads its real zero");
+    assert.equal(ui.query(/^Active/), undefined, "no Active entry remains");
+    // Each entry opens its own list and closes the drawer.
+    openView(ui, "Working");
+    assert.ok(ui.query("Working list"), "Working opens its own list");
+    assert.equal(
+      ui.query("Board menu"),
+      undefined,
+      "picking an entry closes the drawer",
+    );
+    assert.equal(countText(ui, "1 item"), 1);
+    assert.ok(ui.text().includes("Working one"));
+    ui.press("Open the board menu");
+    openView(ui, "Closing");
+    assert.ok(ui.query("Closing list"), "Closing opens its own list");
+    assert.equal(
+      ui.query("Board menu"),
+      undefined,
+      "picking an entry closes the drawer",
+    );
+    assert.equal(countText(ui, "0 items"), 1);
+    assertDarkTheme(ui);
+  } finally {
+    unmount(ui);
+  }
+});

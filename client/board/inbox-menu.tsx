@@ -129,14 +129,19 @@ export function InboxMenu({
         <React.Fragment key={entry.id}>
           {(entry.id === "planning" || entry.id === "working") &&
             divider(`${entry.id}-divider`)}
-          {item(entry.id, entry.label, view === entry.id, count(entry.id), () =>
-            onSelect(entry.id),
-          {
-            icon: entry.icon,
-            hot: entry.id === "needs",
-            // Planning carries no count, so its null never dims; unloaded counts stay hidden.
-            dimmed: loaded && count(entry.id) === 0,
-          })}
+          {item(
+            entry.id,
+            entry.label,
+            view === entry.id,
+            count(entry.id),
+            () => onSelect(entry.id),
+            {
+              icon: entry.icon,
+              hot: entry.id === "needs",
+              // Planning carries no count, so its null never dims; unloaded counts stay hidden.
+              dimmed: loaded && count(entry.id) === 0,
+            },
+          )}
         </React.Fragment>
       ))}
     </ScrollView>

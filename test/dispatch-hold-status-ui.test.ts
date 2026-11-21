@@ -303,7 +303,10 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
 
     // A genuine routing error still reaches the detail.
-    assert.ok(showInView(tree, "real-origin-error"), "the real-origin-error card is listed");
+    assert.ok(
+      showInView(tree, "real-origin-error"),
+      "the real-origin-error card is listed",
+    );
     tree.press(/real-origin-error/);
     await settle(
       () =>
@@ -320,7 +323,10 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
 
     // A merge-only reviewing task names its merge fence and keeps its activity.
-    assert.ok(showInView(tree, "merge-review"), "the merge-review card is listed");
+    assert.ok(
+      showInView(tree, "merge-review"),
+      "the merge-review card is listed",
+    );
     tree.press(/merge-review/);
     await settle(
       () =>
