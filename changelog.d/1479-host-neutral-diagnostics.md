@@ -1,0 +1,1 @@
+Shared task and workspace diagnostics name the task's own host (Paseo, T3Code or BB) where the operation is host-specific, and say "host" where it is shared. Closeout notices, registration and recovery refusals, the recovery prompt and the worktree CLI output no longer assume Paseo. Wording only: no stored field, refusal class or behaviour changes.

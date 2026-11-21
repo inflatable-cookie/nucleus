@@ -32,7 +32,7 @@ test("installed commands, integration and private service stay inside a scratch 
   await git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "init");
   await git("worktree", "add", "--detach", taskCheckout);
   const setupOutput = await exec(command, ["worktree", "prepare"], { env, cwd: taskCheckout });
-  assert.match(setupOutput.stdout, /Paseo sibling preparation: OK/);
+  assert.match(setupOutput.stdout, /Sibling preparation: OK/);
   assert.ok(first.startsWith(join(home, ".local/share/nucleus/versions/")));
   // `nucleus` is the only skill name the package installs and links.
   for (const folder of [join(home, ".agents/skills"), join(home, ".codex/skills"), join(home, ".claude/skills"), ...env.NUCLEUS_SKILL_DIRS.split(delimiter)]) {

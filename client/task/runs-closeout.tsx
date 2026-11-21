@@ -1,6 +1,7 @@
 import { Text, View } from "react-native";
 import { type UseQueryResult } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { DetailSection, muted, type Colors } from "../controls";
 import type { TaskDetailRead } from "./task-dialog";
 import { space, type as typeScale } from "../design";
@@ -25,6 +26,8 @@ export function RunsCloseout({
   const terminalSkippedCleanups = task.resolution.buildOutputCleanups.filter(
     (record) => !record.runId && record.state === "skipped",
   );
+  // The archive and folder facts below come from the task's own host.
+  const hostLabel = HOST_KIND_LABELS[hostKindOf(task.hostId)];
   return (
     <>
       <DetailSection title="Completion cohort" c={c}>
@@ -82,7 +85,7 @@ export function RunsCloseout({
               (task.resolution.externalWorkspaceArchives.some(
                 (record) => record.state === "archived",
               )
-                ? "Paseo sidebar entry archived; folder state recorded per entry"
+                ? `${hostLabel} sidebar entry archived; folder state recorded per entry`
                 : task.reviewEntry?.preserveWorkspace
                   ? "External workspace retained for operator cleanup"
                   : task.resolution.archivedWorkspaceIds.length
@@ -100,7 +103,7 @@ export function RunsCloseout({
                 Sidebar entry archived ·{" "}
                 {record.folderPresent === false
                   ? record.folderRemovalAuthorized
-                    ? "Paseo removed the clean, published worktree folder"
+                    ? `${hostLabel} removed the clean, published worktree folder`
                     : "folder observed absent"
                   : `folder kept at ${record.directory}`}
                 {record.folderRemovedBy

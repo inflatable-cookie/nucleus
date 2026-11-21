@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { doublingDelay } from "../../shared/backoff";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { AdmissionDeferred } from "../host/admission";
 import type { Adapter, ExternalWorkspaceArchiveOutcome, ExternalWorkspaceCatalogEntry } from "../host/adapter";
 import { now, type Store } from "../store/store";
@@ -487,15 +488,16 @@ function settleNativeOutcome(pass: ArchivePass, sent: Task, workspaceId: string,
   const attempts = Math.max(base.attempts, 1);
   if (outcome.status === "archived") {
     const removed = !outcome.folderPresent && base.folderRemovalAuthorized;
+    const host = HOST_KIND_LABELS[hostKindOf(latest.hostId)];
     return { stop: false, task: settle(ports, latest, {
       ...base, state: "archived", observed: outcome.observed, participants: outcome.participants, native: outcome.native,
       folderPresent: outcome.folderPresent, deferredByAdmission: false,
       folderRemovedBy: removed ? base.folderRemovedBy ?? workspaceId : null,
       detail: outcome.folderPresent
-        ? "Paseo archived the catalog entry; the folder, its files, the worktree registration and the branch are preserved"
+        ? `${host} archived the catalog entry; the folder, its files, the worktree registration and the branch are preserved`
         : removed
-          ? `Paseo archived the catalog entry and its teardown removed the folder under the freshly proved clean, published worktree permission${base.folderRemovedBy ? ` recorded by ${base.folderRemovedBy}` : ""}`
-          : "Paseo archived the catalog entry; the folder's state was observed as absent",
+          ? `${host} archived the catalog entry and its teardown removed the folder under the freshly proved clean, published worktree permission${base.folderRemovedBy ? ` recorded by ${base.folderRemovedBy}` : ""}`
+          : `${host} archived the catalog entry; the folder's state was observed as absent`,
       samePathRegistrations: base.samePathRegistrations.length ? base.samePathRegistrations : pass.order,
       attempts, settledAt: now(), nextAttemptAt: null,
     }, "external_workspace_archive_archived") };

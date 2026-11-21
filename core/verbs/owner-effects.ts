@@ -5,7 +5,7 @@ import {
   exhaustedThreadArchives,
   terminalThreadCleanupWaits,
 } from "../workspaces/thread-archive";
-import { hostKindOf } from "../../shared/host-kind";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import {
   archiveIntentOutstanding,
   archiveIntentUnreadable,
@@ -391,7 +391,7 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
       effects.push({
         effect: `external_workspace_archive.${preserved.workspaceId}`,
         kind: "external_workspace_archive",
-        summary: `Preserved external workspace ${preserved.workspaceId} still shows a Paseo sidebar entry; its catalog archive has not been attempted`,
+        summary: `Preserved external workspace ${preserved.workspaceId} still shows a ${HOST_KIND_LABELS[hostKindOf(task.hostId)]} sidebar entry; its catalog archive has not been attempted`,
       });
     for (const record of samePath) {
       if (!externalWorkspaceArchivePending(record)) continue;

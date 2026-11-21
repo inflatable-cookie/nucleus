@@ -4006,6 +4006,18 @@ unknown-on-error interpretation as required-check discovery. Paginated forge
 inventories have a finite 32 MiB response budget and fail closed when exceeded.
 
 
+## Host wording in shared diagnostics
+
+Shared task and workspace copy (refusals, closeout and run notices, registration
+and recovery prompts, generic worktree CLI output) is host-neutral unless the
+operation is specific to one host. A host-specific line names the task's own
+host through `HOST_KIND_LABELS[hostKindOf(hostId)]` from `shared/host-kind.ts`:
+Paseo, T3Code or BB. A line that every host shares says "host" (for example,
+"waiting for host readiness"). Copy names a Paseo API method only where the
+code calls that method. The rule changes wording only: stored typed fields,
+refusal classes and policy stay as they were, and no code parses the copy.
+Admission settings and diagnostics are outside this rule.
+
 ## Shared task decisions
 
 Ready review at head is derived by `readyReviewAtHead` in `core/recovery/task-reasons/verdicts.ts`:

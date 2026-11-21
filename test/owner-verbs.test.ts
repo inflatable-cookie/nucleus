@@ -2698,7 +2698,7 @@ test("a pre-dispatch review-entry park (#325): restart requeues it whatever the 
       phase: "needs_attention",
       entrypoint: "review",
       reason:
-        "Review entry admitted; waiting for Paseo readiness before validation",
+        "Review entry admitted; waiting for host readiness before validation",
       reviewEntry: reviewEntryRecordSchema.parse({
         operationId: (randomUUID() + randomUUID()).replace(/-/g, ""),
         prNumber: 12,

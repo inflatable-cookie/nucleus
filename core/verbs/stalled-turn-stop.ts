@@ -1,4 +1,6 @@
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
+
 import type { Run, Task } from "../../shared/contracts";
 import { dispatchBlocked } from "../dispatch/capacity";
 import { digest, now } from "../store/store";
@@ -25,7 +27,7 @@ export class StalledTurnStops {
       if (dispatchBlocked(task)) throw Error('A dispatch hold is active; stalled-turn stop is deferred');
       this.engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before stopping its retained turn');
       this.engine.rejectFenced(task, 'stalled-turn stop');
-      if (!this.adapter.stopAgentTurn) throw Error('Paseo active-turn cancellation is unavailable');
+      if (!this.adapter.stopAgentTurn) throw Error(`${HOST_KIND_LABELS[hostKindOf(task.hostId)]} active-turn cancellation is unavailable`);
 
       const target = (current: Task) => {
         const incident = current.resolution.incident;
@@ -89,7 +91,7 @@ export class StalledTurnStops {
         }
         throw Error('The exact turn is no longer active; no stop was sent. Let normal stopped-run reconciliation inspect it');
       }
-      if (!observed.activeTurnId) throw Error('Paseo did not expose the active turn ID; Nucleus cannot prove which turn would be interrupted');
+      if (!observed.activeTurnId) throw Error(`${HOST_KIND_LABELS[hostKindOf(task.hostId)]} did not expose the active turn ID; Nucleus cannot prove which turn would be interrupted`);
       if (task.resolution.incident?.turnId !== observed.activeTurnId)
         throw Error(`The stalled turn changed from ${task.resolution.incident?.turnId ?? 'unknown'} to ${observed.activeTurnId}; no interruption was sent`);
       if (previous && previous.turnId !== observed.activeTurnId)
@@ -171,7 +173,7 @@ export class StalledTurnStops {
         throw Error('Task stop binding changed while the interruption was delivered; inspect the recorded run event before any further action');
       }
       const statusReason = `Stop request sent for stalled ${assigned.role} run ${input.runId} turn ${intent.turnId}; waiting for Nucleus to observe inactivity. No replacement turn will start automatically`;
-      return this.store.update(latest.id, { resolution: { ...latest.resolution, stalledTurnStop: { ...latest.resolution.stalledTurnStop, status: 'sent', detail: 'Paseo acknowledged the active-turn cancellation request' } },
+      return this.store.update(latest.id, { resolution: { ...latest.resolution, stalledTurnStop: { ...latest.resolution.stalledTurnStop, status: 'sent', detail: `${HOST_KIND_LABELS[hostKindOf(latest.hostId)]} acknowledged the active-turn cancellation request` } },
         reason: statusReason }, 'stalled_turn_stop_sent', `${input.runId}/${intent.turnId}/${effectId}`);
     }, `task:${input.taskId}`);
   }

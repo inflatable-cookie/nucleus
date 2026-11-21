@@ -653,7 +653,7 @@ export class Operations {
       (pending.kind === "submit" || pending.kind === "review_entry") &&
       !this.engine.submissionReady()
     ) {
-      const diagnostic = `${pending.kind === "review_entry" ? "Review entry" : "Submission"} accepted; waiting for Paseo readiness before validation`;
+      const diagnostic = `${pending.kind === "review_entry" ? "Review entry" : "Submission"} accepted; waiting for host readiness before validation`;
       if (pending.state !== "pending" || pending.diagnostic !== diagnostic)
         this.store.putOperation({
           ...pending,

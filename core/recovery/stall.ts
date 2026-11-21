@@ -26,6 +26,7 @@ import { isTransportFailure } from "../../shared/transport";
 import type { Resolution } from "../resolution";
 import { dispatchBlocked } from "../dispatch/capacity";
 import { now } from "../store/store";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { OPERATOR_WORKER_REMAP_REASON } from "./task-reasons";
 import {
   decideWorkerReplacement,
@@ -127,6 +128,7 @@ export function stalledStopDecision(facts: {
 }): StalledStopDecision {
   const stop = facts.stop;
   if (!stop || stop.status === "completed") return { kind: "none" };
+  const host = HOST_KIND_LABELS[hostKindOf(facts.current.hostId)];
   const identityMatches =
     stop.role === "worker"
       ? !facts.run &&
@@ -173,12 +175,12 @@ export function stalledStopDecision(facts: {
           ? ("busy_same_turn" as const)
           : ("busy_unknown_turn" as const);
     const reason = facts.state.permissions
-      ? `Stalled-turn stop for ${stop.role} run ${stop.runId} is waiting on an active Paseo permission request; the run lease remains held`
+      ? `Stalled-turn stop for ${stop.role} run ${stop.runId} is waiting on an active ${host} permission request; the run lease remains held`
       : facts.state.activeTurnId && facts.state.activeTurnId !== stop.turnId
         ? `The authorized stalled ${stop.role} turn ${stop.turnId} ended or changed, but agent ${stop.agentId} is active on turn ${facts.state.activeTurnId}; no other turn was interrupted and the run lease remains held`
         : facts.state.activeTurnId === stop.turnId
           ? `Stop request for stalled ${stop.role} run ${stop.runId} turn ${stop.turnId} is ${stop.status}; waiting for observed inactivity and retaining the run lease`
-          : `Paseo does not expose the current turn for stalled ${stop.role} run ${stop.runId}; retaining its lease until inactivity can be proved`;
+          : `${host} does not expose the current turn for stalled ${stop.role} run ${stop.runId}; retaining its lease until inactivity can be proved`;
     return { kind, reason };
   }
   if (!["idle", "error", "closed"].includes(facts.state.status))
@@ -277,7 +279,7 @@ export class Stalls {
       ? pending
         ? `pending ${pending.kind === "question" ? "question" : "permission"} ${pending.id}${pending.firstLine ? `: ${pending.firstLine}` : ""}`
         : "a pending permission with no agent activity"
-      : "no agent activity while Paseo still reports it running";
+      : `no agent activity while ${HOST_KIND_LABELS[hostKindOf(current.hostId)]} still reports it running`;
     const reason = `The ${role.toLowerCase()} run ${runId} (agent ${state.id}${turn}) looks stalled: ${stalled}. It still owns this task; the owner may use restart for this exact run after checking its retained identity`;
     this.resolution.attention(
       this.store.task(current.id),
@@ -834,7 +836,7 @@ export class Stalls {
             status: "stopped",
             observedInactiveAt: at,
             detail:
-              "Paseo reported the assigned agent inactive; the run lease was released without accepting a result",
+              `${HOST_KIND_LABELS[hostKindOf(latest.hostId)]} reported the assigned agent inactive; the run lease was released without accepting a result`,
           },
         },
         { phase: "needs_attention", reason },
