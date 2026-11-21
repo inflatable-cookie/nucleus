@@ -903,6 +903,7 @@ test("qualified callers retain legacy owner authority and owner hold semantics",
 
 test("qualified subscription choices merge with legacy completion recipients", () => {
   const policy = {
+    originHostId: "host",
     originAgentId: "origin",
     notificationAgentId: "origin",
     originWorkspaceId: "planning",
@@ -922,4 +923,6 @@ test("qualified subscription choices merge with legacy completion recipients", (
     ],
   };
   assert.deepEqual(completionMembership(policy), []);
+  assert.equal(completionMembership({ ...policy, originHostId: "t3code:other" }).length, 2,
+    "a T3 origin does not reinterpret legacy recipients as T3 threads");
 });

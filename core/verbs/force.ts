@@ -1,3 +1,4 @@
+import { parseAgentId } from "../../shared/agent-identity";
 import { FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL, FORCE_EFFECT_REQUIRED_REFUSAL, FORCE_PUBLICATION_REFUSAL, missingForcedEffectRefusal } from './verb-refusal-text';
 import { randomUUID } from "node:crypto";
 import type { OwnerAcceptanceRecord, RepositoryChecksPolicy, Run, Task, TaskControlInput } from "../../shared/contracts";
@@ -185,6 +186,7 @@ export class ForceVerbs {
     return projects.some(entry => {
       const planner = entry?.planner?.agentId;
       const recordedHost = entry?.agents?.find(agent => agent.agentId === planner)?.hostId;
+      if (planner && recordedHost && parseAgentId(planner)?.hostId && parseAgentId(planner)?.hostId !== recordedHost) return false;
       return plannerIdMatches(planner, caller, recordedHost ?? legacyHost, legacyHost);
     });
   }

@@ -106,10 +106,8 @@ export class ProfileCatalogs {
       ? this.owner.resolveHostAdapter(id)
       : this.owner.primaryAdapter;
     const kind = hostKindOf(id);
-    return (
-      (selected ?? this.owner.primaryAdapter).vocabulary ??
-      canonicalVocabulary(kind, HOST_KIND_LABELS[kind])
-    );
+    const adapter = id && !this.isPrimaryHost(id) ? selected : (selected ?? this.owner.primaryAdapter);
+    return adapter?.vocabulary ?? canonicalVocabulary(kind, HOST_KIND_LABELS[kind]);
   }
 
   /**

@@ -3877,6 +3877,7 @@ test("a continuation whose prior run has no cleanup record is told so, and a fin
 test("qualified owner verb callers keep planner force authority scoped to the same host", async () => {
   const f = fixture();
   try {
+    f.store.setMeta("hostRegistry", [{ id: "host", endpoint: "synthetic" }]);
     f.store.upsertProject({
       key: "caller-project",
       name: "Caller project",

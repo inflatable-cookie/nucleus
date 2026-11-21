@@ -573,8 +573,12 @@ export class SettingsControls {
       if (!this.adapter.originAgent)
         throw Error("Live agent identity validation is unavailable");
       let agent;
+      let hostId: string | undefined;
+      let legacyHostId: string | undefined;
       try {
-        const hostId =
+        const nativeId = parseAgentId(input.agentId)?.nativeAgentId ?? input.agentId;
+        legacyHostId = this.engine.legacyPaseoHostId() ?? await this.engine.identifyOriginHost(nativeId);
+        hostId =
           parseAgentId(input.agentId)?.hostId ??
           (await this.engine.identifyOriginHost(input.agentId));
         agent = hostId
@@ -611,10 +615,10 @@ export class SettingsControls {
         );
       const recorded =
         current.completionSubscriptionOverrides.find((entry) =>
-          sameCallerIdentity(entry.agentId, input.agentId),
+          sameCallerIdentity(entry.agentId, input.agentId, legacyHostId, hostId),
         ) ??
         current.creatorCompletionRecipients.find((recipient) =>
-          sameCallerIdentity(recipient.agentId, input.agentId),
+          sameCallerIdentity(recipient.agentId, input.agentId, legacyHostId, hostId),
         );
       if (!live && !recorded)
         throw Error(
@@ -631,7 +635,7 @@ export class SettingsControls {
         );
       const workspaceId = live ? agent!.workspaceId! : recorded!.workspaceId;
       const overrides = current.completionSubscriptionOverrides.filter(
-        (entry) => !sameCallerIdentity(entry.agentId, input.agentId),
+        (entry) => !sameCallerIdentity(entry.agentId, input.agentId, legacyHostId, hostId),
       );
       overrides.push({
         agentId: input.agentId,

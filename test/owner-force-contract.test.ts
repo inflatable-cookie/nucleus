@@ -133,12 +133,15 @@ test('planner authorization binds legacy and abbreviated callers to the recorded
     const project = f.store.ensureProject('/repo', null);
     const native = '12345678-abcd-ef01-1234-123456789abc';
     f.store.setProjectPlanner({ key: project.key, agentId: native, setBy: 'operator' });
-    f.engine.legacyPaseoHostId = () => 'legacy-paseo';
+    f.store.setMeta('hostRegistry', [
+      { id: 'legacy-paseo', endpoint: 'paseo' },
+      { id: 't3code:other', endpoint: 't3' },
+    ]);
     assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('legacy-paseo', native)), true);
     assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('legacy-paseo', '12345678')), true);
     assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('t3code:other', native)), false);
     assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('unknown-opaque-host', '12345678')), false);
-    f.engine.legacyPaseoHostId = () => undefined;
+    f.store.setMeta('hostRegistry', [{ id: 't3code:other', endpoint: 't3' }]);
     assert.equal(f.engine.forceCallerAuthorized(f.task(), formatAgentId('unknown-opaque-host', native)), false);
     assert.equal(f.engine.forceCallerAuthorized(f.task(), native), true);
   } finally { f.store.close(); }

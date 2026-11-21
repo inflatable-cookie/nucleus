@@ -457,6 +457,7 @@ test('queue.routing-grant and the board snapshot keep grants across a runtime re
 
 test('qualified planner grants retain legacy ownership and never cover another host', () => {
  const f=fixture();try {
+  f.store.setMeta('hostRegistry', [{ id: 'host', endpoint: 'synthetic' }]);
   const caller=formatAgentId('host','planner');
   const grant=f.activate(caller);
   const legacy=f.submit();

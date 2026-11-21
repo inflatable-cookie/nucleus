@@ -10,6 +10,15 @@ export const HOST_IDLE_GRACE_MS = 10 * 60_000;
 /** Live host sessions are separate from the durable catalogue. A disconnect never
  * removes a known identity or proves anything about its outstanding effects. */
 export interface KnownHost { id: string; endpoint: string }
+/** Read old registry rows deliberately; only registered identities can bind legacy callers. */
+export function legacyPaseoPrimaryId(hosts: readonly KnownHost[]): string | undefined {
+  return hosts.find(entry => hostKindOf(entry.id) === 'paseo')?.id;
+}
+
+export function recordedLegacyPaseoHost(store: { getMeta<T>(key: string): T | undefined }): string | undefined {
+  return legacyPaseoPrimaryId(store.getMeta<KnownHost[]>('hostRegistry') ?? []);
+}
+
 export interface HostRegistryStore {
   read(): readonly KnownHost[];
   write(hosts: readonly KnownHost[]): void;
@@ -232,7 +241,8 @@ export class HostRegistry<T> {
     // plugin can connect before the daemon bootstrap) is never that entry: falling
     // back to whichever host is first would let the daemon's own identity guard read a
     // BB host as "the configured daemon" and refuse the Paseo connection that follows.
-    return this.store.read().find((entry) => hostKindOf(entry.id) === "paseo");
+    const id = legacyPaseoPrimaryId(this.store.read());
+    return this.store.read().find(entry => entry.id === id);
   }
   /** The last host close this registry knows about, or null before any host left. */
   disconnectedAt(): number | null { return this.lastDisconnect; }

@@ -19,6 +19,7 @@ export type HoldFields = Pick<
   holds?: TaskHolds;
   notificationAgentId?: string | null;
   plannerAgentId?: string | null;
+  originHostId?: string | null;
 };
 
 /**
@@ -185,12 +186,12 @@ export function holdOwnerOf(
 
 /** The owner value a new hold fence stores: the marker when the placing thread owns the task. */
 export function storedHoldOwner(
-  task: { notificationAgentId?: string | null; originAgentId: string },
+  task: { notificationAgentId?: string | null; originAgentId: string; originHostId?: string | null },
   owner: string,
 ): string {
   return owner !== TASK_OWNER_HOLD &&
     !isOperatorOrigin(owner) &&
-    sameCallerIdentity(owner, taskOwner(task))
+    sameCallerIdentity(owner, taskOwner(task), undefined, task.originHostId)
     ? TASK_OWNER_HOLD
     : owner;
 }
@@ -266,7 +267,7 @@ export function fenceIsPlannerHold(
 ): boolean {
   const owner = holdOwnerOf(task, fence.owner);
   if (isOperatorOwner(owner)) return false;
-  return sameCallerIdentity(owner, taskPlanner(task));
+  return sameCallerIdentity(owner, taskPlanner(task), undefined, task.originHostId);
 }
 
 /**

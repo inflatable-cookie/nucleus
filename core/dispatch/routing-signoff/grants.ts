@@ -1,3 +1,4 @@
+import { recordedLegacyPaseoHost } from "../../host/host-registry";
 import { isOperatorBoardOrT3 } from "../../../shared/operator-identity";
 /**
  * Spec 052 planner grants (Tom, 2026-11-06). A planner asks for standing
@@ -62,8 +63,8 @@ function replaceGrant(store: Store, next: RoutingGrant): RoutingGrant {
   return next;
 }
 
-function liveForPlanner(grants: RoutingGrant[], planner: string, at = Date.now()): RoutingGrant | undefined {
-  return grants.find(grant => sameCallerIdentity(grant.planner, planner) && (grant.status === "pending" || grantIsLive(grant, at)));
+function liveForPlanner(store: Store, grants: RoutingGrant[], planner: string, at = Date.now()): RoutingGrant | undefined {
+  return grants.find(grant => sameCallerIdentity(grant.planner, planner, recordedLegacyPaseoHost(store), recordedLegacyPaseoHost(store)) && (grant.status === "pending" || grantIsLive(grant, at)));
 }
 
 function grantCoversProfile(store: Store, grant: RoutingGrant, profileId: string, requested?: DemandLevel | null, climbTier?: DemandLevel | null): boolean {
@@ -77,7 +78,7 @@ export function coveringGrant(store: Store, task: Task, profileId: string, at = 
   expireStaleGrants(store, at);
   const owner = taskOwner(task);
   for (const grant of readRoutingGrants(store)) {
-    if (!grantIsLive(grant, at) || !sameCallerIdentity(grant.planner, owner, undefined, task.originHostId)) continue;
+    if (!grantIsLive(grant, at) || !sameCallerIdentity(grant.planner, owner, recordedLegacyPaseoHost(store), task.originHostId ?? recordedLegacyPaseoHost(store))) continue;
     if (grantCoversProfile(store, grant, profileId, requestedTier(task.complexity), climbedTier(task))) return grant;
   }
   return null;
@@ -136,7 +137,7 @@ function settleCoveredTasks(store: Store, decisions: Decisions): void {
   for (const task of store.liveTasks()) {
     const owner = taskOwner(task);
     for (const grant of live) {
-      if (!sameCallerIdentity(grant.planner, owner, undefined, task.originHostId)) continue;
+      if (!sameCallerIdentity(grant.planner, owner, recordedLegacyPaseoHost(store), task.originHostId ?? recordedLegacyPaseoHost(store))) continue;
       applyGrantToTask(store, decisions, task, grant);
     }
   }
@@ -202,7 +203,7 @@ export function archiveRoutingGrants(store: Store, decisions: Decisions, live: R
     if (!(grant.status === "pending" || grantIsLive(grant))) continue;
     const plannerHost = parseAgentId(grant.planner)?.hostId;
     if (plannerHost && plannerHost !== observedHostId || !plannerHost && observedHostId && hostKindOf(observedHostId) !== 'paseo') continue;
-    if ([...live].some(id => sameCallerIdentity(grant.planner, id, undefined, observedHostId))) continue;
+    if ([...live].some(id => sameCallerIdentity(grant.planner, id, recordedLegacyPaseoHost(store), observedHostId))) continue;
     withdrawGrantDecision(store, decisions, grant, "The planner thread was archived; the grant no longer applies");
     const ended = replaceGrant(store, { ...grant, status: "archived", endedAt: at, endedBy: "queue", endReason: "archived" });
     clearGrantSignoffs(store, ended.id);
@@ -212,7 +213,7 @@ export function archiveRoutingGrants(store: Store, decisions: Decisions, live: R
 function findGrant(store: Store, grantId: string | undefined, planner?: string): RoutingGrant {
   const grants = readRoutingGrants(store);
   const grant = grantId ? grants.find(item => item.id === grantId)
-    : planner ? liveForPlanner(grants, planner) ?? grants.filter(item => sameCallerIdentity(item.planner, planner)).at(-1)
+    : planner ? liveForPlanner(store, grants, planner) ?? grants.filter(item => sameCallerIdentity(item.planner, planner, recordedLegacyPaseoHost(store), recordedLegacyPaseoHost(store))).at(-1)
       : undefined;
   if (!grant) throw new Error(grantId ? `Unknown routing grant ${grantId}` : "No routing grant for this planner");
   return grant;
@@ -249,7 +250,7 @@ export function applyRoutingGrant(store: Store, decisions: Decisions, input: {
     if (caller === GRANT_OPERATOR_BOARD || caller === "operator")
       throw new Error("The operator revokes a grant from the board; a planner ends their own");
     const grant = findGrant(store, input.grantId, caller);
-    if (!sameCallerIdentity(grant.planner, caller)) throw new Error("A planner ends only their own grant");
+    if (!sameCallerIdentity(grant.planner, caller, recordedLegacyPaseoHost(store), recordedLegacyPaseoHost(store))) throw new Error("A planner ends only their own grant");
     const ended = endGrant(store, decisions, grant, caller, "ended", input.reason?.trim() || "ended");
     return { grant: ended, joined: false, alreadyActive: false };
   }
@@ -266,7 +267,7 @@ export function applyRoutingGrant(store: Store, decisions: Decisions, input: {
     if (!pool.some(entry => entry.profileId === profileId)) throw new Error(`Unknown profile ${profileId}`);
   }
 
-  const existing = liveForPlanner(readRoutingGrants(store), caller);
+  const existing = liveForPlanner(store, readRoutingGrants(store), caller);
   if (existing?.status === "active") return { grant: existing, joined: false, alreadyActive: true };
   if (existing?.status === "pending") return { grant: existing, joined: true, alreadyActive: false };
 

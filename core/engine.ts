@@ -1,3 +1,4 @@
+import { recordedLegacyPaseoHost } from "./host/host-registry";
 import { enginePorts, portsContext } from "./port-context";
 import { onOwnerHost } from "./host/host-ports";
 import { TaskControlLifecycle } from "./verbs/task-control-lifecycle";
@@ -399,7 +400,8 @@ export class Engine {
     return Boolean(this.resolveHostAdapter(id));
   }
   /** The recorded legacy Paseo primary, never a guess from the caller's ID. */
-  legacyPaseoHostId: () => string | undefined = () => this.store.getMeta<string>("hostId") ?? undefined;
+  legacyPaseoHostId: () => string | undefined = () =>
+    recordedLegacyPaseoHost(this.store);
   /** Runtime supplies the authenticated live-host selection at acceptance. */
   selectIngressHost: (
     explicit?: string,
