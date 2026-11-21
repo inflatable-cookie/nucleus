@@ -224,3 +224,57 @@ export function isDarkSurface(hex: string): boolean {
 export function projectBadgeText(badge: ProjectBadge, dark: boolean): string {
   return T3_PROJECT_BADGE_TEXT[badge.color][dark ? "dark" : "light"];
 }
+
+/**
+ * The OKLCH palette above is the owner: these helpers convert one pinned entry to
+ * sRGB at the presentation boundary, so the browser build (react-native-web,
+ * which drops `oklch()` and `color-mix()` through its `normalizeColor`) draws the
+ * same assigned colour. No second palette lives here; every value derives from
+ * `T3_PROJECT_BADGE_TEXT`.
+ */
+const OKLCH_PATTERN = /^oklch\(\s*([0-9.]+)%\s+([0-9.]+)\s+([0-9.]+)\s*\)$/;
+
+/** The sRGB channels of one pinned OKLCH entry, each 0-255. Out-of-gamut clamps. */
+export function oklchToRgbChannels(oklch: string): { r: number; g: number; b: number } {
+  const match = OKLCH_PATTERN.exec(oklch.trim());
+  if (!match) throw new Error(`Unsupported OKLCH colour: ${oklch}`);
+  const light = parseFloat(match[1]!) / 100;
+  const chroma = parseFloat(match[2]!);
+  const hue = (parseFloat(match[3]!) * Math.PI) / 180;
+  const a = chroma * Math.cos(hue);
+  const b = chroma * Math.sin(hue);
+  const l = Math.pow(light + 0.3963377774 * a + 0.2158037573 * b, 3);
+  const m = Math.pow(light - 0.1055613458 * a - 0.0638541728 * b, 3);
+  const s = Math.pow(light - 0.0894841775 * a - 1.291485548 * b, 3);
+  const linear = {
+    r: 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    g: -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    b: -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  };
+  const encode = (value: number): number => {
+    const clamped = Math.min(1, Math.max(0, value));
+    const gamma = clamped <= 0.0031308 ? 12.92 * clamped : 1.055 * Math.pow(clamped, 1 / 2.4) - 0.055;
+    return Math.round(Math.min(1, Math.max(0, gamma)) * 255);
+  };
+  return { r: encode(linear.r), g: encode(linear.g), b: encode(linear.b) };
+}
+
+/** The 14% tint as an explicit alpha, matching `T3_PROJECT_BADGE_TINT`. */
+export const PROJECT_BADGE_TINT_ALPHA = 0.14;
+
+/** The browser-safe foreground for a badge: the pinned entry converted to sRGB. */
+export function projectBadgeWebForeground(badge: ProjectBadge, dark: boolean): string {
+  const { r, g, b } = oklchToRgbChannels(projectBadgeText(badge, dark));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/** The browser-safe tint for a badge: the same converted entry at 14% alpha. */
+export function projectBadgeWebTint(badge: ProjectBadge, dark: boolean): string {
+  const { r, g, b } = oklchToRgbChannels(projectBadgeText(badge, dark));
+  return `rgba(${r}, ${g}, ${b}, ${PROJECT_BADGE_TINT_ALPHA})`;
+}
+
+/** The browser-safe badge style: converted foreground plus the explicit 14% tint. */
+export function projectBadgeWebStyle(badge: ProjectBadge, dark: boolean): { color: string; backgroundColor: string } {
+  return { color: projectBadgeWebForeground(badge, dark), backgroundColor: projectBadgeWebTint(badge, dark) };
+}

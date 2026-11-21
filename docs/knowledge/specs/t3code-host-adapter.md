@@ -1555,7 +1555,11 @@ is the evidence, produced by running that renderer's own functions on the same t
 - **Rendering.** The card draws the badge in place of the folder icon, in the renderer's
   text colour for the surface's mode (600 on light, 400 on dark, judged from the
   surface colour) over the 14% tint. It is decorative: the project name is the label, and
-  the accessible label is unchanged.
+  the accessible label is unchanged. The browser board (react-native-web, which drops
+  the pinned `oklch()` text and the `color-mix()` tint in its `normalizeColor`)
+  converts the assigned palette entry at the presentation boundary to sRGB (`rgb()`)
+  and the same entry at 14% alpha (`rgba()`, nucleus#1487); the pinned OKLCH palette
+  stays the single owner, never duplicated.
 
 ## Thread lifecycle
 
