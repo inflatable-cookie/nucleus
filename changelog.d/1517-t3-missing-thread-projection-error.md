@@ -1,0 +1,1 @@
+Nucleus now recognizes T3 Code's missing-thread `OrchestrationV2GetThreadProjectionError` (`ProjectionStoreThreadNotFoundError`) as a positive not-found signal while keeping read failures, unrecognized causes, and timeouts in wait.

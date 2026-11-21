@@ -4,7 +4,11 @@ import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { readFileSync } from "node:fs";
-import { T3RpcClient, T3RpcError } from "../hosts/t3code/rpc";
+import {
+  T3_THREAD_NOT_FOUND_PROJECTION_REASON,
+  T3RpcClient,
+  T3RpcError,
+} from "../hosts/t3code/rpc";
 
 type Frame = Record<string, unknown>;
 type Reply = (frame: unknown) => void;
@@ -1327,3 +1331,103 @@ for (const type of ["message.dispatch", "thread.settle"])
     assert.deepEqual(await timeout.late, { accepted: true });
     assert.equal(sends, 1);
   });
+
+test("OrchestrationV2GetThreadProjectionError classifies ProjectionStoreThreadNotFoundError for the requested thread without leaking remote text", async (t) => {
+  const threadId = "thread:delegated-task:ns-run-synthetic-missing";
+  const cases = [
+    {
+      name: "real nested OrchestratorProjectionError -> ProjectionStoreThreadNotFoundError",
+      error: {
+        _tag: "OrchestrationV2GetThreadProjectionError",
+        threadId,
+        message: `Failed to load orchestration V2 thread ${threadId}`,
+        cause: {
+          name: "OrchestratorProjectionError",
+          message: `Failed to load orchestration projection for thread ${threadId}.`,
+          cause: {
+            name: "ProjectionStoreThreadNotFoundError",
+            message: `No orchestration projection exists for thread ${threadId}.`,
+          },
+        },
+      },
+      expectedReason: T3_THREAD_NOT_FOUND_PROJECTION_REASON,
+    },
+    {
+      name: "ProjectionStoreReadError stays generic transient",
+      error: {
+        _tag: "OrchestrationV2GetThreadProjectionError",
+        threadId,
+        message: `Failed to load orchestration V2 thread ${threadId}`,
+        cause: {
+          name: "OrchestratorProjectionError",
+          message: `Failed to load orchestration projection for thread ${threadId}.`,
+          cause: {
+            name: "ProjectionStoreReadError",
+            message: `Failed to read orchestration projection for thread ${threadId}.`,
+          },
+        },
+      },
+      expectedReason: "OrchestrationV2GetThreadProjectionError",
+    },
+    {
+      name: "ProjectionStoreThreadNotFoundError for a fork ancestor stays transient",
+      error: {
+        _tag: "OrchestrationV2GetThreadProjectionError",
+        threadId,
+        message: `Failed to load orchestration V2 thread ${threadId}`,
+        cause: {
+          name: "OrchestratorProjectionError",
+          message: `Failed to load orchestration projection for thread ${threadId}.`,
+          cause: {
+            name: "ProjectionStoreThreadNotFoundError",
+            message:
+              "No orchestration projection exists for thread thread:other-fork-source.",
+          },
+        },
+      },
+      expectedReason: "OrchestrationV2GetThreadProjectionError",
+    },
+    {
+      name: "missing cause stays generic transient",
+      error: {
+        _tag: "OrchestrationV2GetThreadProjectionError",
+      },
+      expectedReason: "OrchestrationV2GetThreadProjectionError",
+    },
+  ];
+  let index = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== "Request") return;
+    send(
+      failure(request, {
+        _tag: "Fail",
+        error: cases[index++]!.error,
+      }),
+    );
+  });
+  const client = await clientFor(t, server);
+  for (const entry of cases) {
+    await assert.rejects(
+      client.readStream(
+        "orchestration.subscribeThread",
+        { threadId },
+        () => false,
+      ),
+      (error) => {
+        assert.ok(error instanceof T3RpcError, entry.name);
+        assert.equal(error.code, "remote", entry.name);
+        assert.equal(
+          error.remoteTag,
+          "OrchestrationV2GetThreadProjectionError",
+          entry.name,
+        );
+        assert.equal(error.reason, entry.expectedReason, entry.name);
+        assert.doesNotMatch(
+          `${String(error)} ${JSON.stringify(error)}`,
+          /ns-run-synthetic-missing|other-fork-source|No orchestration projection/,
+        );
+        return true;
+      },
+    );
+  }
+});

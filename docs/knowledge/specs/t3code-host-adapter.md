@@ -801,16 +801,22 @@ For already-bound targets (`observe`, `originAgent`, `isObserved`, `activeRunId`
 once the target is absent from live shell so a positively live, archived,
 `deletedAt`, or mismatched exact binding is proved without pairing
 `getArchivedShellSnapshot`, and selection shares that projection with the
-pre-send check within a pass. Only `ThreadNotFoundError` and, for a bound parent,
-the generic incomplete projection read (nucleus#1460) hand a read to the paired
-inventory (plus operations that genuinely require full coverage: `threadArchiveState`, `workspaceThreads`,
-`archiveThreadPage`, `findAgents`, `anyChildLive`, and `observeThreadList`
-after `ThreadNotFoundError`) pairs `subscribeShell` with
-`getArchivedShellSnapshot` at an equal `snapshotSequence` (retrying up to 5
-times). If events keep advancing the global cursor across that pair, or if
-`subscribeThread` returns a transient incomplete projection read
-(`OrchestrationV2GetThreadProjectionError` before delivery), the adapter throws a
-`HostReadRefusalError` (`T3InventoryChurnError` / `T3TransientReadError`)
+pre-send check within a pass. Only `ThreadNotFoundError`, an
+`OrchestrationV2GetThreadProjectionError` whose `cause` proves
+`ProjectionStoreThreadNotFoundError` for the requested thread (which the
+adapter classifies as `OrchestrationV2GetThreadProjectionError:thread_not_found`),
+and, for a bound parent, the generic incomplete projection read (nucleus#1460)
+hand a read to the paired inventory (plus operations that genuinely require full
+coverage: `threadArchiveState`, `workspaceThreads`, `archiveThreadPage`,
+`findAgents`, `anyChildLive`, and `observeThreadList` after a not-found error)
+pairs `subscribeShell` with `getArchivedShellSnapshot` at an equal
+`snapshotSequence` (retrying up to 5 times). If events keep advancing the global
+cursor across that pair, or if `subscribeThread` returns a transient incomplete
+or failing projection read (`OrchestrationV2GetThreadProjectionError` without a
+missing-thread proof for that thread — including `ProjectionStoreReadError`,
+`LegacyV1ThreadImportError`, missing/unrecognized `cause`, or a missing fork
+ancestor — before delivery), the adapter throws a `HostReadRefusalError`
+(`T3InventoryChurnError` / `T3TransientReadError`)
 rather than catching and erasing the reason or inferring deletion/absence. This
 keeps T3 online and model-eligible, records no `host_transport_fault`, and
 never marks an un-sent intent refused or unknown (`intents.ts` releases the
@@ -1399,8 +1405,10 @@ creation, workspace and custody admission proves settled. The parent must still
 match the task's recorded workspace, project and Nucleus ACP provider. The T3
 `thread.unarchive` effect has the restart operation's durable identity; the
 narrow parent observation must prove the same parent live before normal admission
-proceeds. A narrow read that cannot answer (`ThreadNotFoundError`, or the generic
-incomplete projection error the nightly also gives for an absent thread,
+proceeds. A narrow read that cannot answer (`ThreadNotFoundError`, an
+`OrchestrationV2GetThreadProjectionError` proving
+`ProjectionStoreThreadNotFoundError` for the requested thread, or the generic
+incomplete projection error the nightly gives without that proof,
 nucleus#1460) falls back to the paired inventory, and an unreadable inventory keeps
 the authorized restart pending without losing it. A prepared binding (below) is
 not a restore: the restart precheck sends nothing and the worker's create launches
@@ -1421,11 +1429,11 @@ session are deterministic for a task
 adapter's state before the send, and a lost reply is settled by finding the thread
 before anything is launched again. The binding is stored before the parent's
 launch read, so a read failure in between leaves a **prepared** binding
-(nucleus#1458). The installed nightly answers an absent thread's read with `OrchestrationV2GetThreadProjectionError`, not `ThreadNotFoundError`; the private proof `effigy proof:t3code:prepared-parent` confirms it on an isolated nightly (nucleus#1460). The generic incomplete projection error grants no absence, so the
+(nucleus#1458). An older or generic `OrchestrationV2GetThreadProjectionError` without `ProjectionStoreThreadNotFoundError` grants no absence on its own, so the
 parent observation and the launch's own existence check fall back to the complete
 paired inventory for a prepared binding only (nucleus#1460). A sent parent's generic
 read keeps its transient wait, so churn never turns it into archive scans or a finished
-marker (nucleus#1451). An unreadable inventory keeps the wait.
+marker (nucleus#1451); only `ThreadNotFoundError` or `OrchestrationV2GetThreadProjectionError:thread_not_found` checks the paired inventory. An unreadable inventory keeps the wait.
 Prepared is one decision, shared by first dispatch, the retained launch and owner
 restart: the complete inventory shows no row for the parent, and the `parent-launch`
 command has no ledger intent, which proves nothing was reserved for a send. Only that
@@ -1749,10 +1757,17 @@ notice or pending question.
 
 `findRunAgents` uses exact `nucleus.run` and `nucleus.task` labels to select
 local launch records, then reads each native thread by ID. A fresh thread
-snapshot supplies placement. On `ThreadNotFoundError`, it checks a fresh,
+snapshot supplies placement. On `ThreadNotFoundError`, or on an
+`OrchestrationV2GetThreadProjectionError` whose `cause` proves
+`ProjectionStoreThreadNotFoundError` for the requested thread (the installed
+nightly's `subscribeThread` wire shape for a missing thread, classified as
+`OrchestrationV2GetThreadProjectionError:thread_not_found`), it checks a fresh,
 synchronized live and archived inventory and counts any surviving row as a
 match. A candidate missing from both lists after that response contributes
-no match. A generic projection error leaves the lookup unanswered.
+no match. Any other `OrchestrationV2GetThreadProjectionError` (a read failure
+such as `ProjectionStoreReadError`, missing/unrecognized `cause`, or a missing
+fork ancestor) and any transport or timeout error stays transient and leaves
+the lookup unanswered.
 
 If the inventory's five live and archived pairs keep returning different
 sequences, the lookup retries once from fresh reads. Persistent churn surfaces

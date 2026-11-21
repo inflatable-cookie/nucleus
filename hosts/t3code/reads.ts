@@ -7,7 +7,11 @@ import {
   ProvenPreSendRefusalError,
   type ArchivedThread,
 } from "../../core/host";
-import { T3RpcError, type T3RpcClient } from "./rpc";
+import {
+  T3_THREAD_NOT_FOUND_PROJECTION_REASON,
+  T3RpcError,
+  type T3RpcClient,
+} from "./rpc";
 import { agentRecord, canonical, t3WorkspaceId, type T3StateFile } from "./state";
 import { labelTask } from "./one-row";
 import { linkedWorktreePath } from "../../core/git/git-identity";
@@ -95,14 +99,17 @@ export function isThreadNotFoundRpcError(error: unknown): boolean {
   return (
     error instanceof T3RpcError &&
     error.code === "remote" &&
-    error.remoteTag === "ThreadNotFoundError"
+    (error.remoteTag === "ThreadNotFoundError" ||
+      (error.remoteTag === "OrchestrationV2GetThreadProjectionError" &&
+        error.reason === T3_THREAD_NOT_FOUND_PROJECTION_REASON))
   );
 }
 export function isTransientT3ReadRpcError(error: unknown): boolean {
   return (
     error instanceof T3RpcError &&
     error.code === "remote" &&
-    error.remoteTag === "OrchestrationV2GetThreadProjectionError"
+    error.remoteTag === "OrchestrationV2GetThreadProjectionError" &&
+    error.reason !== T3_THREAD_NOT_FOUND_PROJECTION_REASON
   );
 }
 /** One thread observation as this host reports it: a snapshot's answer, or the thread list's. */
