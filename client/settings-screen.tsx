@@ -44,7 +44,7 @@ import { settingsViews } from "../shared/queue-navigation";
 import { useSettingsSection } from "./settings-hint";
 import { SettingsTelemetry } from "./settings-telemetry";
 import { BackupsPanel } from "./backups-panel";
-import { DispatchLimits } from "./limits";
+import { DispatchLimits, type PendingOverrideRemovalPhase } from "./limits";
 import { HostsPanel } from "./hosts-settings";
 import { ProjectsSection } from "./projects-settings";
 /** A board from a service that predates Spec 052 carries no dispatch routing policy. */
@@ -163,6 +163,22 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     state?.backup?.localError ?? backupsQuery.data?.localError ?? null;
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [pendingOverrideRemovals, setPendingOverrideRemovals] = useState<
+    Record<string, PendingOverrideRemovalPhase>
+  >({});
+  const setRemovalPhase = (
+    projectKey: string,
+    phase: PendingOverrideRemovalPhase | null,
+  ) =>
+    setPendingOverrideRemovals((prev) => {
+      if (phase === null) {
+        if (!Object.prototype.hasOwnProperty.call(prev, projectKey))
+          return prev;
+        const { [projectKey]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [projectKey]: phase };
+    });
   // Dispatch limits save as they change (Tom, 2026-10-22: "auto save rather than
   // needing manual save buttons"): the write, then a fresh board. A failure throws
   // to the section's autosave, which shows it beside the control.
@@ -172,6 +188,41 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
       queryKey: ["nucleus", "state"],
       exact: true,
     });
+  }
+  async function saveProjectLimit(value: {
+    projectKey: string;
+    limit: number | null;
+  }): Promise<void> {
+    if (value.limit !== null) {
+      await persist(() => setProjectLimit(value));
+      await queryClient.invalidateQueries({
+        queryKey: ["nucleus", "project-settings"],
+      });
+      return;
+    }
+    setRemovalPhase(value.projectKey, "saving");
+    try {
+      await setProjectLimit(value);
+    } catch (failure) {
+      setRemovalPhase(value.projectKey, null);
+      throw failure;
+    }
+    setRemovalPhase(value.projectKey, "refreshing");
+    try {
+      await queryClient.refetchQueries(
+        { queryKey: ["nucleus", "state"], exact: true },
+        { throwOnError: true },
+      );
+      await queryClient.invalidateQueries({
+        queryKey: ["nucleus", "project-settings"],
+      });
+    } catch (refreshFailure) {
+      setError(
+        `Override removed, but refresh failed: ${errorText(refreshFailure)}`,
+      );
+    } finally {
+      setRemovalPhase(value.projectKey, null);
+    }
   }
   async function act(fn: () => Promise<unknown>): Promise<boolean> {
     setBusy(true);
@@ -329,9 +380,8 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                     });
                   })
                 }
-                saveProjectLimit={(value) =>
-                  persist(() => setProjectLimit(value))
-                }
+                saveProjectLimit={saveProjectLimit}
+                pendingOverrideRemovals={pendingOverrideRemovals}
               />
             </ScrollView>
           )}

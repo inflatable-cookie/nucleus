@@ -46,6 +46,9 @@ import {
 /** A project override write: its slot limit, or null to remove it. The in-flight cap is always twice the slots (Tom, 2026-11-08). */
 export type ProjectLimitPatch = { projectKey?: string; limit: number | null };
 
+/** In-flight removal phase for a project slot override, retained across Settings tab switches. */
+export type PendingOverrideRemovalPhase = "saving" | "refreshing";
+
 export type DispatchLimitsProps = {
   c: Colors;
   state: UiQueueState;
@@ -60,6 +63,10 @@ export type DispatchLimitsProps = {
   saveProjectLimit: (
     value: ProjectLimitPatch & { projectKey: string },
   ) => Promise<void>;
+  /** Override removals currently saving or refreshing, keyed by project key. */
+  pendingOverrideRemovals?: Readonly<
+    Record<string, PendingOverrideRemovalPhase>
+  >;
 };
 
 const small = (c: Colors) => ({
@@ -641,6 +648,7 @@ function ProjectOverrides({
   state,
   busy,
   saveProjectLimit,
+  pendingOverrideRemovals,
 }: {
   c: Colors;
   state: UiQueueState;
@@ -648,6 +656,9 @@ function ProjectOverrides({
   saveProjectLimit: (
     value: ProjectLimitPatch & { projectKey: string },
   ) => Promise<void>;
+  pendingOverrideRemovals?: Readonly<
+    Record<string, PendingOverrideRemovalPhase>
+  >;
 }) {
   // Choosing a project creates its override at once with the per-project limit;
   // a failure to create it is shown here, beside the picker.
@@ -733,6 +744,7 @@ function ProjectOverrides({
             projectName={projectRecord?.name ?? projectKey}
             value={limit}
             canSave={Boolean(projectRecord)}
+            pendingRemoval={pendingOverrideRemovals?.[projectKey]}
             save={(next) => saveProjectLimit({ projectKey, ...next })}
           />
         );
@@ -746,12 +758,14 @@ function ProjectLimitRow({
   projectName,
   value,
   canSave,
+  pendingRemoval,
   save,
 }: {
   c: Colors;
   projectName: string;
   value: number;
   canSave: boolean;
+  pendingRemoval?: PendingOverrideRemovalPhase;
   save: (patch: ProjectLimitPatch) => Promise<void>;
 }) {
   const [limit, setLimit] = useState(value);
@@ -762,12 +776,20 @@ function ProjectLimitRow({
     if (!auto.saver.busy && !auto.failed) setLimit(value);
   }, [value, auto.failed]);
   // Once a removal starts the row takes no edits, so nothing pending can recreate the
-  // override when it unmounts; a failed removal gives editing back.
-  const [removing, setRemoving] = useState(false);
+  // override when it unmounts; a failed removal gives editing back. Parent-tracked
+  // `pendingRemoval` preserves this lock across Settings tab switches (nucleus#1495).
+  const [localRemoving, setLocalRemoving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   useEffect(() => {
-    if (removing && auto.failed) setRemoving(false);
-  }, [removing, auto.failed]);
+    if (localRemoving && auto.failed) setLocalRemoving(false);
+  }, [localRemoving, auto.failed]);
+  const removing = localRemoving || Boolean(pendingRemoval);
+  const removalStatus =
+    pendingRemoval === "refreshing"
+      ? "Removed — refreshing…"
+      : removing
+        ? "Removing…"
+        : "";
   const change = (next: number) => {
     if (removing) return;
     setLimit(next);
@@ -775,7 +797,7 @@ function ProjectLimitRow({
   };
   const remove = () => {
     setConfirming(false);
-    setRemoving(true);
+    setLocalRemoving(true);
     auto.enqueue({ limit: null });
   };
   return (
@@ -806,11 +828,28 @@ function ProjectLimitRow({
         >
           {projectName}
         </Text>
-        <SaveStatus
-          c={c}
-          status={auto.status}
-          label={`${projectName} override`}
-        />
+        {removalStatus ? (
+          <Text
+            accessibilityLabel={`${projectName} override save status`}
+            accessibilityLiveRegion="polite"
+            style={{
+              ...muted(c),
+              fontSize: type.metadata.fontSize,
+              lineHeight: type.metadata.lineHeight,
+              flexShrink: 1,
+              maxWidth: "100%",
+              textAlign: "right",
+            }}
+          >
+            {removalStatus}
+          </Text>
+        ) : (
+          <SaveStatus
+            c={c}
+            status={auto.status}
+            label={`${projectName} override`}
+          />
+        )}
         <NumberStepper
           c={c}
           a11yLabel={`Task slots for ${projectName} (0–64; 0 admits nothing)`}
@@ -877,6 +916,7 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         state={state}
         busy={props.busy}
         saveProjectLimit={props.saveProjectLimit}
+        pendingOverrideRemovals={props.pendingOverrideRemovals}
       />
       <FrontierGrants c={c} state={state} refresh={props.refreshBoard} />
     </View>
