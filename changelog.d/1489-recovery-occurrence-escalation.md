@@ -1,0 +1,1 @@
+Verified merges now settle a pre-merge recovery episode that never launched a run, even after its pending clock escalated it and attached an incident. Synchronization and closeout continue through the ordinary sweep or owner move, without a planner answer. Independent incidents, holds, unresolved launches and wrong PR or head witnesses still hold their own exits.

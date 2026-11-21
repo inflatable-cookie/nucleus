@@ -40,6 +40,7 @@ import { syncMain } from "../core/forge/index";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { taskControlOperation } from "../core/verbs/task-control-key";
 import { recoveryOvertakenByMerge } from "../core/recovery/merge-occurrence";
+import { recoveryPendingEscalation } from "../core/recovery/coordinator-pass";
 import { Reports } from "../core/intake/report";
 
 const head = "a".repeat(40),
@@ -2200,6 +2201,283 @@ test("C6 a witness bound to the merged commit does not overtake a no-run episode
       kind: "sweep",
     });
     assert.equal(f.task().resolution.recovery?.status, "pending");
+    assert.equal(f.counts().merges, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+/**
+ * The live C6 shape (Bovine #6601): the no-run episode's pending clock escalated
+ * after its verified merge through the real escalation writer. The opening
+ * recorded no incident, the writer derived one and attached it, and the question
+ * it opened was never delivered.
+ */
+function plantDerivedNoRunEscalation(f: ReturnType<typeof fixture>) {
+  plantNoRunEpisode(f, { escalate: false });
+  // The opening is journaled before any incident or question it later derives.
+  f.store.event(f.taskId, "recovery_pending", "");
+  const summary = recoveryPendingEscalation(f.task());
+  f.engine.resolution.recovery.escalate(f.task(), summary);
+  const episode = f.task().resolution.recovery!;
+  f.engine.resolution.openPlannerEscalation(f.task(), {
+    cause: digest(`recovery-pending:${f.taskId}:${episode.id}`),
+    runId: null,
+    question: summary,
+    payload: {
+      cause: "recovery-pending",
+      taskId: f.taskId,
+      runId: null,
+      question: summary,
+    },
+  });
+  return f.task();
+}
+
+test("C6 live shape: the derived incident is overtaken by the verified merge and settles once", async () => {
+  const f = fixture();
+  try {
+    const planted = plantDerivedNoRunEscalation(f);
+    const episode = planted.resolution.recovery!;
+    assert.equal(episode.mergeWitness?.incidentId, null);
+    assert.notEqual(episode.incidentId, null);
+    assert.equal(planted.resolution.incident?.id, episode.incidentId);
+    assert.equal(planted.resolution.stop?.reason, "escalated");
+    assert.equal(recoveryOvertakenByMerge(f.store, planted), true);
+    // The same proof holds after reopening the durable store.
+    const reopened = new Store(join(f.dir, "queue.sqlite"));
+    try {
+      assert.equal(
+        recoveryOvertakenByMerge(reopened, reopened.task(f.taskId)),
+        true,
+      );
+    } finally {
+      reopened.close();
+    }
+    await f.engine.wake();
+    const settled = f.task();
+    // Ordinary progress: one synchronization, then closeout, with no second merge.
+    assert.equal(settled.phase, "done");
+    assert.equal(f.counts().syncs, 1);
+    assert.equal(settled.resolution.recovery?.status, "resolved");
+    assert.equal(settled.resolution.incident?.status, "resolved");
+    assert.equal(settled.resolution.stop, null);
+    // The question is closed once: by the merge's resolution or by ordinary progress.
+    const closures = () =>
+      f.events("planner_escalation_resolved").length +
+      f.events("planner_escalation_answered").length;
+    assert.equal(closures(), 1);
+    assert.equal(plannerEscalations(f.store.eventsAll(f.taskId))[0]?.answered, true);
+    assert.equal(f.counts().merges, 0);
+    // A repeated pass decides the occurrence no further: no second closure or escalation.
+    await f.engine.wake();
+    assert.equal(closures(), 1);
+    assert.equal(f.events("recovery_escalated").length, 1);
+    assert.equal(f.task().resolution.incident?.status, "resolved");
+    assert.equal(f.counts().merges, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("C6 live shape: the owner move and its preview close out through the same decision", async () => {
+  const f = fixture();
+  try {
+    const before = plantDerivedNoRunEscalation(f);
+    assert.equal(closeoutOffer(f)?.available, true);
+    const result = await f.engine.performTaskControl(
+      taskControlInputSchema.parse({
+        action: "move",
+        to: "closeout",
+        taskId: f.taskId,
+        version: before.version,
+        reason: "Resume verified closeout",
+        caller: CALLER,
+      }),
+    );
+    assert.equal(result.phase, "syncing");
+    assert.equal(result.resolution.recovery?.status, "resolved");
+    assert.equal(result.resolution.incident?.status, "resolved");
+    assert.equal(result.resolution.stop, null);
+    assert.equal(f.events("planner_escalation_resolved").length, 1);
+    assert.equal(f.counts().merges, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("C6 live shape: an independent incident keeps its own exit and holds the merge", async () => {
+  const f = fixture();
+  try {
+    const planted = plantDerivedNoRunEscalation(f);
+    const current = f.task();
+    const derived = current.resolution.incident!;
+    // A different fault now occupies the task's incident slot; the episode's
+    // derived incident no longer is what the task holds.
+    f.store.update(f.taskId, {
+      resolution: {
+        ...current.resolution,
+        incident: {
+          ...derived,
+          id: "independent-incident",
+          fingerprint: "independent-incident",
+          role: "coordinator",
+          runId: null,
+          cause: "other",
+          detail: "An independent fault",
+          status: "escalated",
+        },
+      },
+    });
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), true);
+    f.engine.resolution.closeout.continueRecordedMerge(f.task(), {
+      kind: "sweep",
+    });
+    const held = f.task();
+    assert.equal(held.phase, planted.phase);
+    assert.equal(held.reason, planted.reason);
+    assert.equal(held.resolution.incident?.id, "independent-incident");
+    assert.equal(held.resolution.incident?.status, "escalated");
+    assert.equal(f.counts().merges, 0);
+    await assert.rejects(
+      f.engine.performTaskControl(
+        taskControlInputSchema.parse({
+          action: "move",
+          to: "closeout",
+          taskId: f.taskId,
+          version: held.version,
+          reason: "Resume verified closeout",
+          caller: CALLER,
+        }),
+      ),
+      /Recorded merge waits: incident independent-incident is unresolved/,
+    );
+    assert.equal(f.counts().merges, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("C6 live shape: a wrong PR number or head does not overtake the derived escalation", async () => {
+  for (const wrong of ["head", "pr"] as const) {
+    const f = fixture();
+    try {
+      const planted = plantDerivedNoRunEscalation(f);
+      const episode = planted.resolution.recovery!;
+      f.store.update(f.taskId, {
+        ...(wrong === "pr"
+          ? { prUrl: "https://github.com/example/repo/pull/8" }
+          : {}),
+        resolution: {
+          ...planted.resolution,
+          recovery: {
+            ...episode,
+            mergeWitness: {
+              ...episode.mergeWitness!,
+              ...(wrong === "head" ? { head: "d".repeat(40) } : {}),
+              ...(wrong === "pr" ? { prNumber: 8 } : {}),
+            },
+          },
+        },
+      });
+      assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false, wrong);
+      f.engine.resolution.closeout.continueRecordedMerge(f.task(), {
+        kind: "sweep",
+      });
+      assert.equal(f.task().resolution.recovery?.status, "escalated", wrong);
+      assert.equal(f.task().resolution.stop?.reason, "escalated", wrong);
+      assert.equal(f.events("planner_escalation_resolved").length, 0, wrong);
+      assert.equal(f.counts().merges, 0, wrong);
+    } finally {
+      await f.close();
+    }
+  }
+});
+
+test("C6 live shape: an incident recorded before the opening is not claimed by the episode", async () => {
+  const f = fixture();
+  try {
+    plantNoRunEpisode(f, { escalate: false });
+    // Historical evidence that the attached incident predates the episode.
+    f.store.event(
+      f.taskId,
+      "incident",
+      JSON.stringify({
+        id: "pre-opening-incident",
+        role: "coordinator",
+        runId: null,
+        attempt: 0,
+        cause: "repository_identity",
+        action: "",
+        status: "reconciling",
+      }),
+    );
+    f.store.event(f.taskId, "recovery_pending", "");
+    const current = f.task();
+    const episode = current.resolution.recovery!;
+    const incident = {
+      id: "pre-opening-incident",
+      fingerprint: "pre-opening-incident",
+      role: "coordinator" as const,
+      runId: null,
+      turnId: null,
+      attempt: 0,
+      cause: "repository_identity",
+      detail: "Recovery was requested before the merge",
+      action: "" as const,
+      status: "escalated" as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    f.store.update(f.taskId, {
+      resolution: {
+        ...current.resolution,
+        incident,
+        recovery: { ...episode, incidentId: incident.id, status: "escalated" },
+      },
+    });
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false);
+    f.engine.resolution.closeout.continueRecordedMerge(f.task(), {
+      kind: "sweep",
+    });
+    assert.equal(f.task().resolution.recovery?.status, "escalated");
+    assert.equal(f.task().resolution.incident?.status, "escalated");
+    assert.equal(f.counts().merges, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("C6 live shape: an unresolved recovery launch keeps the derived episode owned", async () => {
+  const f = fixture();
+  try {
+    const planted = plantDerivedNoRunEscalation(f);
+    f.store.putRun(
+      runSchema.parse({
+        id: "ambiguous-derived-run",
+        taskId: f.taskId,
+        role: "recovery",
+        generation: planted.resolution.recovery!.generation,
+        head,
+        base,
+        agentId: null,
+        workspaceId: "workspace",
+        profile: null,
+        status: "intent",
+        createdAt: new Date().toISOString(),
+        lastObservedAt: null,
+        active: false,
+        idleSince: null,
+        released: false,
+        completion: null,
+      }) as Run,
+    );
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false);
+    f.engine.resolution.closeout.continueRecordedMerge(f.task(), {
+      kind: "sweep",
+    });
+    assert.equal(f.task().resolution.recovery?.status, "escalated");
+    assert.equal(f.events("planner_escalation_resolved").length, 0);
     assert.equal(f.counts().merges, 0);
   } finally {
     await f.close();
