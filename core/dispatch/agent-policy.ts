@@ -36,7 +36,7 @@ export class AgentPolicy {
     const guard = spec.guard;
     if(guard){
       try{
-        if(!await guard.allowed()||!guard.stillAllowed())throw new ProvenPreSendRefusalError('Reviewer source or writer state changed before creation');
+        if(!await guard.allowed()||!guard.stillAllowed())throw new ProvenPreSendRefusalError('Reviewer source or writer state changed before creation', 'Reviewer creation');
       }catch(error){
         if (
           error instanceof ProvenPreSendRefusalError ||
@@ -48,7 +48,7 @@ export class AgentPolicy {
           error instanceof HostTransportFault
         )
           throw error;
-        throw new ProvenPreSendRefusalError(error instanceof Error?error.message:String(error));
+        throw new ProvenPreSendRefusalError(error instanceof Error?error.message:String(error), 'Reviewer creation');
       }
     }
     return this.host.nativeAgentCreate(spec, mcp, retry);

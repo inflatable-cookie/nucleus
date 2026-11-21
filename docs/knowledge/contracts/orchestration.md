@@ -982,7 +982,9 @@ into its native send or creation (`reviewAdmission` in `deliver.ts`). The guard
 re-proves, immediately before the host call, the ordinary round's custody, the
 live PR identity and head, the writer yield on review entry, the exact source and
 the reservation snapshot, plus the current pause, dispatch hold, task version,
-run ownership and blocking-effect fence. A proven refusal settles the run
+run ownership and blocking-effect fence. A continuation also re-proves its
+recorded reviewer's profile; a creation does not, because the reservation
+selected and proved that profile and delivery records the new agent afterwards. A proven refusal settles the run
 superseded and released with no agent bound; the task stops in attention with
 `Ordinary review reviewer refused before send` naming the refusal. A blocking
 effect found by the guard waits with `review_waiting_on_effects` instead of

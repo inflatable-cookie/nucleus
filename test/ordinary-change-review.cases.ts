@@ -2905,8 +2905,8 @@ test("an ordinary fresh reviewer is re-proved at its native creation and launche
 
 /**
  * Each mutation lands after the ordinary creation's pre-send proofs and before its
- * guard. A proven refusal settles the run superseded with no agent; an effect fence
- * waits instead of refusing.
+ * guard, which runs its proofs inside `allowed` and refuses before any create. A
+ * proven refusal settles the run superseded with no agent; an effect fence waits.
  */
 const freshReviewerRefusals: Array<{
   name: string;
@@ -2918,7 +2918,7 @@ const freshReviewerRefusals: Array<{
     name: "pause",
     plant: (f) => f.store.setMeta("paused", true),
     settles: "attention",
-    reason: /refused before send/,
+    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Ordinary review task reservation changed during custody proof/,
   },
   {
     name: "dispatch hold",
@@ -2937,7 +2937,7 @@ const freshReviewerRefusals: Array<{
         },
       }),
     settles: "attention",
-    reason: /refused before send/,
+    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
   {
     name: "pending effect",
@@ -2972,7 +2972,7 @@ const freshReviewerRefusals: Array<{
         reason: "Concurrent canonical admission changed the source reservation",
       }),
     settles: "attention",
-    reason: /refused before send/,
+    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
   {
     name: "PR head drift",
@@ -2980,7 +2980,7 @@ const freshReviewerRefusals: Array<{
       f.state.prSha = f.oldHead;
     },
     settles: "attention",
-    reason: /refused before send/,
+    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
   {
     name: "a live run that owns the checkout",
@@ -2991,7 +2991,7 @@ const freshReviewerRefusals: Array<{
       f.store.putRun({ ...other, id: randomUUID(), released: false, status: "running", active: true });
     },
     settles: "attention",
-    reason: /refused before send/,
+    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Another run owns the ordinary review checkout$/,
   },
 ];
 
@@ -3009,8 +3009,7 @@ for (const refusal of freshReviewerRefusals) {
       await reviseAndWake(f, 1);
       assert.equal(seen.length, 1, "the ordinary creation reached its guard");
       const run = seen[0]!;
-      assert.equal(f.faults.createTrace[0], "allowed");
-      assert.equal(f.faults.createTrace.includes("native"), false, "no agent is created after the proof refuses");
+      assert.deepEqual(f.faults.createTrace, ["allowed"], "the guard refused before any native create");
       const task = f.store.task(f.task.id);
       assert.equal(f.store.run(run.id)?.status, "superseded");
       assert.equal(f.store.run(run.id)?.released, true);

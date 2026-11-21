@@ -57,21 +57,25 @@ export class RunLaunchDeliver {
   /**
    * The admission a reviewer send or creation re-proves at its last safe point,
    * after the reservation and the pre-send proofs: an ordinary round's custody,
-   * the live PR identity, the writer yield on review entry, the exact source and
-   * the reservation snapshot. A retained send and a fresh creation share it, so
-   * both prove the same facts. `false` and a thrown ProvenPreSendRefusalError are
-   * proven refusals; a blocking effect throws its typed fence so the launch waits.
+   * the live PR identity, the writer yield on review entry, the exact source, the
+   * pause, dispatch hold, task version, run ownership and effect fence. A retained
+   * send and a fresh creation share it. `false` and a thrown ProvenPreSendRefusalError
+   * are proven refusals; a blocking effect throws its typed fence so the launch waits.
    * `detached` is the checkout shape the caller proves: a retained send always
    * proves the detached identity, a creation proves the run's own shape.
    */
   private reviewAdmission(fresh: Task, savedRun: Run, run: Run, detached: boolean): ReviewAdmissionGuard {
     const version = fresh.version, snapshot = this.resolution.ordinaryReviewRuns(fresh.id);
+    // A continuation re-proves its recorded reviewer's profile. A creation starts
+    // the profile its reservation selected and proved, and delivery records the
+    // new agent after createRun returns, so it has no recorded binding to match.
+    const continuing = Boolean(savedRun.agentId);
     const stillAllowed = () => {
       const latest = this.store.task(fresh.id);
       if (latest.version !== version || latest.resolution.currentRunId !== run.id || latest.prHead !== run.head
         || this.resolution.paused() || dispatchBlocked(latest) || isDispositionActive(latest) || snapshot !== this.resolution.ordinaryReviewRuns(fresh.id)) return false;
       assertOrdinaryReviewIdentity(latest, run.head, detached);
-      this.resolution.assertReviewProfileIndependent(latest, savedRun);
+      if (continuing) this.resolution.assertReviewProfileIndependent(latest, savedRun);
       const effects = blockingRecoveryEffects(this.store, latest, { noticeKinds: 'all' });
       if (effects.length) throw new BlockingRecoveryEffectsError(effects);
       return true;
