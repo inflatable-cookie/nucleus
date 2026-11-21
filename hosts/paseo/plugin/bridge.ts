@@ -1,10 +1,12 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { dataHome } from "../../../shared/data-home.mjs";
 import type { RpcCatalogueEntry } from "../../../shared/rpc-catalogue";
 import {
   SERVICE_PROTOCOL_VERSION,
+  backendSourceDigest,
+  serviceBuildIdentity,
   sourcePathFromModule,
 } from "../../../shared/service/build";
 import { pluginRegistration } from "../../../shared/plugin-discovery.mjs";
@@ -29,16 +31,15 @@ import {
   rollWaitWorthy,
 } from "../../../shared/service/roll-recovery";
 import { lifecycleSignalSchema } from "../../../shared/lifecycle-signal";
-import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "../../../service/roll/options";
+import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "../../../shared/service/roll/options";
 import {
   BridgeSession,
   ServiceBridgeUnavailable,
   type BridgeState,
   type StandbyReadiness,
-} from "../../../service/roll/session";
-import { ServiceSpawner } from "../../../service/roll/spawn";
-import { ensureRollOwner, resolveExpectedBuild } from "../../../service/roll/owner";
-import { startupFailureSummary } from "../../../service/roll/startup-output";
+} from "../../../shared/service/roll/session";
+import { ServiceSpawner } from "../../../shared/service/roll/spawn";
+import { startupFailureSummary } from "../../../shared/service/roll/startup-output";
 
 /**
  * The authenticated bridge between the Paseo backend and the standalone Queue
@@ -59,9 +60,9 @@ import { startupFailureSummary } from "../../../service/roll/startup-output";
  * Forwarding decides which of them a failure needs; the bridge only starts and
  * reports the owner, and reloads the plugin once a landed roll is recorded.
  */
-export type { BridgeState, StandbyReadiness } from "../../../service/roll/session";
-export { ServiceBridgeUnavailable } from "../../../service/roll/session";
-export type { BridgeOptions } from "../../../service/roll/options";
+export type { BridgeState, StandbyReadiness } from "../../../shared/service/roll/session";
+export { ServiceBridgeUnavailable } from "../../../shared/service/roll/session";
+export type { BridgeOptions } from "../../../shared/service/roll/options";
 export type { BridgeProcessActions } from "../../../shared/service/bridge-process";
 
 /** Forwarded RPC window: covers the legacy compatibility waits (submit/task 15 s, handoff 60 s) with latency headroom. */
@@ -99,7 +100,7 @@ export class ServiceBridge {
     // module location for fixtures and direct runs.
     const sourcePath =
       options.sourcePath ?? readInstalledSourcePath(this.paseoHome());
-    const { expected, digest, pluginBuild } = resolveExpectedBuild(sourcePath);
+    const { expected, digest, pluginBuild } = this.resolveExpectedBuild(sourcePath);
     this.session = new BridgeSession(expected, pluginBuild, sourcePath, digest);
     // An unresolvable build is a typed state, not a throw: every call reports it.
     if (expected instanceof Error)
@@ -110,9 +111,35 @@ export class ServiceBridge {
       processActions: options.processActions,
       session: this.session,
       connect: (info, connectOptions) => this.tryConnect(info, connectOptions),
-      paseoHome: () => this.paseoHome(),
+      paseoEnvironment: () => ({ PASEO_HOME: this.paseoHome() }),
       currentSession: () => this.currentSession(),
     });
+  }
+
+  /** The build this bridge insists on, from the installed manifest or the source digest. */
+  private resolveExpectedBuild(sourcePath: string | null): {
+    expected: string | Error;
+    digest: string | null;
+    pluginBuild: string | null;
+  } {
+    try {
+      const root = sourcePath ?? sourcePathFromModule();
+      const installed = existsSync(join(root, "manifest.json"))
+        ? JSON.parse(readFileSync(join(root, "build.json"), "utf8"))
+        : null;
+      const digest: string | null =
+        installed?.revision ?? backendSourceDigest(root);
+      const expected: string | Error =
+        installed?.buildId ?? serviceBuildIdentity(root, undefined, digest!);
+      return {
+        expected,
+        digest,
+        pluginBuild: typeof expected === "string" ? expected : null,
+      };
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return { expected: failure, digest: null, pluginBuild: null };
+    }
   }
 
   private currentSession(): string {
@@ -467,7 +494,7 @@ export class ServiceBridge {
   private ensureOwner() {
     if (!this.options.rollOwnerLaunch) return;
     try {
-      ensureRollOwner({ dataDir: this.dataDir, root: this.session.sourcePath ?? sourcePathFromModule() });
+      this.options.processActions.ensureRollOwner({ dataDir: this.dataDir, root: this.session.sourcePath ?? sourcePathFromModule() });
     } catch {
       /* the owner's roll record names any failure it reaches; a missing entry is not a service failure */
     }

@@ -2,13 +2,12 @@ import { type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, openSync, closeSync, writeSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { runtimeNodeArgs } from "../../shared/runtime.mjs";
-import { readServiceExecutorFault, readServiceInfo, readServiceRoll, sessionsDiffer, type ServiceInfo } from "../../shared/service/discovery";
-import { ServiceClient } from "../../shared/service/client";
-import { awaitForeignReplacement, awaitStandbyProgress, SPAWN_TOKEN_ENV, STANDBY_ENV, STANDBY_READY_BUDGET_MS, STANDBY_READY_CAP_MS, STANDBY_READY_STALL_MS } from "../../shared/service/standby-wait";
-import type { BridgeProcessActions } from "../../shared/service/bridge-process";
-import { SERVICE_PROTOCOL_VERSION } from "../../shared/service/build";
-import { paseoHomeEnvironment } from "../../hosts/paseo/index.mjs";
+import { runtimeNodeArgs } from "../../runtime.mjs";
+import { readServiceExecutorFault, readServiceInfo, readServiceRoll, sessionsDiffer, type ServiceInfo } from "../discovery";
+import { ServiceClient } from "../client";
+import { awaitForeignReplacement, awaitStandbyProgress, SPAWN_TOKEN_ENV, STANDBY_ENV, STANDBY_READY_BUDGET_MS, STANDBY_READY_CAP_MS, STANDBY_READY_STALL_MS } from "../standby-wait";
+import type { BridgeProcessActions } from "../bridge-process";
+import { SERVICE_PROTOCOL_VERSION } from "../build";
 import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "./options";
 import { BridgeSession, ServiceBridgeUnavailable, type StandbyReadiness } from "./session";
 import { captureStartupChunk, newStartupCapture, safeSpawnErrorCode, sealStartupCapture, startupFailureRecord, startupFailureSummary, type StartupCapture } from "./startup-output";
@@ -35,7 +34,8 @@ export interface SpawnContext {
   session: BridgeSession;
   /** The bridge's authenticated connect attempt; it owns the presence claim. */
   connect(info: ServiceInfo, options?: { claimPresence?: boolean }): Promise<ServiceClient | null>;
-  paseoHome(): string;
+  /** The host's environment for a spawned service (its home), supplied by the composition. */
+  paseoEnvironment(): NodeJS.ProcessEnv;
   currentSession(): string;
 }
 
@@ -430,7 +430,7 @@ export class ServiceSpawner {
 
   private spawnProcess(attempt: SpawnAttempt, standbyFor?: number): ChildProcess {
     attempt.token = randomUUID();
-    const env: NodeJS.ProcessEnv = { ...process.env, ...paseoHomeEnvironment(this.core.paseoHome()), QUEUE_LOGIN_SESSION: this.core.currentSession(), [SPAWN_TOKEN_ENV]: attempt.token };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...this.core.paseoEnvironment(), QUEUE_LOGIN_SESSION: this.core.currentSession(), [SPAWN_TOKEN_ENV]: attempt.token };
     if (standbyFor) env[STANDBY_ENV] = String(standbyFor); else delete env[STANDBY_ENV];
     const capture = newStartupCapture(env);
     attempt.startup = capture;

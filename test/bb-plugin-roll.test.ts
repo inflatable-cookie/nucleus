@@ -31,7 +31,7 @@ import {
   type BbCommandRun,
 } from "../service/roll/bb-plugin-roll";
 import { RollScheduler } from "../service/roll/roll";
-import { BridgeSession } from "../service/roll/session";
+import { BridgeSession } from "../shared/service/roll/session";
 import { bridgeProcessActions } from "../service/install/bridge-process-actions";
 import {
   RuntimeHealthProjection,

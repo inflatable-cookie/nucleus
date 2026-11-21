@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   OUTPUT_TAIL_BYTES, captureStartupChunk, newStartupCapture, redactStartupText, safeSpawnErrorCode,
   sealStartupCapture, startupFailureRecord, startupFailureSummary,
-} from '../service/roll/startup-output';
+} from '../shared/service/roll/startup-output';
 
 test('startup output keeps a bounded tail and redacts a credential from the environment', () => {
   const capture = newStartupCapture({ QUEUE_API_TOKEN: 'super-secret-token', PATH: '/bin' });

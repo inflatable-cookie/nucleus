@@ -5,7 +5,7 @@
 // and exits by itself once neither holds.
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runRollOwnerEntry } from '../service/roll/owner.ts';
+import { runRollOwnerEntry } from '../service/transport/index.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const reason = await runRollOwnerEntry(process.argv.slice(2), root);

@@ -1,4 +1,4 @@
-import type { ServiceStartupFailure } from "../../shared/service/discovery";
+import type { ServiceStartupFailure } from "../discovery";
 
 /**
  * The startup output one spawned service is allowed to keep.

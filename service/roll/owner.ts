@@ -41,11 +41,11 @@ import {
 import { rollInProgress } from "../../shared/service/roll-recovery";
 import { ServiceClient } from "../../shared/service/client";
 import { bridgeProcessActions } from "../install/bridge-process-actions";
-import { paseoHome } from "../../hosts/paseo/index.mjs";
+import { paseoHome, paseoHomeEnvironment } from "../../hosts/paseo/index.mjs";
 import { installBase } from "../install/install.mjs";
-import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "./options";
-import { BridgeSession } from "./session";
-import { ServiceSpawner } from "./spawn";
+import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "../../shared/service/roll/options";
+import { BridgeSession } from "../../shared/service/roll/session";
+import { ServiceSpawner } from "../../shared/service/roll/spawn";
 import { RollScheduler, ROLL_CHECK_MS } from "./roll";
 import { bbPluginRoll } from "./bb-plugin-roll";
 import type { BridgeProcessActions } from "../../shared/service/bridge-process";
@@ -245,7 +245,7 @@ export class RollOwner {
       processActions: this.processActions,
       session: this.session,
       connect: (info, connectOptions) => this.connect(info, connectOptions),
-      paseoHome: () => this.options.paseoHome ?? paseoHome(),
+      paseoEnvironment: () => paseoHomeEnvironment(this.options.paseoHome ?? paseoHome()),
       currentSession: () => currentLoginSession(),
     });
     this.roll = new RollScheduler({

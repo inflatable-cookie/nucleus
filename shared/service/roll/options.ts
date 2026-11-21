@@ -1,5 +1,5 @@
-import type { BridgeProcessActions } from "../../shared/service/bridge-process";
-import type { BbPluginRollRecord } from "../../shared/bb-plugin-roll";
+import type { BridgeProcessActions } from "../bridge-process";
+import type { BbPluginRollRecord } from "../../bb-plugin-roll";
 
 /** A command to spawn detached, as a plain value so the composition supplies it. */
 export type Command = { command: string; args: string[] };

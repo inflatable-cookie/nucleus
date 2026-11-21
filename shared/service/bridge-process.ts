@@ -26,6 +26,8 @@ export interface BridgeMainChannel {
 
 /** Concrete process and file effects are supplied at composition, never loaded by the bridge. */
 export interface BridgeProcessActions {
+  /** Start the host-independent roll owner for this install (nucleus#1454); the bridge never imports the owner. */
+  ensureRollOwner(input: { dataDir: string; root: string }): unknown;
   openMainChannel(sourcePath: string): Promise<BridgeMainChannel | null>;
   verifyVersion(root: string): Promise<any>;
   activateVersion(root: string): Promise<void>;
