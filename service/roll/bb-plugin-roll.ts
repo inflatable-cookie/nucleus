@@ -25,8 +25,8 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { BbPluginRollRecord } from "../../../shared/bb-plugin-roll";
-import type { Command } from "./options";
+import type { BbPluginRollRecord } from "../../shared/bb-plugin-roll";
+import type { Command } from "../../shared/service/roll/options";
 
 /** `nucleus bb status` reads BB's own plugin list; it is bounded tightly. */
 export const BB_STATUS_TIMEOUT_MS = 60_000;

@@ -6,7 +6,6 @@ import { type LifecycleSignalKind } from "../../../shared/lifecycle-signal";
 import * as contracts from "../../../shared/contracts";
 import { bridgeProcessActions } from "../../../service/install/bridge-process-actions";
 import { ServiceBridge } from "./bridge";
-import { bbPluginRoll } from "./bb-plugin-roll";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -41,15 +40,14 @@ export default function contribute(server: PluginServerContext) {
   // Discovery knows only `nucleus` (nucleus#971); a Paseo config that still names
   // the retired `northstar-queue` ID is ignored, not migrated.
   const pluginId = "nucleus";
-  // A landed roll reloads this plugin so the bridge and UI match the new service,
-  // and keeps BB's installed plugin on the build it landed (nucleus#1339): the
-  // step runs the activated version's own `nucleus bb status`, and installs only
-  // when BB reports that plugin behind, through the same route `nucleus bb
-  // install` is. A machine without the plugin is untouched.
+  // A landed roll reloads this plugin so the bridge and UI match the new service.
+  // The main-channel roll itself is owned by the host-independent roll owner that
+  // this bridge starts (nucleus#1454), so T3-only and Paseo installs share one
+  // loop; BB's installed plugin follows the owner's landed roll (nucleus#1339).
   const bridge = new ServiceBridge({
     processActions: bridgeProcessActions,
     reloadPluginCommand: () => pluginReloadCommand(pluginId),
-    bbPluginRoll: (input) => bbPluginRoll(input),
+    rollOwnerLaunch: true,
   });
   // Reload adopts a compatible service; cold startup must not depend on opening
   // the board or receiving the first forwarded RPC. Bootstrap is bounded and

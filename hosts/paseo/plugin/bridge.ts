@@ -31,16 +31,18 @@ import {
   rollWaitWorthy,
 } from "../../../shared/service/roll-recovery";
 import { lifecycleSignalSchema } from "../../../shared/lifecycle-signal";
-import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "./options";
+import {
+  CONNECT_ATTEMPT_TIMEOUT_MS,
+  type BridgeOptions,
+} from "../../../shared/service/roll/options";
 import {
   BridgeSession,
   ServiceBridgeUnavailable,
   type BridgeState,
   type StandbyReadiness,
-} from "./session";
-import { ServiceSpawner } from "./spawn";
-import { RollScheduler } from "./roll";
-import { startupFailureSummary } from "./startup-output";
+} from "../../../shared/service/roll/session";
+import { ServiceSpawner } from "../../../shared/service/roll/spawn";
+import { startupFailureSummary } from "../../../shared/service/roll/startup-output";
 
 /**
  * The authenticated bridge between the Paseo backend and the standalone Queue
@@ -56,12 +58,17 @@ import { startupFailureSummary } from "./startup-output";
  * service is absent, starting, incompatible, being upgraded or unhealthy. It
  * never starts an in-plugin fallback runtime.
  *
- * Establishing the service (./spawn.ts) and rolling it (./roll.ts) are their own
- * owners; forwarding decides which of them a failure needs.
+ * Establishing the service (service/roll/spawn.ts) is its own owner, and the main
+ * channel roll belongs to the host-independent roll owner (service/roll/owner.ts).
+ * Forwarding decides which of them a failure needs; the bridge only starts and
+ * reports the owner, and reloads the plugin once a landed roll is recorded.
  */
-export type { BridgeState, StandbyReadiness } from "./session";
-export { ServiceBridgeUnavailable } from "./session";
-export type { BridgeOptions } from "./options";
+export type {
+  BridgeState,
+  StandbyReadiness,
+} from "../../../shared/service/roll/session";
+export { ServiceBridgeUnavailable } from "../../../shared/service/roll/session";
+export type { BridgeOptions } from "../../../shared/service/roll/options";
 export type { BridgeProcessActions } from "../../../shared/service/bridge-process";
 
 /** Forwarded RPC window: covers the legacy compatibility waits (submit/task 15 s, handoff 60 s) with latency headroom. */
@@ -87,11 +94,9 @@ const ROLL_CALL_WAIT_MS = 210_000;
 export class ServiceBridge {
   private readonly session: BridgeSession;
   private readonly spawner: ServiceSpawner;
-  private readonly roll: RollScheduler;
   private ensurePromise: Promise<ServiceClient> | null = null;
   private presenceTimer: NodeJS.Timeout | null = null;
   private readonly dataDir: string;
-  private installedReady: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: BridgeOptions) {
     this.dataDir = options.dataDir ?? dataHome();
@@ -113,21 +118,9 @@ export class ServiceBridge {
       processActions: options.processActions,
       session: this.session,
       connect: (info, connectOptions) => this.tryConnect(info, connectOptions),
-      paseoHome: () => this.paseoHome(),
+      paseoEnvironment: () => ({ PASEO_HOME: this.paseoHome() }),
       currentSession: () => this.currentSession(),
     });
-    this.roll = new RollScheduler({
-      options,
-      dataDir: this.dataDir,
-      session: this.session,
-      processActions: options.processActions,
-      ensure: () => this.ensure(),
-    });
-    if (sourcePath && existsSync(join(sourcePath, "manifest.json"))) {
-      this.installedReady = this.roll.resumeInstalled(sourcePath);
-      // Preserve a readable service-state error rather than an unhandled rejection.
-      void this.installedReady.catch(() => {});
-    }
   }
 
   /** The build this bridge insists on, from the installed manifest or the source digest. */
@@ -324,8 +317,6 @@ export class ServiceBridge {
         }
       },
       awaitService: async (remaining) => {
-        // A failed owned handover restores the old build before recovery reconnects.
-        if (this.session.handoff && this.roll.active) await this.roll.active;
         if (
           !rollWaitWorthy(this.dataDir) &&
           readServiceRoll(this.dataDir)?.status !== "failed"
@@ -402,7 +393,6 @@ export class ServiceBridge {
         "unhealthy",
         "this bridge is closed and cannot start the service",
       );
-    await this.installedReady;
     this.session.buildId();
     if (this.session.client?.connected) {
       // A refused claim is retried on the retained connection until it is granted
@@ -481,7 +471,6 @@ export class ServiceBridge {
       } catch {
         /* readiness is authoritative even if cleanup fails */
       }
-      await this.roll.settleLandedRoll(buildId);
       return client;
     } catch {
       client.close();
@@ -489,29 +478,76 @@ export class ServiceBridge {
     }
   }
 
-  /** Watch the configured main channel and roll the service when it changes. */
+  /**
+   * Keep the presence claim, the owner and the plugin's reload current. The roll
+   * itself belongs to the roll owner; this bridge only starts it when this plugin
+   * was installed with the owner launch (the plugin entry does, fixtures do not).
+   */
   watch() {
     // Presence is a hint only; identity is observed by the service itself.
     void this.ensure().catch(() => {});
+    this.ensureOwner();
     if (!this.presenceTimer) {
       this.presenceTimer = setInterval(() => {
         void this.ensure().catch(() => {});
+        this.ensureOwner();
+        this.followLandedRoll();
       }, 2000);
       this.presenceTimer.unref?.();
     }
-    this.roll.start();
   }
 
-  /** One roll check; see ./roll.ts for the rule. */
-  checkSource(force = false): Promise<ServiceRoll | null> {
-    return this.roll.checkSource(force);
+  /** Start the main-channel roll owner for this install unless one already runs. */
+  private ensureOwner() {
+    if (!this.options.rollOwnerLaunch) return;
+    try {
+      this.options.processActions.ensureRollOwner({
+        dataDir: this.dataDir,
+        root: this.session.sourcePath ?? sourcePathFromModule(),
+      });
+    } catch {
+      /* the owner's roll record names any failure it reaches; a missing entry is not a service failure */
+    }
+  }
+
+  /**
+   * A landed roll (recorded by the owner) reloads this plugin once, so the bridge
+   * and UI load the contracts the new service answers with.
+   */
+  private followLandedRoll() {
+    const roll = readServiceRoll(this.dataDir);
+    if (roll?.status === "rolled" && roll.toBuild)
+      this.reloadPlugin(roll.toBuild);
+  }
+
+  private reloadPlugin(buildId: string) {
+    const command = this.options.reloadPluginCommand?.();
+    if (
+      !command ||
+      this.session.reloadedFor === buildId ||
+      buildId === this.session.pluginBuild
+    )
+      return;
+    this.session.reloadedFor = buildId;
+    try {
+      const child = this.options.processActions.spawn(
+        command.command,
+        command.args,
+        { detached: true, stdio: "ignore", env: process.env },
+      );
+      child.on("error", () => {
+        /* the header notice still asks for a manual reload */
+      });
+      child.unref();
+    } catch {
+      /* the header notice still asks for a manual reload */
+    }
   }
 
   close() {
     this.session.closed = true;
     if (this.presenceTimer) clearInterval(this.presenceTimer);
     this.presenceTimer = null;
-    this.roll.stop();
     this.session.dropClient();
     this.session.report("absent", "");
   }
