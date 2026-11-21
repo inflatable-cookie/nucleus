@@ -3911,6 +3911,13 @@ after the task finishes.
   listing updates existing cleanup waits but creates no intent for unobserved history.
   A task whose hook retention is not settled keeps its whole history: hook
   records carry the only proof of an isolated checkout's ownership.
+- The purge writes each non-removed task's compact telemetry record in the same
+  bounded-batch transaction that deletes its history, re-checking every gate
+  above at commit. A capture failure keeps that task's history and reports
+  through retention health. Records keep the rolling 90-day aggregate cohort
+  window and expire by creation time; detailed retention is unchanged (task
+  1496; see the [durable telemetry
+  contract](durable-telemetry.md#retained-aggregate-history)).
 - A purge leaves a tombstone naming the task identity, submission identity,
   input hash, task reference and whether the goal was met, so dependencies
   still resolve (a purged prerequisite never satisfies a dependent and reads

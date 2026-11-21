@@ -8,6 +8,11 @@ import {
 } from "../../shared/contracts";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import type { HookRecord } from "../../shared/hooks";
+import {
+  RETAINED_TELEMETRY_VERSION,
+  TELEMETRY_RETENTION_MS,
+  type RetainedTaskTelemetry,
+} from "../../shared/telemetry";
 import { hookRetentionBlocksPurge } from "../hooks/hook-retention";
 import {
   HOST_RUN_SELECTOR,
@@ -39,6 +44,26 @@ export const HISTORY_RETENTION_MS = 4 * 24 * 60 * 60 * 1000;
 /** How long a finished task's history (task, events, runs) is kept before purge (Spec 018; Tom, 2026-10-20: "4 days for queue", from 14). */
 const TASK_HISTORY_RETENTION_MS = 4 * 24 * 60 * 60 * 1000;
 
+/** Tasks one purge transaction examines: capture and deletion commit together per batch. */
+export const TASK_PURGE_BATCH = 50;
+
+/** Finished tasks one retention pass seeds a compact telemetry record for ahead of purge. */
+export const TELEMETRY_SEED_LIMIT = 200;
+
+/** Retained telemetry records one expiry transaction removes. */
+const TELEMETRY_EXPIRY_BATCH = 500;
+
+/** Where the retained-telemetry coverage marker lives (task 1496). */
+const TELEMETRY_COVERAGE_KEY = "telemetryRetentionCoverage";
+
+/** Retained-history coverage: when compact capture began covering every purged task. */
+export interface RetainedTelemetryCoverage {
+  /** The earliest creation time whose purged tasks all have a retained record; null when nothing was ever purged without one. */
+  coverageFrom: string | null;
+  /** Whether any retention pass has run, so retained records may have expired past the 90-day window. */
+  active: boolean;
+}
+
 /** Count of rows each window removed in one pass (for the record and the tests). */
 export interface RetainedRowPrune {
   operations: number;
@@ -66,6 +91,8 @@ export interface RetentionHooks {
   setCachedTaskCount: (value: number | null) => void;
   advanceRevision: () => void;
   taskChanged: (taskId: string | null) => void;
+  /** Task 1496: derive one live task's compact telemetry record from its detailed history. */
+  captureTelemetry: (taskId: string, at: number) => RetainedTaskTelemetry;
 }
 
 /**
@@ -82,150 +109,322 @@ export class StoreRetention {
     return this.core.db;
   }
 
+  /**
+   * Purge settled task history past the 4-day window. Task 1496: each eligible, non-removed
+   * task's compact telemetry record is written in the same transaction that deletes its
+   * history, in bounded batches that re-read and re-check every gate at commit. A task whose
+   * capture fails keeps its whole history and the failure is recorded under
+   * `telemetryCaptureError` for retention health; a replayed or interrupted pass upserts by
+   * task identity, so it converges without duplicate samples.
+   */
   purgeOldTasks(
     at = Date.now(),
     cleanupFiles?: (taskId: string, runIds: string[]) => void,
+    options: { batch?: number } = {},
   ) {
     const cutoff = at - TASK_HISTORY_RETENTION_MS;
+    const batch = Math.max(1, Math.floor(options.batch ?? TASK_PURGE_BATCH));
     const purged: string[] = [];
+    const failures: string[] = [];
+    this.establishTelemetryCoverage(at);
+    let cursor = 0;
+    for (;;) {
+      const more = this.core.transaction(() => {
+        const rows = this.db
+          .prepare("SELECT rowid AS k, * FROM tasks WHERE rowid>? ORDER BY rowid LIMIT ?")
+          .all(cursor, batch);
+        if (!rows.length) return false;
+        cursor = Number(rows.at(-1)!.k);
+        const pendingProcessTasks = this.pendingProcessTasks();
+        const batchPurged: string[] = [];
+        for (const row of rows) {
+          const id = this.purgeTask(row, at, cutoff, pendingProcessTasks, cleanupFiles, failures);
+          if (id) batchPurged.push(id);
+        }
+        // Purging deletes in bulk (and runs caller cleanup in between), so drop
+        // the projection instead of tracking each row; the next read rebuilds.
+        // Purges are rare and off the hot path.
+        if (batchPurged.length) {
+          this.hooks.tasksStore().invalidateProjections();
+          this.hooks.setCachedTaskCount(null);
+          this.hooks.advanceRevision();
+          for (const id of batchPurged) this.hooks.taskChanged(id);
+        }
+        purged.push(...batchPurged);
+        return rows.length === batch;
+      });
+      if (!more) break;
+    }
     this.core.transaction(() => {
-      const pendingProcessTasks = this.pendingProcessTasks();
-      for (const row of this.db.prepare("SELECT * FROM tasks").all()) {
-        // A schema-45 row names its text and observations by reference, so the read
-        // resolves them exactly as every public read does.
-        const task = this.hooks.numberedTask(String(row.data));
-        const runs = this.hooks.runs(task.id);
-        if (!this.retentionEligible(task, runs, cutoff, pendingProcessTasks))
-          continue;
-        // Audit B5: hook records carry the only proof of an isolated checkout's ownership,
-        // so a task whose hook retention is not settled keeps its whole history. The
-        // hourly reaper runs before the purge and marks the rows it settled; whatever is
-        // left here still names a checkout that exists, or an execution whose ownership a
-        // caller never proved, and neither may be deleted.
-        const hooks = this.hooks.hookEvents(task.id);
-        if (
-          hooks.some((record) => hookRetentionBlocksPurge(record, existsSync))
-        )
-          continue;
-        const runIds = [
-          ...new Set(
-            [
-              task.runId,
-              ...task.retiredWorkers.map((w) => w.runId),
-              ...runs.map((r) => r.id),
-            ].filter((id): id is string => Boolean(id)),
-          ),
-        ];
-        cleanupFiles?.(task.id, runIds);
-        // Spec 043 (c) goal gate: the permanent outcome row keeps the merged task's
-        // own record, but dependents read this host-local tombstone after retention.
-        // Carry the goal-unmet fact so a purged prerequisite still never satisfies a
-        // dependent. It stays out of the portable submissionTombstones export, whose
-        // explicit field pick does not name it.
-        this.db.prepare("INSERT INTO tombstones VALUES(?,?,?,?)").run(
-          task.id,
-          task.submissionId,
-          String(row.input_hash),
-          JSON.stringify({
-            ...taskReferenceSchema.parse(task),
-            goalUnmet: task.resolution.goalUnmet ?? null,
-            purgedAt: new Date(at).toISOString(),
-          }),
-        );
-        for (const id of runIds) {
-          this.hooks.deleteCredential(id);
-          this.db
-            .prepare("DELETE FROM meta WHERE key=?")
-            .run(`reviewPublication:${id}`);
-        }
-        this.db
-          .prepare(
-            "DELETE FROM meta WHERE (key LIKE 'runProcessCleanup:%' OR key LIKE 'runProcessHost:%') AND json_extract(value,'$.taskId')=?",
-          )
-          .run(task.id);
-        this.db
-          .prepare("DELETE FROM meta WHERE key=?")
-          .run(`workspaceTitle:${task.id}`);
-        // Lean store 2 (task 987): the task's own check-policy observation goes with it.
-        this.db
-          .prepare("DELETE FROM meta WHERE key=?")
-          .run(`checkPolicyObservation:${task.id}`);
-        // Preserve occurrence settlement before its task events are removed.
-        // Older versions wrote only the event; copy only an exact matching record.
-        for (const event of this.db
-          .prepare(
-            "SELECT detail FROM events WHERE taskId=? AND kind='operation_superseded' AND json_valid(detail)",
-          )
-          .all(task.id)) {
-          const record = JSON.parse(String(event.detail)) as {
-            id?: string;
-            inputHash?: string;
-            attempt?: number;
-            intentAt?: string;
-            evidence?: string;
-          };
-          if (
-            !record ||
-            typeof record.id !== "string" ||
-            typeof record.evidence !== "string" ||
-            !record.evidence
-          )
-            continue;
-          const row = this.db
-            .prepare(
-              "SELECT data FROM operations WHERE id=? AND taskId=? AND state='needs_attention'",
-            )
-            .get(record.id, task.id);
-          if (!row) continue;
-          const operation = JSON.parse(String(row.data));
-          if (
-            operation.inputHash !== record.inputHash ||
-            operation.attempts !== record.attempt ||
-            (operation.effect?.intentAt ?? null) !== (record.intentAt ?? null)
-          )
-            continue;
-          operation.settlement = {
-            ...record,
-            intentAt: record.intentAt ?? null,
-            kind: "superseded",
-          };
-          this.db
-            .prepare("UPDATE operations SET data=? WHERE id=?")
-            .run(JSON.stringify(operation), record.id);
-        }
-        for (const table of [
-          "events",
-          "runs",
-          "notices",
-          "hook_events",
-          "task_observations",
-        ])
-          this.db.prepare(`DELETE FROM ${table} WHERE taskId=?`).run(task.id);
-        this.db
-          .prepare("DELETE FROM task_messages WHERE fromTaskId=? OR toTaskId=?")
-          .run(task.id, task.id);
-        this.hooks.lastEventAtByTask()?.delete(task.id);
-        this.db.prepare("DELETE FROM receipts WHERE task=?").run(task.id);
-        this.db
-          .prepare("DELETE FROM task_brief_versions WHERE taskId=?")
-          .run(task.id);
-        this.db.prepare("DELETE FROM task_reviews WHERE taskId=?").run(task.id);
-        this.db.prepare("DELETE FROM tasks WHERE id=?").run(task.id);
-        purged.push(task.id);
-      }
       if (purged.length) this.pruneThreadArchiveKeys();
       this.core.setMeta("lastRetentionAt", at);
-      // Purging deletes in bulk (and runs caller cleanup in between), so drop
-      // the projection instead of tracking each row; the next read rebuilds.
-      // Purges are rare and off the hot path.
-      if (purged.length) this.hooks.tasksStore().invalidateProjections();
-      if (purged.length) {
-        this.hooks.setCachedTaskCount(null);
-        this.hooks.advanceRevision();
-        for (const id of purged) this.hooks.taskChanged(id);
-      }
+      this.core.setMeta(
+        "telemetryCaptureError",
+        failures.length
+          ? `Telemetry capture failed for ${failures.length} finished task${failures.length === 1 ? "" : "s"}; their history is kept: ${failures.slice(0, 3).join("; ")}`.slice(0, 2000)
+          : "",
+      );
     });
     return purged;
+  }
+
+  /** One task's purge inside its batch transaction; returns the task id when it was purged. */
+  private purgeTask(
+    row: Record<string, unknown>,
+    at: number,
+    cutoff: number,
+    pendingProcessTasks: Set<string>,
+    cleanupFiles: ((taskId: string, runIds: string[]) => void) | undefined,
+    failures: string[],
+  ): string | null {
+    // A schema-45 row names its text and observations by reference, so the read
+    // resolves them exactly as every public read does.
+    const task = this.hooks.numberedTask(String(row.data));
+    const runs = this.hooks.runs(task.id);
+    if (!this.retentionEligible(task, runs, cutoff, pendingProcessTasks))
+      return null;
+    // Audit B5: hook records carry the only proof of an isolated checkout's ownership,
+    // so a task whose hook retention is not settled keeps its whole history. The
+    // hourly reaper runs before the purge and marks the rows it settled; whatever is
+    // left here still names a checkout that exists, or an execution whose ownership a
+    // caller never proved, and neither may be deleted.
+    const hooks = this.hooks.hookEvents(task.id);
+    if (hooks.some((record) => hookRetentionBlocksPurge(record, existsSync)))
+      return null;
+    // Task 1496: the compact record commits with the deletion, or nothing is deleted.
+    // A removed task never contributed to telemetry, so it carries no record (and any
+    // seeded one goes with it).
+    if (task.removedAt) {
+      this.db.prepare("DELETE FROM task_telemetry_retained WHERE taskId=?").run(task.id);
+    } else {
+      let record: RetainedTaskTelemetry;
+      try {
+        record = this.hooks.captureTelemetry(task.id, at);
+      } catch (error) {
+        failures.push(`${task.id}: ${String(error).slice(0, 300)}`);
+        return null;
+      }
+      this.writeRetainedTelemetry(record);
+    }
+    const runIds = [
+      ...new Set(
+        [
+          task.runId,
+          ...task.retiredWorkers.map((w) => w.runId),
+          ...runs.map((r) => r.id),
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    cleanupFiles?.(task.id, runIds);
+    // Spec 043 (c) goal gate: the permanent outcome row keeps the merged task's
+    // own record, but dependents read this host-local tombstone after retention.
+    // Carry the goal-unmet fact so a purged prerequisite still never satisfies a
+    // dependent. It stays out of the portable submissionTombstones export, whose
+    // explicit field pick does not name it.
+    this.db.prepare("INSERT INTO tombstones VALUES(?,?,?,?)").run(
+      task.id,
+      task.submissionId,
+      String(row.input_hash),
+      JSON.stringify({
+        ...taskReferenceSchema.parse(task),
+        goalUnmet: task.resolution.goalUnmet ?? null,
+        purgedAt: new Date(at).toISOString(),
+      }),
+    );
+    for (const id of runIds) {
+      this.hooks.deleteCredential(id);
+      this.db
+        .prepare("DELETE FROM meta WHERE key=?")
+        .run(`reviewPublication:${id}`);
+    }
+    this.db
+      .prepare(
+        "DELETE FROM meta WHERE (key LIKE 'runProcessCleanup:%' OR key LIKE 'runProcessHost:%') AND json_extract(value,'$.taskId')=?",
+      )
+      .run(task.id);
+    this.db
+      .prepare("DELETE FROM meta WHERE key=?")
+      .run(`workspaceTitle:${task.id}`);
+    // Lean store 2 (task 987): the task's own check-policy observation goes with it.
+    this.db
+      .prepare("DELETE FROM meta WHERE key=?")
+      .run(`checkPolicyObservation:${task.id}`);
+    // Preserve occurrence settlement before its task events are removed.
+    // Older versions wrote only the event; copy only an exact matching record.
+    for (const event of this.db
+      .prepare(
+        "SELECT detail FROM events WHERE taskId=? AND kind='operation_superseded' AND json_valid(detail)",
+      )
+      .all(task.id)) {
+      const record = JSON.parse(String(event.detail)) as {
+        id?: string;
+        inputHash?: string;
+        attempt?: number;
+        intentAt?: string;
+        evidence?: string;
+      };
+      if (
+        !record ||
+        typeof record.id !== "string" ||
+        typeof record.evidence !== "string" ||
+        !record.evidence
+      )
+        continue;
+      const operationRow = this.db
+        .prepare(
+          "SELECT data FROM operations WHERE id=? AND taskId=? AND state='needs_attention'",
+        )
+        .get(record.id, task.id);
+      if (!operationRow) continue;
+      const operation = JSON.parse(String(operationRow.data));
+      if (
+        operation.inputHash !== record.inputHash ||
+        operation.attempts !== record.attempt ||
+        (operation.effect?.intentAt ?? null) !== (record.intentAt ?? null)
+      )
+        continue;
+      operation.settlement = {
+        ...record,
+        intentAt: record.intentAt ?? null,
+        kind: "superseded",
+      };
+      this.db
+        .prepare("UPDATE operations SET data=? WHERE id=?")
+        .run(JSON.stringify(operation), record.id);
+    }
+    for (const table of [
+      "events",
+      "runs",
+      "notices",
+      "hook_events",
+      "task_observations",
+    ])
+      this.db.prepare(`DELETE FROM ${table} WHERE taskId=?`).run(task.id);
+    this.db
+      .prepare("DELETE FROM task_messages WHERE fromTaskId=? OR toTaskId=?")
+      .run(task.id, task.id);
+    this.hooks.lastEventAtByTask()?.delete(task.id);
+    this.db.prepare("DELETE FROM receipts WHERE task=?").run(task.id);
+    this.db
+      .prepare("DELETE FROM task_brief_versions WHERE taskId=?")
+      .run(task.id);
+    this.db.prepare("DELETE FROM task_reviews WHERE taskId=?").run(task.id);
+    this.db.prepare("DELETE FROM tasks WHERE id=?").run(task.id);
+    return task.id;
+  }
+
+  /** Upsert by task identity: a replayed capture replaces, never duplicates, its samples. */
+  private writeRetainedTelemetry(record: RetainedTaskTelemetry) {
+    this.db
+      .prepare(
+        `INSERT INTO task_telemetry_retained(taskId,version,createdAt,capturedAt,data) VALUES(?,?,?,?,?)
+        ON CONFLICT(taskId) DO UPDATE SET version=excluded.version, createdAt=excluded.createdAt,
+          capturedAt=excluded.capturedAt, data=excluded.data`,
+      )
+      .run(record.taskId, record.version, record.createdAt, record.capturedAt, JSON.stringify(record));
+  }
+
+  /**
+   * Fix the coverage marker before the first retention pass that captures telemetry. Every
+   * earlier pass deleted history without a record; it ran at or before `lastRetentionAt`
+   * and only reached tasks finished 4 days before that, so tasks created since then were
+   * never purged unsummarized. A store that never purged is complete from the start.
+   */
+  private establishTelemetryCoverage(at: number) {
+    if (this.core.getMeta(TELEMETRY_COVERAGE_KEY) !== undefined) return;
+    this.core.setMeta(TELEMETRY_COVERAGE_KEY, {
+      coverageFrom: this.legacyCoverageFrom(),
+      establishedAt: new Date(at).toISOString(),
+    });
+  }
+
+  private legacyCoverageFrom(): string | null {
+    const last = this.core.getMeta<number>("lastRetentionAt");
+    return typeof last === "number" && Number.isFinite(last)
+      ? new Date(last - TASK_HISTORY_RETENTION_MS).toISOString()
+      : null;
+  }
+
+  /** Retained-history coverage for the telemetry base (see `establishTelemetryCoverage`). */
+  retainedTelemetryCoverage(): RetainedTelemetryCoverage {
+    const marker = this.core.getMeta<{ coverageFrom?: string | null }>(TELEMETRY_COVERAGE_KEY);
+    if (marker !== undefined)
+      return { coverageFrom: marker?.coverageFrom ?? null, active: true };
+    const coverageFrom = this.legacyCoverageFrom();
+    return { coverageFrom, active: coverageFrom !== null };
+  }
+
+  /**
+   * Seed compact records for still-present finished history ahead of its purge, at most
+   * `limit` tasks per pass from a durable cursor, so a backlog drains over passes and a
+   * capture fault surfaces in retention health before the task reaches purge age. A seeded
+   * record is never counted while the task's detailed history exists, and the purge
+   * re-captures it at commit.
+   */
+  seedRetainedTelemetry(at = Date.now(), limit = TELEMETRY_SEED_LIMIT): { seeded: number; failed: string[] } {
+    this.establishTelemetryCoverage(at);
+    const cursor = this.core.getMeta<number>("telemetrySeedCursor") ?? 0;
+    const rows = this.db
+      .prepare(
+        `SELECT t.rowid AS k, t.id AS id FROM tasks AS t WHERE t.rowid>?
+          AND json_extract(t.data,'$.removedAt') IS NULL
+          AND json_extract(t.data,'$.phase') IN ('done','cancelled')
+          AND json_type(t.data,'$.finishedAt')='text'
+          AND NOT EXISTS (SELECT 1 FROM task_telemetry_retained AS r WHERE r.taskId=t.id AND r.version=?)
+        ORDER BY t.rowid LIMIT ?`,
+      )
+      .all(cursor, RETAINED_TELEMETRY_VERSION, Math.max(1, limit)) as { k: number; id: string }[];
+    const failed: string[] = [];
+    let seeded = 0;
+    for (let index = 0; index < rows.length; index += TASK_PURGE_BATCH) {
+      this.core.transaction(() => {
+        for (const row of rows.slice(index, index + TASK_PURGE_BATCH)) {
+          // Re-read at commit: the row may have been purged or reopened since the scan.
+          const current = this.db.prepare("SELECT data FROM tasks WHERE id=?").get(row.id);
+          if (!current) continue;
+          const task = this.hooks.numberedTask(String(current.data));
+          if (task.removedAt || !["done", "cancelled"].includes(task.phase) || !task.finishedAt) continue;
+          try {
+            this.writeRetainedTelemetry(this.hooks.captureTelemetry(task.id, at));
+            seeded += 1;
+          } catch (error) {
+            failed.push(`${task.id}: ${String(error).slice(0, 300)}`);
+          }
+        }
+      });
+    }
+    this.core.setMeta("telemetrySeedCursor", rows.length < Math.max(1, limit) ? 0 : Number(rows.at(-1)!.k));
+    this.core.setMeta(
+      "telemetrySeedError",
+      failed.length
+        ? `Telemetry seed failed for ${failed.length} finished task${failed.length === 1 ? "" : "s"}: ${failed.slice(0, 3).join("; ")}`.slice(0, 2000)
+        : "",
+    );
+    return { seeded, failed };
+  }
+
+  /**
+   * Expire retained records whose creation cohort left the rolling 90-day window, in bounded
+   * transactions. Detailed retention, tombstones and durable outcomes are untouched.
+   */
+  expireRetainedTelemetry(at = Date.now(), batch = TELEMETRY_EXPIRY_BATCH): number {
+    const before = new Date(at - TELEMETRY_RETENTION_MS).toISOString();
+    let total = 0;
+    for (;;) {
+      const changes = this.core.transaction(() => {
+        const removed = Number(
+          this.db
+            .prepare(
+              "DELETE FROM task_telemetry_retained WHERE taskId IN (SELECT taskId FROM task_telemetry_retained WHERE createdAt<? LIMIT ?)",
+            )
+            .run(before, batch).changes,
+        );
+        if (removed) this.hooks.advanceRevision();
+        return removed;
+      });
+      total += changes;
+      if (changes < batch) return total;
+    }
   }
 
   /**

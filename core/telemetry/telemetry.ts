@@ -1,19 +1,21 @@
 import type { Task, Run, Notice } from "../../shared/contracts";
-import { deriveTaskTelemetry, type QueueEvent } from "./task-facts";
-import { reviewerCalibrationFacts, mergeReviewerCalibration, type ReviewerCalibrationFacts } from "./reviewer-calibration";
-import { taskControlTelemetry } from "./task-control";
+import type { QueueEvent } from "./task-facts";
+import { mergeReviewerCalibration } from "./reviewer-calibration";
+import { liveTelemetryItem, retainedTelemetryItem, type TelemetryBaseItem } from "./telemetry-item";
 export { deriveTaskTelemetry, normalizeTelemetryCause } from "./task-facts";
 export type { QueueEvent } from "./task-facts";
 export { reviewerCalibrationFacts, mergeReviewerCalibration } from "./reviewer-calibration";
 export type { ReviewerCalibrationFacts } from "./reviewer-calibration";
 export type { ReviewerVerdictFact, ReviewerRoundFact, ReviewerIncidentFact } from "./reviewer-calibration";
 export { taskControlTelemetry } from "./task-control";
+export { captureRetainedTelemetry, liveTelemetryItem, retainedTelemetryItem, retainedTelemetryRecord } from "./telemetry-item";
+export type { TelemetryBaseItem, TelemetryMeasures, TelemetryTaskFacts, QaValidationSample } from "./telemetry-item";
 import type { HookRecord } from "../../shared/hooks";
 import {
   STAGE_META, headlineFacts, telemetryFilterSchema, telemetrySnapshotSchema,
-  taskTelemetrySchema, type QaValidationAdmission, type TaskTelemetry,
+  type QaValidationAdmission, type RetainedTaskTelemetry, type TaskTelemetry, type TelemetryCoverage,
   type TelemetryHeadline, type TelemetryHeadlineKey, type TelemetrySnapshot, type TelemetryStageKey,
-  disabledShadowReviewPlan, type TaskUsage, type UsageComplexity,
+  disabledShadowReviewPlan, type UsageComplexity, TELEMETRY_RETENTION_DAYS, TELEMETRY_RETENTION_MS, TASK_CONTROL_RETENTION_DAYS,
 } from "../../shared/telemetry";
 import { type Store, type TelemetryFactChunk } from "../store/store";
 
@@ -27,9 +29,9 @@ function usageByComplexity(items: TelemetryBaseItem[]): UsageComplexity[] {
   const groups = new Map<string, TelemetryBaseItem[]>();
   // An unset complexity is its own bucket: an unrated task is never folded into a level.
   const complexityOf = (item: TelemetryBaseItem) => item.task.complexity ?? "unset";
-  for (const item of finished) groups.set(complexityOf(item), [...(groups.get(complexityOf(item)) ?? []), item]);
+  for (const item of finished) { const key = complexityOf(item), members = groups.get(key); if (members) members.push(item); else groups.set(key, [item]); }
   return [...groups].sort((a, b) => a[0].localeCompare(b[0])).map(([complexity, members]) => {
-    const usages = members.map(item => item.telemetry.usage).filter((usage): usage is TaskUsage => usage !== undefined);
+    const usages = members.map(item => item.telemetry.usage).filter((usage): usage is NonNullable<typeof usage> => usage !== undefined);
     // A task with no usage at all is partial and stays out of the samples: never a zero.
     const measured = usages.filter(usage => usage.evidence !== "none");
     const partialCount = usages.filter(usage => usage.evidence !== "exact").length;
@@ -58,27 +60,21 @@ function distribution(values: number[], partialCount: number) {
  * validations without a value count as partial, never as zero.
  */
 function mergeQaValidationAdmission(items: TelemetryBaseItem[]): QaValidationAdmission {
-  const settled = items.map(item => item.task.resolution.projectValidation)
-    .filter((validation): validation is NonNullable<Task["resolution"]["projectValidation"]> => Boolean(validation) && validation!.state !== "running");
-  const distributionOf = (values: (number | null | undefined)[]) => {
+  const settled = items.map(item => item.qaValidation).filter((sample): sample is NonNullable<typeof sample> => sample !== null);
+  const distributionOf = (values: (number | null)[]) => {
     const recorded = values.filter((value): value is number => typeof value === "number");
     return { count: recorded.length, partialCount: values.length - recorded.length, p50Ms: percentile(recorded, .5), p95Ms: percentile(recorded, .95) };
   };
-  const scheduler = settled.map(validation => validation.hostRunTelemetry);
-  const legacy = settled.map(validation => validation.admission);
-  const cpuMs = scheduler.map((record, index) => record?.cpuMs
-    ?? (legacy[index]?.cpuUserMs != null || legacy[index]?.cpuSystemMs != null
-      ? (legacy[index]?.cpuUserMs ?? 0) + (legacy[index]?.cpuSystemMs ?? 0) : null));
   return {
     validations: settled.length,
-    queueWaitMs: distributionOf(scheduler.map((record, index) => record?.queueWaitMs ?? legacy[index]?.queueWaitMs)),
-    wallMs: distributionOf(scheduler.map((record, index) => record?.wallMs ?? legacy[index]?.wallMs)),
-    cpuMs: distributionOf(cpuMs),
-    capacityUnavailable: settled.filter(validation => validation.capacityUnavailable).length,
+    queueWaitMs: distributionOf(settled.map(sample => sample.queueWaitMs)),
+    wallMs: distributionOf(settled.map(sample => sample.wallMs)),
+    cpuMs: distributionOf(settled.map(sample => sample.cpuMs)),
+    capacityUnavailable: settled.filter(sample => sample.capacityUnavailable).length,
   };
 }
 
-function mergeInterventions(items: TaskTelemetry[]) {
+function mergeInterventions(items: TelemetryBaseItem["telemetry"][]) {
   const recovery = new Map<string, TaskTelemetry["interventions"]["recoveries"][number]>(), actions = new Map<string, number>(), incidents = new Map<string, TaskTelemetry["interventions"]["incidents"][number]>();
   const total = { recoveryRuns: 0, uncertainCreations: 0, absentCreations: 0, attentionNotices: 0, escalations: 0, hookHolds: 0, hookRetries: 0, automaticHookReplays: 0, prospectiveMergeHooks: 0, staleCandidateRebuilds: 0, revisions: 0, continuationRevisions: 0, administrativeRevisions: 0, checkpoints: 0, checkpointContinuations: 0, replacements: 0 };
   for (const item of items) {
@@ -90,11 +86,12 @@ function mergeInterventions(items: TaskTelemetry[]) {
   return { ...total, recoveries: [...recovery.values()], incidents: [...incidents.values()].sort((a, b) => `${a.role}:${a.cause}`.localeCompare(`${b.role}:${b.cause}`)), operatorActions: [...actions].map(([key, count]) => ({ key, count })) };
 }
 
-export interface TelemetryBaseItem { task: Task; telemetry: TaskTelemetry; reviewer: ReviewerCalibrationFacts }
 /**
  * One coalesced task-level base per durable store revision and short age bucket. It holds
- * the current derivation for every task plus bounded dimension dictionaries; filters and
- * groups are computed in memory from it, so memory never grows with filter cardinality.
+ * the current derivation for every live task, the retained contribution of every purged
+ * task inside the 90-day window (exactly one contribution per task), and bounded dimension
+ * dictionaries; filters and groups are computed in memory from it, so memory never grows
+ * with filter cardinality.
  */
 export interface TelemetryBase {
   revision: number;
@@ -108,6 +105,8 @@ export interface TelemetryBase {
   reviewerProviders: string[];
   reviewerProfiles: string[];
   reviewerProfileGroups: string[];
+  /** Retained-history coverage at build time (see `Store.retainedTelemetryCoverage`). */
+  retention: { coverageFrom: string | null; active: boolean };
 }
 
 interface FactBundle {
@@ -116,12 +115,13 @@ interface FactBundle {
   runsByTask: Map<string, Run[]>;
   noticesByTask: Map<string, Notice[]>;
   hooksByTask: Map<string, HookRecord[]>;
+  retained: RetainedTaskTelemetry[];
 }
 
 const yieldToEventLoop = () => new Promise<void>(resolve => setImmediate(resolve));
 
 function emptyBundle(): FactBundle {
-  return { tasks: [], eventsByTask: new Map(), runsByTask: new Map(), noticesByTask: new Map(), hooksByTask: new Map() };
+  return { tasks: [], eventsByTask: new Map(), runsByTask: new Map(), noticesByTask: new Map(), hooksByTask: new Map(), retained: [] };
 }
 
 function pushFact<T>(map: Map<string, T[]>, taskId: string, value: T) {
@@ -134,22 +134,41 @@ function applyFactChunk(bundle: FactBundle, chunk: TelemetryFactChunk) {
   else if (chunk.kind === "events") for (const row of chunk.events) pushFact(bundle.eventsByTask, row.taskId, row.event);
   else if (chunk.kind === "runs") for (const row of chunk.runs) pushFact(bundle.runsByTask, row.taskId, row.run);
   else if (chunk.kind === "notices") for (const row of chunk.notices) pushFact(bundle.noticesByTask, row.taskId, row.notice);
-  else for (const row of chunk.hooks) pushFact(bundle.hooksByTask, row.taskId, row.hook);
+  else if (chunk.kind === "hooks") for (const row of chunk.hooks) pushFact(bundle.hooksByTask, row.taskId, row.hook);
+  else bundle.retained.push(...chunk.records);
 }
 
 function deriveItem(bundle: FactBundle, task: Task, generatedAt: Date): TelemetryBaseItem {
-  const events = bundle.eventsByTask.get(task.id) ?? [], runs = bundle.runsByTask.get(task.id) ?? [];
-  return { task, telemetry: deriveTaskTelemetry(task, events, runs,
-    bundle.noticesByTask.get(task.id) ?? [], bundle.hooksByTask.get(task.id) ?? [], generatedAt),
-    reviewer: reviewerCalibrationFacts(task, events, runs) };
+  return liveTelemetryItem({ task, events: bundle.eventsByTask.get(task.id) ?? [], runs: bundle.runsByTask.get(task.id) ?? [],
+    notices: bundle.noticesByTask.get(task.id) ?? [], hooks: bundle.hooksByTask.get(task.id) ?? [] }, generatedAt);
 }
 
-function dimensionValues(bundle: FactBundle, items: TelemetryBaseItem[]) {
+/**
+ * Retained contributions for purged tasks only: a task whose detailed history the base
+ * read stays live, so a purge committing between bounded page reads never counts twice.
+ */
+function* retainedItems(bundle: FactBundle): Generator<TelemetryBaseItem> {
+  const live = new Set(bundle.tasks.map(task => task.id)), seen = new Set<string>();
+  for (const record of bundle.retained) {
+    if (live.has(record.taskId) || seen.has(record.taskId)) continue;
+    seen.add(record.taskId);
+    yield retainedTelemetryItem(record);
+  }
+}
+
+/**
+ * One stable contribution order, by creation time then task identity, so first-seen labels
+ * and counter rows come out the same whether a task contributes live or retained.
+ */
+function orderItems(items: TelemetryBaseItem[]) {
+  return items.sort((a, b) => ms(a.task.createdAt, 0) - ms(b.task.createdAt, 0) || (a.task.id < b.task.id ? -1 : a.task.id > b.task.id ? 1 : 0));
+}
+
+function dimensionValues(items: TelemetryBaseItem[]) {
   const providers = new Set<string>();
   const reviewerProviders = new Set<string>(), reviewerProfileGroups = new Set<string>(), reviewerProfiles = new Set<string>();
   for (const item of items) {
-    if (item.task.profile?.provider) providers.add(item.task.profile.provider);
-    for (const run of bundle.runsByTask.get(item.task.id) ?? []) if (run.profile?.provider) providers.add(run.profile.provider);
+    for (const provider of item.providers) providers.add(provider);
     for (const verdict of item.reviewer.verdicts) {
       if (verdict.reviewer.provider) reviewerProviders.add(verdict.reviewer.provider);
       if (verdict.reviewer.profileGroup) reviewerProfileGroups.add(verdict.reviewer.profileGroup);
@@ -170,7 +189,7 @@ function dimensionValues(bundle: FactBundle, items: TelemetryBaseItem[]) {
  * concurrent Queue RPC and lifecycle work keep running during a cold build.
  */
 export async function buildTelemetryBase(store: Store, generatedAt = new Date(), options: { pageSize?: number; yieldEvery?: number } = {}): Promise<TelemetryBase> {
-  const revision = store.telemetryRevision();
+  const revision = store.telemetryRevision(), retention = store.retainedTelemetryCoverage();
   const bundle = emptyBundle();
   for (const chunk of store.telemetryFactChunks(options.pageSize ?? 500)) { applyFactChunk(bundle, chunk); await yieldToEventLoop(); }
   const yieldEvery = Math.max(1, options.yieldEvery ?? 16);
@@ -179,16 +198,23 @@ export async function buildTelemetryBase(store: Store, generatedAt = new Date(),
     items.push(deriveItem(bundle, bundle.tasks[index], generatedAt));
     if (index % yieldEvery === yieldEvery - 1) await yieldToEventLoop();
   }
-  return { revision, generatedAt: generatedAt.toISOString(), builtAt: generatedAt.getTime(), items, ...dimensionValues(bundle, items) };
+  // Retained records are already derived; restoring one is cheap, so they yield in larger steps.
+  let restored = 0;
+  for (const item of retainedItems(bundle)) {
+    items.push(item);
+    if (++restored % (yieldEvery * 8) === 0) await yieldToEventLoop();
+  }
+  orderItems(items);
+  return { revision, generatedAt: generatedAt.toISOString(), builtAt: generatedAt.getTime(), items, retention, ...dimensionValues(items) };
 }
 
 /** Synchronous construction for direct derivation, tests and small stores. */
 export function buildTelemetryBaseSync(store: Store, generatedAt = new Date(), page = 500): TelemetryBase {
-  const revision = store.telemetryRevision();
+  const revision = store.telemetryRevision(), retention = store.retainedTelemetryCoverage();
   const facts = store.telemetryFacts(page);
-  const bundle: FactBundle = { tasks: facts.tasks, eventsByTask: facts.eventsByTask, runsByTask: facts.runsByTask, noticesByTask: facts.noticesByTask, hooksByTask: facts.hooksByTask };
-  const items = bundle.tasks.map(task => deriveItem(bundle, task, generatedAt));
-  return { revision, generatedAt: generatedAt.toISOString(), builtAt: generatedAt.getTime(), items, ...dimensionValues(bundle, items) };
+  const bundle: FactBundle = { tasks: facts.tasks, eventsByTask: facts.eventsByTask, runsByTask: facts.runsByTask, noticesByTask: facts.noticesByTask, hooksByTask: facts.hooksByTask, retained: facts.retained };
+  const items = orderItems([...bundle.tasks.map(task => deriveItem(bundle, task, generatedAt)), ...retainedItems(bundle)]);
+  return { revision, generatedAt: generatedAt.toISOString(), builtAt: generatedAt.getTime(), items, retention, ...dimensionValues(items) };
 }
 
 function headlineCounts(items: TelemetryBaseItem[]): TelemetryHeadline {
@@ -198,6 +224,27 @@ function headlineCounts(items: TelemetryBaseItem[]): TelemetryHeadline {
     return { taskCount, factCount: facts.reduce((sum, row) => sum + row[key], 0), rate: items.length ? taskCount / items.length : null };
   };
   return { deliveryExceptions: category("deliveryExceptions"), semanticReview: category("semanticReview"), operatorAdministration: category("operatorAdministration") };
+}
+
+/**
+ * What a window can honestly claim. Retained records expire past the 90-day cohort window,
+ * and history purged before compact capture existed is gone, so the earliest complete
+ * creation time is the later of the two. A window starting before it is partial. The
+ * separate task-control series keeps 30 days and says so for wider windows.
+ */
+function telemetryCoverage(base: TelemetryBase, windowMs: number, createdAfter: number | null, data: TelemetryBaseItem[]): TelemetryCoverage {
+  const iso = (value: number) => Number.isFinite(value) ? new Date(value).toISOString() : null;
+  const windowStart = Math.max(Number.isFinite(windowMs) ? base.builtAt - windowMs : -Infinity, createdAfter ?? -Infinity);
+  const horizon = base.retention.active ? base.builtAt - TELEMETRY_RETENTION_MS : -Infinity;
+  const captured = base.retention.coverageFrom ? ms(base.retention.coverageFrom, -Infinity) : -Infinity;
+  const completeFrom = Math.max(horizon, captured);
+  const retained = data.filter(item => item.retained);
+  return {
+    retentionDays: TELEMETRY_RETENTION_DAYS, windowStart: iso(windowStart), completeFrom: iso(completeFrom),
+    partial: windowStart < completeFrom, liveTasks: data.length - retained.length, retainedTasks: retained.length,
+    reviewerAttributionUnavailable: retained.reduce((sum, item) => sum + item.reviewerAttributionUnavailable, 0),
+    controlsWindowDays: TASK_CONTROL_RETENTION_DAYS, controlsPartial: windowMs > TASK_CONTROL_RETENTION_DAYS * 86_400_000,
+  };
 }
 
 /** Filter, group and aggregate one already-built base in memory. */
@@ -226,7 +273,8 @@ export function telemetrySnapshotFromBase(base: TelemetryBase, input: unknown): 
   const grouped = new Map<string, TelemetryBaseItem[]>();
   for (const item of data) {
     const key = filters.groupBy === "repository" ? item.task.repoPath : filters.groupBy === "scope" ? item.task.scope : filters.groupBy === "profile_group" ? item.task.profileGroup ?? "unassigned" : filters.groupBy === "closeout_authority" ? item.telemetry.closeoutAuthority : "all";
-    grouped.set(key, [...(grouped.get(key) ?? []), item]);
+    const members = grouped.get(key);
+    if (members) members.push(item); else grouped.set(key, [item]);
   }
   const selectedGroups = [...grouped].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).slice(0, 100);
   const groups = selectedGroups.map(([key, items]) => {
@@ -262,7 +310,7 @@ export function telemetrySnapshotFromBase(base: TelemetryBase, input: unknown): 
     reviewerProviders: base.reviewerProviders, reviewerProfiles: base.reviewerProfiles, reviewerProfileGroups: base.reviewerProfileGroups,
   };
   const truncatedDimensions = Object.entries(dimensions).filter(([, values]) => values.length > 100).map(([key]) => key);
-  return telemetrySnapshotSchema.parse({ generatedAt: base.generatedAt, filters, matchingTasks: data.length, groups,
+  return telemetrySnapshotSchema.parse({ generatedAt: base.generatedAt, filters, coverage: telemetryCoverage(base, windowMs, createdAfter, data), matchingTasks: data.length, groups,
     usageByComplexity: usageByComplexity(data),
     omittedGroups: grouped.size - selectedGroups.length, truncatedDimensions,
     ...Object.fromEntries(Object.entries(dimensions).map(([key, values]) => [key, values.slice(0, 100)])),

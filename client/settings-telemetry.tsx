@@ -5,7 +5,7 @@ import { useRpc, Icon } from "./shell";
 import { Button, DetailSection, Disclosure, DropdownSelect, FieldCaption, LabelHelp, controlFrame, controlText, muted, row, type Colors } from "./controls";
 import { control, space, radius, type as typeScale, overlay } from "./design";
 import * as api from "../shared/contracts";
-import { formatTelemetryDuration, STAGE_META, type TelemetrySnapshot } from "../shared/telemetry";
+import { formatTelemetryDuration, STAGE_META, telemetryScreenWindows, type TelemetryScreenWindow, type TelemetrySnapshot } from "../shared/telemetry";
 import { Metric } from "./telemetry-parts";
 function ProjectFilter({ projects, value, onChange, c }: { projects: { path: string; name: string }[]; value: string; onChange: (path: string) => void; c: Colors }) {
   const [open, setOpen] = useState(false);
@@ -69,8 +69,20 @@ function TaskControlSection({controls,c}:{controls:TelemetrySnapshot["controls"]
   </DetailSection>;
 }
 
+/** Task 1496: what the window covers. A wider window is partial until retained coverage reaches it. */
+function CoverageNote({coverage,c}:{coverage:TelemetrySnapshot["coverage"];c:Colors}) {
+  const day=(value:string)=>value.slice(0,10);
+  const history=coverage.partial&&coverage.completeFrom
+    ?`Partial: history before ${day(coverage.completeFrom)} was purged before telemetry was retained, so earlier tasks are missing.`
+    :`Complete for this window. Aggregate history is kept ${coverage.retentionDays} days.`;
+  const sources=coverage.retainedTasks>0?` ${coverage.liveTasks} live · ${coverage.retainedTasks} retained after detail purge.`:"";
+  const reviewer=coverage.reviewerAttributionUnavailable>0?` ${coverage.reviewerAttributionUnavailable} retained reviewer verdict${coverage.reviewerAttributionUnavailable===1?"":"s"} have no profile attribution.`:"";
+  const controls=coverage.controlsPartial?` Task controls cover the last ${coverage.controlsWindowDays} days only.`:"";
+  return <Text accessibilityLabel="Telemetry coverage" style={{...muted(c),fontSize:typeScale.metadata.fontSize,color:coverage.partial?c.statusWarning:c.foregroundMuted}}>{history}{sources}{reviewer}{controls}</Text>;
+}
+
 function TelemetryPanel({data,c,compact,repoPath,setRepoPath,window,setWindow,groupBy,setGroupBy,scope,setScope,profileGroup,setProfileGroup,closeoutAuthority,setCloseoutAuthority,createdAfter,setCreatedAfter,interventionRole,setInterventionRole,interventionProvider,setInterventionProvider,reviewerProvider,setReviewerProvider,reviewerProfile,setReviewerProfile,reviewerProfileGroup,setReviewerProfileGroup}:{
-  data?:TelemetrySnapshot;c:Colors;compact:boolean;repoPath:string;setRepoPath:(value:string)=>void;window:"24h"|"7d"|"30d"|"90d"|"all";setWindow:(value:"24h"|"7d"|"30d"|"90d"|"all")=>void;
+  data?:TelemetrySnapshot;c:Colors;compact:boolean;repoPath:string;setRepoPath:(value:string)=>void;window:TelemetryScreenWindow;setWindow:(value:TelemetryScreenWindow)=>void;
   groupBy:"none"|"repository"|"scope"|"profile_group"|"closeout_authority";setGroupBy:(value:"none"|"repository"|"scope"|"profile_group"|"closeout_authority")=>void;scope:string;setScope:(value:string)=>void;profileGroup:string;setProfileGroup:(value:string)=>void;
   closeoutAuthority:string;setCloseoutAuthority:(value:string)=>void;createdAfter:string;setCreatedAfter:(value:string)=>void;
   interventionRole:string;setInterventionRole:(value:string)=>void;interventionProvider:string;setInterventionProvider:(value:string)=>void;
@@ -91,7 +103,7 @@ function TelemetryPanel({data,c,compact,repoPath,setRepoPath,window,setWindow,gr
   const reviewerProfileGroupOptions=[{value:"",label:"All reviewer groups"},...(data?.reviewerProfileGroups??[]).map(value=>({value,label:value}))];
   return <ScrollView style={{flex:1,minHeight:0}} contentContainerStyle={{gap:space.sm,paddingBottom:space.lg}}>
     <View style={{...row,alignItems:"flex-start"}}><ProjectFilter projects={projects} value={repoPath} onChange={setRepoPath} c={c}/>
-      <View style={{...row,flex:1}}>{(["24h","7d","30d","90d","all"] as const).map(value=><Button key={value} small c={c} text={value} selected={window===value} onPress={()=>setWindow(value)}/>)}</View></View>
+      <View style={{...row,flex:1}}>{telemetryScreenWindows.map(value=><Button key={value} small c={c} text={value} selected={window===value} onPress={()=>setWindow(value)}/>)}</View></View>
     <Disclosure c={c} label="More filters" expanded={advanced} onToggle={() => setAdvanced(!advanced)} />
     {advanced && <View style={{...row,alignItems:"flex-start",gap:space.sm,zIndex:10}}>
       <DropdownSelect c={c} label="Group results" value={groupBy} options={groupOptions} onChange={value=>setGroupBy(value as typeof groupBy)} minWidth={180}/>
@@ -107,6 +119,7 @@ function TelemetryPanel({data,c,compact,repoPath,setRepoPath,window,setWindow,gr
     </View>}
     {createdAfter && Number.isNaN(Date.parse(createdAfter)) && <Text accessibilityRole="alert" style={{color:c.statusWarning}}>Enter a valid date and time for the cohort filter.</Text>}
     <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{data ? `${data.matchingTasks} matching tasks` : "Loading telemetry…"}</Text>
+    {data?.coverage && <CoverageNote coverage={data.coverage} c={c}/>}
     {data && <Disclosure c={c} label="Task control history and refusal reasons" expanded={controlsOpen} onToggle={() => setControlsOpen(!controlsOpen)} />}
     {data && controlsOpen && <TaskControlSection controls={data.controls} c={c}/>}
     {data && (data.omittedGroups > 0 || data.truncatedDimensions.length > 0) && <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Showing up to 100 groups and filter values. {data.omittedGroups} groups omitted; filter by repository or use a narrower window for detail.</Text>}
@@ -152,7 +165,7 @@ function TelemetryPanel({data,c,compact,repoPath,setRepoPath,window,setWindow,gr
 
 export function SettingsTelemetry({c, compact}: {c: Colors; compact: boolean}) {
   const fetchTelemetry = useRpc(api.telemetry);
-  const [telemetryRepo,setTelemetryRepo]=useState(""),[telemetryWindow,setTelemetryWindow]=useState<"24h"|"7d"|"30d"|"90d"|"all">("24h"),[telemetryGroup,setTelemetryGroup]=useState<"none"|"repository"|"scope"|"profile_group"|"closeout_authority">("none");
+  const [telemetryRepo,setTelemetryRepo]=useState(""),[telemetryWindow,setTelemetryWindow]=useState<TelemetryScreenWindow>("24h"),[telemetryGroup,setTelemetryGroup]=useState<"none"|"repository"|"scope"|"profile_group"|"closeout_authority">("none");
   const [telemetryScope,setTelemetryScope]=useState(""),[telemetryProfileGroup,setTelemetryProfileGroup]=useState("");
   const [telemetryCloseout,setTelemetryCloseout]=useState("");
   const [telemetryCreatedAfter,setTelemetryCreatedAfter]=useState(""),[telemetryInterventionRole,setTelemetryInterventionRole]=useState(""),[telemetryInterventionProvider,setTelemetryInterventionProvider]=useState("");

@@ -47,6 +47,11 @@ export const STORE_OPEN_DDL = [
       (json_extract(OLD.data,'$.status')='uncertain' AND json_extract(NEW.data,'$.status')='queued'
        AND json_extract(NEW.data,'$.deliveryIntentState') IS NOT 'refused'))
    BEGIN SELECT RAISE(ABORT,'message delivery intent cannot be removed or moved'); END;`,
+  // Task 1496: one compact, versioned telemetry record per purged task, kept for the
+  // 90-day aggregate cohort window after its detailed history is gone. Additive: an older
+  // build never reads it, so rollback is safe.
+  `CREATE TABLE IF NOT EXISTS task_telemetry_retained(taskId TEXT PRIMARY KEY, version INTEGER NOT NULL, createdAt TEXT NOT NULL, capturedAt TEXT NOT NULL, data TEXT NOT NULL);
+   CREATE INDEX IF NOT EXISTS task_telemetry_retained_created ON task_telemetry_retained(createdAt);`,
   // Expression indexes stay transactionally current without another identity cache.
   ...[
     ["agent", "agentId"],

@@ -1,6 +1,7 @@
 import type { Run, Task } from "../../shared/contracts";
 import { isSemanticIncidentCause, type ReviewerCalibration, type ReviewerCalibrationRow } from "../../shared/telemetry";
-import type { QueueEvent, TelemetryBaseItem } from "./telemetry";
+import type { QueueEvent } from "./task-facts";
+import type { TelemetryBaseItem } from "./telemetry-item";
 import { revisionKind } from "./task-facts";
 
 const ms = (value: string | null | undefined, fallback: number) => {
@@ -103,7 +104,7 @@ function reviewerRowLabel(identity: ReviewerVerdictFact["reviewer"]) {
  * never exceed one no matter how many facts share a verdict, and every rate excludes partial
  * verdicts and facts attributed to them, matching Contract 006's partial-evidence rule.
  */
-export function mergeReviewerCalibration(items: TelemetryBaseItem[]): ReviewerCalibration {
+export function mergeReviewerCalibration<Item extends Pick<TelemetryBaseItem, "reviewer">>(items: Item[]): ReviewerCalibration {
   const rows = new Map<string, ReviewerCalibrationRow>();
   const row = (identity: ReviewerVerdictFact["reviewer"]) => {
     const key = reviewerRowKey(identity);

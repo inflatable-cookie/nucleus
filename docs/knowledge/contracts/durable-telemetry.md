@@ -203,10 +203,69 @@ filter cardinality. Cold construction yields often enough that normal Nucleus RP
 and lifecycle work stay responsive; raising a client timeout is not a remedy.
 
 Windows select tasks by creation time. Percentiles use nearest rank over the
-retained matching records. Empty samples return null percentiles. Every
-distribution reports its sample and partial-evidence counts. Nucleus's existing
-4-day terminal-history retention (Spec 018; Tom, 2026-10-20) still applies, so a wider requested window
-does not claim records that have already expired.
+individual samples of the matching tasks. Empty samples return null percentiles. Every
+distribution reports its sample and partial-evidence counts.
+
+## Retained aggregate history
+
+Detailed task history still purges 4 days after finish (Spec 018; Tom,
+2026-10-20), and archived threads keep their own window. Aggregate telemetry
+keeps a rolling 90-day history (Tom approved, task 1496) through one compact,
+versioned record per purged task in the store's `task_telemetry_retained`
+table, keyed by task identity:
+
+- The record carries the lifecycle phase, creation and finish timestamps, the
+  stable filter dimensions (repository, scope, worker profile group,
+  complexity and the providers the intervention dictionary names), the
+  measured total, waiting, active and intervention durations, per-stage
+  samples, usage totals, the closed-vocabulary intervention counters, reviewer
+  verdicts, rounds, refusals and post-merge incidents, settled validation
+  measures and evidence quality. It never carries titles, briefs, messages,
+  logs, raw events, run, thread or workspace identities, commit identities or
+  credentials.
+- Reviewer verdicts keep their profile vocabulary and drop the agent identity.
+  A verdict whose only visible attribution was its agent identity is recorded
+  `unavailable`: it keeps its verdict counts and stays partial, it reads as
+  "Unattributed reviewer" in the dictionary, it no longer matches an
+  agent-identity filter, and `coverage.reviewerAttributionUnavailable` counts
+  it. A verdict whose row identity needs the agent identity leaves the exact
+  cohort, so no rate gains a denominator it cannot prove.
+- The retention owner writes the record in the same transaction that deletes
+  the task's history, in bounded batches that re-read every row and re-check
+  every purge gate at commit. A removed task never contributed and keeps no
+  record. A capture failure keeps that task's whole history and reports
+  through `retentionError` in service health until a pass succeeds. Records
+  upsert by task identity, so replay or an interrupted pass converges without
+  duplicate samples.
+- Each pass also seeds records for at most 200 still-present finished tasks
+  from a durable cursor, so a capture fault shows before purge age, and
+  expires records whose creation time left the 90-day window in bounded
+  transactions. Detailed retention, tombstones and durable outcomes do not
+  change.
+
+The base reads live tasks and retained records through the same bounded pages
+and one aggregation. A task whose row still exists, live or removed,
+contributes only through its detailed history, so every task contributes once.
+The pages carry that guarantee across a concurrent purge: detailed facts are
+read before the task rows that decide liveness, and retained records after
+them. The retention owner deletes a task's facts and row and writes its record
+in one transaction, so a purge that commits between pages still leaves each
+task on exactly one side — pre-purge rows with pre-purge facts, or no row with
+its retained record — and a cold build never mixes the two or loses the task.
+Retained contributions restore the same filter, group, percentile, denominator
+and partial-evidence inputs the live derivation gives, and a purge does not
+change any reported metric at a fixed query time. A legacy task finished
+without a finish time keeps the total measured at capture.
+
+`coverage` states what a window can claim: `completeFrom` is the later of the
+90-day horizon (once any retention pass ran) and the start of capture, which
+is 4 days before the last pass that purged without records (fixed by the first
+capturing pass). A window, or `createdAfter` boundary, that starts before it is
+`partial`; history purged before rollout is never invented. `liveTasks` and
+`retainedTasks` split the matching tasks by source. Task-control outcomes keep
+their separate 30-day event-time series, and `controlsPartial` says so for a
+wider window. The Telemetry screen offers 24h, 7d, 30d and 90d and labels
+partial coverage; the RPC still accepts `all`, bounded by what is retained.
 
 `queue.detail` includes the same task telemetry alongside task, runs, notices,
 hooks and recent activity, including observed generic closeout authority. The
@@ -214,9 +273,10 @@ native detail modal renders a compact timing
 summary. The Telemetry page exposes the aggregate filters and evidence labels, a
 compact reviewer-calibration section per group with counts beside rates and
 honest partial labels, and the disabled shadow-review plan caption.
-The existing SQLite task events, runs, notices and hook outbox remain the only
-durable sources; telemetry adds no database, analytics service or repository
-protocol.
+The existing SQLite task events, runs, notices and hook outbox remain the
+durable sources for live tasks, and the compact retained records above for
+purged ones; telemetry adds no separate database, analytics service or
+repository protocol.
 
 The shared Settings screen exposes aggregate telemetry in both the Paseo plugin
 and the web board. The board header keeps Pause and does not contain a telemetry
