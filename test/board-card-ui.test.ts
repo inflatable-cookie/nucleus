@@ -2503,7 +2503,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       // A merge hold prompt: the kind and reference, the title, ready-to-merge and why it is held, then Release and Keep.
       openView(tree.raw, "Needs you");
       const holdRow = row(
-        /^Merge hold: merge-ready, App, Status: Ready to merge · held for receipt pending$/,
+        /^Merge hold: merge-ready, App, Status: Ready to merge · held for receipt pending, owner operator$/,
       );
       assert.ok(
         tile(holdRow, "CirclePause"),
