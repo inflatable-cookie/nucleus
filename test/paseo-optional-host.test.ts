@@ -653,6 +653,94 @@ test("ordinary wake archives standing routing grants for archived planners witho
   assert.equal(archived?.status, "archived");
 });
 
+test("T3-scoped wake archives a bare legacy Paseo planner grant on the registered Paseo host", async (t) => {
+  const root = makeTempDir(t, "ns-t3-scoped-legacy-grant-");
+  const dataDir = join(root, "data");
+  const grantRepo = join(root, "repo");
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(grantRepo, { recursive: true });
+
+  const t3HostId = "t3code:scoped-env";
+  const paseoHostId = "paseo-legacy-grants";
+  let paseoInventoryReads = 0;
+  const t3Adapter = {
+    ...makeFakeHostAdapter(t3HostId),
+    listLiveAgents: async () => [],
+  } as unknown as Adapter;
+  const paseoAdapter = {
+    ...makeFakeHostAdapter(paseoHostId),
+    listLiveAgents: async () => {
+      paseoInventoryReads++;
+      return [];
+    },
+  } as unknown as Adapter;
+
+  const runtime = new QueueRuntime({
+    dataDir,
+    hostHome: join(root, "no-paseo"),
+    timers: false,
+  });
+  t.after(async () => {
+    await runtime.drain();
+  });
+
+  await runtime.started;
+  runtime.hostRegistry.connect(t3HostId, "ws://127.0.0.1:3773/ws", {
+    adapter: t3Adapter,
+    admission: runtime.admission,
+  });
+  runtime.hostRegistry.connect(paseoHostId, "ws://127.0.0.1:6767/ws", {
+    adapter: paseoAdapter,
+    admission: runtime.admission,
+  });
+  await runtime.ensureBootstrap();
+  runtime.store.setMeta("paused", false);
+
+  runtime.store.upsertProject({
+    key: "legacy-grant-proj",
+    name: "Legacy Grant Project",
+    repositories: [{ origin: null, path: grantRepo }],
+  });
+  runtime.store.setProjectPlanner({
+    key: "legacy-grant-proj",
+    agentId: "bare-paseo-planner",
+    setBy: "operator",
+  });
+  const asked = applyRoutingGrant(runtime.store, runtime.decisions, {
+    action: "request",
+    caller: "bare-paseo-planner",
+    reason: "frontier review block",
+  });
+  const decision = runtime.decisions.get({ id: asked.grant.decisionId! });
+  runtime.decisions.answer({
+    id: decision.id,
+    version: decision.version,
+    answer: GRANT_APPROVE,
+    answeredBy: GRANT_OPERATOR_BOARD,
+    relayed: false,
+    note: "",
+  });
+  reconcileRoutingGrants(runtime.store, runtime.decisions);
+  assert.equal(
+    readRoutingGrants(runtime.store).find((g) => g.id === asked.grant.id)
+      ?.status,
+    "active",
+  );
+
+  // Even when wake runs inside a T3-scoped host context, the bare legacy Paseo
+  // grant inventories the registered Paseo host and archives the grant.
+  await runtime.engine.withHost(t3HostId, () => runtime.engine.wake());
+  assert.ok(
+    paseoInventoryReads >= 1,
+    "T3-scoped wake queried the registered Paseo host for the bare legacy grant",
+  );
+  assert.equal(
+    readRoutingGrants(runtime.store).find((g) => g.id === asked.grant.id)
+      ?.status,
+    "archived",
+  );
+});
+
 test("explicit Paseo CLI resolves default daemon URL on fresh settings and preserves configured URLs", () => {
   assert.equal(paseoDaemonUrl({}), DEFAULT_PASEO_DAEMON_URL);
   assert.equal(paseoDaemonUrl(undefined), DEFAULT_PASEO_DAEMON_URL);

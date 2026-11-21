@@ -25,9 +25,13 @@ export class PlannerGrantCleanup {
     if (!grantArchiveDue(this.context.store)) return;
     const registeredPaseoHosts =
       this.context.hostIds?.().filter((id) => hostKindOf(id) === "paseo") ?? [];
+    const ambientHostId = (this.context.adapter as { hostId?: string }).hostId;
     const legacyHostId =
-      (this.context.adapter as { hostId?: string }).hostId ??
-      (registeredPaseoHosts.length === 1 ? registeredPaseoHosts[0] : undefined);
+      registeredPaseoHosts.length === 1
+        ? registeredPaseoHosts[0]
+        : ambientHostId && hostKindOf(ambientHostId) === "paseo"
+          ? ambientHostId
+          : undefined;
     const hostIds = new Set<string | undefined>(
       readRoutingGrants(this.context.store).map(
         (grant) => parseAgentId(grant.planner)?.hostId ?? legacyHostId,
