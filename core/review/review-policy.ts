@@ -20,8 +20,11 @@ import { commonDirMatchesTask, readGitCheckout, safeRealpathSync } from "../git/
 import { repoCommonDir } from "../workspaces/workspace-allocation";
 import * as forge from "../forge/index";
 import { runTicketPath } from "../dispatch/agent-creation";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
+import { callerNativeId, parseAgentId } from "../../shared/agent-identity";
 
 export interface ReviewPolicyHost {
+  readonly hostId: string;
   readonly helperPath: string;
   readonly workspaceHost: { workspaceRef(id:string): HostWorkspaceRef; activeThreads(): Promise<HostThread[]> };
   readonly messageHost: { retainedAgentRef(id:string): HostRetainedAgentRef };
@@ -34,26 +37,37 @@ export interface ReviewPolicyHost {
 export class ReviewPolicy {
   constructor(private readonly host: ReviewPolicyHost) {}
   async inspectRegistration(callerAgentId: string) {
+    const host = HOST_KIND_LABELS[hostKindOf(this.host.hostId)];
     const agent = this.host.messageHost.retainedAgentRef(callerAgentId); await agent.refresh(); const current = agent.current();
-    if (!current || agent.archivedAt) throw Error('Calling thread is not a live Paseo thread');
-    if (!agent.workspaceId) throw Error('Calling thread has no workspace');
+    if (!current || agent.archivedAt || agent.status === 'gone' || agent.status === 'closed') throw Error(`Calling thread is not live on ${host}`);
+    if (!agent.workspaceId) throw Error(`Calling thread has no worktree on ${host}`);
     if (wireLabel(current.labels, 'task')) throw Error(`Calling thread already works on queue task ${wireLabel(current.labels, 'task')}; resume that task instead`);
-    const workspace = this.host.workspaceHost.workspaceRef(agent.workspaceId); await workspace.refresh();
+    const workspaceId = agent.workspaceId;
+    const workspace = this.host.workspaceHost.workspaceRef(workspaceId); await workspace.refresh();
     const placement = workspace.current();
-    if (!workspace.directory || !placement) throw Error('Calling thread workspace is missing its directory');
+    if (!workspace.directory || !placement) throw Error(`Calling thread has no available worktree on ${host}`);
     if (!placement.projectRootPath) throw Error('Calling thread workspace belongs to no project checkout');
-    return { workspaceId: agent.workspaceId, directory: workspace.directory, repoPath: placement.projectRootPath, observation: await this.host.observe(callerAgentId) };
+    const observation = await this.host.observe(callerAgentId);
+    if (observation.workspaceId !== workspaceId || ['gone', 'closed'].includes(observation.status))
+      throw Error(`Calling thread changed workspace or ended on ${host} during registration`);
+    return { workspaceId, directory: workspace.directory, repoPath: placement.projectRootPath, observation };
   }
   async inspectReviewEntry(input:ReviewEntryInput,taskId?:string, originProof?: { origin: OriginAgent; state: AgentObservation }) {
     const workspace=this.host.workspaceHost.workspaceRef(input.workspaceId);await workspace.refresh();const current=workspace.current();
     if(!workspace.directory||current?.projectRootPath!==input.submission.repoPath)throw Error('Review-entry workspace is missing or belongs to another project');
-    const origin=originProof?.origin ?? await this.host.originAgent(input.submission.originAgentId);
-    if(!origin||origin.archived||!origin.workspaceId)throw Error('Review entry requires a live originating thread');
+    const originId = input.submission.originAgentId;
+    // A supplied proof was already read on its own host. Otherwise only this
+    // adapter's own qualified caller can be sent to a native thread API.
+    const nativeId = originProof ? parseAgentId(originId)?.nativeAgentId ?? originId : callerNativeId(originId, this.host.hostId);
+    const origin=originProof?.origin ?? await this.host.originAgent(nativeId);
+    if(!origin||origin.archived||origin.deleted||!origin.workspaceId)throw Error('Review entry requires a live originating thread');
     const originState=originProof?.state ?? await this.host.observe(origin.id);
-    if(origin.id!==input.submission.originAgentId||originState.id!==origin.id||originState.workspaceId!==origin.workspaceId)
+    if(origin.id!==nativeId||originState.id!==nativeId||originState.workspaceId!==origin.workspaceId)
       throw Error('Review-entry origin observation does not match the recorded thread and workspace');
+    if (['gone', 'closed'].includes(originState.status)) throw Error('Review entry requires a live originating thread');
     const entries=await this.host.workspaceHost.activeThreads();
-    const attached=entries.filter(entry=>entry.workspaceId===input.workspaceId&&!entry.archived);
+    const attached=entries.filter(entry=>!entry.archived&&(entry.workspaceId===input.workspaceId
+      || (entry.workspaceDirectory && safeRealpathSync(entry.workspaceDirectory)===workspace.directory)));
     const busyEntries=attached.filter(entry=>entry.activeTurn
       ||(entry.pendingPermissionKinds.length&&!entry.pendingPermissionKinds.every(kind=>kind==='question'))
       ||!['idle','error','closed'].includes(entry.status));

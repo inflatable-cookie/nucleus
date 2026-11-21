@@ -64,6 +64,7 @@ export interface HostPolicyPort
       | "continueReviewer"
     >
   > {
+  createReviewEntryWorkspace(spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0]): Promise<{ id: string }>;
   creationOwner(): CreationOwner;
   binding(key: string, task: Task, runId: string, token: string): string;
   dataDir(): string;

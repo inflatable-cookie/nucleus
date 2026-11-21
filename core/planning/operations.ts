@@ -46,6 +46,7 @@ import { repositoryOrigin } from "./lanes";
 import type { Adapter } from "../host/adapter";
 import {
   bindReviewEntry,
+  unavailableReviewEntry,
   type ReviewEntryAdapter,
 } from "../review/review-entry";
 import {
@@ -1312,7 +1313,7 @@ export class Operations {
         (payload as { input?: unknown } | null)?.input,
       );
       if (!this.adapter.inspectReviewEntry || !this.adapter.originAgent)
-        throw Error("Review entry is unavailable on this adapter");
+        throw unavailableReviewEntry(this.adapter.hostId);
       const routingConflict = this.engine.independentReviewRoutingRefusal({
         ...input.submission,
         declaredAuthorModels: input.authorDeclaration.models,

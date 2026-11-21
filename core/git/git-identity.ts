@@ -60,6 +60,18 @@ export function readGitCheckout(directory: string): GitCheckoutIdentity {
   return { toplevel, gitDir, commonDir, head, branch, origin: originUrl(gitDir, commonDir) };
 }
 
+/** A host-reported path is a workspace only if it names a linked Git checkout. */
+export function linkedWorktreePath(directory: string): string | null {
+  if (!isAbsolute(directory)) return null;
+  try {
+    const root = realpathSync(directory);
+    const gitDir = resolveGitDir(root);
+    return gitDir !== resolveCommonDir(gitDir) ? root : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve a ref (`refs/heads/…`) from loose files then packed-refs. */
 export function readGitRef(identity: Pick<GitCheckoutIdentity, "gitDir" | "commonDir">, ref: string): string {
   if (!ref.startsWith("refs/") || ref.includes("..") || ref.includes("\\"))
