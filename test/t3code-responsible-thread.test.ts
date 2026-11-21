@@ -69,6 +69,7 @@ async function t3Fixture(
   store.setMeta("paused", false);
   t.after(() => store.close());
   const engine = new Engine(store, adapter, 0);
+  t.after(() => engine.stop());
   engine.hostIds = () => [host.hostId];
   engine.resolveHostAdapter = (id) =>
     id === host.hostId ? adapter : undefined;

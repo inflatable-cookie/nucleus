@@ -91,8 +91,11 @@ matching reads `.git` directly rather than spawning `git`, and an incomplete
 host inventory (timeout or read failure) still serves surviving hosts for that
 call, marks the shortlist for fresh inventory on the next lookup, and keeps a
 project-addressed `tell` or `ask` pending (rather than expiring it or recording
-permanent self-handling, including when a surviving host's fallback disappears
-before send) until a complete inventory answers (nucleus#1518). Nucleus ranks a live registered planner first,
+permanent self-handling when no candidate is picked) until a complete inventory
+answers (nucleus#1518); automatic recovery for a chosen fallback archived
+between shortlist observation and send while another host's inventory is
+incomplete is out of scope, and the existing no-replay fence for unknown
+delivery stays unchanged. Nucleus ranks a live registered planner first,
 then a thread that dispatched or owns project tasks, then a named agent, then a
 thread that only works in the checkout, breaking ties by the most recent host
 activity or Nucleus call (Tom, 2026-11-19; nucleus#1379). A design or support
