@@ -305,6 +305,28 @@ export function modelWords(
   return model?.label || profile.model || "no model";
 }
 
+/** The rolling window recent-assignment counts cover (nucleus#1497): up to the last 50 recorded assignments, the same sample rotation reads (`recentCounts`, `ASSIGNMENT_HISTORY_KEEP`). */
+export const RECENT_ASSIGNMENT_WINDOW = 50;
+
+/**
+ * One profile's share of the recent-assignment sample for its Profiles row
+ * (nucleus#1497). The denominator sums every `profile:` key in the board's
+ * `recentAssignments`, including profiles no longer shown, so every row reads
+ * against the same actual sample; group keys never enter it. Null while the
+ * board is unread, so the row shows no bar rather than a stale one.
+ */
+export function profileUsage(
+  state: Pick<UiQueueState, "recentAssignments"> | null,
+  profileId: string,
+): { count: number; total: number } | null {
+  if (!state) return null;
+  const recent = state.recentAssignments ?? {};
+  let total = 0;
+  for (const [key, value] of Object.entries(recent))
+    if (key.startsWith("profile:")) total += value;
+  return { count: recent[`profile:${profileId}`] ?? 0, total };
+}
+
 export type CatalogRead = { cwd: string; catalog: HostCatalog };
 
 /** How long ago the stored catalog was read from the host, for the Refresh tooltip. */

@@ -353,7 +353,12 @@ Heavyweight if it needs to").
     subscription group is unavailable reads "group unavailable" in both
     choosers, with the reason and reset time once chosen. Long labels wrap.
     Settings → Profiles rows show a status only for a problem (unavailable, or
-    a paused subscription group); the capability control shows the four
-    brackets, and its (?) says where each complexity starts and which brackets
-    need permission.
+    a paused subscription group); each row carries a slim, quiet usage bar with
+    that profile's share of the last 50 recorded assignments on one common scale
+    across the list (nucleus#1497: the exact count and denominator in its
+    accessible name, length comparing independently of color, zero as an empty
+    track, an empty sample as words). The denominator sums every `profile:` key
+    in the board's `recentAssignments`, including profiles no longer shown; the
+    capability control shows the four brackets, and its (?) says where each
+    complexity starts and which brackets need permission.
 - **Normal.** Normal starts every task on its own bracket.

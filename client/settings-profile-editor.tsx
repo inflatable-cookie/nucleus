@@ -56,6 +56,7 @@ import {
   identityCreateInput,
   hiddenThinkingValues,
   identityValid,
+  profileUsage,
   withCanonicalOption,
   levelLabel,
   modelWords,
@@ -69,6 +70,73 @@ import {
   type CompatibilityRead,
   type ProfileDraft,
 } from "./settings-profile-helpers";
+
+/**
+ * One profile row's recent-assignment usage (nucleus#1497): a slim, quiet bar in
+ * the free space between the label and the row actions, on one common scale
+ * across the list. Length alone compares, so the fill keeps the same muted tone
+ * on every row; zero is an empty track, and an empty sample reads as words.
+ * The accessible name carries the exact count and denominator. Non-interactive.
+ */
+function ProfileUsageBar({
+  c,
+  name,
+  count,
+  total,
+}: {
+  c: Colors;
+  name: string;
+  count: number;
+  total: number;
+}) {
+  if (total <= 0)
+    return (
+      <View style={{ flex: 1, minWidth: 0, justifyContent: "center" }}>
+        <Text
+          accessibilityLabel={`${name} recent assignments: none yet`}
+          style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+        >
+          No recent assignments yet
+        </Text>
+      </View>
+    );
+  const percent = Math.max(0, Math.min(100, (count / total) * 100));
+  return (
+    <View
+      accessibilityRole="image"
+      accessibilityLabel={`${name} recent assignments: ${count} of ${total}`}
+      style={{
+        flex: 1,
+        minWidth: 56,
+        maxWidth: 240,
+        justifyContent: "center",
+      }}
+    >
+      <View style={{ ...row, flexWrap: "nowrap", gap: space.xxs }}>
+        <View
+          style={{
+            flex: 1,
+            height: space.xxs / 2,
+            borderRadius: radius.control,
+            backgroundColor: c.border,
+            overflow: "hidden",
+          }}
+        >
+          <View
+            style={{
+              width: `${percent}%`,
+              height: "100%",
+              backgroundColor: c.foregroundMuted,
+            }}
+          />
+        </View>
+        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+          {count}/{total}
+        </Text>
+      </View>
+    </View>
+  );
+}
 
 export function ProfileRow({
   c,
@@ -174,6 +242,7 @@ export function ProfileRow({
   const status = state
     ? profileRowStatus(availability, entry, state)
     : { problem: "" };
+  const usage = profileUsage(state, profile.id);
   const hostNote = hostCompatibilityNote(compatibility, profile.id);
   const attention = status.problem
     ? `${status.problem}${hostNote ? `\n${hostNote}` : ""}`
@@ -199,6 +268,14 @@ export function ProfileRow({
         >
           {profile.name}
         </Text>
+        {usage ? (
+          <ProfileUsageBar
+            c={c}
+            name={profile.name}
+            count={usage.count}
+            total={usage.total}
+          />
+        ) : null}
         {attention ? (
           <StatusGlyph
             c={c}
