@@ -21,7 +21,6 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import { pidAlive as defaultPidAlive } from "../../core/machine/pid";
 import { writeOwnedJson } from "../../core/machine/owned-file.mjs";
@@ -42,6 +41,7 @@ import {
 import { rollInProgress } from "../../shared/service/roll-recovery";
 import { ServiceClient } from "../../shared/service/client";
 import { bridgeProcessActions } from "../install/bridge-process-actions";
+import { paseoHome } from "../../hosts/paseo/index.mjs";
 import { installBase } from "../install/install.mjs";
 import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "./options";
 import { BridgeSession } from "./session";
@@ -245,7 +245,7 @@ export class RollOwner {
       processActions: this.processActions,
       session: this.session,
       connect: (info, connectOptions) => this.connect(info, connectOptions),
-      paseoHome: () => this.options.paseoHome ?? process.env.PASEO_HOME ?? join(homedir(), ".paseo"),
+      paseoHome: () => this.options.paseoHome ?? paseoHome(),
       currentSession: () => currentLoginSession(),
     });
     this.roll = new RollScheduler({

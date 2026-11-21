@@ -8,6 +8,7 @@ import { ServiceClient } from "../../shared/service/client";
 import { awaitForeignReplacement, awaitStandbyProgress, SPAWN_TOKEN_ENV, STANDBY_ENV, STANDBY_READY_BUDGET_MS, STANDBY_READY_CAP_MS, STANDBY_READY_STALL_MS } from "../../shared/service/standby-wait";
 import type { BridgeProcessActions } from "../../shared/service/bridge-process";
 import { SERVICE_PROTOCOL_VERSION } from "../../shared/service/build";
+import { paseoHomeEnvironment } from "../../hosts/paseo/index.mjs";
 import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "./options";
 import { BridgeSession, ServiceBridgeUnavailable, type StandbyReadiness } from "./session";
 import { captureStartupChunk, newStartupCapture, safeSpawnErrorCode, sealStartupCapture, startupFailureRecord, startupFailureSummary, type StartupCapture } from "./startup-output";
@@ -429,7 +430,7 @@ export class ServiceSpawner {
 
   private spawnProcess(attempt: SpawnAttempt, standbyFor?: number): ChildProcess {
     attempt.token = randomUUID();
-    const env: NodeJS.ProcessEnv = { ...process.env, PASEO_HOME: this.core.paseoHome(), QUEUE_LOGIN_SESSION: this.core.currentSession(), [SPAWN_TOKEN_ENV]: attempt.token };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...paseoHomeEnvironment(this.core.paseoHome()), QUEUE_LOGIN_SESSION: this.core.currentSession(), [SPAWN_TOKEN_ENV]: attempt.token };
     if (standbyFor) env[STANDBY_ENV] = String(standbyFor); else delete env[STANDBY_ENV];
     const capture = newStartupCapture(env);
     attempt.startup = capture;
