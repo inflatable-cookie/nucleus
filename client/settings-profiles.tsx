@@ -204,6 +204,7 @@ export function ProfilesPanel({
       setCreated(null);
   }, [created, profilesQuery.data]);
   const panelBusy = busy || Boolean(removing);
+  const visibleProfileIds = live.map((profile) => profile.id);
   /**
    * Refresh reads the host live for every directory the page reads and replaces
    * Nucleus's stored catalog (nucleus#970). The stored lists stay usable while it
@@ -356,7 +357,7 @@ export function ProfilesPanel({
         label="Stored profiles"
         status={quietSaveStatus(actionStatus) || null}
         endsInRow={profilesEndInRow}
-        description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor. The usage bar shows each profile's share of recent assignments, up to the last 50 recorded."
+        description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor. Usage strips compare recent assignments across this list, from cool to warm; a full strip means that profile is busiest in the list. The sample covers up to the last 50 recorded assignments."
         action={
           <View style={{ ...row, flexWrap: "nowrap" }}>
             <ActionButton
@@ -402,6 +403,7 @@ export function ProfilesPanel({
         {live.map((item) => (
           <ProfileRow
             key={item.id}
+            visibleProfileIds={visibleProfileIds}
             c={c}
             profile={item.stored ?? item.board!}
             board={item.board}
