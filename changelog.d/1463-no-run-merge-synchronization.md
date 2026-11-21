@@ -1,0 +1,1 @@
+- A verified merge now resumes synchronization when a stale recovery episode that never started a run blocks closeout, once its pre-merge witness proves the merge overtook it. A current sync fault, merge hold or live run that still fences progress is named as the holder in `next` and by the closeout move, instead of reporting no change.

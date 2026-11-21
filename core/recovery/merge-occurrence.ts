@@ -3,9 +3,80 @@ import { digest, type Store } from "../store/store";
 import { plannerEscalations } from "../questions/ladder/records";
 import { escalationWaitDetail } from "../questions/ladder/waits";
 
+type OccurrenceStore = Pick<Store, "eventsAll" | "run" | "runs">;
+
+/** The stop is the planner, unknown-delivery or attached wait of this escalation. */
+function stopNamesEscalation(task: Task, id: string): boolean {
+  const stop = task.resolution.stop;
+  return Boolean(
+    stop &&
+      stop.reason === "escalated" &&
+      [
+        escalationWaitDetail.planner(id),
+        escalationWaitDetail.unknown(id),
+        escalationWaitDetail.attached(id),
+      ].some(
+        (detail) =>
+          stop.detail === detail || stop.detail.startsWith(`${detail};`),
+      ),
+  );
+}
+
+/** The PR is the one the episode and the verified merge name, and it is still at the merged head. */
+function prNamesMerge(task: Task, number: number): boolean {
+  try {
+    const path = new URL(task.prUrl ?? "").pathname;
+    return (
+      new RegExp(`^/[^/]+/[^/]+/pull/${number}/?$`).test(path) &&
+      task.prHead === task.resolution.mergeHead
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * An episode that never launched a run. Its unbound pre-merge witness must name
+ * this exact episode, key, generation, PR and head, and no recovery run of its
+ * generation may exist. A witness bound to a run would instead need that run.
+ */
+function noRunEpisodeOvertaken(
+  store: OccurrenceStore,
+  task: Task,
+  number: number,
+): boolean {
+  const recovery = task.resolution.recovery;
+  const witness = recovery?.mergeWitness;
+  if (
+    !recovery ||
+    recovery.status === "resolved" ||
+    recovery.agentId ||
+    recovery.action ||
+    !witness
+  )
+    return false;
+  if (
+    witness.episodeId !== recovery.id ||
+    witness.incidentId !== recovery.incidentId ||
+    witness.stopKey !== recovery.key ||
+    witness.runId !== null ||
+    witness.generation !== recovery.generation ||
+    witness.prNumber !== number ||
+    witness.head !== task.resolution.mergeHead ||
+    witness.mergedCommit !== null
+  )
+    return false;
+  return !store
+    .runs(task.id)
+    .some(
+      (run) =>
+        run.role === "recovery" && run.generation === recovery.generation,
+    );
+}
+
 /** Identify an overtaken run. Clearing a stop needs its own occurrence proof. */
 export function recoveryOvertakenByMerge(
-  store: Pick<Store, "eventsAll" | "run">,
+  store: OccurrenceStore,
   task: Task,
 ): boolean {
   const { recovery, mergeHead, mergedCommit } = task.resolution;
@@ -13,18 +84,9 @@ export function recoveryOvertakenByMerge(
     task.reviewEntry?.prNumber ??
     task.resumePrNumber ??
     task.completion?.prNumber;
-  if (!recovery || !recovery.runId || !number || !mergeHead || !mergedCommit)
-    return false;
-  try {
-    const path = new URL(task.prUrl ?? "").pathname;
-    if (
-      !new RegExp(`^/[^/]+/[^/]+/pull/${number}/?$`).test(path) ||
-      task.prHead !== mergeHead
-    )
-      return false;
-  } catch {
-    return false;
-  }
+  if (!recovery || !number || !mergeHead || !mergedCommit) return false;
+  if (!prNamesMerge(task, number)) return false;
+  if (!recovery.runId) return noRunEpisodeOvertaken(store, task, number);
   const run = store.run(recovery.runId);
   if (
     !run ||
@@ -126,6 +188,36 @@ export function recoveryOvertakenByMerge(
   );
 }
 
+/**
+ * The recovery-pending escalation a no-run episode opened, when the task's exact
+ * stop still names it. It is still open, or the verified merge outlived it (its
+ * routing answered it by ordinary progress and the stop remained). Its cause is
+ * digested from this episode's own id, so no other episode can claim it.
+ */
+export function noRunEscalationOwnsStop(
+  store: Pick<Store, "eventsAll">,
+  task: Task,
+): string | null {
+  const recovery = task.resolution.recovery;
+  if (!recovery || recovery.runId) return null;
+  const events = store.eventsAll(task.id);
+  const cause = digest(`recovery-pending:${task.id}:${recovery.id}`);
+  const match = plannerEscalations(events).find(
+    (item) =>
+      item.cause === cause &&
+      item.runId === null &&
+      (!item.answered ||
+        events.some(
+          (event) =>
+            event.kind === "planner_escalation_answered" &&
+            event.detail ===
+              `${item.id}: answered by ordinary progress: the task merged or ended first`,
+        )) &&
+      stopNamesEscalation(task, item.id),
+  );
+  return match?.id ?? null;
+}
+
 /** The one typed escalation this legacy recovery report opened, if its chain is complete. */
 export function legacyRecoveryEscalation(
   store: Pick<Store, "eventsAll">,
@@ -134,6 +226,7 @@ export function legacyRecoveryEscalation(
 ): string | null {
   const events = store.eventsAll(task.id);
   const runId = task.resolution.recovery?.runId;
+  if (!runId) return null;
   const matches = plannerEscalations(events)
     .filter((item) => item.runId === runId)
     .filter((item) =>
@@ -169,17 +262,7 @@ export function legacyRecoveryOwnsStop(
   const stop = task.resolution.stop;
   const id = legacyRecoveryEscalation(store, task);
   if (!stop || stop.reason !== "escalated" || !id) return false;
-  if (
-    ![
-      escalationWaitDetail.planner(id),
-      escalationWaitDetail.unknown(id),
-      escalationWaitDetail.attached(id),
-    ].some(
-      (detail) =>
-        stop.detail === detail || stop.detail.startsWith(`${detail};`),
-    )
-  )
-    return false;
+  if (!stopNamesEscalation(task, id)) return false;
   const events = store.eventsAll(task.id);
   const payload = events.find(
     (event) =>
