@@ -1948,13 +1948,30 @@ own delete does not retire presentation intents. Regression tests instrument
 
 nucleus#1378's held-turn proof (`effigy proof:t3code:held-turn`) runs the parent
 transcript on the installed nightly: the initial launch, same-state writes, several
-milestones within one held turn, the production release and re-entry, the closeout,
-and the wire's paragraph breaks. On `0.1.11-nightly.20261119.4928`, a re-entry created
+milestones within one held turn, the production release and re-entry, the closeout
+through the ordinary host pass, and the wire's paragraph breaks. On `0.1.11-nightly.20261119.4928`, a re-entry created
 with `createdBy: "system"` is accepted and holds the run, but T3 renders it as a
 visible user bubble. No quiet re-entry exists on `message.dispatch`, so the visible
 plain sentence is the prompt. The proof releases the held turn through a fixture-only
 `acp` debug target, because the adapter in that proof does not own the service's ACP
 surface.
+
+nucleus#1459's finished-parent archive proof (`effigy
+proof:t3code:parent-archive`) runs on the installed nightly through the ordinary
+host maintenance owner: a real store, the real `nucleus t3 install` route and a
+real `T3CodeHost`, driven by `HostPass.run` and never by a presentation, nesting or
+archive method directly. It proves a stored done task with a retired workspace
+handle and a snoozed parent archived in one ordinary pass with exactly one
+`thread.archive` under the deterministic command id and the binding settled; one
+parent's own projection read failing while its sibling archives in the same pass,
+with the faulted parent keeping a `read_failed` wait the next pass settles; an
+archive whose reply is lost leaving an unknown intent, and the rolled host settling
+it from the thread's archived fact with no second command; and two records claiming
+one parent thread never archived while a nonterminal parent keeps the operator's
+snooze. `test/t3code-parent-archive.test.ts` and `test/host-pass.test.ts` cover the
+same cases on the private synthetic nightly — including the failing Inbox read,
+which an isolated nightly cannot create while its own ACP probe reports `warning` —
+and the step order that keeps the archive ahead of every presentation read.
 
 `test/t3code-inbox.test.ts`, `test/acp-agent.test.ts`, `test/acp-service.test.ts`
 and `effigy proof:t3code:inbox` (`scripts/acceptance/t3code-inbox-private.ts`)

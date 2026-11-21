@@ -22,6 +22,11 @@ import {
 import { createServer } from "node:net";
 import { join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { Engine } from "../../core/engine";
+import type { Adapter } from "../../core/host";
+import { enginePorts } from "../../core/port-context";
+import { HostPass } from "../../core/scheduling/host-pass";
+import type { Store } from "../../core/store/store";
 
 /** The nightly line the proofs read; the exact installed build is recorded, never pinned. */
 export const NIGHTLY_LINE = /^0\.1\.11-nightly\.\d+\.\d+$/;
@@ -49,7 +54,10 @@ export function extractArchive(source: string, destination: string): void {
     const prelude = Buffer.alloc(16);
     assert.equal(readSync(fd, prelude, 0, 16, 0), 16);
     const headerSize = prelude.readUInt32LE(12);
-    assert.ok(headerSize > 0 && headerSize < 16 * 1024 * 1024, "bounded header");
+    assert.ok(
+      headerSize > 0 && headerSize < 16 * 1024 * 1024,
+      "bounded header",
+    );
     const header = Buffer.alloc(headerSize);
     readSync(fd, header, 0, headerSize, 16);
     const tree = JSON.parse(header.toString()) as ArchiveEntry;
@@ -66,14 +74,19 @@ export function extractArchive(source: string, destination: string): void {
           walk(child, join(relative, name));
       } else if (entry.link) {
         const linkTarget = resolve(destination, entry.link);
-        assert.ok(linkTarget.startsWith(destination + sep), "link stays inside the fixture");
+        assert.ok(
+          linkTarget.startsWith(destination + sep),
+          "link stays inside the fixture",
+        );
         symlinkSync(linkTarget, target);
       } else if (entry.unpacked) {
         mkdirSync(resolve(target, ".."), { recursive: true });
         copyFileSync(join(source + ".unpacked", relative), target);
       } else {
         assert.ok(
-          typeof entry.size === "number" && entry.size >= 0 && entry.size < 64 * 1024 * 1024,
+          typeof entry.size === "number" &&
+            entry.size >= 0 &&
+            entry.size < 64 * 1024 * 1024,
           "bounded archive entry",
         );
         const bytes = Buffer.alloc(entry.size);
@@ -118,7 +131,8 @@ export async function until<T>(
       if (value) return value as NonNullable<T>;
     } catch (error) {
       last = error instanceof Error ? error.message : String(error);
-      if (!/changed during snapshot|snapshotSequence changed/.test(last)) throw error;
+      if (!/changed during snapshot|snapshotSequence changed/.test(last))
+        throw error;
     }
     await delay(100);
   }
@@ -131,7 +145,11 @@ export async function run(
   options: { env: NodeJS.ProcessEnv; cwd: string; secret?: boolean },
 ): Promise<string> {
   return await new Promise((resolveRun, reject) => {
-    const child = spawn(argv[0]!, argv.slice(1), { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(argv[0]!, argv.slice(1), {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout!.on("data", (bytes) => (stdout += bytes));
@@ -139,8 +157,53 @@ export async function run(
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) return resolveRun(stdout);
-      const detail = stderr.split("\n").filter((line) => line.trim() && !/^\s+at /.test(line)).slice(-6).join(" | ");
-      reject(new Error(`${options.secret ? "credential" : "setup"} command exited ${code}: ${options.secret ? "output withheld" : detail}`));
+      const detail = stderr
+        .split("\n")
+        .filter((line) => line.trim() && !/^\s+at /.test(line))
+        .slice(-6)
+        .join(" | ");
+      reject(
+        new Error(
+          `${options.secret ? "credential" : "setup"} command exited ${code}: ${options.secret ? "output withheld" : detail}`,
+        ),
+      );
     });
   });
+}
+
+/**
+ * One ordinary host maintenance pass over a real store and a real host adapter: the
+ * same owner, step set and order the service sweep runs for a host (`HostPass.run`),
+ * including the finished-parent archive step that reads the host's own durable parent
+ * bindings. A proof uses it instead of calling a presentation or archive method
+ * directly, so what it observes is the path production takes.
+ */
+export async function runOrdinaryHostPass(
+  store: Store,
+  adapter: Adapter,
+  hostId: string,
+): Promise<void> {
+  const engine = new Engine(store, adapter, 60_000);
+  try {
+    const pass = new HostPass(
+      enginePorts(
+        engine,
+        [
+          "adapter",
+          "host",
+          "inventoryHostMatches",
+          "observeRetiredWorkers",
+          "retiredObservationKey",
+          "retiredObservationPlan",
+          "scheduleLane",
+          "stopped",
+          "store",
+        ],
+        ["observationTargets"],
+      ),
+    );
+    await engine.withHost(hostId, () => pass.run(hostId));
+  } finally {
+    await engine.stop();
+  }
 }

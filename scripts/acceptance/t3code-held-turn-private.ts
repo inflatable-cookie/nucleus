@@ -44,16 +44,19 @@ import { T3RpcClient } from "../../hosts/t3code/rpc";
 import { T3CodeHost } from "../../hosts/t3code/adapter";
 import { HOLD_MARKER } from "../../hosts/t3code/nesting";
 import { activeStatuses } from "../../hosts/t3code/reads";
+import { createAdapter } from "../../hosts/t3code";
+import { HostPolicies } from "../../core/host/host-policies";
+import type { HostPolicyConstructor } from "../../core/host";
 import { QueueService } from "../../service/transport/server";
 import { AcpSessions } from "../../core/acp/sessions";
 import { Store } from "../../core/store/store";
 import type { Engine } from "../../core/engine";
 import { submissionSchema } from "../../shared/contracts";
 import {
-  NIGHTLY_LINE,
   extractArchive,
   freePort,
   run,
+  runOrdinaryHostPass,
   scratchRoot,
   until,
 } from "./t3code-private-kit";
@@ -61,6 +64,11 @@ import {
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
 const INSTALLED_APP =
   "/Applications/T3 Code (Nightly).app/Contents/Resources/app.asar";
+/**
+ * The nightly lines this proof reads, the same pair the newer T3 proofs accept. The
+ * exact installed build is recorded in the evidence, never pinned to one.
+ */
+const NIGHTLY_LINE = /^0\.1\.(?:11|12)-nightly\.\d+\.\d+$/;
 const PR_URL = "https://github.com/example-org/synthetic-repository/pull/276";
 const SHOWN_MARKER =
   /nucleus-hold-the-task-thread|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|"jsonrpc"/;
@@ -435,7 +443,6 @@ async function main() {
         waitMs: number,
       ): Promise<{ id: string; rootNodeId: string } | null>;
       reconcile(tasks: unknown[]): Promise<void>;
-      archiveFinishedParents(tasks: unknown[]): Promise<unknown[]>;
       parentOf(
         taskId: string,
       ): { threadId: string; taskId: string } | undefined;
@@ -762,14 +769,23 @@ async function main() {
       method: "release",
       args: [parent.sessionId, "the task is done"],
     });
-    await nesting.reconcile([await storedTask()]);
-    await nesting.archiveFinishedParents([await storedTask()]);
+    // The ordinary host maintenance pass owns this: no presentation or archive
+    // method is called directly (nucleus#1459).
+    const sectionAdapter = createAdapter(
+      HostPolicies as unknown as HostPolicyConstructor,
+      rowHost,
+      {
+        socketPath: join(nucleusData, "callback.sock"),
+        helperPath: join(nucleusData, "worker-report.mjs"),
+      },
+    );
     const closed = await until(
       async () => {
+        await runOrdinaryHostPass(rowStore!, sectionAdapter, rowHost!.hostId);
         const view = await project();
         return view?.thread.archivedAt ? view : null;
       },
-      "the finished parent to be archived",
+      "the finished parent to be archived by the ordinary host pass",
       90_000,
     );
     const finalLines = assistantText(closed).split("\n\n").filter(Boolean);
