@@ -455,9 +455,11 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
         {sections.length===1&&roadmapFor(sections[0])}
         {sections.length>1&&sections.map(section=>{
           const open=expanded===section.project.key, info=summary(section);
-          return <View key={section.project.key} style={{gap:space.sm}}>
-            <View style={{gap:space.xxs,padding:space.sm,borderColor:c.border,borderWidth:1,borderRadius:radius.control,backgroundColor:c.surface1}}>
-              <Pressable accessibilityRole="button" accessibilityLabel={`Project row ${section.project.name}`} accessibilityState={{expanded:open}} onPress={()=>setExpanded(open?null:section.project.key)} style={{gap:space.xxs}}>
+          // One project per flat row, with the divider and the open row's accent edge
+          // the other inbox lists use (nucleus#1511); its plan follows below it.
+          return <View key={section.project.key}>
+            <View style={{borderBottomWidth:1,borderBottomColor:c.border,borderLeftWidth:2,borderLeftColor:open?c.accent:'transparent',backgroundColor:open?c.surface2:c.surface0}}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Project row ${section.project.name}`} accessibilityState={{expanded:open}} onPress={()=>setExpanded(open?null:section.project.key)} style={{gap:space.xxs,paddingHorizontal:space.md,paddingVertical:space.sm}}>
                 <Text style={{color:c.foreground,fontWeight:'600'}}>{open?'▾':'▸'} {section.project.name}{section.project.visibility==='parked'?' · parked':''}</Text>
                 {info.state==='ready' ? <>
                   {info.attention > 0 && <Text accessibilityLabel={`${info.attention} blocked or attention tasks`} style={{color:c.statusWarning,fontSize:type.metadata.fontSize,fontWeight:'600'}}>{info.attention} need attention</Text>}
@@ -466,9 +468,9 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
                   {info.state === 'loading' ? 'Loading…' : `Couldn’t load ${info.subject}: ${info.error}`}
                 </Text>}
               </Pressable>
-              {info.state==='error'&&onRetryPlans&&<Button small c={c} text="Retry" label={`Retry plan and lane reads for ${section.project.name}`} onPress={onRetryPlans} />}
+              {info.state==='error'&&onRetryPlans&&<View style={{paddingHorizontal:space.md,paddingBottom:space.sm}}><Button small c={c} text="Retry" label={`Retry plan and lane reads for ${section.project.name}`} onPress={onRetryPlans} /></View>}
             </View>
-            {open&&roadmapFor(section)}
+            {open&&<View style={{padding:space.md,gap:space.md,borderBottomWidth:1,borderBottomColor:c.border}}>{roadmapFor(section)}</View>}
           </View>;
         })}
         <DormantGroup projects={dormant} c={c}>{project => {
@@ -495,7 +497,7 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
           </View>}
           {searching&&<Text accessibilityLabel="Lane search scope" style={{...muted(c),fontSize:type.metadata.fontSize,lineHeight:type.metadata.lineHeight}}>Searching {scopeLabel==='All projects'?'all projects':scopeLabel}. {query.trim()?'Results match the title, aim or project.':'Every lane in scope is listed.'}</Text>}
         </View>
-        <ScrollView accessibilityLabel={searching ? "Lane search results" : "Planning plan"} style={{flex:1,minHeight:0,borderTopWidth:1,borderTopColor:c.border}} contentContainerStyle={{padding:space.md,gap:space.md}}>
+        <ScrollView accessibilityLabel={searching ? "Lane search results" : "Planning plan"} style={{flex:1,minHeight:0,borderTopWidth:1,borderTopColor:c.border}} contentContainerStyle={searching||sections.length<=1 ? {padding:space.md,gap:space.md} : undefined}>
           {listBody}
         </ScrollView>
       </View>

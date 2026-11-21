@@ -126,6 +126,7 @@ export function TriageLeadCard({
   repositoryBadges,
   selected,
   c,
+  showKind = true,
   onSelectLead,
   onSelectPapercut,
 }: {
@@ -138,6 +139,12 @@ export function TriageLeadCard({
   repositoryBadges?: Readonly<Record<string, ProjectBadge>>;
   selected: boolean;
   c: Colors;
+  /**
+   * Whether the card names its kind (nucleus#1511). The inbox lists leads and
+   * papercuts on their own tabs, so the chip there repeats the tab; a list that
+   * shows both kinds keeps it.
+   */
+  showKind?: boolean;
   onSelectLead: (id: string) => void;
   onSelectPapercut: (id: string) => void;
 }) {
@@ -169,10 +176,14 @@ export function TriageLeadCard({
         </Text>
       }
       chips={
-        <RecordChips
-          c={c}
-          chips={[kind === "papercut" ? RESERVED_LEAD_TAGS.papercut : "Lead"]}
-        />
+        showKind ? (
+          <RecordChips
+            c={c}
+            chips={[
+              kind === "papercut" ? RESERVED_LEAD_TAGS.papercut : "Lead",
+            ]}
+          />
+        ) : undefined
       }
       snippet={
         <Text

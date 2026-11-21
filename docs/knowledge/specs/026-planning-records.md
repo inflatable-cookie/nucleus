@@ -519,12 +519,15 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   menu groups its columns. Milestone QA is not a board surface: QA runs as an
   ordinary task, and the QA runs tab is gone.
 - **The header is one row** (Tom, 2026-11-21): the title, a state pill only when
-  something is abnormal (paused or draining, dispatch held, stopped or resumed
-  threads, queued operations, connecting), the project selector, then Settings,
-  Refresh and the Pause split button. There is no status line. The queue menu behind
-  the split button holds Pause or Resume, Dispatch hold, Stop, the paused note, the
-  slot table (global use, the project default and overrides, then each project using
-  a slot) and the bound runs.
+  something is abnormal (paused or draining, dispatch held, stopped threads, queued
+  operations, connecting), the project selector, then Settings, Refresh and the Pause
+  split button. There is no status line, and a resumed-thread count never earns a pill:
+  it outlives the restart it describes (nucleus#1511). Below 720 points of panel width
+  the selector collapses to its folder icon button, keeping its accessible label
+  ("Projects, <selection>") and the same picker, so the title and the menu button share
+  the row with the controls. The queue menu behind the split button holds Pause or
+  Resume, Dispatch hold, Stop, the paused note, the slot table (global use, the project
+  default and overrides, then each project using a slot) and the bound runs.
 - **Columns:** Triage → Decisions → Attention → Queued → Working → Review →
   Closing (Drafts retired with brief drafts; Attention and Closing added, Tom,
   2026-09-27). These are the projection's buckets, which the inbox menu groups.
@@ -568,6 +571,18 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   component, drawn as a flat row in the inbox list. The list fills its pane and
   scrolls on its own, so the page never grows into one long scroll (Tom,
   2026-09-28). Leads pages its cards and Queue ends with its "…and N more" rows.
+- **Rows stay short, and a card's controls sit in its row** (nucleus#1511). A task row
+  keeps its project, its title, one status line and its chips: the line is the wait or
+  stop that moves the task next, else its progress, so the host wait reads once
+  ("Waiting on the host · 1m ago") without the host identity. The routing sentence behind
+  a host choice belongs to the task detail, which names the host selection and its
+  reason; the row's accessible label keeps the full wording. A card with operator
+  controls (the drained lane's Close and Keep, the escalated merge hold's Release and
+  Keep) draws them inside its row's frame, below its content and outside the row's press
+  target, so a press on a control never opens the record too. Pressing a drained lane's
+  row opens that lane in Planning. The Leads view's two tabs hide the Lead and Papercut
+  kind chip, which would otherwise repeat the tab on every row; a list showing both
+  kinds keeps it.
 - **Pending submissions** (Tom, 2026-09-27): a submitted brief or handoff whose
   operation has not yet created its task shows as a Queued card marked
   "submitting", so an accepted submission is never invisible. Brief-bearing leads
@@ -730,7 +745,8 @@ Planning is a menu view of the inbox board (Tom, 2026-11-21; top-level since
 The header's project selector chooses the projects (Board, "Scope"); Planning has no
 chooser of its own since 2026-11-21. It has two panes:
 
-- **Plan:** for each selected project, a section with that project's lanes in plan order, each with its live-task
+- **Plan:** for each selected project, a flat row — the list's divider, and an accent
+  edge on the expanded row — that opens and closes the project's lanes, with that project's lanes in plan order, each with its live-task
   count and last activity, grouped under **Now** and **Later** (each plan entry
   carries `horizon: now | later`; existing entries are `now`). Up and down
   controls reorder, and a move between groups changes the horizon; saving writes a

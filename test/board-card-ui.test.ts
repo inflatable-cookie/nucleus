@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { boardSource } from "./support/board-source";
+import { recentProjectActivity } from "./support/fakes";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
@@ -348,12 +349,10 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
       "the failed archive is the next action",
     );
     assert.ok(
-      tree.text().includes("Needs attention · Your decision is next"),
-      "attention says who moves it next in human terms",
-    );
-    assert.ok(
-      tree.text().includes("Operator decides whether to restart"),
-      "attention leads with the human reason",
+      tree.text().includes(
+        "Operator decides whether to restart · Your decision is next",
+      ),
+      "the row's one status line says what is happening and who moves it next",
     );
     assert.ok(
       !tree.text().includes("operator_needed") &&
@@ -1233,7 +1232,7 @@ const triagePapercuts = (count: number) =>
     });
   });
 
-test("a long papercut and a long lead render as one-line cards with a kind, a project and one state line", async () => {
+test("a long papercut and a long lead render as one-line rows with a project and one state line", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1259,8 +1258,15 @@ test("a long papercut and a long lead render as one-line cards with a kind, a pr
       "the papercut card keeps its accessible label",
     );
     assert.match(text, /Open · board/, "a papercut states its area");
-    assert.match(text, /Papercut/, "the kind chip names a papercut");
-    assert.match(text, /Lead/, "the kind chip names a lead");
+    // The Leads tabs name the kind, so the rows inside them do not repeat it (nucleus#1511).
+    openView(tree, "Leads");
+    const cutRow = tree.raw.query(`Triage: ${LONG_CUT}`);
+    assert.ok(cutRow, "the papercut row is listed on its tab");
+    assert.doesNotMatch(
+      nodeText(cutRow as HostNode),
+      /\bPapercut\b/,
+      "no kind chip repeats the tab",
+    );
     assert.ok(
       !text.includes("What happened"),
       "the body passage stays in the record",
@@ -1617,4 +1623,423 @@ test("a task row in the inbox list shows its T3 project badge from its own host,
     mounted?.update(h("View", null));
     store.close();
   }
+});
+
+// nucleus#1511: the inbox board's post-roll fixes. Each one is measured on the real board
+// render, at the layouts it affects.
+
+/** A node's whole visible text, and whether it holds a node a predicate matches. */
+const nodeText = (node: HostNode | string): string =>
+  typeof node === "string" ? node : node.children.map(nodeText).join(" ");
+const nodeHas = (
+  node: HostNode | string,
+  match: (node: HostNode) => boolean,
+): boolean =>
+  typeof node === "string"
+    ? false
+    : match(node) || node.children.some((child) => nodeHas(child, match));
+
+test("the narrow header keeps the title, and its project selector becomes an icon that keeps the selection", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const f = fixtures(store);
+    mounted = mountBoard(
+      invokeWith(board([f.long]), async () => ({ tasks: [], hasMore: false })),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query(/^app, Board cards keep the title/)));
+    // The board measures its own pane; 390 points is below the 720-point breakpoint.
+    const measured = tree.raw
+      .ofType("View")
+      .find((node) => typeof node.props.onLayout === "function");
+    assert.ok(measured, "the board measures its pane");
+    measured!.props.onLayout({ nativeEvent: { layout: { width: 390 } } });
+
+    assert.ok(
+      tree.raw.query("Open the board menu"),
+      "the menu button stays reachable",
+    );
+    assert.ok(
+      tree.raw
+        .ofType("Text")
+        .some((node) => node.children.join("") === "Nucleus"),
+      "the title stays visible",
+    );
+    const trigger = tree.raw.query(/^Projects, /);
+    assert.ok(trigger, "the selector keeps its accessible label");
+    assert.match(
+      String(trigger!.props.accessibilityLabel),
+      /^Projects, All projects$/,
+      "and the label still names the selection",
+    );
+    assert.equal(
+      nodeText(trigger as HostNode).trim(),
+      "",
+      "the selector shows its icon alone, so the row fits",
+    );
+
+    tree.raw.press(/^Projects, /);
+    assert.ok(tree.raw.query("Project selector"), "the picker opens");
+    tree.raw.press("Close project selector");
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("a drained-lane row draws its controls inside the row, and the row opens its lane in Planning", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const lane = {
+      id: "lane-1",
+      key: "alpha",
+      title: "Alpha lane",
+      aim: "Done looks like alpha shipped.",
+      status: "active",
+      note: "",
+      repositories: [repo],
+      createdAt: at,
+      updatedAt: at,
+      closedAt: null,
+      drain: { since: at, notices: 1, lastNoticeAt: at, escalatedAt: at },
+      keep: null,
+      liveByPhase: {},
+      liveByRepository: {},
+      terminalCount: 0,
+      lastActivityAt: at,
+      recentOutcomes: [],
+    };
+    const snapshot = {
+      ...board([]),
+      lanes: [lane],
+      projects: [
+        {
+          ...project,
+          version: 1,
+          primary: repo,
+          drain: { since: at, notices: 1, lastNoticeAt: at, escalatedAt: at },
+        },
+      ],
+    };
+    const invoke = async (method: string, input: unknown) => {
+      if (method === "queue.ui-snapshot") return snapshot;
+      if (method === "queue.service-state") return serviceState;
+      if (method === "queue.detail") return undefined;
+      if (method === "task.next") return null;
+      if (method === "queue.queued-page") return { tasks: [], hasMore: false };
+      if (method === "queue.plans")
+        return [
+          {
+            project: "app",
+            version: 1,
+            author: "planner-agent",
+            createdAt: at,
+            entries: [
+              {
+                lane: "alpha",
+                note: "",
+                horizon: "now",
+                doneWhen: "Alpha shipped",
+              },
+            ],
+          },
+        ];
+      if (method === "project.qa.list" || method === "host.run.list") return [];
+      if (method === "host.run.board")
+        return {
+          runs: [],
+          accounting: { readAt: at, entries: [], complete: true },
+        };
+      if (method === "lead.board") return { cards: [], links: [] };
+      if (
+        method === "papercut.list" ||
+        method === "draft.list" ||
+        method === "decision.list" ||
+        method === "lane.task-page"
+      )
+        return method === "lane.task-page"
+          ? { tasks: [], total: 0, nextOffset: null }
+          : [];
+      void input;
+      return {};
+    };
+    mounted = mountBoard(invoke);
+    const tree = mounted;
+    await settle(() => tree.text().includes("Alpha lane has drained"));
+    openView(tree, "Needs you");
+
+    // Close and Keep draw inside the row's own frame (divider and accent edge), not under it.
+    const rowFrame = tree.raw
+      .ofType("View")
+      .find(
+        (node) =>
+          node.props.style?.borderBottomWidth === 1 &&
+          node.props.style?.borderLeftWidth === 2 &&
+          nodeHas(
+            node,
+            (child) =>
+              child.props.accessibilityLabel === "Close drained lane alpha",
+          ) &&
+          nodeHas(
+            node,
+            (child) =>
+              child.props.accessibilityLabel === "Drained lane: Alpha lane",
+          ),
+      );
+    assert.ok(rowFrame, "the drained-lane controls sit inside its row");
+    assert.ok(
+      nodeHas(
+        rowFrame!,
+        (child) => child.props.accessibilityLabel === "Keep drained lane alpha",
+      ),
+      "Keep sits in the row too",
+    );
+
+    // Pressing the row opens its lane in Planning.
+    tree.raw.press("Drained lane: Alpha lane");
+    await settle(() => Boolean(tree.raw.query("Find lanes")));
+    assert.ok(
+      tree.raw
+        .ofType("Text")
+        .some((node) => node.children.join("") === "Planning"),
+      "the board switches to Planning",
+    );
+    await settle(() => tree.raw.text().includes("Alpha lane"));
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("a task row keeps one status line and no host identity, while the detail keeps the routing", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  let detail: ReturnType<typeof mount> | undefined;
+  try {
+    const routing =
+      "Profile Worker runs on online host t3code:task; not ruled out on srv_1, which is not ready";
+    const task = seed(store, "host-waiting", { phase: "working" });
+    const summary = {
+      ...summarizeTask(store.task(task.id)),
+      hostId: "t3code:32be2844",
+      hostWait: { hostId: "t3code:32be2844", since: at },
+      hostReason: routing,
+    };
+    mounted = mountBoard(
+      invokeWith(board([summary]), async () => ({ tasks: [], hasMore: false })),
+    );
+    const tree = mounted;
+    await settle(() => tree.text().includes("host-waiting"));
+    const row = tree.raw
+      .all(/.*/)
+      .find((node) =>
+        String(node.props.accessibilityLabel ?? "").includes(", host-waiting,"),
+      );
+    assert.ok(row, "the task row is on the board");
+    const text = nodeText(row as HostNode);
+    assert.equal(
+      text.match(/Waiting on the host/g)?.length,
+      1,
+      "the wait reads once",
+    );
+    assert.doesNotMatch(
+      text,
+      /T3Code host/,
+      "the host identity stays off the row",
+    );
+    assert.ok(
+      !text.includes("not ruled out"),
+      "the routing sentence stays off the row",
+    );
+    assert.ok(
+      !text.includes(routing),
+      "the row carries no routing explanation",
+    );
+
+    // The task detail keeps the host selection and the reason behind it.
+    const { taskDetailView } = await import("../shared/task-view");
+    const detailView = taskDetailView(store.task(task.id), {}, [], []);
+    detail = mount(
+      h(queue.TaskSummaryBlock as never, {
+        // The detail's host selection is the summary's routing reason, shown in full.
+        task: {
+          ...detailView,
+          hostSelection: {
+            basis: "worker_profile" as const,
+            hostId: "t3code:32be2844",
+            reason: routing,
+          },
+        },
+        next: null,
+        runs: [],
+        c,
+      }),
+    );
+    assert.ok(
+      detail.text().includes("not ruled out"),
+      "the detail keeps the routing explanation",
+    );
+  } finally {
+    detail?.update(h("View", null));
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("the Leads tabs hide the kind chip the tab already names", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const leads = [
+      triageLead("idea-lead", "Idea lead", { tags: ["idea"] }),
+      triageLead("tiny-cut", "Tiny papercut", { tags: ["papercut"] }),
+    ];
+    mounted = mountBoard(
+      invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Triage: Idea lead")));
+    openView(tree, "Leads");
+    const card = tree.raw.query("Triage: Idea lead");
+    assert.ok(card, "the lead row is listed");
+    assert.doesNotMatch(
+      nodeText(card as HostNode),
+      /\bLead\b/,
+      "the Lead chip repeats nothing inside the Leads tab",
+    );
+    tree.raw.press(/^Papercuts tab, /);
+    const cut = tree.raw.query("Triage: Tiny papercut");
+    assert.ok(cut, "the papercut row is listed");
+    assert.doesNotMatch(
+      nodeText(cut as HostNode),
+      /\bPapercut\b/,
+      "the Papercut chip repeats nothing inside the Papercuts tab",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("Planning draws its projects as flat rows with the lists' divider and accent edge", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const second = {
+      key: "second",
+      name: "Second",
+      repositories: [{ origin: "owner/second", path: "/second" }],
+      primary: { origin: "owner/second", path: "/second" },
+    };
+    const plan = (name: string, projectKey: string) => ({
+      project: projectKey,
+      version: 1,
+      author: "planner-agent",
+      createdAt: at,
+      entries: [{ lane: name, note: "", horizon: "now", doneWhen: "It ships" }],
+    });
+    // Store-wide activity keeps both projects out of Planning's Dormant group.
+    const snapshot = {
+      ...board([]),
+      projects: [project, second],
+      projectActivity: recentProjectActivity([project, second]),
+    };
+    mounted = mountBoard(async (method: string) => {
+      if (method === "queue.ui-snapshot") return snapshot;
+      if (method === "queue.service-state") return serviceState;
+      if (method === "queue.detail") return undefined;
+      if (method === "task.next") return null;
+      if (method === "queue.plans")
+        return [plan("lane-a", "app"), plan("lane-b", "second")];
+      if (method === "project.qa.list" || method === "host.run.list") return [];
+      if (method === "host.run.board")
+        return {
+          runs: [],
+          accounting: { readAt: at, entries: [], complete: true },
+        };
+      if (method === "lead.board") return { cards: [], links: [] };
+      return [];
+    });
+    const tree = mounted;
+    await settle(() => Boolean(tree.text().includes("Project row") || true));
+    openView(tree, "Planning");
+    await settle(() => Boolean(tree.raw.query("Project row Second")));
+    const frame = (name: string) =>
+      tree.raw
+        .ofType("View")
+        .find(
+          (node) =>
+            node.props.style?.borderBottomWidth === 1 &&
+            nodeHas(
+              node,
+              (child) =>
+                child.props.accessibilityLabel === `Project row ${name}`,
+            ),
+        );
+    const appFrame = frame("App");
+    assert.ok(appFrame, "the project row draws a flat row");
+    assert.equal(
+      (appFrame!.props.style as { borderWidth?: number }).borderWidth,
+      undefined,
+      "no card border inside the list pane",
+    );
+    assert.equal(
+      (appFrame!.props.style as { borderRadius?: number }).borderRadius,
+      undefined,
+      "no card corner inside the list pane",
+    );
+    assert.equal(
+      (appFrame!.props.style as { borderLeftWidth?: number }).borderLeftWidth,
+      2,
+      "the row keeps the lists' accent edge",
+    );
+    assert.equal(
+      (appFrame!.props.style as { borderLeftColor?: string }).borderLeftColor,
+      "transparent",
+      "closed rows carry no accent",
+    );
+
+    // Expanding keeps the plan editing and marks the open row, as the other lists mark selection.
+    tree.raw.press("Project row App");
+    await settle(
+      () =>
+        (frame("App")?.props.style as { borderLeftColor?: string })
+          .borderLeftColor === dark.accent,
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("a resumed-thread count never adds a header pill", async () => {
+  const { headerStatePills } = await import("../client/board/header");
+  const state = {
+    connected: true,
+    paused: false,
+    quiet: true,
+    dispatchHeld: false,
+    stoppedThreads: 0,
+    resumedThreads: 3,
+    operationBacklog: 0,
+  };
+  assert.deepEqual(
+    headerStatePills(state as never),
+    [],
+    "the resumed count survives a restart with nothing to act on, so it earns no pill",
+  );
+  assert.deepEqual(
+    headerStatePills({ ...state, stoppedThreads: 2 } as never).map(
+      (pill) => pill.label,
+    ),
+    ["2 waiting to resume"],
+    "stopped threads keep their pill",
+  );
 });
