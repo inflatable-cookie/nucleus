@@ -1352,8 +1352,8 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
     openView(ui, "Needs you");
     // Tom, 2026-09-29: cards named the asking agent's id, not the project it came from.
     assert.ok(
-      countText(ui, "app") >= 3,
-      "each decision card names its asking project",
+      countText(ui, "App") >= 3,
+      "each decision row names its asking project by its display name",
     );
     assert.doesNotMatch(
       ui.text(),

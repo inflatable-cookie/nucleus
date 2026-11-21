@@ -597,8 +597,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     (Decision, Merge hold, Lane drained, Lead, Papercut); then the project by its
     display name (a lane's or lead's projects; a decision's asking repository), with
     the T3 project badge where matched, otherwise the folder icon; the age,
-    right-aligned, when the record carries a time (a stop, wait or hold's start, a
-    decision's ask, a lane's escalation, a lead's or submission's creation).
+    right-aligned (a stop, wait or hold's start, else the task's last change; a
+    decision's ask, a lane's escalation, a lead's or submission's creation). The
+    project group shrinks and clips as one unit so the age keeps its place: at most two
+    project marks, the rest as one "+N" count.
   - **Line 2:** the title, up to two lines.
   - **Line 3:** a coloured dot, the state in plain words and the single most useful
     detail after a middle dot ("Working · running affected tests", "Needs attention ·
@@ -608,9 +610,11 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     accessible name (Spec 043). A lead's state follows its current check first:
     unchecked, then checks failed (even with an earlier approval kept), then approved
     or awaiting approval.
-  - **Flags**, below, only for exceptions: a dispatch or merge hold the status line does
-    not name, parked, interactive, budget reached and the PR as a small flag. A normal
-    task shows none.
+  - **Flags**, below, only for exceptions: a dispatch or merge hold, parked,
+    interactive, budget reached and the PR as a small flag. A hold flag is dropped only
+    when the status line was chosen from that fence (a dispatch hold, a held stop, a
+    declared merge-hold wait), never because other text mentions it. The PR flag is a
+    link that opens the pull request without opening the task. A normal task shows none.
   - **Buttons** only where the row is the action: the hold prompt's Release and Keep
     (with its reason) and the drained lane's Close lane and Keep. They sit inside the
     row's frame, below its content and outside its press target, so a press on a
@@ -621,7 +625,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     line, prerequisite counts and promotion, a decision's choices, a lane's aim, and the
     Lead and Papercut kind chips. The task detail's header carries the stop category,
     a stop while paused, linked open decisions and, for an escalated hold, the
-    Nucleus-raised badge; a decision's Links name each task by reference, title and
+    Nucleus-raised badge; its summary names a host outage recorded beside a stop (the
+    host and since when); a decision's Links name each task by reference, title and
     project; a drained lane's Planning screen names its Nucleus-raised escalation. The
     row's accessible name keeps the record's own title as written, the status with its
     detail, and the wording the row shortens, with identifiers sanitized only in

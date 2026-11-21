@@ -15,6 +15,7 @@ import {
   hostKindOf,
   type DecisionView,
   taskNumberLabel,
+  type HoldKind,
   type LaneView,
   type Task,
   type TaskSummary,
@@ -115,6 +116,8 @@ export type CardStatus = {
   detail?: string | null;
   /** The status line's own accessible name, when it carries more than it shows (a wait's owner and next action). */
   a11y?: string;
+  /** The holds this status stands for, set by the branch that chose it; those are not repeated as flags. */
+  holds?: readonly HoldKind[];
 };
 
 function toneColor(tone: CardTone, c: Colors): string {
@@ -319,7 +322,21 @@ export const BoardCard = React.memo(function BoardCard({
               {plainCardText(meta)}
             </Text>
           ) : null}
-          {project}
+          {project ? (
+            // The project group shrinks and clips as one unit, so the age keeps its place.
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: space.xxs,
+                flexShrink: 1,
+                minWidth: 0,
+                overflow: "hidden",
+              }}
+            >
+              {project}
+            </View>
+          ) : null}
           <View style={{ flex: 1 }} />
           {age ? (
             <Text
@@ -354,8 +371,9 @@ export const BoardCard = React.memo(function BoardCard({
         </View>
       ) : null}
       {flags ? (
+        // Presses pass through the flags to the row, except on the PR link.
         <View
-          pointerEvents="none"
+          pointerEvents="box-none"
           style={{
             ...row,
             gap: space.xxs,
@@ -526,6 +544,13 @@ function phaseTone(task: Pick<TaskSummary, "phase">): CardTone {
  * A task's status when no wait, stop or run names it: the hold or wait it stands in,
  * else its phase, with the latest report (or the stored reason) as the detail.
  */
+/** The fences a task is blocked on now, as hold kinds. */
+function blockingHoldKinds(task: TaskSummary): HoldKind[] {
+  const blocking = blockingHold(task);
+  if (blocking === "both") return ["dispatch", "merge"];
+  if (blocking === "dispatch" || blocking === "merge") return [blocking];
+  return blocking === "held" ? presentHoldKinds(task) : [];
+}
 function taskFallbackStatus(
   task: TaskSummary,
   cardAttention: boolean,
@@ -537,6 +562,7 @@ function taskFallbackStatus(
       tone: cardAttention ? "warning" : "muted",
       state: waitStateLabels[task.waitState.state],
       detail: task.waitState.nextAction || null,
+      holds: task.waitState.state === "merge_hold" ? ["merge"] : [],
     };
   const words = rowPhaseWords(task);
   const full = taskStateLabel(task);
@@ -547,6 +573,9 @@ function taskFallbackStatus(
     tone: cardAttention ? "warning" : named ? "muted" : phaseTone(task),
     state,
     detail: detail && detail !== state ? detail : null,
+    // "Held by planner" or "Waiting on Tom" names who holds it, not which fence, so the
+    // kind stays visible as its flag.
+    holds: [],
   };
 }
 /**
@@ -639,6 +668,15 @@ export const TaskCard = React.memo(function TaskCard({
   const hostWait = task.hostWait;
   const holdOwner = task.holdDisplayOwner ?? "a planner thread";
   const firstQuestion = questions[0]?.questions[0]?.question;
+  // A held stop stands for the fence it reports: the blocking fences, else the kind its
+  // recorded fence wording names.
+  const heldStopKinds: HoldKind[] = blockingHoldKinds(task).length
+    ? blockingHoldKinds(task)
+    : /^Dispatch held/i.test(stopRecord?.detail ?? "")
+      ? ["dispatch"]
+      : /^Merge held/i.test(stopRecord?.detail ?? "")
+        ? ["merge"]
+        : [];
   const words = rowPhaseWords(task);
   const ownStop =
     stopRecord && stopRecord.reason !== "host_unavailable"
@@ -702,6 +740,7 @@ export const TaskCard = React.memo(function TaskCard({
                       tone: "muted",
                       state: "Dispatch held",
                       detail: `by ${holdOwner}: ${holdReasonPreview(dispatchWait.reason)}`,
+                      holds: ["dispatch"],
                     }
                   : stopRecord
                     ? stopWait
@@ -714,7 +753,12 @@ export const TaskCard = React.memo(function TaskCard({
                           ),
                         }
                       : stopHeld
-                        ? { tone: "muted", state: "Held", detail: stopDetail }
+                        ? {
+                            tone: "muted",
+                            state: "Held",
+                            detail: stopDetail,
+                            holds: heldStopKinds,
+                          }
                         : {
                             tone: "warning",
                             state: "Needs attention",
@@ -727,6 +771,7 @@ export const TaskCard = React.memo(function TaskCard({
     dispatchWait?.since ??
     task.hold?.blockingSince ??
     task.hold?.since ??
+    task.updatedAt ??
     null;
   // Ages and elapsed times read the clock; a row without one does not tick.
   useTick(since || longCommandStartedAt || task.heavyRun ? 30_000 : null);
@@ -738,13 +783,10 @@ export const TaskCard = React.memo(function TaskCard({
   const rowStatus: CardStatus = waitWording
     ? { ...status, a11y: waitWording }
     : status;
-  // A hold flag is dropped only when the chosen status line names that hold; any
-  // other status (a host wait, a question) leaves the hold visible as a flag.
-  const statusText = `${status.state} ${status.detail ?? ""}`;
+  // A hold flag is dropped only when the branch that chose the status stands for that
+  // hold; any other status (a host wait, a question, a report) keeps it as a flag.
   const flagHoldKinds = allHoldKinds.filter(
-    (kind) =>
-      !statusText.includes(holdKindLabel(kind)) &&
-      !(kind === "merge" && status.state === waitStateLabels.merge_hold),
+    (kind) => !status.holds?.includes(kind),
   );
   // The approved exception set (nucleus#1515): holds, parked, interactive, budget and
   // the PR. Stop categories, a paused stop and linked decisions are in the task detail.
@@ -874,6 +916,7 @@ export const DecisionCard = React.memo(function DecisionCard({
   c,
   board = true,
   projectBadge = null,
+  projectLabel,
 }: {
   decision: DecisionView;
   selected: boolean;
@@ -882,6 +925,8 @@ export const DecisionCard = React.memo(function DecisionCard({
   board?: boolean;
   /** The asking repository's T3 project badge, when matched. */
   projectBadge?: ProjectBadge | null;
+  /** The asking project's display name from the board's project lookup. */
+  projectLabel?: string;
 }) {
   useTick(30_000);
   const headline = decision.headline ?? decision.question;
@@ -910,7 +955,7 @@ export const DecisionCard = React.memo(function DecisionCard({
       meta="Decision"
       project={
         <CardProject
-          name={decisionProjectLabel(decision)}
+          name={projectLabel ?? decisionProjectLabel(decision)}
           badge={projectBadge}
           c={c}
         />

@@ -313,6 +313,14 @@ export function InboxList({
                   null)
                 : null
             }
+            projectLabel={
+              card.value.askedBy.project
+                ? projectLabel(
+                    card.value.askedBy.project.path,
+                    card.value.askedBy.project.origin,
+                  )
+                : undefined
+            }
             c={c}
             selected={openDecisionId === card.id}
             onPress={() => onSelectDecision(card.id)}
@@ -397,6 +405,7 @@ export function InboxList({
                   projectLabel(card.value.repoPath, card.value.repository) ??
                   projectName(card.value)
                 }
+                badge={state?.repositoryBadges?.[card.value.repoPath] ?? null}
                 c={c}
               />
             }

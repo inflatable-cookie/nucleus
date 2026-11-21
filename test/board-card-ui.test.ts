@@ -2458,7 +2458,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       assert.match(
         nodeText(plain),
         new RegExp(
-          `^\\s*${number(normal.id)}\\s+App\\s+plain-working\\s+Working\\s+· Worker is editing\\s*$`,
+          `^\\s*${number(normal.id)}\\s+App\\s+just now\\s+plain-working\\s+Working\\s+· Worker is editing\\s*$`,
         ),
         "a normal task is three lines and shows no flags",
       );
@@ -2553,15 +2553,40 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
       phase: "working",
       reason: "Worker is editing",
     });
+    const mentioned = seed(store, "fenced-working", {
+      phase: "working",
+      reason: "Worker is editing",
+      ...syncHoldProjection({ dispatch: fence("Planner ruling owed.") }),
+    });
     const tasks = [
       {
         ...summarizeTask(store.task(heldAway.id)),
         hostId: "t3code:32be2844",
         hostWait: { hostId: "t3code:32be2844", since: at },
       },
-      summarizeTask(store.task(titled.id)),
+      {
+        ...summarizeTask(store.task(titled.id)),
+        prUrl: "https://github.com/owner/app/pull/41",
+      },
+      // A report that merely mentions a hold never hides the live fence's flag.
+      {
+        ...summarizeTask(store.task(mentioned.id)),
+        headline: "Dispatch held was discussed with the planner",
+      },
     ];
+    // Sixteen matched projects: line 1 draws two marks and a count, never sixteen.
+    const many = Array.from({ length: 16 }, (_, index) => ({
+      origin: `owner/proj-${index}`,
+      path: `/proj-${index}`,
+    }));
     const leads = [
+      {
+        ...triageLead("wide", "Spans many projects", {
+          tags: ["idea"],
+          repositories: many,
+        }),
+        createdAt: at,
+      },
       {
         ...triageLead("rechecked", "Rechecked lead", {
           tags: ["idea"],
@@ -2604,6 +2629,12 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
       revision: 1516,
       repositoryBadges: {
         [repo.path]: { monogram: "AP", color: "fuchsia" as const },
+        ...Object.fromEntries(
+          many.map((item, index) => [
+            item.path,
+            { monogram: `P${index}`, color: "amber" as const },
+          ]),
+        ),
       },
       pendingSubmissions: [
         {
@@ -2672,14 +2703,147 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
       "the decision's asking repository shows its T3 badge",
     );
 
+    // A live fence keeps its flag even when the report headline mentions it.
+    const fenced = tree.query(/^App, fenced-working,/) as HostNode;
+    assert.match(
+      nodeText(fenced),
+      /Working\s+· Dispatch held was discussed with the planner\s+Dispatch held\s*$/,
+      "the status is Working, so the dispatch fence stays a flag",
+    );
+
+    // The PR flag is a link: it opens the pull request and leaves the row's selection alone.
+    const { Linking } = (await import("react-native")) as unknown as {
+      Linking: { opened: string[] };
+    };
+    Linking.opened.length = 0;
+    tree.raw.press(/^Pull request #41, .*, open on GitHub$/);
+    assert.deepEqual(Linking.opened, ["https://github.com/owner/app/pull/41"]);
+    assert.equal(
+      tree.raw.query(/^(Task detail|Loading detail)$/),
+      undefined,
+      "opening the PR does not open the task",
+    );
+
+    // Many projects stay inside line 1: two marks, a count, and the age keeps its place.
+    openView(tree.raw, "Leads");
+    const wide = tree.raw.query(/^Lead: Spans many projects,/) as HostNode;
+    const marks = (node: HostNode): number =>
+      (node.type === "Text" && /^P\d+$/.test(node.children.join("")) ? 1 : 0) +
+      node.children.reduce(
+        (sum, child) => sum + (typeof child === "string" ? 0 : marks(child)),
+        0,
+      );
+    assert.equal(
+      marks(wide),
+      2,
+      `two project marks are drawn: ${nodeText(wide)}`,
+    );
+    assert.match(
+      nodeText(wide),
+      /proj-1\s+\+14\s+\d+d ago\s+Spans many projects/,
+    );
+    const group = (node: HostNode): HostNode | undefined =>
+      node.type === "View" && node.props.style?.overflow === "hidden"
+        ? node
+        : node.children
+            .filter((child): child is HostNode => typeof child !== "string")
+            .map(group)
+            .find(Boolean);
+    const projectGroup = group(wide);
+    assert.ok(projectGroup, "the project group is one bounded unit");
+    assert.equal(projectGroup!.props.style.flexShrink, 1);
+    assert.equal(projectGroup!.props.style.minWidth, 0);
+
+    // A decision names its asking project by its display name.
+    assert.match(nodeText(asked), /^\s*Decision\s+AP\s+App\s+\d+d ago/);
+
     // A pending submission names its project and carries its age.
     const submitted = tree.query(/^Queued: Freshly submitted,/) as HostNode;
     assert.match(
       nodeText(submitted),
-      /^\s*Submitting\s+App\s+\d+d ago\s+Freshly submitted\s+Submitting/,
+      /^\s*Submitting\s+AP\s+App\s+\d+d ago\s+Freshly submitted\s+Submitting/,
     );
   } finally {
     mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+// nucleus#1515 review: the engine keeps an owner-facing stop and records the task's
+// own host outage beside it; the row reads "on the host", so the detail names both.
+test("task detail shows an owner-facing stop and the independent host wait together", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let detail: ReturnType<typeof mount> | undefined;
+  try {
+    const { taskDetailView } = await import("../shared/task-view");
+    const { taskNextSchema } = await import("../shared/contracts");
+    const task = seed(store, "budget-and-away", { phase: "blocked" });
+    const view = taskDetailView(store.task(task.id), {}, [], []);
+    const next = taskNextSchema.parse({
+      taskId: task.id,
+      title: "budget-and-away",
+      phase: "blocked",
+      version: 1,
+      repository: null,
+      number: null,
+      reference: null,
+      attention: true,
+      reason: "Budget reached",
+      activeRun: null,
+      prHead: null,
+      prUrl: null,
+      branch: "ns-task",
+      stop: {
+        kind: "attention",
+        reason: "operator_needed",
+        detail: "Budget reached; raise it or stop the task",
+        since: at,
+        suggestedVerbs: [],
+        owner: "operator",
+        evidence: null,
+      },
+      outcome: {
+        accepted: null,
+        reported: null,
+        impediment: null,
+        impediments: [],
+        reader: null,
+        authorResult: null,
+        decision: "Nothing outstanding",
+        revision: { runs: 0, budget: 3, exhausted: false },
+      },
+      holds: {},
+      verbs: [],
+    });
+    detail = mount(
+      h(queue.TaskSummaryBlock as never, {
+        task: {
+          ...view,
+          resolution: {
+            ...view.resolution,
+            hostWait: { hostId: "t3code:32be2844", since: at },
+          },
+        },
+        next,
+        runs: [],
+        c,
+      }),
+    );
+    assert.match(
+      detail.text(),
+      /Budget reached; raise it or stop the task/,
+      "the stop keeps its detail",
+    );
+    const hostWait = detail.query(/^Host wait: waiting on .+ since /);
+    assert.ok(hostWait, "the independent host wait is in the detail too");
+    assert.match(
+      String(hostWait!.props.accessibilityLabel),
+      new RegExp(`since ${at}$`),
+    );
+    assert.match(detail.text(), /Waiting on .+ · \d+d ago/);
+  } finally {
+    detail?.update(h("View", null));
     store.close();
   }
 });

@@ -1,4 +1,4 @@
-import { Text, View } from "react-native";
+import { Linking, Pressable, Text, View } from "react-native";
 import { Icon } from "../shell";
 import { muted, row, type Colors } from "../controls";
 import type {
@@ -35,7 +35,14 @@ import {
   pullRequestNumberLabel,
 } from "../../shared/pull-request-badge";
 import { useTick } from "../use-tick";
-import { roles, space, type as typeScale, radius } from "../design";
+import {
+  cardRow,
+  roles,
+  space,
+  touchSlop,
+  type as typeScale,
+  radius,
+} from "../design";
 
 export function HoldBadge({ kind, c }: { kind: HoldKind; c: Colors }) {
   const label = holdKindLabel(kind);
@@ -153,26 +160,9 @@ export function PullRequestBadge({
     task.resumePrNumber ??
     completionNumber ??
     task.prUrl.match(/\/pull\/(\d+)/)?.[1];
-  return (
-    <View
-      accessible
-      accessibilityLabel={pullRequestBadgeLabel(number, badge)}
-      style={
-        flag
-          ? {
-              flexDirection: "row",
-              alignItems: "center",
-              gap: space.xxs,
-              paddingHorizontal: space.xs,
-              paddingVertical: space.xxs / 2,
-              borderRadius: radius.control,
-              backgroundColor: c.surface2,
-              borderWidth: 1,
-              borderColor: c.border,
-            }
-          : { flexDirection: "row", alignItems: "center", gap: space.xxs }
-      }
-    >
+  const label = pullRequestBadgeLabel(number, badge);
+  const content = (
+    <>
       <Icon name={badge.icon} size={small ? 12 : 14} color={color} />
       <Text
         style={{
@@ -184,6 +174,43 @@ export function PullRequestBadge({
       >
         {pullRequestNumberLabel(number)}
       </Text>
+    </>
+  );
+  const prUrl = task.prUrl;
+  // The row's PR flag is a link (nucleus#1515): it opens the pull request and leaves
+  // the row's own press, which opens the task detail, untouched.
+  if (flag)
+    return (
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel={`${label}, open on GitHub`}
+        hitSlop={touchSlop(cardRow.tile)}
+        onPress={(event?: { stopPropagation?: () => void }) => {
+          event?.stopPropagation?.();
+          void Linking.openURL(prUrl);
+        }}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: space.xxs,
+          paddingHorizontal: space.xs,
+          paddingVertical: space.xxs / 2,
+          borderRadius: radius.control,
+          backgroundColor: c.surface2,
+          borderWidth: 1,
+          borderColor: c.border,
+        }}
+      >
+        {content}
+      </Pressable>
+    );
+  return (
+    <View
+      accessible
+      accessibilityLabel={label}
+      style={{ flexDirection: "row", alignItems: "center", gap: space.xxs }}
+    >
+      {content}
     </View>
   );
 }

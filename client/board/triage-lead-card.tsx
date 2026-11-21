@@ -68,6 +68,9 @@ export function leadProjectEntries(
   return out;
 }
 
+/** Project marks drawn on a row's line 1 before the rest collapse to "+N". */
+const MAX_PROJECT_MARKS = 2;
+
 /** Project eyebrow for lead and papercut cards, sharing `ProjectBadgeMark` with `TaskCard`. */
 export function LeadProjectEyebrow({
   repositories,
@@ -103,9 +106,13 @@ export function LeadProjectEyebrow({
       </>
     );
   }
+  // Line 1 has room for two project marks; the rest read as one "+N" count, so the
+  // group stays inside the meta line and the age keeps its place (nucleus#1515).
+  const shown = entries.slice(0, MAX_PROJECT_MARKS);
+  const more = entries.length - shown.length;
   return (
     <>
-      {entries.map((entry, index) => (
+      {shown.map((entry, index) => (
         <React.Fragment key={entry.name}>
           {entry.badge ? (
             <ProjectBadgeMark badge={entry.badge} c={c} />
@@ -113,10 +120,19 @@ export function LeadProjectEyebrow({
             <Icon name="Folder" size={12} color={c.foregroundMuted} />
           )}
           <Text numberOfLines={1} ellipsizeMode="tail" style={labelStyle}>
-            {index < entries.length - 1 ? `${entry.name},` : entry.name}
+            {index < shown.length - 1 ? `${entry.name},` : entry.name}
           </Text>
         </React.Fragment>
       ))}
+      {more > 0 && (
+        <Text
+          numberOfLines={1}
+          accessibilityLabel={`and ${more} more project${more === 1 ? "" : "s"}`}
+          style={{ ...labelStyle, flexShrink: 0 }}
+        >
+          {`+${more}`}
+        </Text>
+      )}
     </>
   );
 }
