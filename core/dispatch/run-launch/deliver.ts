@@ -66,16 +66,17 @@ export class RunLaunchDeliver {
    */
   private reviewAdmission(fresh: Task, savedRun: Run, run: Run, detached: boolean): ReviewAdmissionGuard {
     const version = fresh.version, snapshot = this.resolution.ordinaryReviewRuns(fresh.id);
-    // A continuation re-proves its recorded reviewer's profile. A creation starts
-    // the profile its reservation selected and proved, and delivery records the
-    // new agent after createRun returns, so it has no recorded binding to match.
-    const continuing = Boolean(savedRun.agentId);
+    // The profile proof matches a recorded reviewer binding. A continuation and a
+    // review-entry creation keep that proof. An ordinary fresh reviewer replaces
+    // the closed reader still recorded on the task, and its reservation already
+    // selected and proved the profile it starts with, so it skips the match.
+    const matchesBinding = Boolean(savedRun.agentId) || Boolean(fresh.reviewEntry);
     const stillAllowed = () => {
       const latest = this.store.task(fresh.id);
       if (latest.version !== version || latest.resolution.currentRunId !== run.id || latest.prHead !== run.head
         || this.resolution.paused() || dispatchBlocked(latest) || isDispositionActive(latest) || snapshot !== this.resolution.ordinaryReviewRuns(fresh.id)) return false;
       assertOrdinaryReviewIdentity(latest, run.head, detached);
-      if (continuing) this.resolution.assertReviewProfileIndependent(latest, savedRun);
+      if (matchesBinding) this.resolution.assertReviewProfileIndependent(latest, savedRun);
       const effects = blockingRecoveryEffects(this.store, latest, { noticeKinds: 'all' });
       if (effects.length) throw new BlockingRecoveryEffectsError(effects);
       return true;
