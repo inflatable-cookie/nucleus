@@ -124,8 +124,9 @@ new launches and still recovered legacy runs. Use that build's
 use its existing cancellation, teardown retry or retention path as applicable.
 Wait for a fence to expire or clear it there with the existing authority.
 Retry the roll after settlement. An installed bridge that predates the
-deferral status can show the startup refusal as a failed roll. The refusal
-names the custody issue and the compatibility recovery path.
+deferral status shows the startup refusal as a failed roll and suppresses that
+candidate until main advances. After compatibility cleanup, that owner retries
+when it sees the next main revision. The refusal names the custody issue.
 
 The board, Planning and task detail show report-only milestones through the
 ordinary task workflow. Generic host runs and merge-time validation still use

@@ -76,7 +76,7 @@ test('wide and narrow: one-line rows, parked last, one problem icon with its too
   const long = 'A project name long enough to run past the settings column on a phone and keep going';
   const data = settingsOf([
     implicit('acme/book'),
-    row('nucleus', 'Nucleus', [repo('acme/nucleus')], { problems: ['Planner thread is gone', 'Last QA failed'] }),
+    row('nucleus', 'Nucleus', [repo('acme/nucleus')], { problems: ['Planner thread is gone', 'Planner ticket pending'] }),
     row('consumer-app', 'Consumer-App', [repo('acme/sound')], { parked: true, problems: ['No planner'] }),
     row('long', long, [repo('acme/long')]),
   ]);
@@ -86,7 +86,7 @@ test('wide and narrow: one-line rows, parked last, one problem icon with its too
     openProjects(ui, width);
     await settle(() => ui.text().includes('Consumer-App'), 'projects');
     const labels = ui.all(/^(book|Nucleus|Consumer-App|A project name[^,]*), /).map(node => node.props.accessibilityLabel);
-    assert.deepEqual(labels, [`${long}, Active`, 'book, Active', 'Nucleus, Active, Planner thread is gone, Last QA failed', 'Consumer-App, Parked, No planner'], `${width}: sorted, parked last, problems in the row label`);
+    assert.deepEqual(labels, [`${long}, Active`, 'book, Active', 'Nucleus, Active, Planner thread is gone, Planner ticket pending', 'Consumer-App, Parked, No planner'], `${width}: sorted, parked last, problems in the row label`);
     const longName = ui.ofType('Text').find(node => textOf(node) === long)!;
     assert.equal(longName.props.numberOfLines, 1, `${width}: a long name stays on one line`);
     assert.doesNotMatch(ui.text(), /repo-|\/workspace\/user|acme\//, `${width}: no keys, paths or origins on the rows`);
@@ -97,7 +97,7 @@ test('wide and narrow: one-line rows, parked last, one problem icon with its too
     const layer = () => ui.ofType('View').find(node => node.props.testID === 'nucleus-popover-layer')!;
     ui.press('Nucleus problems');
     assert.ok(contains(layer(), 'Nucleus problems help text'), `${width}: the tooltip renders in the overlay layer`);
-    assert.match(textOf(layer()), /Planner thread is gone\nLast QA failed/, `${width}: worst first, one per line`);
+    assert.match(textOf(layer()), /Planner thread is gone\nPlanner ticket pending/, `${width}: worst first, one per line`);
     ui.get('Nucleus problems').props.onBlur();
     assert.equal(ui.query('Nucleus problems help text'), undefined);
     ui.get('Nucleus problems').props.onHoverIn();
