@@ -73,6 +73,8 @@ export function HostDefault({
     <Section
       c={c}
       title="Default host"
+      // No rule below the picker: whitespace separates it from Registered hosts.
+      last
       status={auto.status}
       description="This is a preference, not a limit: the selected worker profile may run on another host. Dispatched tasks keep their host."
     >
