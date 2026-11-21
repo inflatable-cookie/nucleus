@@ -20,7 +20,7 @@ const HOST_CATALOG_META_PREFIX = "hostCatalog:";
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface SettingsContext {
   store: Store;
-  engine: Pick<Engine, "profiles" | "wake" | "resumePausedStops"> & Partial<Pick<Engine, "rebuildProfiles" | "profileCompatibility" | "secondaryCanonicalCatalogs" | "scheduleDecisionNotices">>;
+  engine: Pick<Engine, "wake" | "resumePausedStops"> & Partial<Pick<Engine, "rebuildProfiles" | "profileCompatibility" | "secondaryCanonicalCatalogs" | "scheduleDecisionNotices">>;
   decisions: Decisions;
   capacityChanges: CapacityChangeJournal;
   readonly started: Promise<void>;
@@ -35,8 +35,13 @@ export interface SettingsContext {
 export class RuntimeSettings {
   constructor(private readonly context: SettingsContext) {}
 
+  /**
+   * Identity comes from the stored Nucleus profile records, not the routing
+   * snapshot: the snapshot is empty until a host catalog is read, and a stored
+   * profile must stay configurable then (nucleus#1492).
+   */
   configurePool({ entries }: { entries: PoolEntry[] }) {
-    checkPoolEntries(entries, new Set(this.context.engine.profiles.map(p => p.id)), this.context.store.pool());
+    checkPoolEntries(entries, new Set(this.context.store.profiles().map(p => p.id)), this.context.store.pool());
     this.context.store.setMeta("pool", entries); this.context.store.advanceRevision();
     void this.context.wakeAndSettlePostBootstrapTimeout(); return { ok: true as const };
   }

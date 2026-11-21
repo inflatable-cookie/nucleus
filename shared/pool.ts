@@ -173,11 +173,14 @@ export function saveProfileSettings(pool:PoolEntry[],settings:ProfileSettings):P
 }
 
 /**
- * Pool entries a save may store. A new or changed entry must name a profile in
- * Paseo's current catalog. An entry left unchanged is kept even if its profile
- * has since gone from Paseo: one stale entry must not block every other save
- * (live 2026-09-27: a disabled entry for a deleted profile failed every Profile
- * Pool change). Dispatch only draws from the catalog, so a kept stale entry is inert.
+ * Pool entries a save may store. Identity is the stored Nucleus profile record
+ * (nucleus#1492): a new or changed entry must name one of `knownProfileIds`, the
+ * stored profiles, and never depends on a host catalog being read. The catalog
+ * only decides launch eligibility, so a valid stored profile saves whether or not
+ * a host has been read. An entry left unchanged is kept even if its profile has
+ * since been removed: one stale entry must not block every other save (live
+ * 2026-09-27: a disabled entry for a deleted profile failed every Profile Pool
+ * change). Dispatch only draws from the catalog, so a kept stale entry is inert.
  */
 const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`
  :value&&typeof value==='object'?`{${Object.keys(value).sort().map(k=>`${JSON.stringify(k)}:${canonical((value as Record<string,unknown>)[k])}`).join(',')}}`
@@ -186,7 +189,7 @@ export function checkPoolEntries(entries:PoolEntry[],knownProfileIds:ReadonlySet
  if(new Set(entries.map(e=>e.profileId)).size!==entries.length)throw Error('Duplicate pool profile');
  const unchanged=new Set(stored.map(canonical));
  for(const entry of entries){
-  if(!knownProfileIds.has(entry.profileId)&&!unchanged.has(canonical(entry)))throw Error('Unknown profile; refresh the catalog');
+  if(!knownProfileIds.has(entry.profileId)&&!unchanged.has(canonical(entry)))throw Error(`Unknown profile ${entry.profileId}: no stored profile has this id`);
   if(entry.group.startsWith('profile:'))throw Error('Subscription group prefix is reserved');
  }
 }
