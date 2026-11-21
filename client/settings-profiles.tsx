@@ -7,6 +7,7 @@ import {
   Button,
   Field,
   Section,
+  TabRow,
   muted,
   row,
   type Colors,
@@ -35,11 +36,14 @@ import {
   quietSaveStatus,
 } from "./settings-profile-editor";
 import {
+  USAGE_ROLE_TABS,
   catalogAge,
   defaultPoolEntry,
   modelWords,
   profileRowStatus,
+  usageWindow,
   type CatalogRead,
+  type UsageRole,
 } from "./settings-profile-helpers";
 
 /**
@@ -108,6 +112,8 @@ export function ProfilesPanel({
   ];
   const [lastUsed, setLastUsed] = useState<Record<string, string>>({});
   const [editor, setEditor] = useState<string | "new" | null>(null);
+  // nucleus#1502: which recent-assignment view the usage strips show.
+  const [usageRole, setUsageRole] = useState<UsageRole>("all");
   const [created, setCreated] = useState<NucleusProfile | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [actionStatus, setActionStatus] = useState("");
@@ -357,7 +363,7 @@ export function ProfilesPanel({
         label="Stored profiles"
         status={quietSaveStatus(actionStatus) || null}
         endsInRow={profilesEndInRow}
-        description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor. Usage strips compare recent assignments across this list, from cool to warm; a full strip means that profile is busiest in the list. The sample covers up to the last 50 recorded assignments."
+        description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor. Usage strips compare recent assignments across this list, from cool to warm, for all roles or for one role at a time; a full strip means that profile is busiest in the list for the chosen view. Each view covers up to its last 50 recorded assignments."
         action={
           <View style={{ ...row, flexWrap: "nowrap" }}>
             <ActionButton
@@ -378,6 +384,27 @@ export function ProfilesPanel({
           </View>
         }
       >
+        {state && (
+          <View style={{ gap: space.xs }}>
+            <TabRow
+              c={c}
+              label="Usage view"
+              tabs={USAGE_ROLE_TABS}
+              value={usageRole}
+              onChange={setUsageRole}
+              nowrap
+            />
+            {usageWindow(state, usageRole).sample === 0 && (
+              <Text
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+              >
+                {usageRole === "all"
+                  ? "No recorded assignments yet. Strips fill as profiles take work."
+                  : `No recorded ${USAGE_ROLE_TABS.find((tab) => tab.id === usageRole)?.noun} assignments yet. Strips fill as this role is assigned work.`}
+              </Text>
+            )}
+          </View>
+        )}
         {editor === "new" && (
           <ProfileEditor
             key="new"
@@ -404,6 +431,7 @@ export function ProfilesPanel({
           <ProfileRow
             key={item.id}
             visibleProfileIds={visibleProfileIds}
+            usageRole={usageRole}
             c={c}
             profile={item.stored ?? item.board!}
             board={item.board}

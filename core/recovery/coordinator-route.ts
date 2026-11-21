@@ -951,7 +951,8 @@ export class CoordinatorRoute {
           recoveryAttempts:
             current.resolution.recoveryAttempts + (outage ? 0 : 1),
         });
-        if (group) this.store.chargeAssignment(group, profile!.id);
+        if (group)
+          this.store.chargeAssignment(group, profile!.id, "coordinator");
       });
       if (superseded) {
         this.store.event(

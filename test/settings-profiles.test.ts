@@ -1802,10 +1802,7 @@ test("nucleus#1322: the model picker shows each model's name and its model ID, o
 });
 
 /** The track inside the usage strip labelled `label`. */
-const usageTrack = (
-  ui: ReturnType<typeof mount>,
-  label: string,
-): Node => {
+const usageTrack = (ui: ReturnType<typeof mount>, label: string): Node => {
   const container = ui.get(label) as Node;
   const track = container.children.find(
     (child): child is Node => typeof child !== "string",
@@ -1828,9 +1825,15 @@ const usageFillWidth = (
 };
 
 /** Profiles rows for the usage-bar tests: board order B, A, C with no stored profiles. */
+type RoleWindow = { counts: Record<string, number>; sample: number };
+
 function usageTree(
   recent: Record<string, number>,
   compact = false,
+  extra: {
+    sample?: number;
+    roles?: Partial<Record<"worker" | "reviewer" | "coordinator", RoleWindow>>;
+  } = {},
 ) {
   const snapshot = {
     ...board(),
@@ -1853,6 +1856,13 @@ function usageTree(
       scopes: ["general"],
     })),
     recentAssignments: recent,
+    recentAssignmentSample: extra.sample ?? 50,
+    recentAssignmentRoles: {
+      worker: { counts: {}, sample: 0 },
+      reviewer: { counts: {}, sample: 0 },
+      coordinator: { counts: {}, sample: 0 },
+      ...extra.roles,
+    },
   };
   const invoke = async (method: string) => {
     if (method === "queue.ui-snapshot") return snapshot;
@@ -1883,8 +1893,16 @@ for (const compact of [false, true])
       "../client/settings-profile-helpers"
     );
     const { usageStripColor } = await import("../client/design");
-    assert.equal(RECENT_ASSIGNMENT_WINDOW, 50, "the bar reads the rotation window");
-    assert.equal(usageStripColor(0), "rgb(82, 182, 209)", "positive usage starts cool");
+    assert.equal(
+      RECENT_ASSIGNMENT_WINDOW,
+      50,
+      "the bar reads the rotation window",
+    );
+    assert.equal(
+      usageStripColor(0),
+      "rgb(82, 182, 209)",
+      "positive usage starts cool",
+    );
     assert.equal(usageStripColor(1), "rgb(224, 126, 151)", "leaders end warm");
     assert.deepEqual(
       profileUsage(
@@ -1897,76 +1915,68 @@ for (const compact of [false, true])
             "profile:retired": 50,
             anthropic: 8,
           },
+          recentAssignmentSample: 50,
         } as never,
         "a",
         ["a", "b", "c", "d"],
       ),
-      { count: 16, max: 16 },
+      { count: 16, max: 16, sample: 50 },
       "the maximum includes visible profile IDs and ignores retired history",
     );
     assert.equal(profileUsage(null, "a", ["a"]), null, "no board, no bar");
     const ui = mount(
-      usageTree({
-        "profile:a": 16,
-        "profile:b": 16,
-        "profile:c": 13,
-        "profile:d": 0,
-        "profile:retired": 50,
-        anthropic: 8,
-      }, compact),
+      usageTree(
+        {
+          "profile:a": 16,
+          "profile:b": 16,
+          "profile:c": 13,
+          "profile:d": 0,
+          "profile:retired": 50,
+          anthropic: 8,
+        },
+        compact,
+      ),
     );
     try {
       await settle(() => ui.text().includes("Profiles"));
       ui.press("Profiles");
       await settle(
         () =>
-          Boolean(
-            ui.query(/Sol A recent assignments: 16 in the rolling window/),
-          ) &&
-          Boolean(ui.query(/Sol D recent assignments: 0 in the rolling window/)),
+          Boolean(ui.query(/Sol A, all roles: 16 of 50 recent assignments/)) &&
+          Boolean(ui.query(/Sol D, all roles: 0 of 50 recent assignments/)),
       );
-      assert.ok(ui.query(/Sol B recent assignments: 16 in the rolling window/));
-      assert.ok(ui.query(/Sol C recent assignments: 13 in the rolling window/));
+      assert.ok(ui.query(/Sol B, all roles: 16 of 50 recent assignments/));
+      assert.ok(ui.query(/Sol C, all roles: 13 of 50 recent assignments/));
       assert.equal(
-        usageFillWidth(
-          ui,
-          "Sol A recent assignments: 16 in the rolling window of up to 50 recorded assignments",
-        ),
+        usageFillWidth(ui, "Sol A, all roles: 16 of 50 recent assignments"),
         "100%",
       );
       assert.equal(
-        usageFillWidth(
-          ui,
-          "Sol B recent assignments: 16 in the rolling window of up to 50 recorded assignments",
-        ),
+        usageFillWidth(ui, "Sol B, all roles: 16 of 50 recent assignments"),
         "100%",
         "tied leaders both fill the strip",
       );
       assert.equal(
-        usageFillWidth(
-          ui,
-          "Sol C recent assignments: 13 in the rolling window of up to 50 recorded assignments",
-        ),
+        usageFillWidth(ui, "Sol C, all roles: 13 of 50 recent assignments"),
         "81.25%",
         "13 scales against the visible maximum of 16",
       );
       assert.equal(
-        usageFillWidth(
-          ui,
-          "Sol D recent assignments: 0 in the rolling window of up to 50 recorded assignments",
-        ),
+        usageFillWidth(ui, "Sol D, all roles: 0 of 50 recent assignments"),
         "0%",
         "zero is a neutral empty track",
       );
       assert.equal(
-        usageTrack(
-          ui,
-          "Sol A recent assignments: 16 in the rolling window of up to 50 recorded assignments",
-        ).props.style.height,
+        usageTrack(ui, "Sol A, all roles: 16 of 50 recent assignments").props
+          .style.height,
         36,
         "the track matches adjacent controls",
       );
-      assert.doesNotMatch(ui.text(), /(?:16|13|0)\/50/, "counts are not printed as inline fractions");
+      assert.doesNotMatch(
+        ui.text(),
+        /(?:16|13|0)\/50/,
+        "counts are not printed as inline fractions",
+      );
       const flat = ui.text();
       assert.ok(
         flat.indexOf("Sol B") < flat.indexOf("Sol A") &&
@@ -1976,10 +1986,8 @@ for (const compact of [false, true])
       for (const name of ["Sol A", "Sol B", "Sol C"])
         assert.ok(ui.query(`Edit ${name}`), `${name} stays editable`);
       assert.match(
-        String(
-          (ui.get("Profiles help") as Node).props.accessibilityHint ?? "",
-        ),
-        /full strip means that profile is busiest in the list.*up to the last 50 recorded/s,
+        String((ui.get("Profiles help") as Node).props.accessibilityHint ?? ""),
+        /full strip means that profile is busiest in the list.*up to its last 50 recorded/s,
         "the section help names the scale and sample window once",
       );
     } finally {
@@ -1989,28 +1997,191 @@ for (const compact of [false, true])
 
 test("nucleus#1501: an all-zero sample keeps neutral empty strips", async () => {
   await load();
-  const ui = mount(usageTree({}));
+  const ui = mount(usageTree({}, false, { sample: 0 }));
   try {
     await settle(() => ui.text().includes("Profiles"));
     ui.press("Profiles");
     await settle(() =>
-      Boolean(ui.query(/Sol A recent assignments: 0 in the rolling window/)),
+      Boolean(ui.query(/Sol A, all roles: 0 of 0 recent assignments/)),
     );
     for (const name of ["Sol A", "Sol B", "Sol C", "Sol D"])
       assert.equal(
-        usageFillWidth(
-          ui,
-          `${name} recent assignments: 0 in the rolling window of up to 50 recorded assignments`,
-        ),
+        usageFillWidth(ui, `${name}, all roles: 0 of 0 recent assignments`),
         "0%",
         `${name} has no fill`,
       );
-    assert.doesNotMatch(ui.text(), /(?:0|1)\/50/, "an empty sample has no inline fraction");
+    assert.doesNotMatch(
+      ui.text(),
+      /(?:0|1)\/50/,
+      "an empty sample has no inline fraction",
+    );
     const flat = ui.text();
     assert.ok(
       flat.indexOf("Sol B") < flat.indexOf("Sol A"),
       "row order holds with no data either",
     );
+  } finally {
+    ui.update(h("View", null));
+  }
+});
+
+// nucleus#1502: the usage view picks which charged window the strips read.
+const ALL_WINDOW = {
+  "profile:a": 16,
+  "profile:b": 16,
+  "profile:c": 13,
+  "profile:d": 0,
+};
+const ROLE_WINDOWS: Partial<
+  Record<"worker" | "reviewer" | "coordinator", RoleWindow>
+> = {
+  // Partial sample: 15 worker charges, a tied leader pair and an empty profile.
+  worker: {
+    counts: { "profile:a": 5, "profile:b": 5, "profile:c": 5, "profile:d": 0 },
+    sample: 15,
+  },
+  // Three reviewer charges: one profile leads at 2, another at 1.
+  reviewer: { counts: { "profile:b": 1, "profile:c": 2 }, sample: 3 },
+  // No coordinator history yet.
+  coordinator: { counts: {}, sample: 0 },
+};
+
+for (const compact of [false, true])
+  test(`nucleus#1502: switching the usage view changes the counts, maximum and accessible summary (${compact ? "narrow" : "wide"})`, async () => {
+    await load();
+    const ui = mount(
+      usageTree(ALL_WINDOW, compact, { sample: 50, roles: ROLE_WINDOWS }),
+    );
+    try {
+      await settle(() => ui.text().includes("Profiles"));
+      ui.press("Profiles");
+      await settle(() =>
+        Boolean(ui.query(/Sol B, all roles: 16 of 50 recent assignments/)),
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol B, all roles: 16 of 50 recent assignments"),
+        "100%",
+        "All keeps the shared window and its tied leaders",
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol C, all roles: 13 of 50 recent assignments"),
+        "81.25%",
+      );
+
+      ui.press("Workers");
+      await settle(() =>
+        Boolean(ui.query(/Sol A, workers: 5 of 15 recent assignments/)),
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol A, workers: 5 of 15 recent assignments"),
+        "100%",
+        "tied worker leaders fill",
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol B, workers: 5 of 15 recent assignments"),
+        "100%",
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol D, workers: 0 of 15 recent assignments"),
+        "0%",
+        "zero stays an empty track",
+      );
+      assert.doesNotMatch(
+        ui.text(),
+        /No recorded/,
+        "a populated view has no empty state",
+      );
+
+      ui.press("Reviewers");
+      await settle(() =>
+        Boolean(ui.query(/Sol C, reviewers: 2 of 3 recent assignments/)),
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol C, reviewers: 2 of 3 recent assignments"),
+        "100%",
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol B, reviewers: 1 of 3 recent assignments"),
+        "50%",
+        "a partial sample scales to this view's maximum, not the All maximum",
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol A, reviewers: 0 of 3 recent assignments"),
+        "0%",
+      );
+
+      ui.press("Coordinators");
+      await settle(() =>
+        ui.text().includes("No recorded coordinator assignments yet."),
+      );
+      for (const name of ["Sol A", "Sol B", "Sol C", "Sol D"])
+        assert.equal(
+          usageFillWidth(
+            ui,
+            `${name}, coordinators: 0 of 0 recent assignments`,
+          ),
+          "0%",
+          `${name} has no coordinator fill`,
+        );
+
+      ui.press("All roles");
+      await settle(() =>
+        Boolean(ui.query(/Sol B, all roles: 16 of 50 recent assignments/)),
+      );
+      assert.equal(
+        usageFillWidth(ui, "Sol B, all roles: 16 of 50 recent assignments"),
+        "100%",
+        "returning to All restores its counts",
+      );
+    } finally {
+      ui.update(h("View", null));
+    }
+  });
+
+test("nucleus#1502: the usage view strip shows its count and view in a tooltip on hover", async () => {
+  await load();
+  const ui = mount(
+    usageTree(ALL_WINDOW, false, { sample: 50, roles: ROLE_WINDOWS }),
+  );
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() => Boolean(ui.query("Workers")));
+    ui.press("Workers");
+    await settle(() =>
+      Boolean(ui.query(/Sol A, workers: 5 of 15 recent assignments/)),
+    );
+    ui.get("Sol A, workers: 5 of 15 recent assignments").props.onHoverIn();
+    await settle(() =>
+      ui.text().includes("Sol A, workers: 5 of 15 recent assignments"),
+    );
+    assert.ok(
+      ui.text().includes("Sol A, workers: 5 of 15 recent assignments"),
+      "the tooltip names the view, count and sample",
+    );
+  } finally {
+    ui.update(h("View", null));
+  }
+});
+
+test("nucleus#1502: an empty role view says so and keeps every row editable", async () => {
+  await load();
+  const ui = mount(
+    usageTree(ALL_WINDOW, false, { sample: 50, roles: ROLE_WINDOWS }),
+  );
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() => Boolean(ui.query("Coordinators")));
+    ui.press("Coordinators");
+    await settle(() =>
+      ui.text().includes("No recorded coordinator assignments yet."),
+    );
+    for (const name of ["Sol A", "Sol B", "Sol C", "Sol D"])
+      assert.ok(
+        ui.query(`Edit ${name}`),
+        `${name} stays editable with no history`,
+      );
   } finally {
     ui.update(h("View", null));
   }

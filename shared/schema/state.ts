@@ -104,6 +104,19 @@ export const boundRunSchema = z
 
 export type BoundRun = z.infer<typeof boundRunSchema>;
 
+/**
+ * The assignment roles the Profiles usage view separates (nucleus#1502). Each is
+ * the routing purpose at its charge: a worker, a reviewer or a coordinator.
+ */
+export const ASSIGNMENT_ROLES = ["worker", "reviewer", "coordinator"] as const;
+export type AssignmentRole = (typeof ASSIGNMENT_ROLES)[number];
+
+/** One role's rolling window: its charged profiles (`profile:<id>` keys) and the window's size. */
+export const roleAssignmentUsageSchema = z.object({
+  counts: z.record(z.string(), z.number()),
+  sample: z.number().int().nonnegative(),
+});
+
 export const stateSchema = z.object({
   prStates: z
     .record(z.string(), z.enum(["OPEN", "CLOSED", "MERGED"]))
@@ -170,6 +183,20 @@ export const stateSchema = z.object({
   availability: z.array(availabilitySchema),
   assignments: z.record(z.string(), z.number()),
   recentAssignments: z.record(z.string(), z.number()),
+  // nucleus#1502: the size of the All window behind `recentAssignments` (its
+  // real sample, below 50 while history is short), and each role's own window.
+  recentAssignmentSample: z.number().int().nonnegative().default(0),
+  recentAssignmentRoles: z
+    .object({
+      worker: roleAssignmentUsageSchema,
+      reviewer: roleAssignmentUsageSchema,
+      coordinator: roleAssignmentUsageSchema,
+    })
+    .default({
+      worker: { counts: {}, sample: 0 },
+      reviewer: { counts: {}, sample: 0 },
+      coordinator: { counts: {}, sample: 0 },
+    }),
 });
 
 export type QueueState = z.infer<typeof stateSchema>;

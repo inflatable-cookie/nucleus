@@ -1197,6 +1197,7 @@ export class WorkerFailover {
           this.store.chargeAssignment(
             selected.entry.group,
             selected.profile.id,
+            "worker",
           );
         });
         if (movingHost) {
