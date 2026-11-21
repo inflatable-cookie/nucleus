@@ -2604,8 +2604,8 @@ export class QueueRuntime {
   projectOwnerCandidates() {
     return this.repositories.projectOwnerCandidates();
   }
-  projectSettings() {
-    return this.repositories.projectSettings();
+  projectSettings(input: { project?: string } = {}) {
+    return this.repositories.projectSettings(input);
   }
   resetProjectCancellation(input: {
     key: string;

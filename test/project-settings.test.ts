@@ -236,13 +236,22 @@ test('project.owner-candidates returns classified live threads and an empty list
   } finally { await mute.stop(); }
 });
 
-test('project.settings is one store-and-live read through the owner, and an incomplete live list fails closed', async () => {
+/** An adapter whose live inventory can be made to hang, the way an offline host stalls. */
+function stallableAdapter(dir: string, state: { hang: boolean; throwLive?: boolean }): Adapter {
+  return {
+    ...(muteAdapter(dir) as object),
+    listLiveAgents: () => {
+      if (state.throwLive) return Promise.reject(new Error('Live agent inventory was incomplete'));
+      if (state.hang) return new Promise(() => {});
+      return Promise.resolve([{ id: 'planner-live', title: 'Planner', workspaceId: 'ws', labels: {} }]);
+    },
+  } as unknown as Adapter;
+}
+
+test('project.settings reads saved data only; the focused project adds live state, and a stalled or failing host never blocks the list', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'nsq-project-settings-rpc-'));
-  const runtime = new QueueRuntime({
-    dataDir: dir,
-    adapterFactory: () => liveAdapter(dir, () => [{ id: 'planner-live', title: 'Planner', workspaceId: 'ws' }]),
-    timers: false,
-  });
+  const state = { hang: false, throwLive: false };
+  const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => stallableAdapter(dir, state), timers: false });
   try {
     await runtime.started;
     runtime.store.upsertProject({ key: 'suite', name: 'Suite', repositories: [alpha, beta], primary: alpha });
@@ -252,29 +261,49 @@ test('project.settings is one store-and-live read through the owner, and an inco
     runtime.store.putQaRun(qaRun({
       id: 'qa-suite', key: alpha.origin, state: 'failed', startedAt: '2026-11-08T00:00:00.000Z',
     }));
-    const page = projectSettings.output.parse(await runtime.projectSettings());
-    assert.equal(page.defaultSlots, DEFAULT_PROJECT_LIMIT);
-    const suite = page.projects.find(entry => entry.project.key === 'suite');
-    assert.ok(suite);
-    assert.deepEqual(suite.slots, { value: 3, override: 3 });
-    assert.equal(suite.plannerLive, true);
-    assert.equal(suite.latestQa?.state, 'failed');
-    assert.deepEqual(suite.problems, [PROJECT_SETTINGS_PROBLEMS.qaFailed]);
-    assert.equal(suite.repositories[0].settings?.note, 'alpha-row');
-    assert.equal(suite.repositories[1].settings, null);
-  } finally { await runtime.stop(); }
 
-  const throwDir = mkdtempSync(join(tmpdir(), 'nsq-project-settings-throw-'));
-  const failing = new QueueRuntime({
-    dataDir: throwDir,
-    adapterFactory: () => liveAdapter(throwDir, () => [], { throwLive: true }),
-    timers: false,
-  });
-  try {
-    await failing.started;
-    failing.store.upsertProject({ key: 'suite', name: 'Suite', repositories: [alpha] });
-    await assert.rejects(() => failing.projectSettings(), /Live agent inventory was incomplete/);
-  } finally { await failing.stop(); }
+    // The warm healthy list: saved rows, with planner liveness unknown because no host was read.
+    const list = projectSettings.output.parse(await runtime.projectSettings());
+    const listed = list.projects.find(entry => entry.project.key === 'suite');
+    assert.ok(listed);
+    assert.deepEqual(listed.slots, { value: 3, override: 3 });
+    assert.equal(listed.plannerLive, null);
+    assert.equal(listed.responsibleThread, undefined);
+    assert.equal(listed.latestQa?.state, 'failed');
+    assert.deepEqual(listed.problems, [PROJECT_SETTINGS_PROBLEMS.qaFailed]);
+    assert.equal(listed.repositories[0].settings?.note, 'alpha-row');
+    assert.equal(listed.repositories[1].settings, null);
+
+    // The focused read is the one place a host is read: the planner is live here.
+    const focused = projectSettings.output.parse(await runtime.projectSettings({ project: 'suite' }));
+    assert.deepEqual(focused.projects.map(entry => entry.project.key), ['suite']);
+    assert.equal(focused.projects[0].plannerLive, true);
+    assert.equal(focused.projects[0].latestQa?.state, 'failed');
+
+    // A hung inventory: the list still answers before the host settles, and the focused row goes unknown.
+    state.hang = true;
+    const hungList = await Promise.race([
+      runtime.projectSettings(),
+      new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 1000).unref()),
+    ]);
+    assert.notEqual(hungList, 'timeout');
+    const hungFocus = projectSettings.output.parse(await runtime.projectSettings({ project: 'suite' }));
+    assert.equal(hungFocus.projects[0].plannerLive, null);
+    assert.equal(hungFocus.projects[0].slots.value, 3);
+    state.hang = false;
+
+    // A failing inventory never fails either read; the saved row stays.
+    state.throwLive = true;
+    const failingList = projectSettings.output.parse(await runtime.projectSettings());
+    assert.equal(failingList.projects[0].plannerLive, null);
+    const failingFocus = projectSettings.output.parse(await runtime.projectSettings({ project: 'suite' }));
+    assert.equal(failingFocus.projects[0].plannerLive, null);
+    assert.equal(failingFocus.projects[0].slots.value, 3);
+    state.throwLive = false;
+
+    // An unknown project is a real failure, not an empty row.
+    await assert.rejects(() => runtime.projectSettings({ project: 'missing' }), /Unknown project missing/);
+  } finally { await runtime.stop(); }
 
   const muteDir = mkdtempSync(join(tmpdir(), 'nsq-project-settings-mute-'));
   const mute = new QueueRuntime({ dataDir: muteDir, adapterFactory: () => muteAdapter(muteDir), timers: false });

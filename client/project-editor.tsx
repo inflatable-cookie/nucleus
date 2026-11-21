@@ -43,7 +43,13 @@ export function ProjectEditor({ c, compact = false, projectKey, data, error, ref
   actions: ProjectEditActions; onBack: () => void; /** Opens another project: where Move into lands. */ onOpenProject?: (key: string) => void;
 }) {
   const r = roles(c);
-  const entry = data?.projects.find(candidate => candidate.project.key === projectKey);
+  const saved = data?.projects.find(candidate => candidate.project.key === projectKey);
+  // Live planner, agent and responsible-thread state comes from the focused read; the saved row
+  // keeps the project, its version and every count, so a live read never changes what is saved.
+  const focused = actions.focus?.row?.project.key === projectKey ? actions.focus.row : undefined;
+  const entry = saved && focused
+    ? { ...saved, plannerLive: focused.plannerLive, agents: focused.agents, responsibleThread: focused.responsibleThread }
+    : saved;
   const back = <Button small c={c} icon="ChevronLeft" text="Projects" label="Back to Projects" onPress={onBack} />;
   if (!entry) return <View style={{ gap: space.sm }}>
     <View style={{ ...row, flexWrap: "nowrap" }}>{back}</View>
@@ -190,6 +196,7 @@ function OpenedProject({ c, compact, entry, data, error, refetch, actions, back,
         {Boolean(candidates.error) && <Text style={{ color: r.warning, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>Couldn't load threads</Text>}
       </View>
     </Pair>
+    {Boolean(actions.focus?.error) && <Text style={{ color: r.warning, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>Live status is unavailable: {withoutHostPaths(errorText(actions.focus?.error))}. Saved settings still apply.</Text>}
     {entry.responsibleThread && <View style={{ gap: space.xxs }}>
       <FieldCaption c={c} text="Responsible thread" />
       <Text style={muted(c)}>{entry.responsibleThread.thread

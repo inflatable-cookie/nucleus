@@ -81,6 +81,19 @@ export async function observeProjectAgent(context: ProjectAgentsContext, agent: 
   }
 }
 
+/** The project's agents as saved, every state unknown: the list read never observes a host. */
+export function unobservedProjectAgentViews(project: Pick<Project, "agents" | "planner">): ProjectAgentView[] {
+  return (project.agents ?? []).map(agent => ({
+    name: agent.name,
+    purpose: agent.purpose,
+    agentId: agent.agentId,
+    hostId: agent.hostId,
+    state: "unknown",
+    lastSeen: null,
+    fallback: Boolean(project.planner?.agentId && project.planner.agentId === agent.agentId),
+  }));
+}
+
 /** The project's agents with their live state, in registration order. */
 export async function projectAgentViews(context: ProjectAgentsContext, project: Pick<Project, "agents" | "planner">): Promise<ProjectAgentView[]> {
   return Promise.all((project.agents ?? []).map(async agent => {

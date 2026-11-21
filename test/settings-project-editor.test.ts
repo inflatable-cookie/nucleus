@@ -1668,6 +1668,7 @@ test("the full screen wires the writes: set-planner as the operator, then a re-r
   const { QueueSettingsScreen } = await import("../client/settings-screen");
   for (const width of [390, 1024]) {
     writes.length = 0;
+    let candidateReads = 0;
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -1677,7 +1678,10 @@ test("the full screen wires the writes: set-planner as the operator, then a re-r
         reads++;
         return data;
       }
-      if (method === "project.owner-candidates") return candidates;
+      if (method === "project.owner-candidates") {
+        candidateReads++;
+        return candidates;
+      }
       if (method === "backup.list") return { snapshots: [], localError: null };
       if (method === "project.set-planner") {
         writes.push([method, input]);
@@ -1710,6 +1714,9 @@ test("the full screen wires the writes: set-planner as the operator, then a re-r
         () => Boolean(ui.query("Preferred thread, None")),
         "candidates",
       );
+      // The picker's threads are read when the project opens, so wait for them before choosing.
+      await settle(() => candidateReads > 0, "thread picker requested");
+      await new Promise((resolve) => setTimeout(resolve, 50));
       const before = reads;
       ui.press("Preferred thread, None");
       ui.press("Preferred thread: Nucleus planner");
@@ -1801,6 +1808,65 @@ test("the project shows its named agents with live state and the fallback marker
       app.calls.find(([method]) => method === "agent.unregister")![1],
       { project: "nucleus", name: "lead-ui" },
     );
+  } finally {
+    done(ui);
+  }
+});
+
+test("Settings lists projects before any host read settles; the thread picker and the opened project's live state load only when that project opens", async () => {
+  const calls: string[] = [];
+  const data = settingsOf([row("nucleus", "Nucleus", [repo("acme/nucleus")])]);
+  const never = () => new Promise<never>(() => {});
+  const board = {
+    revision: 1, connected: true, hostId: "host", paused: false, error: "", quiet: true,
+    activeWorkers: 0, unsettled: 0, globalLimit: 32, projectLimit: 4, papercutProjectLimit: 2,
+    tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {},
+    lanes: [], projects: [], projectLimitOverrides: {}, projectInFlightLimitOverrides: {},
+    projectCapacities: [], prStates: {}, usage: { level: "normal", setLevel: "normal", until: null, expired: false },
+    routingGrants: [], backup: { newestSnapshotAt: new Date().toISOString(), localError: null },
+  };
+  const { QueueSettingsScreen } = await import("../client/settings-screen");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const invoke = async (method: string, input: unknown) => {
+    if (method === "queue.ui-snapshot") return board;
+    if (method === "backup.list") return { snapshots: [], localError: null };
+    if (method === "project.settings") {
+      const project = (input as { project?: string }).project;
+      calls.push(project ? `focus:${project}` : "list");
+      // The list answers at once; the focused read of an opened project never settles.
+      return project ? never() : data;
+    }
+    if (method === "project.owner-candidates") {
+      calls.push("candidates");
+      return never();
+    }
+    return {};
+  };
+  const ui = mount(
+    h(QueryClientProvider, {
+      client,
+      children: h(PluginRpcProvider, {
+        invoke: invoke as never,
+        children: h(QueueSettingsScreen as never, {
+          theme: { colors: dark },
+          layout: { compact: false, platform: "ios" },
+          host: { id: "host", label: "Host" },
+        }),
+      }),
+    }),
+  );
+  try {
+    ui.get("Nucleus settings").props.onLayout({ nativeEvent: { layout: { width: 1024 } } });
+    await settle(() => ui.text().includes("Usage level"), "limits");
+    ui.press("Projects");
+    await settle(() => Boolean(ui.query("Nucleus, Active")), "list renders while the picker read hangs");
+    assert.deepEqual(calls.filter((call) => call !== "list"), [], "no host read before a project opens");
+    ui.press("Nucleus, Active");
+    await settle(() => Boolean(ui.query("Preferred thread, None")), "editor opens");
+    await settle(() => calls.includes("candidates") && calls.includes("focus:nucleus"), "picker and focus requested on open");
+    // Saved fields stay editable while the live read hangs, and no live-status warning shows.
+    assert.ok(ui.query("Project name"), "name field is present");
+    assert.equal(ui.text().includes("Live status is unavailable"), false);
   } finally {
     done(ui);
   }

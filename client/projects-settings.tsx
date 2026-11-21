@@ -88,8 +88,10 @@ export type ProjectsQuery = { data: ProjectSettings | undefined; error: unknown;
  * Add project writes `project.upsert`. A failed refresh keeps the rows it had,
  * with a warning on the header.
  */
-export function ProjectsSection({ c, compact, inset, query, createProject, edit }: {
+export function ProjectsSection({ c, compact, inset, query, onFocus, createProject, edit }: {
   c: Colors; compact: boolean; inset: number; query: ProjectsQuery;
+  /** Reports the project open in the editor, or null at the list; its live state is read only then. */
+  onFocus?: (key: string | null) => void;
   createProject: (input: ProjectUpsertInput) => Promise<unknown>;
   /** The opened project's writes; without them rows do not open. */
   edit?: ProjectEditActions;
@@ -104,8 +106,10 @@ export function ProjectsSection({ c, compact, inset, query, createProject, edit 
   useEffect(() => { if (view === "list" && offset.current) scroll.current?.scrollTo?.({ y: offset.current, animated: false }); }, [view]);
   const r = roles(c);
   const data = query.data;
+  const openProject = (key: string) => { setOpened(key); setView("project"); onFocus?.(key); };
+  const backToList = () => { setView("list"); onFocus?.(null); };
   if (view === "project" && opened && edit) return <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ paddingBottom: inset, maxWidth: 780 }} keyboardShouldPersistTaps="handled">
-    <ProjectEditor c={c} compact={compact} projectKey={opened} data={data} error={query.error} refetch={query.refetch} actions={edit} onBack={() => setView("list")} onOpenProject={setOpened} />
+    <ProjectEditor c={c} compact={compact} projectKey={opened} data={data} error={query.error} refetch={query.refetch} actions={edit} onBack={backToList} onOpenProject={openProject} />
   </ScrollView>;
   const rows = data ? sortProjectRows(data.projects) : [];
   const shown = filterProjectRows(rows, filter);
@@ -127,7 +131,7 @@ export function ProjectsSection({ c, compact, inset, query, createProject, edit 
       {data && <View style={{ borderTopWidth: 1, borderTopColor: r.border }}>
         {!rows.length && <Text style={{ ...muted(c), paddingVertical: space.sm, paddingHorizontal: space.sm }}>No projects</Text>}
         {rows.length > 0 && !shown.length && <Text style={{ ...muted(c), paddingVertical: space.sm, paddingHorizontal: space.sm }}>No projects match</Text>}
-        {shown.map(entry => <ProjectRow key={entry.project.key} c={c} entry={entry} onOpen={edit ? () => { setOpened(entry.project.key); setView("project"); } : undefined} />)}
+        {shown.map(entry => <ProjectRow key={entry.project.key} c={c} entry={entry} onOpen={edit ? () => openProject(entry.project.key) : undefined} />)}
       </View>}
     </ScrollView>
     {adding && data && <AddProjectSheet c={c} rows={data.projects} onClose={() => setAdding(false)}

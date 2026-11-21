@@ -2926,9 +2926,12 @@ export class Engine {
   }
   /** Planner participant tickets still pending; the board's project entry says so. */
   plannerTicketPending: () => ReadonlySet<string> = () => new Set();
-  /** Settings → Projects: one read of projects, repository rows, slots, planner liveness and QA. */
-  projectSettings(): Promise<ReturnType<typeof buildProjectSettings>> {
-    return this.projectLifecycle.projectSettings();
+  /**
+   * Settings → Projects: saved projects, repository rows, slots and QA. A named
+   * `project` also gets its live planner, agent and responsible-thread state.
+   */
+  projectSettings(input: { project?: string } = {}): Promise<ReturnType<typeof buildProjectSettings>> {
+    return this.projectLifecycle.projectSettings(input);
   }
   /** Task 1110: one project's named agents with their live state and fallback marker. */
   projectAgents(

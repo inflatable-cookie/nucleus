@@ -1,3 +1,4 @@
+import type { Project } from "../../shared/contracts";
 import { formatAgentId, parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
 import { observationTimeout } from "../recovery/observation-timeout";
@@ -15,6 +16,7 @@ import {
   legacyIdentityObservedOn,
   observedHostIdOf,
   projectAgentViews,
+  unobservedProjectAgentViews,
 } from "./project-agents";
 import type { Engine } from "../engine";
 
@@ -25,6 +27,14 @@ export type ProjectLifecycleContext = Pick<
   Partial<Pick<Engine, "plannerTicketPending" | "resolution">>;
 
 const OWNER_OBSERVATION_TIMEOUT = "Owner liveness check timed out";
+const LIVE_INVENTORY_TIMEOUT = "Live thread inventory timed out";
+const LIVE_READ_TIMEOUT = "Live Settings read timed out";
+
+/** A Settings live read, bounded so a stalled host ends as unknown rather than a hang. */
+const LIVE_READ_MS = 5_000;
+function bounded<T>(work: Promise<T>): Promise<T> {
+  return observationTimeout(work, LIVE_READ_TIMEOUT, LIVE_READ_MS);
+}
 
 /**
  * One owner thread's liveness. `live` resolves the thread the project's planner
@@ -39,9 +49,16 @@ type OwnerThreadState =
 
 export class ProjectLifecycle {
   constructor(readonly context: ProjectLifecycleContext) {}
+  /**
+   * The planner picker's live threads. Bounded, so a slow or offline host fails
+   * the picker with an error instead of holding it open.
+   */
   async projectOwnerCandidates() {
     if (!this.context.adapter.listLiveAgents) return [];
-    const live = await this.context.host.listLiveAgents();
+    const live = await observationTimeout(
+      this.context.host.listLiveAgents(),
+      LIVE_INVENTORY_TIMEOUT,
+    );
     return live.map((agent) => ({
       id: agent.id,
       title: agent.title,
@@ -50,27 +67,20 @@ export class ProjectLifecycle {
     }));
   }
 
-  async projectSettings() {
-    const liveKnown = Boolean(this.context.adapter.listLiveAgents);
-    const live = liveKnown ? await this.context.host.listLiveAgents() : [];
-    const projects = this.context.store.projects();
-    const hostId =
-      this.context.activeHostId ?? observedHostIdOf(this.context.adapter);
-    const agents = Object.fromEntries(
-      await Promise.all(
-        projects.map(
-          async (project) =>
-            [
-              project.key,
-              await projectAgentViews(
-                { host: this.context.host, observedHostId: hostId },
-                project,
-              ),
-            ] as const,
-        ),
-      ),
-    );
-    const responsible = await this.context.resolution?.refreshResponsibleThreads(projects);
+  /**
+   * Settings → Projects. The saved list is answered from the store alone, so a
+   * slow or offline host can never hold it. A named `project` also gets its live
+   * planner, agent and responsible-thread state. Each host read is bounded and a
+   * failed or late one leaves that state unknown; the saved row still returns.
+   */
+  async projectSettings(input: { project?: string } = {}) {
+    const all = this.context.store.projects();
+    const projects = input.project
+      ? all.filter((project) => project.key === input.project)
+      : all;
+    if (input.project && !projects.length)
+      throw new Error(`Unknown project ${input.project}`);
+    const live = input.project ? await this.liveStatus(projects[0]!) : null;
     return buildProjectSettings({
       projects,
       repositories: this.context.store.repositories(),
@@ -78,18 +88,9 @@ export class ProjectLifecycle {
       defaultSlots:
         this.context.store.getMeta<number>("projectLimit") ??
         DEFAULT_PROJECT_LIMIT,
-      liveAgentIds: new Set(
-        live.flatMap((agent) =>
-          hostId
-            ? [
-                formatAgentId(hostId, agent.id),
-                ...(hostKindOf(hostId) === "paseo" ? [agent.id] : []),
-              ]
-            : [agent.id],
-        ),
-      ),
-      liveKnown,
-      observedHostId: hostId ?? undefined,
+      liveAgentIds: live?.liveAgentIds ?? new Set(),
+      liveKnown: live?.liveKnown ?? false,
+      observedHostId: live?.observedHostId,
       plannerTicketPending: this.context.plannerTicketPending?.() ?? new Set(),
       plannerRoutingIssues: new Map(
         projects.map((project) => [
@@ -97,15 +98,67 @@ export class ProjectLifecycle {
           projectPlannerRoutingIssue(this.context.store, project),
         ]),
       ),
-      agents,
-      responsibleThreads: Object.fromEntries(projects.map((project, index) => {
-        const result = responsible?.[index];
-        return [project.key, result ? { thread: result.thread, cacheAgeMs: Math.max(0, Date.now() - result.observedAt), shortlist: result.shortlist } : undefined];
-      })),
+      agents: Object.fromEntries(
+        projects.map((project) => [
+          project.key,
+          live?.agents.get(project.key) ?? unobservedProjectAgentViews(project),
+        ]),
+      ),
+      responsibleThreads: live?.responsibleThreads ?? {},
       latestQaRuns: this.context.store.latestQaRunsFor(
         projectSettingsQaKeys(projects),
       ),
     });
+  }
+
+  /**
+   * One project's live state, every read bounded. An unreadable inventory is
+   * `liveKnown: false`, which the builder reports as unknown planner liveness.
+   */
+  private async liveStatus(project: Project) {
+    const observedHostId =
+      this.context.activeHostId ?? observedHostIdOf(this.context.adapter);
+    const liveKnown = Boolean(this.context.adapter.listLiveAgents);
+    const [inventory, agents, responsible] = await Promise.all([
+      liveKnown
+        ? bounded(this.context.host.listLiveAgents()).catch(() => null)
+        : Promise.resolve(null),
+      bounded(
+        projectAgentViews(
+          { host: this.context.host, observedHostId },
+          project,
+        ),
+      ).catch(() => null),
+      this.context.resolution
+        ? bounded(this.context.resolution.responsibleThread(project)).catch(
+            () => null,
+          )
+        : Promise.resolve(null),
+    ]);
+    return {
+      observedHostId: observedHostId ?? undefined,
+      liveKnown: inventory !== null,
+      liveAgentIds: new Set(
+        (inventory ?? []).flatMap((agent) =>
+          observedHostId
+            ? [
+                formatAgentId(observedHostId, agent.id),
+                ...(hostKindOf(observedHostId) === "paseo" ? [agent.id] : []),
+              ]
+            : [agent.id],
+        ),
+      ),
+      agents: new Map([[project.key, agents]]),
+      responsibleThreads: {
+        [project.key]: responsible
+          ? {
+              thread: responsible.thread,
+              cacheAgeMs: Math.max(0, Date.now() - responsible.observedAt),
+              shortlist: responsible.shortlist,
+            }
+          : undefined,
+      },
+    };
   }
 
   /** Task 1110: a project's named agents with their live state and fallback marker. */

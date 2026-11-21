@@ -26,6 +26,8 @@ export type ProjectEditActions = {
   /** Re-read `project.settings` (and the board) after a batch of writes. */
   refresh: () => Promise<unknown>;
   candidates: { data: OwnerCandidate[] | undefined; error: unknown; isPending: boolean };
+  /** The opened project's live state (`project.settings` with its key); absent until it is read. */
+  focus?: { row: ProjectSettingsRow | undefined; error: unknown; isPending: boolean };
 };
 export type SaveOp = { run: () => Promise<unknown>; revert?: () => void };
 export type ProjectSaves = ReturnType<typeof import("./save-state").useProjectSaves>;

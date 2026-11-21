@@ -99,16 +99,29 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     queryFn: () => fetchRepositories({}),
     enabled: settingsTab === "profiles",
   });
+  // The list is saved data only: it never waits on a host.
   const projectsQuery = useQuery({
     queryKey: ["nucleus", "project-settings"],
     queryFn: () => fetchProjectSettings({}),
     enabled: settingsTab === "projects",
   });
+  // The project open in the editor, and only it, gets its live planner, agent and
+  // responsible-thread state. Its key is cleared when the tab changes away.
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (settingsTab !== "projects") setFocusKey(null);
+  }, [settingsTab]);
+  const focusQuery = useQuery({
+    queryKey: ["nucleus", "project-settings", "focus", focusKey],
+    queryFn: () => fetchProjectSettings({ project: focusKey! }),
+    enabled: settingsTab === "projects" && focusKey !== null,
+  });
   // The planner picker's live threads; task threads are left out by `kind` in the picker.
+  // Read only while an opened project shows the picker, never from the list.
   const candidatesQuery = useQuery({
     queryKey: ["nucleus", "owner-candidates"],
     queryFn: () => fetchOwnerCandidates({}),
-    enabled: settingsTab === "projects",
+    enabled: settingsTab === "projects" && focusKey !== null,
   });
   // Spec 028: the listing is a Backups-tab read. The stale/failing warning on every
   // other tab rides the board's snapshot health, so no surface polls this just to age a
@@ -367,6 +380,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
               compact={compact}
               inset={inset}
               query={projectsQuery}
+              onFocus={setFocusKey}
               createProject={async (input) => {
                 // Refresh even after a refusal so the next Create derives a free key.
                 let writeError: unknown;
@@ -378,7 +392,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 const refreshes = await Promise.allSettled([
                   queryClient.refetchQueries({
                     queryKey: ["nucleus", "project-settings"],
-                    exact: true,
                   }),
                   queryClient.refetchQueries({
                     queryKey: ["nucleus", "state"],
@@ -420,7 +433,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                   Promise.all([
                     queryClient.refetchQueries({
                       queryKey: ["nucleus", "project-settings"],
-                      exact: true,
                     }),
                     queryClient.refetchQueries({
                       queryKey: ["nucleus", "state"],
@@ -431,6 +443,11 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                   data: candidatesQuery.data,
                   error: candidatesQuery.error,
                   isPending: candidatesQuery.isPending,
+                },
+                focus: {
+                  row: focusQuery.data?.projects[0],
+                  error: focusQuery.error,
+                  isPending: focusQuery.isPending,
                 },
               }}
             />

@@ -50,15 +50,22 @@ nothing.
   lane order key on the project, not the repository. A project's plan orders the
   lanes that list any of its repositories.
 - **Operations:** `project.upsert` (name, key, repositories, primary), `project.get` (by
-  key or by any member repository), `projects`, `project.settings` (one Settings
-  read of projects, repository rows, slots, planner liveness and latest QA),
-  `project.owner-candidates` (live threads with a `kind` so planners stand apart
-  from task threads), and `project.remove` (delete by key
+  key or by any member repository), `projects`, `project.settings` (Settings'
+  list: projects, repository rows, slots, stored agents and latest QA, read from
+  the store with no host call; with `project`, that one row also carries live
+  planner liveness, agent states and the responsible thread, each host read
+  bounded so a stalled host leaves it unknown), `project.owner-candidates` (live
+  threads with a `kind` so planners stand apart from task threads, bounded so a
+  stalled host fails the picker rather than holding it), and `project.remove` (delete by key
   and version, with a reason). Removing a repository from a
   project returns it to its default single-repository project.
 - **Settings → Projects (lane `nucleus-ui`, task 946).** The section lists
-  projects from `project.settings`, one row each with its status and one problem
-  icon. Add project writes `project.upsert` on Create, with a key derived from
+  projects from `project.settings` without `project`, one row each with its
+  status and one problem icon, and renders before any host read settles. Opening
+  a project reads its live state with `project.settings({project})` and the
+  planner picker's threads with `project.owner-candidates`; neither runs for the
+  list. A host that is slow or offline leaves planner status unknown, never gone,
+  and never blocks editing saved settings. Add project writes `project.upsert` on Create, with a key derived from
   the name and `create: true`, which the store refuses inside its write
   transaction when the key exists, so a stale list never rewrites another
   project. It offers only repositories still in their default project, since
