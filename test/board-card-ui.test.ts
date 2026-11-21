@@ -468,9 +468,12 @@ test("the card lays out the same content at a narrow and a wide board", async ()
           tree.text().includes("Workspace archive failed"),
       );
       const label = compact ? "narrow" : "wide";
-      assert.ok(
-        tree.query(/^app, Board cards keep the title/),
-        `the ${label} card keeps its accessible label`,
+      const card = tree.query(/^app, Board cards keep the title/);
+      assert.ok(card, `the ${label} card keeps its accessible label`);
+      assert.equal(
+        emptyChipRows(card as HostNode),
+        0,
+        `the ${label} card has no empty chips row`,
       );
       assert.match(
         tree.text(),
@@ -481,11 +484,6 @@ test("the card lays out the same content at a narrow and a wide board", async ()
         tree.text(),
         /Workspace archive failed: EBUSY/,
         `the ${label} card keeps the error next action`,
-      );
-      assert.equal(
-        emptyChipRows(tree.get(/^app, Board cards keep the title/) as HostNode),
-        0,
-        `the ${label} card has no empty chips row`,
       );
     }
   } finally {
@@ -1979,11 +1977,9 @@ test("a task row keeps one status line and no host identity, while the detail ke
     );
     const tree = mounted;
     await settle(() => tree.text().includes("host-waiting"));
-    const row = tree.raw
-      .all(/.*/)
-      .find((node) =>
-        String(node.props.accessibilityLabel ?? "").includes(", host-waiting,"),
-      );
+    // Visiting every view leaves the last one open; the wrapped lookup
+    // navigates back to the card's own view first.
+    const row = tree.all(/, host-waiting,/)[0];
     assert.ok(row, "the task row is on the board");
     const text = nodeText(row as HostNode);
     assert.equal(

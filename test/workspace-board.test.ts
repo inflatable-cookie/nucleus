@@ -169,8 +169,9 @@ test("026-14c rendered: the panel resolves a workspace inside a project reposito
   // Lanes destination is folded into Planning (#866), so nothing is labelled Lanes.
   assert.equal(ui.all("Lanes").length, 0, "no Lanes switch or tab");
   assert.equal(ui.query("Drafts"), undefined);
-  for (const entry of [/^Needs you(, \d+)?$/, /^Planning$/, /^Leads(, \d+)?$/, /^Queue(, \d+)?$/, /^Active(, \d+)?$/])
+  for (const entry of [/^Needs you(, \d+)?$/, /^Planning$/, /^Leads(, \d+)?$/, /^Papercuts(, \d+)?$/, /^Queue(, \d+)?$/, /^Working(, \d+)?$/, /^In review(, \d+)?$/, /^Closing(, \d+)?$/])
     assert.ok(ui.get(entry), `the menu has ${entry}`);
+  assert.equal(ui.query(/^Active/), undefined, "no Active entry remains");
   assert.equal(ui.query(/^QA runs/), undefined, "QA runs is not a board view");
   assert.equal(
     ui.all(/^Lanes/).length,
