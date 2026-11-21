@@ -1463,15 +1463,15 @@ export class AgentMessages {
           ? { agentId: record.fromAgentId, hostId: record.fromHostId }
           : undefined,
       );
-      if (resolved.thread)
+      incomplete = Boolean(resolved.incomplete);
+      if (resolved.thread) {
         candidates.push({
           agentId: resolved.thread.agentId,
           hostId: resolved.thread.hostId,
           kind: "project",
         });
-      else {
+      } else {
         senderIsCandidate = resolved.senderIsCandidate;
-        incomplete = Boolean(resolved.incomplete);
       }
     }
     return {

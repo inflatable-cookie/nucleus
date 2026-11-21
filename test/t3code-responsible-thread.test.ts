@@ -9,6 +9,7 @@ import type { HostPolicyConstructor } from "../core/host";
 import { Engine } from "../core/engine";
 import { Store } from "../core/store/store";
 import { RuntimeRepositories } from "../core/runtime/repositories";
+import { agentAskSchema } from "../core/questions/agent-ask";
 import { agentMessageSchema } from "../core/questions/agent-messages";
 import { formatAgentId } from "../shared/agent-identity";
 import { submissionSchema, type Run } from "../shared/contracts";
@@ -150,6 +151,7 @@ async function t3Fixture(
     store,
     engine,
     repositories,
+    senderTask,
     tellProject,
   };
 }
@@ -503,4 +505,291 @@ test("transient T3 inventory failure keeps a project tell queued, recovers on sw
   await f.engine.resolution.deliverQueuedMessages();
   assert.equal(f.store.message(secondId)?.status, "expired");
   assert.equal(f.fake.commands.length, commandsBefore);
+});
+
+test("transient T3 inventory failure keeps a project ask pending and recovers, while complete absence self-handles", async (t) => {
+  const mcpId = "mcp:ask-planner-1";
+  const f = await t3Fixture(t, (fake, { deskDir }) => {
+    fake.threads.set(
+      mcpId,
+      makeProjection(mcpId, deskDir, {
+        projectId: "proj-desk",
+        title: "Ask Planner",
+        worktreePath: null,
+        creationSource: "mcp",
+        updatedAt: "2026-11-21T20:00:00.000Z",
+      }),
+    );
+  });
+  const qualified = formatAgentId(f.host.hostId, mcpId);
+  f.store.setProjectPlanner({
+    key: "example",
+    agentId: qualified,
+    setBy: "operator",
+  });
+  f.engine.resolution.agentAskPollMs = 10;
+  f.engine.resolution.agentAskWaitMs = 150;
+
+  const originalList = f.host.listLiveAgents.bind(f.host);
+  let failInventory = true;
+  f.host.listLiveAgents = async () => {
+    if (failInventory) throw new Error("transient T3 inventory read failure");
+    return originalList();
+  };
+
+  const askId = "a".repeat(64);
+  const request = agentAskSchema.parse({
+    eventId: askId,
+    taskId: f.senderTask.id,
+    runId: "sender-run",
+    to: { project: "example" },
+    question: "Should we proceed?",
+  });
+  const first = await f.engine.resolution.agentAsk(request, "sender-token");
+  assert.equal(first.status, "pending");
+  assert.equal(
+    f.store
+      .eventsAll(f.senderTask.id)
+      .some((event) => event.kind === "agent_ask_self_handle"),
+    false,
+    "transient inventory failure must not record permanent self-handling",
+  );
+  assert.ok(
+    f.store
+      .eventsAll(f.senderTask.id)
+      .some((event) => event.kind === "agent_ask_host_wait"),
+    "transient inventory failure must record host wait for recovery",
+  );
+  assert.equal(
+    f.fake.commands.filter((cmd) => cmd.type === "message.dispatch").length,
+    0,
+  );
+
+  // Once inventory recovers, resuming pending asks routes that same ask to the live planner.
+  failInventory = false;
+  await f.engine.resolution.resumeAskQuestions();
+  const deadline = Date.now() + 2_000;
+  while (
+    Date.now() < deadline &&
+    !f.fake.commands.some(
+      (cmd) => cmd.type === "message.dispatch" && cmd.threadId === mcpId,
+    )
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(
+    f.fake.commands.some(
+      (cmd) => cmd.type === "message.dispatch" && cmd.threadId === mcpId,
+    ),
+    "expected resumed ask to dispatch to the live MCP planner",
+  );
+
+  // When a complete inventory proves absence, a new ask still records self-handling.
+  f.fake.threads.get(mcpId)!.thread.archivedAt = "2026-11-21T21:00:00.000Z";
+  f.engine.resolution.responsibleThreads.cache.invalidate("example");
+  const absentAsk = agentAskSchema.parse({
+    eventId: "b".repeat(64),
+    taskId: f.senderTask.id,
+    runId: "sender-run",
+    to: { project: "example" },
+    question: "Anyone live?",
+  });
+  const second = await f.engine.resolution.agentAsk(absentAsk, "sender-token");
+  assert.equal(second.status, "pending");
+  assert.match(
+    "detail" in second ? second.detail : "",
+    /No live responsible thread for example; handle it yourself/,
+  );
+  assert.ok(
+    f.store
+      .eventsAll(f.senderTask.id)
+      .some(
+        (event) =>
+          event.kind === "agent_ask_self_handle" &&
+          event.detail.startsWith(`${second.askId}:`),
+      ),
+  );
+});
+
+test("project tell stays queued when a surviving host fallback is archived before send while the planner host inventory failed", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "nucleus-t3-two-host-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const repoDir = join(dir, "repo");
+  const deskDir = join(dir, "planning-desk");
+  mkdirSync(repoDir, { recursive: true });
+  mkdirSync(deskDir, { recursive: true });
+
+  const plannerId = "mcp:primary-planner";
+  const fallbackId = "mcp:fallback-worker";
+
+  const fakeA = await t3Fake(t, repoDir);
+  fakeA.controls.environmentId = "t3-host-a";
+  fakeA.projects.push({
+    id: "proj-desk",
+    title: "Planning Desk",
+    workspaceRoot: deskDir,
+  });
+  fakeA.threads.clear();
+  fakeA.threads.set(
+    plannerId,
+    makeProjection(plannerId, deskDir, {
+      projectId: "proj-desk",
+      title: "Primary Planner",
+      worktreePath: null,
+      creationSource: "mcp",
+      updatedAt: "2026-11-21T20:00:00.000Z",
+    }),
+  );
+
+  const fakeB = await t3Fake(t, repoDir);
+  fakeB.controls.environmentId = "t3-host-b";
+  fakeB.threads.clear();
+  fakeB.threads.set(
+    fallbackId,
+    makeProjection(fallbackId, repoDir, {
+      projectId: "synthetic-project",
+      title: "Fallback Repo Thread",
+      worktreePath: null,
+      updatedAt: "2026-11-21T19:00:00.000Z",
+    }),
+  );
+
+  const hostA = createHost({
+    endpoint: fakeA.endpoint,
+    bearer: "synthetic-bearer",
+    statePath: join(dir, "t3code-a.json"),
+  });
+  const hostB = createHost({
+    endpoint: fakeB.endpoint,
+    bearer: "synthetic-bearer",
+    statePath: join(dir, "t3code-b.json"),
+  });
+  await hostA.connect();
+  await hostB.connect();
+  t.after(() => {
+    hostA.close();
+    hostB.close();
+  });
+
+  const adapterA = createAdapter(Policy, hostA);
+  const adapterB = createAdapter(Policy, hostB);
+  const store = new Store(":memory:");
+  store.setMeta("paused", false);
+  t.after(() => store.close());
+
+  const engine = new Engine(store, adapterA, 0);
+  engine.hostIds = () => [hostA.hostId, hostB.hostId];
+  engine.resolveHostAdapter = (id) =>
+    id === hostA.hostId ? adapterA : id === hostB.hostId ? adapterB : undefined;
+  engine.identifyOriginHost = async (agentId) =>
+    agentId.includes(hostB.hostId) ? hostB.hostId : hostA.hostId;
+
+  store.upsertProject({
+    key: "example",
+    name: "Example",
+    repositories: [{ origin: "synthetic/example", path: repoDir }],
+  });
+  const plannerQualified = formatAgentId(hostA.hostId, plannerId);
+  store.setProjectPlanner({
+    key: "example",
+    agentId: plannerQualified,
+    setBy: "operator",
+  });
+
+  const senderTask = store.insert(
+    submissionSchema.parse({
+      submissionId: "two-host-sender",
+      title: "Sender",
+      repoPath: repoDir,
+      planningCommit: BASE_SHA,
+      brief: { text: "Sender brief" },
+      originAgentId: formatAgentId(hostA.hostId, "other-sender"),
+    }),
+    hostA.hostId,
+    "brief",
+    BASE_SHA,
+  );
+  store.update(senderTask.id, {
+    phase: "working",
+    runId: "sender-run",
+    agentId: "sender-worker",
+    workspaceId: "ws-sender",
+  });
+  store.putRun({
+    id: "sender-run",
+    taskId: senderTask.id,
+    role: "revision",
+    generation: 1,
+    head: BASE_SHA,
+    agentId: "sender-worker",
+    hostId: hostA.hostId,
+    workspaceId: "ws-sender",
+    status: "running",
+    createdAt: STAMP,
+    lastObservedAt: null,
+    active: true,
+    idleSince: null,
+    completion: null,
+    released: false,
+  } as unknown as Run);
+  store.update(senderTask.id, {
+    resolution: {
+      ...store.task(senderTask.id).resolution,
+      currentRunId: "sender-run",
+    },
+  });
+  store.setCredential("sender-run", "sender-token");
+
+  // Host A's inventory fails transiently; Host B's fallback is archived between
+  // shortlist observation and the pre-send delivery check.
+  const originalListA = hostA.listLiveAgents.bind(hostA);
+  let failHostA = true;
+  hostA.listLiveAgents = async () => {
+    if (failHostA) throw new Error("transient host A inventory failure");
+    return originalListA();
+  };
+  const originalOriginB = hostB.originAgent.bind(hostB);
+  let fallbackReads = 0;
+  hostB.originAgent = async (id: string) => {
+    const result = await originalOriginB(id);
+    if (id === fallbackId) {
+      fallbackReads++;
+      if (fallbackReads === 1) {
+        // Archive the fallback right after shortlist observation succeeds,
+        // before deliverThreadMessage's pre-send liveThreadHost check runs.
+        fakeB.threads.get(fallbackId)!.thread.archivedAt =
+          "2026-11-21T21:00:00.000Z";
+      }
+    }
+    return result;
+  };
+
+  const messageId = "c".repeat(64);
+  const receipt = await engine.resolution.agentMessage(
+    agentMessageSchema.parse({
+      eventId: messageId,
+      taskId: senderTask.id,
+      runId: "sender-run",
+      to: { project: "example" },
+      text: "hello across hosts",
+    }),
+    "sender-token",
+  );
+  assert.equal(receipt.status, "queued");
+  assert.equal(store.message(messageId)?.status, "queued");
+  assert.equal(
+    fakeB.commands.filter((cmd) => cmd.type === "message.dispatch").length,
+    0,
+    "archived fallback must never be revived",
+  );
+
+  // Once Host A recovers, sweep delivers the same queued tell to the registered planner.
+  failHostA = false;
+  await engine.resolution.deliverQueuedMessages();
+  assert.equal(store.message(messageId)?.status, "delivered");
+  assert.ok(
+    fakeA.commands.some(
+      (cmd) => cmd.type === "message.dispatch" && cmd.threadId === plannerId,
+    ),
+  );
 });
