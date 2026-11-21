@@ -3870,8 +3870,9 @@ after the task finishes.
 - The participant wait says which of the two it is. The grace window and a
   participant that resumed during it are timed waits that clear on their own
   (`lifecycle`). What the grace and the reap cannot answer — an unreadable
-  listing, an unrecorded root, a live Paseo-owned process, or a proof that still
-  refuses after its tree was proved empty — is a recorded `operator_needed` stop
+  listing, an unrecorded root, a live protected host-runtime process, or a proof
+  that still refuses after its tree was proved empty — is a recorded
+  `operator_needed` stop
   whose exit is `retry_effect` on the `owned_tool.<runId>` occurrence, so a merge
   that cannot settle its own participant is visible instead of waiting forever.
 

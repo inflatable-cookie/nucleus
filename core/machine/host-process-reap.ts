@@ -18,11 +18,9 @@ import { processStartIdentityLiveness } from "./process-identity-search";
 import { pidAlive } from "./pid";
 import { now, type Store } from "../store/store";
 import type { Task } from "../../shared/contracts";
-import { readHostUidProcesses } from "./host-process-listing";
 import { possibleParticipantRuntimePids } from "./owned-tool-process-proof";
 import {
   isGroupBirthIdentity,
-  paseoProcessOwnership,
   provenRecordedPgidsAsync,
   protectedHostPids,
   queueProcessGroupId,
@@ -36,16 +34,27 @@ import {
 export const HOST_PROCESS_SWEEP_KIND = "host_process_sweep";
 export const HOST_PROCESS_SWEEP_WARNING_KIND = "host_process_sweep_warning";
 export const HOST_PROCESS_SWEEP_SETTLED_KIND = "host_process_sweep_settled";
+/** A sweep skipped processes the host adapter marks as its protected runtime. */
+export const HOST_PROCESS_SWEEP_PROTECTED_SKIPPED_KIND =
+  "host_process_sweep_protected_skipped";
+/**
+ * The kind written before the protected-runtime rename. Older tasks keep this
+ * event in their history, so it still counts as a recorded skip.
+ */
 export const HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND =
   "host_process_sweep_paseo_skipped";
+const HOST_PROCESS_SWEEP_SKIPPED_KINDS: readonly string[] = [
+  HOST_PROCESS_SWEEP_PROTECTED_SKIPPED_KIND,
+  HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND,
+];
 /** Short grace after SIGTERM before SIGKILL. Archive and recovery must not wait on a 30s hook grace. */
 export const HOST_PROCESS_SWEEP_GRACE_MS = 1_500;
 
 export interface HostProcessSweepResult {
   terminated: HostProcessTarget[];
   failed: Array<HostProcessTarget & { reason: string }>;
-  /** Paseo-owned targets that matched the sweep scope and were deliberately skipped. */
-  skippedPaseo: HostProcessTarget[];
+  /** Protected host-runtime targets that matched the sweep scope and were deliberately skipped. */
+  skippedProtected: HostProcessTarget[];
   /**
    * Why the sweep could not read what it needed, or null when it did. An
    * unreadable table or cwd column proves nothing about the host, so nothing is
@@ -65,13 +74,14 @@ export interface HostProcessSweepOptions {
   directory?: string | null;
   recordedGroups?: RecordedProcessGroup[];
   protectedPids?: Iterable<number>;
-  /** Test seam; production reads ~/.paseo/paseo.pid. */
-  paseoDaemonPid?: number | null;
   /** Run even before the task is terminal (disposition archive). */
   force?: boolean;
   /** Test seam: substitute the host process table. */
   processes?: HostProcessFact[] | null;
-  /** Optional scoped reader, evaluated only when a sweep needs a listing. */
+  /**
+   * The adapter's process listing, with its protected runtime marked. Required:
+   * a sweep without one proves nothing and stops nothing.
+   */
   readProcesses?: () => Promise<HostProcessFact[] | null>;
   /** Test seam: override start-identity liveness between discovery and signal. */
   identityLiveness?: (
@@ -85,7 +95,7 @@ const noSweep = (
 ): HostProcessSweepResult => ({
   terminated: [],
   failed: [],
-  skippedPaseo: [],
+  skippedProtected: [],
   unavailable,
 });
 
@@ -139,8 +149,10 @@ export async function terminateHostProcessTargets(
   targets: HostProcessTarget[],
   options: Pick<HostProcessSweepOptions, "graceMs" | "identityLiveness"> & {
     recordedGroups?: RecordedProcessGroup[];
-    paseoPids?: Iterable<number>;
-    paseoPgids?: Iterable<number>;
+    /** Processes the host adapter marked as its protected runtime; never signalled. */
+    protectedPids?: Iterable<number>;
+    /** Process groups that must never be group-signalled. */
+    protectedPgids?: Iterable<number>;
     /**
      * The process table the caller already holds. A recorded `pid@time` group
      * identity is then proved from that table instead of a synchronous `ps` per
@@ -154,13 +166,13 @@ export async function terminateHostProcessTargets(
   const queuePgid = queueProcessGroupId();
   const recordedGroups = options.recordedGroups ?? [];
   const processTable = options.processes ?? undefined;
-  const paseoPids = new Set(options.paseoPids ?? []);
-  const paseoPgids = new Set(options.paseoPgids ?? []);
+  const protectedPids = new Set(options.protectedPids ?? []);
+  const protectedPgids = new Set(options.protectedPgids ?? []);
   const provenPgids = await provenRecordedPgidsAsync(
     recordedGroups,
     queuePgid,
     processTable,
-    paseoPgids,
+    protectedPgids,
   );
   const terminated: HostProcessTarget[] = [];
   const failed: Array<HostProcessTarget & { reason: string }> = [];
@@ -179,11 +191,11 @@ export async function terminateHostProcessTargets(
   }
 
   for (const target of targets) {
-    if (paseoPids.has(target.pid)) continue;
+    if (protectedPids.has(target.pid)) continue;
     if (
       target.via === "pgid" &&
       !provenPgids.has(target.pgid) &&
-      !paseoPgids.has(target.pgid)
+      !protectedPgids.has(target.pgid)
     ) {
       failed.push({
         ...target,
@@ -229,7 +241,7 @@ export async function terminateHostProcessTargets(
   for (const group of recordedGroups) {
     if (
       !provenPgids.has(group.pgid) ||
-      paseoPgids.has(group.pgid) ||
+      protectedPgids.has(group.pgid) ||
       !isGroupBirthIdentity(group.startIdentity)
     )
       continue;
@@ -239,7 +251,7 @@ export async function terminateHostProcessTargets(
     await signalProcessGroupAsync(group.pgid, group.startIdentity, "SIGKILL");
   }
   for (const target of terminated) {
-    if (paseoPids.has(target.pid)) continue;
+    if (protectedPids.has(target.pid)) continue;
     if (!pidAlive(target.pid)) continue;
     if (liveness(target.pid, target.startIdentity) !== "alive") continue;
     signalPid(target.pid, target.startIdentity, "SIGKILL", liveness);
@@ -253,7 +265,7 @@ export async function terminateHostProcessTargets(
   const stillLive: Array<HostProcessTarget & { reason: string }> = [];
   const gone: HostProcessTarget[] = [];
   for (const target of terminated) {
-    if (paseoPids.has(target.pid)) continue;
+    if (protectedPids.has(target.pid)) continue;
     if (!pidAlive(target.pid)) gone.push(target);
     else if (liveness(target.pid, target.startIdentity) === "alive")
       stillLive.push({ ...target, reason: "still running after SIGKILL" });
@@ -262,7 +274,7 @@ export async function terminateHostProcessTargets(
   return {
     terminated: gone,
     failed: [...failed, ...stillLive],
-    skippedPaseo: [],
+    skippedProtected: [],
   };
 }
 
@@ -270,7 +282,6 @@ export async function reapHostProcesses(input: {
   directory?: string | null;
   recordedGroups?: RecordedProcessGroup[];
   protectedPids?: Iterable<number>;
-  paseoDaemonPid?: number | null;
   processes?: HostProcessFact[] | null;
   readProcesses?: () => Promise<HostProcessFact[] | null>;
   graceMs?: number;
@@ -288,17 +299,18 @@ export async function reapHostProcesses(input: {
   if (!worktree && !recorded.length) return noSweep();
   let processes: HostProcessFact[] | null;
   if (input.processes === undefined) {
-    if (input.readProcesses) {
-      try {
-        processes = await input.readProcesses();
-      } catch {
-        processes = null;
-      }
-    } else {
-      const read = await readHostUidProcesses();
-      if (read.state === "unknown")
-        return noSweep({ read: "process-listing", reason: read.reason });
-      processes = read.processes;
+    // The table comes from the host adapter, which marks its own runtime on it.
+    // Core never reads the table itself: an unmarked read would leave the
+    // host's daemon unprotected, so without a listing the sweep is unknown.
+    if (!input.readProcesses)
+      return noSweep({
+        read: "process-listing",
+        reason: "the host adapter supplied no process listing",
+      });
+    try {
+      processes = await input.readProcesses();
+    } catch {
+      processes = null;
     }
   } else processes = input.processes;
   if (!processes)
@@ -315,35 +327,39 @@ export async function reapHostProcesses(input: {
       read: "cwd-listing",
       reason: "no process in the host listing has a readable cwd",
     });
-  const paseo = paseoProcessOwnership(processes, input.paseoDaemonPid);
+  const runtimePids = processes
+    .filter((fact) => fact.protectedRuntime)
+    .map((fact) => fact.pid);
   const protectedPids = protectedHostPids([
     ...(input.protectedPids ?? []),
-    ...paseo.pids,
+    ...runtimePids,
     ...possibleParticipantRuntimePids(processes),
   ]);
-  const protectedPgids = new Set([
-    ...paseo.pgids,
-    ...processes
-      .filter((fact) => protectedPids.has(fact.pid))
+  const protectedPgids = new Set(
+    processes
+      .filter((fact) => fact.protectedRuntime || protectedPids.has(fact.pid))
       .map((fact) => fact.pgid),
-  ]);
+  );
   const selection = selectHostProcessTargetsAndSkips({
     processes,
     worktree,
     recordedGroups: recorded,
     protectedPids,
     queuePgid: queueProcessGroupId(),
-    paseo,
   });
   const result = await terminateHostProcessTargets(selection.targets, {
     graceMs: input.graceMs,
     identityLiveness: input.identityLiveness,
     recordedGroups: recorded,
-    paseoPids: paseo.pids,
-    paseoPgids: protectedPgids,
+    protectedPids: runtimePids,
+    protectedPgids,
     processes,
   });
-  return { ...result, skippedPaseo: selection.skippedPaseo, unavailable: null };
+  return {
+    ...result,
+    skippedProtected: selection.skippedProtected,
+    unavailable: null,
+  };
 }
 
 export function hostProcessSweepIntent(phase: "done" | "cancelled"): {
@@ -376,7 +392,6 @@ export async function sweepTaskHostProcesses(
       directory,
       recordedGroups,
       protectedPids: options.protectedPids,
-      paseoDaemonPid: options.paseoDaemonPid,
       processes: options.processes,
       readProcesses: options.readProcesses,
       graceMs: options.graceMs,
@@ -403,15 +418,15 @@ export async function sweepTaskHostProcesses(
     return result;
   }
   if (
-    result.skippedPaseo.length &&
+    result.skippedProtected.length &&
     !store
       .eventsAll(latest.id)
-      .some((event) => event.kind === HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND)
+      .some((event) => HOST_PROCESS_SWEEP_SKIPPED_KINDS.includes(event.kind))
   ) {
     store.event(
       latest.id,
-      HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND,
-      `Skipped ${result.skippedPaseo.length} Paseo-owned process${result.skippedPaseo.length === 1 ? "" : "es"}: ${result.skippedPaseo.map(formatTarget).join("; ")}`,
+      HOST_PROCESS_SWEEP_PROTECTED_SKIPPED_KIND,
+      `Skipped ${result.skippedProtected.length} protected host-runtime process${result.skippedProtected.length === 1 ? "" : "es"}: ${result.skippedProtected.map(formatTarget).join("; ")}`,
     );
   }
   const found = result.terminated.length > 0 || result.failed.length > 0;

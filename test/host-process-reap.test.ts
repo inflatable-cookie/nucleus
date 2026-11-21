@@ -25,6 +25,7 @@ import {
   HOST_PROCESS_SWEEP_KIND,
   HOST_PROCESS_SWEEP_SETTLED_KIND,
   HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND,
+  HOST_PROCESS_SWEEP_PROTECTED_SKIPPED_KIND,
   formatHostProcessSweepEvent,
   hostProcessSweepIntent,
   reapHostProcesses,
@@ -36,6 +37,7 @@ import {
   type HostProcessTarget,
 } from "../core/machine/host-process-select";
 import { readProcessSubset } from "../core/machine/host-process-listing";
+import { markPaseoRuntime } from "../hosts/paseo/adapter/protected-runtime";
 import {
   ownedToolAgentProcessTreeVerdict,
   ownedToolProcessTreeVerdict,
@@ -1048,7 +1050,7 @@ function fact(
   };
 }
 
-test("selectHostProcessTargets keeps worktree cwd and recorded pgids, and skips Queue, Paseo and outsiders", () => {
+test("selectHostProcessTargets keeps worktree cwd and recorded pgids, and skips Queue, marked runtime and outsiders", () => {
   const worktree = "/tmp/ns-reap-worktree";
   const queue = fact({
     pid: process.pid,
@@ -1081,10 +1083,11 @@ test("selectHostProcessTargets keeps worktree cwd and recorded pgids, and skips 
     cwd: "/tmp/unrelated",
     command: "node leftover.mjs",
   });
-  const paseo = fact({
+  const runtime = fact({
     pid: 71006,
     cwd: worktree,
     command: "/Applications/Paseo.app/Contents/MacOS/Paseo",
+    protectedRuntime: true,
   });
   const staleGroup = fact({
     pid: 71007,
@@ -1100,7 +1103,7 @@ test("selectHostProcessTargets keeps worktree cwd and recorded pgids, and skips 
       outsider,
       sibling,
       grouped,
-      paseo,
+      runtime,
       staleGroup,
     ],
     worktree,
@@ -1222,20 +1225,59 @@ test("a resumed agent child of the Paseo daemon survives and is logged once", as
   const task = insertTerminal(store, worktree, "done");
   const options = {
     graceMs: GRACE_MS,
-    paseoDaemonPid: daemon.pid,
-    processes: await fixtureFacts([daemon.pid!, agentPid]),
+    processes: markPaseoRuntime(
+      await fixtureFacts([daemon.pid!, agentPid]),
+      daemon.pid,
+    ),
   };
   const result = await sweepTaskHostProcesses(store, task, options);
   assert.equal(pidAlive(agentPid), true);
-  assert.ok(result.skippedPaseo.some((target) => target.pid === agentPid));
+  assert.ok(result.skippedProtected.some((target) => target.pid === agentPid));
   assert.equal(result.failed.length, 0);
   await sweepTaskHostProcesses(store, task, options);
   const skippedEvents = store
     .eventsAll(task.id)
-    .filter((event) => event.kind === HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND);
+    .filter((event) => event.kind === HOST_PROCESS_SWEEP_PROTECTED_SKIPPED_KIND);
   assert.equal(skippedEvents.length, 1);
   assert.match(skippedEvents[0]!.detail, new RegExp(`pid=${agentPid}`));
-  assert.equal(skippedEvents[0]!.kind, HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND);
+  assert.equal(skippedEvents[0]!.kind, HOST_PROCESS_SWEEP_PROTECTED_SKIPPED_KIND);
+});
+
+test("a legacy paseo-skipped event still answers for the protected skip", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "nsq-reap-legacy-kind-"));
+  const worktree = join(root, "task");
+  await mkdir(worktree);
+  const storeDir = await mkdtemp(join(tmpdir(), "nsq-reap-legacy-kind-store-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(storeDir, { recursive: true, force: true }));
+  const store = new Store(join(storeDir, "queue.sqlite"));
+  t.after(() => store.close());
+  const task = insertTerminal(store, worktree, "done");
+  // Written before the protected-runtime rename: the same skip, under the old kind.
+  store.event(
+    task.id,
+    HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND,
+    "Skipped 1 Paseo-owned process: pid=4100070",
+  );
+  const result = await sweepTaskHostProcesses(store, task, {
+    graceMs: GRACE_MS,
+    processes: [
+      fact({
+        pid: 4100070,
+        cwd: worktree,
+        command: "node agent.mjs",
+        protectedRuntime: true,
+      }),
+    ],
+  });
+  assert.equal(result.skippedProtected.length, 1);
+  assert.equal(
+    store
+      .eventsAll(task.id)
+      .filter((event) => event.kind === HOST_PROCESS_SWEEP_PROTECTED_SKIPPED_KIND)
+      .length,
+    0,
+  );
 });
 
 test("an orphaned worktree keepalive is terminated", async (t) => {
@@ -1269,7 +1311,6 @@ test("an orphaned worktree keepalive is terminated", async (t) => {
   const result = await reapHostProcesses({
     directory: worktree,
     graceMs: GRACE_MS,
-    paseoDaemonPid: null,
     processes: await fixtureFacts([orphanPid]),
   });
   await waitFor(() => !pidAlive(orphanPid), 2_000, "orphan keepalive exit");
@@ -1288,8 +1329,7 @@ test("a recorded hook group equal to the Paseo daemon group is never group-signa
   const result = await reapHostProcesses({
     directory: null,
     graceMs: GRACE_MS,
-    paseoDaemonPid: daemon.pid,
-    processes: await fixtureFacts([daemon.pid!]),
+    processes: markPaseoRuntime(await fixtureFacts([daemon.pid!]), daemon.pid),
     recordedGroups: [
       {
         pgid: daemon.pid!,

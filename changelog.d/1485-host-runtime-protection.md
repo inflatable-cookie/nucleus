@@ -1,0 +1,1 @@
+Host-process cleanup no longer names Paseo in shared code. The Paseo adapter marks its own daemon, processes and process group on the table it supplies, and a missing or unreadable daemon pid file is fenced rather than guessed at. Sweeps stop nothing they cannot attribute, and a task that already recorded the earlier Paseo skip event does not record another.

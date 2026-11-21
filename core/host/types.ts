@@ -92,6 +92,13 @@ export interface HostProcessFact {
   bbThreadId?: string | null;
   /** The executable resolves to the installed Cua Driver, not a workspace copy. */
   trustedCuaExecutable?: boolean;
+  /**
+   * The host adapter that read this table marks a process as its own runtime: the
+   * host's daemon, the processes under it and its process group. Shared cleanup
+   * never selects a marked process or signals its group; it reports the skip.
+   * Core never decides this from a command name.
+   */
+  protectedRuntime?: boolean;
 }
 
 /**

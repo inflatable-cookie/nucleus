@@ -81,9 +81,18 @@ export class MachinePorts {
 
   hostLoad() { return { load: loadavg()[0], cpus: cpus().length }; }
   worktreeValidation(directory: string, extraArgv: string[][]): WorktreeValidationScan { return findWorktreeValidation(directory, extraArgv); }
-  /** Complete host process table for proofs rooted in a Queue-launched provider. */
+  /**
+   * Complete host process table for proofs rooted in a Queue-launched provider.
+   * An adapter that protects its own runtime overrides this and marks it
+   * (`HostProcessFact.protectedRuntime`) before the table reaches a sweep.
+   */
   async hostProcessListing(): Promise<HostProcessFact[] | null> {
-    const read = await readHostUidProcesses();
-    return read.state === "listed" ? read.processes : null;
+    return readHostProcessTable();
   }
+}
+
+/** The host's uid-scoped process table, or null when the read is unknown. */
+export async function readHostProcessTable(): Promise<HostProcessFact[] | null> {
+  const read = await readHostUidProcesses();
+  return read.state === "listed" ? read.processes : null;
 }

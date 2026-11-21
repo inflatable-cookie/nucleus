@@ -18,6 +18,9 @@ import type {
   WorkspaceCreationState,
 } from "../../../core/host";
 import { capPaseoTitle } from "./titles";
+import { paseoRuntimeListing, readPaseoDaemonPid } from "./protected-runtime";
+import { readHostProcessTable } from "../../../core/machine/machine-ports";
+import type { HostProcessFact } from "../../../core/host/types";
 import { mcpBindingPathFromHostRecord } from "../../../shared/report-binding";
 import { timedDaemonRequests } from "./paseo-call-timing";
 import { paseoWorkspaceIdAccepted } from "./workspace-id";
@@ -748,6 +751,13 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
       }
       return observations;
     }
+    /**
+     * The host process table with Paseo's own runtime marked. A pid file that
+     * exists but cannot name the daemon is ambiguous, so the listing is null and
+     * every sweep that needs it stays fenced.
+     */
+    hostProcessListing = async (): Promise<HostProcessFact[] | null> =>
+      paseoRuntimeListing(await readHostProcessTable(), readPaseoDaemonPid());
     async observe(id: string): Promise<AgentObservation> {
       const agent = this.api.agents.ref(id);
       if (!(await agent.refresh())) throw new Error("Agent was not found");

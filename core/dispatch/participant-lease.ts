@@ -25,7 +25,7 @@ export class ParticipantLease {
    * The grace window is a timed retry: it ends by itself and a conclusive read is
    * taken then. The host-process reap is the automatic settlement. What survives
    * both is a fact no pass in this lane can change — an unreadable listing, an
-   * unrecorded root, a live Paseo-owned process, or a proof that still refuses
+   * unrecorded root, a live protected host-runtime process, or a proof that still refuses
    * after its tree was proved empty — so it is the owner's, not a quiet wait. A
    * participant that resumed during the grace is live again, which is transient.
    */
@@ -67,8 +67,8 @@ export class ParticipantLease {
     }
     if (result.unavailable) return { issue: `${issue}; host-process reap could not read the host: ${result.unavailable.reason}`, needsOwner: true };
     if (result.failed.length) return { issue: `${issue}; host-process reap could not prove or stop every target: ${result.failed.map(target => target.reason).join('; ')}`, needsOwner: true };
-    if (result.skippedPaseo.length) {
-      const skipped = `Skipped ${result.skippedPaseo.length} Paseo-owned process${result.skippedPaseo.length === 1 ? '' : 'es'}: ${result.skippedPaseo.map(target => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || '-'} command=${target.command || '-'}`).join('; ')}`;
+    if (result.skippedProtected.length) {
+      const skipped = `Skipped ${result.skippedProtected.length} protected host-runtime process${result.skippedProtected.length === 1 ? '' : 'es'}: ${result.skippedProtected.map(target => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || '-'} command=${target.command || '-'}`).join('; ')}`;
       this.store.event(t.id, 'participant_tool_reap_skipped', skipped);
       return { issue: `${issue}; host-process reap ${skipped}`, needsOwner: true };
     }
