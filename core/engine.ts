@@ -290,6 +290,7 @@ export class Engine {
         "launchProofOnly",
         "note",
         "noteStepFailure",
+        "observeOwnerStop",
         "preferredHostKindsForTask",
         "prerequisiteWaitYieldsToLiveWork",
         "profileCatalogKnown",
@@ -2651,8 +2652,14 @@ export class Engine {
   scheduleDecisionNotices(): Promise<void> {
     return this.decisionNotices.schedule();
   }
-  stopTask(input: TaskControlInput): Promise<Task> {
-    return this.ownerStop.stopTask(input);
+  stopTask(input: TaskControlInput, operationId?: string): Promise<Task> {
+    return this.ownerStop.stopTask(input, operationId);
+  }
+  resumeOwnerStop(input: TaskControlInput, operationId: string): Promise<Task> {
+    return this.ownerStop.resumeOwnerStop(input, operationId);
+  }
+  observeOwnerStop(taskId: string): Promise<Task | null> {
+    return this.ownerStop.observeOwnerStop(taskId);
   }
 
   stopActiveThreads(
@@ -3168,6 +3175,7 @@ export class Engine {
     settleable: Run[];
     fenced: { run: Run; why: string }[];
     live: Run[];
+    observations: Map<string, Awaited<ReturnType<Adapter["observe"]>>>;
   }> {
     return this.verbFences.collectVerbFinishedRuns(taskId, isSubject, options);
   }
@@ -3191,8 +3199,14 @@ export class Engine {
   ): void {
     this.verbFences.assertUnchangedBeforeCancel(taskId, version, runs);
   }
+  observeRunDisposition(run: Run) {
+    return this.verbFences.observeRunDisposition(run);
+  }
   runDisposition(run: Run): Promise<"settle" | "cancel" | { refusal: string }> {
     return this.verbFences.runDisposition(run);
+  }
+  displacedRunObservation(run: Run) {
+    return this.verbFences.displacedRunObservation(run);
   }
   displacedRunBusy(run: Run): Promise<boolean> {
     return this.verbFences.displacedRunBusy(run);

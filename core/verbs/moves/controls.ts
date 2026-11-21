@@ -5,6 +5,7 @@ import { verifyEnclosingOperation, type VerifiedEnclosingOperation } from "../..
 import { now } from "../../store/store";
 import { workspaceDiscardKey, type WorkspaceDiscard } from "../../workspaces/orphan-worktree";
 import { RETAINED_PREREQUISITE_REFUSAL } from "../verb-refusal-text";
+import { ownerStopPendingRefusal } from "../owner-stop";
 import { moveToCloseout, type CloseoutMoveInput } from "./closeout";
 import { reconcileRetainedExternalMerge, reconcileReviewEntryExternalMerge, type ExternalMergeInput } from "./external-merge";
 import { moveToMerge, type MergeMoveInput } from "./merge";
@@ -46,6 +47,8 @@ export class MoveControls {
   async applyTaskControlMove(input: TaskControlInput, operated: <T>(result: T) => T, operationId?: string): Promise<Task> {
     const store = this.engine.store;
     const before = store.task(input.taskId);
+    if (before.resolution.ownerStop)
+      throw new DurableFenceRefusal(ownerStopPendingRefusal(before.resolution.ownerStop));
     const eventCount = store.eventsAll(input.taskId).length;
     // Task 404: the one authenticated durable invocation executing this move is
     // re-proved from the stored operation at every boundary that reads the

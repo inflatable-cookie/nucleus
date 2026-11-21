@@ -694,7 +694,7 @@ export class BbThreads {
       throw error;
     }
   }
-  async stopAgentTurn(id: string) {
+  async stopAgentTurn(id: string, expectedTurnId?: string) {
     const row = await this.read<BbRow>("thread.observe", { threadId: id });
     const observation = this.observation(row);
     if (!observation.active) {
@@ -709,7 +709,12 @@ export class BbThreads {
       this.ports.save(state);
       return;
     }
-    const key = `stop:${id}:${row.updatedAt}`;
+    if (expectedTurnId !== undefined && observation.activeTurnId !== expectedTurnId) {
+      throw new ProvenPreSendRefusalError(
+        `Intended turn ${expectedTurnId} ended or changed to ${observation.activeTurnId ?? "unknown"}; refusing to stop newer turn`,
+      );
+    }
+    const key = `stop:${id}:${expectedTurnId ?? row.updatedAt}`;
     if (
       Object.entries(this.ports.state().writes).some(
         ([key, intent]) =>

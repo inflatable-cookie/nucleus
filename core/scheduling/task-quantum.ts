@@ -54,6 +54,7 @@ export type TaskQuantumContext = Pick<
   | "launchProofOnly"
   | "note"
   | "noteStepFailure"
+  | "observeOwnerStop"
   | "preferredHostKindsForTask"
   | "prerequisiteWaitYieldsToLiveWork"
   | "profileCatalogKnown"
@@ -280,6 +281,10 @@ export class TaskQuantum {
           quantum.pausedForPrerequisiteWait = true;
           return;
         }
+      }
+      if (task.resolution.ownerStop) {
+        await this.context.observeOwnerStop(task.id);
+        task = this.context.store.task(taskId);
       }
       // Spec 046: a self-lifting hold ends by itself once its condition is met, before
       // anything in this pass acts on the held task. Re-read so the pass sees the release.

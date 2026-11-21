@@ -86,7 +86,7 @@ export function forceMovePatch(f: {
     resolution: { ...settled.resolution, ownerSettlements: [...settled.resolution.ownerSettlements, ...records],
       ownerAcceptances: acceptances,
       forcedChecks: [...settled.resolution.forcedChecks, ...(forcedChecks.length ? [{head: observedHead!, runId: selfForceRunId!, reason, checks: forcedChecks}] : [])],
-      currentRunId: null, stop: null, attention: false, recoveryActive: false, integrationTurn: null,
+      currentRunId: null, stop: null, ownerStop: null, attention: false, recoveryActive: false, integrationTurn: null,
       ownerCloseoutParticipants: input.to === 'closeout' ? [...participants].map(([agentId, workspaceId]) => ({ agentId, workspaceId })) : [],
       ...(input.to === 'work' ? { pendingWorkerInstruction: input.instruction?.trim() || reason } : {}),
       ...(input.to === 'review' ? { review: null, pendingReviewReason: reason } : {}),

@@ -502,8 +502,10 @@ export function composeBbAdapter(input: {
         labels: observation.labels,
       };
     }
-    stopAgentTurn(id: string) {
-      return threads.stopAgentTurn(id);
+    stopAgentTurn(id: string, expectedTurnId?: string) {
+      return expectedTurnId !== undefined
+        ? threads.stopAgentTurn(id, expectedTurnId)
+        : threads.stopAgentTurn(id);
     }
     archiveAgent(id: string) {
       // A refusal the adapter or the plugin proves before its write is a not-delivered

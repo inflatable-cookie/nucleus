@@ -97,7 +97,7 @@ export interface Host {
     id: AgentId,
     limit?: number,
   ): Promise<HostTimelineEntry[] | null>;
-  stopAgentTurn(id: AgentId): Promise<void>;
+  stopAgentTurn(id: AgentId, expectedTurnId?: string): Promise<void>;
   archiveAgent(id: AgentId): Promise<void>;
   /**
    * Permanently remove one thread (T3Code, nucleus#1155). Optional: a host that

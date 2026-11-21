@@ -407,6 +407,8 @@ export class Sweep {
     );
     for (const task of this.engine.store.dueHoldTasks())
       byId.set(task.id, task);
+    for (const task of this.engine.store.tasks())
+      if (task.resolution.ownerStop && !task.removedAt) byId.set(task.id, task);
     const order = [...byId.values()].reverse();
     this.engine.sweepStats.tasks = order.length;
     return order;

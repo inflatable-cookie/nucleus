@@ -55,6 +55,7 @@ import {
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { now, operationIdForKey, operationInputHash } from "../store/store";
 import { hostIndependentControlRefusal } from "../host/host-independent-refusals";
+import { stopControlNeedsHost } from "../verbs/owner-stop";
 
 /** One removal payload shape, shared by refusal and execution. */
 const taskRemoveOperationPayloadSchema = z
@@ -601,8 +602,9 @@ export class Operations {
       (!pending.preSendBoundaryStartedAt ||
         (pending.kind === "task_control" &&
           pending.effect?.kind === "task_control" &&
-          pending.effect.target === "restart" &&
-          pending.effect.result === `parent-unarchive:${pending.id}`)) &&
+          ((pending.effect.target === "restart" &&
+            pending.effect.result === `parent-unarchive:${pending.id}`) ||
+            pending.effect.target === "stop"))) &&
       !pending.preSendReceipt &&
       pending.result &&
       pending.effect?.status === "reconciled"
@@ -647,6 +649,7 @@ export class Operations {
       (await this.resumeParentRestore(pending))
     )
       return;
+    if (await this.resumeOwnerStop(pending)) return;
     if (pending.preSendBoundaryStartedAt) {
       this.store.putOperation({
         ...pending,
@@ -681,6 +684,7 @@ export class Operations {
         "task_control",
         "task_remove",
       ].includes(pending.kind) &&
+      this.stopNeedsHost(pending) &&
       (!pendingHost ||
         !this.engine.withHost(pendingHost, () =>
           this.engine.hostAvailable(pendingHost),
@@ -875,9 +879,10 @@ export class Operations {
               (!committed.preSendBoundaryStartedAt ||
                 (committed.kind === "task_control" &&
                   committed.effect?.kind === "task_control" &&
-                  committed.effect.target === "restart" &&
-                  committed.effect.result ===
-                    `parent-unarchive:${committed.id}`)) &&
+                  ((committed.effect.target === "restart" &&
+                    committed.effect.result ===
+                      `parent-unarchive:${committed.id}`) ||
+                    committed.effect.target === "stop"))) &&
               !committed.preSendReceipt,
           ),
           submissionDeferrable:
@@ -1119,6 +1124,143 @@ export class Operations {
             0,
             4000,
           ),
+      });
+    }
+    return true;
+  }
+
+  private stopNeedsHost(pending: QueueOperation): boolean {
+    if (pending.kind !== "task_control") return true;
+    const payload = this.store.operationPayload(pending.id) as {
+      control?: unknown;
+    } | null;
+    const parsed = taskControlInputSchema.safeParse(payload?.control);
+    if (!parsed.success || parsed.data.action !== "stop") return true;
+    try {
+      const task = this.store.task(parsed.data.taskId);
+      return stopControlNeedsHost(task, this.store.runs(task.id), parsed.data);
+    } catch {
+      return true;
+    }
+  }
+
+  private async resumeOwnerStop(operation: QueueOperation): Promise<boolean> {
+    if (operation.kind !== "task_control") return false;
+    const payload = this.store.operationPayload(operation.id) as {
+      control?: unknown;
+    } | null;
+    const parsed = taskControlInputSchema.safeParse(payload?.control);
+    if (!parsed.success || parsed.data.action !== "stop") return false;
+    let task: Task;
+    try {
+      task = this.store.task(parsed.data.taskId);
+    } catch {
+      return false;
+    }
+    const matchingStop = task.resolution.ownerStop?.operationId === operation.id;
+    if (!operation.preSendBoundaryStartedAt && !matchingStop) return false;
+    if (
+      operation.result?.taskId &&
+      operation.effect?.status === "reconciled" &&
+      !operation.preSendReceipt
+    ) {
+      this.store.putOperation({
+        ...operation,
+        state: "succeeded",
+        settledAt: now(),
+        diagnostic: "",
+      });
+      return true;
+    }
+    if (!matchingStop) return false;
+    const hostId = task.hostId ?? operation.hostId;
+    const hostOnline = Boolean(
+      hostId &&
+        this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId)),
+    );
+    if (!hostOnline) {
+      if (operation.preSendBoundaryStartedAt) {
+        const diagnostic =
+          "The owner stop cancellation boundary was interrupted while host is unavailable; confirmation remains pending under the hold";
+        this.store.putOperation({
+          ...operation,
+          state: "needs_attention",
+          settledAt: now(),
+          diagnostic,
+          effect: operation.effect
+            ? {
+                ...operation.effect,
+                status: "uncertain",
+                result: diagnostic.slice(0, 2000),
+                resultAt: now(),
+              }
+            : null,
+        });
+      } else {
+        const diagnostic = hostId
+          ? `Waiting for host ${hostId}`
+          : "Waiting for a proven host identity";
+        if (operation.state !== "pending" || operation.diagnostic !== diagnostic)
+          this.store.putOperation({
+            ...operation,
+            state: "pending",
+            settledAt: null,
+            diagnostic,
+          });
+      }
+      return true;
+    }
+    this.store.putOperation({
+      ...operation,
+      state: "running",
+      settledAt: null,
+    });
+    try {
+      const updated = await this.engine.withHost(hostId!, () =>
+        this.engine.taskControlDispatcher.performTaskControl(
+          parsed.data,
+          operation.id,
+        ),
+      );
+      const committed = this.store.operation(operation.id) ?? operation;
+      this.store.putOperation({
+        ...committed,
+        taskId: committed.taskId ?? updated.id,
+        state: "succeeded",
+        settledAt: now(),
+        diagnostic: "",
+        result: committed.result ?? {
+          taskId: updated.id,
+          number: updated.number,
+          taskVersion: updated.version,
+          phase: updated.phase,
+          reference: updated.reference,
+        },
+        effect: committed.effect
+          ? {
+              ...committed.effect,
+              status: "reconciled",
+              result: updated.id,
+              resultAt: now(),
+            }
+          : null,
+      });
+    } catch (error) {
+      const current = this.store.operation(operation.id) ?? operation;
+      const message = error instanceof Error ? error.message : String(error);
+      this.store.putOperation({
+        ...current,
+        state: "needs_attention",
+        settledAt: now(),
+        diagnostic: message.slice(0, 4000),
+        effect: current.effect
+          ? {
+              ...current.effect,
+              status: "uncertain",
+              result: message.slice(0, 2000),
+              resultAt: now(),
+            }
+          : null,
       });
     }
     return true;

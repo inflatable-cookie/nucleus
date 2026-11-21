@@ -1,6 +1,7 @@
 import type { TaskControlInput, TaskControlRequest } from "../../shared/contracts";
 import type { TaskControlTask } from "../../shared/contracts";
 import { controlHasExternalEffect } from "./control-decisions";
+import { stopControlNeedsHost } from "./owner-stop";
 import { hostIndependentControlRefusal } from "../host/host-independent-refusals";
 import type { Engine } from '../engine';
 
@@ -22,17 +23,23 @@ export class TaskControlLifecycle {
     const input = this.context.resolveTaskControl(request);
     const hostId = this.context.store.task(input.taskId).hostId;
     if (controlHasExternalEffect(input)) {
-      const waiting = hostId ? !this.context.withHost(hostId, () => this.context.hostAvailable(hostId)) : true;
-      // #927: a control refuses on stored facts before it waits for an offline
-      // host, and only a control that would otherwise be accepted enters the
-      // wait. A reachable host changes nothing: its verb answers first.
-      if (waiting) {
-        const refusal = hostIndependentControlRefusal(this.context, input, operationId);
-        if (refusal) return Promise.reject(new Error(refusal));
+      const task = this.context.store.task(input.taskId);
+      const needsHost =
+        input.action !== "stop" ||
+        stopControlNeedsHost(task, this.context.store.runs(task.id), input);
+      if (needsHost) {
+        const waiting = hostId ? !this.context.withHost(hostId, () => this.context.hostAvailable(hostId)) : true;
+        // #927: a control refuses on stored facts before it waits for an offline
+        // host, and only a control that would otherwise be accepted enters the
+        // wait. A reachable host changes nothing: its verb answers first.
+        if (waiting) {
+          const refusal = hostIndependentControlRefusal(this.context, input, operationId);
+          if (refusal) return Promise.reject(new Error(refusal));
+        }
+        if (!hostId) return Promise.reject(new Error('Task is waiting for a proven host identity'));
+        if (waiting)
+          return Promise.reject(new Error(`Transport not connected: waiting for host ${hostId}`));
       }
-      if (!hostId) return Promise.reject(new Error('Task is waiting for a proven host identity'));
-      if (waiting)
-        return Promise.reject(new Error(`Transport not connected: waiting for host ${hostId}`));
     }
     return hostId ? this.context.withHost(hostId, () => this.context.taskControlDispatcher.performTaskControl(input, operationId))
       : this.context.taskControlDispatcher.performTaskControl(input, operationId);

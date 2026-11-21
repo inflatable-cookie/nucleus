@@ -1495,10 +1495,15 @@ export class T3CodeHost implements Host {
    * turn stop keeps working; with nothing live there is nothing to send
    * (nucleus#1328 review).
    */
-  async stopAgentTurn(id: string) {
+  async stopAgentTurn(id: string, expectedTurnId?: string) {
     const runs = await this.reads.activeRunIds(id);
     if (!runs.length) return;
-    const key = identity("stop", canonical([id, runs]));
+    if (expectedTurnId !== undefined && !runs.includes(expectedTurnId)) {
+      throw new ProvenPreSendRefusalError(
+        `Intended turn ${expectedTurnId} ended; active turn ${runs.join(", ")} left untouched`,
+      );
+    }
+    const key = identity("stop", canonical([id, expectedTurnId ? [expectedTurnId] : runs]));
     await this.intents.effect(key, "orchestration.dispatchCommand", {
       type: "thread.stop",
       commandId: key,
