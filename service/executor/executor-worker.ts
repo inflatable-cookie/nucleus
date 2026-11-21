@@ -22,6 +22,7 @@ import { formatSchemaRefusal } from "../../shared/schema-refusal";
 import { callCatalogueMethod, CapacityWriteRefusalError, MethodNotServedError, SurfaceRefusalError } from "../transport/dispatch";
 import type { CatalogueSurface } from "../../shared/web-surface";
 import { clearStandbyReady, markStandbyReady } from "../install/standby";
+import { assertLegacyQaSettled } from "../install/legacy-qa-custody";
 import { waitForStandbyHandoffAsync } from "../install/standby-handoff";
 import { RequestKeyConflictError } from "../../core/runtime/request-ledger";
 import { hostRunSocketPath, hostRunStateDirForDataDir } from "../callbacks/host-run-endpoint";
@@ -87,8 +88,9 @@ async function bootExecutor(): Promise<void> {
     // drain while new connects never see ENOENT/ECONNREFUSED. The writable
     // lease, callbacks and journal wait until the old pid exits; the front holds
     // clients paused until this runtime's private socket can take them.
+    const standbyDataDir = options.dataDir ?? dataHome();
     if (data.standbyFor) {
-      const standbyDataDir = data.owner.dataDir ?? dataHome();
+      assertLegacyQaSettled(standbyDataDir);
       let front: HostRunFront | undefined;
       if (options.hostRunEndpoint) {
         try {
@@ -108,6 +110,7 @@ async function bootExecutor(): Promise<void> {
       try { await waitForStandbyHandoffAsync(data.standbyFor, join(standbyDataDir, "queue.sqlite")); }
       finally { clearStandbyReady(standbyDataDir, process.pid); }
     }
+    assertLegacyQaSettled(standbyDataDir);
     runtime = createQueueRuntime(options);
   } catch (error) {
     // A boot that never reached the runtime leaves the standby's front holding

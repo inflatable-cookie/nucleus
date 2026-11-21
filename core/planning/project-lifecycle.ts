@@ -10,7 +10,6 @@ import {
 import { projectPlannerRoutingIssue } from "../questions/planner-presence";
 import {
   buildProjectSettings,
-  projectSettingsQaKeys,
 } from "./project-settings";
 import {
   observedHostIdOf,
@@ -104,9 +103,6 @@ export class ProjectLifecycle {
         ]),
       ),
       responsibleThreads: live?.responsibleThreads ?? {},
-      latestQaRuns: this.context.store.latestQaRunsFor(
-        projectSettingsQaKeys(projects),
-      ),
     });
   }
 

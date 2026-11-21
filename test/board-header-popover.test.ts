@@ -43,7 +43,7 @@ test("the header's queue menu and its slot table render in the popover layer, ab
     projectLimit: 2, projectLimitOverrides: {}, dispatchHeld: false,
     operationBacklog: 0, drained: false, boundRuns: [],
     projectCapacities: [{ projectKey: 'a', projectName: 'Alpha', occupiedSlots: 1, slotLimit: 2, inFlightTasks: 1, inFlightLimit: 5 }],
-    qaFence: { fence: null },
+
   };
   const query = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ui = mount(h(QueryClientProvider, { client: query, children: h(PluginRpcProvider, { invoke: async () => ({}), children: h(PopoverHost, null,

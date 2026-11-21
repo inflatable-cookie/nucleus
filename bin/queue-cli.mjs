@@ -7,7 +7,7 @@
 // line of refusal. Everything else lives in the owner named there; this file
 // keeps no per-method branch of its own.
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPayload } from './payload.mjs';
@@ -108,10 +108,6 @@ async function main() {
       callerSource: () => cliCallerSource(),
       readTicket: () => readRunTicket(),
       credentialFor,
-      newRequestId: () => randomUUID(),
-      onQaRequestId(requestId) {
-        console.error(`QA request ID: ${requestId}; reconcile with project.qa.request-status, never repeat with a new ID after unknown delivery.`);
-      },
       async answerThroughTicket(ticket, payload) {
         const { callbackRequest } = await import('../shared/service/callback-client.mjs');
         const body = { ...payload, eventId: createHash('sha256').update(JSON.stringify(payload)).digest('hex') };

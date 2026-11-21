@@ -5,9 +5,7 @@ import type {
   LaneView,
   Project,
   HostRunInternalRecord,
-  BoardQaRun,
   HeavyRunView,
-  ProjectQaRun,
 } from "../../shared/contracts";
 import { projectActivityRows, type ProjectActivity } from "../../shared/project-activity";
 import { visibleTaskSummaries } from "../../shared/contracts";
@@ -16,7 +14,6 @@ import {
   taskWaitStateContext,
   taskWithCurrentWait,
 } from "../recovery/wait-context";
-import { boardQaRuns, createQaStalenessResolver } from "../qa/qa-board";
 import { isAbsolute, relative, resolve } from "node:path";
 
 /**
@@ -76,8 +73,6 @@ export interface UiSnapshotFacts {
   runs: Run[];
   unsettledNotices: number;
   lanes: LaneView[];
-  /** Milestone QA cards (Tom, 2026-11-01); task test runs stay on their task card as `heavyRun`. */
-  qaRuns: BoardQaRun[];
   queuedCounts: Array<{ repoPath: string; count: number }>;
 }
 
@@ -94,12 +89,10 @@ export function createUiSnapshotFactsCache(
     runs: Run[],
   ) => (task: Task) => string = () => () => "",
   liveHostRuns: () => HostRunInternalRecord[] = () => [],
-  latestQaRuns: (nowMs: number) => ProjectQaRun[] = () => [],
   externalWait: (task: Task) => string = () => "",
   externalWaitSignature: () => string = () => "",
   defaultHostId: () => string = () => "",
 ) {
-  const staleQaRun = createQaStalenessResolver();
   let cached: UiSnapshotFacts | null = null;
   let liveSignature: string | null = null;
   let lastStoreRevision = store.boardRevision();
@@ -109,8 +102,6 @@ export function createUiSnapshotFactsCache(
     const currentLive = liveHostRuns();
     const nowMs = Date.now();
     const boardHostId = defaultHostId();
-    const qaRuns = boardQaRuns(latestQaRuns(nowMs), nowMs, staleQaRun);
-    // A passing QA card fades on the clock, with no write: a change in the visible cards advances the revision.
     const signature = JSON.stringify([
       currentLive
         .filter((run) => run.runClass === "heavy")
@@ -124,7 +115,6 @@ export function createUiSnapshotFactsCache(
           run.repository.path,
         ])
         .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-      qaRuns.map((run) => [run.id, run.stale]),
       externalWaitSignature(),
       boardHostId,
     ]);
@@ -202,7 +192,7 @@ export function createUiSnapshotFactsCache(
         launchedAt: run.launchedAt,
         holder:
           run.state === "queued" && firstHolder
-            ? (holderTask?.reference ?? "milestone QA")
+            ? (holderTask?.reference ?? "host run")
             : null,
       });
     }
@@ -237,7 +227,6 @@ export function createUiSnapshotFactsCache(
       // Lane views derive from lanes, outcomes and live tasks, and carry their own
       // revision, so they are reused across a board rebuild that touched neither.
       lanes: store.laneViews(),
-      qaRuns,
       queuedCounts: store.boardQueueCounts(),
     };
     return cached;

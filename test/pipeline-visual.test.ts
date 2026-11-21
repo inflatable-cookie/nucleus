@@ -2487,7 +2487,7 @@ for (const compact of [false, true]) {
       tree(
         MainSurface,
         compact,
-        respond({ ...board, tasks: [], pendingSubmissions: [], qaRuns: [] }),
+        respond({ ...board, tasks: [], pendingSubmissions: [] }),
       ),
     );
     try {

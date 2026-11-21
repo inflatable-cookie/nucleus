@@ -561,7 +561,7 @@ export class PersistenceExecutor {
       };
       this.pending.set(id, pendingEntry);
       const timer =
-        kind === "rpc" && waitsForSettlement(payload.method, payload.input)
+        kind === "rpc" && waitsForSettlement(payload.method)
           ? undefined
           : setTimeout(() => {
               const pending = this.pending.get(id);

@@ -16,7 +16,7 @@ export class StoreNotices {
 
   /** Notices whose status still awaits settlement; the admission and attention counts read this. */
   unsettledNoticeCount(): number {
-    return Number(this.core.db.prepare("SELECT COUNT(*) AS count FROM notices WHERE json_extract(data, '$.status') IN ('pending','intent','uncertain')").get()?.count ?? 0);
+    return Number(this.core.db.prepare("SELECT COUNT(*) AS count FROM notices WHERE json_extract(data, '$.status') IN ('pending','intent','uncertain') AND json_extract(data, '$.kind') IS NOT 'qa'").get()?.count ?? 0);
   }
 
   putNotice(n: Notice) {

@@ -302,7 +302,7 @@ export class ServiceClient {
     return await new Promise<unknown>((resolve, reject) => {
       // Explicit settlement calls own no transport deadline. Socket loss still rejects,
       // and the existing durable request/operation reads reconcile uncertain delivery.
-      const waitForSettlement = waitsForSettlement(method, input);
+      const waitForSettlement = waitsForSettlement(method);
       const timer = waitForSettlement
         ? undefined
         : setTimeout(() => {

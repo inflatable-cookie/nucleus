@@ -40,7 +40,6 @@ import {
 } from "../core/workspaces/worktree-links";
 import { runScratchRoot } from "../core/workspaces/run-scratch";
 import { liveBackupDir } from "../core/store/backup-worker.mjs";
-import { projectQaPlacement } from "../core/qa/project-qa-placement";
 import { chooseWorkspaceProvider } from "../core/workspaces/barge-allocator";
 import { defaultDataDir } from "../shared/service/default-data-dir";
 import { Store } from "../core/store/store";
@@ -725,15 +724,6 @@ test("live placement via defaultDataDir preserves backup, run-scratch, QA, Barge
     join(mount, "scratch", "repo"),
   );
   assert.ok(!liveBackupDir().includes("worktrees/nucleus"));
-  const qaStore = new Store(join(root, "qa.sqlite"));
-  t.after(() => qaStore.close());
-  assert.deepEqual(
-    projectQaPlacement.checkoutRoots({
-      store: qaStore,
-      options: { dataDir: liveData },
-    }),
-    [join(mount, "queue")],
-  );
 
   // Barge provider selection stays untouched when repo opts in.
   assert.equal(

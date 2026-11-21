@@ -1151,7 +1151,7 @@ belongs to the reader, so a later exhausted replacement is never silent). The re
 such a reader to that pass rather than escalating it before its turn ends, and a spent budget alone
 still escalates through the ladder.
 Notices that fell back to the project owner — origin fallbacks, proof-wait attention, scheduled
-milestone QA and the drain prompts — go to the project's planner (`project.set-planner`), then the
+the drain prompts — go to the project's planner (`project.set-planner`), then the
 Nucleus planner (the project that holds origin `inflatable-cookie/paseo-northstar-queue`), then the task's origin thread. Dormancy is re-derived: a
 project with no planner and no live owner record is silent. One-time migration, in the same build:
 a project with an owner thread and no planner gains that thread as its planner when the thread is

@@ -242,25 +242,6 @@ export function usePlanningData({
   };
 }
 
-/** Latest legacy milestone QA per repository for Planning and task telemetry. */
-export function useQaData({
-  tab,
-  selected,
-}: {
-  tab: BoardTab;
-  selected: string | null;
-  state?: UiQueueState | undefined;
-}) {
-  const fetchQaList = useRpc(api.projectQaList);
-  const qaQuery = useQuery({
-    queryKey: ["nucleus", "project-qa"],
-    queryFn: () => fetchQaList({}),
-    enabled: tab === "planning" || Boolean(selected),
-    refetchInterval: 4000,
-  });
-  return { qaQuery };
-}
-
 /** The open records an action refreshes once it lands. */
 type OpenRecords = {
   selected: string | null;

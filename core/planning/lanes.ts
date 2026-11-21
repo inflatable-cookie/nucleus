@@ -59,7 +59,6 @@ export type ProjectDrainInput = {
   drain: LaneDrain | null;
   liveTasks: number;
   /** Queued or running milestone QA in any repository belonging to this project. */
-  activeQaRuns?: number;
   /** Latest finish of any of the project's tasks: a board drains when work finishes, not by being idle. */
   lastFinishedAt: string | null;
   /** Latest finish eligible to end an explicit idle mark. */
@@ -156,7 +155,7 @@ export function evaluateDrains(
     const eligibleFinishedAt = input.idleSubmittedFinishedAt === undefined ? input.lastFinishedAt : input.idleSubmittedFinishedAt;
     const eligibleFinished = eligibleFinishedAt ? Date.parse(eligibleFinishedAt) : Number.NaN;
     const idle = Boolean(input.idleSince) && !(Number.isFinite(eligibleFinished) && eligibleFinished > Date.parse(input.idleSince!));
-    if (input.liveTasks > 0 || (input.activeQaRuns ?? 0) > 0 || answered || idle || !drainedByFinish) { if (episode) result.projects[input.key] = null; continue; }
+    if (input.liveTasks > 0 || answered || idle || !drainedByFinish) { if (episode) result.projects[input.key] = null; continue; }
     const operatorOwned = escalatesWithoutPrompt(input.owner);
     // A drained board is not an operator decision (Tom, 2026-10-15): the episode prompts
     // the planner and shows on the Planning tab, and never escalates.

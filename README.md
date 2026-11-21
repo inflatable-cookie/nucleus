@@ -135,7 +135,7 @@ gauge; its Usage level setting controls dispatch routing only.
   [specs](docs/knowledge/specs/README.md) (per-capability design with
   acceptance oracles).
 - [The Nucleus skill](skills/nucleus/SKILL.md) — what agents read: planning
-  records, briefs and leads, submission, owner verbs, review entry, project QA.
+  records, briefs and leads, submission, owner verbs, review entry, and milestone QA history.
 - [Operations](docs/knowledge/operations/restore.md) — restore a verified
   store snapshot. The data-home layout is in the release contract.
 - [Open questions](docs/knowledge/questions.md) — what is deliberately

@@ -1,3 +1,4 @@
+import { seedLegacyQaRun } from "./support/legacy-qa";
 import { observeIdle } from './support/fakes';
 /**
  * Spec 056 through the public RuntimeOwner/durable-operation envelope: the
@@ -146,7 +147,7 @@ test('Spec 056/445 a re-keyed milestone QA run keeps its submitted caller throug
   // plus a genuine generic-supervised run with no QA record at all.
   for (const id of ['milestone-rekey', 'milestone-legacy']) {
     writeRun(store, qaSettledRun(id, SOURCE.origin, at));
-    store.putQaRun(qaRecord(id, SOURCE.origin, at));
+    seedLegacyQaRun(store, qaRecord(id, SOURCE.origin, at));
     emptyRunDirectory(f.stateDir, id);
     // The live false positive 444 clears: a recorded failure against the QA run.
     store.putHostRunOutputFailure({
@@ -256,7 +257,7 @@ test('Spec 056/445 a path-changing re-key still accepts the run’s recorded sub
     qaLogs.push(join(qaLogRoot, 'qa.stdout.log'), join(qaLogRoot, 'qa.stderr.log'));
     // Authentic pair: the journal row at the pre-move checkout and its QA record.
     writeRun(f.store, qaSettledRun(id, SOURCE.origin, at));
-    f.store.putQaRun(qaRecord(id, SOURCE.origin, at));
+    seedLegacyQaRun(f.store, qaRecord(id, SOURCE.origin, at));
     emptyRunDirectory(f.stateDir, id);
     f.store.putHostRunOutputFailure({
       runId: id, epoch: 1, firstSeen: at, lastSeen: at, attempts: 1,

@@ -1,0 +1,1 @@
+Milestone QA now uses ordinary report-only Nucleus tasks and the repository's runner. Existing QA results and request history remain readable. Service upgrades defer when the compatibility build still owns legacy execution or cleanup.

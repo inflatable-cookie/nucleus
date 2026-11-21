@@ -6,7 +6,7 @@ import { Engine } from '../core/engine';
 import { Leads } from '../core/planning/leads';
 import { evaluateDrains } from '../core/planning/lanes';
 import type { Adapter } from '../core/host';
-import { laneKeepInputSchema, projectQaRunSchema, submissionSchema } from '../shared/contracts';
+import { laneKeepInputSchema, submissionSchema } from '../shared/contracts';
 import { pipelineBoard } from '../shared/pipeline-board';
 import type { Profile, Task } from '../shared/contracts';
 
@@ -620,70 +620,5 @@ test('shared lanes remain in both drained project roadmaps while lane notices st
     assert.equal(laneNotices(f).length, 2, 'one notice per shared lane, not per project');
     f.store.evaluateLaneDrains();
     assert.equal(drainNotices(f).length, 4, 'repeated evaluation does not duplicate notices');
-  } finally { void f.close(); }
-});
-
-
-const qaRun = (id: string, state: 'queued' | 'running' | 'passed' | 'failed' | 'hold', repository = repoA) => projectQaRunSchema.parse({
-  id, repository, key: repository.origin, state, baseBranch: 'main', base: head,
-  argv: ['effigy', 'qa'], digest: 'b'.repeat(64), exitCode: null, durationMs: 0,
-  outputTail: '', startedAt: new Date().toISOString(), finishedAt: null, pid: null,
-  capacityWait: null, capacityUnavailable: false,
-});
-
-test('project drain counts queued and running QA across all project repositories, not just latest results', () => {
-  const f = fixture();
-  try {
-    planFixture(f);
-    const repoB = { origin: 'acme/beta', path: '/repo-b' };
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [repoA, repoB], primary: repoA });
-    finishOne(f, 'finished-before-qa');
-    // A QA worktree maps by origin to the project, even when its path differs.
-    const qaRepo = { ...repoB, path: '/private/qa-worktree' };
-    for (const state of ['queued', 'running'] as const) {
-      const run = qaRun(`active-${state}`, state, qaRepo);
-      f.store.putQaRun(run);
-      f.store.putQaRun(qaRun(`newer-${state}`, 'passed', qaRepo));
-      f.store.evaluateLaneDrains();
-      assert.equal(f.store.projectByKey('app')!.drain, null);
-      assert.equal(f.store.notices('project:app').length, 0);
-      f.store.putQaRun({ ...run, state: 'passed' });
-    }
-    f.store.evaluateLaneDrains();
-    assert.ok(f.store.projectByKey('app')!.drain, 'settled QA allows the normal project episode');
-  } finally { void f.close(); }
-});
-
-test('QA starting during owner observation supersedes the pending project drain before delivery', async () => {
-  const f = fixture();
-  try {
-    f.store.setMeta('paused', false);
-    planFixture(f);
-    finishOne(f, 'finished-before-observation');
-    f.store.evaluateLaneDrains();
-    const notice = f.store.notices('project:app')[0]!;
-    assert.equal(notice.status, 'pending');
-    f.engine.resolution.adapter.observe = async id => {
-      f.store.putQaRun(qaRun('started-during-observation', 'running'));
-      return { id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' };
-    };
-    await f.engine.resolution.deliverDrainNotices();
-    assert.equal(f.store.projectByKey('app')!.drain, null);
-    assert.equal(f.store.notices('project:app')[0]!.status, 'superseded');
-    assert.equal(f.notified.length, 0);
-  } finally { await f.close(); }
-});
-
-test('QA in another project and held or settled QA do not suppress project drain', () => {
-  const f = fixture();
-  try {
-    planFixture(f);
-    finishOne(f, 'finished-unrelated-qa');
-    f.store.upsertProject({ key: 'other', name: 'Other', repositories: [{ origin: 'acme/other', path: '/other' }] });
-    f.store.putQaRun(qaRun('other-running', 'running', { origin: 'acme/other', path: '/other' }));
-    for (const state of ['passed', 'failed', 'hold'] as const) f.store.putQaRun(qaRun(`settled-${state}`, state));
-    f.store.evaluateLaneDrains();
-    assert.ok(f.store.projectByKey('app')!.drain);
-    assert.equal(f.store.notices('project:app').length, 1);
   } finally { void f.close(); }
 });
