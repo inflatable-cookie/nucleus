@@ -1,6 +1,6 @@
 # Spec 067 — Explicit resolution
 
-Status: proposed (planner, 2026-11-21). Awaiting Tom's approval. Supersedes the
+Status: approved (Tom, 2026-11-21: "Approve"; coordinators also get `merge.now` and `closeout.now`). Supersedes the
 proof rules in [Spec 066](066-one-reconciler.md) named under
 [What changes in earlier specs](#what-changes-in-earlier-specs).
 Audience: queue implementers, reviewers, planners and coordinators
@@ -111,9 +111,10 @@ No command changes anything it does not name.
 **Authority.** The operator board: every command. The task's live responsible
 planner, resolved the way project-addressed messages resolve (not only the
 stored `project.planner.agentId`; Tom, 2026-11-19, no singleton planners): every
-command. The task's coordinator (its recovery run): every command except
-accepting `hold_owner`, `route_policy` or `two_writers`, and except `merge.now`
-and `closeout.now`. Workers and reviewers ask instead. A `critical` task: planner
+command. The task's coordinator (its recovery run): every command, including
+`merge.now` and `closeout.now` (Tom, 2026-11-21: "Coordinators should get merge
+and closeout"), except accepting `hold_owner`, `route_policy` or `two_writers`.
+The hard gates bind every caller. Workers and reviewers ask instead. A `critical` task: planner
 and operator only.
 
 ## Normal flow keeps working, and stops being a lever
@@ -208,7 +209,7 @@ replacement.
 | --- | --- | --- |
 | 1 | Typed fields for every prose-matched decision. The command contract (warnings, `accept`, `owner_resolution` event, version-only check) and authority by live responsible planner. `run.release` and `record.clear`, settling the underlying fact. | `retry_effect force` settle-only path; force's stored-planner match |
 | 2 | `run.start`, `phase.set`, `message.send`. `next`, stop text and refusals name the explicit command. Coordinators launch for mechanical stalls. | `core/recovery/absent-creation/**`, creation gates in `route`/`restart`/`reviewer-report`, responsible-fault fallback |
-| 3 | `turn.take`/`turn.release`, `merge.now`, `closeout.now`. Prerequisite wait releases the turn. | `merge-occurrence`, restart-to-closeout path, turn-lever refusals (supersedes nucleus#1513) |
+| 3 | `turn.take`/`turn.release`, `merge.now`, `closeout.now`. Prerequisite wait releases the turn. | `merge-occurrence`, restart-to-closeout path, turn-lever refusals (nucleus#1513 retired in favour of this batch) |
 | 4 | Escalations bound to version, carrying explicit commands, closing when the cause clears. | escalation binding-hash refusals in `escalation-settlement` |
 | 5 | Host availability from health readings, not one call. | host-wide timeout stamping |
 | 6 | Proof owners out of the gate path. | pre-send receipts, owned-tool proof, archive proof, per-effect settlement modules, `restart-episode`, `retry_effect` replay variants; shrink `verb-fences`, `recovery-effects`, `fence-settlement`, coordinator episode modules |
