@@ -1,0 +1,1 @@
+Regression coverage for terminal cleanup: a done, merged task whose build-output cleanup intent survives a restart still finishes that cleanup and archives its workspace in one lifecycle pass, with or without build output left on disk.
