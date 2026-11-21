@@ -28,37 +28,55 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { git } from "../git/index";
 import {
+  bbWorkspacePathInRoot,
   ownedBbWorkspacePath,
   ownedWorkspacePath,
   ownedWorkspaceRoot,
   parseWorktreeList,
   repoCommonDir,
+  workspacePathInRoot,
+  workspaceRepoRoot,
   WORKSPACES_DIR,
 } from "./workspace-allocation";
 
 /**
- * The canonical owned path, with no redirect below Queue's data dir: the
- * workspaces dir, the repository's owned root and the workspace itself are each
- * a real directory (never a symlink), and the bound directory resolves to
- * exactly that path. Synchronous, so it runs at the mutation boundary with no
- * await between it and the delete. Throws on any redirect or read failure.
+ * The canonical owned path, with no redirect below Queue's data dir or
+ * configured local workspace root: the workspaces root (if any), the
+ * repository's owned root and the workspace itself are each a real directory
+ * (never a symlink), and the bound directory resolves to exactly that path.
+ * Synchronous, so it runs at the mutation boundary with no await between it
+ * and the delete. Throws on any redirect or read failure.
  */
 export function assertCanonicalOwnedPath(
   directory: string,
-  dataDir: string,
+  rootOrDataDir: string,
   commonDir: string,
   taskId: string,
 ): void {
-  const data = realpathSync(dataDir);
-  const legacy = ownedWorkspacePath(data, commonDir, taskId),
-    isolated = ownedBbWorkspacePath(data, commonDir, taskId);
-  const expected = directory === isolated ? isolated : legacy;
-  const components = [
-    join(data, WORKSPACES_DIR),
-    ownedWorkspaceRoot(data, commonDir),
-    ...(expected === isolated ? [dirname(isolated)] : []),
-    expected,
-  ];
+  const root = realpathSync(rootOrDataDir);
+  const legacy = ownedWorkspacePath(root, commonDir, taskId),
+    isolated = ownedBbWorkspacePath(root, commonDir, taskId),
+    directLegacy = workspacePathInRoot(root, commonDir, taskId),
+    directIsolated = bbWorkspacePathInRoot(root, commonDir, taskId);
+  let expected = legacy;
+  let components: string[];
+  if (directory === directIsolated || directory === directLegacy) {
+    expected = directory;
+    components = [
+      root,
+      workspaceRepoRoot(root, commonDir),
+      ...(expected === directIsolated ? [dirname(directIsolated)] : []),
+      expected,
+    ];
+  } else {
+    expected = directory === isolated ? isolated : legacy;
+    components = [
+      join(root, WORKSPACES_DIR),
+      ownedWorkspaceRoot(root, commonDir),
+      ...(expected === isolated ? [dirname(isolated)] : []),
+      expected,
+    ];
+  }
   for (const component of components) {
     const stat = lstatSync(component);
     if (stat.isSymbolicLink() || !stat.isDirectory())

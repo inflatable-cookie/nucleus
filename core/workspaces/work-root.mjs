@@ -1,25 +1,38 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import { dataHome } from '../../shared/data-home.mjs';
 import { writeOwnedJson } from '../machine/owned-file.mjs';
 
 const portableRoots = new Set();
+const refusal = message => Object.assign(Error(message), { code: 'WORK_PLACEMENT_REFUSAL' });
 const settingsFor = dataDir => {
   const path = join(dataDir, 'settings.json');
   const value = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Work storage settings must be an object');
-  for (const key of ['workRoot', 'workVolumeId']) {
-    if (value[key] !== undefined && typeof value[key] !== 'string') throw Error(`${key} must be a string`);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw refusal('Work storage settings must be an object');
+  for (const key of ['workRoot', 'workVolumeId', 'localWorkspaceRoot']) {
+    if (value[key] !== undefined && typeof value[key] !== 'string') throw refusal(`${key} must be a string`);
+  }
+  if (value.retainedWorkspaceRoots !== undefined &&
+      (!Array.isArray(value.retainedWorkspaceRoots) || value.retainedWorkspaceRoots.some(item => typeof item !== 'string'))) {
+    throw refusal('retainedWorkspaceRoots must be an array of strings');
   }
   return { path, value };
 };
 const validMount = value => {
   if (typeof value !== 'string' || !isAbsolute(value) || value === '/' || resolve(value) !== value)
-    throw Error('workRoot must be a canonical absolute directory');
+    throw refusal('workRoot must be a canonical absolute directory');
   return value;
 };
+export function validSubpathInsideMount(mount, value, label) {
+  if (typeof value !== 'string' || !isAbsolute(value) || value === '/' || resolve(value) !== value)
+    throw refusal(`${label} must be a canonical absolute directory`);
+  const rel = relative(mount, value);
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+    throw refusal(`${label} must be inside workRoot (${mount})`);
+  return value;
+}
 
 /** Read only. Startup completes adoption before any allocation or migration backup. */
 export function getWorkStorage(dataDir = dataHome(), env = process.env) {
@@ -39,6 +52,38 @@ export function getWorkStorage(dataDir = dataHome(), env = process.env) {
 }
 export const getWorkRoot = (dataDir, env) => getWorkStorage(dataDir, env).root;
 
+/**
+ * Resolve active and retained local task-workspace roots inside the verified work volume.
+ * Installs that have not opted in keep `<workRoot>/queue/workspaces` as the sole root.
+ */
+export function getLocalWorkspacePlacement(dataDir = dataHome(), env = process.env) {
+  const storage = getWorkStorage(dataDir, env);
+  const { value } = settingsFor(dataDir);
+  const defaultRoot = join(storage.root, 'queue', 'workspaces');
+  const activeOverride = env.NUCLEUS_LOCAL_WORKSPACE_ROOT?.trim();
+  const activeRoot = activeOverride
+    ? validSubpathInsideMount(storage.root, activeOverride, 'NUCLEUS_LOCAL_WORKSPACE_ROOT')
+    : value.localWorkspaceRoot !== undefined
+      ? validSubpathInsideMount(storage.root, value.localWorkspaceRoot, 'localWorkspaceRoot')
+      : defaultRoot;
+  const retainedOverride = env.NUCLEUS_RETAINED_WORKSPACE_ROOTS?.trim();
+  const configuredRetained = retainedOverride
+    ? retainedOverride.split(delimiter).map(entry => validSubpathInsideMount(storage.root, entry, 'NUCLEUS_RETAINED_WORKSPACE_ROOTS'))
+    : (value.retainedWorkspaceRoots ?? []).map(entry => validSubpathInsideMount(storage.root, entry, 'retainedWorkspaceRoots'));
+  const retainedSet = new Set();
+  if (activeRoot !== defaultRoot) retainedSet.add(defaultRoot);
+  for (const entry of configuredRetained) {
+    if (entry !== activeRoot) retainedSet.add(entry);
+  }
+  return {
+    workRoot: storage.root,
+    ...(storage.volumeId ? { volumeId: storage.volumeId } : {}),
+    activeRoot,
+    defaultRoot,
+    retainedRoots: [...retainedSet],
+  };
+}
+
 /** Observe the volume mounted at a root without creating that root. */
 export function readWorkVolume(root) {
   const plist = execFileSync('/usr/sbin/diskutil', ['info', '-plist', root], { timeout: 10_000 });
@@ -54,7 +99,7 @@ export function recordedWorkRoots(records) {
     if (!value || typeof value !== 'object') return;
     for (const [key, child] of Object.entries(value)) {
       if (allocationFields.has(key) && typeof child === 'string' && isAbsolute(child)) {
-        const match = child.match(/^(.+)(?:\/queue\/(?:workspaces|project-qa|backups)(?:\/|$)|\/scratch\/[^/]+(?:\/|$))/);
+        const match = child.match(/^(.+)(?:\/queue\/(?:workspaces|project-qa|backups)(?:\/|$)|\/worktrees\/nucleus(?:\/|$)|\/scratch\/[^/]+(?:\/|$))/);
         if (match) roots.add(validMount(match[1]));
       } else if (typeof child === 'object') visit(child);
     }
@@ -97,13 +142,17 @@ function existingAllocations(dataDir) {
 /** One-time adoption refuses rather than falling back while its volume is absent. */
 export function initializeWorkRoot(dataDir, env = process.env, options = {}) {
   const settings = settingsFor(dataDir);
-  if (env.NUCLEUS_WORK_ROOT?.trim() || env.NUCLEUS_WORK_VOLUME_ID?.trim() || settings.value.workRoot || settings.value.workVolumeId)
-    return getWorkStorage(dataDir, env);
+  if (env.NUCLEUS_WORK_ROOT?.trim() || env.NUCLEUS_WORK_VOLUME_ID?.trim() || settings.value.workRoot || settings.value.workVolumeId) {
+    const storage = getWorkStorage(dataDir, env);
+    getLocalWorkspacePlacement(dataDir, env);
+    return storage;
+  }
   const roots = recordedWorkRoots(options.records ?? existingAllocations(dataDir));
   if (roots.length > 1) throw Error('Recorded allocations name different work roots; set workRoot explicitly');
   const portable = join(resolve(dataDir), 'work');
   if (!roots.length || (roots.length === 1 && roots[0] === portable)) {
     portableRoots.add(resolve(dataDir));
+    getLocalWorkspacePlacement(dataDir, env);
     return { root: portable };
   }
   const root = roots[0];
@@ -111,5 +160,7 @@ export function initializeWorkRoot(dataDir, env = process.env, options = {}) {
   if (volume.MountPoint !== root || typeof volume.VolumeUUID !== 'string' || !volume.VolumeUUID || volume.Internal !== false || volume.Writable !== true || volume.WritableVolume !== true)
     throw Error('Recorded work root is not an available writable external volume; adoption refused');
   writeOwnedJson(settings.path, { ...settings.value, workRoot: root, workVolumeId: volume.VolumeUUID });
-  return getWorkStorage(dataDir, env);
+  const storage = getWorkStorage(dataDir, env);
+  getLocalWorkspacePlacement(dataDir, env);
+  return storage;
 }

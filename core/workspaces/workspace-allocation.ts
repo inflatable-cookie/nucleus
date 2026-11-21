@@ -82,26 +82,44 @@ export function retainNodeModules(
   }
 }
 
+export const workspaceRepoRoot = (
+  workspacesRoot: string,
+  gitCommonDir: string,
+) => join(workspacesRoot, digest(gitCommonDir));
+
+export const workspacePathInRoot = (
+  workspacesRoot: string,
+  gitCommonDir: string,
+  taskId: string,
+) => join(workspaceRepoRoot(workspacesRoot, gitCommonDir), `ns-${taskId}`);
+
+/** BB pins live beside this task's checkout, never in another task's parent. */
+export const bbWorkspacePathInRoot = (
+  workspacesRoot: string,
+  gitCommonDir: string,
+  taskId: string,
+) =>
+  join(
+    workspaceRepoRoot(workspacesRoot, gitCommonDir),
+    `task-${taskId}`,
+    `ns-${taskId}`,
+  );
+
 export const ownedWorkspaceRoot = (dataDir: string, gitCommonDir: string) =>
-  join(dataDir, WORKSPACES_DIR, digest(gitCommonDir));
+  workspaceRepoRoot(join(dataDir, WORKSPACES_DIR), gitCommonDir);
 
 export const ownedWorkspacePath = (
   dataDir: string,
   gitCommonDir: string,
   taskId: string,
-) => join(ownedWorkspaceRoot(dataDir, gitCommonDir), `ns-${taskId}`);
+) => workspacePathInRoot(join(dataDir, WORKSPACES_DIR), gitCommonDir, taskId);
 
 /** BB pins live beside this task's checkout, never in another task's parent. */
 export const ownedBbWorkspacePath = (
   dataDir: string,
   gitCommonDir: string,
   taskId: string,
-) =>
-  join(
-    ownedWorkspaceRoot(dataDir, gitCommonDir),
-    `task-${taskId}`,
-    `ns-${taskId}`,
-  );
+) => bbWorkspacePathInRoot(join(dataDir, WORKSPACES_DIR), gitCommonDir, taskId);
 
 export class WorkspaceObservationUnavailableError extends Error {}
 
@@ -128,18 +146,35 @@ export function sameWorkspacePath(a: string, b: string): boolean {
   }
 }
 
-export function isOwnedWorkspacePath(
+export function isWorkspacePathInRoot(
   path: string,
-  dataDir: string,
+  workspacesRoot: string,
   gitCommonDir: string,
   taskId: string,
 ): boolean {
   return (
     sameWorkspacePath(
       path,
-      ownedWorkspacePath(dataDir, gitCommonDir, taskId),
+      workspacePathInRoot(workspacesRoot, gitCommonDir, taskId),
     ) ||
-    sameWorkspacePath(path, ownedBbWorkspacePath(dataDir, gitCommonDir, taskId))
+    sameWorkspacePath(
+      path,
+      bbWorkspacePathInRoot(workspacesRoot, gitCommonDir, taskId),
+    )
+  );
+}
+
+export function isOwnedWorkspacePath(
+  path: string,
+  dataDir: string,
+  gitCommonDir: string,
+  taskId: string,
+): boolean {
+  return isWorkspacePathInRoot(
+    path,
+    join(dataDir, WORKSPACES_DIR),
+    gitCommonDir,
+    taskId,
   );
 }
 
