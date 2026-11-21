@@ -10,13 +10,13 @@ export const workspaceNavigationViews = navigationViews;
 
 export const settingsViews = [
   { id: "capacity", label: "Dispatch limits", short: "Limits" },
-  // nucleus#1325: the host catalogue and the default host picker.
-  { id: "hosts", label: "Hosts", short: "Hosts" },
   // Spec 052 / nucleus#934: one Profiles page holds the stored records and their dispatch settings;
   // nucleus#963: the Subscriptions list sits beneath them on the same page.
   { id: "profiles", label: "Profiles", short: "Profiles" },
   // Lane `nucleus-ui` (task 946): Projects replaces Repositories.
   { id: "projects", label: "Projects", short: "Projects" },
+  // nucleus#1325: the host catalogue and the default host picker (nucleus#1494: after Projects).
+  { id: "hosts", label: "Hosts", short: "Hosts" },
   { id: "backups", label: "Backups", short: "Backups" },
   { id: "telemetry", label: "Telemetry", short: "Telemetry" },
 ] as const;
