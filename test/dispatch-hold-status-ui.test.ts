@@ -4,6 +4,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
+import { inboxText, showInView } from "./support/inbox";
 import { Store } from "../core/store/store";
 import {
   submissionSchema,
@@ -231,34 +232,37 @@ test("the card and detail show the live dispatch hold, and next names the same f
     };
     const tree = mountBoard(invoke);
     mounted = tree;
-    await settle(
-      () =>
-        tree.text().includes("stale-hold") && tree.text().includes("unheld"),
-    );
+    // The inbox lists one view at a time; the cards span Needs you, Queue and Active.
+    await settle(() => {
+      const all = inboxText(tree);
+      return all.includes("stale-hold") && all.includes("unheld");
+    });
+    const cards = inboxText(tree);
 
     // Card: the live dispatch fence is the reason; the stale stored text is gone.
     assert.ok(
-      tree.text().includes(DISPATCH),
+      cards.includes(DISPATCH),
       "the stale-hold card names the dispatch hold",
     );
     assert.ok(
-      !tree.text().includes(STALE),
+      !cards.includes(STALE),
       "no card shows the obsolete stored reason",
     );
     assert.ok(
-      tree.text().includes("Dispatch held"),
+      cards.includes("Dispatch held"),
       "the state chip still says dispatch held",
     );
     assert.ok(
-      tree.text().includes("Merge held"),
+      cards.includes("Merge held"),
       "the both-holds card keeps the merge hold chip",
     );
     assert.ok(
-      tree.text().includes("Reviewer run is reading the diff"),
+      cards.includes("Reviewer run is reading the diff"),
       "a merge-only reviewing card keeps its activity",
     );
 
     // Detail: the stale stored reason is not shown, and next names the fence.
+    assert.ok(showInView(tree, "stale-hold"), "the stale-hold card is listed");
     tree.press(/stale-hold/);
     await settle(() => Boolean(tree.query(`Stop: hold; held; ${DISPATCH}`)));
     // Task 538: the hold lines and the stored routing errors live in the collapsed
@@ -279,6 +283,7 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
 
     // Both fences: the dispatch fence is the wait, the merge fence has its own line.
+    assert.ok(showInView(tree, "both-holds"), "the both-holds card is listed");
     tree.press(/both-holds/);
     // Selecting a task opens on its Overview tab.
     await settle(() => Boolean(tree.query(`Stop: hold; held; ${DISPATCH}`)));
@@ -298,6 +303,7 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
 
     // A genuine routing error still reaches the detail.
+    assert.ok(showInView(tree, "real-origin-error"), "the real-origin-error card is listed");
     tree.press(/real-origin-error/);
     await settle(
       () =>
@@ -314,6 +320,7 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
 
     // A merge-only reviewing task names its merge fence and keeps its activity.
+    assert.ok(showInView(tree, "merge-review"), "the merge-review card is listed");
     tree.press(/merge-review/);
     await settle(
       () =>
@@ -332,6 +339,7 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
 
     // An unheld working task has neither fence line.
+    assert.ok(showInView(tree, "unheld"), "the unheld card is listed");
     tree.press(/unheld/);
     await settle(
       () =>

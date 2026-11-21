@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { mount, useNativeStubs } from './support/render';
+import { recentProjectActivity } from './support/fakes';
 import { hostRunRecordSchema, type DecisionView, type HostRunRecord, type Project, type ProjectQaRun } from '../shared/contracts';
 
 useNativeStubs();
@@ -61,7 +62,8 @@ const planSection = { project, latest: plan, saved: { ...(plan as object), entri
 /** The plan column at either viewport, so the compact latest QA is proved at both. */
 function renderPlan(props: Record<string, unknown>) {
   return import('../client/planning-panel').then(({ PlanningTab }) => mount(h(PlanningTab, {
-    sections: [planSection], lanes: [], edits: {}, selectedLane: '', step: 'plan', busy: false, lanePanel: null,
+    // Recent activity keeps the project out of the Dormant group, so its plan is on screen.
+    sections: [planSection], lanes: [], edits: {}, selectedLane: '', step: 'plan', busy: false, lanePanel: null, projectActivity: recentProjectActivity([project]),
     onStep() {}, onOpenLane() {}, onEdit() {}, onSave() {}, onCancel() {}, ...props, c,
   } as never)));
 }

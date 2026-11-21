@@ -15,7 +15,7 @@ import { type as typeScale, space, radius } from "../design";
  * The decision dialog (Spec 032). It owns its answer, withdraw reason, pending option and
  * details toggle; the board remounts it per decision, so they clear when it moves to another.
  */
-export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordNotice, setRecordNotice, onOpenDecision, onOpenTask, onClose, c }: { id: string; compact: boolean; busy: boolean; act: BoardAct; recordNotice: RecordNoticeValue | null; setRecordNotice: (notice: RecordNoticeValue | null) => void; onOpenDecision: (id: string) => void; onOpenTask: (id: string) => void; onClose: () => void; c: Colors }) {
+export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordNotice, setRecordNotice, onOpenDecision, onOpenTask, onClose, c, inline = false }: { inline?: boolean; id: string; compact: boolean; busy: boolean; act: BoardAct; recordNotice: RecordNoticeValue | null; setRecordNotice: (notice: RecordNoticeValue | null) => void; onOpenDecision: (id: string) => void; onOpenTask: (id: string) => void; onClose: () => void; c: Colors }) {
   const fetchDecision = useRpc(api.decisionGet), answerDecision = useRpc(api.decisionAnswer), withdrawDecision = useRpc(api.decisionWithdraw);
   const [decisionDetailsOpen,setDecisionDetailsOpen] = useState(false);
   const [decisionAnswerText, setDecisionAnswerText] = useState(""),
@@ -34,6 +34,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
   return (
     <RecordModal
       label="Decision detail"
+      inline={inline}
       title="Decision"
       compact={compact}
       c={c}

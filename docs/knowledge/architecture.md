@@ -27,17 +27,20 @@ owner to the rules it enforces.
 
 ### Client
 
-- `client/queue.tsx` is the board shell: tabs, project scope, the open task or
-  record, and the Planning and QA tabs. The Pipeline view (Triage, Attention,
-  Queued, Working, Review and Closing) is one set of columns; cards carry no
-  action buttons and finished work leaves the board
+- `client/queue.tsx` is the board shell, an inbox: the menu, the open view's list
+  and the open record's detail pane (a modal on a medium or narrow panel), with
+  project scope and Planning. The list groups the card-once projection's columns
+  under Needs you, Leads, Queue and Active; cards carry no action buttons beyond
+  their hold and lane-drain prompts, and finished work leaves the board
   ([Spec 019](specs/019-lanes.md), [Spec 026](specs/026-planning-records.md)).
 - The board is split into modules queue.tsx imports, never the reverse:
   `client/board/` holds card text helpers (`text.ts`), badges (`badges.tsx`),
-  the memoised cards (`cards.tsx`), the header with its queue menu and slot
-  popover state (`header.tsx`), the Pipeline and its column widths (`pipeline.tsx`,
-  columns memoised per input; its Triage filter, pages and measurements sit in
-  `usePipelineState`, which the shell holds so they survive tab switches), and the
+  the memoised cards (`cards.tsx`, drawn as rows inside the list through
+  `BoardCardVariantContext`), the header with its queue menu and slot table
+  (`header.tsx`), the menu (`inbox-menu.tsx`), the list (`inbox-list.tsx`: the
+  projection memoised per input in `useInboxBoard`; its Leads tag filter and pages
+  and the queued-more page sit in `usePipelineState`, which the shell holds so they
+  survive view switches), and the
   board reads (`use-board-data.ts`: task detail and next, the planning lists on
   their per-domain revisions, planning, QA, and the shared `act`/`leadAct`);
   `client/task/` holds the task
@@ -58,7 +61,8 @@ owner to the rules it enforces.
   ring. Every control keeps the tracker listening; only the focused control
   subscribes, so a key or pointer press re-renders that control alone.
 - `shared/pipeline-board.ts` sorts in-scope cards into the board's columns, each
-  card once. Papercut decision links resolve through the lead projection, since
+  card once; `shared/inbox-board.ts` groups those columns under the menu views,
+  counts them and picks the pane layout for a panel width. Papercut decision links resolve through the lead projection, since
   papercuts are tagged leads. `core/telemetry/ui-snapshot.ts` caches the compact board projection by
   store revision; terminal history is read only by detail and telemetry.
 - Board components reach the host only through `client/shell/` (data calls,

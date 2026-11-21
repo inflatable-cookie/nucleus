@@ -2,12 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { boardSource } from "./support/board-source";
-import {
-  headerControls,
-  navigationViews,
-  settingsViews,
-  workspaceNavigationViews,
-} from "../shared/queue-navigation";
+import { headerControls, settingsViews } from "../shared/queue-navigation";
+import { activeSections, inboxViews } from "../shared/inbox-board";
 
 const ui = boardSource();
 const entry = readFileSync(
@@ -19,32 +15,30 @@ const settingsScreen = readFileSync(
   "utf8",
 );
 
-test("navigation exposes Tasks, Planning and QA runs; Usage is removed and Lanes is folded into Planning", () => {
+test("the menu is Needs you, Planning, Leads, Queue and Active with its three sections; QA runs is not a board view", () => {
   assert.deepEqual(
-    navigationViews.map((view) => view.label),
-    ["Tasks", "Planning", "QA runs"],
+    inboxViews.map((view) => view.label),
+    ["Needs you", "Planning", "Leads", "Queue", "Active"],
   );
   assert.deepEqual(
-    workspaceNavigationViews.map((view) => view.label),
-    ["Tasks", "Planning", "QA runs"],
+    activeSections.map((section) => section.label),
+    ["Working", "In review", "Closing"],
   );
-  // PR #518's TypeScript formatting reformatted the surface; the static reads tolerate the shipped layout.
-  assert.match(
-    ui,
-    /\(workspacePanel\s*\?\s*workspaceNavigationViews\s*:\s*navigationViews\s*\)\.map\(\s*\(view\) =>/,
-  );
+  // One menu for the main surface and the workspace panel; QA runs as an ordinary task (Tom, 2026-11-21).
+  assert.match(ui, /inboxViews\.map\(\(entry\) =>/);
+  assert.doesNotMatch(ui, /<QaRunsTab|workspaceNavigationViews|<TabRow/);
 });
 
-test("Tasks shows the Pipeline with no Lanes switch; no Lanes tab remains", () => {
+
+test("the list views render the inbox list; Planning keeps its own panes; no Lanes view remains", () => {
   assert.doesNotMatch(ui, /LanesSwitch/);
-  assert.match(
-    ui,
-    /tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space\.sm, zIndex: 0 \}\}>\s*<PipelineBoard\b/,
-  );
-  assert.doesNotMatch(ui, /tab === "lanes"/);
+  assert.match(ui, /view === "planning" \? \(\s*<PlanningTab\b/);
+  assert.match(ui, /<InboxList\b/);
+  assert.doesNotMatch(ui, /PipelineBoard|tab === "lanes"/);
   assert.doesNotMatch(ui, /accessibilityLabel="Board mode"/);
   assert.doesNotMatch(ui, /text="Status"/);
 });
+
 
 test("header controls expose icon-only Settings, Refresh and Pause or Resume in order", () => {
   const running = headerControls(false, true, false);
@@ -130,20 +124,17 @@ test("706: pause chevron menu acts on one press and has no Stop arm", () => {
   assert.doesNotMatch(ui, /key: "drain"/);
 });
 
-test("706: an open header menu stacks above the nav row and the outside-press layer", () => {
-  // The wrapper's zIndex 50 is trapped inside the title+controls row unless that
-  // row itself raises. Old code raised only the wrapper, so All projects (nav
-  // row zIndex 20) painted over the menu. Falsify: a relative wrapper zIndex is
-  // not enough; the ancestor row must be at 50 while a menu is open.
+test("706: an open header menu stacks above the panes and the outside-press layer", () => {
+  // The wrapper's zIndex 50 is trapped inside the header row unless that row itself
+  // raises: the row is at 50 while the menu is open, above the outside-press layer (40).
   assert.match(
     ui,
-    /\.\.\.row, justifyContent: "space-between", \.\.\.\(queueMenuOpen \|\| slotsOpen \? \{ zIndex: 50 \} : \{\}\)/,
+    /\.\.\.row, flexWrap: "nowrap", justifyContent: "space-between", \.\.\.\(queueMenuOpen \? \{ zIndex: 50 \} : \{\}\)/,
   );
   assert.match(ui, /position: "relative", zIndex: queueMenuOpen \? 50 : 0/);
-  assert.match(ui, /position: "relative", zIndex: slotsOpen \? 50 : 0/);
-  assert.match(ui, /justifyContent: "space-between", zIndex: 20/);
   assert.match(ui, /zIndex: 40 \}\}/);
 });
+
 
 test("Settings is the native settings screen holding Dispatch limits, Profiles, Projects, Hosts, Backups and Telemetry", () => {
   // Projects replaces Repositories (lane nucleus-ui, task 946); Subscriptions folded into Profiles (nucleus#963);
@@ -206,42 +197,17 @@ test("Telemetry is in Settings and pause remains in the header", () => {
   );
 });
 
-test("the Tasks tab counts only open tasks in the project selection", async () => {
-  const { openTaskCount } = await import("../shared/queue-navigation");
-  const task = (
-    repoPath: string,
-    phase: string,
-    extra: Record<string, string> = {},
-  ) => ({ repoPath, phase, repository: null, ...extra });
-  const tasks = [
-    task("/project-l", "working"),
-    task("/project-l", "done"),
-    task("/project-a", "queued"),
-    task("/project-a", "done", { originError: "missing origin" }),
-  ];
-  assert.equal(
-    openTaskCount(tasks, () => true),
-    3,
-    "all projects: every open task, plus one kept for its origin error",
-  );
-  assert.equal(
-    openTaskCount(tasks, (repoPath) => repoPath === "/project-l"),
-    1,
-    "filtered to project-l: only its open task",
-  );
+test("the Queue count adds the queued tasks the board holds back, in the project selection", () => {
   const ui = boardSource();
-  // #1001: the board carries only queue heads, so the label adds the queued tasks it left out.
-  assert.match(
-    ui,
-    /`Tasks \(\$\{openTaskCount\(state\.tasks, attentionBelongs\) \+ hiddenQueued\} open\)`/,
-    "the label uses the selection-aware count",
-  );
+  // #1001: the board carries only queue heads, so the Queue count adds the queued tasks it left out.
   assert.match(
     ui,
     /const queuedCounts = \(state\?\.queuedCounts \?\? \[\]\)\.filter\(\(item\) =>\s*attentionBelongs\(item\.repoPath\),?\s*\)/,
-    "the left-out count follows the same selection",
+    "the left-out count follows the selection",
   );
+  assert.match(ui, /hiddenQueued,\s*triageTag: pipeline\.triageTag,/, "the inbox counts receive the left-out total");
 });
+
 
 test("open-task predicate keeps terminal tasks with either origin error", async () => {
   const { isOpenTask } = await import("../shared/queue-navigation");

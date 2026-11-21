@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { boardSource } from "./support/board-source";
 import {
-  planningColumns,
   planningPlan,
   reorderPlan,
   movePlan,
@@ -73,32 +72,30 @@ test("026-14 Planning tab reorders and moves lanes with their horizon", () => {
   ]);
 });
 
-test("026-14a Planning tab has plan and lane columns wide and a plan-then-lane drill-down compact", () => {
-  assert.deepEqual(planningColumns(false, "lane"), ["plan", "lane"]);
-  assert.deepEqual(planningColumns(false, "plan"), ["plan", "lane"]);
-  assert.deepEqual(planningColumns(true, "plan"), ["plan"]);
-  assert.deepEqual(planningColumns(true, "lane"), ["lane"]);
+test("026-14a Planning has a plan pane and a lane pane wide, and opens the lane in a modal without a detail pane", () => {
   const ui = boardSource();
-  // PR #518's TypeScript formatting reformatted the surface; the slice bounds follow the shipped layout.
-  // #866: the Lanes destination is folded into Planning, so the slice bounds follow the Tasks tab.
-  const pipeline = ui.slice(
-    ui.indexOf(
-      '{tab === "queue" && (\n        <View style={{ flex: 1, minHeight: 0, gap: 12, zIndex: 0 }}>',
-    ),
-    ui.indexOf("          {task && ("),
+  // The inbox (Tom, 2026-11-21): the plan fills the list pane and the lane the detail pane on a
+  // wide board; a narrower board keeps the plan and opens the lane in a modal.
+  assert.match(
+    ui,
+    /inbox=\{\{ listWidth: wide \? inboxListWidth : null, laneModal: !wide \}\}/,
   );
-  assert.doesNotMatch(
-    pipeline,
-    /Planning|Lane document|Save plan|planningLane/,
+  // The card list never carries planning: Planning is its own view.
+  const list = readFileSync(
+    new URL("../client/board/inbox-list.tsx", import.meta.url),
+    "utf8",
   );
+  assert.doesNotMatch(list, /Planning|Lane document|Save plan|planningLane/);
   assert.doesNotMatch(ui, /accessibilityLabel="Planning projects"/);
   assert.doesNotMatch(ui, /Back to projects/);
   const panel = readFileSync(
     new URL("../client/planning-panel.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(panel, /accessibilityLabel="Planning plan"/);
+  assert.match(panel, /accessibilityLabel=\{searching \? "Lane search results" : "Planning plan"\}/);
   assert.match(panel, /accessibilityLabel="Planning lane"/);
+  assert.match(panel, /bodyLabel="Planning lane"/, "the lane modal keeps the pane's name");
+  assert.match(panel, /onClose=\{\(\)=>onStep\('plan'\)\}/, "closing the lane modal returns to the plan");
   assert.match(panel, /Back to plan/);
   assert.doesNotMatch(panel, /picker/i);
   assert.match(

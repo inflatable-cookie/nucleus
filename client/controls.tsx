@@ -1957,6 +1957,7 @@ export function Dialog({
   eyebrow,
   wide = false,
   backdropLabel,
+  inline = false,
 }: {
   c: Colors;
   title: string;
@@ -1969,45 +1970,22 @@ export function Dialog({
   eyebrow?: React.ReactNode;
   wide?: boolean;
   backdropLabel?: string;
+  /** Render the frame in place, filling its container (the inbox detail pane); no modal or scrim. */
+  inline?: boolean;
   children: React.ReactNode;
 }) {
   const r = roles(c);
-  return (
-    <Modal
-      visible
-      transparent
-      animationType="fade"
-      onRequestClose={() => {
-        if (!closeDisabled) onClose();
-      }}
-    >
-      <PopoverHost>
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "center",
-            padding: space.lg,
-            backgroundColor: overlay.scrim,
-          }}
-        >
-          {backdropLabel && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={backdropLabel}
-              onPress={onClose}
-              style={{
-                position: "absolute",
-                top: 0,
-                right: 0,
-                bottom: 0,
-                left: 0,
-              }}
-            />
-          )}
+  const frame = (
           <View
-            accessibilityViewIsModal
+            accessibilityViewIsModal={!inline}
             accessibilityLabel={label}
-            style={{
+            style={inline ? {
+              flex: 1,
+              minHeight: 0,
+              gap: space.sm,
+              padding: space.lg,
+              backgroundColor: r.canvas,
+            } : {
               maxWidth: wide ? 980 : 560,
               width: "100%",
               maxHeight: "90%",
@@ -2055,6 +2033,41 @@ export function Dialog({
             </ScrollView>
             {footer}
           </View>
+  );
+  if (inline) return frame;
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      onRequestClose={() => {
+        if (!closeDisabled) onClose();
+      }}
+    >
+      <PopoverHost>
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            padding: space.lg,
+            backgroundColor: overlay.scrim,
+          }}
+        >
+          {backdropLabel && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={backdropLabel}
+              onPress={onClose}
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
+              }}
+            />
+          )}
+          {frame}
         </View>
       </PopoverHost>
     </Modal>

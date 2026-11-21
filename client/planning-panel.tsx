@@ -1,12 +1,12 @@
 import React, { type ReactNode, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import type { LaneView, LeadListFacts, PlanningTriage, Project, ProjectPlan, ProjectQaRun } from "../shared/contracts";
-import { chooserProjects, laneFinderCount, laneFinderRows, laneFinderScopeLabel, lanePlaceLabel, lanePlaces, type LaneFinderRow } from "../shared/lane-finder";
+import { laneFinderCount, laneFinderRows, laneFinderScopeLabel, lanePlaceLabel, lanePlaces, type LaneFinderRow } from "../shared/lane-finder";
 import { effectiveSelection } from "../shared/project-scope";
-import { activeSteps, movePlan, planDraftStale, planningColumns, planningPlan, projectLanes, rebaseDraft, reorderPlan, roadmapView, sameOrder, type PlanDraft, type PlanEntry, type PlanningStep, type RoadmapStep } from "../shared/planning-tab";
+import { activeSteps, movePlan, planDraftStale, planningPlan, projectLanes, rebaseDraft, reorderPlan, roadmapView, sameOrder, type PlanDraft, type PlanEntry, type PlanningStep, type RoadmapStep } from "../shared/planning-tab";
 import { decisionAge } from "../shared/pipeline-board";
 import { formatTelemetryDuration } from "../shared/telemetry";
-import { ActionButton, Button, Field, controlFrame, controlText, muted, row, type Colors } from "./controls";
+import { ActionButton, Button, Dialog, Field, controlFrame, controlText, muted, row, type Colors } from "./controls";
 import { overlay, radius, roles, space, touchTarget, type, type as typeScale } from "./design";
 import { projectDormantByActivity, type ProjectActivity } from "../shared/project-activity";
 import { ProjectTriage } from "./planning-triage";
@@ -308,48 +308,6 @@ function DormantGroup({ projects, c, children }: { projects: Project[]; c: Color
   </View>;
 }
 
-export function PlanningProjectChooser({ projects, selection, onSelect, compact, c }: {
-  projects: Project[]; selection: readonly string[]; onSelect: (keys: string[]) => void; compact: boolean; c: Colors;
-}) {
-  const [open, setOpen] = useState(false);
-  const chosen = effectiveSelection(projects, selection);
-  const label = laneFinderScopeLabel(projects, selection);
-  const r = roles(c);
-  const pick = (keys: string[]) => { onSelect(keys); setOpen(false); };
-  const option = (name: string, keys: string[], selected: boolean, a11y: string) => <Pressable key={a11y} accessibilityRole="button" accessibilityLabel={a11y} accessibilityState={{ selected }}
-    onPress={() => pick(keys)} style={{ ...row, justifyContent: "space-between", minHeight: 40, paddingHorizontal: space.sm, paddingVertical: space.xs, borderRadius: radius.control,
-      borderWidth: 1, borderColor: selected ? r.accent : r.border, backgroundColor: selected ? r.raised : r.section }}>
-    <Text numberOfLines={1} style={{ color: r.foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight, flexShrink: 1 }}>{name}</Text>
-    {selected && <Text style={{ color: r.accent, fontSize: type.metadata.fontSize }}>Selected</Text>}
-  </Pressable>;
-  const panel = <View accessibilityLabel="Planning project chooser" style={{ gap: space.xxs, padding: space.sm }}>
-    {option("All projects", [], !chosen.length, "Choose all projects")}
-    {chooserProjects(projects).map(project => option(`${project.name}${project.visibility === "parked" ? " · parked" : ""}`, [project.key], chosen.includes(project.key), `Choose project ${project.name}`))}
-    {!projects.length && <Text style={muted(c)}>No projects yet.</Text>}
-  </View>;
-  return <View style={{ minWidth: 150, maxWidth: "100%", position: "relative", zIndex: open ? 30 : 0 }}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`Project: ${label}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)}
-      style={{ minHeight: 34, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.xs, paddingHorizontal: space.sm, paddingVertical: space.xs,
-        borderRadius: radius.control, borderWidth: 1, borderColor: chosen.length ? r.accent : r.border, backgroundColor: r.section }}>
-      <Text numberOfLines={1} style={{ color: r.foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight, flexShrink: 1 }}>{label}</Text>
-      <Text style={{ color: r.muted, fontSize: type.metadata.fontSize }}>{open ? "▴" : "▾"}</Text>
-    </Pressable>
-    {open && !compact && <View style={{ position: "absolute", top: 34 + space.xxs, right: 0, width: 300, borderWidth: 1, borderColor: r.border, borderRadius: radius.panel, backgroundColor: r.section,
-      shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12, zIndex: 30 }}>{panel}</View>}
-    {open && compact && <Modal visible transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-      <View style={{ flex: 1, justifyContent: "center", padding: space.md, backgroundColor: overlay.scrim }}>
-        <View accessibilityViewIsModal style={{ width: "100%", maxWidth: 520, maxHeight: "90%", alignSelf: "center", borderRadius: radius.panel, borderWidth: 1, borderColor: r.border, backgroundColor: r.section }}>
-          <View style={{ ...row, justifyContent: "space-between", paddingHorizontal: space.sm, paddingTop: space.sm }}>
-            <Text accessibilityRole="header" style={{ color: r.foreground, fontSize: type.section.fontSize, lineHeight: type.section.lineHeight, fontWeight: "600" }}>Project</Text>
-            <ActionButton c={c} action="close" label="Close project chooser" onPress={() => setOpen(false)} />
-          </View>
-          {panel}
-        </View>
-      </View>
-    </Modal>}
-  </View>;
-}
-
 const statusWord: Record<LaneView["status"], string> = { active: "Active", paused: "Paused", done: "Done", abandoned: "Abandoned" };
 
 /**
@@ -426,7 +384,16 @@ export function LaneFinderResults({ rows, total, query, loading, error, plansErr
   </View>;
 }
 
-export function PlanningTab({ sections: allSections, leads = [], lanes, projects: allProjects, projectActivity = [], selection = [], plans: allPlans, plansError, lanesLoading = false, lanesError, edits, saveErrors, selectedLane, step, compact, busy, lanePanel, qaRuns, qaLoading = false, qaError, onOpenQaRun, onRetryQa, onRetryPlans, onRetryLanes, onStep, onOpenLane, onOpenTask, onSelectProjects, onEdit, onSave, onCancel, onCloseLane, c }: {
+/**
+ * The inbox board's Planning (Tom, 2026-11-21): the plan fills the list pane and
+ * the open lane the detail pane, or a modal when the board has no detail pane.
+ * The board header's project filter scopes it, so Planning has no chooser of its own.
+ */
+export type PlanningInbox = { listWidth: number | null; laneModal: boolean };
+
+export function PlanningTab({ sections: allSections, leads = [], lanes, projects: allProjects, projectActivity = [], selection = [], plans: allPlans, plansError, lanesLoading = false, lanesError, edits, saveErrors, selectedLane, step, compact, busy, lanePanel, qaRuns, qaLoading = false, qaError, onOpenQaRun, onRetryQa, onRetryPlans, onRetryLanes, onStep, onOpenLane, onOpenTask, onEdit, onSave, onCancel, onCloseLane, inbox: inboxLayout, c }: {
+  /** The pane layout; without it the plan fills the panel and the lane opens in a modal. */
+  inbox?: PlanningInbox;
   sections: PlanSection[]; leads?: LeadListFacts[]; lanes: LaneView[]; edits: Record<string, PlanEdit>; saveErrors?: Record<string, string>; selectedLane: string; step: PlanningStep; compact: boolean; busy: boolean; lanePanel: ReactNode;
   /** The latest milestone QA per repository; `qaLoading` and `qaError` keep a first and a failed read apart from no run. */
   qaRuns?: ProjectQaRun[]; qaLoading?: boolean; qaError?: string; onOpenQaRun?: (runId: string) => void; onRetryQa?: () => void;
@@ -436,7 +403,7 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
   projectActivity?: readonly ProjectActivity[];
   /** A plan read that failed keeps its last version; the lane search then says its positions may be stale. */
   plansError?: string; lanesLoading?: boolean; lanesError?: string;
-  onSelectProjects?: (keys: string[]) => void; onRetryLanes?: () => void;
+  onRetryLanes?: () => void;
   /** Reads the plans again after a failed read. */
   onRetryPlans?: () => void;
   onStep: (step: PlanningStep) => void; onOpenLane: (lane: string) => void; onOpenTask?: (id: string) => void; onEdit: (project: string, edit: PlanEdit) => void;
@@ -458,7 +425,6 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
   const nowMs = Date.now();
   const dormant = allSections.filter(section => projectDormantByActivity(section.project, activityByKey.get(section.project.key), nowMs)).map(section => section.project);
   const sections = allSections.filter(section => !dormant.includes(section.project));
-  const visible = planningColumns(compact, step);
   const [expanded, setExpanded] = useState<string | null>(null);
   const roadmapProps = { leads, lanes, edits, saveErrors, selectedLane, busy, qaRuns, qaLoading, qaError, onOpenQaRun, onRetryQa, onOpenLane, onOpenTask, onEdit, onSave, onCancel, onCloseLane, c };
   const roadmapFor = (section: PlanSection) => <ProjectRoadmap section={section} {...roadmapProps} onRetry={onRetryPlans} />;
@@ -478,64 +444,67 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
   const clearSearch = () => { setQuery(""); setBrowse(false); };
   const chosenScope = effectiveSelection(projects, selection);
   const allScopeOn = !chosenScope.length || allScope;
-  const planColumn = <ScrollView accessibilityLabel="Planning plan" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:radius.card}} contentContainerStyle={{padding:space.sm,gap:space.md}}>
-    {!allSections.length&&<Text style={muted(c)}>No projects yet.</Text>}
-    {sections.length===1&&roadmapFor(sections[0])}
-    {sections.length>1&&sections.map(section=>{
-      const open=expanded===section.project.key, info=summary(section);
-      return <View key={section.project.key} style={{gap:space.sm}}>
-        <View style={{gap:space.xxs,padding:space.sm,borderColor:c.border,borderWidth:1,borderRadius:radius.control,backgroundColor:c.surface0}}>
-          <Pressable accessibilityRole="button" accessibilityLabel={`Project row ${section.project.name}`} accessibilityState={{expanded:open}} onPress={()=>setExpanded(open?null:section.project.key)} style={{gap:space.xxs}}>
-            <Text style={{color:c.foreground,fontWeight:'600'}}>{open?'▾':'▸'} {section.project.name}{section.project.visibility==='parked'?' · parked':''}</Text>
-            {info.state==='ready' ? <>
-              {info.attention > 0 && <Text accessibilityLabel={`${info.attention} blocked or attention tasks`} style={{color:c.statusWarning,fontSize:type.metadata.fontSize,fontWeight:'600'}}>{info.attention} need attention</Text>}
-              <Text numberOfLines={2} style={{...muted(c),fontSize:type.metadata.fontSize}}>{info.aim}</Text>
-            </> : <Text accessibilityLabel={`${info.state === 'loading' ? 'Loading plan' : 'Plan unavailable'} for ${section.project.name}`} accessibilityRole={info.state === 'error' ? 'alert' : undefined} style={muted(c)}>
-              {info.state === 'loading' ? 'Loading…' : `Couldn’t load ${info.subject}: ${info.error}`}
-            </Text>}
-          </Pressable>
-          {info.state==='error'&&onRetryPlans&&<Button small c={c} text="Retry" label={`Retry plan and lane reads for ${section.project.name}`} onPress={onRetryPlans} />}
-        </View>
-        {open&&roadmapFor(section)}
-      </View>;
-    })}
-    <DormantGroup projects={dormant} c={c}>{project => {
-      const triage = allSections.find(section => section.project.key === project.key)?.triage;
-      return triage && <ProjectTriage project={project.name} triage={triage} onOpenTask={onOpenTask} c={c} />;
-    }}</DormantGroup>
-  </ScrollView>;
-  const laneColumn = <ScrollView accessibilityLabel="Planning lane" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:radius.card}} contentContainerStyle={{padding:space.sm,gap:space.sm}}>
-    {lanePanel}
-  </ScrollView>;
-  const searchColumn = <ScrollView accessibilityLabel="Lane search results" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:radius.card}} contentContainerStyle={{padding:space.sm,gap:space.sm}}>
-    <LaneFinderResults rows={rows} total={scoped.length} query={query} loading={lanesLoading} error={lanesError} plansError={plansError} allProjects={allScopeOn} onRetry={onRetryLanes} onOpenLane={onOpenLane} selectedLane={selectedLane} c={c}/>
-  </ScrollView>;
-  return <>
-      {compact && step==='lane' && <Button small c={c} icon="ChevronLeft" text="Back to plan" onPress={()=>onStep('plan')}/>}
-      {/* The chooser and the search live inside Planning: nothing joins the board header (Tom, 2026-11-07). */}
-      <View accessibilityLabel="Planning header" style={{gap:space.xs,paddingBottom:space.xs}}>
-        <View style={{...row,justifyContent:'space-between'}}>
-          <Text accessibilityRole="header" style={{color:c.foreground,fontSize:type.page.fontSize,lineHeight:type.page.lineHeight,fontWeight:'600'}}>Planning</Text>
-          {Boolean(projects.length)&&onSelectProjects&&<PlanningProjectChooser projects={projects} selection={selection} onSelect={onSelectProjects} compact={compact} c={c}/>}
-        </View>
-        <View style={row}>
-          <View style={{flexGrow:1,flexShrink:1,minWidth:170,maxWidth:420}}>
-            <TextInput accessibilityLabel="Find lanes" value={query} onChangeText={setQuery} placeholder="Find lanes" placeholderTextColor={roles(c).muted} autoCapitalize="none" autoCorrect={false}
-              style={{...controlFrame(c),...controlText(c)}}/>
+  {
+    const inbox = inboxLayout ?? { listWidth: null, laneModal: compact };
+    const pane = { flex: 1, minHeight: 0, backgroundColor: c.surface0 } as const;
+    const listStyle = inbox.listWidth ? { width: inbox.listWidth, minHeight: 0, borderRightWidth: 1, borderRightColor: c.border } : { flex: 1, minHeight: 0 };
+    const listBody = searching
+      ? <LaneFinderResults rows={rows} total={scoped.length} query={query} loading={lanesLoading} error={lanesError} plansError={plansError} allProjects={allScopeOn} onRetry={onRetryLanes} onOpenLane={onOpenLane} selectedLane={selectedLane} c={c}/>
+      : <>
+        {!allSections.length&&<Text style={muted(c)}>No projects yet.</Text>}
+        {sections.length===1&&roadmapFor(sections[0])}
+        {sections.length>1&&sections.map(section=>{
+          const open=expanded===section.project.key, info=summary(section);
+          return <View key={section.project.key} style={{gap:space.sm}}>
+            <View style={{gap:space.xxs,padding:space.sm,borderColor:c.border,borderWidth:1,borderRadius:radius.control,backgroundColor:c.surface1}}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Project row ${section.project.name}`} accessibilityState={{expanded:open}} onPress={()=>setExpanded(open?null:section.project.key)} style={{gap:space.xxs}}>
+                <Text style={{color:c.foreground,fontWeight:'600'}}>{open?'▾':'▸'} {section.project.name}{section.project.visibility==='parked'?' · parked':''}</Text>
+                {info.state==='ready' ? <>
+                  {info.attention > 0 && <Text accessibilityLabel={`${info.attention} blocked or attention tasks`} style={{color:c.statusWarning,fontSize:type.metadata.fontSize,fontWeight:'600'}}>{info.attention} need attention</Text>}
+                  <Text numberOfLines={2} style={{...muted(c),fontSize:type.metadata.fontSize}}>{info.aim}</Text>
+                </> : <Text accessibilityLabel={`${info.state === 'loading' ? 'Loading plan' : 'Plan unavailable'} for ${section.project.name}`} accessibilityRole={info.state === 'error' ? 'alert' : undefined} style={muted(c)}>
+                  {info.state === 'loading' ? 'Loading…' : `Couldn’t load ${info.subject}: ${info.error}`}
+                </Text>}
+              </Pressable>
+              {info.state==='error'&&onRetryPlans&&<Button small c={c} text="Retry" label={`Retry plan and lane reads for ${section.project.name}`} onPress={onRetryPlans} />}
+            </View>
+            {open&&roadmapFor(section)}
+          </View>;
+        })}
+        <DormantGroup projects={dormant} c={c}>{project => {
+          const triage = allSections.find(section => section.project.key === project.key)?.triage;
+          return triage && <ProjectTriage project={project.name} triage={triage} onOpenTask={onOpenTask} c={c} />;
+        }}</DormantGroup>
+      </>;
+    const laneOpen = Boolean(selectedLane) && step === 'lane';
+    return <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
+      <View style={listStyle}>
+        <View accessibilityLabel="Planning header" style={{gap:space.sm,paddingHorizontal:space.md,paddingTop:space.md,paddingBottom:space.sm}}>
+          <Text accessibilityRole="header" style={{color:c.foreground,fontSize:type.section.fontSize,lineHeight:type.section.lineHeight,fontWeight:'600'}}>Planning</Text>
+          <View style={{...row,flexWrap:'nowrap'}}>
+            <View style={{flex:1,minWidth:0}}>
+              <TextInput accessibilityLabel="Find lanes" value={query} onChangeText={setQuery} placeholder="Find lanes" placeholderTextColor={roles(c).muted} autoCapitalize="none" autoCorrect={false}
+                style={{...controlFrame(c),...controlText(c)}}/>
+            </View>
+            {searching?<Button small c={c} text="Back to plan" label="Close lane search" onPress={clearSearch}/>:<Button small c={c} text="Browse" label="Browse all lanes" onPress={()=>setBrowse(true)}/>}
           </View>
-          <View style={row}>
+          {searching&&<View style={row}>
             {Boolean(chosenScope.length)&&<Button small c={c} text={laneFinderScopeLabel(projects,chosenScope)}
               label={`Search lanes in ${laneFinderScopeLabel(projects,chosenScope)}`} selected={!allScopeOn} onPress={()=>setAllScope(false)}/>}
             <Button small c={c} text="All projects" label="Search lanes in all projects" selected={allScopeOn} onPress={()=>setAllScope(true)}/>
-          </View>
-          {searching?<Button small c={c} text="Back to plan" label="Close lane search" onPress={clearSearch}/>:<Button small c={c} text="Browse all lanes" label="Browse all lanes" onPress={()=>setBrowse(true)}/>}
+          </View>}
+          {searching&&<Text accessibilityLabel="Lane search scope" style={{...muted(c),fontSize:type.metadata.fontSize,lineHeight:type.metadata.lineHeight}}>Searching {scopeLabel==='All projects'?'all projects':scopeLabel}. {query.trim()?'Results match the title, aim or project.':'Every lane in scope is listed.'}</Text>}
         </View>
-        {searching&&<Text accessibilityLabel="Lane search scope" style={{...muted(c),fontSize:type.metadata.fontSize,lineHeight:type.metadata.lineHeight}}>Searching {scopeLabel==='All projects'?'all projects':scopeLabel}. {query.trim()?'Results match the title, aim or project.':'Every lane in scope is listed.'}</Text>}
+        <ScrollView accessibilityLabel={searching ? "Lane search results" : "Planning plan"} style={{flex:1,minHeight:0,borderTopWidth:1,borderTopColor:c.border}} contentContainerStyle={{padding:space.md,gap:space.md}}>
+          {listBody}
+        </ScrollView>
       </View>
-      <View style={{flex:1,minHeight:0,flexDirection:compact?'column':'row',gap:space.sm}}>
-        {searching
-          ? (compact && step==='lane' ? laneColumn : <>{searchColumn}{!compact&&visible.includes('lane')&&laneColumn}</>)
-          : <>{visible.includes('plan')&&planColumn}{visible.includes('lane')&&laneColumn}</>}
-      </View>
-  </>;
+      {!inbox.laneModal && <ScrollView accessibilityLabel="Planning lane" style={pane} contentContainerStyle={{padding:space.lg,gap:space.sm}}>
+        {lanePanel}
+      </ScrollView>}
+      {inbox.laneModal && laneOpen && <Dialog c={c} title="Lane" label="Lane detail" closeLabel="Close lane" bodyLabel="Planning lane" backdropLabel="Close lane detail" wide onClose={()=>onStep('plan')}>
+        {lanePanel}
+      </Dialog>}
+    </View>;
+  }
 }

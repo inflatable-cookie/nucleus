@@ -19,7 +19,6 @@ import {
   useNativeStubs,
   type HostNode,
 } from "./support/render";
-import { pipelineColumns, pipelineStubWidth } from "../shared/pipeline-board";
 import { Store } from "../core/store/store";
 import { leadActions } from "../core/planning/lead-actions";
 import type { LeadStatusFacts } from "../shared/lead-status";
@@ -333,14 +332,8 @@ const service = {
   paused: false,
   hostId: "host",
 };
-let hostRunsForUi: ReturnType<typeof hostRunRecordSchema.parse>[] = [];
-const hostRunCapacityReleases: Array<{ runId: string; reason: string }> = [];
-let projectQaRunsForUi: ProjectQaRun[] = [];
-const projectQaRunRequests: string[] = [];
-const projectQaActions: Array<{
-  method: string;
-  input: { id: string; reason: string };
-}> = [];
+const hostRunsForUi: ReturnType<typeof hostRunRecordSchema.parse>[] = [];
+const projectQaRunsForUi: ProjectQaRun[] = [];
 
 /** Methods the surface asked for, so one read replacing two is provable. */
 const rpcMethods: string[] = [];
@@ -365,28 +358,6 @@ const invoke = async (method: string, input: unknown): Promise<unknown> => {
       },
     };
   if (method === "project.qa.list") return projectQaRunsForUi;
-  if (method === "project.qa.run") {
-    projectQaRunRequests.push((input as { repository: string }).repository);
-    return projectQaRunsForUi[0] ?? {};
-  }
-  if (
-    method === "project.qa.cancel" ||
-    method === "project.qa.retry-teardown"
-  ) {
-    projectQaActions.push({
-      method,
-      input: input as { id: string; reason: string },
-    });
-    return (
-      projectQaRunsForUi.find(
-        (run) => run.id === (input as { id: string }).id,
-      ) ?? {}
-    );
-  }
-  if (method === "host.run.capacity.release") {
-    hostRunCapacityReleases.push(input as { runId: string; reason: string });
-    return hostRunsForUi[0];
-  }
   if (method === "lead.board")
     return { cards: boardCards([lead, taggedLead()]).map(boardRow), links: [] };
   if (method === "lead.get") {
@@ -415,164 +386,6 @@ const invoke = async (method: string, input: unknown): Promise<unknown> => {
 };
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
-
-function hostRunFixture(id: string, overrides: Record<string, unknown> = {}) {
-  const submittedAt = new Date(Date.now() - 30 * 60_000).toISOString();
-  return hostRunRecordSchema.parse({
-    id,
-    epoch: 2,
-    caller: "client:Effigy interactive",
-    submissionSource: "client",
-    repository: repo,
-    selector: "test",
-    runClass: "light",
-    classSource: "default",
-    priority: "interactive",
-    state: "settled",
-    submittedAt,
-    capacityDeadlineAt: new Date(Date.now() + 3 * 60_000).toISOString(),
-    runTimeoutMs: 30 * 60_000,
-    budgetFallback: { cpu: 1, memoryBytes: 1_000_000_000 },
-    budget: {
-      cpu: 1,
-      memoryBytes: 1_000_000_000,
-      wallMs: null,
-      source: "fallback",
-    },
-    position: null,
-    admittedAt: submittedAt,
-    launchedAt: submittedAt,
-    settledAt: null,
-    capacitySample: null,
-    pid: 4242,
-    processGroupId: 4242,
-    startIdentity: "4242@identity",
-    settlement: null,
-    wallMs: null,
-    cpuMs: null,
-    containers: [],
-    capacityReleasedAt: null,
-    capacityReleaseReason: null,
-    capacityReleaseKind: null,
-    ...overrides,
-  });
-}
-
-function settledRun(
-  id: string,
-  caller: string,
-  repository: { origin: string | null; path: string },
-  outcome: "passed" | "failed" | "cancelled",
-  settledAt: string,
-  selector = "qa",
-  holdCapacity = false,
-) {
-  const submittedAt = new Date(
-    Date.parse(settledAt) - 4 * 60_000,
-  ).toISOString();
-  const startedAt = new Date(Date.parse(settledAt) - 2 * 60_000).toISOString();
-  return hostRunFixture(id, {
-    caller,
-    repository,
-    selector,
-    priority: caller.startsWith("queue:milestone:")
-      ? "milestone"
-      : "interactive",
-    state: "settled",
-    submittedAt,
-    launchedAt: startedAt,
-    admittedAt: startedAt,
-    settledAt,
-    wallMs: 120_000,
-    capacityReleasedAt: holdCapacity ? null : settledAt,
-    containers: holdCapacity
-      ? [
-          {
-            runtime: "docker",
-            containerId: `held-${id}`,
-            removed: false,
-            startedAt,
-            removedAt: null,
-          },
-        ]
-      : [],
-    settlement: {
-      format: "host.run.settlement",
-      version: 1,
-      runId: id,
-      outcome,
-      launched: true,
-      settledAt,
-      containers: [],
-      result: {
-        format: "host.run.result",
-        version: 1,
-        runId: id,
-        epoch: 2,
-        pgid: 4242,
-        startIdentity: "4242@identity",
-        exitCode: outcome === "passed" ? 0 : 1,
-        signal: null,
-        startedAt,
-        endedAt: settledAt,
-        wallMs: 120_000,
-        cpuMs: null,
-        escapedDescendants: [],
-      },
-    },
-  });
-}
-
-function projectQaFixture(
-  id: string,
-  overrides: Partial<ProjectQaRun> = {},
-): ProjectQaRun {
-  return {
-    id,
-    repository: repo,
-    key: repo.origin!,
-    state: "failed",
-    submittedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
-    queuePosition: null,
-    hostRunEpoch: 2,
-    selector: "qa:changed",
-    runClass: "heavy",
-    classSource: "default",
-    priority: "milestone",
-    baseBranch: "main",
-    base: "b".repeat(40),
-    argv: ["effigy", "qa:changed"],
-    digest: "d".repeat(64),
-    exitCode: 1,
-    durationMs: 120_000,
-    outputTail: "The check failed\nExpected one run to pass",
-    startedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
-    finishedAt: new Date().toISOString(),
-    pid: 4242,
-    capacityWait: null,
-    capacityUnavailable: false,
-    steps: [
-      {
-        name: "teardown",
-        command: "paseo worktree.teardown",
-        exitCode: 1,
-        signal: null,
-        timedOut: false,
-        stdoutHead: "",
-        stdoutTail: "",
-        stderrHead: "",
-        stderrTail: "Worktree cleanup needs a retry",
-      } as never,
-    ],
-    failedStep: "teardown",
-    logWriteErrors: [],
-    interruptedStep: null,
-    hostSettlement: null,
-    escapedDescendants: [],
-    cancelReason: null,
-    ...overrides,
-  } as ProjectQaRun;
-}
 
 /**
  * The host loads the plugin as a CJS bundle. Like plugin-load.test.ts guards the
@@ -628,7 +441,8 @@ async function bundleMainSurface() {
   return bundledMainSurface;
 }
 
-test("the bundled board status keeps the project default and override count readable", async () => {
+// Tom, 2026-11-21: the status line left the header; the slot table lives in the queue menu.
+test("the bundled queue menu keeps the project default and override count readable", async () => {
   const mainSurface = await bundleMainSurface();
   const previous = board.projectLimitOverrides;
   board.projectLimitOverrides = { "project-a": 6 };
@@ -636,10 +450,16 @@ test("the bundled board status keeps the project default and override count read
   try {
     await settleUntil(
       ui,
-      () => ui.text().includes("project default 5 · 1 override"),
-      "the bundled board status did not include the project override count",
+      () => ui.query("Queue controls menu")?.props.disabled === false,
+      "the queue controls did not load",
     );
-    assert.match(ui.text(), /project default 5 · 1 override/);
+    assert.doesNotMatch(
+      ui.text(),
+      /project default|global slots/,
+      "the header carries no status line",
+    );
+    ui.press("Queue controls menu");
+    assert.match(ui.text(), /0\/32 global · project default 5 · 1 override/);
   } finally {
     unmount(ui);
     board.projectLimitOverrides = previous;
@@ -669,36 +489,24 @@ function ancestorsOf(root: HostNode, target: HostNode): HostNode[] {
   return chain;
 }
 
-function assertHeaderMenuStacksAboveNav(
+function assertHeaderMenuInTopLayer(
   ui: ReturnType<typeof mount>,
   menuLabel: string,
   overlayLabel: string,
 ) {
   const menu = ui.get(menuLabel);
   const overlayZ = Number(hostStyle(ui.get(overlayLabel)).zIndex ?? 0);
-  const navRow = ui.ofType("View").find((node) => {
-    const style = hostStyle(node);
-    return style.zIndex === 20 && style.justifyContent === "space-between";
-  });
-  assert.ok(
-    navRow,
-    "the nav row still stacks at zIndex 20 so its own dropdowns overlay the board",
-  );
-  assert.ok(
-    overlayZ > 20,
-    "the outside-press layer covers the nav row and the board",
-  );
+  assert.ok(overlayZ > 0, "the outside-press layer covers the board");
   // Queue #1391: the open menu renders in the shell's popover layer, above
-  // the board columns, instead of climbing a z-index ladder inside the
-  // header — an anchored dropdown there is painted over by the column cards.
-  // The bundled surface carries its own copy of the layer id string.
+  // the list and detail panes, instead of climbing a z-index ladder inside the
+  // header. The bundled surface carries its own copy of the layer id string.
   const layer = ui
     .ofType("View")
     .find((node) => node.props.testID === "nucleus-popover-layer");
   assert.ok(layer, "the board shell mounts one popover layer");
   assert.ok(
     ancestorsOf(layer, menu).length > 0,
-    "the menu renders in the top layer, above the board columns",
+    "the menu renders in the top layer, above the panes",
   );
 }
 
@@ -757,7 +565,7 @@ for (const compact of [false, true])
       assert.equal(ui.get("Pause").props.accessibilityRole, "menuitem");
       assert.equal(ui.get("Dispatch hold").props.accessibilityRole, "menuitem");
       assert.equal(ui.get("Stop").props.accessibilityRole, "menuitem");
-      assertHeaderMenuStacksAboveNav(
+      assertHeaderMenuInTopLayer(
         ui,
         "Queue controls",
         "Close queue controls",
@@ -837,21 +645,13 @@ function tree(
   });
 }
 
-/** Yield until the pipeline header and its cards render, or fail. */
+/** Yield until the board read lands: the menu carries real counts and the open list has rendered. */
 async function settle(ui: ReturnType<typeof mount>) {
-  const rendered = () => {
-    const joined = ui.ofType("Text").map((node) => node.children.join(""));
-    return (
-      joined.includes("Closing") &&
-      joined.includes("Task queued") &&
-      joined.includes("Cut one")
-    );
-  };
   for (let attempt = 0; attempt < 400; attempt++) {
-    if (rendered()) return;
+    if (ui.query(/^Active, \d+$/) && ui.query(/ list$/)) return;
     await tick();
   }
-  assert.fail("the pipeline board did not render");
+  assert.fail("the inbox board did not render");
 }
 
 async function settleUntil(
@@ -881,27 +681,51 @@ const navigationButtons = (ui: ReturnType<typeof mount>) =>
     );
 const navigationLabels = (ui: ReturnType<typeof mount>) =>
   navigationButtons(ui).map((node) => String(node.props.accessibilityLabel));
+/** A menu entry's name, without its count. */
+const viewName = (label: string) => label.replace(/, \d+$/, "");
 const navigationButton = (ui: ReturnType<typeof mount>, name: string) => {
   const button = navigationButtons(ui).find(
-    (node) =>
-      String(node.props.accessibilityLabel).replace(
-        /\s+\(\d+(?: open)?\)$/,
-        "",
-      ) === name,
+    (node) => viewName(String(node.props.accessibilityLabel)) === name,
   );
-  assert.ok(button, `missing ${name} navigation tab`);
+  assert.ok(button, `missing ${name} menu entry`);
   return button;
 };
-/** Column headers carry the full column width, labelled "Name, count". */
-const headers = (ui: ReturnType<typeof mount>, width: number) =>
-  ui
-    .ofType("View")
-    .filter(
-      (node) =>
-        (node.props.style as { width?: number } | undefined)?.width === width &&
-        /^[A-Za-z]+, \d+$/.test(String(node.props.accessibilityLabel ?? "")),
-    )
-    .map((node) => String(node.props.accessibilityLabel).split(",")[0]);
+/** Open a menu view (or one of Active's sections) by name. */
+const openView = (ui: ReturnType<typeof mount>, name: string) =>
+  navigationButton(ui, name).props.onPress();
+/** The views that list task and decision cards. */
+const cardViews = ["Needs you", "Queue", "Active"] as const;
+/** A text's count summed over the card views; each card lives in exactly one. */
+const countAcross = (
+  ui: ReturnType<typeof mount>,
+  value: string,
+  views: readonly string[] = cardViews,
+) =>
+  views.reduce((sum, view) => {
+    openView(ui, view);
+    return sum + countText(ui, value);
+  }, 0);
+/** The first card whose label matches, leaving its view open. */
+const findCard = (
+  ui: ReturnType<typeof mount>,
+  match: (label: string) => boolean,
+  views: readonly string[] = cardViews,
+) => {
+  for (const view of views) {
+    openView(ui, view);
+    const card = ui
+      .ofType("Pressable")
+      .find((node) => match(String(node.props.accessibilityLabel)));
+    if (card) return card;
+  }
+  return undefined;
+};
+/** Leads' Leads | Papercuts switch. */
+const leadsTab = (ui: ReturnType<typeof mount>, name: "Leads" | "Papercuts") =>
+  ui.press(new RegExp(`^${name} tab, \\d+$`));
+/** Close an open record: its modal backdrop below the wide layout, its pane's close control at it. */
+const closeRecord = (ui: ReturnType<typeof mount>, backdrop: string) =>
+  ui.press(ui.query(backdrop) ? backdrop : "Close detail");
 
 /** Every themed color resolves to the dark palette (or a fixed overlay literal). */
 function assertDarkTheme(ui: ReturnType<typeof mount>) {
@@ -942,180 +766,140 @@ async function verifyViewport(compact: boolean) {
   const ui = mount(tree(MainSurface, compact));
   try {
     await settle(ui);
-    assert.deepEqual(
-      navigationLabels(ui).map((label) =>
-        label.replace(/\s+\(\d+(?: open)?\)$/, ""),
-      ),
-      ["Tasks", "Planning", "QA runs"],
-    );
-    assert.equal(
-      ui.query(/^Decisions \(/),
-      undefined,
-      "Decisions has no top-level tab",
-    );
-    assert.equal(
-      ui.query("Papercuts"),
-      undefined,
-      "Papercuts has no top-level tab",
-    );
+    // Tom, 2026-11-21: the menu replaces the Tasks, Planning and QA runs tabs.
+    assert.deepEqual(navigationLabels(ui).map(viewName), [
+      "Needs you",
+      "Planning",
+      "Leads",
+      "Queue",
+      "Active",
+      "Working",
+      "In review",
+      "Closing",
+    ]);
+    assert.ok(ui.get("Needs you list"), "the inbox opens on Needs you");
+    assert.equal(ui.query(/^Tasks( \(|$|, )/), undefined, "no Tasks tab remains");
+    assert.equal(ui.query(/^QA runs/), undefined, "QA runs is retired as a board surface");
     assert.equal(
       ui.query("Board mode"),
       undefined,
-      "Tasks has no Pipeline/Lanes mode toggle",
+      "the inbox has no Pipeline/Lanes mode toggle",
     );
-    // #866: the Lanes destination is folded into Planning; the board's Lanes switch went on 2026-11-08.
+    assert.equal(ui.all("Lanes").length, 0, "nothing is labelled Lanes");
+    openView(ui, "Planning");
+    assert.ok(ui.get("Find lanes"), "Planning carries lane discovery");
     assert.equal(
-      ui.all("Lanes").length,
-      0,
-      "nothing is labelled Lanes on Tasks",
+      ui.query(/^Project: /),
+      undefined,
+      "Planning has no chooser of its own",
     );
-    navigationButton(ui, "Planning").props.onPress();
-    assert.ok(ui.get("Find lanes"), "Planning carries lane discovery now");
-    assert.ok(ui.get(/^Project: /), "and its own project chooser");
     assert.ok(
       ui.query(/^Projects, /),
-      "the header project selector stays available on Planning",
+      "the header project selector scopes Planning",
     );
-    navigationButton(ui, "Tasks").props.onPress();
+    openView(ui, "Queue");
     assert.equal(ui.query("Find lanes"), undefined);
     assert.equal(
-      countText(ui, "Parked (no slot held)"),
+      countAcross(ui, "Parked (no slot held)"),
       4,
       "parked lifecycle tasks carry the no-slot badge",
     );
-    const width = compact ? 260 : 300;
-    // Seven columns in spec order, each card kind present, no retired board. This fixture has no
-    // decisions, so the Decisions column is an empty stub (nucleus-ui finding 1), not a full-width column.
-    assert.deepEqual(
-      headers(ui, width),
-      pipelineColumns.filter((name) => name !== "Decisions"),
-    );
-    assert.ok(
-      ui.query("Decisions, 0, empty"),
-      "the empty Decisions column keeps its name and real total in a stub",
-    );
-    assert.ok(ui.get("Nucleus navigation"));
+    // Each task card renders once, in exactly one view, whatever its lane count.
+    for (const phase of phases)
+      assert.equal(
+        countAcross(ui, `Task ${phase}`),
+        1,
+        `${phase} renders once`,
+      );
     assert.equal(
-      ui.query(/^Decisions \(/),
-      undefined,
-      "the Decisions column count replaces the removed tab count",
+      countAcross(ui, "Shared task"),
+      1,
+      "a card in two lanes renders once",
     );
+    openView(ui, "Queue");
+    assert.equal(countText(ui, "Task queued"), 1, "queued work is in Queue");
+    openView(ui, "Active");
+    for (const section of ["Working", "In review", "Closing"])
+      assert.ok(
+        ui.query(new RegExp(`^${section} section, \\d+$`)),
+        `Active lists its ${section} section`,
+      );
+    assert.equal(countText(ui, "Task closing"), 1, "closing work is in Active");
+    openView(ui, "Closing");
+    assert.equal(countText(ui, "Task working"), 0, "a section shows only its own cards");
+    assert.equal(countText(ui, "Task closing"), 1);
+    // This fixture has no decisions: Needs you names its empty Decisions section with a real zero.
+    openView(ui, "Needs you");
+    assert.ok(ui.query("Decisions section, 0"), "the empty Decisions section keeps its real total");
+    assert.ok(ui.text().includes("Nothing here."));
     assert.equal(
       ui.query("Filter by project"),
       undefined,
       "no separate filter switch on the board",
-    );
-    assert.equal(ui.query(/^Status$/), undefined, "no retired board toggle");
-    for (const phase of phases)
-      assert.equal(countText(ui, `Task ${phase}`), 1, `${phase} renders once`);
-    assert.equal(
-      countText(ui, "Shared task"),
-      1,
-      "a card in two lanes renders once",
-    );
-    assert.equal(countText(ui, "Cut one"), 1);
-    assert.equal(countText(ui, "Lead one"), 1);
-    ui.press("Filter Triage by tag, All tags (2)");
-    ui.press("Filter Triage by tag: Papercut (1)");
-    assert.equal(countText(ui, "Cut one"), 1);
-    assert.equal(countText(ui, "Lead one"), 0);
-    ui.press("Filter Triage by tag, Papercut (1)");
-    ui.press("Filter Triage by tag: All tags (2)");
-    assert.equal(countText(ui, "Lead one"), 1);
-    // Tom, 2026-11-08: the swim-lane view is retired. No switch, no lane rows, no row toggles.
-    assert.equal(
-      ui.query("Lanes"),
-      undefined,
-      "no Lanes switch beside the project selector",
     );
     assert.equal(
       ui
         .ofType("Pressable")
         .filter((node) => node.props.accessibilityRole === "switch").length,
       0,
-      "the board header holds no switch",
+      "the board holds no switch",
     );
-    assert.equal(
-      ui.query(/lane, \d+ cards/),
-      undefined,
-      "no swim-lane row headers",
+    // Leads split into leads and papercuts, each with the tag filter.
+    openView(ui, "Leads");
+    await settleUntil(
+      ui,
+      () => countText(ui, "Lead one") === 1,
+      "the Leads list did not render",
     );
-    assert.equal(
-      ui.query(
-        /^Show \d+ more in .*, (Decisions|Attention|Queued|Working|Review|Closing)$/,
-      ),
-      undefined,
-      'no per-cell "N more" control',
-    );
-    assert.equal(
-      ui.query(/^Collapse /),
-      undefined,
-      "no per-cell collapse control",
-    );
-    assert.equal(
-      ui.query("Promote"),
-      undefined,
-      "pipeline cards render no Promote button",
-    );
-    assert.equal(
-      ui.query("Approve"),
-      undefined,
-      "pipeline cards render no Approve button",
-    );
-    assert.equal(
-      ui.query("Drop"),
-      undefined,
-      "pipeline cards render no Drop button",
-    );
-    assert.equal(
-      ui.query("Check again"),
-      undefined,
-      "pipeline cards render no Check again button",
-    );
+    assert.equal(countText(ui, "Cut one"), 0, "papercuts sit behind their own switch");
+    for (const label of ["Promote", "Approve", "Drop", "Check again"])
+      assert.equal(ui.query(label), undefined, `list rows render no ${label} button`);
     assert.equal(
       ui
         .ofType("Pressable")
         .filter((node) => node.props.accessibilityRole === "toolbar").length,
       0,
-      "no card action toolbar",
+      "no row action toolbar",
     );
+    ui.press("Filter leads by tag, All tags (2)");
+    ui.press("Filter leads by tag: Papercut (1)");
+    assert.equal(countText(ui, "Lead one"), 0);
+    leadsTab(ui, "Papercuts");
+    assert.equal(countText(ui, "Cut one"), 1);
+    ui.press("Filter leads by tag, Papercut (1)");
+    ui.press("Filter leads by tag: All tags (2)");
+    leadsTab(ui, "Leads");
+    assert.equal(countText(ui, "Lead one"), 1);
     ui.press("Triage: Lead one");
     await settleUntil(
       ui,
       () =>
         ui.query("Lead detail") !== undefined &&
         ui.query("Check the brief") !== undefined,
-      "the lead modal did not load",
+      "the lead detail did not load",
     );
-    assert.equal(
-      ui.query("Open"),
-      undefined,
-      "a lead click does not switch to the Papercuts tab",
-    );
+    assert.ok(ui.get("Leads list"), "opening a lead keeps the Leads list");
     assert.equal(
       ui.get("Approve the checked version").props.accessibilityState.disabled,
       true,
     );
     assert.match(ui.text(), /Lead has no brief to approve/);
     assertDarkTheme(ui);
-    ui.press("Close lead detail");
+    closeRecord(ui, "Close lead detail");
+    assert.equal(ui.query("Lead detail"), undefined);
+    leadsTab(ui, "Papercuts");
     ui.press("Triage: Cut one");
     await settleUntil(
       ui,
       () =>
         ui.query("Papercut detail") !== undefined &&
         ui.query("Close as completed") !== undefined,
-      "the papercut modal did not load",
-    );
-    assert.equal(
-      ui.query("Open"),
-      undefined,
-      "a papercut click does not switch to the Papercuts tab",
+      "the papercut detail did not load",
     );
     assert.ok(ui.get("Promote"));
     assert.ok(ui.get("Close as completed"));
     assertDarkTheme(ui);
-    ui.press("Close papercut detail");
+    closeRecord(ui, "Close papercut detail");
     assertDarkTheme(ui);
   } finally {
     unmount(ui);
@@ -1170,15 +954,15 @@ test("026-14/A2 the bundled Planning tab renders its roadmap in the dark theme",
   }
 });
 
-test("026-13/15 the bundled Pipeline renders in the dark theme at the wide viewport", async () => {
+test("026-13/15 the bundled inbox renders in the dark theme at the wide viewport", async () => {
   await verifyViewport(false);
 });
 
-test("026-13/15 the bundled Pipeline renders in the dark theme at the compact viewport", async () => {
+test("026-13/15 the bundled inbox renders in the dark theme at the medium viewport", async () => {
   await verifyViewport(true);
 });
 
-test("141 the bundled Pipeline distinguishes dispatch and merge holds in the dark theme", async () => {
+test("141 the bundled inbox distinguishes dispatch and merge holds in the dark theme", async () => {
   const originalTasks = board.tasks;
   board.tasks = [
     ...originalTasks,
@@ -1199,6 +983,8 @@ test("141 the bundled Pipeline distinguishes dispatch and merge holds in the dar
     const MainSurface = await bundleMainSurface();
     ui = mount(tree(MainSurface, false));
     await settle(ui);
+    // Held queued work stays in Queue.
+    openView(ui, "Queue");
     assert.equal(countText(ui, "Dispatch held"), 1);
     assert.equal(countText(ui, "Merge held"), 1);
     assert.ok(
@@ -1235,637 +1021,6 @@ test("141 the bundled Pipeline distinguishes dispatch and merge holds in the dar
   } finally {
     if (ui) unmount(ui);
     board.tasks = originalTasks;
-  }
-});
-
-test("Spec 035 bundled Pipeline shows host-run metrics and held capacity in the dark theme", async () => {
-  const originalTasks = board.tasks;
-  board.tasks = board.tasks.map((task) =>
-    task.id === "task-working"
-      ? { ...task, number: 42, reference: "owner/app#042" }
-      : task,
-  );
-  const now = Date.now();
-  const submittedAt = new Date(now - 27 * 60_000).toISOString();
-  const launchedAt = new Date(now - 2 * 60_000).toISOString();
-  const escapedRunId = "host-run-escaped-panel";
-  const escapedSettledAt = new Date().toISOString();
-  hostRunsForUi = [
-    hostRunRecordSchema.parse({
-      id: "host-run-panel",
-      epoch: 1,
-      caller: `queue:validation:task-working:${"a".repeat(40)}`,
-      repository: repo,
-      selector: "qa",
-      runClass: "heavy",
-      classSource: "default",
-      priority: "validation",
-      state: "running",
-      submittedAt,
-      capacityDeadlineAt: new Date(now + 3 * 60_000).toISOString(),
-      runTimeoutMs: 30 * 60_000,
-      budgetFallback: { cpu: 1, memoryBytes: 1_000_000_000 },
-      budget: {
-        cpu: 1,
-        memoryBytes: 1_000_000_000,
-        wallMs: null,
-        source: "fallback",
-      },
-      position: null,
-      admittedAt: launchedAt,
-      launchedAt,
-      settledAt: null,
-      capacitySample: null,
-      pid: 4242,
-      processGroupId: 4242,
-      startIdentity: "4242@identity",
-      settlement: null,
-      wallMs: 120_000,
-      cpuMs: 60_000,
-      containers: [
-        {
-          runtime: "docker",
-          containerId: "container-held",
-          removed: "unknown",
-          startedAt: launchedAt,
-          removedAt: null,
-        },
-      ],
-      capacityReleasedAt: null,
-      capacityReleaseReason: null,
-      capacityReleaseKind: null,
-    }),
-    hostRunRecordSchema.parse({
-      id: escapedRunId,
-      epoch: 1,
-      caller: "queue:milestone:test",
-      repository: repo,
-      selector: "qa:escaped",
-      runClass: "heavy",
-      classSource: "default",
-      priority: "milestone",
-      state: "settled",
-      submittedAt,
-      capacityDeadlineAt: new Date(now + 3 * 60_000).toISOString(),
-      runTimeoutMs: 30 * 60_000,
-      budgetFallback: { cpu: 1, memoryBytes: 1_000_000_000 },
-      budget: {
-        cpu: 1,
-        memoryBytes: 1_000_000_000,
-        wallMs: null,
-        source: "fallback",
-      },
-      position: null,
-      admittedAt: launchedAt,
-      launchedAt,
-      settledAt: escapedSettledAt,
-      capacitySample: null,
-      pid: 4243,
-      processGroupId: 4243,
-      startIdentity: "4243@identity",
-      settlement: {
-        format: "host.run.settlement",
-        version: 1,
-        runId: escapedRunId,
-        outcome: "passed",
-        launched: true,
-        settledAt: escapedSettledAt,
-        containers: [],
-        result: {
-          format: "host.run.result",
-          version: 1,
-          runId: escapedRunId,
-          epoch: 1,
-          pgid: 4243,
-          startIdentity: "4243@identity",
-          exitCode: 0,
-          signal: null,
-          startedAt: launchedAt,
-          endedAt: escapedSettledAt,
-          wallMs: 100,
-          cpuMs: null,
-          escapedDescendants: [{ pid: 9001, startIdentity: "9001@identity" }],
-        },
-      },
-      wallMs: 100,
-      cpuMs: null,
-      containers: [],
-      escapedDescendantsProvenDeadAt: null,
-      capacityReleasedAt: null,
-      capacityReleaseReason: null,
-      capacityReleaseKind: null,
-    }),
-  ];
-  hostRunCapacityReleases.length = 0;
-  rpcMethods.length = 0;
-  const MainSurface = await bundleMainSurface();
-  const ui = mount(tree(MainSurface, false));
-  try {
-    // Host runs share the QA list; the Pipeline stays focused on its columns.
-    await settleUntil(
-      ui,
-      () => ui.text().includes("QA runs (2)"),
-      "the QA runs tab did not count the active host runs",
-    );
-    // Audit A8: the board polls one combined private read, never the two it replaced.
-    assert.ok(
-      rpcMethods.includes("host.run.board"),
-      "the board reads the combined host-run read",
-    );
-    assert.equal(
-      rpcMethods.includes("host.run.list"),
-      false,
-      "the pinned list is not polled separately",
-    );
-    assert.equal(
-      rpcMethods.includes("host.run.accounting.list"),
-      false,
-      "the accounting list is not polled separately",
-    );
-    assert.ok(
-      !ui.text().includes("QA host runs"),
-      "the pipeline view does not render the host-run panel",
-    );
-    ui.press("QA runs (2)");
-    await settleUntil(
-      ui,
-      () =>
-        ui
-          .text()
-          .includes("Capacity held by a container not reported removed."),
-      "the bundled QA run list did not render",
-    );
-    assert.ok(ui.text().includes("Now"));
-    assert.ok(ui.text().includes("Results · past 24 hours"));
-    assert.ok(ui.text().includes("App"));
-    assert.ok(ui.text().includes("Task validation"));
-    const taskValidationRow = ui
-      .ofType("Pressable")
-      .find((node) =>
-        String(node.props.accessibilityLabel).includes("Task validation"),
-      );
-    assert.ok(
-      taskValidationRow,
-      "task validation remains selectable from QA runs",
-    );
-    taskValidationRow!.props.onPress();
-    await settleUntil(
-      ui,
-      () => ui.query("QA run detail host-run-panel") !== undefined,
-      "the QA run detail did not open",
-    );
-    ui.press("Diagnostics: identity, host process and output");
-    assert.ok(
-      ui.text().includes("Task · owner/app#042"),
-      `the task identity remains reachable in run diagnostics: ${ui.text().slice(-800)}`,
-    );
-    assert.ok(ui.text().includes("Commit aaaaaaaa"));
-    assert.ok(ui.text().includes("Running"));
-    assert.ok(!ui.text().includes("QA host runs"));
-    assert.ok(
-      ui.get("Release held capacity for run host-run-panel").props
-        .accessibilityState.disabled,
-    );
-    assert.ok(
-      ui
-        .text()
-        .includes("Capacity held by 1 escaped descendant not proven dead."),
-    );
-    assert.ok(
-      ui.get("Release held capacity for run host-run-escaped-panel").props
-        .accessibilityState.disabled,
-    );
-    assertDarkTheme(ui);
-
-    ui.type(
-      "Capacity release reason for run host-run-panel",
-      "Operator verified the container is stopped",
-    );
-    assert.equal(
-      ui.get("Release held capacity for run host-run-panel").props
-        .accessibilityState.disabled,
-      false,
-    );
-    ui.press("Release held capacity for run host-run-panel");
-    await settleUntil(
-      ui,
-      () => hostRunCapacityReleases.length === 1,
-      "the bundle did not submit the operator release",
-    );
-    ui.type(
-      "Capacity release reason for run host-run-escaped-panel",
-      "Operator verified the escaped process is safe to release",
-    );
-    assert.equal(
-      ui.get("Release held capacity for run host-run-escaped-panel").props
-        .accessibilityState.disabled,
-      false,
-    );
-    ui.press("Release held capacity for run host-run-escaped-panel");
-    await settleUntil(
-      ui,
-      () => hostRunCapacityReleases.length === 2,
-      "the bundle did not submit the escaped-descendant operator release",
-    );
-    assert.deepEqual(hostRunCapacityReleases, [
-      {
-        runId: "host-run-panel",
-        reason: "Operator verified the container is stopped",
-      },
-      {
-        runId: escapedRunId,
-        reason: "Operator verified the escaped process is safe to release",
-      },
-    ]);
-    assertDarkTheme(ui);
-  } finally {
-    hostRunsForUi = [];
-    projectQaRunsForUi = [];
-    board.tasks = originalTasks;
-    unmount(ui);
-  }
-});
-
-test("179 bundled QA runs combine now and results, scope projects, filter failures, open details and launch from a picker", async () => {
-  const originalProjects = board.projects;
-  const originalTasks = board.tasks;
-  const submittedAt = new Date(Date.now() - 8 * 60_000).toISOString();
-  const startedAt = new Date(Date.now() - 5 * 60_000).toISOString();
-  const qaFailedId = "qa-result-failed";
-  const qaQueuedId = "qa-run-queued";
-  const oldResultId = "qa-result-old";
-  const taskId = "validation-task-17";
-  const commit = "c".repeat(40);
-  board.projects = [project, projectDProject];
-  board.tasks = [
-    ...originalTasks,
-    {
-      ...summary(taskId, "Validate the release path", [], "working"),
-      number: 17,
-      reference: "owner/app#017",
-    },
-  ];
-  hostRunsForUi = [
-    hostRunFixture("validation-running", {
-      caller: `queue:validation:${taskId}:${commit}`,
-      repository: repo,
-      selector: "qa:changed",
-      priority: "validation",
-      state: "running",
-      submissionSource: "queue",
-      submittedAt,
-      launchedAt: startedAt,
-      admittedAt: startedAt,
-      settledAt: null,
-      capacityReleasedAt: null,
-      wallMs: null,
-    }),
-    hostRunFixture(qaQueuedId, {
-      caller: "queue:milestone:app:queued",
-      repository: repo,
-      selector: "qa",
-      priority: "milestone",
-      runClass: "heavy",
-      state: "queued",
-      submittedAt,
-      launchedAt: null,
-      admittedAt: null,
-      position: 2,
-      settledAt: null,
-      settlement: null,
-      capacityReleasedAt: null,
-    }),
-    settledRun(
-      qaFailedId,
-      "queue:milestone:app:failed",
-      repo,
-      "failed",
-      new Date().toISOString(),
-    ),
-    settledRun(
-      "capacity-held-failed",
-      "client:Effigy interactive",
-      repo,
-      "failed",
-      new Date().toISOString(),
-      "test",
-      true,
-    ),
-    settledRun(
-      "qa-result-passed",
-      "client:Effigy interactive",
-      repo,
-      "passed",
-      new Date(Date.now() - 5 * 60_000).toISOString(),
-      "interactive",
-    ),
-    settledRun(
-      oldResultId,
-      "client:Effigy interactive",
-      repo,
-      "passed",
-      new Date(Date.now() - 30 * 60 * 60_000).toISOString(),
-      "interactive",
-    ),
-    settledRun(
-      "project-d-result",
-      "client:Effigy interactive",
-      projectDRepo,
-      "passed",
-      new Date(Date.now() - 3 * 60_000).toISOString(),
-      "interactive",
-    ),
-  ];
-  projectQaRunsForUi = [
-    projectQaFixture(qaFailedId, {
-      state: "failed",
-      failedStep: "teardown",
-      finishedAt: new Date().toISOString(),
-      outputTail: "Worktree cleanup needs a retry",
-      failureIndexes: [
-        {
-          stage: "qa",
-          tests: 3,
-          failed: 1,
-          cancelled: 1,
-          skipped: 0,
-          identities: [
-            {
-              id: 2,
-              title: "expected mismatch",
-              location: "test/result.test.ts:8:2",
-              status: "failed",
-            },
-            {
-              id: 3,
-              title: "cancelled child",
-              location: null,
-              status: "cancelled",
-            },
-          ],
-          omittedIdentities: 0,
-          truncated: false,
-          diagnosticsTruncated: true,
-        },
-      ],
-      steps: [
-        {
-          name: "teardown",
-          command: "paseo worktree.teardown",
-          exitCode: 1,
-          signal: null,
-          timedOut: false,
-          stdoutHead: "",
-          stdoutTail: "",
-          stderrHead: "",
-          stderrTail: "Worktree cleanup needs a retry",
-        } as never,
-      ],
-    }),
-    projectQaFixture(qaQueuedId, {
-      state: "queued",
-      submittedAt,
-      startedAt: submittedAt,
-      finishedAt: null,
-      exitCode: null,
-      durationMs: 0,
-      outputTail: "",
-      failedStep: null,
-      steps: [],
-    }),
-  ];
-  projectQaActions.length = 0;
-  projectQaRunRequests.length = 0;
-  const MainSurface = await bundleMainSurface();
-  const ui = mount(tree(MainSurface, false));
-  const clearProjectSelection = () => {
-    let selector = ui.all(/^Projects,/)[0];
-    if (!selector) return;
-    if (!ui.query("Clear project selection"))
-      ui.press(selector.props.accessibilityLabel as string);
-    if (ui.query("Clear project selection"))
-      ui.press("Clear project selection");
-    selector = ui.all(/^Projects,/)[0];
-    if (selector && ui.query("Clear project selection"))
-      ui.press(selector.props.accessibilityLabel as string);
-  };
-  try {
-    clearProjectSelection();
-    await settleUntil(
-      ui,
-      () => ui.text().includes("QA runs (3)"),
-      "the QA runs navigation did not show its live run count",
-    );
-    ui.press("QA runs (3)");
-    await settleUntil(
-      ui,
-      () =>
-        ui.query("QA runs") !== undefined &&
-        ui.text().includes("Worktree cleanup needs a retry"),
-      "the joined QA run rows did not render",
-    );
-    assert.ok(ui.query("Now"));
-    assert.ok(ui.query("Results"));
-    assert.ok(ui.text().includes("App"));
-    assert.ok(
-      ui.text().includes("Task validation"),
-      "the run category follows the primary failure and time/state",
-    );
-    assert.ok(
-      !ui.text().includes("Commit cccccccc"),
-      "commit identity stays in the shared run detail",
-    );
-    assert.ok(
-      !ui.text().includes("Selector · qa"),
-      "selector identity stays in the shared run detail",
-    );
-    assert.ok(
-      ui
-        .ofType("View")
-        .some((node) => node.props.accessibilityLabel === "Outcome Failed"),
-      "failed results expose their outcome badge",
-    );
-    assert.ok(
-      ui
-        .ofType("View")
-        .some((node) => node.props.accessibilityLabel === "Outcome Passed"),
-      "passed results expose their outcome badge",
-    );
-    const heldFailureBadge = ui
-      .ofType("View")
-      .find(
-        (node) =>
-          node.props.accessibilityLabel === "Outcome Failed · capacity held",
-      );
-    assert.ok(
-      heldFailureBadge,
-      "capacity-held failures keep the settled outcome in their badge",
-    );
-    assert.ok(
-      ui.query("QA run row capacity-held-failed"),
-      "capacity-held failures stay in Now",
-    );
-    assert.equal(
-      (heldFailureBadge.props.style as { borderColor: string }).borderColor,
-      dark.statusDanger,
-      "capacity-held failure badges keep the danger tone",
-    );
-    assert.equal(ui.get("Open task #017").props.accessibilityRole, "link");
-    assert.ok(ui.text().includes("Worktree cleanup needs a retry · App"));
-    assert.ok(
-      !ui.text().includes("teardown failed · Worktree cleanup needs a retry"),
-      "the failed step is not repeated before its diagnostic",
-    );
-    assert.ok(
-      ui.query("QA run row project-d-result"),
-      "unfiltered results include the second project",
-    );
-    assert.ok(
-      !ui.query("QA run row qa-result-old"),
-      "results older than 24 hours start collapsed",
-    );
-
-    ui.press("Failed only");
-    assert.ok(
-      ui.query(`QA run row ${qaFailedId}`),
-      "Failed only retains failed results",
-    );
-    assert.equal(
-      ui.query("QA run row qa-result-passed"),
-      undefined,
-      "Failed only hides passed results",
-    );
-    ui.press("Failed only");
-
-    const pressQaRow = (id: string) => {
-      const root = ui.get(`QA run row ${id}`);
-      const find = (node: HostNode): HostNode | undefined => {
-        if (
-          node.props.accessibilityRole === "button" &&
-          String(node.props.accessibilityLabel).includes("Open QA run details")
-        )
-          return node;
-        for (const child of node.children)
-          if (typeof child !== "string") {
-            const found = find(child);
-            if (found) return found;
-          }
-        return undefined;
-      };
-      const button = find(root);
-      assert.ok(button, `QA run row ${id} has an accessible detail action`);
-      button!.props.onPress();
-    };
-    pressQaRow(qaFailedId);
-    assert.ok(ui.query(`QA run detail ${qaFailedId}`));
-    assert.ok(ui.text().includes("Steps"));
-    assert.ok(ui.text().includes("teardown · exit 1"));
-    assert.ok(ui.text().includes("Settlement"));
-    assert.equal(
-      ui.query("QA run identity"),
-      undefined,
-      "identity is behind the diagnostics disclosure",
-    );
-    ui.press("Diagnostics: identity, host process and output");
-    assert.ok(ui.text().includes("Caller · queue:milestone:app:failed"));
-    assert.ok(ui.text().includes("epoch 2"));
-    assert.ok(ui.text().includes("Commit bbbbbbbbbbbb"));
-    assert.ok(ui.text().includes("Selector · qa"));
-    assert.ok(
-      ui
-        .text()
-        .includes(
-          "qa: 1 failed, 1 cancelled; 2 identities retained, 0 omitted (diagnostics truncated)",
-        ),
-    );
-    assert.ok(
-      ui
-        .text()
-        .includes("failed 2 expected mismatch — test/result.test.ts:8:2"),
-    );
-    assert.ok(ui.text().includes("cancelled 3 cancelled child"));
-    ui.type(
-      `Teardown retry reason for run ${qaFailedId}`,
-      "Operator checked the retained worktree",
-    );
-    assert.equal(
-      ui.get(`Retry teardown for run ${qaFailedId}`).props.accessibilityState
-        .disabled,
-      false,
-    );
-    ui.press(`Retry teardown for run ${qaFailedId}`);
-    await settleUntil(
-      ui,
-      () =>
-        projectQaActions.some(
-          (action) => action.method === "project.qa.retry-teardown",
-        ),
-      "the detail view did not submit a teardown retry",
-    );
-    assert.deepEqual(projectQaActions[0], {
-      method: "project.qa.retry-teardown",
-      input: {
-        id: qaFailedId,
-        reason: "Operator checked the retained worktree",
-      },
-    });
-    ui.press("Close QA run detail");
-
-    pressQaRow(qaQueuedId);
-    ui.press(`Cancel QA run ${qaQueuedId}`);
-    await settleUntil(
-      ui,
-      () =>
-        projectQaActions.some(
-          (action) => action.method === "project.qa.cancel",
-        ),
-      "the detail view did not submit QA cancellation",
-    );
-    assert.deepEqual(projectQaActions[1], {
-      method: "project.qa.cancel",
-      input: { id: qaQueuedId, reason: "Cancelled from QA runs for App" },
-    });
-    ui.press("Close QA run detail");
-
-    ui.press("Projects, All projects");
-    ui.press(/^Project App/);
-    assert.ok(
-      ui.query("QA run row qa-result-passed"),
-      "the project selector scopes the combined run list",
-    );
-    assert.equal(ui.query("QA run row project-d-result"), undefined);
-    ui.press("Projects, App");
-    ui.press("Show older QA results");
-    assert.ok(
-      ui.query(`QA run row ${oldResultId}`),
-      "Show more reveals results older than 24 hours",
-    );
-    ui.press("Run QA");
-    assert.ok(ui.query("Choose a project for Run QA"));
-    assert.ok(ui.query("Run QA for App"));
-    assert.equal(
-      ui.query("Run QA for Project-D"),
-      undefined,
-      "the Run QA picker follows the project scope",
-    );
-    ui.press("Run QA for App");
-    await settleUntil(
-      ui,
-      () => projectQaRunRequests.length === 1,
-      "the project picker did not start milestone QA",
-    );
-    assert.deepEqual(projectQaRunRequests, ["owner/app"]);
-    assertDarkTheme(ui);
-    clearProjectSelection();
-  } finally {
-    board.projects = originalProjects;
-    board.tasks = originalTasks;
-    clearProjectSelection();
-    hostRunsForUi = [];
-    projectQaRunsForUi = [];
-    projectQaActions.length = 0;
-    projectQaRunRequests.length = 0;
-    unmount(ui);
   }
 });
 
@@ -1911,7 +1066,7 @@ const decision = (over: Record<string, unknown>): DecisionFixture => ({
   ...over,
 });
 
-test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge holds in the dark theme", async () => {
+test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds under Needs you in the dark theme", async () => {
   const stamp = new Date().toISOString();
   const fresh = decision({});
   const stale = decision({
@@ -2042,15 +1197,22 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
   const ui = mount(tree(MainSurface, false, rpc));
   try {
     await settle(ui);
-    // The Pipeline Decisions column carries four agent decisions and one
-    // Nucleus-raised merge hold, without a separate navigation tab.
+    // Needs you's Decisions section carries four agent decisions and one
+    // Nucleus-raised merge hold, without a separate navigation entry.
     assert.ok(
-      ui.query("Decisions, 5"),
-      "the Pipeline column includes agent decisions and the escalated hold",
+      ui.query("Decisions section, 5"),
+      "the Decisions section includes agent decisions and the escalated hold",
+    );
+    const attentionCount = Number(
+      String(ui.get(/^Tasks needing attention section, \d+$/).props.accessibilityLabel).split(", ")[1],
+    );
+    assert.ok(
+      ui.query(`Needs you, ${5 + attentionCount}`),
+      `the menu counts both sections: ${navigationLabels(ui).join(" | ")}`,
     );
     // A Triage lead card carries no decision chip any more (Tom, 2026-11-07): its card is title, kind, project and state.
     assert.equal(
-      countText(ui, "Decision"),
+      countAcross(ui, "Decision"),
       7,
       `the four decision cards plus chips on the linked shared, unlaned and Project-D cards; project selector:${ui
         .all(/^Projects,/)
@@ -2061,6 +1223,7 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
         .filter((text) => text.includes("Decision"))
         .join(" | ")}`,
     );
+    openView(ui, "Needs you");
     assert.equal(
       countText(ui, "Stale"),
       1,
@@ -2069,7 +1232,7 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
     assert.equal(
       countText(ui, "Nucleus-raised"),
       1,
-      "the escalated merge hold is visible in Pipeline",
+      "the escalated merge hold is visible under Needs you",
     );
     assert.ok(ui.query("Held merge: Held reviewed task"));
     assert.match(
@@ -2080,7 +1243,7 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
     assert.ok(ui.get("Keep"));
     assert.ok(
       ui.query(/^Decision: Where should this decision live\?/),
-      "a General decision is present in the Decisions column",
+      "a General decision is present in the Decisions section",
     );
     assert.equal(
       countText(ui, "General"),
@@ -2105,6 +1268,8 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
         ),
       "decision cards name linked tasks by reference and title",
     );
+    // The linked shared task is working, so its card is in Active.
+    openView(ui, "Active");
     assert.ok(
       ui.text().includes("Waiting on you · Which branch do we cut?"),
       "linked operator waits name the decision",
@@ -2119,6 +1284,7 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
         ),
       "the task card accessibility label names the decision",
     );
+    openView(ui, "Needs you");
     // Tom, 2026-09-29: cards named the asking agent's id, not the project it came from.
     assert.ok(
       countText(ui, "app") >= 3,
@@ -2201,14 +1367,14 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
       () => ui.query(/^Decision: Which branch do we cut\?/) === undefined,
       "the answered decision stayed on the board",
     );
-    assert.ok(ui.query("Decisions, 4"), "the Pipeline column count dropped");
+    assert.ok(ui.query("Decisions section, 4"), "the section count dropped");
     await settleUntil(
       ui,
       () => ui.text().includes("operator authority"),
       "the recorded answer did not render in the modal",
     );
     assertDarkTheme(ui);
-    ui.press("Close decision detail");
+    closeRecord(ui, "Close decision detail");
     // The withdraw path.
     ui.press(/^Decision: Rename the lane\?/);
     await settleUntil(
@@ -2246,20 +1412,21 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
       "the withdrawn decision stayed on the board",
     );
     assert.ok(
-      ui.query("Decisions, 3"),
-      "the Pipeline column count dropped again",
+      ui.query("Decisions section, 3"),
+      "the section count dropped again",
     );
-    ui.press("Close decision detail");
+    closeRecord(ui, "Close decision detail");
     // The stale decision stays open on the board until a human withdraws it.
     assert.ok(ui.query(/^Decision: Still worth splitting\?/));
     assert.equal(countText(ui, "Stale"), 1);
     assert.equal(
-      countText(ui, "Decision"),
+      countAcross(ui, "Decision"),
       3,
       "the stale and General decision cards keep their chips, as does the linked Project-D task",
     );
+    openView(ui, "Needs you");
     assertDarkTheme(ui);
-    // A specific project filter keeps General in the count, its own section and the pipeline column.
+    // A specific project filter keeps General in the count and the Decisions section.
     ui.press("Projects, All projects");
     assert.ok(ui.query("Project selector"));
     ui.press(/^Project App/);
@@ -2268,7 +1435,7 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
       "Projects, App",
     );
     assert.ok(
-      ui.query("Decisions, 3"),
+      ui.query("Decisions section, 3"),
       "the project filter count includes the remaining project decision, General and held merge",
     );
     assert.equal(
@@ -2279,15 +1446,15 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
     assert.equal(
       ui
         .ofType("View")
-        .find((node) => node.props.accessibilityLabel === "Decisions, 3")?.props
+        .find((node) => node.props.accessibilityLabel === "Decisions section, 3")?.props
         .accessibilityLabel,
-      "Decisions, 3",
-      "the Decisions column keeps General and the held merge under a specific project filter",
+      "Decisions section, 3",
+      "the Decisions section keeps General and the held merge under a specific project filter",
     );
     assert.equal(
       ui.query(/^Decisions \(/),
       undefined,
-      "agent decisions remain in Pipeline without a separate tab",
+      "agent decisions remain under Needs you without a separate tab",
     );
     assert.ok(ui.query(/^Decision: Still worth splitting\?/));
     assert.ok(ui.query(/^Decision: Where should this decision live\?/));
@@ -2403,20 +1570,13 @@ test("030-7 bundled dark-theme task detail offers routing before dispatch with e
       return answered;
     };
     const MainSurface = await bundleMainSurface();
-    const ui = mount(tree(MainSurface, false, rpc));
+    // Below the wide layout the task detail is a modal with its own close control.
+    const ui = mount(tree(MainSurface, true, rpc));
     try {
-      const routingCard = () =>
-        ui
-          .ofType("Pressable")
-          .find((node) =>
-            String(node.props.accessibilityLabel).includes("Routing UI"),
-          );
-      await settleUntil(
-        ui,
-        () => routingCard() !== undefined,
-        "the board never offered the queued task",
-      );
-      routingCard()!.props.onPress();
+      await settle(ui);
+      const routingCard = findCard(ui, (label) => label.includes("Routing UI"));
+      assert.ok(routingCard, "the board never offered the queued task");
+      routingCard.props.onPress();
       // PR #538 reads the detail in ten seconds: routing sits in the collapsed Technical group.
       await settleUntil(
         ui,
@@ -2505,11 +1665,7 @@ test("030-7 bundled dark-theme task detail offers routing before dispatch with e
         undefined,
         "closing the detail removes the modal",
       );
-      ui.ofType("Pressable")
-        .find((node) =>
-          String(node.props.accessibilityLabel).includes("Started UI"),
-        )!
-        .props.onPress();
+      findCard(ui, (label) => label.includes("Started UI"))!.props.onPress();
       await settleUntil(
         ui,
         () => ui.query("Close task detail") !== undefined,
@@ -2521,11 +1677,7 @@ test("030-7 bundled dark-theme task detail offers routing before dispatch with e
         "a started task offers no routing change",
       );
       ui.press("Close task detail");
-      ui.ofType("Pressable")
-        .find((node) =>
-          String(node.props.accessibilityLabel).includes("Parked UI"),
-        )!
-        .props.onPress();
+      findCard(ui, (label) => label.includes("Parked UI"))!.props.onPress();
       await settleUntil(
         ui,
         () => ui.text().includes("Parked (no slot held)"),
@@ -2540,7 +1692,7 @@ test("030-7 bundled dark-theme task detail offers routing before dispatch with e
   }
 });
 
-test("026-15a bundled Pipeline record modals run each action and report in the modal", async () => {
+test("026-15a bundled inbox records run each action and report in their detail", async () => {
   const stamp = "2026-09-27T00:00:00.000Z";
   const digest = `sha256:${"a".repeat(64)}`;
   const body = "---\ntitle: Lead one\n---\n\n## Outcome\n\nShip it.\n";
@@ -2675,13 +1827,12 @@ test("026-15a bundled Pipeline record modals run each action and report in the m
   const MainSurface = await bundleMainSurface();
   const ui = mount(tree(MainSurface, false, rpc));
   try {
+    await settle(ui);
+    openView(ui, "Leads");
     await settleUntil(
       ui,
-      () =>
-        ui.text().includes("Lead one") &&
-        ui.text().includes("Lead drop") &&
-        ui.text().includes("Cut one"),
-      "the 15a board did not render",
+      () => ui.text().includes("Lead one") && ui.text().includes("Lead drop"),
+      "the 15a Leads list did not render",
     );
     assert.equal(ui.query("Promote"), undefined);
     ui.press("Triage: Lead one");
@@ -2726,7 +1877,7 @@ test("026-15a bundled Pipeline record modals run each action and report in the m
       ui.text(),
       /Only open leads can be dropped; this lead is promoted/,
     );
-    ui.press("Close lead detail");
+    closeRecord(ui, "Close lead detail");
     ui.press("Triage: Lead drop");
     await settleUntil(
       ui,
@@ -2746,7 +1897,8 @@ test("026-15a bundled Pipeline record modals run each action and report in the m
       () => ui.text().includes("Dropped"),
       "drop result stayed out of the modal",
     );
-    ui.press("Close lead detail");
+    closeRecord(ui, "Close lead detail");
+    leadsTab(ui, "Papercuts");
     ui.press("Triage: Cut one");
     await settleUntil(
       ui,
@@ -2821,7 +1973,7 @@ test("026-15a bundled Pipeline record modals run each action and report in the m
   }
 });
 
-test("043 (a) the bundled Pipeline labels every declared wait state with owner and next action in the dark theme", async () => {
+test("043 (a) the bundled inbox labels every declared wait state with owner and next action in the dark theme", async () => {
   const originalTasks = board.tasks;
   board.tasks = [
     ...originalTasks,
@@ -2886,27 +2038,17 @@ test("043 (a) the bundled Pipeline labels every declared wait state with owner a
     const ui = mount(tree(MainSurface, false));
     try {
       await settle(ui);
-      await settleUntil(
-        ui,
-        () =>
-          ui.text().includes("Merge hold") &&
-          ui.text().includes("Needs source rights"),
-        "the wait-state labels did not render",
-      );
+      // Each waiting card lives in one view; together they carry every label once.
       for (const label of labels)
-        assert.equal(countText(ui, label), 1, `${label} renders once`);
+        assert.equal(countAcross(ui, label), 1, `${label} renders once`);
       assert.equal(
-        countText(ui, "Merge held"),
+        countAcross(ui, "Merge held"),
         0,
         "the wait-state merge hold replaces the duplicate Spec 040 badge",
       );
-      const card = ui
-        .ofType("Pressable")
-        .find((node) =>
-          String(node.props.accessibilityLabel).startsWith(
-            "app, Capacity wait, Queued, Waiting for capacity",
-          ),
-        );
+      const card = findCard(ui, (label) =>
+        label.startsWith("app, Capacity wait, Queued, Waiting for capacity"),
+      );
       assert.ok(card, "the card label names the wait state");
       const badge = ui
         .ofType("View")
@@ -2939,7 +2081,7 @@ test("043 (a) the bundled Pipeline labels every declared wait state with owner a
   }
 });
 
-test("decision waits use readable fallback labels in narrow and wide cards", async () => {
+test("decision waits use readable fallback labels in medium and wide lists", async () => {
   const originalTasks = board.tasks;
   const waitTask = {
     ...summary("operator-wait", "Operator wait", ["first"], "blocked"),
@@ -2968,16 +2110,12 @@ test("decision waits use readable fallback labels in narrow and wide cards", asy
       const ui = mount(tree(MainSurface, compact, rpc));
       try {
         await settle(ui);
+        const card = findCard(ui, (label) => label.includes("Operator wait"));
+        assert.ok(card);
         assert.ok(
           ui.text().includes("Waiting on you · operator decision"),
           "the operator wait fallback stays readable when its title is unavailable",
         );
-        const card = ui
-          .ofType("Pressable")
-          .find((node) =>
-            String(node.props.accessibilityLabel).includes("Operator wait"),
-          );
-        assert.ok(card);
         assert.match(
           String(card.props.accessibilityLabel),
           /Waiting on you · operator decision/,
@@ -3048,13 +2186,9 @@ test("043 (a) bundled dark-theme task detail names the derived wait, its owner a
     const ui = mount(tree(MainSurface, false, rpc));
     try {
       await settle(ui);
-      const waitCard = ui
-        .ofType("Pressable")
-        .find((node) =>
-          String(node.props.accessibilityLabel).startsWith(
-            "app, Wait detail, Queued, Waiting for capacity",
-          ),
-        );
+      const waitCard = findCard(ui, (label) =>
+        label.startsWith("app, Wait detail, Queued, Waiting for capacity"),
+      );
       assert.ok(waitCard, "the capacity wait card remains available");
       waitCard!.props.onPress();
       // The Overview opens first and leads with the wait: its state, owner and next action.
@@ -3085,7 +2219,7 @@ test("043 (a) bundled dark-theme task detail names the derived wait, its owner a
           ui.query("Technical")?.props.accessibilityState?.selected === true,
         "the Technical tab did not open",
       );
-      // The board card behind the sheet keeps its own wait badge; the detail's visible wait line is what must not repeat.
+      // The list row beside the detail keeps its own wait badge; the detail's visible wait line is what must not repeat.
       assert.equal(
         ui.text().includes("· next:"),
         false,
@@ -3154,6 +2288,8 @@ test("051 bundled dark-theme board marks an interactive task, and says when it i
     const ui = mount(tree(MainSurface, false, rpc));
     try {
       await settle(ui);
+      // Both sessions are working, so Active lists them.
+      openView(ui, "Active");
       assert.equal(
         countText(ui, "Interactive"),
         1,
@@ -3173,202 +2309,10 @@ test("051 bundled dark-theme board marks an interactive task, and says when it i
   }
 });
 
-/** Finding 1 (nucleus-ui, 2026-11-08): an empty column is a labelled stub at both widths and expands once it holds a card. */
-const headerText = (node: HostNode): string =>
-  node.children
-    .map((child) => (typeof child === "string" ? child : headerText(child)))
-    .join("");
+// Finding 1 (nucleus-ui): a loading or failed board read is never reported as an empty inbox.
 for (const compact of [false, true]) {
-  test(`finding 1 bundled Pipeline collapses empty columns to labelled stubs at the ${compact ? "narrow" : "wide"} viewport`, async () => {
-    const uiBoard = {
-      ...board,
-      tasks: [
-        summary("stub-working", "Working task", ["first"], "working"),
-        summary("stub-queued", "Queued task", ["first"], "queued"),
-      ],
-    };
-    const noLeads = async (method: string, input: unknown) => {
-      if (method === "queue.ui-snapshot") return uiBoard;
-      if (method === "papercut.list") return [];
-      if (method === "lead.board") return { cards: [], links: [] };
-      return invoke(method, input);
-    };
-    const headerLabels = (ui: ReturnType<typeof mount>) =>
-      ui
-        .ofType("View")
-        .map((node) => node.props.accessibilityLabel)
-        .filter(
-          (label): label is string =>
-            typeof label === "string" &&
-            /^(Triage|Decisions|Attention|Queued|Working|Review|Closing), \d+/.test(
-              label,
-            ),
-        );
-    const header = (ui: ReturnType<typeof mount>, label: string) => {
-      const node = ui
-        .ofType("View")
-        .find((view) => view.props.accessibilityLabel === label);
-      assert.ok(node, `${label} header renders`);
-      return node;
-    };
-    const widthOf = (ui: ReturnType<typeof mount>, label: string) =>
-      (header(ui, label).props.style as { width: number }).width;
-    const MainSurface = await bundleMainSurface();
-    const ui = mount(tree(MainSurface, compact, noLeads));
-    try {
-      await settleUntil(
-        ui,
-        () =>
-          ui
-            .ofType("Text")
-            .some((node) => node.children.join("") === "Queued task"),
-        "the populated columns did not render",
-      );
-      assert.deepEqual(
-        headerLabels(ui),
-        [
-          "Triage, 0, empty",
-          "Decisions, 0, empty",
-          "Attention, 0, empty",
-          "Queued, 1",
-          "Working, 1",
-          "Review, 0, empty",
-          "Closing, 0, empty",
-        ],
-        "pipeline order holds, and each empty column says it is empty with its real total",
-      );
-      assert.equal(
-        headerText(header(ui, "Triage, 0, empty")),
-        "Triage",
-        "a stub shows only its name",
-      );
-      assert.equal(
-        headerText(header(ui, "Decisions, 0, empty")),
-        "Decisions",
-        "the collapsed Decisions header has no count badge",
-      );
-      assert.equal(headerText(header(ui, "Closing, 0, empty")), "Closing");
-      for (const label of [
-        "Triage, 0, empty",
-        "Decisions, 0, empty",
-        "Attention, 0, empty",
-        "Review, 0, empty",
-        "Closing, 0, empty",
-      ]) {
-        assert.equal(
-          (header(ui, label).props.style as { flexDirection: string })
-            .flexDirection,
-          "row",
-          `${label} keeps the same header line as populated columns`,
-        );
-      }
-      assert.equal(
-        ui.all(/^Filter Triage by tag/).length,
-        0,
-        "a stub carries no tag filter",
-      );
-      for (const label of [
-        "Triage, 0, empty",
-        "Decisions, 0, empty",
-        "Attention, 0, empty",
-        "Review, 0, empty",
-        "Closing, 0, empty",
-      ])
-        assert.equal(
-          widthOf(ui, label),
-          pipelineStubWidth,
-          `${label} is a slim stub`,
-        );
-      const open = widthOf(ui, "Queued, 1");
-      assert.equal(
-        widthOf(ui, "Working, 1"),
-        open,
-        "populated columns share the width the stubs leave",
-      );
-      assert.ok(
-        open >= (compact ? 260 : 300),
-        "a populated column keeps a card width",
-      );
-      assertDarkTheme(ui);
-    } finally {
-      unmount(ui);
-    }
-    // A card in Triage expands its stub back to a populated width; the other empty columns stay stubs.
-    const withLead = async (method: string, input: unknown) =>
-      method === "queue.ui-snapshot" ? uiBoard : invoke(method, input);
-    const expanded = mount(tree(MainSurface, compact, withLead));
-    try {
-      await settleUntil(
-        expanded,
-        () =>
-          expanded
-            .ofType("Text")
-            .some((node) => node.children.join("") === "Lead one"),
-        "the Triage card did not render",
-      );
-      const triage = expanded
-        .ofType("View")
-        .find((view) =>
-          /^Triage, [1-9]\d*$/.test(
-            String(view.props.accessibilityLabel ?? ""),
-          ),
-        );
-      assert.ok(triage, "Triage expands once it holds a card");
-      assert.equal(
-        (triage.props.style as { width: number }).width,
-        widthOf(expanded, "Queued, 1"),
-        "the expanded column takes a populated width",
-      );
-      assert.ok(
-        expanded
-          .ofType("View")
-          .some(
-            (view) => view.props.accessibilityLabel === "Decisions, 0, empty",
-          ),
-        "other empty columns stay stubs",
-      );
-      assert.equal(
-        headerText(columnHeader(expanded, "Decisions, 0, empty")),
-        "Decisions",
-        "the stub name stays on one line between populated Triage and Queued columns",
-      );
-      assert.equal(
-        headerText(columnHeader(expanded, "Attention, 0, empty")),
-        "Attention",
-        "the second stub between populated columns also shows only its name",
-      );
-    } finally {
-      unmount(expanded);
-    }
-  });
-}
-
-/** Column headers in pipeline order, from their accessible labels. */
-const columnHeaders = (ui: ReturnType<typeof mount>, pattern: RegExp) =>
-  ui
-    .ofType("View")
-    .map((node) => node.props.accessibilityLabel)
-    .filter(
-      (label): label is string =>
-        typeof label === "string" && pattern.test(label),
-    );
-const columnHeader = (ui: ReturnType<typeof mount>, label: string) => {
-  const node = ui
-    .ofType("View")
-    .find((view) => view.props.accessibilityLabel === label);
-  assert.ok(node, `${label} header renders`);
-  return node;
-};
-const columnWidth = (ui: ReturnType<typeof mount>, label: string) =>
-  (columnHeader(ui, label).props.style as { width: number }).width;
-const COLUMN_HEADER =
-  /^(Triage|Decisions|Attention|Queued|Working|Review|Closing), /;
-
-// Finding 1 (nucleus-ui): the stub rule only speaks for a loaded board. A loading or failed read has zero
-// totals, so it must keep every column open and must never read "empty".
-for (const compact of [false, true]) {
-  const viewport = compact ? "narrow" : "wide";
-  test(`finding 1 a board still loading keeps every column open and reads loading, not empty, at the ${viewport} viewport`, async () => {
+  const viewport = compact ? "medium" : "wide";
+  test(`finding 1 a board still loading reads loading, never empty, at the ${viewport} viewport`, async () => {
     const pending = async (method: string, input: unknown) =>
       method === "queue.ui-snapshot"
         ? new Promise(() => {})
@@ -3378,43 +2322,24 @@ for (const compact of [false, true]) {
     try {
       await settleUntil(
         ui,
-        () => ui.query("Triage, loading") !== undefined,
-        "the loading header did not render",
+        () => ui.query("Needs you list") !== undefined,
+        "the loading list did not render",
+      );
+      assert.ok(ui.text().includes("Loading…"), "the list says it is loading");
+      assert.equal(
+        ui.text().includes("Nothing here"),
+        false,
+        "loading is not reported as an empty list",
+      );
+      assert.equal(
+        ui.text().includes("0 items"),
+        false,
+        "the list count is not a zero total",
       );
       assert.deepEqual(
-        columnHeaders(ui, COLUMN_HEADER),
-        pipelineColumns.map((name) => `${name}, loading`),
-        "every column is open and says loading",
-      );
-      assert.equal(
-        columnHeaders(ui, /empty$/).length,
-        0,
-        "no column reads empty before the board loads",
-      );
-      const width = columnWidth(ui, "Triage, loading");
-      assert.notEqual(
-        width,
-        pipelineStubWidth,
-        "a loading column is not a stub",
-      );
-      for (const name of pipelineColumns)
-        assert.equal(
-          columnWidth(ui, `${name}, loading`),
-          width,
-          `${name} keeps the open width while loading`,
-        );
-      assert.ok(
-        headerText(columnHeader(ui, "Triage, loading")).startsWith("Triage…"),
-        "the count is a placeholder, not a zero total",
-      );
-      assert.ok(
-        ui.text().includes("Loading pipeline…"),
-        "the body says the pipeline is loading",
-      );
-      assert.equal(
-        ui.query(/^No planning records match/),
-        undefined,
-        "loading is not reported as no records",
+        navigationLabels(ui),
+        ["Needs you", "Planning", "Leads", "Queue", "Active", "Working", "In review", "Closing"],
+        "menu counts stay hidden until the board loads",
       );
       assertDarkTheme(ui);
     } finally {
@@ -3433,107 +2358,23 @@ for (const compact of [false, true]) {
     try {
       await settleUntil(
         ui,
-        () => ui.query("Triage, not loaded") !== undefined,
-        "the failed header did not render",
+        () => ui.text().includes("The board could not be read; see the error above."),
+        "the failed list did not render",
       );
-      assert.deepEqual(
-        columnHeaders(ui, COLUMN_HEADER),
-        pipelineColumns.map((name) => `${name}, not loaded`),
-        "every column says not loaded",
-      );
+      assert.ok(ui.text().includes("Not loaded"), "the list count says not loaded");
       assert.equal(
-        columnHeaders(ui, /empty$/).length,
-        0,
+        ui.text().includes("Nothing here"),
+        false,
         "a failed read never reads empty",
-      );
-      assert.ok(
-        headerText(columnHeader(ui, "Triage, not loaded")).startsWith(
-          "Triage—",
-        ),
-        "the count is a dash, not a zero total",
-      );
-      for (const name of pipelineColumns)
-        assert.notEqual(
-          columnWidth(ui, `${name}, not loaded`),
-          pipelineStubWidth,
-          `${name} stays open`,
-        );
-      assert.ok(
-        ui.text().includes("The board could not be read; see the error above."),
-        "the body names the failed read",
       );
       assert.ok(
         ui.text().includes("Snapshot read refused"),
         "the failure is shown with the error banner",
       );
-      assertDarkTheme(ui);
-    } finally {
-      unmount(ui);
-    }
-  });
-
-  test(`finding 1 long content keeps the populated columns at card width and the stubs intact at the ${viewport} viewport`, async () => {
-    const longTitle =
-      "A task title written at length, so that it runs well past what a narrow column can hold and has to clamp to two lines "
-        .repeat(3)
-        .trim();
-    const uiBoard = {
-      ...board,
-      tasks: [
-        summary("long-working", longTitle, ["first"], "working"),
-        summary("short-queued", "Short queued task", ["first"], "queued"),
-      ],
-    };
-    const longContent = async (method: string, input: unknown) => {
-      if (method === "queue.ui-snapshot") return uiBoard;
-      if (method === "papercut.list") return [];
-      if (method === "lead.board") return { cards: [], links: [] };
-      return invoke(method, input);
-    };
-    const MainSurface = await bundleMainSurface();
-    const ui = mount(tree(MainSurface, compact, longContent));
-    try {
-      await settleUntil(
-        ui,
-        () =>
-          ui
-            .ofType("Text")
-            .some((node) => node.children.join("") === "Short queued task"),
-        "the long-content board did not render",
-      );
-      assert.deepEqual(columnHeaders(ui, COLUMN_HEADER), [
-        "Triage, 0, empty",
-        "Decisions, 0, empty",
-        "Attention, 0, empty",
-        "Queued, 1",
-        "Working, 1",
-        "Review, 0, empty",
-        "Closing, 0, empty",
-      ]);
-      const open = columnWidth(ui, "Queued, 1");
       assert.equal(
-        columnWidth(ui, "Working, 1"),
-        open,
-        "the long card does not widen its column",
-      );
-      assert.ok(
-        open >= (compact ? 260 : 300),
-        "a populated column keeps a card width",
-      );
-      for (const label of ["Triage, 0, empty", "Review, 0, empty"])
-        assert.equal(
-          columnWidth(ui, label),
-          pipelineStubWidth,
-          `${label} stays a stub next to long content`,
-        );
-      const title = ui
-        .ofType("Text")
-        .find((node) => node.children.join("") === longTitle);
-      assert.ok(title, "the long title renders in full in the card");
-      assert.equal(
-        title.props.numberOfLines,
-        2,
-        "the card clamps a long title to two lines",
+        navigationLabels(ui).some((label) => /, \d+$/.test(label)),
+        false,
+        "the menu shows no zero counts for a failed read",
       );
       assertDarkTheme(ui);
     } finally {
@@ -3541,9 +2382,9 @@ for (const compact of [false, true]) {
     }
   });
 
-  // Tom, 2026-11-08: the swim-lane view is retired. An empty board and a long column of cards in
-  // several lanes both render as the one set of columns, with real totals and no lane controls.
-  test(`the board has no swim-lane view: empty, and a long column of multi-lane cards, at the ${viewport} viewport`, async () => {
+  // Tom, 2026-11-08: the swim-lane view is retired; the inbox (2026-11-21) lists each card once.
+  // An empty board and a long list of cards in several lanes both read real totals.
+  test(`the inbox lists an empty board and a long list of multi-lane cards with real totals at the ${viewport} viewport`, async () => {
     const respond =
       (uiBoard: unknown) => async (method: string, input: unknown) => {
         if (method === "queue.ui-snapshot") return uiBoard;
@@ -3560,20 +2401,13 @@ for (const compact of [false, true]) {
       ),
     );
     try {
-      await settleUntil(
-        empty,
-        () =>
-          empty
-            .text()
-            .includes("No planning records match the selected projects."),
-        "the empty board did not render",
-      );
+      await settle(empty);
       assert.deepEqual(
-        columnHeaders(empty, COLUMN_HEADER),
-        pipelineColumns.map((name) => `${name}, 0, empty`),
-        "every column reads its real zero total",
+        navigationLabels(empty),
+        ["Needs you, 0", "Planning", "Leads, 0", "Queue, 0", "Active, 0", "Working, 0", "In review, 0", "Closing, 0"],
+        "every menu entry reads its real zero total",
       );
-      assert.equal(empty.query("Lanes"), undefined, "no Lanes switch");
+      assert.ok(empty.text().includes("Nothing here."), "an empty list says so");
       assert.ok(
         empty.query(/^Projects, /),
         "the project selector stays in the header",
@@ -3582,42 +2416,48 @@ for (const compact of [false, true]) {
     } finally {
       unmount(empty);
     }
-    const many = Array.from({ length: 40 }, (_, index) =>
-      summary(
-        `multi-${index}`,
-        `Multi-lane task ${index}`,
-        index % 2 ? ["first", "second"] : ["second"],
-        "queued",
+    const longTitle =
+      "A task title written at length, so that it runs well past what a list row can hold and has to clamp to two lines "
+        .repeat(3)
+        .trim();
+    const many = [
+      ...Array.from({ length: 40 }, (_, index) =>
+        summary(
+          `multi-${index}`,
+          `Multi-lane task ${index}`,
+          index % 2 ? ["first", "second"] : ["second"],
+          "queued",
+        ),
       ),
-    );
+      summary("long-queued", longTitle, ["first"], "queued"),
+    ];
     const ui = mount(
       tree(MainSurface, compact, respond({ ...board, tasks: many })),
     );
     try {
-      await settleUntil(
-        ui,
-        () =>
-          ui
-            .ofType("Text")
-            .some((node) => node.children.join("") === "Multi-lane task 39"),
-        "the long column did not render",
-      );
-      assert.ok(ui.query("Queued, 40"), "the header counts each card once");
+      await settle(ui);
+      openView(ui, "Queue");
+      assert.ok(ui.query("Queued section, 41"), "the list counts each card once");
+      assert.ok(ui.query("Queue, 41"), "and so does the menu");
       for (let index = 0; index < 40; index++)
         assert.equal(
           countText(ui, `Multi-lane task ${index}`),
           1,
           `card ${index} renders once`,
         );
+      const title = ui
+        .ofType("Text")
+        .find((node) => node.children.join("") === longTitle);
+      assert.ok(title, "the long title renders in full in the row");
+      assert.equal(
+        title.props.numberOfLines,
+        2,
+        "the row clamps a long title to two lines",
+      );
       assert.equal(
         ui.query(/lane, \d+ cards/),
         undefined,
         "no swim-lane row headers",
-      );
-      assert.equal(
-        ui.query(/^\d+ more$/),
-        undefined,
-        "no five-card cell: the column scrolls instead",
       );
       assert.equal(
         ui.query(/^Collapse /),

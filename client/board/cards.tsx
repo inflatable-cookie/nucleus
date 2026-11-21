@@ -76,6 +76,14 @@ import { overlay, space, radius, type as typeScale } from "../design";
  * Spec 026 row 15a: cards carry no action buttons; clicking one opens the
  * record modal.
  */
+/**
+ * How a board card draws its frame. The inbox list (Tom, 2026-11-21) draws every
+ * card as a flat row with a divider and an accent edge when selected; the content
+ * and actions are the card's own either way.
+ */
+export type BoardCardVariant = "card" | "row";
+export const BoardCardVariantContext = React.createContext<BoardCardVariant>("card");
+
 export const BoardCard = React.memo(function BoardCard({
   label,
   onPress,
@@ -101,12 +109,23 @@ export const BoardCard = React.memo(function BoardCard({
   snippet?: React.ReactNode;
   footer?: React.ReactNode;
 }) {
+  const variant = React.useContext(BoardCardVariantContext);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={plainCardText(label)}
+      accessibilityState={variant === "row" ? { selected } : undefined}
       onPress={onPress}
-      style={{
+      style={variant === "row" ? {
+        gap: space.xs,
+        paddingHorizontal: space.md,
+        paddingVertical: space.sm,
+        borderBottomWidth: 1,
+        borderBottomColor: c.border,
+        borderLeftWidth: 2,
+        borderLeftColor: selected ? c.accent : "transparent",
+        backgroundColor: selected ? c.surface2 : c.surface0,
+      } : {
         gap: space.xs,
         padding: board ? space.sm : space.md,
         paddingTop: board ? space.xs : space.sm,

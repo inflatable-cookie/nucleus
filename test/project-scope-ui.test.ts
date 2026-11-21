@@ -577,7 +577,7 @@ test("026-14a a lane shared by two projects shows only the selected projects' le
   );
 });
 
-test("026-14a/14b rendered Planning: two selected projects show both plans, none shows all, compact drills plan to lane and back", async () => {
+test("026-14a/14b rendered Planning: two selected projects show both plans, none shows all, compact opens the lane in a modal over the plan", async () => {
   const { ProjectSelector, usePlanningLane, useProjectScope } = await load();
   const { PlanningTab } = await import("../client/planning-panel");
   const { planningScopeLanes, scopedProjects } = await import(
@@ -758,12 +758,14 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
   assert.equal(
     compact.query("Planning lane"),
     undefined,
-    "compact shows one step",
+    "compact has no lane pane",
   );
+  // Without a detail pane the lane opens in a modal over the plan (Tom, 2026-11-21).
   compact.press("Open lane shared");
-  assert.equal(compact.query("Planning plan"), undefined);
+  assert.ok(compact.get("Lane detail"), "the lane opens in a modal");
+  assert.ok(compact.get("Planning plan"), "the plan stays beneath it");
   assert.equal(compact.text().includes("shared"), true);
-  compact.press("Back to plan");
+  compact.press("Close lane");
   assert.deepEqual(
     sections(compact),
     ["Plan for project-a-accelerator"],
@@ -815,7 +817,7 @@ test("Planning header carries no Park, Unpark, Delete or planner-missing suffix:
   }
 });
 
-test("121 rendered: milestone QA stages render as named steps, and the task and QA runs surfaces receive them", async () => {
+test("121 rendered: milestone QA stages render as named steps, and the task detail receives them", async () => {
   const { ProjectQaSteps } = await import("../client/planning-panel");
   const step = (name: string, exitCode: number, timedOut = false) => ({
     name,
@@ -874,14 +876,9 @@ test("121 rendered: milestone QA stages render as named steps, and the task and 
     /test · exit 7/,
     "the failing test stage renders as a named step",
   );
-  // The task detail receives its project QA row; the QA runs tab joins host and project QA reads.
+  // The task detail receives its project QA row. The QA runs tab is no longer a board
+  // view (Tom, 2026-11-21: QA runs as an ordinary task).
   const source = boardSource();
-  // PR #518's TypeScript formatting puts each JSX prop on its own line.
-  assert.match(
-    source,
-    /<QaRunsTab\s+focusRunId=\{qaFocusId\}\s+runs=\{hostRunQuery\.data\}\s+qaRuns=\{qaQuery\.data\}/,
-    "the QA runs tab joins host and milestone records",
-  );
   assert.match(
     source,
     /title="Milestone QA"/,
@@ -1102,9 +1099,6 @@ test("1476: the board's selector commits the selection it reports; the other sco
     source,
     /onChange=\{\(projects\) => setScope\(\{ projects \}\)\}/,
   );
-  assert.match(
-    source,
-    /const setScopeProjects = \(projects: string\[\]\) => setScope\(\{ projects \}\);/,
-  );
-  assert.match(source, /onSelectProjects=\{setScopeProjects\}/);
+  // A lane's "Show plan" writes the same selection (Planning has no chooser of its own since 2026-11-21).
+  assert.match(source, /const showLanePlan = \(project: string\) => \{\s*setScope\(\{ projects: \[project\] \}\);/);
 });

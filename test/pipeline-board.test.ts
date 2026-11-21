@@ -4,14 +4,9 @@ import { readFileSync } from "node:fs";
 import { boardSource } from "./support/board-source";
 import {
   pipelineBoard,
-  pipelineCellMaxHeight,
   pipelineColumn,
-  pipelineColumnMaxWidth,
   pipelineColumns,
-  pipelineColumnWidths,
   pipelinePhaseColumn,
-  pipelineStubColumns,
-  pipelineStubWidth,
   triageKind,
   triagePage,
   triagePageSize,
@@ -621,17 +616,14 @@ test("long columns hold every card and the header counts them all", () => {
   );
 });
 
-test("026-12a every pipeline card renders through the shared board card, and each column is its own scroll", () => {
+test("026-12a every inbox card renders through the shared board card, and the list is one scroll", () => {
   const ui = boardSource();
-  // #1042: the Pipeline view lives in its own module, which the Tasks tab mounts.
-  const pipeline = readFileSync(
-    new URL("../client/board/pipeline.tsx", import.meta.url),
+  // The inbox list (Tom, 2026-11-21) lives in its own module, which the shell mounts for every list view.
+  const list = readFileSync(
+    new URL("../client/board/inbox-list.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(
-    ui,
-    /\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space\.sm, zIndex: 0 \}\}>\s*<PipelineBoard\b/,
-  );
+  assert.match(ui, /<InboxList\b/);
   // One card component: TaskCard renders through BoardCard, and leads render BoardCard too.
   assert.match(ui, /function BoardCard\(/);
   // Commit 308157c4 (2026-09-27, one board card component) pinned TaskCard to
@@ -643,54 +635,43 @@ test("026-12a every pipeline card renders through the shared board card, and eac
   );
   assert.ok(
     !ui.includes("PipelineRecordCard"),
-    "pipeline must not keep a separate record card component",
+    "the list must not keep a separate record card component",
   );
-  assert.match(
-    pipeline,
-    /if \(card\.kind === "task"\)\s*return \(\s*<TaskCard/,
-  );
+  assert.match(list, /case "task":\s*return <TaskCard/);
+  assert.doesNotMatch(list, /card\.kind==='papercut'|card\.kind === "papercut"/);
+  assert.match(list, /<BoardCard key=\{key\}/);
+  assert.doesNotMatch(list, /actions=/);
+  assert.doesNotMatch(list, /actionsLabel/);
+  // Every card draws as a row of the one list, which is its view's single scroll.
+  assert.match(list, /<BoardCardVariantContext\.Provider value="row">/);
+  assert.equal((list.match(/<ScrollView\b/g) ?? []).length, 1, "the list is one scroll");
+  // Leads page their own window (Tom, 2026-11-07).
+  assert.match(list, /const visible = page \? page\.visible : section\.cards;/);
+  // Swim-lane rows, kanban columns and their stubs are gone (Tom, 2026-11-08; 2026-11-21).
   assert.doesNotMatch(
-    pipeline,
-    /card\.kind==='papercut'|card\.kind === "papercut"/,
-  );
-  assert.match(pipeline, /return \(\s*<BoardCard/);
-  assert.doesNotMatch(pipeline, /actions=/);
-  assert.doesNotMatch(pipeline, /actionsLabel/);
-  // Triage pages its own window (Tom, 2026-11-07); every column scrolls at the measured height.
-  assert.match(
-    pipeline,
-    /const visible = triage \? triage\.visible : board\.cards\[name\];/,
-  );
-  assert.match(pipeline, /const cards = visible\.map/);
-  assert.match(
-    pipeline,
-    /<ScrollView\s+nestedScrollEnabled\s+showsVerticalScrollIndicator\s+style=\{\{\s*height: pipelineColumnHeight\(\s*pipelineAreaHeight,[\s\S]{0,200}bottomPadding:\s*inset,[\s\S]{0,200}headerHeight:\s*pipelineHeaderHeight,[\s\S]{0,200}\)\s*,?\s*\}\}\s*contentContainerStyle/,
-  );
-  // Swim-lane rows and their expand and collapse controls are gone (Tom, 2026-11-08).
-  assert.doesNotMatch(
-    pipeline,
-    /text="Show less"|expandedCells|collapsedRows|lane, \$\{total\} cards|Nothing in this lane/,
+    ui,
+    /text="Show less"|expandedCells|collapsedRows|lane, \$\{total\} cards|Nothing in this lane|pipelineColumnWidths|pipelineStubColumns/,
   );
 });
 
-test("026-13 Tasks keeps Pipeline with no Lanes switch; the Lanes destination is Planning", () => {
+test("026-13 the inbox menu has no Lanes or QA destination; Planning holds the lane search", () => {
   const ui = boardSource();
   const controls = readFileSync(
     new URL("../client/project-scope-controls.tsx", import.meta.url),
     "utf8",
   );
-  const nav = readFileSync(
-    new URL("../shared/queue-navigation.ts", import.meta.url),
+  const inbox = readFileSync(
+    new URL("../shared/inbox-board.ts", import.meta.url),
     "utf8",
   );
-  // #866: the separate Lanes destination is folded into Planning's lane search.
-  assert.doesNotMatch(nav, /\{ id: "lanes"/);
-  assert.match(nav, /\{ id: "planning", label: "Planning" \}/);
-  assert.match(nav, /\{ id: "qa", label: "QA runs" \}/);
+  // #866: the separate Lanes destination is folded into Planning's lane search; QA is a task (Tom, 2026-11-21).
+  assert.doesNotMatch(inbox, /id: 'lanes'|id: 'qa'/);
+  assert.match(inbox, /\{ id: 'planning', label: 'Planning'/);
   assert.doesNotMatch(ui, /accessibilityLabel="Board mode"/);
   assert.doesNotMatch(ui, /text="Pipeline"/);
   assert.doesNotMatch(ui, /text="Status"/);
   assert.doesNotMatch(ui, /statusColumn/);
+  assert.doesNotMatch(ui, /<QaRunsTab\b/);
   // Tom, 2026-11-08: the board's swim-lane view and its switch are retired; the header keeps the project selector.
   assert.doesNotMatch(ui, /LanesSwitch|useLanesSwitch|lanesOn|swimlanes/);
   assert.doesNotMatch(
@@ -704,28 +685,21 @@ test("026-13 Tasks keeps Pipeline with no Lanes switch; the Lanes destination is
   );
   assert.doesNotMatch(controls, /ProjectFilterSwitch/);
   assert.doesNotMatch(controls, /accessibilityLabel="Enabled"/);
-  // A lane opened from Planning's lane search keeps the plan and lane columns.
+  // A lane opened from Planning's lane search keeps the plan and lane panes.
   assert.match(
     ui,
     /const selectPlanningLane = \(key: string\) => \{\s*setPlanningPin\(key\);/,
   );
   assert.doesNotMatch(ui, /setPipelineTarget/);
-  assert.match(
-    ui,
-    /const columns = useMemo\(\s*\(\) => pipelineBoard\(pipelineInput\),/,
-  );
+  // The menu counts and every list read one derivation, then the Leads tag filter narrows a copy.
+  assert.match(ui, /const columns = useMemo\(\s*\(\) => pipelineBoard\(\{/);
   assert.equal(
     (ui.match(/pipelineBoard\(/g) ?? []).length,
     1,
-    "derive columns once, then filter Triage cards",
+    "derive the board once, then filter Leads cards",
   );
-  // The filter switch scopes the Pipeline view only: off shows all, on restores
-  // the kept selection. Lanes and Planning keep the selection.
-  assert.match(ui, /const pipelineFilterSelection = selection;/);
-  assert.match(
-    ui,
-    /selection:\s*pipelineFilterSelection,\s*leads:\s*boardLeads/,
-  );
+  // The project selection is the only filter state (nucleus#1476).
+  assert.match(ui, /const inbox = useInboxBoard\(\{\s*state,\s*selection,/);
   // #866 retired the Lanes table and its second projection.
   assert.doesNotMatch(ui, /tablePipeline|laneTableRows/);
 });
@@ -759,21 +733,22 @@ test("026-15 an accepted submission shows queued as submitting until its task ap
   assert.equal(replaced.counts.Queued, 1);
 });
 
-test("026-15a pipeline cards open a record modal and carry no action buttons", () => {
+test("026-15a inbox cards open a record modal or the detail pane and carry no action buttons", () => {
   const ui = boardSource();
-  // #1042: the Pipeline view lives in its own module, which the Tasks tab mounts.
+  // The inbox list lives in its own module, which the shell mounts (Tom, 2026-11-21).
   const pipeline = readFileSync(
-    new URL("../client/board/pipeline.tsx", import.meta.url),
+    new URL("../client/board/inbox-list.tsx", import.meta.url),
     "utf8",
   );
   const triageLeadCard = readFileSync(
     new URL("../client/board/triage-lead-card.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(
-    ui,
-    /\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space\.sm, zIndex: 0 \}\}>\s*<PipelineBoard\b/,
-  );
+  assert.match(ui, /<InboxList\b/);
+  // A wide board opens a record in the detail pane; Planning and narrower boards open the same record as a modal.
+  assert.match(ui, /const inlineDetail = wide && view !== "planning";/);
+  assert.match(ui, /\{wide && detailPane\}/);
+  assert.match(ui, /\{!inlineDetail && detail\}/);
   assert.doesNotMatch(pipeline, /setTab\('papercuts'\)/);
   assert.doesNotMatch(pipeline, /text="Approve"/);
   assert.doesNotMatch(pipeline, /text="Promote"/);
@@ -876,38 +851,6 @@ test("026-14 Planning tab writes operator versions and refuses stale saves", asy
   } finally {
     store.close();
   }
-});
-
-test("every column is a full-height scroll at the measured board height", async () => {
-  const { pipelineColumnHeight, pipelineColumnChrome } = await import(
-    "../shared/pipeline-board"
-  );
-  assert.equal(
-    pipelineColumnHeight(1000, { bottomPadding: 24, headerHeight: 30 }),
-    1000 - 24 - 30 - pipelineColumnChrome,
-    "the column takes exactly the pipeline area less padding, the measured header and the scroll chrome",
-  );
-  assert.equal(pipelineColumnHeight(200), 240, "never unusably short");
-  assert.equal(
-    pipelineColumnHeight(0),
-    pipelineCellMaxHeight,
-    "before measurement it uses the cap",
-  );
-});
-
-test("the pipeline grid fills the panel width and never scrolls vertically itself", () => {
-  const ui = boardSource();
-  assert.match(
-    ui,
-    /return \(\s*<View\s+onLayout=\{[^}]*\}\s*style=\{\{\s*flex: 1, minHeight: 0, paddingBottom: inset\s*\}\}\s*>/,
-    "no side padding outside the horizontal scroll",
-  );
-  assert.match(
-    ui,
-    /<ScrollView\s+ref=\{pipelineHorizontal\}\s+horizontal\s[^>]*contentContainerStyle=\{\{\s*paddingHorizontal: inset\s*\}\}\s*>\s*<View style=\{\{ gap: space.sm, paddingBottom: space.sm \}\}>/,
-    "the side padding scrolls with the content; the grid inside is a plain view",
-  );
-  assert.doesNotMatch(ui, /pipelineVertical/);
 });
 
 test("032 a linked promoted lead outside the card set places its decision through link facts alone", () => {
@@ -1038,68 +981,3 @@ test("Triage cards: one state line per lead or papercut, operator order, and pag
   );
 });
 
-test("finding 1: empty columns collapse to stubs, populated columns share the freed width, and the cap holds", () => {
-  const zero = Object.fromEntries(
-    pipelineColumns.map((name) => [name, 0]),
-  ) as Record<(typeof pipelineColumns)[number], number>;
-  const onlyWork = { ...zero, Attention: 1, Queued: 2 };
-  // Pipeline order is kept: the stubs are a set, and the widths are read per column by name.
-  assert.deepEqual(
-    [...pipelineStubColumns(onlyWork)],
-    ["Triage", "Decisions", "Working", "Review", "Closing"],
-  );
-  assert.equal(
-    pipelineStubColumns(zero).size,
-    pipelineColumns.length,
-    "a board with no cards is all stubs",
-  );
-  assert.equal(
-    pipelineStubColumns({ ...zero, Triage: 1 }).has("Triage"),
-    false,
-    "a column with a card is never a stub",
-  );
-  assert.equal(
-    pipelineStubColumns(zero, ["Triage"]).has("Triage"),
-    false,
-    "Triage stays open under a tag filter so it can be cleared",
-  );
-  // Wide: two populated columns share what the five stubs leave, within the cap.
-  const wide = pipelineColumnWidths(pipelineStubColumns(onlyWork), {
-    available: 1232,
-    gap: 10,
-    minWidth: 300,
-  });
-  assert.equal(wide.Triage, pipelineStubWidth);
-  assert.equal(
-    wide.Attention,
-    Math.floor((1232 - 5 * pipelineStubWidth - 6 * 10) / 2),
-  );
-  assert.equal(
-    wide.Attention,
-    wide.Queued,
-    "populated columns get equal widths",
-  );
-  // One populated column stops at the cap instead of stretching across the panel.
-  const lone = pipelineColumnWidths(
-    pipelineStubColumns({ ...zero, Working: 1 }),
-    { available: 1232, gap: 10, minWidth: 300 },
-  );
-  assert.equal(lone.Working, pipelineColumnMaxWidth);
-  // Narrow: a populated column never drops below a card, even when the stubs leave no room; the grid scrolls sideways.
-  const narrow = pipelineColumnWidths(pipelineStubColumns(onlyWork), {
-    available: 358,
-    gap: 10,
-    minWidth: 260,
-  });
-  assert.equal(narrow.Attention, 260);
-  // Everything populated keeps the old equal split, unchanged by the stub rule.
-  const full = pipelineColumnWidths(
-    pipelineStubColumns(
-      Object.fromEntries(
-        pipelineColumns.map((name) => [name, 1]),
-      ) as typeof zero,
-    ),
-    { available: 1232, gap: 10, minWidth: 300 },
-  );
-  assert.deepEqual(new Set(Object.values(full)), new Set([300]));
-});

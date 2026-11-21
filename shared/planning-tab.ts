@@ -1,12 +1,8 @@
 import type { LaneView, Project, ProjectPlan, TaskSummary, LeadListFacts } from './contracts';
 
 export type PlanEntry = ProjectPlan['entries'][number];
-/** Spec 026: the header selector chooses projects, so the tab has plan and lane columns. */
+/** Whether the open lane shows: on a board without a detail pane, 'lane' opens it in a modal. */
 export type PlanningStep = 'plan' | 'lane';
-
-export function planningColumns(compact: boolean, step: PlanningStep): PlanningStep[] {
-  return compact ? [step] : ['plan', 'lane'];
-}
 
 export function planningPlan(latest: ProjectPlan | undefined, _saved?: ProjectPlan, laneKeys: readonly string[] = []) {
   const entries = latest?.entries ?? [];

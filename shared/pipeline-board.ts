@@ -32,9 +32,6 @@ export function decisionAge(createdAt: string, now: number = Date.now()): string
 /** The board's one set of columns: each card once, with per-column totals of the cards loaded. */
 export type PipelineBoard = { counts: Record<PipelineColumn, number>; cards: Record<PipelineColumn, PipelineCard[]> };
 
-/** Fallback height of a column's own scroll before the board area has been measured. */
-export const pipelineCellMaxHeight = 420;
-
 /** Triage pages (Tom, 2026-11-07): a column shows one page of cards, then an "…and N more" card loads the next. */
 export const triagePageSize = 8;
 export function triagePage<T>(cards: T[], shown: number): { visible: T[]; hidden: number } {
@@ -65,49 +62,6 @@ export function triageRank(lead: BoardLead): number {
   return lead.check?.ok ? 0 : 1;
 }
 const byTriageRank = (a: PipelineCard, b: PipelineCard) => (a.kind === 'lead' ? triageRank(a.value) : 0) - (b.kind === 'lead' ? triageRank(b.value) : 0);
-
-/**
- * Finding 1 (nucleus-ui, 2026-11-08): a column with no cards collapses to a slim labelled
- * stub at every width, so populated columns get the space and a narrow board opens on work.
- * The stub shows only its name; its accessible label retains the real count and empty state.
- * It expands as soon as the column holds a card.
- */
-export const pipelineStubWidth = 84;
-/** Populated columns share the width the stubs leave, but never stretch past a readable card. */
-export const pipelineColumnMaxWidth = 420;
-
-/**
- * The columns that collapse: those whose header total is zero and that nothing forces open.
- * The totals are the server's: every non-queued live task, and the queued count the server
- * reports. Triage stays open under a tag filter, so its filter can still be cleared.
- */
-export function pipelineStubColumns(totals: Readonly<Record<PipelineColumn, number>>, forcedOpen: readonly PipelineColumn[] = []): ReadonlySet<PipelineColumn> {
-  return new Set(pipelineColumns.filter(name => !totals[name] && !forcedOpen.includes(name)));
-}
-
-/**
- * Each column's width: a stub, or an equal share of what the stubs leave. A populated
- * column is never narrower than `minWidth` (the grid scrolls sideways past that) nor wider
- * than the cap.
- */
-export function pipelineColumnWidths(stubs: ReadonlySet<PipelineColumn>, layout: { available: number; gap: number; minWidth: number }): Record<PipelineColumn, number> {
-  const open = pipelineColumns.length - stubs.size;
-  const room = layout.available - stubs.size * pipelineStubWidth - (pipelineColumns.length - 1) * layout.gap;
-  const share = open ? Math.min(pipelineColumnMaxWidth, Math.max(layout.minWidth, Math.floor(room / open))) : layout.minWidth;
-  return Object.fromEntries(pipelineColumns.map(name => [name, stubs.has(name) ? pipelineStubWidth : share])) as Record<PipelineColumn, number>;
-}
-
-/** The vertical scroll's gap between the header and the row, and its bottom padding. */
-export const pipelineColumnChrome = 10 + 12;
-/**
- * Height of each column's own scroll: exactly the pipeline area
- * less its bottom padding, the measured sticky header and the scroll's own gap and
- * padding, so the grid itself never overflows (Tom, 2026-09-28: it scrolled ~40 px).
- */
-export function pipelineColumnHeight(areaHeight: number, chrome: { bottomPadding: number; headerHeight: number } = { bottomPadding: 0, headerHeight: 0 }): number {
-  if (!(areaHeight > 0)) return pipelineCellMaxHeight;
-  return Math.max(240, Math.floor(areaHeight - chrome.bottomPadding - chrome.headerHeight - pipelineColumnChrome));
-}
 
 /**
  * Spec 026 Board phase mapping as of 87555f7. Queued is `queued`; Working is

@@ -91,14 +91,16 @@ type MountOver = {
   onRetryLanes?: () => void;
   sections?: PlanSection[];
   lanes?: LaneView[];
+  step?: "plan" | "lane";
+  selectedLane?: string;
 };
 
 async function mountTab(over: MountOver = {}) {
   const { PlanningTab } = await import("../client/planning-panel");
-  const log = { opened: [] as string[], selected: [] as string[][] };
+  const log = { opened: [] as string[], steps: [] as string[] };
   function Harness() {
     const [planEdits] = useState<Record<string, PlanEdit>>({});
-    const [selection, setSelection] = useState<string[]>(over.selection ?? []);
+    const selection = over.selection ?? [];
     return h(PlanningTab, {
       sections: over.sections ?? sections,
       lanes: over.lanes ?? lanes,
@@ -106,20 +108,16 @@ async function mountTab(over: MountOver = {}) {
       plans: [latest, betaPlan],
       selection,
       compact: over.compact ?? false,
-      step: "plan",
+      step: over.step ?? "plan",
       busy: false,
       edits: planEdits,
-      selectedLane: "",
+      selectedLane: over.selectedLane ?? "",
       lanePanel: h("Text", null, "LANE PANEL SENTINEL"),
       lanesLoading: over.lanesLoading,
       lanesError: over.lanesError,
       plansError: over.plansError,
       onRetryLanes: over.onRetryLanes,
-      onSelectProjects: (keys: string[]) => {
-        log.selected.push(keys);
-        setSelection(keys);
-      },
-      onStep: () => {},
+      onStep: (step: string) => log.steps.push(step),
       onOpenLane: (key: string) => log.opened.push(key),
       onEdit: () => {},
       onSave: () => {},
@@ -132,10 +130,8 @@ async function mountTab(over: MountOver = {}) {
 
 test("866 rendered wide: the finder replaces the plan column, names project and status, and keeps the lane column", async () => {
   const { ui, log } = await mountTab();
-  assert.equal(
-    ui.get("Project: All projects").props.accessibilityLabel,
-    "Project: All projects",
-  );
+  // The board header's project filter scopes Planning; it has no chooser of its own (Tom, 2026-11-21).
+  assert.equal(ui.query(/^Project: /), undefined);
   assert.ok(ui.get("Planning plan"));
   assert.ok(ui.get("Planning lane"), "the lane column is beside the plan");
   assert.match(ui.text(), /LANE PANEL SENTINEL/);
@@ -173,14 +169,15 @@ test("866 rendered wide: the finder replaces the plan column, names project and 
 
 test("866 rendered: the all-projects scope is labelled and reaches lanes the chosen project does not list", async () => {
   const { ui } = await mountTab({ selection: ["alpha"] });
+  // The scope buttons belong to the search, so they show once a search is open.
+  assert.equal(ui.query("Search lanes in alpha"), undefined);
+  ui.type("Find lanes", "beta lane");
   assert.ok(ui.get("Search lanes in alpha"));
-  const all = ui.get("Search lanes in all projects");
   assert.equal(
-    all.props.accessibilityState.selected,
+    ui.get("Search lanes in all projects").props.accessibilityState.selected,
     false,
     "no cross-project scope until asked",
   );
-  ui.type("Find lanes", "beta lane");
   assert.equal(
     ui.query(/^Open lane Beta lane/),
     undefined,
@@ -194,29 +191,25 @@ test("866 rendered: the all-projects scope is labelled and reaches lanes the cho
   assert.ok(ui.get("Open lane Beta lane, beta, Active"));
 });
 
-test("866 rendered: a narrow layout opens the chooser as a modal and writes the shared project scope", async () => {
-  const { ui, log } = await mountTab({ compact: true });
-  assert.ok(ui.get("Browse all lanes"));
-  ui.press("Project: All projects");
-  assert.ok(ui.get("Planning project chooser"));
-  assert.equal(ui.ofType("Modal").length, 1, "a modal at the narrow size");
-  assert.equal(
-    ui.get("Choose all projects").props.accessibilityState.selected,
-    true,
-  );
-  ui.press("Choose project beta");
-  assert.deepEqual(log.selected, [["beta"]]);
-  assert.equal(
-    ui.query("Planning project chooser"),
-    undefined,
-    "choosing closes the chooser",
-  );
-  assert.equal(
-    ui.get("Project: beta").props.accessibilityLabel,
-    "Project: beta",
-  );
-  assert.ok(ui.get("Search lanes in beta"));
-  assert.ok(ui.get("Search lanes in all projects"));
+test("a board without a detail pane keeps the plan and opens the open lane in a modal that returns to the plan", async () => {
+  // Narrow, nothing open: the plan alone, and no modal.
+  const closed = (await mountTab({ compact: true })).ui;
+  assert.ok(closed.get("Planning plan"));
+  assert.ok(closed.get("Browse all lanes"));
+  assert.equal(closed.query("Planning lane"), undefined, "no lane pane beside the plan");
+  assert.equal(closed.ofType("Modal").length, 0);
+  // Narrow with a lane open: the plan stays and the lane is a modal.
+  const { ui, log } = await mountTab({ compact: true, step: "lane", selectedLane: "s1" });
+  assert.ok(ui.get("Planning plan"), "the plan stays under the modal");
+  assert.equal(ui.ofType("Modal").length, 1, "the lane opens in a modal");
+  assert.ok(ui.get("Lane detail"));
+  assert.match(ui.text(), /LANE PANEL SENTINEL/);
+  ui.press("Close lane");
+  assert.deepEqual(log.steps, ["plan"], "closing the modal returns to the plan");
+  // Wide: the lane is the pane beside the plan, never a modal.
+  const wide = (await mountTab({ step: "lane", selectedLane: "s1" })).ui;
+  assert.ok(wide.get("Planning lane"));
+  assert.equal(wide.ofType("Modal").length, 0);
 });
 
 test("866 rendered: searching all projects finds another project's lane and says so", async () => {

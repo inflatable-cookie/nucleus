@@ -157,6 +157,9 @@ const invokeFor =
     return {};
   };
 
+/** The slot table inside the queue menu (Tom, 2026-11-21: moved out of the header's status line). */
+const SLOTS = /^Project slot usage \(/;
+
 const surfaceProps = {
   theme: { colors: c },
   host: { id: "host", label: "Host" },
@@ -184,32 +187,31 @@ async function settle(probe: () => boolean) {
   assert.fail("the surface did not settle");
 }
 
-test("665 the header keeps the summary line and the slot count opens a popover with only projects using a slot", async () => {
+test("665 the queue menu holds the slot table, with only projects using a slot; the header has no status line (Tom, 2026-11-21)", async () => {
   await load();
   const client = new QueryClient();
   const ui = mount(surfaceTree(client));
   try {
+    // The board is connected once the queue controls are enabled.
     await settle(
-      () =>
-        ui.text().includes("Running ·") && ui.text().includes("global slots"),
+      () => ui.query("Queue controls menu")?.props.accessibilityState?.disabled === false,
     );
-    // The summary line stays; no per-project counts render inline.
-    assert.ok(
-      ui.text().includes("project default 4"),
-      "the summary keeps the project default",
-    );
+    // The status line left the header; a normal running queue shows no state pill.
+    assert.ok(!ui.text().includes("Running ·"), "the header has no status line");
+    assert.equal(ui.query("Queue state"), undefined, "a running queue shows no state pill");
     assert.equal(
-      ui.query("Projects using slots"),
+      ui.query(SLOTS),
       undefined,
-      "the popover starts closed",
+      "the slot table starts closed",
     );
     assert.ok(
       !ui.text().includes("project-e"),
       "no per-project row renders inline",
     );
-    // The slot count opens the popover as an anchored dropdown, not a Modal.
-    ui.press(/show projects using slots/);
-    assert.ok(ui.get("Projects using slots"), "the popover opens");
+    // The queue menu opens as an anchored dropdown, not a Modal, with the slot table inside.
+    ui.press("Queue controls menu");
+    assert.ok(ui.get(SLOTS), "the slot table opens with the queue menu");
+    assert.ok(ui.text().includes("5/16 global · project default 4"), "the table keeps the global use and the project default");
     assert.equal(
       ui.ofType("Modal").length,
       0,
@@ -222,7 +224,7 @@ test("665 the header keeps the summary line and the slot count opens a popover w
     // menu still land on the menu.
     // (The stub renderer has no hit testing; the layering is the interaction.)
     const overlayZ =
-      (ui.get("Close project slot usage").props.style as { zIndex?: number })
+      (ui.get("Close queue controls").props.style as { zIndex?: number })
         .zIndex ?? 0;
     assert.ok(
       overlayZ > 20,
@@ -244,11 +246,9 @@ test("665 the header keeps the summary line and the slot count opens a popover w
           (child.props.accessibilityLabel === label || inLayer(child, label)),
       );
     assert.ok(
-      layer && inLayer(layer, "Projects using slots"),
-      "the slot popover renders in the top layer, above the board columns",
+      layer && inLayer(layer, "Queue controls"),
+      "the queue menu renders in the top layer, above the board",
     );
-    const slotMenu = ui.get("Projects using slots");
-    assert.ok(slotMenu, "the slot popover opens");
     assert.ok(ui.get("apple, 2 of 4 slots, 5 of 8 in flight"));
     assert.ok(ui.get("zebra, 2 of 4 slots, 0 of 8 in flight"));
     assert.ok(ui.get("project-e, 1 of 4 slots, 1 of 8 in flight"));
@@ -265,26 +265,19 @@ test("665 the header keeps the summary line and the slot count opens a popover w
         order.indexOf("zebra") < order.indexOf("project-e"),
       "rows order by slots used, then name",
     );
-    // A live board refresh does not close the popover.
+    // A live board refresh does not close the menu.
     await client.refetchQueries({ queryKey: ["nucleus", "state"] });
-    assert.ok(
-      ui.get("Projects using slots"),
-      "the popover survives a board refresh",
-    );
+    assert.ok(ui.get(SLOTS), "the menu survives a board refresh");
     // The trigger toggles it closed again.
-    ui.press(/hide projects using slots/);
-    assert.equal(
-      ui.query("Projects using slots"),
-      undefined,
-      "the trigger closes the popover",
-    );
+    ui.press("Queue controls menu");
+    assert.equal(ui.query(SLOTS), undefined, "the trigger closes the menu");
   } finally {
     ui.update(h("View", null));
     client.clear();
   }
 });
 
-test("665 the slot popover closes on outside click and on Escape, and names the empty state", async () => {
+test("665 the queue menu closes on outside click and on Escape", async () => {
   await load();
   // Escape arrives as a DOM keydown on web hosts; the stub renderer has no
   // document, so this test lends it a minimal listener registry.
@@ -310,33 +303,22 @@ test("665 the slot popover closes on outside click and on Escape, and names the 
   const client = new QueryClient();
   const ui = mount(surfaceTree(client));
   try {
+    // The board is connected once the queue controls are enabled.
     await settle(
-      () =>
-        ui.text().includes("Running ·") && ui.text().includes("global slots"),
+      () => ui.query("Queue controls menu")?.props.accessibilityState?.disabled === false,
     );
-    ui.press(/show projects using slots/);
-    assert.ok(ui.get("Projects using slots"), "the popover opens");
+    ui.press("Queue controls menu");
+    assert.ok(ui.get(SLOTS), "the menu opens");
     // Outside click closes it through the overlay press.
-    ui.press("Close project slot usage");
-    assert.equal(
-      ui.query("Projects using slots"),
-      undefined,
-      "an outside click closes the popover",
-    );
-    ui.press(/show projects using slots/);
-    assert.ok(ui.get("Projects using slots"), "the popover reopens");
+    ui.press("Close queue controls");
+    assert.equal(ui.query(SLOTS), undefined, "an outside click closes the menu");
+    ui.press("Queue controls menu");
+    assert.ok(ui.get(SLOTS), "the menu reopens");
     // Other keys leave it open; Escape closes it through the keydown listener.
     keyListeners.forEach((listener) => listener({ key: "Enter" }));
-    assert.ok(
-      ui.get("Projects using slots"),
-      "other keys leave the popover open",
-    );
+    assert.ok(ui.get(SLOTS), "other keys leave the menu open");
     keyListeners.forEach((listener) => listener({ key: "Escape" }));
-    assert.equal(
-      ui.query("Projects using slots"),
-      undefined,
-      "Escape closes the popover",
-    );
+    assert.equal(ui.query(SLOTS), undefined, "Escape closes the menu");
   } finally {
     if (previousDocument === undefined) delete globals.document;
     else globals.document = previousDocument;
@@ -345,7 +327,7 @@ test("665 the slot popover closes on outside click and on Escape, and names the 
   }
 });
 
-test("665 the slot popover says so in one line when no project uses a slot", async () => {
+test("665 the slot table says so in one line when no project uses a slot", async () => {
   await load();
   const client = new QueryClient();
   const empty = boardOf(
@@ -361,16 +343,16 @@ test("665 the slot popover says so in one line when no project uses a slot", asy
     }),
   );
   try {
+    // The board is connected once the queue controls are enabled.
     await settle(
-      () =>
-        ui.text().includes("Running ·") && ui.text().includes("global slots"),
+      () => ui.query("Queue controls menu")?.props.accessibilityState?.disabled === false,
     );
     assert.ok(
       !ui.text().includes("project-e"),
       "no per-project row renders inline",
     );
-    ui.press(/show projects using slots/);
-    assert.ok(ui.get("Projects using slots"), "the popover opens");
+    ui.press("Queue controls menu");
+    assert.ok(ui.get(SLOTS), "the slot table opens with the menu");
     assert.ok(
       ui.text().includes("No project is using a slot."),
       "the empty state reads in one line",
