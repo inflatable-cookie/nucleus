@@ -15,9 +15,10 @@ import type {
   HostPermissionDecision,
   HostWorkspaceSpec,
 } from "../../shared/host";
-import type { Run, Task } from "../../shared/contracts";
+import type { Profile, Run, Task } from "../../shared/contracts";
 import type { TaskAttention } from "../../shared/task-attention";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
+import { createOwnedCloseoutWorktree } from "../../core/workspaces/workspace-continuation/host";
 import { T3CodeHost, type T3CodeConfig } from "./adapter";
 
 export { T3CodeHost, type T3CodeConfig } from "./adapter";
@@ -155,8 +156,9 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
             .filter((w) => !w.archivedAt)
             .map((w) => ({
               id: w.id,
-              projectRootPath: w.directory,
+              projectRootPath: w.projectRootPath ?? w.directory,
               workspaceDirectory: w.directory,
+              ...(w.worktreeSlug ? { worktreeSlug: w.worktreeSlug } : {}),
               placement: {
                 kind: "external",
                 provenance: "t3code",
@@ -166,9 +168,23 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         createWorkspace: (spec: HostWorkspaceSpec) =>
           native.createWorkspace(spec),
         workspaceRef: (id: string) => native.workspaceRef(id),
-        createCloseoutWorkspace: (_spec: HostWorktreeWorkspaceSpec) => {
-          throw new ProvenPreSendRefusalError(
-            "T3Code does not support closeout worktree registration",
+        createCloseoutWorkspace: async (spec: HostWorktreeWorkspaceSpec) => {
+          const directory = await createOwnedCloseoutWorktree(
+            this.placement(),
+            this.dataDir(),
+            spec,
+          );
+          return native.createWorkspace(
+            {
+              title: spec.title,
+              requestId: spec.requestId,
+              directory,
+              project: { workspaceRoot: spec.source.cwd },
+            },
+            {
+              worktreeSlug: spec.source.worktreeSlug,
+              projectRootPath: spec.source.cwd,
+            },
           );
         },
         workspaceIdAccepted: (id: unknown) => native.workspaceIdAccepted(id),
@@ -239,6 +255,72 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     askReviewer(...args: Parameters<T3Adapter["askPlanner"]>) {
       return this.askPlanner(...args);
     }
+    /** A short-lived decider child under the task's parent; core delivers the question and archives it. */
+    async runDecider(
+      task: Task,
+      input: {
+        profile: Profile;
+        signal: AbortSignal;
+        timeoutMs: number;
+        decisionId: string;
+      },
+    ): Promise<{ agentId: string; text: string | null }> {
+      if (input.signal.aborted)
+        throw new ProvenPreSendRefusalError(
+          "The decider was abandoned before creation",
+        );
+      if (!task.workspaceId)
+        throw new ProvenPreSendRefusalError(
+          "T3Code decider needs the task workspace",
+        );
+      const created = await this.native.createAgent({
+        workspaceId: task.workspaceId,
+        profile: input.profile,
+        title: `Decision: ${task.title}`,
+        taskNumber: task.number,
+        mcpBindingPath: null,
+        attempt: () => ({
+          prompt:
+            "You are the Nucleus decider for this task. Wait for the decision prompt arriving in your next message, then answer it using the command it provides.",
+          requestId: `ns-decider-launch-${input.decisionId}`,
+          labels: {
+            [WIRE_LABEL_KEYS.task]: task.id,
+            [WIRE_LABEL_KEYS.role]: "decider",
+            "nucleus.decider": task.id,
+          },
+          environment: {},
+        }),
+      });
+      return { agentId: created.id, text: null };
+    }
+    /** A consult reviewer child under the task's parent; core delivers the question and retains it. */
+    async createConsultReviewer(
+      task: Task,
+      input: { profile: Profile; id: string },
+    ): Promise<{ id: string; workspaceId: string | null }> {
+      if (!task.workspaceId)
+        throw new ProvenPreSendRefusalError(
+          "T3Code consult reviewer needs the task workspace",
+        );
+      return this.native.createAgent({
+        workspaceId: task.workspaceId,
+        profile: input.profile,
+        title: `Review: ${task.title}`,
+        taskNumber: task.number,
+        mcpBindingPath: null,
+        attempt: () => ({
+          prompt:
+            "You are the Nucleus reviewer for this task. Wait for the question arriving in your next message, then answer it using the command it provides.",
+          requestId: `ns-reviewer-consult-launch-${input.id}`,
+          labels: {
+            [WIRE_LABEL_KEYS.task]: task.id,
+            [WIRE_LABEL_KEYS.role]: "reviewer",
+            "nucleus.reviewer": task.id,
+          },
+          environment: {},
+        }),
+      });
+    }
     observe(id: string) {
       return this.native.observe(id);
     }
@@ -291,8 +373,14 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     notify(id: string, messageId: string, text: string) {
       return this.native.sendMessage(id, { messageId, text });
     }
+    enqueueMessage(id: string, messageId: string, text: string) {
+      return this.native.enqueueMessage(id, { messageId, text });
+    }
     steerOrNotify(id: string, messageId: string, text: string) {
       return this.native.steerOrNotify(id, { messageId, text });
+    }
+    interruptAndContinue(id: string, messageId: string, text: string) {
+      return this.native.interruptAndContinue(id, messageId, text);
     }
     stopAgentTurn(id: string, expectedTurnId?: string) {
       return expectedTurnId !== undefined

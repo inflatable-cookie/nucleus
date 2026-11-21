@@ -20,6 +20,7 @@ export interface BbWorkspaceRecord {
   repositoryRoot: string;
   projectId: string;
   title: string;
+  worktreeSlug?: string;
   environmentId?: string;
   archivedAt?: string;
 }
@@ -164,12 +165,18 @@ export class BbThreads {
   workspaceFor(row: BbRow, agent: BbAgent | undefined): string | null {
     if (agent) {
       const workspace = this.ports.workspace(agent.workspaceId);
-      return workspace && workspace.environmentId === row.environmentId &&
-        workspace.directory === row.environmentPath ? agent.workspaceId : null;
+      return workspace &&
+        workspace.environmentId === row.environmentId &&
+        workspace.directory === row.environmentPath
+        ? agent.workspaceId
+        : null;
     }
     if (!row.environmentId) return null;
-    const directory = row.environmentPath && linkedWorktreePath(row.environmentPath);
-    return directory ? workspaceHandleForPath(directory) : `bb-environment:${row.environmentId}`;
+    const directory =
+      row.environmentPath && linkedWorktreePath(row.environmentPath);
+    return directory
+      ? workspaceHandleForPath(directory)
+      : `bb-environment:${row.environmentId}`;
   }
 
   private observation(row: BbRow): AgentObservation {
@@ -242,6 +249,21 @@ export class BbThreads {
     if (row.threadId !== id)
       throw new Error("BB observation answered another thread");
     return this.observation(row);
+  }
+  async originAgent(id: string) {
+    const { rows } = await this.read<{ rows: BbRow[] }>("thread.read", {
+      threadIds: [id],
+    });
+    const row = rows.find((item) => item.threadId === id);
+    if (!row) return null;
+    const observation = this.observation(row);
+    return {
+      id,
+      workspaceId: observation.workspaceId,
+      title: row.title ?? "",
+      archived: observation.status === "closed",
+      labels: observation.labels,
+    };
   }
   async observationInventory(
     ids: readonly string[],
@@ -598,6 +620,51 @@ export class BbThreads {
       expectedCascadeThreadIds: fresh.cascadeThreadIds,
     });
   }
+  async deleteAgent(id: string, depth = 0): Promise<void> {
+    const owned = this.ports.state().agents[id];
+    if (!owned)
+      throw new ProvenPreSendRefusalError(
+        "BB delete only accepts a Nucleus-created thread",
+      );
+    if (depth > 8)
+      throw new ProvenPreSendRefusalError(
+        "BB delete cascade nesting exceeded its bound",
+      );
+    const key = `delete:${id}`;
+    const prior = this.ports.state().writes[key];
+    if (prior?.status === "settled") return;
+    if (prior?.status === "unknown")
+      throw new HostUnknownDeliveryError({ command: "bb.thread.delete" });
+    const existing = await this.read<{ rows: BbRow[] }>("thread.read", {
+      threadIds: [id],
+    });
+    if (!existing.rows.some((row) => row.threadId === id)) {
+      const state = this.ports.state();
+      state.writes[key] = { status: "settled" };
+      this.ports.save(state);
+      return;
+    }
+    // Same cascade proof as archive: every id the delete would touch must be this
+    // task's own recorded thread, or the delete is refused with nothing written.
+    const cascade = await this.read<{ cascadeThreadIds: string[] }>(
+      "thread.cascade",
+      { threadId: id, action: "delete" },
+    );
+    this.proveCascade(id, owned.task, cascade.cascadeThreadIds);
+    for (const child of cascade.cascadeThreadIds.filter(
+      (child) => child !== id,
+    ))
+      await this.deleteAgent(child, depth + 1);
+    const fresh = await this.read<{ cascadeThreadIds: string[] }>(
+      "thread.cascade",
+      { threadId: id, action: "delete" },
+    );
+    this.proveCascade(id, owned.task, fresh.cascadeThreadIds);
+    await this.write(key, "thread.delete", {
+      threadId: id,
+      expectedCascadeThreadIds: fresh.cascadeThreadIds,
+    });
+  }
   /** A cascade may name this thread and this task's own recorded threads, nothing else. */
   private proveCascade(
     threadId: string,
@@ -633,6 +700,7 @@ export class BbThreads {
       status?: string;
       parentThreadId?: string | null;
       archivedAt?: number;
+      deleted?: boolean;
     }) => {
       if (
         op === "thread.stop" &&
@@ -652,6 +720,8 @@ export class BbThreads {
         throw new HostUnknownDeliveryError({ command: "bb.thread.reparent" });
       if (op === "thread.archive" && typeof result.archivedAt !== "number")
         throw new HostUnknownDeliveryError({ command: "bb.thread.archive" });
+      if (op === "thread.delete" && result.deleted !== true)
+        throw new HostUnknownDeliveryError({ command: "bb.thread.delete" });
       if (
         (op === "thread.interaction.respond" ||
           op === "thread.interaction.cancel") &&
@@ -704,7 +774,10 @@ export class BbThreads {
       this.ports.save(state);
       return;
     }
-    if (expectedTurnId !== undefined && observation.activeTurnId !== expectedTurnId) {
+    if (
+      expectedTurnId !== undefined &&
+      observation.activeTurnId !== expectedTurnId
+    ) {
       throw new ProvenPreSendRefusalError(
         `Intended turn ${expectedTurnId} ended or changed to ${observation.activeTurnId ?? "unknown"}; refusing to stop newer turn`,
       );
@@ -838,6 +911,36 @@ export class BbThreads {
     if (previous?.status === "unknown")
       throw new HostUnknownDeliveryError({ command: "bb.thread.send" });
     await this.write(key, "thread.send", { threadId: id, text, messageId });
+  }
+  /** Queue a message behind the active turn on a recorded task thread. */
+  async enqueueMessage(id: string, text: string, messageId: string) {
+    await this.send(id, text, messageId);
+  }
+  /** Steer a live turn with one message; refuses before send when no turn is active. */
+  async interruptAndContinue(id: string, text: string, messageId: string) {
+    if (!this.ports.state().agents[id])
+      throw new ProvenPreSendRefusalError(
+        "BB delivery needs a recorded task thread",
+      );
+    const key = `interrupt:${id}:${messageId}`;
+    const previous = this.ports.state().writes[key];
+    if (previous?.status === "unknown")
+      throw new HostUnknownDeliveryError({ command: "bb.thread.send" });
+    if (previous?.status === "settled") return;
+    try {
+      await this.write(key, "thread.send", {
+        threadId: id,
+        text,
+        messageId,
+        mode: "steer",
+      });
+    } catch (error) {
+      if (this.ports.notSent(error))
+        throw new ProvenPreSendRefusalError(
+          error instanceof Error ? error.message : String(error),
+        );
+      throw error;
+    }
   }
   /**
    * One message into a live turn. A steer the plugin proved it never wrote (its own

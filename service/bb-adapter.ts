@@ -1,10 +1,16 @@
 import { isHostOperationTimeout } from "../core/host/errors";
 import { HostPolicies } from "../core/host/host-policies";
-import type { Adapter, HostPolicyConstructor, HostPolicyPort } from "../core/host";
+import type {
+  Adapter,
+  HostPolicyConstructor,
+  HostPolicyPort,
+  HostWorktreeWorkspaceSpec,
+} from "../core/host";
 import {
   ArchiveNotDeliveredError,
   ProvenPreSendRefusalError,
 } from "../core/host";
+import { createOwnedCloseoutWorktree } from "../core/workspaces/workspace-continuation/host";
 import { taskWorkspaceTitle } from "../core/workspaces/workspace-title";
 import type {
   HostAgentSpec,
@@ -42,7 +48,9 @@ export interface BbWorkspaces
     | "workspaceIdAccepted"
     | "taskWorkspaceArchived"
   > {
-  createWorkspace(task: Pick<Task, "directory" | "repoPath" | "title">): Promise<{ id: string; directory: string }>;
+  createWorkspace(
+    task: Pick<Task, "directory" | "repoPath" | "title">,
+  ): Promise<{ id: string; directory: string }>;
   workspaceRef(id: string): HostWorkspaceRef;
   repositoryProject(
     root: string,
@@ -73,7 +81,9 @@ export function composeBbAdapter(input: {
       return {
         id: row.threadId,
         workspaceId: threads.workspaceFor(row, agent),
-        ...(includeWorkspaceDirectory ? { workspaceDirectory: row.environmentPath } : {}),
+        ...(includeWorkspaceDirectory
+          ? { workspaceDirectory: row.environmentPath }
+          : {}),
         labels: agent?.labels,
         archived: row.archivedAt !== null,
         status: row.archivedAt !== null ? "closed" : row.status,
@@ -201,11 +211,19 @@ export function composeBbAdapter(input: {
         const workspace = workspaces.workspaceRef(spec.workspaceId);
         await workspace.refresh();
         const current = workspace.current();
-        if (!task || workspace.directory !== task.directory || current?.projectRootPath !== task.repoPath)
-          throw new ProvenPreSendRefusalError("BB workspace is no longer attached to the task checkout");
+        if (
+          !task ||
+          workspace.directory !== task.directory ||
+          current?.projectRootPath !== task.repoPath
+        )
+          throw new ProvenPreSendRefusalError(
+            "BB workspace is no longer attached to the task checkout",
+          );
         const registered = await workspaces.createWorkspace(task);
         if (registered.id !== spec.workspaceId)
-          throw new ProvenPreSendRefusalError("BB workspace registration returned a different handle");
+          throw new ProvenPreSendRefusalError(
+            "BB workspace registration returned a different handle",
+          );
       }
       return threads.createAgent(spec);
     }
@@ -219,8 +237,9 @@ export function composeBbAdapter(input: {
             .filter((w) => !w.archivedAt)
             .map((w) => ({
               id: w.id,
-              projectRootPath: w.directory,
+              projectRootPath: w.worktreeSlug ? w.repositoryRoot : w.directory,
               workspaceDirectory: w.directory,
+              ...(w.worktreeSlug ? { worktreeSlug: w.worktreeSlug } : {}),
               placement: {
                 kind: "external",
                 provenance: "bb",
@@ -235,10 +254,26 @@ export function composeBbAdapter(input: {
           }),
         workspaceRef: (id: string) => workspaces.workspaceRef(id),
         workspaceIdAccepted: workspaces.workspaceIdAccepted,
-        createCloseoutWorkspace: async () => {
-          throw new ProvenPreSendRefusalError(
-            "BB closeout workspace registration is unavailable",
+        createCloseoutWorkspace: async (spec: HostWorktreeWorkspaceSpec) => {
+          const directory = await createOwnedCloseoutWorktree(
+            this.placement(),
+            this.dataDir(),
+            spec,
           );
+          const registered = await workspaces.createWorkspace({
+            directory,
+            repoPath: spec.source.cwd,
+            title: spec.title,
+          });
+          const recorded = input.records()[registered.id];
+          if (recorded) {
+            input.put({
+              ...recorded,
+              repositoryRoot: spec.source.cwd,
+              worktreeSlug: spec.source.worktreeSlug,
+            });
+          }
+          return registered;
         },
         archiveThreadPage: async (options: {
           filter: { includeArchived: boolean };
@@ -315,9 +350,15 @@ export function composeBbAdapter(input: {
     notify(id: string, messageId: string, text: string) {
       return threads.deliver(id, text, messageId);
     }
+    enqueueMessage(id: string, messageId: string, text: string) {
+      return threads.enqueueMessage(id, text, messageId);
+    }
     /** A participant message steers a live turn; a proven not-sent steer falls back to one queued send. */
     steerOrNotify(id: string, messageId: string, text: string) {
       return threads.steerOrNotify(id, text, messageId);
+    }
+    interruptAndContinue(id: string, messageId: string, text: string) {
+      return threads.interruptAndContinue(id, text, messageId);
     }
     pendingQuestions(id: string) {
       return threads.pendingQuestions(id);
@@ -492,15 +533,8 @@ export function composeBbAdapter(input: {
     observationInventory(ids: readonly string[]) {
       return threads.observationInventory(ids);
     }
-    async originAgent(id: string) {
-      const observation = await threads.observe(id);
-      return {
-        id,
-        workspaceId: observation.workspaceId,
-        title: "",
-        archived: observation.status === "closed",
-        labels: observation.labels,
-      };
+    originAgent(id: string) {
+      return threads.originAgent(id);
     }
     stopAgentTurn(id: string, expectedTurnId?: string) {
       return expectedTurnId !== undefined
@@ -511,6 +545,13 @@ export function composeBbAdapter(input: {
       // A refusal the adapter or the plugin proves before its write is a not-delivered
       // archive, so the durable effect stays ready instead of reading as uncertain.
       return threads.archiveAgent(id).catch((error) => {
+        if (input.notSent(error) || error instanceof ProvenPreSendRefusalError)
+          throw new ArchiveNotDeliveredError(error);
+        throw error;
+      });
+    }
+    deleteAgent(id: string) {
+      return threads.deleteAgent(id).catch((error) => {
         if (input.notSent(error) || error instanceof ProvenPreSendRefusalError)
           throw new ArchiveNotDeliveredError(error);
         throw error;

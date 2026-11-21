@@ -59,7 +59,9 @@ export type AcpAnswerInput = AcpCaller & { id: string; version: number } & (
   );
 
 /** Where a host's decision cards live: one inbox, or one task's parent thread. */
-export type AcpCardScope = { hostId: string } | { taskId: string; sessionId?: string };
+export type AcpCardScope =
+  | { hostId: string }
+  | { taskId: string; sessionId?: string };
 /** One decision card, by the version it carries. */
 export interface AcpPendingCard {
   id: string;
@@ -106,7 +108,9 @@ export interface AcpSessionSurface {
    * A host adapter names its own prompt rules here, because the agent never parses
    * remote text: an ignore prompt ends the turn, a hold prompt holds it.
    */
-  bind(input: { taskId: string } & AcpBindingRules): AcpSessionBinding;
+  bind(
+    input: { taskId: string; directory?: string } & AcpBindingRules,
+  ): AcpSessionBinding;
   /** Mint a decision-only inbox identity for this host. */
   bindInbox?(input: { hostId: string } & AcpBindingRules): {
     sessionId: string;
