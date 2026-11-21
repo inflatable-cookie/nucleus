@@ -1435,7 +1435,9 @@ export class Engine {
     if (!target) return null;
     const label = HOST_KIND_LABELS[target.kind];
     const prefix =
-      target.source === "repository" ? "Repository host" : "Operator default host";
+      target.source === "repository"
+        ? "Repository host"
+        : "Operator default host";
     const registered = [
       ...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])]),
     ].filter((id) => hostKindOf(id) === target.kind);
@@ -1772,7 +1774,10 @@ export class Engine {
     version: number;
     rebindWorkspaceId?: string;
     removeOrphanWorkspace?: boolean;
-    parentRestart?: { before: () => Promise<boolean>; commit: (task: Task, restored: boolean) => Task };
+    parentRestart?: {
+      before: () => Promise<boolean>;
+      commit: (task: Task, restored: boolean) => Task;
+    };
     settleFences?: {
       detail: string;
       runIds: string[];
@@ -2328,7 +2333,11 @@ export class Engine {
     reason: string;
     instruction?: string;
     caller?: string;
-    parentRestart?: { before: () => Promise<boolean>; commit: (task: Task, restored: boolean) => Task; restoreRetained?: boolean };
+    parentRestart?: {
+      before: () => Promise<boolean>;
+      commit: (task: Task, restored: boolean) => Task;
+      restoreRetained?: boolean;
+    };
     restart?: {
       afterSettlement: (settled: Task) => Task;
       afterRevision: (revised: Task) => Task;
@@ -2930,7 +2939,9 @@ export class Engine {
    * Settings → Projects: saved projects, repository rows, slots and QA. A named
    * `project` also gets its live planner, agent and responsible-thread state.
    */
-  projectSettings(input: { project?: string } = {}): Promise<ReturnType<typeof buildProjectSettings>> {
+  projectSettings(
+    input: { project?: string } = {},
+  ): Promise<ReturnType<typeof buildProjectSettings>> {
     return this.projectLifecycle.projectSettings(input);
   }
   /** Task 1110: one project's named agents with their live state and fallback marker. */
@@ -3301,10 +3312,7 @@ export class Engine {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       this.store.event(fresh.id, "barge_custody_lost", reason);
-      if (
-        !["done", "cancelled"].includes(fresh.phase) &&
-        !fresh.removedAt
-      ) {
+      if (!["done", "cancelled"].includes(fresh.phase) && !fresh.removedAt) {
         this.note(
           fresh.id,
           `Barge lease custody lost (return fenced): ${reason}`,

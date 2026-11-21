@@ -1818,15 +1818,37 @@ test("Settings lists projects before any host read settles; the thread picker an
   const data = settingsOf([row("nucleus", "Nucleus", [repo("acme/nucleus")])]);
   const never = () => new Promise<never>(() => {});
   const board = {
-    revision: 1, connected: true, hostId: "host", paused: false, error: "", quiet: true,
-    activeWorkers: 0, unsettled: 0, globalLimit: 32, projectLimit: 4, papercutProjectLimit: 2,
-    tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {},
-    lanes: [], projects: [], projectLimitOverrides: {}, projectInFlightLimitOverrides: {},
-    projectCapacities: [], prStates: {}, usage: { level: "normal", setLevel: "normal", until: null, expired: false },
-    routingGrants: [], backup: { newestSnapshotAt: new Date().toISOString(), localError: null },
+    revision: 1,
+    connected: true,
+    hostId: "host",
+    paused: false,
+    error: "",
+    quiet: true,
+    activeWorkers: 0,
+    unsettled: 0,
+    globalLimit: 32,
+    projectLimit: 4,
+    papercutProjectLimit: 2,
+    tasks: [],
+    profiles: [],
+    pool: [],
+    availability: [],
+    assignments: {},
+    recentAssignments: {},
+    lanes: [],
+    projects: [],
+    projectLimitOverrides: {},
+    projectInFlightLimitOverrides: {},
+    projectCapacities: [],
+    prStates: {},
+    usage: { level: "normal", setLevel: "normal", until: null, expired: false },
+    routingGrants: [],
+    backup: { newestSnapshotAt: new Date().toISOString(), localError: null },
   };
   const { QueueSettingsScreen } = await import("../client/settings-screen");
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const invoke = async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot") return board;
     if (method === "backup.list") return { snapshots: [], localError: null };
@@ -1856,16 +1878,118 @@ test("Settings lists projects before any host read settles; the thread picker an
     }),
   );
   try {
-    ui.get("Nucleus settings").props.onLayout({ nativeEvent: { layout: { width: 1024 } } });
+    ui.get("Nucleus settings").props.onLayout({
+      nativeEvent: { layout: { width: 1024 } },
+    });
     await settle(() => ui.text().includes("Usage level"), "limits");
     ui.press("Projects");
-    await settle(() => Boolean(ui.query("Nucleus, Active")), "list renders while the picker read hangs");
-    assert.deepEqual(calls.filter((call) => call !== "list"), [], "no host read before a project opens");
+    await settle(
+      () => Boolean(ui.query("Nucleus, Active")),
+      "list renders while the picker read hangs",
+    );
+    assert.deepEqual(
+      calls.filter((call) => call !== "list"),
+      [],
+      "no host read before a project opens",
+    );
     ui.press("Nucleus, Active");
-    await settle(() => Boolean(ui.query("Preferred thread, None")), "editor opens");
-    await settle(() => calls.includes("candidates") && calls.includes("focus:nucleus"), "picker and focus requested on open");
+    await settle(
+      () => Boolean(ui.query("Preferred thread, None")),
+      "editor opens",
+    );
+    await settle(
+      () => calls.includes("candidates") && calls.includes("focus:nucleus"),
+      "picker and focus requested on open",
+    );
     // Saved fields stay editable while the live read hangs, and no live-status warning shows.
     assert.ok(ui.query("Project name"), "name field is present");
+    assert.equal(ui.text().includes("Live status is unavailable"), false);
+  } finally {
+    done(ui);
+  }
+});
+
+test("T3-only with a saved offline Paseo planner: Settings lists the project, the picker reports its read failure, and the planner is unknown rather than gone", async () => {
+  const data = settingsOf([
+    row("suite", "Suite", [repo("acme/suite")], {
+      planner: "paseo-synthetic:planner-paseo",
+      plannerLive: null,
+    }),
+  ]);
+  const never = () => new Promise<never>(() => {});
+  const board = {
+    revision: 1,
+    connected: true,
+    hostId: "t3code:synthetic",
+    paused: false,
+    error: "",
+    quiet: true,
+    activeWorkers: 0,
+    unsettled: 0,
+    globalLimit: 32,
+    projectLimit: 4,
+    papercutProjectLimit: 2,
+    tasks: [],
+    profiles: [],
+    pool: [],
+    availability: [],
+    assignments: {},
+    recentAssignments: {},
+    lanes: [],
+    projects: [],
+    projectLimitOverrides: {},
+    projectInFlightLimitOverrides: {},
+    projectCapacities: [],
+    prStates: {},
+    usage: { level: "normal", setLevel: "normal", until: null, expired: false },
+    routingGrants: [],
+    backup: { newestSnapshotAt: new Date().toISOString(), localError: null },
+  };
+  const { QueueSettingsScreen } = await import("../client/settings-screen");
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const invoke = async (method: string, input: unknown) => {
+    if (method === "queue.ui-snapshot") return board;
+    if (method === "backup.list") return { snapshots: [], localError: null };
+    // The saved list answers at once, and so does the focused read of the open project.
+    if (method === "project.settings") return data;
+    // The Paseo host is offline from a T3-only installation: the picker's read fails.
+    if (method === "project.owner-candidates")
+      throw new Error("Transport not connected (status: disconnected)");
+    return never();
+  };
+  const ui = mount(
+    h(QueryClientProvider, {
+      client,
+      children: h(PluginRpcProvider, {
+        invoke: invoke as never,
+        children: h(QueueSettingsScreen as never, {
+          theme: { colors: dark },
+          layout: { compact: false, platform: "ios" },
+          host: { id: "t3code:synthetic", label: "T3" },
+        }),
+      }),
+    }),
+  );
+  try {
+    ui.get("Nucleus settings").props.onLayout({
+      nativeEvent: { layout: { width: 1024 } },
+    });
+    await settle(() => ui.text().includes("Usage level"), "limits");
+    ui.press("Projects");
+    await settle(
+      () => Boolean(ui.query("Suite, Active")),
+      "list renders with the Paseo host offline",
+    );
+    ui.press("Suite, Active");
+    await settle(
+      () => ui.text().includes("Couldn't load threads"),
+      "picker failure is local",
+    );
+    // The planner is shown by its saved id and is not reported gone; saved fields stay enabled.
+    assert.equal(ui.text().includes("Gone"), false);
+    assert.ok(ui.query("Project name"));
     assert.equal(ui.text().includes("Live status is unavailable"), false);
   } finally {
     done(ui);

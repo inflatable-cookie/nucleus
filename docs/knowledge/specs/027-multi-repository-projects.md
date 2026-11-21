@@ -65,7 +65,9 @@ nothing.
   a project reads its live state with `project.settings({project})` and the
   planner picker's threads with `project.owner-candidates`; neither runs for the
   list. A host that is slow or offline leaves planner status unknown, never gone,
-  and never blocks editing saved settings. Add project writes `project.upsert` on Create, with a key derived from
+  and never blocks editing saved settings. On a T3-only installation a saved
+  Paseo planner is unknown: the T3 inventory cannot observe it, and the picker
+  shows its read failure locally. Add project writes `project.upsert` on Create, with a key derived from
   the name and `create: true`, which the store refuses inside its write
   transaction when the key exists, so a stale list never rewrites another
   project. It offers only repositories still in their default project, since

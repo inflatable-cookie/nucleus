@@ -124,10 +124,7 @@ export class ProjectLifecycle {
         ? bounded(this.context.host.listLiveAgents()).catch(() => null)
         : Promise.resolve(null),
       bounded(
-        projectAgentViews(
-          { host: this.context.host, observedHostId },
-          project,
-        ),
+        projectAgentViews({ host: this.context.host, observedHostId }, project),
       ).catch(() => null),
       this.context.resolution
         ? bounded(this.context.resolution.responsibleThread(project)).catch(
