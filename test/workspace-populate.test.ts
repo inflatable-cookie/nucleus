@@ -20,7 +20,10 @@ import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { submissionSchema, type Profile, type Task } from "../shared/contracts";
 import type { Adapter } from "../core/host";
-import { PaseoAdapter } from "../service/paseo-composition";
+import {
+  PASEO_INIT_LOCK_RULE,
+  PaseoAdapter,
+} from "../service/paseo-composition";
 import { GitBulkCommandError, GIT_SLOW_TIMEOUT_MS } from "../core/git/index";
 import {
   WORKSPACE_POPULATE_BUDGET_MS,
@@ -731,6 +734,11 @@ test("an unlocked dirty slug-matched worktree at an arbitrary path is not a remo
     };
     await assert.rejects(
       () => removeOrphanCheckout(task, fabricated, ownedPath),
+      /not a Queue-owned leftover or a host initializing lock/,
+    );
+    await assert.rejects(
+      () =>
+        removeOrphanCheckout(task, fabricated, ownedPath, PASEO_INIT_LOCK_RULE),
       /not a Queue-owned leftover or a Paseo initializing lock/,
     );
     assert.equal(existsSync(join(paseoWt, "notes.txt")), true);
@@ -752,14 +760,28 @@ test("an unlocked dirty slug-matched worktree at an arbitrary path is not a remo
     assert.equal(existsSync(join(paseoWt, "notes.txt")), true);
 
     run("worktree", "lock", "--reason", "initializing", paseoWt);
-    const locked = await classifyWorkspaceCreation({
+    const nonPaseoLocked = await classifyWorkspaceCreation({
       task,
       ownedPath,
       scan: () => ({ state: "absent" }),
     });
+    assert.equal(
+      nonPaseoLocked.kind,
+      "conflicting",
+      "without a host initLock rule, a locked worktree outside ownedPath is conflicting",
+    );
+    const locked = await classifyWorkspaceCreation({
+      task,
+      ownedPath,
+      scan: () => ({ state: "absent" }),
+      initLock: PASEO_INIT_LOCK_RULE,
+    });
     assert.equal(locked.kind, "partial");
-    if (locked.kind === "partial")
+    if (locked.kind === "partial") {
       assert.equal(locked.orphan.lockReason, "initializing");
+      assert.equal(locked.orphan.provenance, "host_initializing");
+      assert.equal(locked.orphan.hostLabel, "Paseo");
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

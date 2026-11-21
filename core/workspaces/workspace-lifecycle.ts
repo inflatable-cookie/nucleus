@@ -56,7 +56,12 @@ import {
   intakeOwnedReviewWorkspace,
   workspaceOutsideQueueAllocation,
 } from "../../shared/workspace-ownership";
-import type { HostProjectRef, HostWorkspaceSpec } from "../../shared/host";
+import type { HostInitLockRule } from "../host/types";
+import type {
+  HostProjectRef,
+  HostWorkspacePlacement,
+  HostWorkspaceSpec,
+} from "../../shared/host";
 
 /**
  * The workspace lifecycle of one task — storage preflight, populate, creation,
@@ -186,7 +191,10 @@ export class WorkspaceLifecycle {
     const cliOptions = this.host.workspaceAllocationBridge?.bargeCliOptions;
     let pools;
     try {
-      const repo = await resolveBargeRepoIdentifier(task.repoPath, task.repository);
+      const repo = await resolveBargeRepoIdentifier(
+        task.repoPath,
+        task.repository,
+      );
       pools = await bargeWorktreeStatus({ repo }, cliOptions);
     } catch (error) {
       throw classifyBargeDispatchError(error);
@@ -252,7 +260,9 @@ export class WorkspaceLifecycle {
 
     const unreturnedDisplaced = (
       fresh.resolution?.displacedWorkspaceAllocations ?? []
-    ).filter((entry) => entry.provider === "barge" && entry.state !== "returned");
+    ).filter(
+      (entry) => entry.provider === "barge" && entry.state !== "returned",
+    );
     if (unreturnedDisplaced.length > 0) {
       throw new CheckoutUnavailableError(
         `Waiting for displaced Barge lease ${unreturnedDisplaced[0]!.leaseId ?? unreturnedDisplaced[0]!.allocationId} to return before allocating replacement`,
@@ -300,7 +310,8 @@ export class WorkspaceLifecycle {
     if (reusableIntent) {
       intent = reusableIntent;
     } else {
-      const baseRef = options.targetHead ?? fresh.planningBase ?? fresh.baseBranch;
+      const baseRef =
+        options.targetHead ?? fresh.planningBase ?? fresh.baseBranch;
       const baseSha = (await git(fresh.repoPath, "rev-parse", baseRef)).trim();
       const repoIdentifier = await resolveBargeRepoIdentifier(
         fresh.repoPath,
@@ -562,6 +573,7 @@ export class WorkspaceLifecycle {
       skipProcessScan: options.skipProcessScan,
       skipRemoteCheck: options.skipRemoteCheck,
       scan: this.host.scanForWorktreeAdd,
+      initLock: this.host.initLock,
       step: options.progress
         ? (step, work) =>
             this.creationStep(task, `worktree_inspection_${step}`, work)
@@ -808,7 +820,7 @@ export class WorkspaceLifecycle {
       ? await this.host.ownedDataDirFor(task, orphan.directory)
       : null;
     const ownedPath = ownedData ? orphan.directory : null;
-    await removeOrphanCheckout(task, orphan, ownedPath);
+    await removeOrphanCheckout(task, orphan, ownedPath, this.host.initLock);
   }
   /**
    * The published source a worker continuation resumes from: the queue branch on
@@ -946,15 +958,31 @@ export class WorkspaceLifecycle {
       ) {
         const existingWorkspaces = await this.host.findWorkspaces(fresh);
         const cliOptions = this.host.workspaceAllocationBridge?.bargeCliOptions;
-        if (existingWorkspaces.length === 1 && existingWorkspaces[0]!.directory === fresh.workspaceAllocation.checkoutPath) {
+        if (
+          existingWorkspaces.length === 1 &&
+          existingWorkspaces[0]!.directory ===
+            fresh.workspaceAllocation.checkoutPath
+        ) {
           const verified = await verifyBargeLeaseAndCustody({
             allocation: fresh.workspaceAllocation,
             saveAllocation: (updated) => this.saveAllocation(fresh.id, updated),
             cliOptions,
           });
-          const headOk = await git(verified.checkoutPath!, "rev-parse", "HEAD").catch(() => "");
-          const branchOk = await git(verified.checkoutPath!, "branch", "--show-current").catch(() => "");
-          const dirtyOk = await queueCheckoutStatus(verified.checkoutPath!, "status", "--porcelain").catch(() => "dirty");
+          const headOk = await git(
+            verified.checkoutPath!,
+            "rev-parse",
+            "HEAD",
+          ).catch(() => "");
+          const branchOk = await git(
+            verified.checkoutPath!,
+            "branch",
+            "--show-current",
+          ).catch(() => "");
+          const dirtyOk = await queueCheckoutStatus(
+            verified.checkoutPath!,
+            "status",
+            "--porcelain",
+          ).catch(() => "dirty");
           if (headOk === source.head && branchOk === fresh.branch && !dirtyOk) {
             return {
               ...existingWorkspaces[0]!,
@@ -1121,6 +1149,8 @@ export interface WorkspaceLifecycleHost {
   ) => void;
   /** Still-running or unknown process evidence for a worktree add; a host without one observes none. */
   scanForWorktreeAdd?: (targetPath: string) => ProcessSearch;
+  /** Host-supplied initialization lock interpretation; absent on hosts without initialization locks. */
+  initLock?: HostInitLockRule | null;
   /** Every catalog registration of one exact folder; absent when the host has no catalog. */
   externalWorkspaceCatalog?(
     directory: string,
@@ -1182,4 +1212,5 @@ export interface WorkspaceInventoryEntry {
   readonly projectRootPath: string;
   readonly workspaceDirectory?: string | null;
   readonly worktreeSlug?: string | null;
+  readonly placement?: HostWorkspacePlacement | null;
 }

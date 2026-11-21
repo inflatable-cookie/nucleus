@@ -1,8 +1,16 @@
-import type { OrphanWorkspace, WorkspaceCreationState } from "../host/types";
-export type { OrphanWorkspace, WorkspaceCreationState } from "../host/types";
+import type {
+  HostInitLockRule,
+  OrphanWorkspace,
+  WorkspaceCreationState,
+} from "../host/types";
+export type {
+  HostInitLockRule,
+  OrphanWorkspace,
+  WorkspaceCreationState,
+} from "../host/types";
 /**
  * Queue-owned initial workspace allocation. Git populates the linked worktree
- * under the bulk ceiling; Paseo then registers the existing directory. A
+ * under the bulk ceiling; the host then registers the existing directory. A
  * timeout is a partial leftover, never absence and never permission to replay.
  */
 import {
@@ -33,8 +41,6 @@ export { taskCheckoutTarget };
 
 export const WORKSPACES_DIR = "workspaces";
 export const WORKSPACE_POPULATE_BUDGET_MS = GIT_SLOW_TIMEOUT_MS;
-/** Exact lock reason Paseo leaves on a worktree it was still creating. */
-export const PASEO_INIT_LOCK_REASON = "initializing";
 
 export interface ListedWorktree {
   path: string;
@@ -263,11 +269,13 @@ export function workspaceCreationRefusal(
       return `Workspace creation is still running (${state.evidence}); awaiting that process, not retrying creation`;
     case "unknown":
       return `Workspace creation is uncertain (${state.evidence}); awaiting a visible result, not retrying creation`;
-    case "partial":
+    case "partial": {
       // The stop names the owner verb and fields that exit it, never an internal
       // parameter: `retry_effect effect=workspace_creation discard=true` removes
       // the proven orphan and replays the same create once (nucleus#1106).
-      return `Paseo left an orphan ${state.orphan.directory ? `worktree at ${state.orphan.directory} (locked: ${state.orphan.lockReason})` : "branch with no worktree"} on branch ${state.orphan.branch} at ${state.orphan.head}, base-identical and unpublished. Retry with retry_effect effect=workspace_creation discard=true; it removes the orphan and replays the same create once`;
+      const actor = state.orphan.hostLabel ?? "Host";
+      return `${actor} left an orphan ${state.orphan.directory ? `worktree at ${state.orphan.directory} (locked: ${state.orphan.lockReason})` : "branch with no worktree"} on branch ${state.orphan.branch} at ${state.orphan.head}, base-identical and unpublished. Retry with retry_effect effect=workspace_creation discard=true; it removes the orphan and replays the same create once`;
+    }
     case "conflicting":
       return `Task worktree or branch left by an earlier create is not a provable orphan (${state.evidence}); resolve it manually before replaying creation`;
     case "found_done":
@@ -302,6 +310,8 @@ export async function classifyWorkspaceCreation(input: {
   /** Optional durable timing wrapper for Git inspection substeps. */
   step?: InspectionStep;
   scan?: (targetPath: string) => ProcessSearch;
+  /** Host-supplied rule recognizing a host-owned initialization lock. */
+  initLock?: HostInitLockRule | null;
 }): Promise<WorkspaceCreationState> {
   const { task, ownedPath } = input;
   const paths = [...new Set([ownedPath, ...(input.legacyPaths ?? [])])];
@@ -360,6 +370,8 @@ export async function classifyWorkspaceCreation(input: {
     existingPaths.length > 0 || Boolean(tree && existsSync(tree.path));
   if (!tree && !pathExists && !branchHead) return { kind: "absent" };
 
+  const matchesHostInit = (reason: string) =>
+    Boolean(input.initLock?.matches(reason));
   if (
     tree &&
     (ref ? Boolean(tree.branch && tree.branch !== ref) : Boolean(tree.branch))
@@ -368,10 +380,12 @@ export async function classifyWorkspaceCreation(input: {
       kind: "conflicting",
       evidence: `${tree.path} is on ${tree.branch}`,
     };
-  if (tree?.locked && tree.lockReason !== PASEO_INIT_LOCK_REASON)
+  if (tree?.locked && !matchesHostInit(tree.lockReason))
     return {
       kind: "conflicting",
-      evidence: `${tree.path} is not locked with the exact reason "${PASEO_INIT_LOCK_REASON}"`,
+      evidence: input.initLock?.expectedReason
+        ? `${tree.path} is not locked with the exact reason "${input.initLock.expectedReason}"`
+        : `${tree.path} is locked (${tree.lockReason || "no reason"}), not a provable orphan`,
     };
   if (tree && branchHead && tree.head && tree.head !== branchHead)
     return {
@@ -411,7 +425,7 @@ export async function classifyWorkspaceCreation(input: {
         )
       : "";
   const initializing = Boolean(
-    tree?.locked && tree.lockReason === PASEO_INIT_LOCK_REASON,
+    tree?.locked && matchesHostInit(tree.lockReason),
   );
   const atOwned = Boolean(
     directory && paths.some((path) => sameWorkspacePath(directory, path)),
@@ -451,22 +465,33 @@ export async function classifyWorkspaceCreation(input: {
   if (!head && directory)
     return { kind: "conflicting", evidence: `${directory} has no task branch` };
 
-  // Removable leftover: Queue-owned populate, Paseo's locked-initializing
+  // Removable leftover: Queue-owned populate, a host-recognized initializing
   // worktree, or a base-identical unpublished branch with no worktree. An
   // unlocked dirty slug/branch match at any other path is authored work.
   if (directory && !atOwned && !initializing)
     return {
       kind: "conflicting",
       evidence: dirty
-        ? `${directory} is unlocked and dirty; it is not a Queue-owned populate leftover or a Paseo initializing lock`
-        : `${directory} is not locked with the exact reason "${PASEO_INIT_LOCK_REASON}"`,
+        ? `${directory} is unlocked and dirty; it is not a Queue-owned populate leftover${input.initLock ? ` or a ${input.initLock.hostLabel} initializing lock` : ""}`
+        : input.initLock?.expectedReason
+          ? `${directory} is not locked with the exact reason "${input.initLock.expectedReason}"`
+          : `${directory} is not a Queue-owned populate leftover`,
     };
 
+  const provenance: OrphanWorkspace["provenance"] = initializing
+    ? "host_initializing"
+    : directory
+      ? "queue_owned"
+      : "branch_only";
   const orphan: OrphanWorkspace = {
     directory,
     branch: task.branch,
     head,
-    lockReason: initializing ? PASEO_INIT_LOCK_REASON : "partial",
+    lockReason: initializing ? tree!.lockReason : "partial",
+    provenance,
+    ...(initializing && input.initLock
+      ? { hostLabel: input.initLock.hostLabel }
+      : {}),
   };
   const where = directory
     ? `worktree at ${directory} (locked: ${orphan.lockReason})`
@@ -553,16 +578,20 @@ export async function removeOrphanCheckout(
   task: Pick<Task, "repoPath" | "branch" | "proofOnly">,
   orphan: OrphanWorkspace,
   ownedPath: string | null,
+  initLock?: HostInitLockRule | null,
 ): Promise<void> {
   if (orphan.directory) {
     const owned = Boolean(
       ownedPath && sameWorkspacePath(orphan.directory, ownedPath),
     );
-    if (!owned && orphan.lockReason !== PASEO_INIT_LOCK_REASON)
+    const hostInitializing = Boolean(
+      initLock && orphan.lockReason && initLock.matches(orphan.lockReason),
+    );
+    if (!owned && !hostInitializing)
       throw new Error(
-        `${orphan.directory} is not a Queue-owned leftover or a Paseo initializing lock`,
+        `${orphan.directory} is not a Queue-owned leftover or a ${initLock?.hostLabel ?? "host"} initializing lock`,
       );
-    if (orphan.lockReason === PASEO_INIT_LOCK_REASON)
+    if (hostInitializing)
       await git(task.repoPath, "worktree", "unlock", orphan.directory);
     if (existsSync(orphan.directory)) {
       try {

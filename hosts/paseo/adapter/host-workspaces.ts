@@ -1,8 +1,22 @@
 import { paseoWorkspaceIdAccepted } from "./workspace-id";
 import { capPaseoTitle } from "./titles";
 import { existsSync } from "node:fs";
-import type { Host, HostNativeArchive, HostThread, HostThreadInventory, HostTerminalInventory, HostWorkspaceRef, HostWorkspaceRecord, HostWorkspaceSpec } from "../../../shared/host";
+import type {
+  Host,
+  HostNativeArchive,
+  HostThread,
+  HostThreadInventory,
+  HostTerminalInventory,
+  HostWorkspaceRef,
+  HostWorkspaceSpec,
+} from "../../../shared/host";
 import type { HostWorktreeWorkspaceSpec } from "../../../core/host";
+import {
+  paseoWorkspacePlacement,
+  paseoWorkspaceRecord,
+  type PaseoNativeWorkspacePlacementRecord,
+  type PaseoNativeWorkspaceRecord,
+} from "./workspace-placement";
 
 /**
  * The Paseo host's workspace calls, behind the `Host` contract: the complete
@@ -38,11 +52,28 @@ import type { HostWorktreeWorkspaceSpec } from "../../../core/host";
  * of the daemon's own promise, with core keeping the answer's mapping and
  * refusal as it did before the move.
  */
-export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspaceAvailable" | "repositoryProject" | "setWorkspaceTitle" | "workspaceArchived"
-  | "workspaceTerminals" | "workspaceThreads" | "activeThreads"> {
-  constructor(private readonly owner: { readonly api: NativeWorkspaceDaemon }) {}
+export class PaseoWorkspaceHost
+  implements
+    Pick<
+      Host,
+      | "workspaceRef"
+      | "workspaceAvailable"
+      | "repositoryProject"
+      | "setWorkspaceTitle"
+      | "workspaceArchived"
+      | "workspaceTerminals"
+      | "workspaceThreads"
+      | "activeThreads"
+    >
+{
+  constructor(
+    private readonly owner: { readonly api: NativeWorkspaceDaemon },
+  ) {}
 
-  archiveThreadPage(options: { filter: { includeArchived: boolean; projectKeys?: string[] }; page: { limit: number; cursor?: string } }) {
+  archiveThreadPage(options: {
+    filter: { includeArchived: boolean; projectKeys?: string[] };
+    page: { limit: number; cursor?: string };
+  }) {
     return this.owner.api.agents.list(options);
   }
 
@@ -54,13 +85,17 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    * continuation preflight, the process proof and the task workspace retirement
    * keep their refreshes, reads and refusals in core.
    */
-  workspaceIdAccepted(id: unknown) { return paseoWorkspaceIdAccepted(id); }
+  workspaceIdAccepted(id: unknown) {
+    return paseoWorkspaceIdAccepted(id);
+  }
   workspaceRef(id: string): HostWorkspaceRef {
     const native = this.owner.api.workspaces.ref(id);
     return {
-      get directory() { return native.directory; },
+      get directory() {
+        return native.directory;
+      },
       refresh: () => native.refresh(),
-      current: () => native.current(),
+      current: () => paseoWorkspaceRecord(native.current()),
       archive: (requestId) => native.archive(requestId),
     };
   }
@@ -71,12 +106,14 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    * reconciliation that asks this question.
    */
   async workspaceArchived(id: string) {
-    const workspace = this.owner.api.workspaces.ref(id); await workspace.refresh();
+    const workspace = this.owner.api.workspaces.ref(id);
+    await workspace.refresh();
     return !workspace.current();
   }
 
   /**
-   * The complete active inventory, paged to its end.
+   * The complete active inventory, paged to its end, with each entry's native
+   * Paseo placement translated into host-neutral placement and provenance facts.
    *
    * Creation reconciliation needs it: Paseo's free-text workspace query does
    * not promise to search `worktreeSlug`, so using the Queue slug as a query
@@ -85,13 +122,28 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    * identity locally.
    */
   async workspaceInventory() {
-    const entries: Awaited<ReturnType<typeof this.owner.api.workspaces.list>>["entries"] = [];
+    const entries: Awaited<
+      ReturnType<typeof this.owner.api.workspaces.list>
+    >["entries"] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 100; page++) {
-      const result = await this.owner.api.workspaces.list({ page: { limit: 100, ...(cursor ? { cursor } : {}) } });
+      const result = await this.owner.api.workspaces.list({
+        page: { limit: 100, ...(cursor ? { cursor } : {}) },
+      });
       entries.push(...result.entries);
-      if (!result.pageInfo.hasMore) return entries;
-      if (!result.pageInfo.nextCursor) throw new Error("Workspace lookup is incomplete");
+      if (!result.pageInfo.hasMore) {
+        return entries.map((entry) => ({
+          id: entry.id,
+          projectRootPath: entry.projectRootPath,
+          workspaceDirectory: entry.workspaceDirectory,
+          worktreeSlug: entry.worktreeSlug,
+          labels: entry.labels,
+          archivingAt: entry.archivingAt,
+          placement: paseoWorkspacePlacement(entry),
+        }));
+      }
+      if (!result.pageInfo.nextCursor)
+        throw new Error("Workspace lookup is incomplete");
       cursor = result.pageInfo.nextCursor;
     }
     throw new Error("Workspace lookup exceeded the bounded page limit");
@@ -106,9 +158,13 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
   async repositoryProject(projectRoot: string) {
     try {
       const projects = (await this.owner.api.projects.list()).projects;
-      const project = projects.find(entry => entry.projectRootPath === projectRoot);
+      const project = projects.find(
+        (entry) => entry.projectRootPath === projectRoot,
+      );
       return project ? { projectId: project.projectId } : {};
-    } catch { return {}; }
+    } catch {
+      return {};
+    }
   }
 
   /**
@@ -121,8 +177,11 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    * recovery name different refusals at their own boundaries.
    */
   createWorkspace(spec: HostWorkspaceSpec) {
-    return this.owner.api.workspaces.create({ title: capPaseoTitle(spec.title), requestId: spec.requestId,
-      source: { kind: "directory", path: spec.directory, ...spec.project } });
+    return this.owner.api.workspaces.create({
+      title: capPaseoTitle(spec.title),
+      requestId: spec.requestId,
+      source: { kind: "directory", path: spec.directory, ...spec.project },
+    });
   }
 
   /**
@@ -135,7 +194,10 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    * `{id, directory}` mapping.
    */
   createCloseoutWorkspace(spec: HostWorktreeWorkspaceSpec) {
-    return this.owner.api.workspaces.create({ ...spec, title: capPaseoTitle(spec.title) });
+    return this.owner.api.workspaces.create({
+      ...spec,
+      title: capPaseoTitle(spec.title),
+    });
   }
 
   /**
@@ -143,17 +205,25 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    * read an uncertain previous write needs: a title the host already shows is
    * confirmed without a second send.
    */
-  async setWorkspaceTitle(id: string, title: string, requestId: string, _uncertain: boolean) {
+  async setWorkspaceTitle(
+    id: string,
+    title: string,
+    requestId: string,
+    _uncertain: boolean,
+  ) {
     const workspace = this.owner.api.workspaces.ref(id);
     const current = await workspace.refresh();
-    if (!current) throw Error('Task workspace is no longer available');
+    if (!current) throw Error("Task workspace is no longer available");
     if (workspace.name === title) return;
     const result = await workspace.setTitle(title, requestId);
-    if (result.title !== title) throw Error('Workspace title update was not confirmed');
+    if (result.title !== title)
+      throw Error("Workspace title update was not confirmed");
   }
 
   async workspaceAvailable(id: string) {
-    const workspace = this.owner.api.workspaces.ref(id); await workspace.refresh(); return Boolean(workspace.directory && existsSync(workspace.directory));
+    const workspace = this.owner.api.workspaces.ref(id);
+    await workspace.refresh();
+    return Boolean(workspace.directory && existsSync(workspace.directory));
   }
 
   /**
@@ -162,9 +232,22 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    */
   async workspaceTerminals(id: string): Promise<HostTerminalInventory> {
     try {
-      const terminals = await this.owner.api.terminals.list({ workspaceId: id });
-      return { ok: true, terminals: terminals.entries.map(entry => ({ id: entry.id, name: entry.name })) };
-    } catch (error) { return { ok: false, reason: `Workspace ${id} terminal inventory could not be read: ${errorMessage(error)}` }; }
+      const terminals = await this.owner.api.terminals.list({
+        workspaceId: id,
+      });
+      return {
+        ok: true,
+        terminals: terminals.entries.map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+        })),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `Workspace ${id} terminal inventory could not be read: ${errorMessage(error)}`,
+      };
+    }
   }
 
   /**
@@ -172,21 +255,45 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    * paged to its positive end: a repeated or missing cursor is an incomplete
    * inventory, never a smaller one.
    */
-  async workspaceThreads(workspaceIds: readonly string[]): Promise<HostThreadInventory> {
+  async workspaceThreads(
+    workspaceIds: readonly string[],
+  ): Promise<HostThreadInventory> {
     try {
       const threads: HostThread[] = [];
       let cursor: string | undefined;
       const cursors = new Set<string>();
       for (;;) {
-        const result = await this.owner.api.agents.list({ filter: { includeArchived: true }, page: { limit: 200, cursor } });
-        threads.push(...result.entries.map(entry => entry.agent).filter(agent => agent.workspaceId != null && workspaceIds.includes(agent.workspaceId)).map(threadRecord));
+        const result = await this.owner.api.agents.list({
+          filter: { includeArchived: true },
+          page: { limit: 200, cursor },
+        });
+        threads.push(
+          ...result.entries
+            .map((entry) => entry.agent)
+            .filter(
+              (agent) =>
+                agent.workspaceId != null &&
+                workspaceIds.includes(agent.workspaceId),
+            )
+            .map(threadRecord),
+        );
         if (result.pageInfo.hasMore === false) break;
         const next = result.pageInfo.nextCursor;
-        if (result.pageInfo.hasMore !== true || !next || cursors.has(next)) return { ok: false, reason: 'Workspace thread inventory is incomplete' };
-        cursors.add(next); cursor = next;
+        if (result.pageInfo.hasMore !== true || !next || cursors.has(next))
+          return {
+            ok: false,
+            reason: "Workspace thread inventory is incomplete",
+          };
+        cursors.add(next);
+        cursor = next;
       }
       return { ok: true, threads };
-    } catch (error) { return { ok: false, reason: `Workspace thread inventory could not be read: ${errorMessage(error)}` }; }
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `Workspace thread inventory could not be read: ${errorMessage(error)}`,
+      };
+    }
   }
 
   /**
@@ -197,28 +304,35 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
     const entries: NativeThreadEntry[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 100; page++) {
-      const result = await this.owner.api.agents.list({ filter: { includeArchived: false }, page: { limit: 100, ...(cursor ? { cursor } : {}) } });
+      const result = await this.owner.api.agents.list({
+        filter: { includeArchived: false },
+        page: { limit: 100, ...(cursor ? { cursor } : {}) },
+      });
       entries.push(...result.entries);
-      if (!result.pageInfo.hasMore) return entries.map(entry => threadRecord(entry.agent));
+      if (!result.pageInfo.hasMore)
+        return entries.map((entry) => threadRecord(entry.agent));
       const next = result.pageInfo.nextCursor;
-      if (!next) throw Error('Workspace thread inventory is incomplete');
+      if (!next) throw Error("Workspace thread inventory is incomplete");
       cursor = next;
     }
-    throw Error('Workspace thread inventory exceeded its page limit');
+    throw Error("Workspace thread inventory exceeded its page limit");
   }
 }
 
-const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 /** The Nucleus facts of one native thread record: what the ownership and idleness decisions read. */
 const threadRecord = (agent: NativeThreadRecord): HostThread => ({
   id: agent.id,
   workspaceId: agent.workspaceId ?? null,
   labels: agent.labels ?? {},
-  status: agent.status ?? '',
+  status: agent.status ?? "",
   archived: Boolean(agent.archivedAt),
   activeTurn: Boolean(agent.activeTurn),
-  pendingPermissionKinds: (agent.pendingPermissions ?? []).map(request => request?.kind ?? null),
+  pendingPermissionKinds: (agent.pendingPermissions ?? []).map(
+    (request) => request?.kind ?? null,
+  ),
 });
 
 /**
@@ -228,15 +342,34 @@ const threadRecord = (agent: NativeThreadRecord): HostThread => ({
  */
 export interface NativeWorkspaceDaemon {
   readonly workspaces: {
-    list(options: { page: { limit: number; cursor?: string } }): Promise<{ entries: NativeWorkspaceEntry[]; pageInfo: { hasMore: boolean; nextCursor?: string | null } }>;
+    list(options: {
+      page: { limit: number; cursor?: string };
+    }): Promise<{
+      entries: NativeWorkspaceEntry[];
+      pageInfo: { hasMore: boolean; nextCursor?: string | null };
+    }>;
     create(options: NativeWorkspaceCreateInput): Promise<NativeWorkspaceHandle>;
     ref(id: string): NativeWorkspaceRef;
   };
-  readonly projects: { list(): Promise<{ projects: { projectRootPath: string; projectId: string }[] }> };
-  readonly agents: {
-    list(options: { filter: { includeArchived: boolean }; page: { limit: number; cursor?: string } }): Promise<{ entries: NativeThreadEntry[]; pageInfo: { hasMore: boolean; nextCursor?: string | null } }>;
+  readonly projects: {
+    list(): Promise<{
+      projects: { projectRootPath: string; projectId: string }[];
+    }>;
   };
-  readonly terminals: { list(options: { workspaceId: string }): Promise<{ entries: { id: string; name: string }[] }> };
+  readonly agents: {
+    list(options: {
+      filter: { includeArchived: boolean };
+      page: { limit: number; cursor?: string };
+    }): Promise<{
+      entries: NativeThreadEntry[];
+      pageInfo: { hasMore: boolean; nextCursor?: string | null };
+    }>;
+  };
+  readonly terminals: {
+    list(options: {
+      workspaceId: string;
+    }): Promise<{ entries: { id: string; name: string }[] }>;
+  };
 }
 
 /** One listed thread as the daemon reports it; only the fields the thread facts read. */
@@ -247,7 +380,9 @@ export interface NativeThreadRecord {
   readonly status?: string | null;
   readonly archivedAt?: string | null;
   readonly activeTurn?: unknown;
-  readonly pendingPermissions?: readonly ({ readonly kind?: string | null } | null)[] | null;
+  readonly pendingPermissions?:
+    | readonly ({ readonly kind?: string | null } | null)[]
+    | null;
 }
 
 export interface NativeThreadEntry {
@@ -255,7 +390,8 @@ export interface NativeThreadEntry {
 }
 
 /** One registration the inventory lists; `labels` is what the live-run presence projection reads. */
-export interface NativeWorkspaceEntry {
+export interface NativeWorkspaceEntry
+  extends PaseoNativeWorkspacePlacementRecord {
   readonly id: string;
   readonly projectRootPath: string;
   readonly workspaceDirectory?: string | null;
@@ -267,7 +403,11 @@ export interface NativeWorkspaceEntry {
 
 /** The registrations this host can be asked for: a folder, or the closeout worktree core proved. */
 export type NativeWorkspaceCreateInput =
-  | { title: string; requestId: string; source: { kind: "directory"; path: string; projectId?: string } }
+  | {
+      title: string;
+      requestId: string;
+      source: { kind: "directory"; path: string; projectId?: string };
+    }
   | HostWorktreeWorkspaceSpec;
 
 /** A registration's own answer, as much of it as creation and recovery read. */
@@ -280,8 +420,8 @@ export interface NativeWorkspaceRef {
   readonly name?: string | null;
   readonly directory?: string | null;
   refresh(): Promise<unknown>;
-  /** The record the last refresh read; null or undefined once the daemon no longer lists it. */
-  current(): HostWorkspaceRecord | null | undefined;
+  /** The native record the last refresh read; null or undefined once the daemon no longer lists it. */
+  current(): PaseoNativeWorkspaceRecord | null | undefined;
   setTitle(title: string, requestId: string): Promise<{ title: string | null }>;
   archive(requestId: string): Promise<HostNativeArchive>;
 }

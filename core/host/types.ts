@@ -6,6 +6,7 @@ import type {
   TaskNextVerb,
   TaskRegistrationBinding,
 } from "../../shared/contracts";
+import type { HostWorkspacePlacement } from "../../shared/host";
 import type { AgentObservation } from "./index";
 
 /**
@@ -50,6 +51,17 @@ export interface OrphanWorkspace {
   branch: string;
   head: string;
   lockReason: string;
+  /** Host-neutral provenance of the leftover checkout or branch. */
+  provenance?: "queue_owned" | "host_initializing" | "branch_only";
+  /** Human-readable host label when `provenance === "host_initializing"`. */
+  hostLabel?: string;
+}
+
+/** Host-supplied rule for recognizing an interrupted host-owned worktree initialization lock. */
+export interface HostInitLockRule {
+  readonly hostLabel: string;
+  readonly expectedReason?: string;
+  matches(lockReason: string): boolean;
 }
 
 export type WorkspaceCreationState =
@@ -378,49 +390,15 @@ export type VerifiedPr = {
 export type ReviewerSetting = { login: string };
 
 /**
- * The pre-call source gate for a catalog-only archive (Spec 017).
- *
- * Paseo 0.13.0 `archiveByScope` → `resolveWorkspaceBackingDirectory`
- * (`@getpaseo/server/dist/server/server/workspace-archive-service.js`:130-151)
- * calls a workspace's backing directory Paseo-owned when the registry record has
- * `isPaseoOwnedWorktree`, `worktreeRoot` and `mainRepoRoot`, or — for a
- * `kind: "worktree"` record without them — when filesystem discovery finds the
- * cwd under `<worktrees-root>/<hash>/<slug>` (`server/utils/worktree.js`:611-659,
- * roots 559-575). `maybeRemoveDirectory` (186-190) returns false *before* any
- * teardown command or `deletePaseoWorktree` when the backing is not owned; that
- * is the only path that runs `worktree.teardown` commands, `git worktree remove
- * --force`, directory removal or a prune (479-514, 713-771).
- *
- * The wire descriptor is a faithful projection of exactly those two inputs:
- * `workspaceKind` is the registry `kind` (`server/server/session.js`:4223) and
- * `project.checkout` is built from the persisted placement
- * (`server/server/workspace-registry-model.js`:85-118), which reports
- * `isPaseoOwnedWorktree: true` only when the record also has `mainRepoRoot`.
- * A non-`worktree` kind whose checkout is not Paseo-owned and names no main
- * repository therefore cannot reach any removal: only the catalog record, its
- * agents and its terminals change. That catalog-only shape keeps its original
- * proof.
- *
- * A `worktree` placement *can* reach teardown, so it is refused by default
- * (`allowWorktree`). The worktree amendment (Tom, 2026-10-25) lets the caller
- * opt in only after the clean, published source proof below: a removed folder
- * then loses nothing, because the exact head is on the canonical remote.
- * Non-worktree external folders keep the no-removal rule. Everything else is
- * refused before the call; a missing, owned or inconsistent placement is never
- * guessed, and an unexpected removal is never accepted as a side effect.
+ * The pre-call source gate for a catalog-only archive (Spec 017), expressed in
+ * host-neutral placement and provenance facts normalized at the host adapter
+ * boundary. Missing, owned, worktree (unless opted in after source proof), or
+ * inconsistent placement facts are refused before any archive call.
  */
 export type ExternalWorkspaceCatalogView =
   | {
       workspaceDirectory?: string | null;
-      workspaceKind?: string | null;
-      project?: {
-        checkout?: {
-          cwd?: string;
-          isPaseoOwnedWorktree?: boolean;
-          mainRepoRoot?: string | null;
-        } | null;
-      } | null;
-      gitRuntime?: { isPaseoOwnedWorktree?: boolean } | null;
+      placement?: HostWorkspacePlacement | null;
     }
   | null
   | undefined;

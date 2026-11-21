@@ -20,15 +20,18 @@ import { Lifecycle } from "../core/closeout/workspace-lifecycle";
 import {
   PaseoAdapter,
   externalWorkspaceArchivePlacement,
+  paseoWorkspaceRecord,
   type Adapter,
   type AgentObservation,
 } from "../service/paseo-composition";
 import {
   OPERATOR_BOARD_CALLER,
+  externalWorkspaceArchiveSchema,
   reviewEntryRecordSchema,
   runSchema,
   submissionSchema,
   taskControlInputSchema,
+  taskSchema,
 } from "../shared/contracts";
 import { operationInputHash } from "../core/store/store";
 import {
@@ -538,8 +541,9 @@ test(
     );
     assert.deepEqual(record.observed, {
       kind: "directory",
-      isPaseoOwnedWorktree: false,
+      hostOwnedWorktree: false,
       mainRepoRoot: null,
+      provenance: "paseo",
     });
     assert.deepEqual(record.participants, [
       "review-agent",
@@ -995,6 +999,7 @@ test(
   async (t) => {
     const f = await fixture(t);
     const view = {
+      projectRootPath: f.repo,
       workspaceDirectory: f.workspace,
       workspaceKind: "worktree",
       project: {
@@ -1007,7 +1012,7 @@ test(
       gitRuntime: { isPaseoOwnedWorktree: true },
     };
     const parentProof = externalWorkspaceArchivePlacement(
-      view,
+      paseoWorkspaceRecord(view),
       workspaceId,
       f.workspace,
     );
@@ -1021,7 +1026,7 @@ test(
       /worktree placement/,
     );
     const amended = externalWorkspaceArchivePlacement(
-      view,
+      paseoWorkspaceRecord(view),
       workspaceId,
       f.workspace,
       true,
@@ -1836,5 +1841,390 @@ test(
       ),
       /Task changed|pending/,
     );
+  },
+);
+
+test(
+  "persisted old Paseo evidence and an outstanding disposition remain readable without broadening permission",
+  { timeout: HOOK_TEST_TIMEOUT_MS },
+  async (t) => {
+    const f = await fixture(t, "working", false);
+    const legacyObservedDirectory = {
+      kind: "directory",
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    };
+    const legacyObservedWorktree = {
+      kind: "worktree",
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: f.repo,
+    };
+    const legacyDisposition = {
+      kind: "cancel",
+      status: "intent",
+      workDisposition: "archive_if_empty",
+      workspaceArchived: false,
+      reason: "Legacy cancellation disposition",
+      caller: "operator (board)",
+      requestedAt: new Date().toISOString(),
+      observedAt: new Date().toISOString(),
+      refSnapshot: null,
+      effects: [],
+      proofPolicies: [],
+    };
+    const legacyRecord = {
+      workspaceId,
+      directory: f.workspace,
+      requestId: `ns-catalog-archive-${f.task.id}-${workspaceId}`,
+      state: "held",
+      observed: legacyObservedDirectory,
+      participants: ["review-agent"],
+      native: null,
+      folderPresent: true,
+      detail: "Legacy hold before field rename",
+      attempts: 1,
+      source: null,
+      folderRemovalAuthorized: false,
+      folderRemovedBy: null,
+      samePathRegistrations: [workspaceId],
+      deferredByAdmission: false,
+      intentAt: null,
+      settledAt: new Date().toISOString(),
+      nextAttemptAt: null,
+    };
+    const storedRow = JSON.parse(JSON.stringify(f.store.task(f.task.id)));
+    storedRow.phase = "cancelled";
+    storedRow.disposition = legacyDisposition;
+    storedRow.resolution.externalWorkspaceArchives = [legacyRecord];
+    // Write the pre-rename JSON directly into SQLite to simulate an existing row on disk.
+    (
+      f.store as unknown as {
+        db: {
+          prepare(sql: string): { run(...args: unknown[]): void };
+        };
+      }
+    ).db
+      .prepare("UPDATE tasks SET data=? WHERE id=?")
+      .run(JSON.stringify(storedRow), f.task.id);
+
+    const reopened = new Store(join(f.root, "queue.sqlite"));
+    t.after(() => reopened.close());
+    const reloaded = reopened.task(f.task.id);
+    assert.equal(reloaded.disposition?.status, "intent");
+    assert.equal(reloaded.disposition?.workDisposition, "archive_if_empty");
+    assert.deepEqual(
+      reloaded.resolution.externalWorkspaceArchives[0]?.observed,
+      {
+        kind: "directory",
+        hostOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    );
+
+    const parsedWorktree = externalWorkspaceArchiveSchema.parse({
+      ...legacyRecord,
+      observed: legacyObservedWorktree,
+    });
+    assert.deepEqual(parsedWorktree.observed, {
+      kind: "worktree",
+      hostOwnedWorktree: true,
+      mainRepoRoot: f.repo,
+    });
+
+    // A wire or persisted payload carrying both spellings is refused rather than guessed.
+    assert.throws(
+      () =>
+        taskSchema.parse({
+          ...storedRow,
+          resolution: {
+            ...storedRow.resolution,
+            externalWorkspaceArchives: [
+              {
+                ...legacyRecord,
+                observed: {
+                  kind: "directory",
+                  isPaseoOwnedWorktree: true,
+                  hostOwnedWorktree: false,
+                  mainRepoRoot: null,
+                },
+              },
+            ],
+          },
+        }),
+      /both the legacy "isPaseoOwnedWorktree" and the current "hostOwnedWorktree"/,
+    );
+  },
+);
+
+test(
+  "non-Paseo and ambiguous placement evidence refuse archive without broadening permission",
+  { timeout: HOOK_TEST_TIMEOUT_MS },
+  async (t) => {
+    const f = await fixture(t);
+    const nonPaseoAndAmbiguousViews: Array<{ label: string; view: unknown }> = [
+      {
+        label: "t3code external registration without catalog-only proof",
+        view: {
+          workspaceDirectory: f.workspace,
+          placement: { kind: "external", provenance: "t3code" },
+        },
+      },
+      {
+        label: "bb external registration without catalog-only proof",
+        view: {
+          workspaceDirectory: f.workspace,
+          placement: { kind: "external", provenance: "bb" },
+        },
+      },
+      {
+        label: "missing placement object",
+        view: { workspaceDirectory: f.workspace, placement: null },
+      },
+      {
+        label: "missing kind",
+        view: {
+          workspaceDirectory: f.workspace,
+          placement: {
+            checkoutDirectory: f.workspace,
+            hostOwnedWorktree: false,
+            mainRepoRoot: null,
+          },
+        },
+      },
+      {
+        label: "non-worktree missing hostOwnedWorktree",
+        view: {
+          workspaceDirectory: f.workspace,
+          placement: {
+            kind: "directory",
+            checkoutDirectory: f.workspace,
+            mainRepoRoot: null,
+          },
+        },
+      },
+      {
+        label: "non-worktree with null hostOwnedWorktree",
+        view: {
+          workspaceDirectory: f.workspace,
+          placement: {
+            kind: "directory",
+            checkoutDirectory: f.workspace,
+            hostOwnedWorktree: null,
+            mainRepoRoot: null,
+          },
+        },
+      },
+      {
+        label: "non-worktree with runtimeHostOwnedWorktree true",
+        view: {
+          workspaceDirectory: f.workspace,
+          placement: {
+            kind: "directory",
+            checkoutDirectory: f.workspace,
+            hostOwnedWorktree: false,
+            mainRepoRoot: null,
+            runtimeHostOwnedWorktree: true,
+          },
+        },
+      },
+      {
+        label:
+          "raw un-normalized Paseo wire object passed directly to core placement",
+        view: {
+          workspaceDirectory: f.workspace,
+          workspaceKind: "directory",
+          project: {
+            checkout: {
+              cwd: f.workspace,
+              isPaseoOwnedWorktree: false,
+              mainRepoRoot: null,
+            },
+          },
+        },
+      },
+      {
+        label:
+          "Paseo native record missing isPaseoOwnedWorktree normalized fail-closed",
+        view: paseoWorkspaceRecord({
+          projectRootPath: f.repo,
+          workspaceDirectory: f.workspace,
+          workspaceKind: "directory",
+          project: { checkout: { cwd: f.workspace, mainRepoRoot: null } },
+        }),
+      },
+      {
+        label: "Paseo native record with non-boolean runtime ownership flag",
+        view: paseoWorkspaceRecord({
+          projectRootPath: f.repo,
+          workspaceDirectory: f.workspace,
+          workspaceKind: "directory",
+          project: {
+            checkout: {
+              cwd: f.workspace,
+              isPaseoOwnedWorktree: false,
+              mainRepoRoot: null,
+            },
+          },
+          gitRuntime: {
+            isPaseoOwnedWorktree: "unexpected" as unknown as boolean,
+          },
+        }),
+      },
+    ];
+
+    for (const candidate of nonPaseoAndAmbiguousViews) {
+      const decision = externalWorkspaceArchivePlacement(
+        candidate.view as Parameters<
+          typeof externalWorkspaceArchivePlacement
+        >[0],
+        workspaceId,
+        f.workspace,
+        true,
+      );
+      assert.equal(decision.ok, false, candidate.label);
+    }
+  },
+);
+
+test(
+  "no-archive and accepted catalog-only twins over host-neutral placement and provenance",
+  { timeout: HOOK_TEST_TIMEOUT_MS },
+  async (t) => {
+    const runNeutralTwin = async (
+      placementFor: (
+        directory: string,
+      ) => import("../shared/host").HostWorkspacePlacement,
+    ): Promise<{
+      archiveCalls: number;
+      task: ReturnType<Fixture["store"]["task"]>;
+      directory: string;
+    }> => {
+      const f = await fixture(t);
+      const adapter = Object.create(PaseoAdapter.prototype) as InstanceType<
+        typeof PaseoAdapter
+      >;
+      let archiveCalls = 0;
+      let catalogued = true;
+      const entry = {
+        id: workspaceId,
+        projectRootPath: f.workspace,
+        workspaceDirectory: f.workspace,
+        placement: placementFor(f.workspace),
+      };
+      Object.defineProperty(adapter, "workspaceHost", {
+        value: {
+          workspaceInventory: async () => (catalogued ? [entry] : []),
+          workspaceRef: () => ({
+            directory: f.workspace,
+            refresh: async () => {},
+            current: () => (catalogued ? entry : null),
+            archive: async () => {
+              archiveCalls++;
+              catalogued = false;
+              return { archivedAt: new Date().toISOString(), error: null };
+            },
+          }),
+          workspaceThreads: async () => ({
+            ok: true as const,
+            threads: [
+              {
+                id: "review-agent",
+                workspaceId,
+                labels: { "northstar.task": f.task.id },
+                status: "idle",
+                archived: false,
+                activeTurn: false,
+                pendingPermissionKinds: [],
+              },
+            ],
+          }),
+          workspaceTerminals: async () => ({
+            ok: true as const,
+            terminals: [],
+          }),
+        },
+      });
+      adapter.observe = async (agentId: string) => ({
+        id: agentId,
+        workspaceId,
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+      });
+      const engineAdapter = fakeAdapter({
+        hostProcessListing: async () => [],
+        profiles: async () => [],
+        validate: async () => "",
+        createWorkspace: async () => {
+          throw Error("unused");
+        },
+        verifyWorkspace: async (task) => task.branch,
+        createAgent: async () => {
+          throw Error("unused");
+        },
+        observe: (agentId) => adapter.observe(agentId),
+        archiveTaskWorkspace: async () => {
+          throw Error("unused");
+        },
+        taskWorkspaceArchived: async () => !catalogued,
+        externalWorkspaceCatalog: (directory) =>
+          adapter.externalWorkspaceCatalog(directory),
+        archiveExternalWorkspace: (input) =>
+          adapter.archiveExternalWorkspace(input),
+        verifyPr: async () => ({ url: "", head: "" }),
+      });
+      const engine = new Engine(f.store, engineAdapter, 0);
+      try {
+        await new Lifecycle(engine).archive(f.store.task(f.task.id));
+        return {
+          archiveCalls,
+          task: f.store.task(f.task.id),
+          directory: f.workspace,
+        };
+      } finally {
+        await engine.stop();
+        f.store.close();
+      }
+    };
+
+    // No-archive twin: non-Paseo external registration lacking positive catalog-only proof.
+    const refusedTwin = await runNeutralTwin(() => ({
+      kind: "external",
+      provenance: "t3code",
+    }));
+    assert.equal(refusedTwin.archiveCalls, 0);
+    const refusedRecord =
+      refusedTwin.task.resolution.externalWorkspaceArchives.find(
+        (item) => item.workspaceId === workspaceId,
+      )!;
+    assert.equal(refusedRecord.state, "held");
+    assert.equal(refusedRecord.folderRemovalAuthorized, false);
+    assert.equal(existsSync(refusedTwin.directory), true);
+
+    // Accepted catalog-only twin: host-neutral non-worktree placement with positive proof.
+    const acceptedTwin = await runNeutralTwin((directory) => ({
+      kind: "external",
+      checkoutDirectory: directory,
+      hostOwnedWorktree: false,
+      mainRepoRoot: null,
+      runtimeHostOwnedWorktree: false,
+      provenance: "t3code",
+    }));
+    assert.equal(acceptedTwin.archiveCalls, 1);
+    const acceptedRecord =
+      acceptedTwin.task.resolution.externalWorkspaceArchives.find(
+        (item) => item.workspaceId === workspaceId,
+      )!;
+    assert.equal(acceptedRecord.state, "archived");
+    assert.deepEqual(acceptedRecord.observed, {
+      kind: "external",
+      hostOwnedWorktree: false,
+      mainRepoRoot: null,
+      provenance: "t3code",
+    });
+    assert.equal(acceptedRecord.folderRemovalAuthorized, false);
+    assert.equal(acceptedRecord.folderPresent, true);
+    assert.equal(existsSync(acceptedTwin.directory), true);
   },
 );

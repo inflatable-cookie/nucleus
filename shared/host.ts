@@ -62,13 +62,20 @@ export interface Host {
   repositoryProject(projectRoot: string): Promise<HostProjectRef>;
   createWorkspace(spec: HostWorkspaceSpec): Promise<Workspace>;
   /** `uncertain` says a previous title write may have landed; the host reads it, never assumes it. */
-  setWorkspaceTitle(id: WorkspaceId, title: string, requestId: RequestId, uncertain: boolean): Promise<void>;
+  setWorkspaceTitle(
+    id: WorkspaceId,
+    title: string,
+    requestId: RequestId,
+    uncertain: boolean,
+  ): Promise<void>;
   /** Whether the host no longer lists the registration. An absent record is the only positive answer. */
   workspaceArchived(id: WorkspaceId): Promise<boolean>;
   /** The workspace's terminal sessions; an unreadable inventory is `ok: false` with the refusal text the caller reports. */
   workspaceTerminals(id: WorkspaceId): Promise<HostTerminalInventory>;
   /** Every thread, archived included, in the listed workspaces, walked to its positive end; an incomplete walk is `ok: false`. */
-  workspaceThreads(workspaceIds: readonly WorkspaceId[]): Promise<HostThreadInventory>;
+  workspaceThreads(
+    workspaceIds: readonly WorkspaceId[],
+  ): Promise<HostThreadInventory>;
   /** Every live thread the host lists, walked to its end; an incomplete walk rejects, never reads as an empty list. */
   activeThreads(): Promise<HostThread[]>;
 
@@ -78,10 +85,18 @@ export interface Host {
   /** One agent's native state; an unreadable agent is a refused read, never an idle one. */
   observe(id: AgentId): Promise<HostObservation>;
   /** `null` means the inventory could not be walked to its end; a missing identity is unknown, not inactive. */
-  observationInventory(ids: readonly AgentId[]): Promise<ReadonlyMap<AgentId, HostObservation> | null>;
+  observationInventory(
+    ids: readonly AgentId[],
+  ): Promise<ReadonlyMap<AgentId, HostObservation> | null>;
   listLiveAgents(): Promise<HostLiveAgent[]>;
-  agentTimelinePage(id: AgentId, limit?: number): Promise<HostTimelinePage | null>;
-  agentTimeline(id: AgentId, limit?: number): Promise<HostTimelineEntry[] | null>;
+  agentTimelinePage(
+    id: AgentId,
+    limit?: number,
+  ): Promise<HostTimelinePage | null>;
+  agentTimeline(
+    id: AgentId,
+    limit?: number,
+  ): Promise<HostTimelineEntry[] | null>;
   stopAgentTurn(id: AgentId): Promise<void>;
   archiveAgent(id: AgentId): Promise<void>;
   /**
@@ -99,7 +114,10 @@ export interface Host {
    */
   deleteAgent?(id: AgentId): Promise<void>;
   /** Optional: a host without run-usage streams has no method, so usage stays unknown rather than zero. */
-  subscribeRunUsage?(id: AgentId, handler: (event: RunUsageStreamEvent) => void): Promise<RunUsageStream>;
+  subscribeRunUsage?(
+    id: AgentId,
+    handler: (event: RunUsageStreamEvent) => void,
+  ): Promise<RunUsageStream>;
 
   /** A live retained-agent handle: reads and sends keep their original timing. */
   retainedAgentRef(id: AgentId): HostRetainedAgentRef;
@@ -125,21 +143,52 @@ export interface Host {
    * synchronously immediately before the native send. A proven refusal is
    * `{sent: false}`; an unknown delivery throws.
    */
-  sendGuarded(id: AgentId, input: HostGuardedMessage, guard: HostSendGuard): Promise<HostGuardedSendResult>;
+  sendGuarded(
+    id: AgentId,
+    input: HostGuardedMessage,
+    guard: HostSendGuard,
+  ): Promise<HostGuardedSendResult>;
   /** Sends only when the agent is idle; the reply is text, never an answer authority. */
   sendWhenIdle(id: AgentId, input: HostAsk): Promise<string | null>;
-  interruptAndContinue(id: AgentId, messageId: RequestId, text: string): Promise<void>;
+  interruptAndContinue(
+    id: AgentId,
+    messageId: RequestId,
+    text: string,
+  ): Promise<void>;
 
   pendingQuestions(id: AgentId): Promise<NativeQuestion[]>;
   answeredQuestions(id: AgentId): Promise<AnsweredQuestionRead>;
-  answerNativeQuestion(agent: AgentId, workspace: WorkspaceId, request: RequestId, answers: Record<string, string>): Promise<void>;
+  answerNativeQuestion(
+    agent: AgentId,
+    workspace: WorkspaceId,
+    request: RequestId,
+    answers: Record<string, string>,
+  ): Promise<void>;
   /** Optional native permission response; an absent method grants no permission capability. */
-  answerNativePermission?(agent: AgentId, workspace: WorkspaceId, request: RequestId, decision: HostPermissionDecision, intentId: RequestId): Promise<void>;
+  answerNativePermission?(
+    agent: AgentId,
+    workspace: WorkspaceId,
+    request: RequestId,
+    decision: HostPermissionDecision,
+    intentId: RequestId,
+  ): Promise<void>;
   /** Dismiss one pending native question; never used for tool or bash permissions. */
-  dismissNativeQuestion(agent: AgentId, workspace: WorkspaceId, request: RequestId): Promise<void>;
+  dismissNativeQuestion(
+    agent: AgentId,
+    workspace: WorkspaceId,
+    request: RequestId,
+  ): Promise<void>;
   /** Raises a native question and returns its request ID; the caller owns the durable send intent. */
-  raiseDecision(agent: AgentId, workspace: WorkspaceId, input: NativeDecisionInput): Promise<string>;
-  answerDecision(agent: AgentId, workspace: WorkspaceId, input: NativeDecisionAnswer): Promise<void>;
+  raiseDecision(
+    agent: AgentId,
+    workspace: WorkspaceId,
+    input: NativeDecisionInput,
+  ): Promise<string>;
+  answerDecision(
+    agent: AgentId,
+    workspace: WorkspaceId,
+    input: NativeDecisionAnswer,
+  ): Promise<void>;
 }
 
 export interface HostCatalogOptions {
@@ -153,8 +202,16 @@ export type WorkspaceId = string;
 export type RequestId = string;
 
 /** Native approval choices, carried without inferring a host or a permission policy. */
-export const hostPermissionDecisionSchema = z.enum(['accept', 'acceptForSession', 'acceptAlways', 'decline', 'cancel']);
-export type HostPermissionDecision = z.infer<typeof hostPermissionDecisionSchema>;
+export const hostPermissionDecisionSchema = z.enum([
+  "accept",
+  "acceptForSession",
+  "acceptAlways",
+  "decline",
+  "cancel",
+]);
+export type HostPermissionDecision = z.infer<
+  typeof hostPermissionDecisionSchema
+>;
 
 /** What a host reports it can do; `false` means not reported, which keeps the current fallback. */
 export interface HostCapabilities {
@@ -174,11 +231,31 @@ export interface Workspace {
   directory: string;
 }
 
-/** Where a host's native workspace sits on disk: a Paseo-owned worktree or a main checkout. */
+/** Where a host's native workspace sits on disk: a host-owned worktree or a non-worktree checkout. */
 export interface HostPlacement {
   kind: string;
-  isPaseoOwnedWorktree: boolean;
+  hostOwnedWorktree: boolean;
   mainRepoRoot: string | null;
+  provenance?: string;
+}
+
+/**
+ * Host-neutral placement and provenance facts normalized at the host adapter
+ * boundary. Missing or ambiguous facts never widen archive permission.
+ */
+export interface HostWorkspacePlacement {
+  /** Placement kind reported by the host (for example `"directory"`, `"worktree"`, or `"external"`). */
+  readonly kind?: string | null;
+  /** Checkout directory named by the host's placement descriptor, when reported. */
+  readonly checkoutDirectory?: string | null;
+  /** Whether the host's placement descriptor claims ownership of the worktree (`false` only when positively non-owned). */
+  readonly hostOwnedWorktree?: boolean | null;
+  /** Main repository root named by the placement descriptor, or `null` when positively none. */
+  readonly mainRepoRoot?: string | null;
+  /** Whether the host's Git runtime reports a host-owned worktree. */
+  readonly runtimeHostOwnedWorktree?: boolean | null;
+  /** Host-neutral provenance of these placement facts (for example `"paseo"`, `"t3code"`, or `"bb"`). */
+  readonly provenance?: string | null;
 }
 
 /**
@@ -200,17 +277,8 @@ export interface HostWorkspaceRecord {
   readonly workspaceDirectory?: string | null;
   readonly projectId?: string | null;
   readonly worktreeSlug?: string | null;
-  /** The placement facts the external archive proof reads; each is absent when the host reports none. */
-  readonly workspaceKind?: string | null;
-  readonly project?: { readonly checkout?: HostCheckout | null } | null;
-  readonly gitRuntime?: { readonly isPaseoOwnedWorktree?: boolean } | null;
-}
-
-/** The checkout a registration reports, as the placement rule reads it. */
-export interface HostCheckout {
-  cwd?: string;
-  isPaseoOwnedWorktree?: boolean;
-  mainRepoRoot?: string | null;
+  /** Host-neutral placement and provenance facts normalized at the adapter boundary. */
+  readonly placement?: HostWorkspacePlacement | null;
 }
 
 export interface HostWorkspaceCatalogEntry {
@@ -369,7 +437,12 @@ export interface HostObservation {
 export interface HostTimelineEntry {
   timestamp: string;
   turnId?: string;
-  item: { type: string; status?: string; name?: string; detail?: { type?: string; command?: string } & Record<string, unknown> } & Record<string, unknown>;
+  item: {
+    type: string;
+    status?: string;
+    name?: string;
+    detail?: { type?: string; command?: string } & Record<string, unknown>;
+  } & Record<string, unknown>;
 }
 
 export interface HostTimelineCursor {
@@ -406,7 +479,10 @@ export interface RunUsageStreamEvent {
 }
 
 /** Callable to unsubscribe; `subscriptionId` is null once the host has released it. */
-export type RunUsageStream = (() => void) & { readonly ready: Promise<void>; readonly subscriptionId: string | null };
+export type RunUsageStream = (() => void) & {
+  readonly ready: Promise<void>;
+  readonly subscriptionId: string | null;
+};
 
 /** Native retained identity fields consumed by core, without an SDK type. */
 export interface HostRetainedAgentRef {
@@ -415,9 +491,18 @@ export interface HostRetainedAgentRef {
   readonly status: string | null;
   readonly activeTurn: unknown;
   readonly pendingPermissions: readonly unknown[] | null;
-  readonly runtimeInfo: { provider?: string | null; model?: string | null; modeId?: string | null; thinkingOptionId?: string | null } | null;
+  readonly runtimeInfo: {
+    provider?: string | null;
+    model?: string | null;
+    modeId?: string | null;
+    thinkingOptionId?: string | null;
+  } | null;
   refresh(): Promise<unknown>;
-  current(): { labels?: Record<string, string> | null; provider?: string | null; model?: string | null } | null;
+  current(): {
+    labels?: Record<string, string> | null;
+    provider?: string | null;
+    model?: string | null;
+  } | null;
   send(text: string, options: { messageId: string }): Promise<void>;
 }
 
@@ -443,7 +528,9 @@ export interface HostGuardedMessage extends HostMessage {
 }
 
 /** `sent: false` is a proven refusal with nothing delivered. */
-export type HostGuardedSendResult = { sent: true } | { sent: false; reason: string };
+export type HostGuardedSendResult =
+  | { sent: true }
+  | { sent: false; reason: string };
 
 export interface HostAsk extends HostMessage {
   signal: AbortSignal;
@@ -574,13 +661,15 @@ export const hostProviderSchema = z
 export type HostProvider = z.infer<typeof hostProviderSchema>;
 
 export const hostCatalogSchema = z
-  .object({ providers: z.array(hostProviderSchema),
+  .object({
+    providers: z.array(hostProviderSchema),
     /**
      * This read carries no feature answer: the host resolves feature values per
      * project context and the caller supplied none. Availability must not judge
      * feature values against it — unknown, never negative (nucleus#1139 review).
      */
-    featuresDeferred: z.boolean().optional() })
+    featuresDeferred: z.boolean().optional(),
+  })
   .strict();
 export type HostCatalog = z.infer<typeof hostCatalogSchema>;
 

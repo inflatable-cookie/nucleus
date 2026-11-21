@@ -220,7 +220,7 @@ const workspaceId = "ws-ext";
 const head = "a".repeat(40);
 const placement = {
   kind: "directory",
-  isPaseoOwnedWorktree: false,
+  hostOwnedWorktree: false,
   mainRepoRoot: null,
 };
 

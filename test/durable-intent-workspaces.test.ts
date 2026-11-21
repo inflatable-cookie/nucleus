@@ -403,7 +403,7 @@ test("external_workspace_archive_intent observes the catalog-only effect after a
   let sends = 0;
   const placement = {
     kind: "directory",
-    isPaseoOwnedWorktree: false,
+    hostOwnedWorktree: false,
     mainRepoRoot: null,
   };
   const f = intentFixture(

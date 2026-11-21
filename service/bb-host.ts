@@ -393,7 +393,10 @@ export function createBbWorkspaceAdapter(
                 projectRootPath: record.directory,
                 workspaceDirectory: record.directory,
                 projectId: record.projectId,
-                workspaceKind: "external",
+                placement: {
+                  kind: "external",
+                  provenance: "bb",
+                },
               }
             : null;
         },

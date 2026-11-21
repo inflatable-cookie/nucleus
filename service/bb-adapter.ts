@@ -214,6 +214,10 @@ export function composeBbAdapter(input: {
               id: w.id,
               projectRootPath: w.directory,
               workspaceDirectory: w.directory,
+              placement: {
+                kind: "external",
+                provenance: "bb",
+              },
             })),
         repositoryProject: (root: string) => workspaces.repositoryProject(root),
         createWorkspace: (spec: HostWorkspaceSpec) =>
@@ -454,17 +458,24 @@ export function composeBbAdapter(input: {
       const rows = await threads.inventoryRows();
       const known = threads.agents();
       const workspaces = Object.values(input.records());
-      return rows.filter(row => row.archivedAt === null && row.status !== "closed")
-        .map(row => {
-          const workspace = workspaces.find(w => w.environmentId === row.environmentId && w.directory === row.environmentPath);
+      return rows
+        .filter((row) => row.archivedAt === null && row.status !== "closed")
+        .map((row) => {
+          const workspace = workspaces.find(
+            (w) =>
+              w.environmentId === row.environmentId &&
+              w.directory === row.environmentPath,
+          );
           return {
             id: row.threadId,
             title: row.title ?? "",
             workspaceId: workspace?.id ?? null,
             directory: row.environmentPath,
             repositoryRoot: workspace?.repositoryRoot ?? null,
-            updatedAt: Number.isFinite(row.updatedAt) ? new Date(row.updatedAt).toISOString() : null,
-            labels: known.find(agent => agent.id === row.threadId)?.labels,
+            updatedAt: Number.isFinite(row.updatedAt)
+              ? new Date(row.updatedAt).toISOString()
+              : null,
+            labels: known.find((agent) => agent.id === row.threadId)?.labels,
           };
         });
     }
