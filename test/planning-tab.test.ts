@@ -78,7 +78,7 @@ test("026-14a Planning has a plan pane and a lane pane wide, and opens the lane 
   // wide board; a narrower board keeps the plan and opens the lane in a modal.
   assert.match(
     ui,
-    /inbox=\{\{ listWidth: wide \? inboxListWidth : null, laneModal: !wide \}\}/,
+    /inbox=\{\{\s*listWidth: wide \? inboxListWidth : null,\s*laneModal: !wide,?\s*\}\}/,
   );
   // The card list never carries planning: Planning is its own view.
   const list = readFileSync(
@@ -92,10 +92,21 @@ test("026-14a Planning has a plan pane and a lane pane wide, and opens the lane 
     new URL("../client/planning-panel.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(panel, /accessibilityLabel=\{searching \? "Lane search results" : "Planning plan"\}/);
+  assert.match(
+    panel,
+    /accessibilityLabel=\{searching \? "Lane search results" : "Planning plan"\}/,
+  );
   assert.match(panel, /accessibilityLabel="Planning lane"/);
-  assert.match(panel, /bodyLabel="Planning lane"/, "the lane modal keeps the pane's name");
-  assert.match(panel, /onClose=\{\(\)=>onStep\('plan'\)\}/, "closing the lane modal returns to the plan");
+  assert.match(
+    panel,
+    /bodyLabel="Planning lane"/,
+    "the lane modal keeps the pane's name",
+  );
+  assert.match(
+    panel,
+    /onClose=\{\(\)=>onStep\('plan'\)\}/,
+    "closing the lane modal returns to the plan",
+  );
   assert.match(panel, /Back to plan/);
   assert.doesNotMatch(panel, /picker/i);
   assert.match(

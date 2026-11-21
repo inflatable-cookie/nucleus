@@ -208,15 +208,15 @@ test("026-14c both surfaces hydrate one board projection: a surface mounting aft
     "planning survives the unchanged refresh",
   );
   assert.ok(
-    first.text().includes("Parked (no slot held)") && second.text().includes("Parked (no slot held)"),
+    first.text().includes("Parked (no slot held)") &&
+      second.text().includes("Parked (no slot held)"),
     "both surfaces keep the projection through an unchanged refresh",
   );
   first.update(h("View", null));
   second.update(h("View", null));
 });
 
-
-test("026 rendered bundle in dark theme splits leads and papercuts and filters tags", async () => {
+test("026 rendered bundle in dark theme lists leads and papercuts as separate menu views and filters only leads by tag", async () => {
   await loadBundle();
   // The board read's narrow card rows; lead.get still serves the full record on selection.
   const makeLead = (id: string, tags: string[]) => ({
@@ -263,37 +263,39 @@ test("026 rendered bundle in dark theme splits leads and papercuts and filters t
     }),
   );
   try {
+    // The board read lands after the lead read, so wait for both before counting anything.
     await settle(
-      () => ui.text().includes("Tagged") && ui.text().includes("Plain"),
+      () =>
+        ui.text().includes("Tagged") &&
+        ui.text().includes("Plain") &&
+        !ui.text().includes("Loading…"),
     );
-    // Leads and papercuts are the Leads view's two tabs (Tom, 2026-11-21).
+    // Leads and Papercuts are menu entries of their own, each with its real total (Tom, 2026-11-21).
     openView(ui, "Leads");
     const leads = ui.raw;
-    assert.ok(leads.query("Leads tab, 1") && leads.query("Papercuts tab, 1"));
-    assert.ok(leads.text().includes("Plain") && !leads.text().includes("Tagged"));
-    leads.press("Papercuts tab, 1");
-    assert.ok(leads.text().includes("Tagged") && leads.text().includes("Papercut"));
-    leads.press("Leads tab, 1");
-    // The tag filter is a dropdown of the tags the Leads view shows, with counts (Tom, 2026-10-15).
-    leads.press("Filter leads by tag, All tags (2)");
-    assert.ok(leads.get("Filter leads by tag: idea (1)"));
-    assert.ok(leads.get("Filter leads by tag: Papercut (1)"));
-    // Reserved tags lead under their display names, then free-form tags (Tom, 2026-10-15).
+    assert.ok(leads.query("Leads, 1") && leads.query("Papercuts, 1"));
+    assert.equal(
+      leads.query(/^(Leads|Papercuts) tab, /),
+      undefined,
+      "no tab switch inside Leads",
+    );
+    assert.ok(
+      leads.text().includes("Plain") && !leads.text().includes("Tagged"),
+    );
+    // The tag filter sits in the list header, after the item count (Tom, 2026-11-21).
+    assert.ok(leads.text().includes("1 item"));
+    // A dropdown of the tags the Leads view shows, with counts (Tom, 2026-10-15). Papercuts are
+    // their own list, so the reserved papercut tag is never offered here.
+    leads.press("Filter leads by tag, All tags (1)");
     assert.deepEqual(
       leads
         .all(/^Filter leads by tag: /)
         .map((node) => node.props.accessibilityLabel),
-      [
-        "Filter leads by tag: All tags (2)",
-        "Filter leads by tag: Papercut (1)",
-        "Filter leads by tag: idea (1)",
-      ],
+      ["Filter leads by tag: All tags (1)", "Filter leads by tag: idea (1)"],
     );
     assert.ok(
-      leads.text().includes("Reserved") &&
-        leads.text().indexOf("Reserved") < leads.text().indexOf("Tags") &&
-        leads.text().indexOf("Tags") < leads.text().indexOf("idea (1)"),
-      "the Reserved group heads the list, then Tags",
+      !leads.text().includes("Reserved"),
+      "no reserved group: the papercut tag is not offered",
     );
     assert.equal(
       leads.query(/^Filter leads by tag: briefed/),
@@ -302,14 +304,21 @@ test("026 rendered bundle in dark theme splits leads and papercuts and filters t
     );
     leads.press("Filter leads by tag: idea (1)");
     assert.ok(leads.text().includes("Plain"));
-    leads.press("Papercuts tab, 0");
-    assert.equal(leads.query("Triage: Tagged"), undefined);
-    leads.press("Filter leads by tag, idea (1)");
-    leads.press("Filter leads by tag: Papercut (1)");
-    leads.press("Papercuts tab, 1");
-    assert.ok(leads.text().includes("Tagged"));
-    leads.press("Leads tab, 0");
-    assert.equal(leads.query("Triage: Plain"), undefined);
+    // Papercuts are their own list, unfiltered by the Leads tag (Tom, 2026-11-21).
+    openView(ui, "Papercuts");
+    assert.ok(
+      ui.raw.text().includes("Tagged") && !ui.raw.text().includes("Plain"),
+    );
+    assert.equal(
+      ui.raw.query(/^Filter leads by tag/),
+      undefined,
+      "the papercut list has no tag filter",
+    );
+    // Back on Leads, the tag filter still narrows the list.
+    openView(ui, "Leads");
+    assert.ok(
+      ui.raw.text().includes("Plain") && !ui.raw.text().includes("Tagged"),
+    );
   } finally {
     ui.update(h("View", null));
     leadRows = [];

@@ -34,7 +34,6 @@ import {
   inboxMenuWidth,
   type ActiveSection,
   type InboxView,
-  type LeadsTab,
 } from "../shared/inbox-board";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
@@ -107,7 +106,8 @@ export function MainSurface({
   const c = theme.colors;
   const [panelWidth, setPanelWidth] = useState(0);
   const mode = inboxLayout(panelWidth, layout.compact);
-  const wide = mode === "wide", narrow = mode === "narrow";
+  const wide = mode === "wide",
+    narrow = mode === "narrow";
   const menuWidth = inboxMenuWidth[wide ? "wide" : "medium"];
   // The detail pane's room decides whether a record lays out compactly.
   const detailWidth = panelWidth - menuWidth - inboxListWidth;
@@ -117,8 +117,9 @@ export function MainSurface({
   const changeLaneStatus = useRpc(api.laneStatus);
   const queryClient = useQueryClient();
   const [view, setView] = useState<InboxView>("needs");
-  const [activeSection, setActiveSection] = useState<ActiveSection | null>(null);
-  const [leadsTab, setLeadsTab] = useState<LeadsTab>("leads");
+  const [activeSection, setActiveSection] = useState<ActiveSection | null>(
+    null,
+  );
   const [menuOpen, setMenuOpen] = useState(false);
   // The reads still key on the two data shapes: Planning's, and the card lists'.
   const tab: BoardTab = view === "planning" ? "planning" : "queue";
@@ -329,7 +330,9 @@ export function MainSurface({
   // Records open in the detail pane on a wide board's lists. Planning's detail pane
   // holds the lane, so a record opened from it is a modal, as on a narrower board.
   const inlineDetail = wide && view !== "planning";
-  const anyRecord = Boolean(selected || selectedLeadId || openPapercutId || openDecisionId);
+  const anyRecord = Boolean(
+    selected || selectedLeadId || openPapercutId || openDecisionId,
+  );
   const detail = task ? (
     <TaskDialog
       key={`task:${task.id}`}
@@ -400,9 +403,20 @@ export function MainSurface({
     />
   ) : null;
   const detailPane = (
-    <View accessibilityLabel="Detail" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+    <View
+      accessibilityLabel="Detail"
+      style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+    >
       {detail ?? (
-        <View accessibilityLabel={anyRecord ? "Loading detail" : "No item selected"} style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: space.lg }}>
+        <View
+          accessibilityLabel={anyRecord ? "Loading detail" : "No item selected"}
+          style={{
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            padding: space.lg,
+          }}
+        >
           <Text style={muted(c)}>
             {anyRecord ? "Loading…" : "Select an item to see its detail."}
           </Text>
@@ -466,9 +480,18 @@ export function MainSurface({
           filter={filter}
           onMenu={narrow ? () => setMenuOpen(true) : undefined}
         >
-          <View style={{ flex: 1, minHeight: 0, flexDirection: "row", zIndex: 0 }}>
+          <View
+            style={{ flex: 1, minHeight: 0, flexDirection: "row", zIndex: 0 }}
+          >
             {!narrow && (
-              <View style={{ width: menuWidth, minHeight: 0, borderRightWidth: 1, borderRightColor: c.border }}>
+              <View
+                style={{
+                  width: menuWidth,
+                  minHeight: 0,
+                  borderRightWidth: 1,
+                  borderRightColor: c.border,
+                }}
+              >
                 {menu}
               </View>
             )}
@@ -476,7 +499,10 @@ export function MainSurface({
               <PlanningTab
                 c={c}
                 compact={compact}
-                inbox={{ listWidth: wide ? inboxListWidth : null, laneModal: !wide }}
+                inbox={{
+                  listWidth: wide ? inboxListWidth : null,
+                  laneModal: !wide,
+                }}
                 leads={boardLeads}
                 onCloseLane={(lane) =>
                   void act(() =>
@@ -631,7 +657,13 @@ export function MainSurface({
                       c={c}
                     />
                   ) : (
-                    <View style={{ alignItems: "center", justifyContent: "center", padding: space.lg }}>
+                    <View
+                      style={{
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: space.lg,
+                      }}
+                    >
                       <Text style={muted(c)}>Select a lane from the plan.</Text>
                     </View>
                   )
@@ -639,9 +671,18 @@ export function MainSurface({
               />
             ) : (
               <>
-                <View style={wide
-                  ? { width: inboxListWidth, minHeight: 0, borderRightWidth: 1, borderRightColor: c.border }
-                  : { flex: 1, minWidth: 0, minHeight: 0 }}>
+                <View
+                  style={
+                    wide
+                      ? {
+                          width: inboxListWidth,
+                          minHeight: 0,
+                          borderRightWidth: 1,
+                          borderRightColor: c.border,
+                        }
+                      : { flex: 1, minWidth: 0, minHeight: 0 }
+                  }
+                >
                   <InboxList
                     c={c}
                     state={state}
@@ -649,8 +690,6 @@ export function MainSurface({
                     inbox={inbox}
                     view={view}
                     activeSection={activeSection}
-                    leadsTab={leadsTab}
-                    onLeadsTab={setLeadsTab}
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}
                     queuedHidden={queuedHidden}
@@ -677,13 +716,44 @@ export function MainSurface({
           {!inlineDetail && detail}
         </BoardHeader>
         {narrow && menuOpen && (
-          <Modal visible transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+          <Modal
+            visible
+            transparent
+            animationType="fade"
+            onRequestClose={() => setMenuOpen(false)}
+          >
             <View style={{ flex: 1, flexDirection: "row" }}>
-              <View accessibilityViewIsModal accessibilityLabel="Board menu" style={{ width: 260, maxWidth: "85%", backgroundColor: c.surface0, borderRightWidth: 1, borderRightColor: c.border, paddingTop: space.sm }}>
-                <Text style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600", paddingHorizontal: space.md, paddingBottom: space.xs }}>Nucleus</Text>
+              <View
+                accessibilityViewIsModal
+                accessibilityLabel="Board menu"
+                style={{
+                  width: 260,
+                  maxWidth: "85%",
+                  backgroundColor: c.surface0,
+                  borderRightWidth: 1,
+                  borderRightColor: c.border,
+                  paddingTop: space.sm,
+                }}
+              >
+                <Text
+                  style={{
+                    color: c.foreground,
+                    fontSize: typeScale.section.fontSize,
+                    fontWeight: "600",
+                    paddingHorizontal: space.md,
+                    paddingBottom: space.xs,
+                  }}
+                >
+                  Nucleus
+                </Text>
                 {menu}
               </View>
-              <Pressable accessibilityRole="button" accessibilityLabel="Close the board menu" onPress={() => setMenuOpen(false)} style={{ flex: 1, backgroundColor: overlay.scrim }} />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close the board menu"
+                onPress={() => setMenuOpen(false)}
+                style={{ flex: 1, backgroundColor: overlay.scrim }}
+              />
             </View>
           </Modal>
         )}
