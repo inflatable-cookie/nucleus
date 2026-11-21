@@ -17,7 +17,13 @@ import {
   row,
   type Colors,
 } from "./controls";
-import { control, space, type as typeScale, radius } from "./design";
+import {
+  control,
+  space,
+  type as typeScale,
+  radius,
+  usageStripColor,
+} from "./design";
 import { createAutoSave, type AutoSave } from "../shared/autosave";
 import {
   hostModelFor,
@@ -49,6 +55,7 @@ import {
   WEIGHT_STOP_SPEECH,
   HOST_DEFAULT,
   PAIRED_MIN_WIDTH,
+  RECENT_ASSIGNMENT_WINDOW,
   defaultPoolEntry,
   emptyProfileDraft,
   featureFingerprint,
@@ -72,67 +79,52 @@ import {
 } from "./settings-profile-helpers";
 
 /**
- * One profile row's recent-assignment usage (nucleus#1497): a slim, quiet bar in
- * the free space between the label and the row actions, on one common scale
- * across the list. Length alone compares, so the fill keeps the same muted tone
- * on every row; zero is an empty track, and an empty sample reads as words.
- * The accessible name carries the exact count and denominator. Non-interactive.
+ * One profile row's recent-assignment usage: the track fills the existing
+ * control height and scales to the busiest profile in the rendered list. The
+ * color is a secondary cool-to-warm cue; length carries the comparison.
+ * Non-interactive, with the exact count and rolling window available to readers.
  */
 function ProfileUsageBar({
   c,
   name,
   count,
-  total,
+  max,
 }: {
   c: Colors;
   name: string;
   count: number;
-  total: number;
+  max: number;
 }) {
-  if (total <= 0)
-    return (
-      <View style={{ flex: 1, minWidth: 0, justifyContent: "center" }}>
-        <Text
-          accessibilityLabel={`${name} recent assignments: none yet`}
-          style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-        >
-          No recent assignments yet
-        </Text>
-      </View>
-    );
-  const percent = Math.max(0, Math.min(100, (count / total) * 100));
+  const ratio = max > 0 ? Math.max(0, Math.min(1, count / max)) : 0;
+  const percent = ratio * 100;
+  const color = usageStripColor(ratio);
   return (
     <View
       accessibilityRole="image"
-      accessibilityLabel={`${name} recent assignments: ${count} of ${total}`}
+      accessibilityLabel={`${name} recent assignments: ${count} in the rolling window of up to ${RECENT_ASSIGNMENT_WINDOW} recorded assignments`}
       style={{
         flex: 1,
         minWidth: 56,
         maxWidth: 240,
-        justifyContent: "center",
+        height: control.height,
       }}
     >
-      <View style={{ ...row, flexWrap: "nowrap", gap: space.xxs }}>
+      <View
+        style={{
+          flex: 1,
+          height: control.height,
+          borderRadius: radius.control,
+          backgroundColor: c.border,
+          overflow: "hidden",
+        }}
+      >
         <View
           style={{
-            flex: 1,
-            height: space.xxs / 2,
-            borderRadius: radius.control,
-            backgroundColor: c.border,
-            overflow: "hidden",
+            width: `${percent}%`,
+            height: "100%",
+            backgroundColor: color,
           }}
-        >
-          <View
-            style={{
-              width: `${percent}%`,
-              height: "100%",
-              backgroundColor: c.foregroundMuted,
-            }}
-          />
-        </View>
-        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-          {count}/{total}
-        </Text>
+        />
       </View>
     </View>
   );
@@ -150,6 +142,7 @@ export function ProfileRow({
   projects,
   repositories,
   state,
+  visibleProfileIds,
   busy,
   editing,
   poolSave,
@@ -171,6 +164,7 @@ export function ProfileRow({
   projects: readonly Project[];
   repositories: readonly RepositorySettings[];
   state: UiQueueState | null;
+  visibleProfileIds: readonly string[];
   busy: boolean;
   editing: boolean;
   poolSave: (entry: PoolEntry) => Promise<void>;
@@ -242,7 +236,7 @@ export function ProfileRow({
   const status = state
     ? profileRowStatus(availability, entry, state)
     : { problem: "" };
-  const usage = profileUsage(state, profile.id);
+  const usage = profileUsage(state, profile.id, visibleProfileIds);
   const hostNote = hostCompatibilityNote(compatibility, profile.id);
   const attention = status.problem
     ? `${status.problem}${hostNote ? `\n${hostNote}` : ""}`
@@ -273,7 +267,7 @@ export function ProfileRow({
             c={c}
             name={profile.name}
             count={usage.count}
-            total={usage.total}
+            max={usage.max}
           />
         ) : null}
         {attention ? (

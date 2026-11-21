@@ -309,22 +309,23 @@ export function modelWords(
 export const RECENT_ASSIGNMENT_WINDOW = 50;
 
 /**
- * One profile's share of the recent-assignment sample for its Profiles row
- * (nucleus#1497). The denominator sums every `profile:` key in the board's
- * `recentAssignments`, including profiles no longer shown, so every row reads
- * against the same actual sample; group keys never enter it. Null while the
- * board is unread, so the row shows no bar rather than a stale one.
+ * One profile's count and the busiest visible row's count for its Profiles
+ * strip. Only IDs in the rendered list set the maximum; retained history for
+ * removed profiles and group keys never affect the comparison.
  */
 export function profileUsage(
   state: Pick<UiQueueState, "recentAssignments"> | null,
   profileId: string,
-): { count: number; total: number } | null {
+  visibleProfileIds: readonly string[],
+): { count: number; max: number } | null {
   if (!state) return null;
   const recent = state.recentAssignments ?? {};
-  let total = 0;
-  for (const [key, value] of Object.entries(recent))
-    if (key.startsWith("profile:")) total += value;
-  return { count: recent[`profile:${profileId}`] ?? 0, total };
+  const count = recent[`profile:${profileId}`] ?? 0;
+  const max = visibleProfileIds.reduce(
+    (highest, id) => Math.max(highest, recent[`profile:${id}`] ?? 0),
+    0,
+  );
+  return { count, max };
 }
 
 export type CatalogRead = { cwd: string; catalog: HostCatalog };
