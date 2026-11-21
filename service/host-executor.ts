@@ -133,7 +133,7 @@ export class HostExecutorLink {
   readonly declaration: HostExecutorDeclaration;
   readonly connectedAt = new Date().toISOString();
   private readonly pending = new Map<string, PendingOperation>();
-  private readonly expiredReads = new Set<string>();
+  private readonly expiredReads = new Map<string, HostOperationName>();
   private readonly write: (frame: unknown) => void;
   private readonly deadlineMs: number;
   private closed = false;
@@ -193,9 +193,9 @@ export class HostExecutorLink {
         pending.timedOut = true;
         if (HOST_READS.has(op)) {
           this.pending.delete(id);
-          this.expiredReads.add(id);
+          this.expiredReads.set(id, op);
           if (this.expiredReads.size > 1024)
-            this.expiredReads.delete(this.expiredReads.values().next().value!);
+            this.expiredReads.delete(this.expiredReads.keys().next().value!);
           rejectLate(
             new HostOperationUnknownDeliveryError(
               op,
@@ -248,7 +248,18 @@ export class HostExecutorLink {
     if (answer.v !== PROTOCOL_VERSION || typeof answer.id !== "string")
       return false;
     const pending = this.pending.get(answer.id);
-    if (!pending) return this.expiredReads.delete(answer.id);
+    if (!pending) {
+      const op = this.expiredReads.get(answer.id);
+      if (!op) return false;
+      // An expired read is still a response to this exact request. Do not let an
+      // arbitrary or malformed frame consume its correlation or pass as a reply.
+      const valid = answer.error !== undefined
+        ? answer.result === undefined && parseHostOperationFailure(answer.error) !== null
+        : answer.result !== undefined && parseHostOperationOutcome(op, answer.result).ok;
+      if (!valid) return false;
+      this.expiredReads.delete(answer.id);
+      return true;
+    }
     if (answer.error !== undefined) {
       const failure = parseHostOperationFailure(answer.error);
       if (!failure) {

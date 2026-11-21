@@ -344,6 +344,35 @@ test("a malformed executor answer settles that operation, and the connection kee
   }
 });
 
+test("a late read reply leaves the executor channel and another operation intact", async () => {
+  const dir = socketFixtureDirectory("queue-service.sock");
+  const service = new QueueService({ owner: { dataDir: dir, timers: false }, fixture: "fake" });
+  await service.start();
+  const hostId = hostIdFromDataDir("/tmp/bb-data");
+  let executor: ExecutorClient | null = null;
+  try {
+    executor = await ExecutorClient.connect(readServiceInfo(dir)!, declarationFor("/tmp/bb-data"));
+    let replyLate!: (value: unknown) => void;
+    let replyIndependent!: (value: unknown) => void;
+    let receivedIndependent!: () => void;
+    const independentReceived = new Promise<void>(resolve => { receivedIndependent = resolve; });
+    executor.answer = op => new Promise(resolve => {
+      if (op === "call.counters") replyLate = resolve;
+      else { replyIndependent = resolve; receivedIndependent(); }
+    });
+    await assert.rejects(service.sendHostOperation(hostId, "call.counters", {}), HostOperationUnknownDeliveryError);
+    const independent = service.sendHostOperation(hostId, "identity.probe", {});
+    await independentReceived;
+    replyLate({ operation: "call.counters", at: "2026-11-16T00:00:00.000Z", calls: {}, value: { counters: {}, loadedAt: 1 } });
+    replyIndependent({ operation: "identity.probe", at: "2026-11-16T00:00:00.000Z", calls: {}, value: { dataDir: "/tmp/bb-data", bbVersion: "0.49.0", sdkVersion: "0.6.132", hostIds: ["host_1"] } });
+    assert.deepEqual((await independent).value, { dataDir: "/tmp/bb-data", bbVersion: "0.49.0", sdkVersion: "0.6.132", hostIds: ["host_1"] });
+    assert.equal(executor.closed, false);
+  } finally {
+    executor?.close();
+    await service.stop();
+  }
+});
+
 test("over the real socket only a proven pre-write refusal is definite; a post-write failure is unknown", async () => {
   const dir = socketFixtureDirectory("queue-service.sock");
   const service = new QueueService({ owner: { dataDir: dir, timers: false }, fixture: "fake" });
