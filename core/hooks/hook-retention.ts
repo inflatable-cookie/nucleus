@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   EVENT_SCHEMA_V4, hookRecordSchema, hookEventV4Schema, hookHoldsTransition, supersededRetentionReconciliation,
-  hookStateIsTerminal, type HookRecord, type NormalizedHookDefinition,
+  hookStateIsTerminal, hookWireFamilyOfManifestPath, wireNameFor, type HookRecord, type NormalizedHookDefinition,
 } from "../../shared/hooks";
 import type { Task } from "../../shared/contracts";
 import { type Store, digest, now } from "../store/store";
@@ -254,7 +254,7 @@ export class HookRetentionGate {
     if (existing.some(record => record.eventId === eventId)) throw new Error("Retention reconciliation refuses a duplicate occurrence identity");
     const program = await pinProgram(current.repoPath, discovery.pin.commit, hook.program);
     const event = hookEventV4Schema.parse({
-      schema: EVENT_SCHEMA_V4, eventId, hookId: hook.id, event: "task.pre_archive",
+      schema: wireNameFor(hookWireFamilyOfManifestPath(discovery.pin.path) ?? "legacy", EVENT_SCHEMA_V4), eventId, hookId: hook.id, event: "task.pre_archive",
       occurredAt: now(), attempt: 1,
       repository: {
         root: worktree, baseBranch: current.baseBranch, baseCommit, target: RETENTION_RECONCILIATION_TARGET,

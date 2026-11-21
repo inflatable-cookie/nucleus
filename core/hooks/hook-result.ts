@@ -1,5 +1,8 @@
 import { userInfo } from "node:os";
-import { EVENT_SCHEMA, RESULT_SCHEMA, hookResultSchema, type HookRecord, type HookResult } from "../../shared/hooks";
+import {
+  EVENT_SCHEMA, RESULT_SCHEMA, canonicalWireName, hookResultSchema, hookWireFamilyOfManifestPath, hookWireFamilyOfSchema,
+  wireNameFor, type HookRecord, type HookResult, type HookWireFamily,
+} from "../../shared/hooks";
 import type { ExecutionOutcome } from "../machine/process-exec";
 
 /**
@@ -17,19 +20,40 @@ export const STDERR_EXCERPT_MAX_BYTES = 2000;
 /** The existing stored error limit a failing hook's evidence must fit inside. */
 export const HOOK_EVIDENCE_MAX_BYTES = 4000;
 
+/**
+ * The event schema a stored occurrence was delivered under: its manifest's
+ * family spelled over the generation its payload recorded. A baseline record
+ * with no payload was delivered as the v1 generation.
+ */
+export function recordEventSchema(record: Pick<HookRecord, "manifest" | "eventPayload">): string {
+  const family = hookWireFamilyOfManifestPath(record.manifest.path) ?? "legacy";
+  return wireNameFor(family, canonicalWireName(record.eventPayload?.schema ?? EVENT_SCHEMA));
+}
+
+/** The family an event schema was spelled in; a name that is not a hook wire name is the legacy surface. */
+function familyOfEventSchema(schema: string): HookWireFamily {
+  return hookWireFamilyOfSchema(schema) ?? "legacy";
+}
+
+/** The event variables each family's hooks receive, spelled out so every name stays greppable. */
+const LEGACY_EVENT_ENV = { id: "PASEO_QUEUE_EVENT_ID", schema: "PASEO_QUEUE_EVENT_SCHEMA" } as const;
+const NEUTRAL_EVENT_ENV = { id: "NUCLEUS_QUEUE_EVENT_ID", schema: "NUCLEUS_QUEUE_EVENT_SCHEMA" } as const;
+
 export function minimalHookEnvironment(eventId: string, schema: string = EVENT_SCHEMA): Record<string, string> {
   // USER is identity metadata needed by host credential discovery, not an
   // arbitrary caller override. Derive it from the launch process's OS identity.
   const username = userInfo().username;
   if (!username) throw new Error("Hook launch user identity is unavailable");
-  const env: Record<string, string> = { USER: username, PASEO_QUEUE_EVENT_ID: eventId, PASEO_QUEUE_EVENT_SCHEMA: schema };
+  // A hook receives the event identity in the family its manifest was written in, never both.
+  const names = familyOfEventSchema(schema) === "neutral" ? NEUTRAL_EVENT_ENV : LEGACY_EVENT_ENV;
+  const env: Record<string, string> = { USER: username, [names.id]: eventId, [names.schema]: schema };
   for (const key of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"] as const) { const value = process.env[key]; if (value) env[key] = value; }
   return env;
 }
 
 export interface ParsedHookResult { result: HookResult }
 /** Parse the closed hook result envelope. Any extra stdout bytes are a failure. */
-export function parseHookResult(stdout: Buffer, expectedEventId: string): ParsedHookResult | { error: string } {
+export function parseHookResult(stdout: Buffer, expectedEventId: string, eventSchema: string = EVENT_SCHEMA): ParsedHookResult | { error: string } {
   const text = stdout.toString("utf8");
   const trimmed = text.trim();
   if (!trimmed) return { error: "Hook produced no result on stdout" };
@@ -37,7 +61,8 @@ export function parseHookResult(stdout: Buffer, expectedEventId: string): Parsed
   try { parsed = JSON.parse(trimmed); } catch { return { error: "Hook result is not valid JSON or contains extra bytes" }; }
   const candidate = hookResultSchema.safeParse(parsed);
   if (!candidate.success) return { error: `Hook result is invalid: ${candidate.error.issues.map(issue => issue.message).join("; ")}` };
-  if (candidate.data.schema !== RESULT_SCHEMA) return { error: "Hook result schema is unsupported" };
+  // The result must answer in the family the event was delivered in; the other spelling is refused.
+  if (candidate.data.schema !== wireNameFor(familyOfEventSchema(eventSchema), RESULT_SCHEMA)) return { error: "Hook result schema is unsupported" };
   if (candidate.data.eventId !== expectedEventId) return { error: "Hook result event ID does not match the dispatched event" };
   return { result: candidate.data };
 }

@@ -1,4 +1,4 @@
-import { EVENT_SCHEMA, type HookRecord, type HookResult, type NormalizedHookDefinition } from "../../shared/hooks";
+import { type HookRecord, type HookResult, type NormalizedHookDefinition } from "../../shared/hooks";
 import type { Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { gitText, type GitSnapshot } from "../git/git-snapshot";
@@ -10,7 +10,7 @@ import {
   type HookContext, type HookEmissionResult,
 } from "./hook-context";
 import type { HookOccurrences } from "./hook-occurrence";
-import { executionFailure, failedResultEvidence, minimalHookEnvironment, parseHookResult } from "./hook-result";
+import { executionFailure, failedResultEvidence, minimalHookEnvironment, parseHookResult, recordEventSchema } from "./hook-result";
 import type { HookPublication } from "./hook-publication";
 import type { ManifestDiscovery } from "./hook-manifest";
 import type { ProspectiveMerge } from "../merge/prospective-merge";
@@ -204,7 +204,7 @@ export class HookExecution {
       try {
         outcome = await this.run({
           root, executable, argv: record.program.argv, stdin,
-          timeoutMs: record.timeoutMs, maxOutputBytes: record.maxOutputBytes, env: minimalHookEnvironment(record.eventId, record.eventPayload?.schema ?? EVENT_SCHEMA),
+          timeoutMs: record.timeoutMs, maxOutputBytes: record.maxOutputBytes, env: minimalHookEnvironment(record.eventId, recordEventSchema(record)),
           onSpawn: (pid, processGroupId, leaderStartIdentity) => { record = this.save(this.store.hookEvent(record.id)!, {
             processId: pid || null, processGroupId: processGroupId ?? null, leaderStartIdentity: leaderStartIdentity ?? null }); },
         });
@@ -228,7 +228,7 @@ export class HookExecution {
         return this.result(this.uncertainSync(current, `${failure}; read-only hook changed repository state and requires attention`));
       return this.result(this.fail(current, failure));
     }
-    const parsed = parseHookResult(outcome.stdout, current.eventId);
+    const parsed = parseHookResult(outcome.stdout, current.eventId, recordEventSchema(current));
     if ("error" in parsed) return this.result(this.fail(current, failedResultEvidence(outcome, `produced no usable result: ${parsed.error}`)));
     const result = parsed.result;
     if (result.changedPaths.length || result.commitSubjectSuffix !== null) return this.result(this.fail(current, "A read-only hook may not report changed paths or a commit subject"));

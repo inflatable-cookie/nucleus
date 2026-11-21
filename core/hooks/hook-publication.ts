@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  EVENT_SCHEMA, joinCommitSubject, pathIsAllowed, type HookRecord, type HookResult,
+  joinCommitSubject, pathIsAllowed, type HookRecord, type HookResult,
 } from "../../shared/hooks";
 import type { Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
@@ -13,7 +13,7 @@ import { gitNulEach } from "../git/git-command";
 import { blobDigest } from "./hook-manifest";
 import { executablePath, hookProgramExecutable, type HookEmissionResult } from "./hook-context";
 import { okResult } from "./hook-occurrence";
-import { executionFailure, failedResultEvidence, minimalHookEnvironment, parseHookResult } from "./hook-result";
+import { executionFailure, failedResultEvidence, minimalHookEnvironment, parseHookResult, recordEventSchema } from "./hook-result";
 import type { ExecutionOutcome, ExecutionRequest } from "../machine/process-exec";
 import type { HookCheckouts } from "./hook-checkouts";
 
@@ -81,7 +81,7 @@ export class HookPublication {
       const executable = await hookProgramExecutable(current, path);
       outcome = await this.run({
         root: path, executable, argv: current.program.argv, stdin,
-        timeoutMs: current.timeoutMs, maxOutputBytes: current.maxOutputBytes, env: minimalHookEnvironment(current.eventId, current.eventPayload?.schema ?? EVENT_SCHEMA),
+        timeoutMs: current.timeoutMs, maxOutputBytes: current.maxOutputBytes, env: minimalHookEnvironment(current.eventId, recordEventSchema(current)),
         onSpawn: (pid, processGroupId, leaderStartIdentity) => { const latest = this.store.hookEvent(current.id); if (latest) current = this.save(latest, {
           processId: pid || null, processGroupId: processGroupId ?? null, leaderStartIdentity: leaderStartIdentity ?? null }); },
       });
@@ -92,7 +92,7 @@ export class HookPublication {
       terminationError: outcome.terminationError ?? null });
     const failure = executionFailure(outcome, latest);
     if (failure) return this.result(await this.failIntegrationWrite(latest, failure));
-    const parsed = parseHookResult(outcome.stdout, latest.eventId);
+    const parsed = parseHookResult(outcome.stdout, latest.eventId, recordEventSchema(latest));
     if ("error" in parsed) return this.result(await this.failIntegrationWrite(latest, failedResultEvidence(outcome, `produced no usable result: ${parsed.error}`)));
     const result = parsed.result;
     if (result.outcome !== "ok") return this.result(await this.failIntegrationWrite(latest, failedResultEvidence(outcome, `reported outcome ${result.outcome}: ${result.summary}`), result));

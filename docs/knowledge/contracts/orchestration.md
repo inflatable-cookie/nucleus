@@ -2912,9 +2912,10 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 ### Repository hooks
 
-- A repository may declare generic hooks in `.paseo/queue.json`
+- A repository may declare generic hooks in `.nucleus/queue.json`, the neutral
+  documented path, or the legacy `.paseo/queue.json`
   ([Spec 001](../specs/001-generic-repository-hooks.md),
-  [repository hooks](repository-hooks.md)). Nucleus pins manifest, executable,
+  [repository hooks](repository-hooks.md), including its wire families). Nucleus pins manifest, executable,
   instruction artifact, event and clean base before direct no-shell execution;
   read-only hooks preserve Git state.
 - Installed: integration-write hooks use the repository turn and Nucleus-owned

@@ -2,7 +2,7 @@ import type { executeHookProgram } from "../machine/process-exec";
 import type { snapshotGit } from "../git/git-snapshot";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
 import { join } from "node:path";
-import { EVENT_SCHEMA_V2, EVENT_SCHEMA_V3, type AnyHookTarget, type HookPin, type HookRecord, type HookEventName, type InstructionArtifact, type MergeCandidate } from "../../shared/hooks";
+import { EVENT_SCHEMA_V2, EVENT_SCHEMA_V3, canonicalWireName, type AnyHookTarget, type HookPin, type HookRecord, type HookEventName, type InstructionArtifact, type MergeCandidate } from "../../shared/hooks";
 import type { Task } from "../../shared/contracts";
 
 export interface HookEmissionResult { hold: boolean; attention: boolean; records: HookRecord[] }
@@ -47,8 +47,10 @@ export async function hookProgramExecutable(record: HookRecord, root: string): P
 
 /** The target a stored occurrence actually carries, tolerating records that only named it in the immutable payload. */
 export function hookRecordTarget(record: Pick<HookRecord, "target" | "eventPayload">): AnyHookTarget {
-  if (record.eventPayload?.schema === EVENT_SCHEMA_V2) return "reviewed_head";
-  if (record.eventPayload?.schema === EVENT_SCHEMA_V3) return "prospective_merge";
+  // Either spelling of a generation names the same target.
+  const generation = record.eventPayload ? canonicalWireName(record.eventPayload.schema) : null;
+  if (generation === EVENT_SCHEMA_V2) return "reviewed_head";
+  if (generation === EVENT_SCHEMA_V3) return "prospective_merge";
   return record.target;
 }
 

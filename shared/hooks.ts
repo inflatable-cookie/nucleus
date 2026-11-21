@@ -13,7 +13,17 @@ export function utf8Length(value: string): number {
 // Generic repository hook surface, frozen by docs/knowledge/specs/001-generic-repository-hooks.md.
 // Queue treats document identity, event payloads and hook results as opaque data.
 
-export const HOOK_MANIFEST_PATH = ".paseo/queue.json";
+// Two spellings of one frozen wire surface. The `paseo.queue.*` family and
+// `.paseo/queue.json` are what committed repositories already carry; the
+// `nucleus.queue.*` family and `.nucleus/queue.json` are the documented neutral
+// path for new manifests. Each generation means the same thing in both families.
+// The manifest's location selects its family, and its schema spelling must match
+// that family. Every event and result is spelled in its manifest's family, never
+// both, and a legacy occurrence keeps its recorded spelling for life.
+export type HookWireFamily = "legacy" | "neutral";
+export const LEGACY_HOOK_MANIFEST_PATH = ".paseo/queue.json";
+export const NEUTRAL_HOOK_MANIFEST_PATH = ".nucleus/queue.json";
+export const HOOK_MANIFEST_PATHS = [LEGACY_HOOK_MANIFEST_PATH, NEUTRAL_HOOK_MANIFEST_PATH] as const;
 export const CONTROL_SCHEMA = "paseo.queue.control.v1";
 export const CONTROL_SCHEMA_V2 = "paseo.queue.control.v2";
 export const CONTROL_SCHEMA_V3 = "paseo.queue.control.v3";
@@ -21,6 +31,13 @@ export const CONTROL_SCHEMA_V4 = "paseo.queue.control.v4";
 export const CONTROL_SCHEMA_V5 = "paseo.queue.control.v5";
 export const CONTROL_SCHEMA_V6 = "paseo.queue.control.v6";
 export const CONTROL_SCHEMA_V7 = "paseo.queue.control.v7";
+export const NEUTRAL_CONTROL_SCHEMA = "nucleus.queue.control.v1";
+export const NEUTRAL_CONTROL_SCHEMA_V2 = "nucleus.queue.control.v2";
+export const NEUTRAL_CONTROL_SCHEMA_V3 = "nucleus.queue.control.v3";
+export const NEUTRAL_CONTROL_SCHEMA_V4 = "nucleus.queue.control.v4";
+export const NEUTRAL_CONTROL_SCHEMA_V5 = "nucleus.queue.control.v5";
+export const NEUTRAL_CONTROL_SCHEMA_V6 = "nucleus.queue.control.v6";
+export const NEUTRAL_CONTROL_SCHEMA_V7 = "nucleus.queue.control.v7";
 export const CLOSEOUT_SELECTION_SCHEMA = z.enum(["queue", "hooks"]);
 export type CloseoutSelection = z.infer<typeof CLOSEOUT_SELECTION_SCHEMA>;
 export const RESERVED_VALIDATION_MESSAGE = "validation is reserved for Spec 042 item 3 (plain-validation pre-merge) and is not available until that capability ships";
@@ -30,6 +47,66 @@ export const EVENT_SCHEMA_V2 = "paseo.queue.event.v2";
 export const EVENT_SCHEMA_V3 = "paseo.queue.event.v3";
 export const EVENT_SCHEMA_V4 = "paseo.queue.event.v4";
 export const RESULT_SCHEMA = "paseo.queue.hook-result.v1";
+export const NEUTRAL_EVENT_SCHEMA = "nucleus.queue.event.v1";
+export const NEUTRAL_EVENT_SCHEMA_V2 = "nucleus.queue.event.v2";
+export const NEUTRAL_EVENT_SCHEMA_V3 = "nucleus.queue.event.v3";
+export const NEUTRAL_EVENT_SCHEMA_V4 = "nucleus.queue.event.v4";
+export const NEUTRAL_RESULT_SCHEMA = "nucleus.queue.hook-result.v1";
+
+const LEGACY_TO_NEUTRAL_WIRE_NAME: ReadonlyMap<string, string> = new Map([
+  [CONTROL_SCHEMA, NEUTRAL_CONTROL_SCHEMA], [CONTROL_SCHEMA_V2, NEUTRAL_CONTROL_SCHEMA_V2], [CONTROL_SCHEMA_V3, NEUTRAL_CONTROL_SCHEMA_V3],
+  [CONTROL_SCHEMA_V4, NEUTRAL_CONTROL_SCHEMA_V4], [CONTROL_SCHEMA_V5, NEUTRAL_CONTROL_SCHEMA_V5], [CONTROL_SCHEMA_V6, NEUTRAL_CONTROL_SCHEMA_V6],
+  [CONTROL_SCHEMA_V7, NEUTRAL_CONTROL_SCHEMA_V7],
+  [EVENT_SCHEMA, NEUTRAL_EVENT_SCHEMA], [EVENT_SCHEMA_V2, NEUTRAL_EVENT_SCHEMA_V2], [EVENT_SCHEMA_V3, NEUTRAL_EVENT_SCHEMA_V3],
+  [EVENT_SCHEMA_V4, NEUTRAL_EVENT_SCHEMA_V4], [RESULT_SCHEMA, NEUTRAL_RESULT_SCHEMA],
+]);
+const NEUTRAL_TO_LEGACY_WIRE_NAME: ReadonlyMap<string, string> = new Map(
+  [...LEGACY_TO_NEUTRAL_WIRE_NAME].map(([legacy, neutral]) => [neutral, legacy]),
+);
+
+/** The wire family a schema name is spelled in, or null for a name that is not a repository hook wire name. */
+export function hookWireFamilyOfSchema(schema: string): HookWireFamily | null {
+  if (LEGACY_TO_NEUTRAL_WIRE_NAME.has(schema)) return "legacy";
+  if (NEUTRAL_TO_LEGACY_WIRE_NAME.has(schema)) return "neutral";
+  return null;
+}
+
+/**
+ * Resolve either spelling of a wire name to its legacy generation name. Every
+ * comparison on generation (v2 target, v5 closeout, v4 retention) uses this, so
+ * a neutral spelling can never select a different generation.
+ */
+export function canonicalWireName(schema: string): string {
+  return NEUTRAL_TO_LEGACY_WIRE_NAME.get(schema) ?? schema;
+}
+
+/** The spelling of one legacy generation name in a family. */
+export function wireNameFor(family: HookWireFamily, legacy: string): string {
+  const neutral = LEGACY_TO_NEUTRAL_WIRE_NAME.get(legacy);
+  if (!neutral) throw new Error(`Not a repository hook wire name: ${legacy}`);
+  return family === "neutral" ? neutral : legacy;
+}
+
+/** The family a manifest location belongs to, or null for any other path. */
+export function hookWireFamilyOfManifestPath(path: string): HookWireFamily | null {
+  if (path === LEGACY_HOOK_MANIFEST_PATH) return "legacy";
+  if (path === NEUTRAL_HOOK_MANIFEST_PATH) return "neutral";
+  return null;
+}
+
+/** Either spelling of one wire generation, as a closed Zod literal union. */
+const wireNameSchema = <Legacy extends string, Neutral extends string>(legacy: Legacy, neutral: Neutral) =>
+  z.union([z.literal(legacy), z.literal(neutral)]);
+
+/**
+ * Reserved allowed paths that exist only for a neutral manifest: its namespace
+ * root, its manifest and its hook directory. Legacy manifests keep their frozen
+ * rules and are never refused for naming a `.nucleus` path they already held.
+ */
+export function reservedNeutralAllowedPath(path: string): boolean {
+  return path === ".nucleus" || path === ".nucleus/" || path === NEUTRAL_HOOK_MANIFEST_PATH
+    || path === ".nucleus/hooks" || path.startsWith(".nucleus/hooks/");
+}
 export const MANIFEST_MAX_BYTES = 64 * 1024;
 export const METADATA_MAX_BYTES = 32 * 1024;
 export const SUMMARY_MAX_BYTES = 4000;
@@ -189,7 +266,7 @@ function refineHookBindings(hook: {
   }
   for (const [index, path] of hook.allowedPaths.entries()) {
     const forbidden = path === ".git" || path.startsWith(".git/") || path === ".paseo" || path === ".paseo/"
-      || path === HOOK_MANIFEST_PATH || (path.endsWith("/") && HOOK_MANIFEST_PATH.startsWith(path))
+      || path === LEGACY_HOOK_MANIFEST_PATH || (path.endsWith("/") && LEGACY_HOOK_MANIFEST_PATH.startsWith(path))
       || path === ".paseo/hooks" || path.startsWith(".paseo/hooks/");
     if (forbidden) ctx.addIssue({ code: "custom", path: ["allowedPaths", index], message: `Reserved path may not be declared: ${path}` });
   }
@@ -254,7 +331,7 @@ const hookDefinitionV7Schema = z.object({
 export type HookDefinitionV7 = z.infer<typeof hookDefinitionV7Schema>;
 
 const controlManifestV1Schema = z.object({
-  schema: z.literal(CONTROL_SCHEMA),
+  schema: wireNameSchema(CONTROL_SCHEMA, NEUTRAL_CONTROL_SCHEMA),
   hooks: z.array(hookDefinitionSchema).max(16),
 }).strict().superRefine((manifest, ctx) => {
   const ids = new Set<string>();
@@ -264,7 +341,7 @@ const controlManifestV1Schema = z.object({
   }
 });
 const controlManifestV2Schema = z.object({
-  schema: z.literal(CONTROL_SCHEMA_V2), hooks: z.array(hookDefinitionV2Schema).max(16),
+  schema: wireNameSchema(CONTROL_SCHEMA_V2, NEUTRAL_CONTROL_SCHEMA_V2), hooks: z.array(hookDefinitionV2Schema).max(16),
 }).strict().superRefine((manifest, ctx) => {
   const ids = new Set<string>();
   for (const [index, hook] of manifest.hooks.entries()) {
@@ -273,7 +350,7 @@ const controlManifestV2Schema = z.object({
   }
 });
 const controlManifestV3Schema = z.object({
-  schema: z.literal(CONTROL_SCHEMA_V3), hooks: z.array(hookDefinitionV3Schema).max(16),
+  schema: wireNameSchema(CONTROL_SCHEMA_V3, NEUTRAL_CONTROL_SCHEMA_V3), hooks: z.array(hookDefinitionV3Schema).max(16),
 }).strict().superRefine((manifest, ctx) => {
   const ids = new Set<string>();
   for (const [index, hook] of manifest.hooks.entries()) {
@@ -282,7 +359,7 @@ const controlManifestV3Schema = z.object({
   }
 });
 const controlManifestV4Schema = z.object({
-  schema: z.literal(CONTROL_SCHEMA_V4), hooks: z.array(hookDefinitionV4Schema).max(16),
+  schema: wireNameSchema(CONTROL_SCHEMA_V4, NEUTRAL_CONTROL_SCHEMA_V4), hooks: z.array(hookDefinitionV4Schema).max(16),
 }).strict().superRefine((manifest, ctx) => {
   const ids = new Set<string>();
   for (const [index, hook] of manifest.hooks.entries()) {
@@ -292,7 +369,7 @@ const controlManifestV4Schema = z.object({
 });
 /** v5 keeps v4 hook definitions, makes hooks optional, and adds closeout selection. */
 const controlManifestV5ObjectSchema = z.object({
-  schema: z.literal(CONTROL_SCHEMA_V5),
+  schema: wireNameSchema(CONTROL_SCHEMA_V5, NEUTRAL_CONTROL_SCHEMA_V5),
   closeout: CLOSEOUT_SELECTION_SCHEMA.default("hooks"),
   hooks: z.array(hookDefinitionV4Schema).max(16).default([]),
 }).passthrough().superRefine((manifest, ctx) => {
@@ -313,7 +390,7 @@ const controlManifestV5ObjectSchema = z.object({
 const controlManifestV5Schema = controlManifestV5ObjectSchema.transform(({ schema, closeout, hooks }) => ({ schema, closeout, hooks }));
 /** v6 keeps v5's closeout selection and adds the pre-archive retention gate to the hook surface. */
 const controlManifestV6ObjectSchema = z.object({
-  schema: z.literal(CONTROL_SCHEMA_V6),
+  schema: wireNameSchema(CONTROL_SCHEMA_V6, NEUTRAL_CONTROL_SCHEMA_V6),
   closeout: CLOSEOUT_SELECTION_SCHEMA.default("hooks"),
   hooks: z.array(hookDefinitionV6Schema).max(16).default([]),
 }).passthrough().superRefine((manifest, ctx) => {
@@ -334,7 +411,7 @@ const controlManifestV6ObjectSchema = z.object({
 const controlManifestV6Schema = controlManifestV6ObjectSchema.transform(({ schema, closeout, hooks }) => ({ schema, closeout, hooks }));
 /** v7 keeps v6's closeout selection and adds the finished-task runtime stop to the hook surface. */
 const controlManifestV7ObjectSchema = z.object({
-  schema: z.literal(CONTROL_SCHEMA_V7),
+  schema: wireNameSchema(CONTROL_SCHEMA_V7, NEUTRAL_CONTROL_SCHEMA_V7),
   closeout: CLOSEOUT_SELECTION_SCHEMA.default("hooks"),
   hooks: z.array(hookDefinitionV7Schema).max(16).default([]),
 }).passthrough().superRefine((manifest, ctx) => {
@@ -372,7 +449,7 @@ export interface NormalizedControlManifest {
 }
 export function normalizeControlManifest(manifest: ControlManifest | NormalizedControlManifest): NormalizedControlManifest {
   return {
-    schema: manifest.schema,
+    schema: canonicalWireName(manifest.schema) as NormalizedControlManifest["schema"],
     closeout: "closeout" in manifest && manifest.closeout === "queue" ? "queue" : "hooks",
     hooks: manifest.hooks.map(hook => {
       const target: AnyHookTarget = "target" in hook && hook.target ? hook.target : "integration_base";
@@ -453,7 +530,7 @@ export const hookReplayLineageSchema = z.object({
 export type HookReplayLineage = z.infer<typeof hookReplayLineageSchema>;
 
 export const hookEventSchema = z.object({
-  schema: z.literal(EVENT_SCHEMA),
+  schema: wireNameSchema(EVENT_SCHEMA, NEUTRAL_EVENT_SCHEMA),
   eventId: z.string().min(1).max(240),
   hookId: hookIdSchema,
   event: hookEventNameSchema,
@@ -488,7 +565,7 @@ export type AnyHookEvent = HookEvent | HookEventV2 | HookEventV3 | HookEventV4;
 
 /** v2 retains every v1 field and adds the closed reviewed-head target. */
 export const hookEventV2Schema = hookEventSchema.extend({
-  schema: z.literal(EVENT_SCHEMA_V2),
+  schema: wireNameSchema(EVENT_SCHEMA_V2, NEUTRAL_EVENT_SCHEMA_V2),
   repository: z.object({
     root: z.string().min(1),
     baseBranch: z.string().min(1),
@@ -512,7 +589,7 @@ export type MergeCandidate = z.infer<typeof mergeCandidateSchema>;
 
 /** v3 names the prospective-merge target and its pinned candidate identity. */
 export const hookEventV3Schema = hookEventSchema.extend({
-  schema: z.literal(EVENT_SCHEMA_V3),
+  schema: wireNameSchema(EVENT_SCHEMA_V3, NEUTRAL_EVENT_SCHEMA_V3),
   repository: z.object({
     root: z.string().min(1),
     baseBranch: z.string().min(1),
@@ -533,7 +610,7 @@ export const hookEventV3Schema = hookEventSchema.extend({
  * payload.
  */
 export const hookEventV4Schema = hookEventSchema.extend({
-  schema: z.literal(EVENT_SCHEMA_V4),
+  schema: wireNameSchema(EVENT_SCHEMA_V4, NEUTRAL_EVENT_SCHEMA_V4),
   event: z.literal("task.pre_archive"),
   repository: z.object({
     root: z.string().min(1),
@@ -557,7 +634,7 @@ export const anyHookEventSchema = z.union([hookEventSchema, hookEventV2Schema, h
 const boundedSummarySchema = z.string().refine(value => utf8Length(value) >= 1 && utf8Length(value) <= SUMMARY_MAX_BYTES, `Summary must be 1-${SUMMARY_MAX_BYTES} UTF-8 bytes`);
 
 export const hookResultSchema = z.object({
-  schema: z.literal(RESULT_SCHEMA),
+  schema: wireNameSchema(RESULT_SCHEMA, NEUTRAL_RESULT_SCHEMA),
   eventId: z.string().min(1).max(240),
   outcome: z.enum(["ok", "blocked", "failed"]),
   summary: boundedSummarySchema,
