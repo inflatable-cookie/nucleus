@@ -1,0 +1,1 @@
+- Settings → Hosts: removed the horizontal rule between the Default host picker and Registered hosts; whitespace separates the two sections. The Online/Offline host grouping and its divider are unchanged.
