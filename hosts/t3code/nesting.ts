@@ -1140,7 +1140,7 @@ export class T3Nesting {
       // named); a thread T3 has not listed yet is a transient read the next pass
       // owns, and must not fail the launch.
       try {
-        await this.core.reads.readProjection(threadId, "observation");
+        await this.core.reads.readDirectProjection(threadId, "observation");
       } catch (error) {
         if (error instanceof T3CompatibilityError) throw error;
       }

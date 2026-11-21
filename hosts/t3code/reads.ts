@@ -288,9 +288,18 @@ export class T3Reads {
   private archivedHeld: Promise<z.infer<typeof archivedShellSnapshot>> | null =
     null;
   private inventoryHeld: Promise<T3Inventory> | null = null;
-  private readonly projectionHeld = new Map<string, Promise<Projection>>();
+  private readonly projectionHeld = new Map<
+    string,
+    Promise<ThreadSnapshotRead>
+  >();
+  private shapeProbe: Promise<void> | null = null;
+  private readonly forgetEpochs = new Map<string, number>();
   private passing = false;
   constructor(private readonly core: T3ReadContext) {}
+
+  private forgetEpoch(threadId: string): number {
+    return this.forgetEpochs.get(threadId) ?? 0;
+  }
 
   /**
    * The pass opens: these are the tasks the host still works on, and every read in
@@ -334,6 +343,8 @@ export class T3Reads {
     this.archivedHeld = null;
     this.inventoryHeld = null;
     this.projectionHeld.clear();
+    this.shapeProbe = null;
+    this.forgetEpochs.clear();
   }
 
   /** The Nucleus task a tracked thread was launched for, from its own launch labels. */
@@ -368,6 +379,7 @@ export class T3Reads {
         );
         return !projection.thread.archivedAt && !projection.thread.deletedAt;
       } catch (error) {
+        if (error instanceof T3CompatibilityError) throw error;
         if (isTransientT3ReadRpcError(error))
           throw new T3TransientReadError(error);
         if (isThreadNotFoundRpcError(error)) {
@@ -377,7 +389,11 @@ export class T3Reads {
         return true;
       }
     } catch (error) {
-      if (error instanceof HostReadRefusalError) throw error;
+      if (
+        error instanceof HostReadRefusalError ||
+        error instanceof T3CompatibilityError
+      )
+        throw error;
       return true;
     }
   }
@@ -387,7 +403,8 @@ export class T3Reads {
     try {
       const row = await this.shellRow(threadId);
       return !!row && !row.archivedAt && !row.deletedAt;
-    } catch {
+    } catch (error) {
+      if (error instanceof T3CompatibilityError) throw error;
       return false;
     }
   }
@@ -429,19 +446,21 @@ export class T3Reads {
     if (!this.passing) return undefined;
     return await this.shellRow(threadId);
   }
-  /** Narrow single-thread projection without `shell` or `archivedShell` gating. */
-  async readDirectProjection(
+  /**
+   * Narrow single-thread snapshot without `shell` or `archivedShell` gating.
+   * Inside a pass, concurrent observation reads for the same thread coalesce
+   * onto one in-flight snapshot until `forget` or pass closeout drops it.
+   */
+  private async readDirectSnapshot(
     threadId: string,
     kind: ThreadReadKind = "observation",
     fresh = false,
-  ): Promise<Projection> {
+  ): Promise<ThreadSnapshotRead> {
     if (fresh) this.projectionHeld.delete(threadId);
     if (!fresh && kind === "observation" && this.passing) {
       let pending = this.projectionHeld.get(threadId);
       if (!pending) {
-        pending = this.readFreshSnapshot(threadId, kind).then(
-          (read) => read.projection,
-        );
+        pending = this.readFreshSnapshot(threadId, kind);
         this.projectionHeld.set(threadId, pending);
       }
       try {
@@ -452,13 +471,24 @@ export class T3Reads {
         throw error;
       }
     }
-    return (await this.readFreshSnapshot(threadId, kind)).projection;
+    return this.readFreshSnapshot(threadId, kind);
+  }
+  /** Narrow single-thread projection without `shell` or `archivedShell` gating. */
+  async readDirectProjection(
+    threadId: string,
+    kind: ThreadReadKind = "observation",
+    fresh = false,
+  ): Promise<Projection> {
+    return (await this.readDirectSnapshot(threadId, kind, fresh)).projection;
   }
   /** Read an already-bound thread via narrow projection first, falling back to broad inventory only on ThreadNotFoundError. */
   async readThreadRecord(
     id: string,
     fresh = false,
-  ): Promise<{ row: ShellRow | Projection["thread"]; projection: Projection | null } | null> {
+  ): Promise<{
+    row: ShellRow | Projection["thread"];
+    projection: Projection | null;
+  } | null> {
     if (!fresh) {
       const shell = await this.threadRow(id);
       if (shell) return { row: shell, projection: null };
@@ -498,6 +528,7 @@ export class T3Reads {
   resetShape() {
     this.pendingThreadShape = false;
     this.compatibilityError = "";
+    this.shapeProbe = null;
   }
   markShapePending(pending = true) {
     this.pendingThreadShape = pending;
@@ -535,10 +566,12 @@ export class T3Reads {
         return false;
       },
     );
+    if (!snapshot)
+      throw new T3CompatibilityError("subscribeShell.snapshot missing");
     // The projects this read saw are the host's own project observation. The board
     // reads them from here, so a badge never costs an extra host read (nucleus#1450).
-    this.observedProjects = snapshot!.projects;
-    return snapshot!;
+    this.observedProjects = snapshot.projects;
+    return snapshot;
   }
   /**
    * The projects the last synchronized shell read saw, or null before any read on
@@ -593,9 +626,28 @@ export class T3Reads {
       (held.pass === this.pass || !row?.pendingRuntimeRequest)
     )
       return held.read;
-    const read = await this.readFreshSnapshot(threadId, kind);
-    if (marker) this.held.set(threadId, { marker, pass: this.pass, read });
-    else this.held.delete(threadId);
+    const pass = this.pass;
+    const epoch = this.forgetEpoch(threadId);
+    const directPending = this.passing
+      ? this.projectionHeld.get(threadId)
+      : undefined;
+    const read = directPending
+      ? await directPending.then((candidate) =>
+          snapshotCovers(candidate, kind)
+            ? candidate
+            : this.readFreshSnapshot(threadId, kind),
+        )
+      : kind === "observation" && this.passing
+        ? await this.readDirectSnapshot(threadId, kind)
+        : await this.readFreshSnapshot(threadId, kind);
+    if (
+      marker &&
+      this.passing &&
+      this.pass === pass &&
+      this.forgetEpoch(threadId) === epoch
+    )
+      this.held.set(threadId, { marker, pass, read });
+    else if (!marker) this.held.delete(threadId);
     return read;
   }
 
@@ -604,7 +656,7 @@ export class T3Reads {
     threadId: string,
     kind: ThreadReadKind,
   ): Promise<ThreadSnapshotRead> {
-    let read: Omit<ThreadSnapshotRead, "omitsTurnItems"> | undefined;
+    let read: ThreadSnapshotRead | undefined;
     try {
       await this.core.rpc.readStream(
         "orchestration.subscribeThread",
@@ -643,9 +695,11 @@ export class T3Reads {
             const snapshot = complete.projection;
             if (snapshot.thread.id !== threadId)
               throw new T3CompatibilityError("subscribeThread.thread.id");
-            read = { projection: snapshot, paged: coverage.paged };
-            (read as ThreadSnapshotRead).omitsTurnItems =
-              coverage.omitsTurnItems;
+            read = {
+              projection: snapshot,
+              paged: coverage.paged,
+              omitsTurnItems: coverage.omitsTurnItems,
+            };
           } else if (item.kind === "synchronized") {
             if (!read)
               throw new T3CompatibilityError(
@@ -659,8 +713,10 @@ export class T3Reads {
           return false;
         },
       );
+      if (!read)
+        throw new T3CompatibilityError("subscribeThread.projection missing");
       this.pendingThreadShape = false;
-      return read! as ThreadSnapshotRead;
+      return read;
     } catch (error) {
       if (this.pendingThreadShape && error instanceof T3CompatibilityError) {
         this.compatibilityError = error.message;
@@ -671,14 +727,54 @@ export class T3Reads {
   }
 
   /**
+   * Pick the first live, non-archived, non-deleted row whose task this host still
+   * observes. Archived, deleted and terminal-task rows stay unread.
+   */
+  private eligibleProbeRow(rows: readonly ShellRow[]): ShellRow | undefined {
+    return rows.find(
+      (row) => !row.archivedAt && !row.deletedAt && this.observes(row.id),
+    );
+  }
+
+  /**
+   * When startup left thread shape pending on an empty shell, validate the first
+   * eligible live row once via direct projection without re-entering `shell` or
+   * `inventory`. Concurrent callers coalesce on the single in-flight probe.
+   */
+  private async probePendingThreadShape(
+    rows: readonly ShellRow[],
+  ): Promise<void> {
+    if (!this.pendingThreadShape) return;
+    if (!this.shapeProbe) {
+      const probe = this.eligibleProbeRow(rows);
+      if (!probe) return;
+      this.shapeProbe = this.runShapeProbe(probe).finally(() => {
+        this.shapeProbe = null;
+      });
+    }
+    await this.shapeProbe;
+  }
+
+  private async runShapeProbe(probe: ShellRow): Promise<void> {
+    try {
+      await this.readDirectProjection(probe.id, "observation");
+    } catch (error) {
+      // A missing or transiently unready probe row keeps shape validation pending
+      // for the next read without failing unrelated shell callers; compatibility,
+      // transport and timeout faults surface immediately.
+      if (isThreadNotFoundRpcError(error) || isTransientT3ReadRpcError(error))
+        return;
+      throw error;
+    }
+  }
+
+  /**
    * The pass-scoped live shell snapshot: all projects and active non-archived
    * threads in one RPC without pairing with `getArchivedShellSnapshot`.
    */
   async shell() {
     const snapshot = await this.memoisedShellRead();
-    const probe = snapshot.threads[0] ?? snapshot.archivedThreads[0];
-    if (this.pendingThreadShape && probe)
-      await this.readProjection(probe.id, "observation");
+    await this.probePendingThreadShape(snapshot.threads);
     return snapshot;
   }
   private async memoisedShellRead() {
@@ -711,8 +807,7 @@ export class T3Reads {
 
   async inventory(): Promise<T3Inventory> {
     const inventory = await this.memoisedInventoryRead();
-    if (this.pendingThreadShape && inventory.threads[0])
-      await this.readProjection(inventory.threads[0].id, "observation");
+    await this.probePendingThreadShape(inventory.threads);
     return inventory;
   }
   /**
@@ -958,11 +1053,12 @@ export class T3Reads {
             : shellNative && activeStatuses.has(shellNative.status)
               ? shellNative.status
               : "idle",
-      active: thread.archivedAt || thread.deletedAt
-        ? false
-        : !!active ||
-          !!shellNative?.activeRunId ||
-          (!!shellNative && activeStatuses.has(shellNative.status)),
+      active:
+        thread.archivedAt || thread.deletedAt
+          ? false
+          : !!active ||
+            !!shellNative?.activeRunId ||
+            (!!shellNative && activeStatuses.has(shellNative.status)),
       permissions:
         thread.archivedAt || thread.deletedAt
           ? false
@@ -975,17 +1071,17 @@ export class T3Reads {
       activeTurnId:
         thread.archivedAt || thread.deletedAt
           ? null
-          : active?.id ?? shellNative?.activeRunId ?? null,
+          : (active?.id ?? shellNative?.activeRunId ?? null),
       turnStartedAt:
-        thread.archivedAt || thread.deletedAt ? null : active?.startedAt ?? null,
+        thread.archivedAt || thread.deletedAt
+          ? null
+          : (active?.startedAt ?? null),
       lastUserMessageAt: shellNative?.latestUserMessageAt ?? null,
       labels: record?.labels ?? {},
       pendingPermissionKinds:
         thread.archivedAt || thread.deletedAt
           ? []
-          : pending.map((r) =>
-              r.kind === "user_input" ? "question" : r.kind,
-            ),
+          : pending.map((r) => (r.kind === "user_input" ? "question" : r.kind)),
       ...(!(thread.archivedAt || thread.deletedAt) && pending[0]
         ? {
             pendingRequest: {
@@ -1171,6 +1267,7 @@ export class T3Reads {
   forget(threadId: string) {
     this.held.delete(threadId);
     this.projectionHeld.delete(threadId);
+    this.forgetEpochs.set(threadId, this.forgetEpoch(threadId) + 1);
   }
 
   /**
@@ -1244,15 +1341,15 @@ export class T3Reads {
    * and a long thread has no such read (nucleus#1217).
    */
   async answeredQuestions(id: string) {
-    if (!(await this.isObserved(id)))
-      return {
-        ok: false as const,
-        reason: "T3Code thread is no longer observed",
-      };
     // A projection this read cannot trust answers nothing: the caller must see
     // an unknown read, not an operator who answered nothing.
-    let p;
+    let p: Projection;
     try {
+      if (!(await this.isObserved(id)))
+        return {
+          ok: false as const,
+          reason: "T3Code thread is no longer observed",
+        };
       p = await this.readProjection(id, "window");
     } catch (error) {
       return {

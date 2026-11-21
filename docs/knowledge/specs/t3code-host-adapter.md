@@ -124,8 +124,12 @@ Connection order:
    strictly decode the first listed thread when one exists. A missing method,
    missing field or changed field type refuses connection with its exact name.
    If no thread is readable, register online with thread shape pending first
-   thread; the first thread Nucleus creates or observes is strictly decoded
-   before use. A mismatch refuses by its exact name and takes the host offline.
+   thread; the first thread Nucleus creates or the first eligible live (non-archived,
+   non-deleted, observed) row a shell or inventory read sees is strictly decoded
+   via one single-flight bounded direct projection probe without re-entering shell
+   or inventory (leaving terminal and archived rows unread and sharing the pass's
+   observation snapshot). A mismatch refuses by its exact name, takes the host
+   offline and leaves independent hosts unaffected.
    A missing protocol version is also a refusal.
    The public environment descriptor is only a preflight hint.
 4. Only after those probes, claim `t3code:<environmentId>` in the existing host
