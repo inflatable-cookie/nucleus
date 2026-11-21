@@ -46,7 +46,7 @@ type Placement='attached'|'elsewhere';
 function ready(f:Fixture){
   f.store.setMeta('paused',false);
   f.store.setMeta('hostId','host');
-  f.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
+  f.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:"default",scopes:['general']}]);
 }
 /**
  * The real review-entry inspection over a mocked daemon. The single `writer`
@@ -497,7 +497,7 @@ test('the service timer alone carries a Queue-held brief handover across a resta
     await runtime.started;
     await seedReviewerProfile(runtime,f);
     runtime.store.setMeta('paused',false);
-    runtime.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
+    runtime.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:"default",scopes:['general']}]);
     const brief=briefInput(f,runtime.store);
     const accepted=await runtime.engine.startOperation({key:'service-brief-handover',kind:'review_entry',payload:{type:'review_entry',input:brief.input}});
     assert.ok('accepted' in accepted,`acceptance refused: ${JSON.stringify(accepted)}`);
@@ -612,7 +612,7 @@ for(const placement of ['elsewhere','attached'] as const){
       await runtime.started;
       await seedReviewerProfile(runtime,f);
       runtime.store.setMeta('paused',false);
-      runtime.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
+      runtime.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:"default",scopes:['general']}]);
       const accepted=await runtime.engine.startOperation({key:`service-timer-${placement}`,kind:'review_entry',payload:{type:'review_entry',input:f.reviewInput}});
       assert.ok('accepted' in accepted,`acceptance refused: ${JSON.stringify(accepted)}`);
       if(!('accepted' in accepted))return;
@@ -642,7 +642,7 @@ test('a service restart keeps the handover and its own timer starts the reviewer
     await runtime.started;
     await seedReviewerProfile(runtime,f);
     runtime.store.setMeta('paused',false);
-    runtime.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
+    runtime.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:"default",scopes:['general']}]);
     const accepted=await runtime.engine.startOperation({key:'service-restart-handover',kind:'review_entry',payload:{type:'review_entry',input:f.reviewInput}});
     assert.ok('accepted' in accepted);
     if(!('accepted' in accepted))return;
@@ -794,8 +794,8 @@ test('changes requested revise the task workspace and the next review reuses the
   const f=ownerRevisionFixture();const w=writer(f,'elsewhere');const engine=mount(f,w.overrides);
   const worker={...f.reviewer,id:'worker',name:'Worker',model:'gpt-6.1-terra'} as const;
   engine.profiles=[f.reviewer,worker as unknown as typeof f.reviewer];
-  f.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']},
-    {profileId:'worker',enabled:true,group:'workers',roles:['worker'],weight:1,scopes:['general']}]);
+  f.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:"default",scopes:['general']},
+    {profileId:'worker',enabled:true,group:'workers',roles:['worker'],weight:"default",scopes:['general']}]);
   try{
     const {settled}=await accept(engine,f,'revision-cycle');
     const task=f.store.task(settled.taskId!);

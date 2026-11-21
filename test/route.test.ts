@@ -68,7 +68,7 @@ const profile = (
     enabled: true,
     group: group ?? id,
     roles,
-    weight: 1,
+    weight: "default",
     scopes: ["general"] as const,
     ...rating,
   },
@@ -85,11 +85,11 @@ function fixture() {
   // Spec 053: the rating, not the role switch, keeps coord to coordinator demand.
   const coord = profile("coord", "coord-model", ["coordinator"], undefined, {
     capability: "mechanical",
-    cost: "very_low",
+    
   });
   // Spec 052: a frontier profile automatic selection never lands on below Maximum (task 577 routes to it).
   const nova = profile("nova", "nova-model", ["worker"], undefined, {
-    cost: "very_high",
+    
     capability: "frontier",
   });
   const all = [author, sol, luna, authorrev, coord, nova];

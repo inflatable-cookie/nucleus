@@ -753,7 +753,7 @@ test("nucleus#998: Subscriptions ending in group rows is the last section, with 
                 {
                   profileId: "imported",
                   group: "anthropic",
-                  weight: 3,
+                  weight: "most",
                   enabled: true,
                   scopes: ["general"],
                   roles: ["worker"],
@@ -1301,7 +1301,7 @@ test("the dispatch row and sliders wait for the board: absent while it loads or 
         {
           profileId: "imported",
           group: "anthropic",
-          weight: 3,
+          weight: "most",
           enabled: true,
           scopes: ["general"],
           roles: ["worker"],
@@ -1460,7 +1460,7 @@ test("a Profiles card shows Name, Subscription, Weight, Provider and Model at on
               {
                 profileId: "imported",
                 group: "anthropic",
-                weight: 3,
+                weight: "most",
                 enabled: true,
                 scopes: ["general"],
                 roles: ["worker"],

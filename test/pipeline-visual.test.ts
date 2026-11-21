@@ -2377,7 +2377,7 @@ test("030-7 bundled dark-theme task detail offers routing before dispatch with e
           enabled: true,
           group: "strong",
           roles: ["worker"],
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
           capability: "frontier",
         },

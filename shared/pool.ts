@@ -1,7 +1,7 @@
 import type {CapabilityLevel,DemandLevel,PoolEntry,ProfileCapability,RoutePolicy,UsageLevel,UsageView} from './contracts';
 import {profileCapabilityLevels} from './contracts';
 export type ProfileSettings=PoolEntry;
-/** Ordinal rank of the five cost and task-complexity levels, lowest first (a profile's capability is a bracket). */
+/** Ordinal rank of the five task-complexity levels, lowest first (a profile's capability is a bracket). */
 export const CAPABILITY_LEVELS: readonly CapabilityLevel[] = ["very_low", "low", "medium", "high", "very_high"];
 export function capabilityRank(value:CapabilityLevel):number{return CAPABILITY_LEVELS.indexOf(value);}
 /** A profile's four capability brackets, lowest first (Tom, 2026-11-19). */
@@ -14,8 +14,8 @@ export const BRACKET_LABELS: Record<ProfileCapability, string> = {
 export const DEMAND_LEVELS: readonly DemandLevel[] = profileCapabilityLevels;
 export function demandRank(value:DemandLevel):number{return DEMAND_LEVELS.indexOf(value);}
 /**
- * Spec 052: each level's permission rule is about a profile's bracket, not its
- * cost. "The top two" are Heavyweight and Frontier (Tom, 2026-11-19).
+ * Spec 052: each level's permission rule is about a profile's bracket, not a
+ * rating elsewhere. "The top two" are Heavyweight and Frontier (Tom, 2026-11-19).
  */
 export const TOP_TIERS: readonly ProfileCapability[] = ["heavyweight", "frontier"];
 
@@ -46,10 +46,10 @@ export const USAGE_LABELS: Record<UsageLevel, { label: string; detail: string; s
  * the task may climb to and `climbTier` the bracket a recorded climb earned.
  * At Low and Normal, Frontier always needs sign-off and Heavyweight does unless
  * the task starts there (a very-high task, which may climb to Frontier) or a
- * recorded climb reached it. Cost is only the rotation lean (Spec 053) and
- * never a permission rule.
+ * recorded climb reached it. Rotation weight (Spec 053) is never a
+ * permission rule.
  */
-export function requestOnly(entry: Pick<PoolEntry, "cost" | "capability">, usage: UsageLevel = "normal",
+export function requestOnly(entry: Pick<PoolEntry, "capability">, usage: UsageLevel = "normal",
   requested?: DemandLevel | null, climbTier?: DemandLevel | null): boolean {
   const tier = entry.capability;
   if (!tier) return false;
@@ -80,7 +80,7 @@ export const requestSignedOff = (request: { signoff?: { status: string } | null 
  * profile at High needs the request with a reason
  * and the operator's board sign-off (Tom, 2026-10-21; 2026-11-17).
  */
-export const requestReaches = (entry: Pick<PoolEntry, "cost" | "capability" | "profileId">, usage: UsageLevel,
+export const requestReaches = (entry: Pick<PoolEntry, "capability" | "profileId">, usage: UsageLevel,
   request: { profileId: string; reason: string; signoff?: { status: string } | null } | null | undefined, requested?: DemandLevel | null,
   climbTier?: DemandLevel | null) =>
   !requestOnly(entry, usage, requested, climbTier) || (request?.profileId === entry.profileId && Boolean(request.reason.trim()) && requestSignedOff(request));
@@ -90,7 +90,7 @@ export const requestReaches = (entry: Pick<PoolEntry, "cost" | "capability" | "p
  * profile, waits for one, or sets its thinking (automatic selection applies).
  */
 export function honouredRequest<T extends { profileId: string; reason: string; signoff?: { status: string } | null }>(
-  request: T | null | undefined, pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[], usage: UsageLevel,
+  request: T | null | undefined, pool: readonly Pick<PoolEntry, "capability" | "profileId">[], usage: UsageLevel,
   requested?: DemandLevel | null, climbTier?: DemandLevel | null): T | null {
   if (!request) return null;
   const entry = pool.find(item => item.profileId === request.profileId);
@@ -101,7 +101,7 @@ export function honouredRequest<T extends { profileId: string; reason: string; s
  * the task's own requested tier (Maximum is the exception, where workers and
  * reviewers use the top two tiers), and not held by the level's permission rule.
  */
-export function automaticReachable(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel,
+export function automaticReachable(entry: Pick<PoolEntry, "capability">, level: UsageLevel,
   requested?: DemandLevel | null, climbTier?: DemandLevel | null,
   role: "worker" | "reviewer" | "coordinator" = "worker"): boolean {
   const tier = entry.capability;
@@ -117,12 +117,12 @@ export function automaticReachable(entry: Pick<PoolEntry, "cost" | "capability">
  * selection of one pool entry. A read of the routing bounds and `requestOnly`,
  * never a gate; other gates (enabled, group, catalog) are reported beside it.
  */
-export function automaticSelection(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel, requested?: DemandLevel | null,
+export function automaticSelection(entry: Pick<PoolEntry, "capability">, level: UsageLevel, requested?: DemandLevel | null,
   climbTier?: DemandLevel | null, role: "worker" | "reviewer" | "coordinator" = "worker"): NonNullable<RoutePolicy["automatic"]> {
   return automaticReachable(entry, level, requested, climbTier, role) ? "allowed" : "request_tier";
 }
 /** One plain sentence for `automaticSelection`; `time` formats the optional end time (the client passes local time). */
-export function describeAutomaticSelection(entry: Pick<PoolEntry, "cost" | "capability">, usage: UsageView, time: (iso: string) => string = iso => iso,
+export function describeAutomaticSelection(entry: Pick<PoolEntry, "capability">, usage: UsageView, time: (iso: string) => string = iso => iso,
   requested?: DemandLevel | null, climbTier?: DemandLevel | null, role: "worker" | "reviewer" | "coordinator" = "worker"): string {
   const label = USAGE_LABELS[usage.level].label;
   const ends = !usage.expired && usage.until && usage.level !== "normal" ? ` until ${time(usage.until)}` : "";
@@ -145,7 +145,7 @@ export function describeAutomaticSelection(entry: Pick<PoolEntry, "cost" | "capa
  * wrap, so the tag stays a few words (compact routing dialogs at 360 pt); the
  * chosen profile's wrapping sentence carries the level and end time.
  */
-export function automaticSelectionTag(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel, requested?: DemandLevel | null,
+export function automaticSelectionTag(entry: Pick<PoolEntry, "capability">, level: UsageLevel, requested?: DemandLevel | null,
   climbTier?: DemandLevel | null, role: "worker" | "reviewer" | "coordinator" = "worker"): string {
   return automaticSelection(entry, level, requested, climbTier, role) === "request_tier" ? " · request only" : "";
 }
@@ -242,7 +242,7 @@ export function workerThinking(task: { thinkingOptionId?: string; profileRequest
  * an unsigned request's level never narrows automatic or replacement selection.
  */
 export function honouredWorkerThinking(task: { thinkingOptionId?: string; profileRequests?: { worker?: ({ profileId: string; reason: string; thinkingOptionId?: string; signoff?: { status: string } | null }) | null } | null },
-  pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[], usage: UsageLevel, requested?: DemandLevel | null,
+  pool: readonly Pick<PoolEntry, "capability" | "profileId">[], usage: UsageLevel, requested?: DemandLevel | null,
   climbTier?: DemandLevel | null): string {
   return honouredRequest(task.profileRequests?.worker ?? null, pool, usage, requested, climbTier) ? workerThinking(task) : task.thinkingOptionId || "";
 }
@@ -268,7 +268,7 @@ export function honouredWorkerThinking(task: { thinkingOptionId?: string; profil
 export function supersedingRouteProfile(
   request: { profileId: string; reason: string; required?: boolean; signoff?: { status: string } | null } | null | undefined,
   recordedProfileId: string | null | undefined,
-  pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[],
+  pool: readonly Pick<PoolEntry, "capability" | "profileId">[],
   usage: UsageLevel,
   requested?: DemandLevel | null,
   climbTier?: DemandLevel | null,

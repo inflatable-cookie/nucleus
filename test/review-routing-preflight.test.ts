@@ -14,7 +14,7 @@ import type { Adapter } from '../core/host';
 
 
 const entry = (profileId: string, roles: PoolEntry['roles'], over: Partial<PoolEntry> = {}) =>
-  poolSchema.parse({ profileId, enabled: true, group: profileId, roles, weight: 1, scopes: ['general'], ...over });
+  poolSchema.parse({ profileId, enabled: true, group: profileId, roles, weight: "default", scopes: ['general'], ...over });
 const luna = profile('luna', 'gpt-6-luna');
 const lunaReviewer = profile('luna-reviewer', 'gpt-6-luna');
 const sol = profile('sol', 'gpt-6.1-sol');
@@ -237,7 +237,7 @@ test('an unrequested frontier reviewer is no independent route at preflight, as 
   // Only Luna and an unflagged frontier Sol can review: Sol is by-request by rule.
   const frontierOnly = [
     entry('luna', ['worker', 'reviewer']),
-    entry('sol', ['reviewer'], { cost: 'very_high', capability: 'frontier' }),
+    entry('sol', ['reviewer'], { capability: 'frontier' }),
     entry('muse', ['worker'], { enabled: false }),
     entry('opaque', ['worker']),
   ];

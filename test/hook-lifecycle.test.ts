@@ -99,7 +99,7 @@ async function repoWithPolicy(
       profileId: profile.id,
       enabled: true,
       group: "test",
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

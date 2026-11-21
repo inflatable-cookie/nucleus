@@ -30,7 +30,7 @@ const pr = (number: number): BranchPr => ({ number, url: `https://github.com/exa
 function fixture(graceMs = GRACE, withNotices = false) {
   const dir = mkdtempSync(join(tmpdir(), 'ns-live-evidence-')), store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('paused', false);
-  store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] }]);
   const states = new Map<string, AgentObservation>();
   const calls = { lookups: 0, observes: 0, finds: 0 };
   const notifications: { id: string; text: string }[] = [];
@@ -286,7 +286,7 @@ test('capability absent: the unavailability is recorded once and Queue decides f
   const dir = mkdtempSync(join(tmpdir(), 'ns-live-evidence-')), store = new Store(join(dir, 'queue.sqlite'));
   try {
     store.setMeta('paused', false);
-    store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] }]);
+    store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] }]);
     const states = new Map<string, AgentObservation>();
     const adapter: Adapter = fakeAdapter({
       profiles: async () => [worker], validate: async t => t.planningCommit ?? base,

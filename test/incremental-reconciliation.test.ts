@@ -542,7 +542,7 @@ test("degraded admission defers one workspace intent and resumes it after bounde
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -1504,7 +1504,7 @@ test(
         enabled: true,
         group: "test",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -1585,7 +1585,7 @@ test(
         enabled: true,
         group: "test",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -1742,7 +1742,7 @@ test(
         enabled: true,
         group: "test",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -2284,7 +2284,7 @@ test("a released reported worker wakes a waiting task in another project without
       enabled: true,
       group: "test",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

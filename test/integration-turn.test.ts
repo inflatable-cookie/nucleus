@@ -59,7 +59,7 @@ function fixture(realSource = false, graceMs = 0) {
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -67,7 +67,7 @@ function fixture(realSource = false, graceMs = 0) {
       enabled: true,
       group: "review",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -75,7 +75,7 @@ function fixture(realSource = false, graceMs = 0) {
       enabled: true,
       group: "coordinate",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

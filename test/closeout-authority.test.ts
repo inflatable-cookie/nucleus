@@ -214,7 +214,7 @@ async function authorityFixture(t: any, options: FixtureOptions = {}) {
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -222,7 +222,7 @@ async function authorityFixture(t: any, options: FixtureOptions = {}) {
       enabled: true,
       group: "coordinate",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

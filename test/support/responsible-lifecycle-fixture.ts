@@ -87,7 +87,7 @@ export function fixture(
       group: "author",
       roles: ["worker"],
       scopes: ["general"],
-      weight: 1,
+      weight: "default",
       capability: "mechanical",
     },
     {
@@ -96,7 +96,7 @@ export function fixture(
       group: "higher",
       roles: ["worker"],
       scopes: ["general"],
-      weight: 1,
+      weight: "default",
       capability: "worker",
     },
     {
@@ -105,9 +105,9 @@ export function fixture(
       group: "review",
       roles: ["reviewer"],
       scopes: ["general"],
-      weight: 1,
+      weight: "default",
       capability: "worker",
-      cost: "low",
+      
     },
     {
       profileId: coordinator.id,
@@ -115,9 +115,9 @@ export function fixture(
       group: "coordinate",
       roles: ["coordinator"],
       scopes: ["general"],
-      weight: 1,
+      weight: "default",
       capability: "mechanical",
-      cost: "very_low",
+      
     },
   ];
   store.setMeta("pool", pool);

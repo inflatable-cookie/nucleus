@@ -61,7 +61,7 @@ function fixture(graceMs = 0) {
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -69,7 +69,7 @@ function fixture(graceMs = 0) {
       enabled: true,
       group: "review",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -77,7 +77,7 @@ function fixture(graceMs = 0) {
       enabled: true,
       group: "coordinate",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -1656,7 +1656,7 @@ function addProfile(
       enabled: true,
       group,
       roles: [role],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

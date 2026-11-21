@@ -1010,8 +1010,9 @@ function StepperLabel({
  * invisible 44-point target laid over the track, so the line never breaks; a screen reader adjusts it.
  * `value` is a stop or null (nothing chosen yet, so no stop is marked). Labels sit centred under their
  * stops, the first and last held inside the column; `captions={false}` drops them when the owner shows
- * the chosen value beside the field's label instead (Cost and Capability, Tom 2026-11-08). An adjust
- * from unset starts at `unsetStop`, else the middle stop.
+ * the chosen value beside the field's label instead (Weight and Capability, Tom 2026-11-08). `markStop`
+ * keeps just that stop's label visible when the other captions are dropped (Weight's Default centre). An
+ * adjust from unset starts at `unsetStop`, else the middle stop.
  */
 export function StopSlider<T extends string>({
   c,
@@ -1021,6 +1022,7 @@ export function StopSlider<T extends string>({
   value,
   labelFor,
   captions = true,
+  markStop,
   disabled = false,
   unsetStop,
   onChange,
@@ -1032,6 +1034,8 @@ export function StopSlider<T extends string>({
   value: T | null;
   labelFor: (stop: T) => string;
   captions?: boolean;
+  /** The one stop whose label stays visible when `captions` is false. */
+  markStop?: T;
   disabled?: boolean;
   unsetStop?: T;
   onChange: (stop: T) => void;
@@ -1139,9 +1143,10 @@ export function StopSlider<T extends string>({
           );
         })}
       </View>
-      {captions && (
+      {(captions || markStop !== undefined) && (
         <View style={{ height: caption.lineHeight, marginHorizontal: edge }}>
           {stops.map((stop, i) => {
+            if (!captions && stop !== markStop) return null;
             const style = {
               ...caption,
               color: stop === value ? r.foreground : r.muted,

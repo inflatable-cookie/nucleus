@@ -134,10 +134,10 @@ function fixture(withBackup = true) {
   store.setMeta('paused', false);
   store.putRepository({ origin: null, path: '/repo' }, 'agent', 'fixture keeps agent closeout');
   store.setMeta('pool', [
-    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
-    ...(withBackup ? [{ profileId: backup.id, enabled: true, group: 'review-backup', roles: ['reviewer'], weight: 1, scopes: ['general'] }] : []),
-    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: 1, scopes: ['general'] },
+    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] },
+    ...(withBackup ? [{ profileId: backup.id, enabled: true, group: 'review-backup', roles: ['reviewer'], weight: "default", scopes: ['general'] }] : []),
+    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: "default", scopes: ['general'] },
   ]);
   const submitted = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Task', repoPath: '/repo', planningCommit: base, handoffPath: 'handoff.md', originAgentId: 'origin' }), 'host', 'handoff', base);
   const task = store.update(submitted.id, {

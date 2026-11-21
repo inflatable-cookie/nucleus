@@ -32,9 +32,9 @@ function fixture() {
   store.setMeta('paused', false);
   const worker = profile('worker', 'test/worker'), reviewer = profile('reviewer', 'test/reviewer'), coord = profile('coord', 'test/coord');
   store.setMeta('pool', [
-    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
-    { profileId: coord.id, enabled: true, group: 'coord', roles: ['coordinator'], weight: 1, scopes: ['general'] },
+    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
+    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] },
+    { profileId: coord.id, enabled: true, group: 'coord', roles: ['coordinator'], weight: "default", scopes: ['general'] },
   ]);
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Stale state never fences current work', repoPath: '/repo',

@@ -82,7 +82,7 @@ for (const agent of [false, true]) {
         profileId: worker.id,
         enabled: true,
         group: "fixture",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);

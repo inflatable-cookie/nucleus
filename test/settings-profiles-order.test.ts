@@ -61,7 +61,7 @@ function storedPoolEntry(
     group: "codex",
     roles: ["worker"],
     ...(capability !== undefined ? { capability } : {}),
-    weight: 1,
+    weight: "default",
     scopes: ["general"],
   });
 }

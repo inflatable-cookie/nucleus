@@ -18,9 +18,9 @@ export const scopeSchema = z.enum(["general", "mechanical", "complex"]);
 export type Scope = z.infer<typeof scopeSchema>;
 
 /**
- * The five-level ordinal scale a task's `complexity` and a pool entry's `cost`
- * use (a profile's capability is the four brackets below). Unset stays neutral: selection never infers a rating from a model
- * name, cost or notes (Tom 2026-10-12).
+ * The five-level ordinal scale a task's `complexity` uses (a profile's
+ * capability is the four brackets below). Unset stays neutral: selection never
+ * infers a rating from a model name or notes (Tom 2026-10-12).
  */
 export const capabilityLevels = ["very_low", "low", "medium", "high", "very_high"] as const;
 
@@ -29,13 +29,40 @@ export const capabilityLevelSchema = z.enum(capabilityLevels);
 export type CapabilityLevel = z.infer<typeof capabilityLevelSchema>;
 
 /**
- * A pool entry's cost is the same five-level ordinal scale, listed most
- * expensive first because the settings table reads it that way. Deriving it from
- * `capabilityLevels` is what keeps the two scales from drifting.
+ * A pool entry's rotation weight (Spec 053, Tom 2026-11-21): five named stops
+ * with Default at the centre. Each stop moves the profile's relative rotation
+ * share by one fixed additive step from Default (80%, 90%, 100%, 110%, 120%).
+ * A share only orders rotation among profiles already eligible; it never
+ * admits or excludes one, and it is not a percentage of all work. The retired
+ * integer weight and the retired Cost rating read through `poolRecordFromLegacy`.
  */
-const costLevels = [...capabilityLevels].reverse() as unknown as typeof capabilityLevels;
+export const profileWeightLevels = ["fewest", "fewer", "default", "more", "most"] as const;
 
-export const costSchema = z.enum(costLevels);
+export const profileWeightSchema = z.enum(profileWeightLevels);
+
+export type ProfileWeight = z.infer<typeof profileWeightSchema>;
+
+export const DEFAULT_PROFILE_WEIGHT: ProfileWeight = "default";
+
+/** One notch moves the relative share by this much of Default's share. */
+export const WEIGHT_SHARE_STEP = 0.1;
+
+/** The relative rotation share of a weight stop: 0.8, 0.9, 1, 1.1, 1.2. */
+export const weightShare = (weight: ProfileWeight): number => {
+  const centre = Math.floor(profileWeightLevels.length / 2);
+  // Round away float noise so equal stops compare equal and diagnostics read cleanly.
+  return Math.round((1 + (profileWeightLevels.indexOf(weight) - centre) * WEIGHT_SHARE_STEP) * 100) / 100;
+};
+
+/**
+ * The retired integer weight read as a stop (Tom, 2026-11-21): the old default 1
+ * is Default, 2 is the first higher stop, and 3-10 the highest. Any other value
+ * is returned unchanged so validation still refuses it.
+ */
+export const legacyWeightStop = (value: unknown): unknown =>
+  typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 10
+    ? value === 1 ? "default" : value === 2 ? "more" : "most"
+    : value;
 
 /**
  * A pool entry's capability bracket (Spec 052, Tom 2026-11-19): four brackets

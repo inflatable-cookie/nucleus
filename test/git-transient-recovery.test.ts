@@ -58,30 +58,30 @@ function fixture(seed: "queued" | "review" | "force" = "force") {
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: "worker",
-      cost: "low",
+      
     },
     {
       profileId: reviewer.id,
       enabled: true,
       group: "review",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: "worker",
-      cost: "medium",
+      
     },
     {
       profileId: coordinator.id,
       enabled: true,
       group: "coordinate",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: "mechanical",
-      cost: "very_low",
+      
     },
   ]);
   const submitted = store.insert(

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { PoolEntry, Profile } from "../../shared/contracts";
-import { availabilitySchema,poolSchema,routingGrantSchema,usageSettingSchema,type RoutingGrant,type RoutingPolicy,type Task,type UsageLevel,type UsageSetting,type UsageView } from "../../shared/contracts";
+import { availabilitySchema,poolRecordFromLegacy,poolSchema,routingGrantSchema,usageSettingSchema,type RoutingGrant,type RoutingPolicy,type Task,type UsageLevel,type UsageSetting,type UsageView } from "../../shared/contracts";
 import { nucleusProfileSchema,profileImportRecordSchema,type NucleusProfile,type ProfileImportRecord } from "../../shared/profiles";
 import { taskRoutingPolicy } from "../dispatch/routing";
 import { now,StoreCore } from "./store-core";
@@ -22,7 +22,7 @@ export class StoreConfig {
   private advanceRevision() { return this.core.advanceRevision(); }
   private availability = (...args: Parameters<Ports["availability"]>) => this.ports.availability(...args);
 
-  pool(): PoolEntry[] { return (this.getMeta<unknown[]>("pool") ?? []).map(p => poolSchema.parse(p)); }
+  pool(): PoolEntry[] { return (this.getMeta<unknown[]>("pool") ?? []).map(p => poolSchema.parse(poolRecordFromLegacy(p))); }
 
   /**
    * Nucleus-owned profile records (Tom, 2026-11-07). The host's own profile list

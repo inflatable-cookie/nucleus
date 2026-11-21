@@ -186,7 +186,7 @@ function fixture(
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -194,7 +194,7 @@ function fixture(
       enabled: true,
       group: "review",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -1077,7 +1077,7 @@ test("every available next offer applies on queued and post-move pre-PR task sha
         enabled: true,
         group: "author",
         roles: ["worker"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
       {
@@ -1085,7 +1085,7 @@ test("every available next offer applies on queued and post-move pre-PR task sha
         enabled: true,
         group: "review",
         roles: ["reviewer"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
       {
@@ -1093,7 +1093,7 @@ test("every available next offer applies on queued and post-move pre-PR task sha
         enabled: true,
         group: "review",
         roles: ["coordinator"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
@@ -2156,7 +2156,7 @@ test("an owner-routed reviewer on the author model can continue its checkpoint",
         enabled: true,
         group: "review",
         roles: ["reviewer"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);

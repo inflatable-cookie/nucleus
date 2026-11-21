@@ -89,17 +89,17 @@ const POOL = [
     enabled: true,
     group: "fixture-worker",
     roles: ["worker"],
-    weight: 2,
+    weight: "more",
     scopes: ["general"],
     capability: "worker",
-    cost: "medium",
+    
   },
   {
     profileId: "fixture-reviewer",
     enabled: true,
     group: "fixture-reviewer",
     roles: ["reviewer"],
-    weight: 1,
+    weight: "default",
     scopes: ["general"],
   },
 ];

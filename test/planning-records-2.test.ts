@@ -402,7 +402,7 @@ test("026-5 a linked lane document is pinned at dispatch into worker and reviewe
         profileId: profile.id,
         enabled: true,
         group: "test",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);

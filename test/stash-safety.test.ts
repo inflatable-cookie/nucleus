@@ -96,7 +96,7 @@ test('the worker launch records the shared stash list for the run', async () => 
     readStash: async directory => { reads.push(directory); return entries; },
   });
   const engine = new Engine(store, adapter, 0); engine.profiles = [profile];
-  store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: "default", scopes: ['general'] }]);
   store.setMeta('paused', false);
   try {
     const task = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Task', repoPath: '/project', planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'origin' }), 'host', 'handoff', 'a'.repeat(40));

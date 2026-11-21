@@ -3750,7 +3750,7 @@ weighted(1)(
           enabled: true,
           group: "coordinate",
           roles: ["coordinator"],
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
         },
       ]);
@@ -3825,7 +3825,7 @@ weighted(1)(
           enabled: true,
           group: "coordinate",
           roles: ["coordinator"],
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
         },
       ]);

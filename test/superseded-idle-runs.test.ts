@@ -43,7 +43,7 @@ function fixture() {
   const all = [worker, reviewer, coord];
   store.setMeta('pool', all.map(item => ({ profileId: item.id, enabled: true, group: item.id,
     roles: [item.id === 'reviewer' ? 'reviewer' : item.id === 'coord' ? 'coordinator' : 'worker'],
-    weight: 1, scopes: ['general'] })));
+    weight: "default", scopes: ['general'] })));
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Superseded idle', repoPath: '/repo', planningCommit: base,
     handoffPath: 'handoff.md', originAgentId: 'origin',

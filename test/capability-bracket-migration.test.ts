@@ -27,7 +27,7 @@ const legacyPool = [
   { profileId: 'synthetic-opus', capability: 'frontier' },
   { profileId: 'synthetic-unrated' },
   { profileId: 'synthetic-odd', capability: 'ultra' },
-].map(entry => ({ enabled: true, group: entry.profileId, weight: 1, cost: 'medium', ...entry }));
+].map(entry => ({ enabled: true, group: entry.profileId, weight: "default", ...entry }));
 
 const EXPECTED: Record<string, string | undefined> = {
   'synthetic-luna': 'mechanical', 'synthetic-muse': 'mechanical',
@@ -87,7 +87,7 @@ test('1385: an unknown value written after the first run is listed on the next o
     const first = new Store(path);
     const clean = first.getMeta<CapabilityBracketMigration>(CAPABILITY_BRACKET_MIGRATION_KEY)!;
     assert.deepEqual(clean.unknown, [], 'a fresh store records an empty first run');
-    first.setMeta('pool', [{ profileId: 'synthetic-odd', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'ultra' }]);
+    first.setMeta('pool', [{ profileId: 'synthetic-odd', enabled: true, group: 'g', weight: "default", scopes: ['general'], capability: 'ultra' }]);
     first.close();
     const second = new Store(path);
     let record: CapabilityBracketMigration;
@@ -110,16 +110,16 @@ test('1385: a later scan keeps the dropped offsets and earlier conversions in th
     const seed = new Store(path);
     seed.deleteMeta(CAPABILITY_BRACKET_MIGRATION_KEY);
     seed.setMeta('demandRoleOffsets', { worker: 0, reviewer: 0, coordinator: -2 });
-    seed.setMeta('pool', [{ profileId: 'synthetic-haiku', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'medium' }]);
+    seed.setMeta('pool', [{ profileId: 'synthetic-haiku', enabled: true, group: 'g', weight: "default", scopes: ['general'], capability: 'medium' }]);
     seed.close();
     const first = new Store(path);
     first.close();
     // A stale writer adds an unknown value, then another five-point rating.
     const stale = new Store(path);
-    stale.setMeta('pool', [...stale.getMeta<unknown[]>('pool')!, { profileId: 'synthetic-odd', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'ultra' }]);
+    stale.setMeta('pool', [...stale.getMeta<unknown[]>('pool')!, { profileId: 'synthetic-odd', enabled: true, group: 'g', weight: "default", scopes: ['general'], capability: 'ultra' }]);
     stale.close();
     const second = new Store(path);
-    second.setMeta('pool', [...second.getMeta<unknown[]>('pool')!, { profileId: 'synthetic-sol', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'very_high' }]);
+    second.setMeta('pool', [...second.getMeta<unknown[]>('pool')!, { profileId: 'synthetic-sol', enabled: true, group: 'g', weight: "default", scopes: ['general'], capability: 'very_high' }]);
     second.close();
     const third = new Store(path);
     try {
@@ -134,6 +134,6 @@ test('1385: a later scan keeps the dropped offsets and earlier conversions in th
 test('1385: a stale writer\'s five-point rating reads as its bracket at the wire boundary', () => {
   for (const [from, to] of [['very_low', 'mechanical'], ['low', 'mechanical'], ['medium', 'worker'], ['high', 'worker'], ['very_high', 'heavyweight'], ['frontier', 'frontier']])
     assert.equal(profileCapabilitySchema.parse(from), to, from);
-  const entry = poolSchema.parse({ profileId: 'p', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'high' });
+  const entry = poolSchema.parse({ profileId: 'p', enabled: true, group: 'g', weight: "default", scopes: ['general'], capability: 'high' });
   assert.equal(entry.capability, 'worker');
 });

@@ -162,7 +162,7 @@ function fixture() {
       profileId: profile.id,
       enabled: true,
       group: "test",
-      weight: 1,
+      weight: "default" as const,
       scopes: ["general"],
     },
   ]);
@@ -3275,7 +3275,7 @@ test("an errored worker is replaced only after its same-thread continuation is r
         profileId: profile.id,
         enabled: true,
         group: "test",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -3283,7 +3283,7 @@ test("an errored worker is replaced only after its same-thread continuation is r
         profileId: backup.id,
         enabled: true,
         group: "backup",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -3533,7 +3533,7 @@ test("group counts pace under the per-model share order; unavailability and stri
       profileId: p.id,
       enabled: true,
       group: i === 2 ? "b" : "a",
-      weight: 1,
+      weight: "default" as const,
       roles: ["worker" as const],
       scopes: ["general" as const],
     }));
@@ -3572,7 +3572,7 @@ test("recent assignment window drives rotation while lifetime use only breaks ti
       profileId: p.id,
       enabled: true,
       group: p.id,
-      weight: 1,
+      weight: "default" as const,
       roles: ["worker" as const],
       scopes: ["general" as const],
     }));
@@ -3613,7 +3613,7 @@ test("recent assignment window drives rotation while lifetime use only breaks ti
     await f.close();
   }
 });
-test("a weight-2 model takes twice the assignments of a weight-1 model across subscription groups", async () => {
+test("a More-weight model takes 110 assignments to a Default model's 100 across subscription groups", async () => {
   const f = fixture();
   try {
     const task = f.add(),
@@ -3626,7 +3626,7 @@ test("a weight-2 model takes twice the assignments of a weight-1 model across su
         profileId: "heavy",
         enabled: true,
         group: "sub-a",
-        weight: 2,
+        weight: "more" as const,
         roles: ["worker" as const],
         scopes: ["general" as const],
       },
@@ -3634,13 +3634,13 @@ test("a weight-2 model takes twice the assignments of a weight-1 model across su
         profileId: "light",
         enabled: true,
         group: "sub-b",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker" as const],
         scopes: ["general" as const],
       },
     ];
     const picked: string[] = [];
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 21; i++) {
       const choice = chooseProfile(
         task,
         profiles,
@@ -3655,8 +3655,8 @@ test("a weight-2 model takes twice the assignments of a weight-1 model across su
         f.store.chargeAssignment(choice.entry.group, choice.profile.id),
       );
     }
-    assert.equal(picked.filter((p) => p === "heavy").length, 16);
-    assert.equal(picked.filter((p) => p === "light").length, 8);
+    assert.equal(picked.filter((p) => p === "heavy").length, 11);
+    assert.equal(picked.filter((p) => p === "light").length, 10);
     assert.equal(picked[0], "heavy");
     assert.equal(picked[1], "light");
   } finally {
@@ -3676,7 +3676,7 @@ test("a group counter never outranks a per-model share and an unavailable group 
         profileId: "weighted",
         enabled: true,
         group: "sub-a",
-        weight: 2,
+        weight: "more" as const,
         roles: ["worker" as const],
         scopes: ["general" as const],
       },
@@ -3684,7 +3684,7 @@ test("a group counter never outranks a per-model share and an unavailable group 
         profileId: "other",
         enabled: true,
         group: "sub-b",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker" as const],
         scopes: ["general" as const],
       },
@@ -3900,7 +3900,7 @@ test("exhausted worker is replaced once in the same workspace and stale callback
         profileId: profile.id,
         enabled: true,
         group: "first",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -3908,7 +3908,7 @@ test("exhausted worker is replaced once in the same workspace and stale callback
         profileId: second.id,
         enabled: true,
         group: "second",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -4061,7 +4061,7 @@ test("catalog provider outage waits for required worker and does not promote fal
         profileId: pi.id,
         enabled: true,
         group: "test",
-        weight: 1,
+        weight: "default" as const,
         capability: "worker",
         roles: ["worker"],
         scopes: ["general"],
@@ -4070,7 +4070,7 @@ test("catalog provider outage waits for required worker and does not promote fal
         profileId: strong.id,
         enabled: true,
         group: "strong",
-        weight: 1,
+        weight: "default" as const,
         capability: "heavyweight",
         roles: ["worker"],
         scopes: ["general"],
@@ -4161,7 +4161,7 @@ test("catalog provider outage prevents a stronger fallback", async () => {
         profileId: pi.id,
         enabled: true,
         group: "test",
-        weight: 1,
+        weight: "default" as const,
         capability: "worker",
         roles: ["worker"],
         scopes: ["general"],
@@ -4170,7 +4170,7 @@ test("catalog provider outage prevents a stronger fallback", async () => {
         profileId: strong.id,
         enabled: true,
         group: "strong",
-        weight: 1,
+        weight: "default" as const,
         capability: "heavyweight",
         roles: ["worker"],
         scopes: ["general"],
@@ -4241,7 +4241,7 @@ test("provider outage does not promote a fallback above worker demand", async ()
         profileId: profile.id,
         enabled: true,
         group: "test",
-        weight: 1,
+        weight: "default" as const,
         capability: "worker",
         roles: ["worker"],
         scopes: ["general"],
@@ -4250,7 +4250,7 @@ test("provider outage does not promote a fallback above worker demand", async ()
         profileId: strong.id,
         enabled: true,
         group: "strong",
-        weight: 1,
+        weight: "default" as const,
         capability: "heavyweight",
         roles: ["worker"],
         scopes: ["general"],
@@ -4301,7 +4301,7 @@ test("a stopped callback-free worker fails over when its subscription group is o
         profileId: profile.id,
         enabled: true,
         group: "first",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -4309,7 +4309,7 @@ test("a stopped callback-free worker fails over when its subscription group is o
         profileId: second.id,
         enabled: true,
         group: "second",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -4450,7 +4450,7 @@ test("a lost replacement creation stays owned without launching blindly", async 
         profileId: "second",
         enabled: true,
         group: "second",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -4503,7 +4503,7 @@ test("pause during continuation verification prevents replacement intent and dis
         profileId: "second",
         enabled: true,
         group: "second",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },
@@ -4546,7 +4546,7 @@ test("required preferred profile does not silently fall back after exhaustion", 
         profileId: "second",
         enabled: true,
         group: "second",
-        weight: 1,
+        weight: "default" as const,
         roles: ["worker"],
         scopes: ["general"],
       },

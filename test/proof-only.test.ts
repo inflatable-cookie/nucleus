@@ -118,7 +118,7 @@ function fixture(requiresOperatorGo = false) {
       enabled: true,
       group: "proof",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
     {
@@ -126,7 +126,7 @@ function fixture(requiresOperatorGo = false) {
       enabled: true,
       group: "review",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);

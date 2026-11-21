@@ -276,9 +276,9 @@ function eligibleDecider(f: Awaited<ReturnType<typeof askFixture>>): void {
       group: "coordinate",
       roles: ["coordinator"],
       scopes: ["general"],
-      weight: 1,
+      weight: "default",
       capability: "worker",
-      cost: "very_low",
+      
     },
   ]);
 }
@@ -840,9 +840,9 @@ test("an unanswered scope question reaches the board without a decider", async (
         group: "coordinate",
         roles: ["coordinator"],
         scopes: ["general"],
-        weight: 1,
+        weight: "default",
         capability: "worker",
-        cost: "very_low",
+        
       },
     ]);
     const adapter = f.engine.adapter as unknown as {

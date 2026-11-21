@@ -22,7 +22,42 @@ operator's two real levers, task complexity and the usage slider, don't drive
 the choice, and supervisors pin profiles to get the strength they want.
 
 
-## Cost leans, it doesn't exclude (Tom, 2026-11-04)
+## Weight is a five-stop rotation slider; Cost is retired (Tom, 2026-11-21)
+
+Tom, 2026-11-21: capability roles now decide eligibility, so the profile **Cost**
+rating is removed and the integer **Weight** becomes a five-stop slider in the
+former Cost position, beside Capability. This supersedes the cost lean below:
+the 2026-11-04 ruling (cost leans, it does not exclude) is kept only as history.
+
+- **Stops.** `weight` is the enum `fewest`, `fewer`, `default`, `more`, `most`,
+  Default at the centre and for every new profile. The control shows plain words
+  (Fewest, Fewer, Default, More, Most), marks the centre, and carries no number.
+- **Share.** One notch is one fixed additive step of 10 points of Default's
+  share: 80%, 90%, 100%, 110% and 120% (`weightShare` in
+  `shared/schema/settings/capability.ts`). A share orders rotation among profiles
+  already eligible for the run. It is never an admission criterion and never a
+  promised percentage of all work. Equal weights get equal rotation opportunity
+  whatever a profile's prior cost.
+- **One rule for selection and diagnostics.** `chooseProfile`, the selection
+  explanation (`met` rows carry `weight` and `share`) and the board's preview
+  rank by recent use over share (`rotationShare`). Capability, role fit,
+  workload, sign-off, host and subscription availability, scope, reviewer
+  independence and assignment history are unchanged. Cost-only filters in
+  non-delivery routing and transient rate-limit failover are removed, and
+  `routeCost` no longer reaches the coordinator route plan. Actual usage and
+  subscription accounting is untouched.
+- **Migration (reads only).** A stored or wire profile still carrying the old
+  integer reads at the existing boundaries (`poolRecordFromLegacy` for
+  `queue.pool` / `queue.profile`, the store's `pool()` read): 1 is Default, 2 is
+  More, 3–10 is Most. This compresses the old 1–10 range on purpose. Any other
+  integer or a non-integer still fails validation. A legacy `cost` is discarded
+  and never used for the mapping or for routing. Recorded diagnostics
+  (`routePolicySchema`, `selectionExplanationSchema`) drop `cost` and
+  `effectiveWeight`, map a numeric `weight` the same way and derive `share`.
+  Stored bytes, live settings and already assigned tasks are not rewritten; the
+  next profile write emits only the canonical form.
+
+## Cost leans, it doesn't exclude (Tom, 2026-11-04; retired 2026-11-21)
 
 Tom: "Queue should _lean_ towards a lower cost model in the capability tier, not exclude all other options based on cost!" Selecting the cheapest cost as the tier left GLM (low) alone at medium demand, so DeepSeek, Grok and Haiku (medium cost) got work only when GLM was unavailable. Cost now biases rotation among every profile that meets the demand; it never removes one.
 
@@ -77,25 +112,23 @@ Selection for a run then:
    available, which the level's permission rule allows (or a
    request signed off on the board), and which pass review independence for a
    reviewer. A
-   profile with no cost is never cost-gated ([Spec 052](052-usage-level.md));
+   profile's weight never gates it ([Spec 052](052-usage-level.md));
    the board's preview applies the same gate.
-2. Keeps every profile at the run's own bracket (the demand), whatever its
-   cost; the nearest bracket above is the bail-out when none carries it, and a
+2. Keeps every profile at the run's own bracket (the demand); the nearest bracket above is the bail-out when none carries it, and a
    shortfall takes the most capable profile at or below the bracket the task may
    climb to. A profile above that bracket is never automatic for a worker
    (Maximum's rule is Heavyweight and Frontier for workers and reviewers only).
    A reviewer and a coordinator are not capped there: they take the nearest
    permitted bracket above or the most capable permitted profile rather than
    wait ([Spec 052](052-usage-level.md)).
-3. Weights each kept profile by its **effective weight**: the configured
-   `weight` times the **cost lean**. The lean is `COST_LEAN` (2) for each cost
-   step below `very_high`: very_low ×16, low ×8, medium ×4, high ×2, very_high
-   ×1. An unrated cost counts as `medium`. Cost only shifts share; it never
-   removes a kept profile. The constant lives in `shared/demand.ts`.
+3. Gives each kept profile its **share**: the weight stop's relative share,
+   80%, 90%, 100%, 110% or 120% of Default (Tom, 2026-11-21). A share only
+   orders rotation; it never removes a kept profile. `weightShare` lives with
+   the weight enum and `rotationShare` in `shared/demand.ts`.
 4. Rotates among them over the last 50 assignments: the profile with the lowest
-   recent use over its effective weight goes first. The subscription group's
-   recent count paces without deciding; lifetime use over effective weight and
-   then the profile id break ties.
+   recent use over its share goes first. The subscription group's recent count
+   paces without deciding; lifetime use over share and then the profile id
+   break ties.
 5. If no profile meets the demand, keeps the most capable eligible profiles and
    rotates among them the same way; the board shows the shortfall
    ("demand Heavyweight, best available Worker").
@@ -142,7 +175,7 @@ capability now keeps a profile behind sign-off below Maximum.
 ## Visibility before rollout
 
 The task detail shows each role's demand and the profile the formula would
-pick now ("worker · demand Worker → Deepseek · medium cost"), as a read-only
+pick now ("worker · demand Worker → Deepseek"), as a read-only
 preview computed on the board from the pool, the catalog, the usage level and
 the task (`shared/demand.ts`), before selection switched over. A shortfall is
 shown in warning colour with the profiles a signed-off request could reach.
@@ -197,7 +230,7 @@ after the switch is live (the "operator UI before agent rollout" rule).
 
 | # | Case | Expected |
 | --- | --- | --- |
-| 1 | Complexity medium, Normal, worker | Every Worker profile rotates; medium-cost profiles get twice the share of high-cost ones and four times a very_high-cost one, none is starved; a review asking for changes never climbs past Worker |
+| 1 | Complexity medium, Normal, worker | Every Worker profile rotates by weight share, none is starved; a review asking for changes never climbs past Worker |
 | 2 | Complexity high, Normal, worker | Starts on Worker; after an applied changes-required review, climbs once to Heavyweight |
 | 2b | Same task, reviewer, Worker author | Mechanical (one bracket below); on the author's bracket at High |
 | 3 | Any complexity, coordinator | Mechanical when available, else the lowest permitted bracket with a profile |
@@ -208,8 +241,8 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | 8 | Author escalation history (rows stripped 2026-11-09, task 989) | No demand change |
 | 9 | Signed-off request | Used for that role whatever the demand |
 | 10 | Pool entry limited to one role or scope | Still selectable for every role and task scope |
-| 11 | Two profiles at equal cost and capability, weights 2 and 1 | Share follows weight (2:1) |
-| 12 | Same capability, costs medium and high, equal weight | Medium-cost share is twice the high-cost share; the high-cost one still gets work |
+| 11 | Two profiles at the same capability, weights More and Default | Share follows the stops (110:100); Most and Fewest give 120:80 |
+| 12 | Same capability, equal weight, differently rated legacy costs | Equal rotation; the legacy cost is discarded on read |
 | 13 | Unavailable subscription group in the set | Skipped; the rest of the set rotates |
 | 14 | Worker `route` (`now` or queued), `restart fresh`, or required-profile check for a profile launchable only on another online host | Evaluates every online host catalog in the task's mode; raises unavailability only when no online host can launch it, and moves the task (`basis: "worker_profile"`) to the capable host while keeping branch and PR |
 | 15 | Unbound worker on a repository with an explicit hostKind whose host is offline, reconnecting, or has no read catalog, while another online host has the profile | Stays queued with `Waiting for repository host <label>`, no workspace, profile charge or slot; a healthy project dispatches in the same pass; the same task dispatches through ordinary scheduling once the host answers |

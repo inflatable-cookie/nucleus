@@ -1905,7 +1905,7 @@ test("service transport coverage: every catalogue method answers with a validate
           enabled: true,
           group: "coverage",
           roles: ["worker"],
-          weight: 1,
+          weight: "default",
           scopes: ["general"],
         },
       ],

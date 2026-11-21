@@ -23,7 +23,7 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ns-identity-')), store = new Store(join(dir, 'queue.sqlite'));
   const worker = profile('worker');
   store.setMeta('paused', false);
-  store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] }]);
   const creates: { taskId: string; runId: string; token: string; requestId: string }[] = [];
   const states = new Map<string, AgentObservation>();
   let gate: { promise: Promise<void>; release: () => void; reached: Promise<void>; onCall: () => void } | null = null;

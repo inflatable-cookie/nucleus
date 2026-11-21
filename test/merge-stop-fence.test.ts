@@ -41,7 +41,7 @@ function fixture(options: {
     submissionId: randomUUID(), title: 'Stop before merge', repoPath: '/repo', planningCommit: base,
     handoffPath: 'handoff.md', originAgentId: 'origin',
   }), 'host', 'handoff', base);
-  store.setMeta('pool', [{ profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] }]);
   const observations = new Map<string, AgentObservation>();
   const idle = (id: string) => observations.set(id, { id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
   idle('worker-agent');

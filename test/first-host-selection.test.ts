@@ -25,10 +25,10 @@ const pool = [paseo, t3, both].map((p) =>
     profileId: p.id,
     enabled: true,
     group: p.id,
-    weight: 1,
+    weight: "default",
     scopes: ["general"],
     capability: "heavyweight",
-    cost: "medium",
+    
   }),
 );
 const hosts = [

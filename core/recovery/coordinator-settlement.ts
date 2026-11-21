@@ -338,13 +338,6 @@ export class RecoverySettlement {
             action,
             views: ownerVerbViews(facts),
             stopReason: stop?.reason,
-            routeCost:
-              action.verb === "route"
-                ? (this.store
-                    .pool()
-                    .find((entry) => entry.profileId === action.profileId)
-                    ?.cost ?? null)
-                : null,
             routeCapability:
               action.verb === "route"
                 ? (this.store

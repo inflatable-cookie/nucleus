@@ -82,7 +82,7 @@ function engineFor(t: TestContext, store: Store, root: string) {
   const engine = new Engine(store, adapter, 0);
   engine.profiles = [profile];
   t.after(() => engine.stop());
-  store.setMeta("pool", [{ profileId: profile.id, enabled: true, group: "test", weight: 1, scopes: ["general"] }]);
+  store.setMeta("pool", [{ profileId: profile.id, enabled: true, group: "test", weight: "default", scopes: ["general"] }]);
   store.setMeta("paused", false);
   return engine;
 }

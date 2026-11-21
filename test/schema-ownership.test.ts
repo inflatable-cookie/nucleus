@@ -8,7 +8,7 @@ import {
   capacitySchema,
   capacityStateFields,
   capabilityLevelSchema,
-  costSchema,
+  profileWeightSchema,
   eventSchema,
   legacyHoldProjectionFields,
   reviewEntryInputSchema,
@@ -131,11 +131,9 @@ test("one retired-submission rule answers every surface with its own wording", (
   );
 });
 
-test("the cost scale is the capability scale, listed most expensive first", () => {
-  assert.deepEqual(
-    costSchema.options,
-    [...capabilityLevelSchema.options].reverse(),
-  );
+test("the rotation weight is five named stops with Default at the centre", () => {
+  assert.deepEqual(profileWeightSchema.options, ["fewest", "fewer", "default", "more", "most"]);
+  assert.equal(profileWeightSchema.options[Math.floor(profileWeightSchema.options.length / 2)], "default");
 });
 
 test("the capacity catalogue is the only place a limit is bounded and defaulted", () => {

@@ -51,7 +51,7 @@ function fixture(graceMs = GRACE) {
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ]);
@@ -833,7 +833,7 @@ test("732: an unanswered owner does not start a planning decider", async () => {
         enabled: true,
         group: "author",
         roles: ["worker", "coordinator"],
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);

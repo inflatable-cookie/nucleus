@@ -130,7 +130,7 @@ const board = (tasks: ReturnType<typeof summaryOf>[]) => ({
       enabled: true,
       group: "author",
       roles: ["worker"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
     },
   ],
@@ -727,9 +727,9 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       enabled: true,
       group: "frontier",
       roles: ["worker", "reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
-      cost: "very_high",
+      
       capability: "frontier",
     },
     {
@@ -737,9 +737,9 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       enabled: true,
       group: "cheap",
       roles: ["worker", "reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
-      cost: "low",
+      
       capability: "frontier",
     },
     {
@@ -747,9 +747,9 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       enabled: true,
       group: "coord",
       roles: ["coordinator"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
-      cost: "very_high",
+      
       capability: "frontier",
     },
     {
@@ -757,9 +757,9 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       enabled: true,
       group: "complex",
       roles: ["reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["complex"],
-      cost: "very_high",
+      
       capability: "frontier",
     },
   ];
@@ -987,9 +987,9 @@ test("Spec 052: bundled dark choosers name an unavailable subscription group ins
       enabled: true,
       group: "down",
       roles: ["worker", "reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
-      cost: "very_high",
+      
       capability: "frontier",
     },
   ];

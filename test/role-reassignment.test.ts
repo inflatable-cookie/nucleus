@@ -13,9 +13,9 @@ import type { ResolutionAdapter } from '../core/resolution';
 import { runPrompt } from '../core/dispatch/prompts';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
-const profile = (id: string, model: string, roles: Array<'worker' | 'reviewer'> = ['worker'], group?: string): { profile: Profile; entry: { profileId: string; enabled: boolean; group: string; roles: Array<'worker' | 'reviewer'>; weight: number; scopes: Array<'general'> } } => ({
+const profile = (id: string, model: string, roles: Array<'worker' | 'reviewer'> = ['worker'], group?: string): { profile: Profile; entry: { profileId: string; enabled: boolean; group: string; roles: Array<'worker' | 'reviewer'>; weight: 'default'; scopes: Array<'general'> } } => ({
   profile: { id, name: id, provider: 'test', model, notes: '', available: true, problem: '', supportedThinking: [] },
-  entry: { profileId: id, enabled: true, group: group ?? id, roles, weight: 1, scopes: ['general'] },
+  entry: { profileId: id, enabled: true, group: group ?? id, roles, weight: "default", scopes: ['general'] },
 });
 // Spec 036 acceptance shape: Sol writes, a fresh Luna agent reviews. `author`
 // is the retained worker, `authorrev` is a reviewer route on the author's

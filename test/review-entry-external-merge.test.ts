@@ -35,7 +35,7 @@ async function openService(options:{paused?:boolean;merge?:boolean;key?:string}=
   await runtime.started;await runtime.bootstrap;
   const store=runtime.store;
   store.setMeta('paused',false);
-  store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
+  store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:"default",scopes:['general']}]);
   const intake=queueOperationSchema.parse({id:'c'.repeat(64),key:options.key??'external-merge-intake',kind:'review_entry',inputHash:'d'.repeat(64),
     state:'running',taskId:null,expectedVersion:null,repoPath:f.repo,submissionId:'owner-revision',createdAt:now(),startedAt:now(),
     settledAt:null,attempts:1,diagnostic:'',result:null,effect:null});

@@ -230,8 +230,16 @@ Heavyweight if it needs to").
 - **Eligibility** (Tom, 2026-11-09). Automatic selection may use a profile when
   its capability bracket and its On/Off switch allow it at the level in force,
   nothing else. Outside that, a profile needs an explicit request with a reason
-  and sign-off. Cost is a rotation lean ([Spec 053](053-demand-based-selection.md)),
-  never a permission rule (Tom, 2026-11-17).
+  and sign-off. Profile cost is retired and the rotation weight is a five-stop slider
+  ([Spec 053](053-demand-based-selection.md), Tom, 2026-11-21); neither is ever a
+  permission rule.
+- **Cost removed, Weight a slider** (Tom, 2026-11-21). The profile Cost rating
+  is gone now that capability brackets decide eligibility; no routing, sign-off
+  or recovery path reads it. Non-delivery routing and transient rate-limit
+  failover no longer filter on it, and a coordinator `route` is checked only
+  against the level's permission rule. Saved profiles read their legacy Cost
+  and integer weight at the existing boundaries (Spec 053 states the mapping);
+  the Cost value is discarded.
 - **Frontier is a capability bracket, not a cost** (Tom, 2026-11-09: "Can we
   get rid of very low, and instead add `frontier` to the other end of the
   scale?… then Opus would move to `frontier` to distinguish it better from
@@ -257,7 +265,7 @@ Heavyweight if it needs to").
 - **Preference.** The level sets each run's start bracket, not a weight: since
   [Spec 053](053-demand-based-selection.md) (Tom, 2026-10-21; 2026-11-04) the
   set is every profile rated at or above the demand, with rotation and fair
-  share inside it, weighted by a cost lean that never removes a profile. The
+  share inside it, weighted by the five-stop weight share (80% to 120% of Default, Tom, 2026-11-21), which never removes a profile. The
   2026-10-18 soft leans and tier orders are retired. An unavailable
   subscription group leaves the set; when nothing meets the demand, selection
   takes the most capable eligible profiles.
@@ -327,10 +335,10 @@ Heavyweight if it needs to").
   a stored flag as absolute and rerouted a correct automatic Maximum pick.
   Reads show the policy in force, derived from the selector's own
   `requestOnly`; no gate or setting changes.
-  - `task.next` and `queue.detail` carry `routingPolicy`: the dispatch-level policy, and
+  - `task.next` and `queue.detail` carry `routingPolicy` (a recorded row that still carries the retired `cost` reads without it, nucleus#1488): the dispatch-level policy, and
     one row per profile the task names (worker request, worker preference,
     recorded worker or reviewer run, reviewer and coordinator requests). Each
-    row has `cost`, `capability`, `automatic` (`allowed`, `request_tier` when the
+    row has `capability`, `automatic` (`allowed`, `request_tier` when the
     level's permission rule holds the profile, or null outside the pool), its pool `gates` (disabled,
     group unavailable) and an `explanation`. A request stays
     explicit at every level; a preference alone does not satisfy a request

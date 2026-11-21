@@ -134,7 +134,7 @@ for (const role of ['reviewer', 'revision', 'closeout', 'executor'] as const) {
     try {
       const current = f.run('current-run', role); f.activate(current);
       f.engine.profiles = [current.profile!];
-      f.store.setMeta('pool', [{ profileId: current.profile!.id, enabled: true, group: 'synthetic', roles: ['reviewer', 'worker', 'coordinator'], weight: 1, scopes: ['general'] }]);
+      f.store.setMeta('pool', [{ profileId: current.profile!.id, enabled: true, group: 'synthetic', roles: ['reviewer', 'worker', 'coordinator'], weight: "default", scopes: ['general'] }]);
       f.store.setMeta('paused', false);
       await f.engine.resolution.observe();
       const failed = f.store.run(current.id)!;
@@ -175,7 +175,7 @@ for (const status of ['intent', 'uncertain'] as const) {
     try {
       const current = { ...f.run('current-run', 'reviewer'), status }; f.activate(current);
       f.engine.profiles = [current.profile!];
-      f.store.setMeta('pool', [{ profileId: current.profile!.id, enabled: true, group: 'synthetic', roles: ['reviewer'], weight: 1, scopes: ['general'] }]);
+      f.store.setMeta('pool', [{ profileId: current.profile!.id, enabled: true, group: 'synthetic', roles: ['reviewer'], weight: "default", scopes: ['general'] }]);
       f.store.setMeta('paused', false);
       await f.engine.resolution.observe();
       const held = f.store.run(current.id)!;

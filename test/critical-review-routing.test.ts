@@ -38,7 +38,7 @@ function fixture() {
       enabled: true,
       group: p.id,
       roles: ["worker", "reviewer"],
-      weight: 1,
+      weight: "default",
       scopes: ["general"],
       capability: ["worker", "mechanical", "worker", "heavyweight", "worker"][i],
       cost: i === 3 ? "very_high" : "low",

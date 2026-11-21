@@ -111,7 +111,7 @@ export function retainedWorkerFailureCause(args: {
 export function isWorkerRouteApproved(
   task: Pick<Task, "profileRequests" | "complexity">,
   profileId: string,
-  pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[],
+  pool: readonly Pick<PoolEntry, "capability" | "profileId">[],
   usage: UsageLevel,
 ): boolean {
   const entry = pool.find((item) => item.profileId === profileId);

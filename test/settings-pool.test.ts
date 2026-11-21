@@ -64,7 +64,7 @@ const entry = (profileId: string, group = "subscription"): PoolEntry =>
   poolSchema.parse({
     profileId,
     group,
-    weight: 1,
+    weight: "default",
     enabled: true,
     scopes: ["general"],
   });
@@ -225,9 +225,8 @@ test("a live profile row is one line at narrow and wide sizes, with no By reques
         enabled: true,
         scopes: ["general"],
         roles: ["worker", "reviewer", "coordinator"],
-        cost: "very_high",
         capability: "frontier",
-        weight: 3,
+        weight: "most",
       }),
     ],
     recentAssignments: { "profile:worker-1": 2 },
@@ -1344,35 +1343,31 @@ test("Spec 052: a profile row shows a status only for a problem; a frontier prof
       group: "frontier",
       enabled: true,
       scopes: ["general"],
-      cost: "very_high",
       capability: "frontier",
-      weight: 1,
+      weight: "default",
     }),
     poolSchema.parse({
       profileId: "cheap",
       group: "cheap",
       enabled: true,
       scopes: ["general"],
-      cost: "low",
       capability: "frontier",
-      weight: 1,
+      weight: "default",
     }),
     poolSchema.parse({
       profileId: "off",
       group: "off",
       enabled: false,
       scopes: ["general"],
-      cost: "very_high",
       capability: "frontier",
-      weight: 1,
+      weight: "default",
     }),
     poolSchema.parse({
       profileId: "gone",
       group: "gone",
       enabled: true,
       scopes: ["general"],
-      cost: "very_high",
-      weight: 1,
+      weight: "default",
     }),
   ];
   let state = board({
@@ -1502,12 +1497,12 @@ test("Spec 052: a profile row shows a status only for a problem; a frontier prof
         /Heavyweight and Frontier need permission at Low and Normal, Frontier at High/,
       );
       assert.match(
-        ui.get("Cost help").props.accessibilityHint,
-        /Unset ranks as medium and is never cost-gated/,
+        ui.get("Weight help").props.accessibilityHint,
+        /never makes a profile eligible or ineligible/,
       );
       assert.doesNotMatch(
         ui.text(),
-        /Each cost step down|Each run needs the task's complexity|Weight 2 receives|By request/,
+        /Each cost step down|Cost help|Each run needs the task's complexity|Weight 2 receives|By request/,
       );
       assert.equal(
         ui.query("Save Frontier Opus with a long profile name"),
@@ -1735,25 +1730,23 @@ test("a problem shows an unboxed warning glyph; needing a request shows no glyph
         group: "zai",
         enabled: true,
         scopes: ["general"],
-        weight: 1,
+        weight: "default",
       }),
       poolSchema.parse({
         profileId: "oracle",
         group: "anthropic",
         enabled: true,
         scopes: ["general"],
-        cost: "very_high",
         capability: "frontier",
-        weight: 1,
+        weight: "default",
       }),
       poolSchema.parse({
         profileId: "both",
         group: "zai",
         enabled: true,
         scopes: ["general"],
-        cost: "very_high",
         capability: "frontier",
-        weight: 1,
+        weight: "default",
       }),
     ],
     availability: [
@@ -1858,7 +1851,7 @@ test("the opened editor autosaves pool fields and keeps Remove at the bottom wit
     ui.press("Edit Live model");
     await settle(
       () =>
-        Boolean(ui.query("Cost help")) &&
+        Boolean(ui.query("Weight help")) &&
         Boolean(ui.query("Remove Live model")),
     );
     assert.equal(ui.query("Save Live model"), undefined);
@@ -1867,39 +1860,30 @@ test("the opened editor autosaves pool fields and keeps Remove at the bottom wit
       ui.text(),
       /Changes save automatically|Profile notes|Usage policy:/,
     );
-    ui.press("Cost high");
+    ui.press("Weight: more assignments");
     await waitFor(
       () =>
         saved.some(
           (value) =>
-            value && typeof value === "object" && "cost" in (value as object),
+            value && typeof value === "object" && (value as { weight?: string }).weight === "more",
         ),
-      "cost to autosave",
+      "weight to autosave",
     );
-    const costWrite = saved.find(
+    const weightWrite = saved.find(
       (value) =>
         value &&
         typeof value === "object" &&
-        (value as { cost?: string }).cost === "high",
-    ) as { profileId: string; cost: string };
-    assert.equal(costWrite.profileId, "live");
+        (value as { weight?: string }).weight === "more",
+    ) as { profileId: string; weight: string };
+    assert.equal(weightWrite.profileId, "live");
+    assert.equal("cost" in weightWrite, false, "a profile write carries no Cost");
     assert.equal(
       ui.query("Advanced"),
       undefined,
       "subscription and weight are directly visible",
     );
-    await settle(() => Boolean(ui.query("Decrease weight for Live model")));
-    ui.press("Increase weight for Live model");
-    await waitFor(
-      () =>
-        saved.some(
-          (value) =>
-            value &&
-            typeof value === "object" &&
-            (value as { weight?: number }).weight === 2,
-        ),
-      "weight to autosave",
-    );
+    assert.equal(ui.query("Increase weight for Live model"), undefined, "the numeric stepper is gone");
+    assert.doesNotMatch(ui.text(), /Weight 2|Weight 1/);
     assert.match(
       ui.get("Weight help").props.accessibilityHint,
       /Recent assignments: 0; total assignments: 0/,
@@ -1949,7 +1933,7 @@ async function openEditor(name = "Live model") {
     screenTree(
       board({
         profiles: [profile("live", name)],
-        pool: [{ ...entry("live"), cost: "high" }],
+        pool: [{ ...entry("live"), weight: "more" as const }],
       }),
       (input) => saved.push(input),
     ),
@@ -1957,7 +1941,7 @@ async function openEditor(name = "Live model") {
   selectSettingsTab(ui, "Profiles");
   await settle(() => ui.text().includes(name));
   ui.press(`Edit ${name}`);
-  await settle(() => Boolean(ui.query("Cost help")));
+  await settle(() => Boolean(ui.query("Weight help")));
   return { ui, saved };
 }
 const layoutEditor = (
@@ -1969,12 +1953,12 @@ const layoutEditor = (
     .get(`${name} editor`)
     .props.onLayout({ nativeEvent: { layout: { width } } });
 
-test("the editor pairs Provider | Model and Cost | Capability from its own width, stacking only on a phone", async () => {
+test("the editor pairs Provider | Model and Weight | Capability from its own width, stacking only on a phone", async () => {
   const { ui } = await openEditor();
   try {
     const pairs = [
       [/^Provider, /, /^Model, /],
-      ["Cost value", "Capability value"],
+      ["Weight value", "Capability value"],
     ] as const;
     const minWidths = () =>
       pairs.flat().map((label) => columnOf(ui, label).props.style.minWidth);
@@ -2050,72 +2034,40 @@ test("Name shares the first row with Duplicate and Remove, with no caption above
   }
 });
 
-test("Subscription and Weight take half the second row each, aligned at field height; By request is gone", async () => {
+test("Subscription takes its own row, Weight shares the Capability row, and the old stepper and its space are gone; By request is gone", async () => {
   const { ui, saved } = await openEditor();
   try {
     layoutEditor(ui, 688);
     const dispatchRow = ui.get("Profile dispatch row") as Node;
-    const [subscription, weight, ...more] = columns(dispatchRow);
-    assert.equal(more.length, 0, "two columns only");
-    assert.deepEqual(
-      [
-        subscription.props.style.flex,
-        subscription.props.style.minWidth,
-        weight.props.style.flex,
-        weight.props.style.minWidth,
-      ],
-      [1, 0, 1, 0],
-      "Subscription and Weight split the row in half",
-    );
-    assert.ok(contains(subscription, "Subscription"));
-    assert.ok(
-      contains(weight, "Weight help") &&
-        contains(weight, "Weight for Live model"),
-      "Weight is the shared number control with its ?",
-    );
+    assert.ok(contains(dispatchRow, "Subscription"));
+    assert.equal(contains(dispatchRow, "Weight help"), false, "Weight left the Subscription row");
+    assert.equal(ui.query("Decrease weight for Live model"), undefined);
+    assert.equal(ui.query("Weight for Live model"), undefined);
     assert.equal(
       ui.query("Selection by request"),
       undefined,
       "By request is retired (Tom, 2026-11-09)",
     );
     assert.doesNotMatch(ui.text(), /By request/);
-    assert.equal(
-      dispatchRow.props.style.alignItems,
-      "flex-end",
-      "the controls line up along their bottom edge",
+    const weightColumn = columnOf(ui, "Weight value");
+    assert.ok(
+      contains(weightColumn, "Weight help") && contains(weightColumn, /^Weight slider, /),
+      "Weight is the shared slider with its ?",
     );
-    const stepper = (ui.ofType("View") as Node[])
-      .filter(
-        (node) =>
-          node.props.style?.justifyContent === "center" &&
-          contains(node, "Weight for Live model"),
-      )
-      .at(-1)!;
-    const subscriptionHeight = ui.get("Subscription").props.style.minHeight;
-    assert.equal(
-      subscriptionHeight,
-      36,
-      "the Subscription input is at the one control height",
-    );
-    assert.equal(
-      stepper.props.style.minHeight,
-      subscriptionHeight,
-      "the stepper sits in a box as tall as the Subscription input",
+    assert.deepEqual(
+      [columnOf(ui, "Weight value").props.style.minWidth, columnOf(ui, "Capability value").props.style.minWidth],
+      [0, 0],
+      "Weight and Capability pair on one row in the former Cost position",
     );
     layoutEditor(ui, 358);
     assert.equal(
-      subscriptionMin(ui),
+      columnOf(ui, "Weight value").props.style.minWidth,
       "100%",
-      "on a phone Subscription takes the whole row",
+      "on a phone each takes the whole row",
     );
-    assert.equal(
-      columns(ui.get("Profile dispatch row") as Node)[1].props.style.minWidth,
-      "100%",
-      "Weight takes the next row",
-    );
-    ui.press("Increase weight for Live model");
+    ui.press("Weight: most assignments");
     await waitFor(
-      () => saved.some((value) => (value as { weight?: number })?.weight === 2),
+      () => saved.some((value) => (value as { weight?: string })?.weight === "most"),
       "weight to autosave",
     );
     assert.equal(
@@ -2123,26 +2075,32 @@ test("Subscription and Weight take half the second row each, aligned at field he
         (value) =>
           value &&
           typeof value === "object" &&
-          "byRequest" in (value as object),
+          ("byRequest" in (value as object) || "cost" in (value as object)),
       ),
       false,
-      "no write carries the retired flag",
+      "no write carries a retired field",
     );
   } finally {
     unmount(ui);
   }
 });
-const subscriptionMin = (ui: ReturnType<typeof mount>) =>
-  columns(ui.get("Profile dispatch row") as Node)[0].props.style.minWidth;
-
-test("Cost and Capability are sliders with the chosen value beside the label, no stop labels, and an unset value marks no stop", async () => {
+test("Weight and Capability are sliders with the chosen value beside the label, Default marked at the centre, and an unset capability marks no stop", async () => {
   const { ui, saved } = await openEditor();
   try {
-    const cost = ui.get(/^Cost slider, /),
+    const weight = ui.get(/^Weight slider, /),
       capability = ui.get(/^Capability slider, /);
-    assert.equal(cost.props.accessibilityRole, "adjustable");
-    assert.equal(cost.props.accessibilityLabel, "Cost slider, High");
-    assert.equal(cost.props.accessibilityValue.now, 3);
+    assert.equal(weight.props.accessibilityRole, "adjustable");
+    assert.equal(weight.props.accessibilityLabel, "Weight slider, More");
+    assert.equal(weight.props.accessibilityValue.now, 3);
+    assert.equal(weight.props.accessibilityValue.max, 4, "five stops");
+    assert.equal(ui.query(/^Cost/), undefined, "Cost is retired");
+    assert.deepEqual(
+      ["fewest", "fewer", "default", "more", "most"].map((stop) =>
+        ui.get(new RegExp(`^Weight: ${stop === "default" ? "default" : `${stop} assignments`}$`)).props.accessibilityState.selected,
+      ),
+      [false, false, false, true, false],
+      "each stop has a plain-words accessible name",
+    );
     assert.equal(
       capability.props.accessibilityLabel,
       "Capability slider, not set",
@@ -2152,32 +2110,32 @@ test("Cost and Capability are sliders with the chosen value beside the label, no
       undefined,
       "unset marks no stop",
     );
-    assert.equal(ui.get("Cost high").props.accessibilityState.selected, true);
     assert.equal(
-      ui.query("Cost help") !== undefined &&
+      ui.query("Weight help") !== undefined &&
         ui.query("Capability help") !== undefined,
       true,
       "a ? beside each name",
     );
     assert.equal(
-      ui.get("Cost value").children.join(""),
-      "High",
-      "the chosen cost sits at the right of its label row",
+      ui.get("Weight value").children.join(""),
+      "More",
+      "the chosen weight sits at the right of its label row",
     );
     assert.equal(ui.get("Capability value").children.join(""), "Unset");
-    const costLabelRow = (ui.ofType("View") as Node[])
-      .filter(
-        (node) =>
-          node.props.style?.flexWrap === "nowrap" &&
-          contains(node, "Cost help") &&
-          contains(node, "Cost value"),
-      )
-      .at(-1);
-    assert.ok(costLabelRow, "the value shares the label row");
+    assert.doesNotMatch(ui.text(), /\b(80|90|100|110|120)%|\bx\d/, "no numbers in the primary control");
+    assert.ok(
+      ui.ofType("Text").some((node) => node.children.join("") === "Default"),
+      "the centre stop's Default label is visible",
+    );
     assert.doesNotMatch(
       ui.text(),
-      /Very low|Very high|\bMedium\b/,
-      "no stop labels under either slider",
+      /Very low|Very high|\bMedium\b|\bFewest\b|\bMost\b/,
+      "no other stop labels under either slider",
+    );
+    weight.props.onAccessibilityAction({ nativeEvent: { actionName: "decrement" } });
+    await waitFor(
+      () => saved.some((value) => (value as { weight?: string })?.weight === "default"),
+      "a keyboard-style decrement to autosave the centre stop",
     );
     capability.props.onAccessibilityAction({
       nativeEvent: { actionName: "increment" },
@@ -2225,11 +2183,11 @@ test("Cost and Capability are sliders with the chosen value beside the label, no
       ui.get("Capability help").props.accessibilityHint,
       /Heavyweight and Frontier need permission at Low and Normal, Frontier at High/,
     );
-    ui.press("Cost very low");
+    ui.press("Weight: fewest assignments");
     await waitFor(
       () =>
         saved.some(
-          (value) => (value as { cost?: string })?.cost === "very_low",
+          (value) => (value as { weight?: string })?.weight === "fewest",
         ),
       "a stop press to autosave",
     );
@@ -2322,7 +2280,7 @@ test("every Settings section aligns with the tab row: no inner side padding at a
 test("a stop slider is one continuous track with stops and labels placed at their own positions", async () => {
   const { ui } = await openEditor();
   try {
-    const slider = ui.get(/^Cost slider, /) as Node;
+    const slider = ui.get(/^Weight slider, /) as Node;
     const nodes = slider.children.filter(
       (child): child is Node => typeof child !== "string",
     );
@@ -2365,12 +2323,12 @@ test("a stop slider is one continuous track with stops and labels placed at thei
     const ring = (label: string) =>
       (ui.get(label).children[0] as Node).props.style;
     assert.equal(
-      ring("Cost very high").borderWidth,
+      ring("Weight: most assignments").borderWidth,
       1,
       "an unfilled stop keeps a thin ring",
     );
-    assert.equal(ring("Cost high").width, 18, "the chosen stop is larger");
-    assert.equal(ring("Cost high").borderWidth, 2);
+    assert.equal(ring("Weight: more assignments").width, 18, "the chosen stop is larger");
+    assert.equal(ring("Weight: more assignments").borderWidth, 2);
   } finally {
     unmount(ui);
   }

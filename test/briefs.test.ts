@@ -175,7 +175,7 @@ test('a brief queue.dependsOn waits for closeout before dispatch', async t => {
       observe: async (id: string) => ({ id, workspaceId: `ws-${id.replace(/^agent-/, '')}`, status: 'running', active: true, permissions: false, error: '' }),
     });
     e.store.setMeta('globalLimit', 2);
-    e.store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: 1, scopes: ['mechanical'] }]);
+    e.store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'test', weight: "default", scopes: ['mechanical'] }]);
     const operation = await submit(e.engine, prepared.submission);
     assert.equal(operation.state, 'succeeded', operation.diagnostic);
     const dependent = e.store.task(operation.result!.taskId!);
@@ -574,7 +574,7 @@ test('8c. the declared stage preflight refuses any declared plan as retired, and
     const inserted = e.store.insert(briefSubmission('/repo', 'a'.repeat(40)), 'host', briefText, 'a'.repeat(40));
     const reviewer: Profile = { id: 'deepseek', name: 'deepseek', provider: 'test', model: 'deepseek/deepseek-v3', notes: '', available: true, problem: '', supportedThinking: [] };
     e.engine.profiles = [profile, reviewer];
-    e.store.setMeta('pool', [{ profileId: 'deepseek', enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] }]);
+    e.store.setMeta('pool', [{ profileId: 'deepseek', enabled: true, group: 'review', roles: ['reviewer'], weight: "default", scopes: ['general'] }]);
     const stageFields = `  stages:\n    - id: final-verify\n      kind: verify\n      subject: {head: candidate, digests: []}\n      role: reviewer\n      independence: []\n      gate: {pass: [source-check], insufficient: []}\n      actions: [comment]\n      profile: {id: deepseek, reason: "Fresh verifier"}\n      wait: []`;
     const withProfile = (id: string) => briefText.replace('  scope: mechanical', `  scope: mechanical\n${stageFields.replace('id: deepseek, reason', `id: ${id}, reason`)}`) + `\nAmendment.\n`;
     // Retired (Spec 043, 2026-10-06): the preflight refuses any declared plan, so the catalog distinction no longer applies.

@@ -247,7 +247,7 @@ test("the engine refuses an otherwise dispatchable dependent while its fan-in is
   const engine = new Engine(store, adapter, 0);
   try {
     engine.profiles = [profile];
-    store.setMeta("pool", [{ profileId: profile.id, enabled: true, group: "test", weight: 1, scopes: ["general"] }]);
+    store.setMeta("pool", [{ profileId: profile.id, enabled: true, group: "test", weight: "default", scopes: ["general"] }]);
     store.setMeta("paused", false);
     const add = (submissionId: string, title: string, dependsOn: string[] = []) => store.insert(submissionSchema.parse({
       submissionId, title, repoPath: "/repo", planningCommit: "a".repeat(40),

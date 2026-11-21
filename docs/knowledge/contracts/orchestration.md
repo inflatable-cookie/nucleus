@@ -720,7 +720,7 @@ repository-qualified `repo#N` form; same-repository occupants keep the shorter
 admitted, so `next` explains that wait without offering a manual `proof` action.
 
 **RoleSelection** (`core/dispatch/routing.ts`). Eligibility gates, every profile that
-meets demand, then rotation by weight times the cost lean, balanced by group.
+meets demand, then rotation by the weight stop's share (80% to 120% of Default), balanced by group.
 Decides who may take a reviewer, coordinator or executor role. Enforces
 [Profile selection](#profile-selection). Pures: `reviewerIndependence`,
 `chooseProfile`, `taskRoutingPolicy`, `eligibilityReasons`,
@@ -1376,8 +1376,8 @@ request identities and stored committed-handoff rows are not rewritten.
   ([Spec 052](../specs/052-usage-level.md), Tom 2026-11-19). Selection keeps every
   eligible profile at the demand's bracket, else the nearest above or the most capable
   eligible profiles, then rotates over the last 50 assignments by recent use
-  over effective weight: configured weight times a cost lean that doubles per
-  cost step down (Spec 053, Tom, 2026-11-04: cost leans, it doesn't exclude).
+  over the profile's weight share: one of five stops from 80% to 120% of
+  Default, with no cost input (Spec 053, Tom, 2026-11-21).
 - Frontier profiles, and profiles the usage level's permission rule holds, need a
   per-role request with a reason and the operator's board sign-off unless the
   usage level puts them in automatic selection: Frontier only at Extra high and Maximum

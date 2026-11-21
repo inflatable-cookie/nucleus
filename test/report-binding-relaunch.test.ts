@@ -98,7 +98,7 @@ function fixture() {
   store.setMeta('pool', all.map(item => ({
     profileId: item.id, enabled: true, group: item.id,
     roles: [item.id === 'reviewer' ? 'reviewer' : item.id === 'coord' ? 'coordinator' : 'worker'],
-    weight: 1, scopes: ['general'],
+    weight: "default", scopes: ['general'],
   })));
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Binding relaunch', repoPath: '/repo', planningCommit: base,

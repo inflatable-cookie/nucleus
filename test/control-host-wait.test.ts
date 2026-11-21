@@ -30,7 +30,7 @@ function fixture(options: { missing?: Array<'merge' | 'merged'> } = {}) {
     : (..._args: unknown[]) => { remote.push(String(property)); throw new Error('Transport not connected: host offline is unavailable'); } }) as unknown as Adapter;
   const engine = new Engine(store, adapter, 0);
   engine.hostAvailable = () => false;
-  store.setMeta('pool', [{ profileId: 'worker', enabled: true, group: 'workers', roles: ['worker'], weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: 'worker', enabled: true, group: 'workers', roles: ['worker'], weight: "default", scopes: ['general'] }]);
   const task = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Offline host control',
     repoPath: '/repo', planningCommit: base, handoffPath: 'handoff.md', originAgentId: 'origin' }), 'offline', 'handoff.md', base);
   return {

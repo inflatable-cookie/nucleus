@@ -131,8 +131,6 @@ export function coordinatorActionPlan(input: {
   views: TaskNextVerb[];
   /** The stop the report answers, if the task still records one. */
   stopReason?: string | null;
-  /** The reported route profile's cost, when the verb is `route`. */
-  routeCost: CapabilityLevel | null;
   /** The reported route profile's capability, which decides whether it needs permission. */
   routeCapability?: ProfileCapability | null;
   /** The task's complexity, which fixes its requested tier for the permission rule. */
@@ -204,7 +202,7 @@ export function coordinatorActionPlan(input: {
     action.verb === "route" &&
     input.routeCapability &&
     requestOnly(
-      { cost: input.routeCost, capability: input.routeCapability },
+      { capability: input.routeCapability },
       input.usage,
       requestedTier(input.complexity),
     )

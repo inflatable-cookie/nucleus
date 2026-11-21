@@ -26,9 +26,9 @@ import type { Adapter } from '../core/host';
 const profile = (id: string): Profile => ({ id, name: id === 'sol' ? 'Sol oracle' : id, provider: 'test', model: `test/${id}`, available: true, problem: '', notes: '', supportedThinking: id === 'opus' ? ['xhigh'] : [] });
 const profiles = ['cheap', 'sol', 'opus'].map(profile);
 const pool = [
-  poolSchema.parse({ profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer', 'coordinator'], weight: 1, scopes: ['general'], cost: 'low' }),
-  poolSchema.parse({ profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'high', capability: 'frontier' }),
-  poolSchema.parse({ profileId: 'opus', enabled: true, group: 'opus', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'frontier' }),
+  poolSchema.parse({ profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer', 'coordinator'], weight: "default", scopes: ['general'], }),
+  poolSchema.parse({ profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'frontier' }),
+  poolSchema.parse({ profileId: 'opus', enabled: true, group: 'opus', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'frontier' }),
 ];
 
 function fixture() {

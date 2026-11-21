@@ -25,7 +25,7 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ns-checkpoint-')), store = new Store(join(dir, 'queue.sqlite'));
   const worker = profile('worker');
   store.setMeta('paused', false);
-  store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] }]);
+  store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] }]);
   const continuations: { intentId: string; text: string }[] = [], createdRuns: Run[] = [], reminders: string[] = [];
   let verify: (task: Task, head: string) => Promise<void> = async () => {};
   let workspacePreflight: () => Promise<{ available: true } | { available: false; reason: string }> = async () => ({ available: true });

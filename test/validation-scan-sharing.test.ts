@@ -37,7 +37,7 @@ const head = "a".repeat(40), base = "b".repeat(40);
 
 const profile = (id: string, roles: Profile extends never ? never : Array<"worker" | "reviewer" | "coordinator">) => ({
   profile: { id, name: id, provider: "test", model: id, notes: "", available: true, problem: "", supportedThinking: ["low"] } as Profile,
-  entry: { profileId: id, enabled: true, group: id, roles, weight: 1, scopes: ["general"] as const },
+  entry: { profileId: id, enabled: true, group: id, roles, weight: "default", scopes: ["general"] as const },
 });
 
 interface ScanCall { directory: string; argv: string[][] }

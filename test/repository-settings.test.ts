@@ -696,7 +696,7 @@ test("Settings-only capacity writes apply and record the change, refuse every ot
         {
           profileId: "fixture",
           group: "subscription",
-          weight: 2,
+          weight: "more",
           enabled: true,
           scopes: ["general"],
           roles: ["worker"],

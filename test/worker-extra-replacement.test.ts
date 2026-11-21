@@ -25,7 +25,7 @@ function fixture() {
   store.setMeta('paused', false);
   store.putRepository({ origin: null, path: '/repo' }, 'agent', 'fixture keeps agent closeout');
   store.setMeta('pool', [
-    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
+    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
   ]);
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Long-running task', repoPath: '/repo',

@@ -52,7 +52,7 @@ test("settling many dependents coalesces dispatch by repository", async () => {
         profileId: profile.id,
         enabled: true,
         group: "test",
-        weight: 1,
+        weight: "default",
         scopes: ["general"],
       },
     ]);
