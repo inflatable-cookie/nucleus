@@ -145,24 +145,24 @@ test("706: an open header menu stacks above the nav row and the outside-press la
   assert.match(ui, /zIndex: 40 \}\}/);
 });
 
-test("Settings is the native settings screen holding Dispatch limits, Hosts, Profiles, Projects, Backups and Telemetry", () => {
+test("Settings is the native settings screen holding Dispatch limits, Profiles, Projects, Hosts, Backups and Telemetry", () => {
   // Projects replaces Repositories (lane nucleus-ui, task 946); Subscriptions folded into Profiles (nucleus#963);
-  // Hosts holds the host catalogue and the default host picker (nucleus#1325).
+  // Hosts holds the host catalogue and the default host picker (nucleus#1325); Hosts sits after Projects (nucleus#1494).
   assert.equal(settingsViews.length, 6);
   assert.deepEqual(
     settingsViews.map((view) => view.label),
     [
       "Dispatch limits",
-      "Hosts",
       "Profiles",
       "Projects",
+      "Hosts",
       "Backups",
       "Telemetry",
     ],
   );
   assert.deepEqual(
     settingsViews.map((view) => view.short),
-    ["Limits", "Hosts", "Profiles", "Projects", "Backups", "Telemetry"],
+    ["Limits", "Profiles", "Projects", "Hosts", "Backups", "Telemetry"],
   );
   // The tab row stays one line in Paseo's 640–700 point settings column (nucleus#963): short labels only.
   assert.ok(

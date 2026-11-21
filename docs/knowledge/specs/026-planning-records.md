@@ -615,9 +615,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   The panel finds the Nucleus project whose repositories include the workspace's
   project root (`project.get` by repository) and shows the Pipeline and Planning views (lane discovery included) scoped to that project, with the multi-project selector preset
   to it. A workspace outside every Nucleus project shows a plain message. The
-  Papercuts view stays in the main surface; Dispatch limits, Hosts (the host
-  catalogue and the default host, nucleus#1325), Profiles (with the
-  Subscriptions list beneath the profiles), Projects, Backups and Telemetry live
+  Papercuts view stays in the main surface; Dispatch limits, Profiles (with the
+  Subscriptions list beneath the profiles), Projects, Hosts (the host
+  catalogue and the default host, nucleus#1325; after Projects, nucleus#1494),
+  Backups and Telemetry live
   in Nucleus's native
   Paseo settings screen (`addSettingsScreen`), which the header's Settings icon opens
   through `openSettings` (Tom, 2026-09-27). Its sections are one row of tabs at
