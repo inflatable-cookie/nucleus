@@ -1,11 +1,22 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { command, git } from "../core/git/index";
-import { ownedBbWorkspacePath, ownedWorkspaceRoot, repoCommonDir } from "../core/workspaces/workspace-allocation";
+import {
+  ownedBbWorkspacePath,
+  ownedWorkspaceRoot,
+  repoCommonDir,
+} from "../core/workspaces/workspace-allocation";
 import { siblingPathFor } from "../core/workspaces/siblings";
 import {
   bbWorktreeLinksWait,
@@ -36,7 +47,9 @@ async function fixture(t: TestContext) {
   const data = join(base, "data");
   await repo(siblingB, { "README.md": "siblingB\n" });
   await repo(primary, {
-    "paseo.json": JSON.stringify({ worktree: { setup: "nucleus worktree prepare ../siblingB" } }),
+    "paseo.json": JSON.stringify({
+      worktree: { setup: "nucleus worktree prepare ../siblingB" },
+    }),
   });
   await mkdir(data);
   const commonDir = await repoCommonDir(primary);
@@ -59,7 +72,15 @@ test(
     const taskId = randomUUID();
     const directory = ownedBbWorkspacePath(f.data, f.commonDir, taskId);
     await mkdir(dirname(directory), { recursive: true });
-    await git(f.primary, "worktree", "add", "-b", `ns-${taskId}`, directory, "HEAD");
+    await git(
+      f.primary,
+      "worktree",
+      "add",
+      "-b",
+      `ns-${taskId}`,
+      directory,
+      "HEAD",
+    );
     const pinPath = siblingPathFor(f.data, taskId, "siblingB");
     await mkdir(dirname(pinPath), { recursive: true });
     await git(f.siblingB, "worktree", "add", "--detach", pinPath, "HEAD");
@@ -89,7 +110,10 @@ test(
       worktreeLinks: { ...placed, at: new Date().toISOString() },
     };
     assert.equal(
-      await bbWorktreeLinksWait(view, configured, { dataDir: f.data, required: [configured[1]!] }),
+      await bbWorktreeLinksWait(view, configured, {
+        dataDir: f.data,
+        required: [configured[1]!],
+      }),
       null,
     );
   },

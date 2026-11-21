@@ -481,7 +481,9 @@ export async function canonicalLinkRoot(
       !bargeAllocation.checkoutPath ||
       !bargeAllocation.gitCommonDir
     ) {
-      throw new Error("Barge workspace link root requires an active Barge allocation");
+      throw new Error(
+        "Barge workspace link root requires an active Barge allocation",
+      );
     }
     const [actualDir, expectedDir, actualCommon, expectedCommon] =
       await Promise.all([
@@ -491,7 +493,9 @@ export async function canonicalLinkRoot(
         realpath(bargeAllocation.gitCommonDir),
       ]);
     if (actualDir !== expectedDir || actualCommon !== expectedCommon) {
-      throw new Error("Barge checkout path or Git common directory does not match the recorded lease");
+      throw new Error(
+        "Barge checkout path or Git common directory does not match the recorded lease",
+      );
     }
     return dirname(actualDir);
   }

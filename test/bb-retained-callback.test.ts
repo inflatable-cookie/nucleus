@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -13,7 +19,9 @@ const BB_HOST = `bb:${"0".repeat(32)}`;
 /** The NUCLEUS_* assignments a continuation sentence names, unquoted. */
 function assignments(sentence: string): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const match of sentence.matchAll(/(NUCLEUS_[A-Z_]+)='((?:[^']|'\\'')*)'/g))
+  for (const match of sentence.matchAll(
+    /(NUCLEUS_[A-Z_]+)='((?:[^']|'\\'')*)'/g,
+  ))
     env[match[1]!] = match[2]!.replaceAll("'\\''", "'");
   return env;
 }
@@ -30,14 +38,25 @@ test("a continuation on a host without per-thread environment names the run's ow
     NUCLEUS_CONTINUATION_RUN_ID: "run-bb",
     NUCLEUS_CONTINUATION_TICKET: "/synthetic/bb/tickets/run-bb.json",
   });
-  assert.match(sentence, /nucleus helper report\. Feed the actual result JSON on stdin; never print the ticket\.$/);
+  assert.match(
+    sentence,
+    /nucleus helper report\. Feed the actual result JSON on stdin; never print the ticket\.$/,
+  );
   assert.equal(
-    retainedCallbackSentence({ run: { id: "run-bb" }, helperPath, perThreadEnvironment: true }),
+    retainedCallbackSentence({
+      run: { id: "run-bb" },
+      helperPath,
+      perThreadEnvironment: true,
+    }),
     "",
     "a host that injects the environment keeps its continuation text",
   );
   assert.equal(
-    retainedCallbackSentence({ run: { id: "run-bb" }, helperPath: undefined, perThreadEnvironment: false }),
+    retainedCallbackSentence({
+      run: { id: "run-bb" },
+      helperPath: undefined,
+      perThreadEnvironment: false,
+    }),
     "",
   );
 });
@@ -73,26 +92,51 @@ test("the named callback reports for the run after the shell has lost its enviro
     }),
     { mode: 0o600 },
   );
-  const sentence = retainedCallbackSentence({ run: { id: "run-bb" }, helperPath: helper, perThreadEnvironment: false });
+  const sentence = retainedCallbackSentence({
+    run: { id: "run-bb" },
+    helperPath: helper,
+    perThreadEnvironment: false,
+  });
   const run = (env: Record<string, string>) =>
-    new Promise<{ code: number | null; out: string; err: string }>((resolve, reject) => {
-      // Only the sentence's assignments and the relay location reach the helper; nothing inherited.
-      const child = spawn(
-        process.execPath,
-        [new URL("../bin/nucleus.mjs", import.meta.url).pathname, "helper", "report"],
-        { stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH ?? "", HOME: dir, BB_SERVER_URL: base, ...env } },
-      );
-      let out = "", err = "";
-      child.stdout.on("data", (chunk) => (out += chunk));
-      child.stderr.on("data", (chunk) => (err += chunk));
-      child.on("error", reject);
-      child.on("close", (code) => resolve({ code, out, err }));
-      child.stdin.end(JSON.stringify({ status: "blocked", summary: "Retained report" }));
-    });
+    new Promise<{ code: number | null; out: string; err: string }>(
+      (resolve, reject) => {
+        // Only the sentence's assignments and the relay location reach the helper; nothing inherited.
+        const child = spawn(
+          process.execPath,
+          [
+            new URL("../bin/nucleus.mjs", import.meta.url).pathname,
+            "helper",
+            "report",
+          ],
+          {
+            stdio: ["pipe", "pipe", "pipe"],
+            env: {
+              PATH: process.env.PATH ?? "",
+              HOME: dir,
+              BB_SERVER_URL: base,
+              ...env,
+            },
+          },
+        );
+        let out = "",
+          err = "";
+        child.stdout.on("data", (chunk) => (out += chunk));
+        child.stderr.on("data", (chunk) => (err += chunk));
+        child.on("error", reject);
+        child.on("close", (code) => resolve({ code, out, err }));
+        child.stdin.end(
+          JSON.stringify({ status: "blocked", summary: "Retained report" }),
+        );
+      },
+    );
 
   const bare = await run({ NUCLEUS_HELPER: helper });
   assert.notEqual(bare.code, 0);
-  assert.match(bare.err, /Missing Nucleus callback environment/, "the bare shell is the observed refusal");
+  assert.match(
+    bare.err,
+    /Missing Nucleus callback environment/,
+    "the bare shell is the observed refusal",
+  );
   assert.equal(received.length, 0);
 
   const named = await run(assignments(sentence));
