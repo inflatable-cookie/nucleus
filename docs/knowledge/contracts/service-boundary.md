@@ -1427,10 +1427,11 @@ entry's own retry. While another verified host is online, its failure records
 that host's cause and leaves `startError` empty, so the board shows no global
 fault; the rest of the bootstrap still runs. The catalog pass reads every online
 host's own catalog and skips an offline adapter rather than rejecting the pass,
-and durable operation resume, bulk-disposition resume and the first
-reconciliation run once. Only a fleet with no online host makes the primary's
-connect failure the runtime's start error, and only then does losing the primary
-un-prove the bootstrap. `service.health`'s `hosts` names the offline primary and
+and durable operation resume, bulk-disposition resume and reconciliation run
+once on cold start and once when an active primary session disconnects, without
+waiting for the offline adapter or repeating on later ticks while it stays
+offline. Only a fleet with no online host makes the primary's connect failure
+the runtime's start error. `service.health`'s `hosts` names the offline primary and
 its cause, its bound work waits for it, and a host that reconnects reads its own
 catalog at once instead of waiting for the periodic pass.
 

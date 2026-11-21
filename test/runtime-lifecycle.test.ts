@@ -198,7 +198,10 @@ test("a host identity conflict is a typed fact observed by the bootstrap, not st
 });
 
 test("a secondary host satisfies readiness while the primary connect never answers (nucleus#1449)", async () => {
-  const withSecondary = fakeOwner({ secondaryOnline: true, primaryHangs: true });
+  const withSecondary = fakeOwner({
+    secondaryOnline: true,
+    primaryHangs: true,
+  });
   const lifecycle = new RuntimeLifecycle(withSecondary.owner);
   const startedAt = Date.now();
 
@@ -207,7 +210,11 @@ test("a secondary host satisfies readiness while the primary connect never answe
     true,
     "the online host owns readiness, so the bootstrap completes",
   );
-  assert.equal(lifecycle.startError, "", "the primary's absence is not a start error");
+  assert.equal(
+    lifecycle.startError,
+    "",
+    "the primary's absence is not a start error",
+  );
   assert.equal(lifecycle.bootstrapped, true);
   assert.equal(
     lifecycle.primaryFault === null,
@@ -225,7 +232,11 @@ test("a secondary host satisfies readiness while the primary connect never answe
     lifecycle.primaryFault?.message ?? "",
     /Daemon connection did not settle inside 10 ms/,
   );
-  assert.equal(lifecycle.startError, "", "the recorded host fault stays off the board");
+  assert.equal(
+    lifecycle.startError,
+    "",
+    "the recorded host fault stays off the board",
+  );
 });
 
 test("with no host online the primary's connect failure is still the runtime's start error", async () => {
@@ -242,4 +253,96 @@ test("with no host online the primary's connect failure is still the runtime's s
     /Daemon connection did not settle inside 10 ms/,
   );
   assert.equal(lifecycle.bootstrapped, false);
+});
+
+test("warm primary disconnect with a secondary host online runs common recovery once without waiting (nucleus#1449)", async () => {
+  let primaryOnline = true;
+  let refreshes = 0;
+  let bulkResumes = 0;
+  const opResumes: boolean[] = [];
+  let wakes = 0;
+  let lifecycle!: RuntimeLifecycle;
+  const owner = {
+    store: {
+      prStateTasks: () => [],
+      advanceRevision: () => undefined,
+    },
+    engine: {
+      refresh: async () => {
+        refreshes++;
+      },
+      wake: async () => {
+        wakes++;
+      },
+      progressMark: () => wakes,
+      resumeOperations: (reconcileInterrupted: boolean) => {
+        opResumes.push(reconcileInterrupted);
+      },
+      resumeBulkDispositions: () => {
+        bulkResumes++;
+      },
+      hooks: { disposeLegacyWarmCheckouts: async () => undefined },
+    },
+    adapter: {
+      connect: () =>
+        primaryOnline ? Promise.resolve() : new Promise<void>(() => {}),
+    },
+    admission: {},
+    hostRegistry: {
+      known: () => [],
+      get: () => undefined,
+      primary: () => undefined,
+      connect: () => ({}),
+      resource: (_id: string, create: () => unknown) => create(),
+    },
+    plannerTickets: { ensure: async () => undefined },
+    t3Host: () => null,
+    refreshT3Settings: () => undefined,
+    daemonUrl: "ws://127.0.0.1:6767/ws",
+    connectTimeoutMs: 10,
+    paseoHostId: "paseo:primary",
+    hostSession: null as { id: string; token: object } | null,
+    idleShutdownLatched: false,
+    connected: () => {
+      if (!primaryOnline) {
+        const hadSession = owner.hostSession !== null;
+        owner.hostSession = null;
+        if (hadSession) lifecycle.bootstrapped = false;
+        return false;
+      }
+      return owner.hostSession !== null;
+    },
+    anyHostConnected: () => {
+      owner.connected();
+      return true;
+    },
+    readPrStates: async () => ({}),
+  } as unknown as RuntimeLifecycleOwner;
+
+  lifecycle = new RuntimeLifecycle(owner);
+  assert.equal(await lifecycle.ensureBootstrap(), true);
+  assert.equal(refreshes, 1);
+  assert.equal(bulkResumes, 1);
+  assert.deepEqual(opResumes, [true]);
+  assert.equal(wakes, 1);
+
+  // Primary disconnects while secondary stays online: common recovery and reconciliation
+  // run once (reconcileInterrupted=false) without waiting for the hanging primary connect.
+  primaryOnline = false;
+  const startedAt = Date.now();
+  assert.equal(await lifecycle.ensureBootstrap(), true);
+  assert.ok(Date.now() - startedAt < 1_000);
+  assert.equal(lifecycle.startError, "");
+  assert.equal(lifecycle.bootstrapped, true);
+  assert.equal(refreshes, 2);
+  assert.equal(bulkResumes, 2);
+  assert.deepEqual(opResumes, [true, false]);
+  assert.equal(wakes, 2);
+
+  // Subsequent ticks while primary remains offline do not repeat recovery or reconciliation.
+  assert.equal(await lifecycle.ensureBootstrap(), true);
+  assert.equal(refreshes, 2);
+  assert.equal(bulkResumes, 2);
+  assert.deepEqual(opResumes, [true, false]);
+  assert.equal(wakes, 2);
 });

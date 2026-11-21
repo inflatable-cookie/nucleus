@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { QueueRuntime } from "../service/runtime-owner";
@@ -47,9 +53,17 @@ interface Recording {
   catalogs: number;
 }
 
-const recording = (): Recording => ({ workspaces: [], agents: [], catalogs: 0 });
+const recording = (): Recording => ({
+  workspaces: [],
+  agents: [],
+  catalogs: 0,
+});
 
-const waitUntil = async (ready: () => boolean, label: string, timeoutMs = 15_000) => {
+const waitUntil = async (
+  ready: () => boolean,
+  label: string,
+  timeoutMs = 15_000,
+) => {
   const start = Date.now();
   while (!ready() && Date.now() - start < timeoutMs)
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -103,7 +117,10 @@ function adapterFor(
     },
     createAgent: async (task: { id: string; workspaceId?: string | null }) => {
       seen.agents.push(task.id);
-      return { id: `${hostId}-agent-${task.id}`, workspaceId: task.workspaceId ?? null };
+      return {
+        id: `${hostId}-agent-${task.id}`,
+        workspaceId: task.workspaceId ?? null,
+      };
     },
     observe: async (id: string) => ({
       id,
@@ -139,14 +156,24 @@ interface Fixture {
 async function fixture(): Promise<Fixture> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "t3-sole-online-")));
   const repo = join(root, "repo");
-  await git(root, "init", "--bare", "--initial-branch=main", join(root, "origin.git"));
+  await git(
+    root,
+    "init",
+    "--bare",
+    "--initial-branch=main",
+    join(root, "origin.git"),
+  );
   await git(root, "clone", join(root, "origin.git"), repo);
   await git(repo, "config", "user.name", "Queue test");
   await git(repo, "config", "user.email", "queue@example.invalid");
   mkdirSync(join(repo, ".paseo"), { recursive: true });
   writeFileSync(
     join(repo, ".paseo/queue.json"),
-    JSON.stringify({ schema: "paseo.queue.control.v5", closeout: "queue", hooks: [] }),
+    JSON.stringify({
+      schema: "paseo.queue.control.v5",
+      closeout: "queue",
+      hooks: [],
+    }),
   );
   await git(repo, "add", ".");
   await git(repo, "commit", "-m", "fixture");
@@ -312,9 +339,38 @@ test("an already running T3 host losing Paseo keeps the board quiet and T3 work 
     assert.equal(f.hosts.paseo.workspaces.length, 0, "Paseo created nothing");
     assert.equal(f.hosts.t3.agents.length, 1, "the existing worker is on T3");
 
+    // Pending durable work and a queued T3 task present when Paseo disconnects:
+    // common recovery and reconciliation must run once on the remaining online host.
+    const warmControl = {
+      taskId: existing.id,
+      version: f.runtime.store.task(existing.id).version,
+      action: "hold" as const,
+      reason: "Warm disconnect fixture",
+    };
+    const warmAccepted = f.runtime.store.acceptOperation({
+      key: "warm-disconnect-hold",
+      kind: "task_control",
+      inputHash: operationInputHash(warmControl),
+      taskId: existing.id,
+      expectedVersion: warmControl.version,
+      payload: { type: "task_control", control: warmControl },
+      hostId: t3Host,
+    });
+    assert.ok("accepted" in warmAccepted, JSON.stringify(warmAccepted));
+    const reconciled = insertTask(
+      f.runtime,
+      f,
+      t3Host,
+      "Reconciled on warm disconnect",
+    );
+
     // Tom quits Paseo. The service keeps running with T3 online.
     f.hosts.online.value = false;
-    assert.equal(await f.runtime.ensureBootstrap(), true, "T3 alone satisfies readiness");
+    assert.equal(
+      await f.runtime.ensureBootstrap(),
+      true,
+      "T3 alone satisfies readiness",
+    );
 
     assert.equal(
       f.runtime.startError,
@@ -322,23 +378,61 @@ test("an already running T3 host losing Paseo keeps the board quiet and T3 work 
       "an offline primary is that host's fault, never a board-wide start error",
     );
     const board = f.runtime.uiSnapshot();
-    assert.equal(board.error, "", "no global failure banner on a healthy board");
+    assert.equal(
+      board.error,
+      "",
+      "no global failure banner on a healthy board",
+    );
     const health = f.runtime.health();
-    assert.equal(health.connected, true, "the fleet is still connected through T3");
-    assert.equal(health.hostId, paseoHost, "the legacy host identity is unchanged");
+    assert.equal(
+      health.connected,
+      true,
+      "the fleet is still connected through T3",
+    );
+    assert.equal(
+      health.hostId,
+      paseoHost,
+      "the legacy host identity is unchanged",
+    );
     assert.deepEqual(
       health.hosts?.find((host) => host.id === t3Host)?.state,
       "online",
     );
+    // Common durable recovery and reconciliation ran on warm Paseo disconnect without
+    // waiting for the offline primary.
+    await waitUntil(
+      () => f.runtime.store.task(existing.id).held,
+      "the accepted durable operation resumed on warm Paseo disconnect",
+    );
+    assert.equal(
+      f.runtime.store
+        .operations({})
+        .filter((record) => record.key === "warm-disconnect-hold").length,
+      1,
+      "the durable operation ran once",
+    );
+    await waitUntil(
+      () => Boolean(f.runtime.store.task(reconciled.id).agentId),
+      "reconciliation dispatched the queued T3 task on warm Paseo disconnect",
+    );
+    assert.equal(
+      f.hosts.t3.agents.length,
+      2,
+      "reconciliation created the queued T3 worker once",
+    );
+
     // The primary's own bounded attempt records its cause on that host.
     await waitUntil(
       () =>
         /Daemon connection did not settle inside 200 ms/.test(
-          f.runtime.health().hosts?.find((host) => host.id === paseoHost)?.reason ?? "",
+          f.runtime.health().hosts?.find((host) => host.id === paseoHost)
+            ?.reason ?? "",
         ),
       "the offline primary records its own cause",
     );
-    const offlinePaseo = f.runtime.health().hosts?.find((host) => host.id === paseoHost);
+    const offlinePaseo = f.runtime
+      .health()
+      .hosts?.find((host) => host.id === paseoHost);
     assert.equal(offlinePaseo?.state, "offline");
     assert.match(
       offlinePaseo?.reason ?? "",
@@ -350,6 +444,21 @@ test("an already running T3 host losing Paseo keeps the board quiet and T3 work 
       f.hosts.offlineConnectPending.value,
       true,
       "the offline primary's own connect never answered, and nothing waited on it",
+    );
+
+    // A later tick while Paseo stays offline does not duplicate recovery or dispatch.
+    assert.equal(await f.runtime.ensureBootstrap(), true);
+    assert.equal(
+      f.runtime.store
+        .operations({})
+        .filter((record) => record.key === "warm-disconnect-hold").length,
+      1,
+      "a subsequent tick does not duplicate the durable operation",
+    );
+    assert.equal(
+      f.hosts.t3.agents.length,
+      2,
+      "a subsequent tick does not duplicate workers",
     );
 
     // Existing T3 work is untouched and its host is still available.
@@ -386,16 +495,30 @@ test("an already running T3 host losing Paseo keeps the board quiet and T3 work 
       () => Boolean(f.runtime.store.task(fresh.id).agentId),
       "the new T3 task dispatched while Paseo was offline",
     );
-    assert.equal(f.hosts.t3.agents.length, 2, "the new worker was created on T3");
+    assert.equal(
+      f.hosts.t3.agents.length,
+      3,
+      "the new worker was created on T3",
+    );
 
     // A task actually bound to the offline Paseo host waits there, and nothing
     // pretends a workspace effect happened.
-    const paseoTask = insertTask(f.runtime, f, paseoHost, "Bound to Paseo", true);
+    const paseoTask = insertTask(
+      f.runtime,
+      f,
+      paseoHost,
+      "Bound to Paseo",
+      true,
+    );
     await f.runtime.engine.dispatchTask(paseoTask.id, false);
     const waiting = f.runtime.store.task(paseoTask.id);
     assert.equal(waiting.resolution.stop?.reason, "host_unavailable");
     assert.equal(waiting.resolution.hostWait?.hostId, paseoHost);
-    assert.equal(waiting.workspaceIntent, false, "no workspace effect is attempted");
+    assert.equal(
+      waiting.workspaceIntent,
+      false,
+      "no workspace effect is attempted",
+    );
     assert.equal(f.hosts.paseo.workspaces.length, 0);
 
     // An independently real service fault is still on the board: the host fault
@@ -426,7 +549,12 @@ test("a cold start with stored Paseo configuration and only T3 online resumes du
     registerT3(f.runtime, f.adapters.t3);
     await planRepository(f, f.runtime);
 
-    const existing = insertTask(f.runtime, f, t3Host, "Started before the cold start");
+    const existing = insertTask(
+      f.runtime,
+      f,
+      t3Host,
+      "Started before the cold start",
+    );
     await f.runtime.engine.dispatchTask(existing.id, false);
     await waitUntil(
       () => Boolean(f.runtime.store.task(existing.id).agentId),
@@ -475,7 +603,11 @@ test("a cold start with stored Paseo configuration and only T3 online resumes du
       "",
       "a cold start with only T3 online is not a start failure",
     );
-    assert.equal(cold.bootstrapped, true, "readiness completed on the online host");
+    assert.equal(
+      cold.bootstrapped,
+      true,
+      "readiness completed on the online host",
+    );
     assert.equal(
       f.hosts.offlineConnectPending.value,
       true,
@@ -492,11 +624,14 @@ test("a cold start with stored Paseo configuration and only T3 online resumes du
     await waitUntil(
       () =>
         /Daemon connection did not settle inside 200 ms/.test(
-          cold!.health().hosts?.find((host) => host.id === paseoHost)?.reason ?? "",
+          cold!.health().hosts?.find((host) => host.id === paseoHost)?.reason ??
+            "",
         ),
       "the stored Paseo primary records its own cause",
     );
-    const offlinePaseo = cold.health().hosts?.find((host) => host.id === paseoHost);
+    const offlinePaseo = cold
+      .health()
+      .hosts?.find((host) => host.id === paseoHost);
     assert.equal(offlinePaseo?.state, "offline");
     assert.match(
       offlinePaseo?.reason ?? "",
@@ -511,7 +646,9 @@ test("a cold start with stored Paseo configuration and only T3 online resumes du
       "the accepted durable operation resumed without the primary host",
     );
     assert.equal(
-      cold.store.operations({}).filter((record) => record.key === "cold-start-hold").length,
+      cold.store
+        .operations({})
+        .filter((record) => record.key === "cold-start-hold").length,
       1,
       "the operation ran once, not twice",
     );
@@ -521,7 +658,12 @@ test("a cold start with stored Paseo configuration and only T3 online resumes du
       existingAgentId,
       "the existing T3 worker keeps its thread across the cold start",
     );
-    const fresh = insertTask(cold, f, t3Host, "Dispatched after the cold start");
+    const fresh = insertTask(
+      cold,
+      f,
+      t3Host,
+      "Dispatched after the cold start",
+    );
     await cold.engine.dispatchTask(fresh.id, false);
     await waitUntil(
       () => Boolean(cold!.store.task(fresh.id).agentId),
@@ -531,7 +673,10 @@ test("a cold start with stored Paseo configuration and only T3 online resumes du
     // The stored Paseo-bound task waits on its own host.
     const paseoTask = insertTask(cold, f, paseoHost, "Stored Paseo work", true);
     await cold.engine.dispatchTask(paseoTask.id, false);
-    assert.equal(cold.store.task(paseoTask.id).resolution.stop?.reason, "host_unavailable");
+    assert.equal(
+      cold.store.task(paseoTask.id).resolution.stop?.reason,
+      "host_unavailable",
+    );
     assert.equal(f.hosts.paseo.workspaces.length, 0);
   } finally {
     if (cold) await cold.drain();

@@ -996,7 +996,10 @@ export class QueueRuntime {
           () => {
             // A sweep fault stays on the board until the next pass settles, and
             // only the error this tick recorded is cleared (nucleus#1449).
-            if (this.sweepStartError && this.startError === this.sweepStartError)
+            if (
+              this.sweepStartError &&
+              this.startError === this.sweepStartError
+            )
               this.startError = "";
             this.sweepStartError = null;
           },
@@ -1399,7 +1402,8 @@ export class QueueRuntime {
       dataHome: this.dataDir,
       socketPath: this.paseo.socketPath,
       answerDecision: (input) => this.questions.answerT3Decision(input),
-      parentStatus: (hostId, taskId) => this.t3Host?.decisionParent(hostId, taskId) ?? { state: "unknown" },
+      parentStatus: (hostId, taskId) =>
+        this.t3Host?.decisionParent(hostId, taskId) ?? { state: "unknown" },
       openInboxUi: async (hostId) => {
         if (!this.t3Host) {
           throw new Error(`T3Code host ${hostId} is not configured`);

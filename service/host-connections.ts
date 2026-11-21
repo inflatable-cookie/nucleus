@@ -195,6 +195,7 @@ export class HostConnections {
       (this.owner.hostSession !== null &&
         this.owner.paseoHostId !== this.owner.hostSession.id)
     ) {
+      const hadSession = this.owner.hostSession !== null;
       if (this.owner.hostSession)
         this.owner.hostRegistry.disconnect(
           this.owner.hostSession.id,
@@ -202,10 +203,10 @@ export class HostConnections {
         );
       this.owner.hostSession = null;
       // Readiness belongs to the verified host that owns the work (nucleus#1449).
-      // Losing the primary retires only its own claim: a fleet that still has an
-      // online host stays bootstrapped, so every later tick does not repeat
-      // settled durable recovery while the primary reconnects on its own bound.
-      if (this.owner.hostRegistry.onlineIds().length === 0)
+      // Losing an active primary session triggers one common recovery and
+      // reconciliation pass on the remaining online host; once that pass settles,
+      // later ticks while the primary stays offline do not repeat it.
+      if (hadSession || this.owner.hostRegistry.onlineIds().length === 0)
         this.owner.bootstrapped = false;
       return false;
     }
@@ -324,8 +325,10 @@ export class HostConnections {
     const project = this.owner.store.queueProject();
     if (!project || !this.owner.adapter.notify) return;
     try {
-      const { thread } = await this.owner.engine.resolution.responsibleThread(project);
-      if (!thread || epoch !== this.pluginPresenceEpoch || this.owner.closing) return;
+      const { thread } =
+        await this.owner.engine.resolution.responsibleThread(project);
+      if (!thread || epoch !== this.pluginPresenceEpoch || this.owner.closing)
+        return;
       const reload = commands.length
         ? commands
             .map((command) => `Reload the plugin with: ${command}`)
@@ -338,7 +341,9 @@ export class HostConnections {
         }),
       );
     } catch {
-      this.owner.engine.resolution.responsibleThreads.cache.invalidate(project.key);
+      this.owner.engine.resolution.responsibleThreads.cache.invalidate(
+        project.key,
+      );
       /* the board error is the operator-visible surface */
     }
   }

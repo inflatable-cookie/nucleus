@@ -293,7 +293,10 @@ export class RuntimeLifecycle {
           // A host already proved readiness in this process: durable recovery and
           // the first reconciliation are settled facts, so nothing repeats here.
           if (this.owner.connected())
-            await this.boundedBootstrapStep("Daemon catalog refresh", this.refresh());
+            await this.boundedBootstrapStep(
+              "Daemon catalog refresh",
+              this.refresh(),
+            );
           return;
         }
         await this.boundedBootstrapStep(
