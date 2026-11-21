@@ -114,6 +114,7 @@ function ProfileUsageBar({
       <View
         style={{
           flex: 1,
+          height: control.height,
           borderRadius: radius.control,
           backgroundColor: c.border,
           overflow: "hidden",
