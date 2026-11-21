@@ -38,6 +38,9 @@ export class PlannerGrantCleanup {
       ),
     );
     for (const hostId of hostIds) {
+      // A bare legacy Paseo grant with no resolved Paseo host must never be
+      // evaluated against an ambient non-Paseo host (e.g. during a T3-scoped wake).
+      if (!hostId && ambientHostId) continue;
       const archive = async () => {
         try {
           if (hostId && !this.context.hostAvailable(hostId)) return;
