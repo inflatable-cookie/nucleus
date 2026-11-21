@@ -30,7 +30,9 @@ import {
   HISTORY_RETENTION_MS,
   StoreRetention,
   type RetainedRowPrune,
+  type RetainedTelemetryCoverage,
 } from "./store-retention";
+import { captureRetainedTelemetry } from "../telemetry/telemetry-item";
 import { StoreOperations } from "./store-operations";
 import { StoreNotices } from "./store-notices";
 import { StoreMessages } from "./store-messages";
@@ -78,6 +80,9 @@ export {
 export {
   ASSIGNMENT_HISTORY_KEEP,
   HISTORY_RETENTION_MS,
+  TASK_PURGE_BATCH,
+  TELEMETRY_SEED_LIMIT,
+  type RetainedTelemetryCoverage,
   HOST_RUN_KEEP_PER_SELECTOR,
   PROJECT_QA_KEEP_PER_REPOSITORY,
   VERB_OUTCOME_RETENTION_MS,
@@ -261,6 +266,8 @@ export class Store {
     },
     advanceRevision: () => this.advanceRevision(),
     taskChanged: (taskId) => this.taskChanged(taskId),
+    captureTelemetry: (taskId, at) =>
+      captureRetainedTelemetry(this.outcomesStore.telemetryFactsForTask(taskId), new Date(at)),
   });
   private readonly migrationStore = new StoreMigration(this.core, {
     retainedArchiveKeys: () => this.retentionStore.retainedArchiveKeys(),
@@ -1286,8 +1293,25 @@ export class Store {
   purgeOldTasks(
     at = Date.now(),
     cleanupFiles?: (taskId: string, runIds: string[]) => void,
+    options: { batch?: number } = {},
   ) {
-    return this.retentionStore.purgeOldTasks(at, cleanupFiles);
+    return this.retentionStore.purgeOldTasks(at, cleanupFiles, options);
+  }
+  /** Task 1496: seed compact telemetry for still-present finished history, bounded per pass. */
+  seedRetainedTelemetry(at = Date.now(), limit?: number) {
+    return this.retentionStore.seedRetainedTelemetry(at, limit);
+  }
+  /** Task 1496: expire retained telemetry outside the rolling 90-day cohort window. */
+  expireRetainedTelemetry(at = Date.now(), batch?: number) {
+    return this.retentionStore.expireRetainedTelemetry(at, batch);
+  }
+  /** Task 1496: the earliest creation time retained telemetry covers completely. */
+  retainedTelemetryCoverage(): RetainedTelemetryCoverage {
+    return this.retentionStore.retainedTelemetryCoverage();
+  }
+  /** Task 1496: the retained-telemetry capture faults the last passes recorded, for retention health. */
+  telemetryRetentionError(): string {
+    return this.getMeta<string>("telemetryCaptureError") || this.getMeta<string>("telemetrySeedError") || "";
   }
   /**
    * Audits B5: the tasks the next purge would delete, so the caller can reap their owned

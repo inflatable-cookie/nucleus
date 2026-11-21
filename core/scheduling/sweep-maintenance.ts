@@ -107,6 +107,8 @@ export class SweepMaintenance {
           await reapHookCheckouts(this.store, {
             taskIds: new Set(candidates.map((task) => task.id)),
           });
+        // Task 1496: compact telemetry for still-present finished history, bounded per pass.
+        this.store.seedRetainedTelemetry(at);
         this.store.purgeOldTasks(at, (taskId, runIds) => {
           this.context.adapter.purgeReportingFiles?.(taskId, runIds);
           void this.context.removeSiblings(taskId);
@@ -119,7 +121,10 @@ export class SweepMaintenance {
         // Lean store 2 (task 987): the same windows the schema-52 migration applied, so rows that
         // outlive their task or run are pruned as they age out, not only once.
         this.store.transaction(() => this.store.pruneRetainedRows(at));
-        this.store.setMeta("retentionError", "");
+        // Retained telemetry keeps the rolling 90-day cohort window; detail retention is unchanged.
+        this.store.expireRetainedTelemetry(at);
+        // A capture fault keeps that task's history and stays visible in retention health.
+        this.store.setMeta("retentionError", this.store.telemetryRetentionError());
       } catch (error) {
         this.store.setMeta("retentionError", String(error));
         this.store.setMeta("lastRetentionAt", at);

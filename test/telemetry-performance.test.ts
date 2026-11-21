@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { Store, digest } from "../core/store/store";
-import { createTelemetrySnapshotCache } from "../core/telemetry/telemetry";
+import { captureRetainedTelemetry, createTelemetrySnapshotCache } from "../core/telemetry/telemetry";
 import { taskSchema } from "../shared/contracts";
 import { telemetrySnapshotSchema } from "../shared/telemetry";
 import { timingTest, performanceAssert } from './support/timing';
@@ -177,6 +177,61 @@ timingTest("shared telemetry base meets the cold, warm and unrelated-RPC respons
     assert.equal(concurrent[1].matchingTasks, TASK_COUNT / REPOS.length);
 
     console.log(`telemetry oracle: fixture ${fixture.facts} facts / ${(fixture.bytes / 1024 / 1024).toFixed(1)} MB; cold ${coldCpuMs.toFixed(0)} ms; lag p95 ${cpuSliceP95.toFixed(1)} ms; ui-snapshot probe max ${probeMaxCpuMs.toFixed(0)} ms; warm p95 ${warmCpuP95.toFixed(1)} ms; builds ${builds}`);
+  } finally { fixture.close(); }
+});
+
+/**
+ * Task 1496: ninety days of retained compact records beside the live fixture. Restoring
+ * them joins the same coalesced base, so cold construction, unrelated RPC and warm
+ * filters stay inside the same envelope as the live-only oracle.
+ */
+const RETAINED_RECORDS = 9_000;
+timingTest("ninety days of retained telemetry stay inside the cold, warm and unrelated-RPC envelope", async () => {
+  const fixture = buildFixture();
+  try {
+    const outcomes = (fixture.store as unknown as { outcomesStore: { telemetryFactsForTask: (id: string) => Parameters<typeof captureRetainedTelemetry>[0] } }).outcomesStore;
+    const template = captureRetainedTelemetry(outcomes.telemetryFactsForTask("perf-task-11"), new Date(fixture.generatedAt));
+    const insert = fixture.store.db.prepare("INSERT INTO task_telemetry_retained(taskId,version,createdAt,capturedAt,data) VALUES(?,?,?,?,?)");
+    fixture.store.transaction(() => {
+      for (let index = 0; index < RETAINED_RECORDS; index++) {
+        const createdAt = new Date(fixture.generatedAt - (index % 89) * 86_400_000 - index * 1_000).toISOString();
+        const record = { ...template, taskId: `retained-${index}`, createdAt,
+          dimensions: { ...template.dimensions, repoPath: REPOS[index % REPOS.length], scope: CAPABILITIES[index % 3], profileGroup: `group-${index % 4}` } };
+        insert.run(record.taskId, record.version, createdAt, record.capturedAt, JSON.stringify(record));
+      }
+    });
+    const cached = createTelemetrySnapshotCache(fixture.store, { maxAgeMs: 15_000, now: () => fixture.generatedAt });
+    const uiSnapshotProbe = () => new Promise<number>(resolve => { setImmediate(() => { resolve(cpuSample(() => fixture.store.tasks()).ms); }); });
+    const cpuSlices = startCpuSliceMonitor();
+    let building = true;
+    const probeSamples: number[] = [];
+    const probing = (async () => { while (building) probeSamples.push(await uiSnapshotProbe()); })();
+    const coldStarted = process.cpuUsage();
+    const cold = await cached({ window: "90d", groupBy: "scope" });
+    const coldCpuMs = cpuTimeMs(coldStarted);
+    building = false;
+    await probing;
+    const cpuSliceP95 = percentile(cpuSlices.stop(), 0.95);
+    assert.equal(cold.matchingTasks, RETAINED_RECORDS + TASK_COUNT);
+    assert.equal(cold.coverage.retainedTasks, RETAINED_RECORDS);
+    performanceAssert(coldCpuMs <= 5_000, `cold base with retained history took ${coldCpuMs.toFixed(0)} ms`);
+    performanceAssert(cpuSliceP95 < 100, `event-loop CPU p95 with retained history was ${cpuSliceP95.toFixed(1)} ms`);
+    const probeMaxCpuMs = Math.max(0, ...probeSamples);
+    performanceAssert(probeMaxCpuMs < 250, `queue.ui-snapshot probe took ${probeMaxCpuMs.toFixed(0)} ms during cold construction`);
+    const warmLatency: number[] = [];
+    for (let index = 0; index < 50; index++) {
+      const started = process.cpuUsage();
+      await cached({
+        window: (["24h", "7d", "30d", "90d"] as const)[index % 4],
+        groupBy: (["none", "repository", "scope", "profile_group", "closeout_authority"] as const)[index % 5],
+        ...(index % 3 === 0 ? { repoPath: REPOS[index % REPOS.length] } : {}),
+        ...(index % 2 === 0 ? { scope: CAPABILITIES[index % CAPABILITIES.length] } : {}),
+      });
+      warmLatency.push(cpuTimeMs(started));
+    }
+    const warmCpuP95 = percentile(warmLatency, 0.95);
+    performanceAssert(warmCpuP95 <= 100, `warm filter p95 with retained history was ${warmCpuP95.toFixed(1)} ms`);
+    console.log(`retained telemetry oracle: ${RETAINED_RECORDS} records + ${TASK_COUNT} live tasks; cold ${coldCpuMs.toFixed(0)} ms; lag p95 ${cpuSliceP95.toFixed(1)} ms; ui-snapshot probe max ${probeMaxCpuMs.toFixed(0)} ms; warm p95 ${warmCpuP95.toFixed(1)} ms`);
   } finally { fixture.close(); }
 });
 

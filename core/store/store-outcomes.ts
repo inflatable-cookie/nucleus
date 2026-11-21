@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { noticeSchema,outcomeSchema,type Notice,type Outcome,type OutcomeSearchInput,type OutcomeSearchResult,type RepositorySettings,type Run,type Task } from "../../shared/contracts";
 import { hookRecordSchema,type HookRecord } from "../../shared/hooks";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
+import { RETAINED_TELEMETRY_VERSION, type RetainedTaskTelemetry } from "../../shared/telemetry";
 import { currentBrief } from "../planning/brief";
 import { addOutcomeToLaneIndex } from "../planning/lanes";
 import { digest,now,StoreCore } from "./store-core";
@@ -111,7 +112,8 @@ export type TelemetryFactChunk =
   | { kind: "events"; events: { taskId: string; event: QueueEventRow }[] }
   | { kind: "runs"; runs: { taskId: string; run: Run }[] }
   | { kind: "notices"; notices: { taskId: string; notice: Notice }[] }
-  | { kind: "hooks"; hooks: { taskId: string; hook: HookRecord }[] };
+  | { kind: "hooks"; hooks: { taskId: string; hook: HookRecord }[] }
+  | { kind: "retained"; records: RetainedTaskTelemetry[] };
 interface Ports {
   tasksStore: StoreTasks;
   numberFor: (taskId: string) => { number: number; reference: string } | null;
@@ -186,17 +188,40 @@ export class StoreOutcomes {
       hookCursor = Number(rows.at(-1)!.k);
       yield { kind: "hooks", hooks: rows.map(row => ({ taskId: String(row.taskId), hook: hookRecordSchema.parse(JSON.parse(String(row.data))) })) };
     }
+    // Task 1496: one retained compact record per purged task. A task row that still exists
+    // (live or removed) never contributes through its record, so each task counts once.
+    let retainedCursor = 0;
+    while (true) {
+      const rows = this.db.prepare(`SELECT r.rowid AS k,r.data AS data FROM task_telemetry_retained AS r
+        WHERE r.rowid>? AND r.version=? AND NOT EXISTS (SELECT 1 FROM tasks AS t WHERE t.id=r.taskId)
+        ORDER BY r.rowid LIMIT ?`).all(retainedCursor, RETAINED_TELEMETRY_VERSION, page) as { k: number; data: string }[];
+      if (!rows.length) break;
+      retainedCursor = Number(rows.at(-1)!.k);
+      yield { kind: "retained", records: rows.map(row => JSON.parse(String(row.data)) as RetainedTaskTelemetry) };
+    }
+  }
+
+  /** One live task's telemetry facts, read exactly as the bulk base reads them. */
+  telemetryFactsForTask(taskId: string): { task: Task; events: QueueEventRow[]; runs: Run[]; notices: Notice[]; hooks: HookRecord[] } {
+    const task = this.tasksStore.projectedTask(taskId) ?? this.tasksStore.snapshotTask(taskId);
+    const events = (this.db.prepare("SELECT id,taskId,at,kind,detail FROM events WHERE taskId=? ORDER BY id").all(taskId) as unknown as QueueEventRow[])
+      .map(row => ({ id: Number(row.id), taskId: String(row.taskId), at: String(row.at), kind: String(row.kind), detail: String(row.detail) }));
+    const runs = (this.db.prepare("SELECT data FROM runs WHERE taskId=? ORDER BY rowid").all(taskId) as { data: string }[]).map(row => JSON.parse(String(row.data)) as Run);
+    const notices = (this.db.prepare("SELECT data FROM notices WHERE taskId=? ORDER BY rowid").all(taskId) as { data: string }[]).map(row => noticeSchema.parse(JSON.parse(String(row.data))));
+    const hooks = (this.db.prepare("SELECT data FROM hook_events WHERE taskId=? ORDER BY rowid").all(taskId) as { data: string }[]).map(row => hookRecordSchema.parse(JSON.parse(String(row.data))));
+    return { task, events, runs, notices, hooks };
   }
 
   telemetryFacts(page = 500) {
-    const facts = { tasks: [] as Task[], eventsByTask: new Map<string, QueueEventRow[]>(), runsByTask: new Map<string, Run[]>(), noticesByTask: new Map<string, Notice[]>(), hooksByTask: new Map<string, HookRecord[]>() };
+    const facts = { tasks: [] as Task[], eventsByTask: new Map<string, QueueEventRow[]>(), runsByTask: new Map<string, Run[]>(), noticesByTask: new Map<string, Notice[]>(), hooksByTask: new Map<string, HookRecord[]>(), retained: [] as RetainedTaskTelemetry[] };
     const push = <T>(map: Map<string, T[]>, taskId: string, value: T) => { const list = map.get(taskId); if (list) list.push(value); else map.set(taskId, [value]); };
     for (const chunk of this.telemetryFactChunks(page)) {
       if (chunk.kind === "tasks") facts.tasks.push(...chunk.tasks);
       else if (chunk.kind === "events") for (const row of chunk.events) push(facts.eventsByTask, row.taskId, row.event);
       else if (chunk.kind === "runs") for (const row of chunk.runs) push(facts.runsByTask, row.taskId, row.run);
       else if (chunk.kind === "notices") for (const row of chunk.notices) push(facts.noticesByTask, row.taskId, row.notice);
-      else for (const row of chunk.hooks) push(facts.hooksByTask, row.taskId, row.hook);
+      else if (chunk.kind === "hooks") for (const row of chunk.hooks) push(facts.hooksByTask, row.taskId, row.hook);
+      else facts.retained.push(...chunk.records);
     }
     return facts;
   }

@@ -727,10 +727,187 @@ export const emptyTaskControlTelemetry: TaskControlTelemetry = {
   topRefusals: [],
 };
 
+/**
+ * Rolling aggregate telemetry history (Tom approved 90 days, task 1496). Detailed task
+ * history still purges after 4 days; one compact retained record per purged task keeps
+ * the aggregate measurements for 90 days of creation-time cohorts.
+ */
+export const TELEMETRY_RETENTION_DAYS = 90;
+export const TELEMETRY_RETENTION_MS = TELEMETRY_RETENTION_DAYS * 86_400_000;
+/** Task-control outcomes keep their own 30-day event-time series. */
+export const TASK_CONTROL_RETENTION_DAYS = 30;
+/** The windows the Telemetry screen offers. `all` stays an RPC value, bounded by retention. */
+export const telemetryScreenWindows = ["24h", "7d", "30d", "90d"] as const;
+export type TelemetryScreenWindow = (typeof telemetryScreenWindows)[number];
+export const RETAINED_TELEMETRY_VERSION = 1;
+
+const retainedText = z.string().max(512);
+const retainedAt = z.string().max(64);
+/**
+ * Version 1 of the compact per-task measurement record written when detailed history
+ * is purged. It carries only lifecycle outcome, timestamps, stable filter dimensions,
+ * measured durations and usage totals, closed-vocabulary intervention and review counts
+ * and evidence quality. Titles, briefs, messages, logs, raw events, run, thread and
+ * workspace identities and credentials are never part of it: reviewer verdicts keep
+ * their profile vocabulary and drop the agent identity, recording `unavailable` where
+ * that identity was the only attribution.
+ */
+export const retainedTaskTelemetrySchema = z
+  .object({
+    version: z.literal(RETAINED_TELEMETRY_VERSION),
+    taskId: z.string().min(1).max(200),
+    createdAt: retainedAt,
+    finishedAt: retainedAt.nullable(),
+    capturedAt: retainedAt,
+    outcome: z.object({ phase: z.string().max(64) }).strict(),
+    dimensions: z
+      .object({
+        repoPath: retainedText,
+        scope: z.string().max(64),
+        profileGroup: retainedText.nullable(),
+        complexity: z.string().max(64).nullable(),
+        providers: z.array(z.string().max(200)).max(64),
+      })
+      .strict(),
+    measures: z
+      .object({
+        evidence: z.enum(["exact", "mixed", "partial"]),
+        totalElapsedMs: z.number().nonnegative(),
+        waitingMs: z.number().nonnegative(),
+        activeMs: z.number().nonnegative(),
+        interventionMs: z.number().nonnegative(),
+        closeoutAuthority: closeoutAuthoritySchema,
+        stages: z
+          .array(
+            z
+              .object({
+                stage: telemetryStageKeySchema,
+                elapsedMs: z.number().nonnegative(),
+                partial: z.boolean(),
+              })
+              .strict(),
+          )
+          .max(64),
+        usage: z
+          .object({
+            evidence: z.enum(["exact", "partial", "none"]),
+            total: usageTotalsSchema,
+          })
+          .strict()
+          .nullable(),
+      })
+      .strict(),
+    interventions: interventionSchema,
+    reviewer: z
+      .object({
+        verdicts: z
+          .array(
+            z
+              .object({
+                at: retainedAt,
+                verdict: z.enum(["approved", "changes_required"]),
+                exact: z.boolean(),
+                attribution: z.enum(["profile", "unavailable", "none"]),
+                reviewer: z
+                  .object({
+                    profileId: z.string().max(200).nullable(),
+                    profileName: z.string().max(200).nullable(),
+                    provider: z.string().max(200).nullable(),
+                    model: z.string().max(200).nullable(),
+                    profileGroup: z.string().max(200).nullable(),
+                  })
+                  .strict(),
+              })
+              .strict(),
+          )
+          .max(256),
+        rounds: z
+          .array(
+            z
+              .object({
+                at: retainedAt,
+                kind: z.enum(["review", "pre_merge"]),
+                partial: z.boolean(),
+                verdictIndex: z.number().int().nonnegative().nullable(),
+              })
+              .strict(),
+          )
+          .max(256),
+        refusals: z
+          .array(
+            z
+              .object({
+                at: retainedAt,
+                verdictIndex: z.number().int().nonnegative().nullable(),
+              })
+              .strict(),
+          )
+          .max(256),
+        postMergeIncidents: z
+          .array(
+            z
+              .object({
+                at: retainedAt,
+                cause: z.string().max(64),
+                semantic: z.boolean(),
+                verdictIndex: z.number().int().nonnegative().nullable(),
+              })
+              .strict(),
+          )
+          .max(256),
+      })
+      .strict(),
+    qaValidation: z
+      .object({
+        queueWaitMs: z.number().nonnegative().nullable(),
+        wallMs: z.number().nonnegative().nullable(),
+        cpuMs: z.number().nonnegative().nullable(),
+        capacityUnavailable: z.boolean(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+export type RetainedTaskTelemetry = z.infer<typeof retainedTaskTelemetrySchema>;
+
+/**
+ * What the matching window can honestly claim. `completeFrom` is the earliest creation
+ * time this query covers completely: detailed history purged before compact capture
+ * existed, and retained records past the 90-day cohort window, are gone. A window that
+ * starts before it is `partial`. Task-control outcomes stay on their own 30-day series.
+ */
+export const telemetryCoverageSchema = z
+  .object({
+    retentionDays: z.number().int().positive(),
+    windowStart: z.string().nullable(),
+    completeFrom: z.string().nullable(),
+    partial: z.boolean(),
+    liveTasks: z.number().int().nonnegative(),
+    retainedTasks: z.number().int().nonnegative(),
+    /** Retained reviewer verdicts whose only attribution was an agent identity. */
+    reviewerAttributionUnavailable: z.number().int().nonnegative(),
+    controlsWindowDays: z.number().int().positive(),
+    controlsPartial: z.boolean(),
+  })
+  .strict();
+export type TelemetryCoverage = z.infer<typeof telemetryCoverageSchema>;
+export const emptyTelemetryCoverage: TelemetryCoverage = {
+  retentionDays: TELEMETRY_RETENTION_DAYS,
+  windowStart: null,
+  completeFrom: null,
+  partial: false,
+  liveTasks: 0,
+  retainedTasks: 0,
+  reviewerAttributionUnavailable: 0,
+  controlsWindowDays: TASK_CONTROL_RETENTION_DAYS,
+  controlsPartial: false,
+};
+
 export const telemetrySnapshotSchema = z
   .object({
     generatedAt: z.string(),
     filters: telemetryFilterSchema,
+    coverage: telemetryCoverageSchema.default(emptyTelemetryCoverage),
     matchingTasks: z.number().int().nonnegative(),
     groups: z.array(telemetryGroupSchema),
     omittedGroups: z.number().int().nonnegative().default(0),
