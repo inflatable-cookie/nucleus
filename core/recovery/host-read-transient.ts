@@ -186,7 +186,7 @@ export function isHostReadRecoveryHeld(
     Task,
     | "id"
     | "phase"
-    | "reason"
+    | "reasonFact"
     | "workspaceId"
     | "agentId"
     | "prHead"
@@ -206,8 +206,8 @@ export function isHostReadRecoveryHeld(
   }
   if (
     hasUnresolvedHostReadExhaustionEvent(store, task.id) &&
-    (isHostReadExhaustedReason(task.reason) ||
-      isHostReadExhaustedReason(task.resolution.stop?.detail ?? ""))
+    (task.reasonFact?.code === "host_read_exhausted" ||
+      task.resolution.stop?.fact?.code === "host_read_exhausted")
   ) {
     return "exhausted";
   }

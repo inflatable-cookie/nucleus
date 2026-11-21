@@ -345,7 +345,7 @@ extension, `no-automatic-retry-record.ts` records the durable retry rule, and
 [Verbs](#verbs). Delegates remain on Engine.
 
 **ForceVerbs** (`core/verbs/force.ts`). Applies `force: true` on
-`retry_effect` and `move`: who may force, the settlement record, and the forced
+`move`: who may force, the settlement record, and the forced
 move. Enforces the force rules in [Verbs](#verbs). Pures:
 `forceMergeSourceRefusal`, `forceMergeAcceptance`, `forceMergeAdmission`,
 `forceMovePatch`. Delegates remain on Engine.
@@ -3003,6 +3003,15 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 ### Verbs
 
+[Explicit resolution](../specs/067-explicit-resolution.md) has a separate
+version-fenced transaction. An applied command records one `owner_resolution`
+event with the target's prior state, the caller, the reason and the warnings
+the caller accepted. Release revokes the run credential and retires its
+delivery records before any best-effort host cancellation or archive. Clear
+changes the stored fact the fence reads. Ordinary scheduling evaluates the
+resulting state on its own cadence.
+
+
 - The owner verbs and reconciliation act on current forge, checkout,
   integration and participant observations. Exact-head review or operator
   source acceptance, preservation of uncommitted work, exclusive writers,
@@ -3013,8 +3022,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   observation changes nothing. An absent terminal cleanup target is settled
   only when storage and the host archive are observed; this claims no removal.
 - A settled escalation closes its refusal follow-up. Reviewer-side answers
-  stay with the reviewer, and a coordinator may report an offered forced move
-  or effect retry under its own authenticated recovery binding.
+  stay with the reviewer. A coordinator can report an offered forced move
+  under its authenticated recovery binding and use explicit resolution for a
+  run or effect it needs to clear.
 - A required worker preference needing board sign-off enters the same routing
   request and decision lifecycle as an explicit role request; unsigned requests
   use automatic selection until the decision is answered.

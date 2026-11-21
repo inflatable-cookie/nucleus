@@ -475,7 +475,7 @@ export class OriginRouting {
             ),
           );
           const routedStop = Boolean(
-            planner && t.resolution.stop?.detail === reason,
+            planner && t.resolution.stop?.fact?.code === "origin_error",
           );
           if (t.originError !== reason || t.originLookupError || routedStop)
             this.store.update(

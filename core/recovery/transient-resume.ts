@@ -148,7 +148,7 @@ export class TransientResume {
       stop = current.resolution.stop;
     if (
       stop?.reason !== "provider_unavailable" ||
-      !stop.detail.startsWith(TRANSIENT_PROVIDER_WAIT) ||
+      stop.fact?.code !== "provider_retry" ||
       current.failoverReason
     )
       return;

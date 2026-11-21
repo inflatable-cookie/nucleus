@@ -1,12 +1,11 @@
 import { proofActivationRefusal } from '../qa/proof-activation';
-import { FORCE_CALLER_REFUSAL, FORCE_REASON_REFUSAL, FORCE_ACTION_REFUSAL, FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL, FORCE_EFFECT_REQUIRED_REFUSAL, FORCE_PUBLICATION_REFUSAL, missingForcedEffectRefusal } from '../verbs/verb-refusal-text';
+import { FORCE_CALLER_REFUSAL, FORCE_REASON_REFUSAL, FORCE_ACTION_REFUSAL, FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL } from '../verbs/verb-refusal-text';
 import { completeStateRefusal, moveStateRefusal, stopStateRefusal, routeStateRefusal } from '../verbs/control-refusals';
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL } from '../verbs/control-refusals';
 import { isDispositionActive, cancellationWithdrawalRefusal, holdsOf, type Task, type TaskControlInput } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import { verifyAcceptedEnclosingOperation } from "../planning/enclosing-operation";
 import { observationAdvanceSince } from "../recovery/observation-advance";
-import { collectOwnerVerbFacts, ownerPendingEffects } from "../verbs/owner-verbs";
 import { ownerStopPendingRefusal } from "../verbs/owner-stop";
 
 /**
@@ -43,7 +42,7 @@ const VERSION_REFUSES: ReadonlySet<TaskControlInput["action"]> = new Set([
  * The wording is each verb's own, so an offline refusal and the verb's later
  * refusal say the same thing about the same fact.
  */
-export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, input: TaskControlInput, operationId?: string): string | null {
+export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, input: TaskControlInput, operationId?: string): string | null | Promise<string | null> {
   const store = engine.store;
   // An unknown task refuses here: no host could ever answer for it.
   const task = store.task(input.taskId);
@@ -78,19 +77,14 @@ export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 're
 }
 
 /**
- * `force: true` settles one of two effects, and every gate below is the one
- * `forceMove`/`forceSettleEffect` makes: the caller (the board, a recorded
- * planner, or the authenticated self-force run this operation carries), the
- * reason, which actions force settles, the forced move's own facts, and the
- * recorded effect a forced settle names. The two adapter gates are presence
- * checks on the resolution adapter the engine already holds, not host reads, so
- * they belong here too; every check that would observe the host still waits.
+ * A forced move checks the same authority, reason and stored move facts here
+ * as it does at execution. Adapter availability is a capability check.
  */
-function forcedControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, task: Task, input: TaskControlInput): string | null {
-  if (!engine.forceCallerAuthorized(task, input.caller))
+async function forcedControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, task: Task, input: TaskControlInput): Promise<string | null> {
+  if (!await engine.forceCallerAuthorized(task, input.caller))
     return FORCE_CALLER_REFUSAL;
   if (!input.reason?.trim()) return FORCE_REASON_REFUSAL;
-  if (input.action === "retry_effect") return forcedEffectRefusal(engine, task, input);
+  if (input.action === "retry_effect") return "Use run.release or record.clear kind=effect for explicit settlement";
   if (input.action !== "move") return FORCE_ACTION_REFUSAL;
   const version = versionRefusal(task, input);
   if (version) return version;
@@ -117,18 +111,6 @@ function forcedControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'for
 function adapterGate(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, method: 'merge' | 'merged'): boolean {
   try { return Boolean(engine.resolution.adapter[method]); }
   catch { return true; }
-}
-
-/** The forced settlement of one recorded effect: it names an effect that is still pending. */
-function forcedEffectRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, task: Task, input: TaskControlInput): string | null {
-  const version = versionRefusal(task, input);
-  if (version) return version;
-  if (!input.effect) return FORCE_EFFECT_REQUIRED_REFUSAL;
-  if (input.effect.startsWith('review_publication.'))
-    return FORCE_PUBLICATION_REFUSAL;
-  const effects = ownerPendingEffects(collectOwnerVerbFacts(engine.store, task));
-  if (!effects.some(effect => effect.effect === input.effect)) return missingForcedEffectRefusal(input.effect);
-  return null;
 }
 
 /**

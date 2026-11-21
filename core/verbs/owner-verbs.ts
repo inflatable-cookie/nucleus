@@ -583,11 +583,9 @@ export function ownerVerbViews(facts: OwnerVerbFacts): TaskNextVerb[] {
             : [mappedVerbView(verb, facts)],
       ),
   ];
-  const effects = ownerPendingEffects(facts);
   if (!facts.task.removedAt) {
     const { task } = facts;
-    let moveIndex = 0,
-      effectIndex = 0;
+    let moveIndex = 0;
     views = views.map((view) => {
       if (view.verb === "move") {
         const to = moveTargets[moveIndex++];
@@ -604,21 +602,6 @@ export function ownerVerbViews(facts: OwnerVerbFacts): TaskNextVerb[] {
             to === "merge" && !readyReviewAtHead(task)
               ? ["reason", "qualification"]
               : ["reason"],
-        });
-      }
-      if (view.verb === "retry_effect" && effects[effectIndex]) {
-        const effect = effects[effectIndex++];
-        if (effect.effect.startsWith("review_publication.")) return view;
-        return taskNextVerbSchema.parse({
-          ...view,
-          forceArgs: {
-            action: "retry_effect",
-            taskId: task.id,
-            version: task.version,
-            effect: effect.effect,
-            force: true,
-          },
-          forceFill: ["reason"],
         });
       }
       return view;

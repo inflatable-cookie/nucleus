@@ -5,12 +5,10 @@ import {
   episodeBindsCurrentWork,
   isDispositionActive,
   isDispositionComplete,
-  isRetainedProfileReason,
   noticeTaskLine,
   taskOwner,
 } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { isSshAuthExhausted } from "../../shared/ssh-auth";
 import { isHostReadRecoveryHeld } from "../recovery/host-read-transient";
 import { isWaitingTaskStop, recordedStopIsWait } from "../../shared/task-stop";
 import { parseHostOutageNoticeId } from "../../shared/host-outage";
@@ -755,7 +753,7 @@ export class Notices {
       const locallyActionable =
         awaitingProof ||
         isCloseoutHookHold(task) ||
-        isSshAuthExhausted(task.reason) ||
+        task.reasonFact?.code === "ssh_auth" ||
         hostReadExhausted;
       // A recorded stop whose reason is not a wait is attention whatever the
       // phase says: Queue has stopped and named an owner verb it cannot apply
@@ -801,7 +799,7 @@ export class Notices {
       const suggested = stop?.suggestedVerbs.length
         ? `\nSuggested verbs: ${stop.suggestedVerbs.join(", ")}`
         : "";
-      const remapHint = isRetainedProfileReason(task.reason)
+      const remapHint = task.reasonFact?.code === "retained_profile"
         ? "\nOwner action: restart remaps the retained worker to an eligible profile, with an optional instruction as its continuation; route role=worker chooses the profile."
         : "";
       const proofOwner = awaitingProof
@@ -919,7 +917,7 @@ export class Notices {
         ownerActionNeeded,
         awaitingProof: task.resolution.stop?.reason === "awaiting_proof",
         closeoutHookHold: isCloseoutHookHold(task),
-        sshAuthExhausted: isSshAuthExhausted(task.reason),
+        sshAuthExhausted: task.reasonFact?.code === "ssh_auth",
         hostReadExhausted:
           isHostReadRecoveryHeld(this.store, task) === "exhausted",
         recoveryEscalated: task.resolution.recovery?.status === "escalated",

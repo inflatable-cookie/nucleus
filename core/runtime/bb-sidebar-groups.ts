@@ -76,7 +76,7 @@ function waitLabelOf(task: Pick<TaskSummary, "waitingOn" | "waitState" | "reason
   if (task.waitingOn) return `Waiting on ${task.waitingOn}`.slice(0, 240);
   // A QA queue position is the recorded reason itself, so it is shown exactly as
   // Queue wrote it: the declared wait state's own label would drop the position.
-  if (typeof task.reason === "string" && task.reason.startsWith(QA_CAPACITY_WAIT_PREFIX)) {
+  if (task.waitState?.state === "waiting_capacity" && task.waitState.owner === "Queue QA scheduler") {
     const end = task.reason.indexOf(")", QA_CAPACITY_WAIT_PREFIX.length);
     return (end === -1 ? task.reason : task.reason.slice(0, end + 1)).slice(0, 240);
   }

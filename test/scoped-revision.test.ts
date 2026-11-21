@@ -11,6 +11,7 @@ import type { Adapter } from '../core/host';
 test('the versioned revise control accepts one non-empty scoped instruction', () => {
   const parsed = taskControl.input.parse({ taskId: 'task', version: 3, action:'move',to:'work',reason:'Return to the retained author', instruction: 'Apply the accepted replacement plan' });
   assert.equal(parsed.version, 3);
+  assert.ok("instruction" in parsed);
   assert.equal(parsed.instruction, 'Apply the accepted replacement plan');
 });
 
@@ -23,7 +24,7 @@ test('revise rejects empty, whitespace-only and oversized instructions while ins
   assert.throws(() => taskControl.input.parse({ ...base, instruction: '' }));
   assert.throws(() => taskControl.input.parse({ ...base, instruction: '   ' }));
   assert.throws(() => taskControl.input.parse({ ...base, instruction: 'x'.repeat(12001) }));
-  assert.equal(taskControl.input.parse(base).instruction, undefined);
+  assert.ok(!("instruction" in taskControl.input.parse(base)));
 });
 
 test('the control requires task identity and accepts an omitted version', () => {
@@ -33,7 +34,9 @@ test('the control requires task identity and accepts an omitted version', () => 
 
 test('instruction stays invalid for controls that do not carry scoped worker authority', () => {
   // A restart may carry a retained-worker remap's continuation (2026-09-28); the engine refuses it elsewhere.
-  assert.equal(taskControl.input.parse({ taskId: 'task', version: 3, action: 'restart', reason: 'Remap', instruction: 'report only' }).instruction, 'report only');
+  const restart = taskControl.input.parse({ taskId: 'task', version: 3, action: 'restart', reason: 'Remap', instruction: 'report only' });
+  assert.ok("instruction" in restart);
+  assert.equal(restart.instruction, 'report only');
   assert.throws(() => taskControl.input.parse({ taskId: 'task', version: 3, action: 'hold', instruction: 'no' }), /Instruction is only valid for a restart or a move to work/);
   // Round 4: a replacement profile is chosen with route role=worker; the retired retry field carries nothing.
   assert.equal((taskControl.input.parse({ taskId: 'task', version: 3, action: 'restart', reason: 'Remap', profile: { profileId: 'backup', reason: 'Use the eligible backup' } }) as Record<string, unknown>).profile, undefined);

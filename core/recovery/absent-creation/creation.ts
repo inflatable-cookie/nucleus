@@ -123,7 +123,6 @@ export class CreationRecovery {
             : false,
           false,
           false,
-          workspaceCreationRefusal(classified),
         ) &&
         !this.store.runs(task.id).length &&
         !this.store

@@ -38,6 +38,7 @@ first, then call task with the listed args plus the reason or instruction it
 asks you to fill.
 Task IDs also accept references such as nucleus#1070. Task owner verbs may omit
 version, optionally fence an observed phase, and return the changed field names.
+run.release and record.clear take a task version, reason and warning IDs in accept.
 Queued next offers set_dependencies; its dependsOn list accepts references too.
 capacity is not a CLI route: only the operator changes dispatch limits, in
 Settings, and a CLI call refuses without changing anything. capacity-state reads

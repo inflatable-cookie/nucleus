@@ -210,6 +210,7 @@ export function recoveryEffects(
     for (const hook of hooks)
       latestGateOccurrence.set(`${hook.event}:${hook.hookId}`, hook.id);
     for (const hook of hooks) {
+      if (hook.state === "superseded") continue;
       if (
         hook.baseAdvance &&
         latestGateOccurrence.get(`${hook.event}:${hook.hookId}`) !== hook.id
@@ -1003,9 +1004,8 @@ export function blockingTaskOperations(
     );
 }
 
-/** The two labels the review-dispatch wait records for itself, in that writer's terms. */
-const REVIEW_EFFECT_WAIT =
-  /^(?:Ordinary review|Review-entry) waits for (.+); settle it with retry_effect before continuing$/;
+export const reviewEffectWaitKey = (effects: readonly RecoveryEffect[]) =>
+  digest(JSON.stringify(effects.map(({ kind, identity, state }) => [kind, identity, state])));
 
 /**
  * The review-dispatch wait this task still records: the first moment it was
@@ -1022,7 +1022,7 @@ export function reviewEffectWait(
   if (
     !stop ||
     stop.reason !== "lifecycle" ||
-    !REVIEW_EFFECT_WAIT.test(stop.detail)
+    stop.fact?.code !== "review_effect_wait"
   )
     return null;
   return { since: stop.since, detail: stop.detail };
@@ -1034,9 +1034,10 @@ export function reviewEffectWait(
  * `RunLaunchDeliver`; decoding its sentence here is what keeps the reader from
  * rebuilding the writer's words.
  */
-export function reviewEffectWaitRefusal(task: Task): string | null {
-  const wait = reviewEffectWait(task);
-  return wait ? (REVIEW_EFFECT_WAIT.exec(wait.detail)?.[1] ?? null) : null;
+export function matchesReviewEffectWait(task: Task, effects: readonly RecoveryEffect[]): boolean {
+  if (!reviewEffectWait(task)) return false;
+  const key = task.resolution.stop?.fact?.subject;
+  return key === undefined || key === reviewEffectWaitKey(effects);
 }
 
 /** Refusal text for the complete blocking set, in projection order. */

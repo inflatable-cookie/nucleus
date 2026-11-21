@@ -59,17 +59,8 @@ export function resolutionCreationRestartRefusal(task: Task, run: Run) {
   if (run.role !== "closeout" && run.head !== task.prHead)
     return "PR head changed; inspect it before replacing the absent run";
   if (provenAbsentCreation(run)) return null;
-  const detail = task.resolution.stop?.detail;
-  if (
-    task.resolution.incident?.runId === run.id &&
-    detail &&
-    [
-      resolutionCreationPartial(run),
-      resolutionCreationUnavailable(run.role),
-      resolutionCreationSettled(run),
-    ].some((prefix) => detail.startsWith(prefix))
-  )
-    return detail;
+  const stop = task.resolution.stop;
+  if (task.resolution.incident?.runId === run.id && stop?.fact?.code === "creation_lookup") return stop.detail;
   return resolutionCreationWait(run.role);
 }
 

@@ -1,10 +1,9 @@
 import {formatTaskNumber,type HoldKind,type Task} from '../../shared/contracts';
 import {taskTitleStateLabel} from '../../shared/task-state';
-import {PREREQUISITE_WAIT_PREFIX} from '../../shared/wait-state';
 
 
 /** `Working*: 012 Title` while a hold is in place but not what the task waits on. */
-type WorkspaceTitleTask=Pick<Task,'held'|'phase'|'title'|'number'>&Partial<Pick<Task,'holds'|'disposition'|'holdOwner'|'holdReason'|'reason'|'holdUntil'|'dependsOn'>>&{holdKind?:HoldKind;waitState?:{owner:string;state?:string}};
+type WorkspaceTitleTask=Pick<Task,'held'|'phase'|'title'|'number'>&Partial<Pick<Task,'holds'|'disposition'|'holdOwner'|'holdReason'|'reason'|'reasonFact'|'holdUntil'|'dependsOn'>>&{holdKind?:HoldKind;waitState?:{owner:string;state?:string}};
 
 /**
  * The reference a title names for one task: a finished task names none, and a recorded
@@ -35,7 +34,7 @@ export function taskWorkspaceTitle(task:WorkspaceTitleTask, references:TitleRefe
   // probes are linear, so a long reason costs one plain scan, never the regex.
   const referenced=reasons.filter(reason=>reason.includes("#")||/longhorn\d{0,9}/i.test(reason))
     .map(reason=>reason.match(/(?:[\w.-]{1,40}#\d{1,9}|#\d{1,9}|\bLonghorn\d{1,9}\b)/i)?.[0]).find(Boolean);
-  const dependency=task.reason?.startsWith(PREREQUISITE_WAIT_PREFIX)?task.dependsOn?.map(id=>reference(id)).find(Boolean):undefined;
+  const dependency=task.reasonFact?.code === "prerequisite"?task.dependsOn?.map(id=>reference(id)).find(Boolean):undefined;
   const normalizedReference=referenced&&/^Longhorn\d+$/i.test(referenced)?'Longhorn release':referenced;
   const waitingOn=until??fenceUntil??normalizedReference??dependency??null;
   const currentFence=task.phase==='blocked'||task.phase==='needs_attention'

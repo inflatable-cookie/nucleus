@@ -1,4 +1,5 @@
 import { hostSelectionSchema } from "../host-selection";
+import { taskDecisionFactSchema } from "../task-stop";
 import { z } from "zod";
 import { holdKindSchema, taskPhaseSchema } from "../schema/task-primitives";
 import {
@@ -122,6 +123,7 @@ export const taskSchema = submissionSchema
     phase: taskPhaseSchema,
     /** Free text by contract: the retained-profile fact among it is read by `shared/retained-profile.ts`, never matched here. */
     reason: z.string(),
+    reasonFact: taskDecisionFactSchema.nullable().optional(),
     held: z.boolean(),
     /** Spec 058: responsible task budget starts when an old task is converted. */
     budgetSince: z.string().datetime({ offset: true }).nullable().default(null),

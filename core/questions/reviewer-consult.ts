@@ -48,7 +48,7 @@ export class ReviewerConsult {
     const opened = events.find(event => event.kind === 'reviewer_consult' && event.detail.startsWith(`${id}:`));
     return !!opened && current.phase !== 'done' && current.phase !== 'cancelled'
       && current.resolution.stop?.reason === 'escalated'
-      && current.resolution.stop.detail === escalationWaitDetail.reviewer(id)
+      && current.resolution.stop.fact?.code === "consult" && current.resolution.stop.fact.subject === id
       && !events.some(event => event.id > opened.id && event.kind === 'operator_control' && event.detail !== 'note');
   }
   /** Drive one recorded consult: send once, settle the advice into the same worker, or fall through. */
@@ -87,7 +87,7 @@ export class ReviewerConsult {
       reviewer = created.id;
       this.store.transaction(() => {
         const current = this.store.task(t.id);
-        if (current.resolution.stop?.reason !== 'escalated' || !current.resolution.stop.detail.includes(input.id)
+        if (current.resolution.stop?.reason !== 'escalated' || current.resolution.stop.fact?.code !== "consult" || current.resolution.stop.fact.subject !== input.id
           || current.resolution.reviewerAgentId || current.workspaceId !== t.workspaceId)
           throw Error('Task changed while the reviewer consult was being created');
         this.store.event(t.id, 'reviewer_consult_reviewer', `${input.id}: ${reviewer}`);

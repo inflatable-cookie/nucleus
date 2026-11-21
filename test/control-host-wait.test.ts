@@ -276,11 +276,6 @@ test('a forced control refuses on local facts before the wait, and a valid one s
     // The caller gate is the dispatcher's own force refusal.
     await refused(control(f, { action: 'move', to: 'work', reason: 'Force the move', force: true, caller: 'unrelated-thread' }),
       /Force requires the task project planner, Nucleus planner, operator, or this task authenticated worker, reviewer or recovery run/);
-    // A forced settle names a recorded effect, and never discards a verdict.
-    await refused(control(f, { action: 'retry_effect', effect: 'review_publication.review-1', reason: 'Publish it', force: true, caller: 'operator (board)' }),
-      /Force cannot discard an accepted review verdict/);
-    await refused(control(f, { action: 'retry_effect', effect: 'hook.absent', reason: 'Settle it', force: true, caller: 'operator (board)' }),
-      /No recorded blocking effect hook\.absent; read next for current effects/);
 
     // A forced move keeps the version, removal and merged-PR refusals.
     const stale = control(f, { action: 'move', to: 'work', reason: 'Force the move', force: true, caller: 'operator (board)' });
