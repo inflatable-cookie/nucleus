@@ -229,7 +229,10 @@ test("the closeout registration keeps its title, request identity and branch-off
     { id: "w-closeout", directory: "/closeout" });
   const spec = host.state.spec!;
   assert.equal(spec.requestId, "ns-closeout-workspace-task");
-  assert.ok(spec.title.length <= 200 && spec.title.endsWith("…"), `${spec.title.length}`);
+  // Core hands the title through uncapped; the host adapter fits it to its
+  // own bound (task 1480), and the Paseo adapter's boundary cap is witnessed
+  // by the paseo title test's outbound-create titles.
+  assert.equal(spec.title, `Closeout: ${longTitle}`);
   assert.deepEqual(spec.source, { kind: "worktree", cwd: "/repo", action: "branch-off",
     baseBranch: head, branchName: "ns-closeout-task", worktreeSlug: "ns-closeout-task" });
 

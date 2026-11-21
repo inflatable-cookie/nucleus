@@ -10,7 +10,6 @@ import { existsSync } from "node:fs";
 import { git, queueCheckoutStatus } from "../../git/index";
 import { workspaceToolProcessIssue } from "../../recovery/stall";
 import type { ParticipantRuntime } from "../../machine/participant-runtime";
-import { capPaseoTitle } from "../workspace-title";
 import type {
   WorkspaceInventoryEntry,
   WorkspacePlacement,
@@ -125,7 +124,7 @@ export class WorkspaceContinuation {
   async createCloseoutWorkspace(task: Task) {
     const slug = `ns-closeout-${task.id}`;
     const workspace = await this.host.workspaceHost.createCloseoutWorkspace({
-      title: capPaseoTitle(`Closeout: ${task.title}`),
+      title: `Closeout: ${task.title}`,
       requestId: `ns-closeout-workspace-${task.id}`,
       source: {
         kind: "worktree",

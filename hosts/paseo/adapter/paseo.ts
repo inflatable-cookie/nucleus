@@ -17,7 +17,7 @@ import type {
   ProcessSearch,
   WorkspaceCreationState,
 } from "../../../core/host";
-import { capPaseoTitle } from "../../../shared/paseo-title";
+import { capPaseoTitle } from "./titles";
 import { mcpBindingPathFromHostRecord } from "../../../shared/report-binding";
 import { timedDaemonRequests } from "./paseo-call-timing";
 import { paseoWorkspaceIdAccepted } from "./workspace-id";
@@ -505,9 +505,11 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
       outcome?: "ok" | "failed",
     ) => void;
     /**
-     * Write one core-computed title through the host. The cap and the identity
-     * refusal are core's, so this is a plain return of the host's own promise: no
-     * async wrapper adds a turn ahead of the native refresh.
+     * Write one core-computed title through the host. The cap is the host's:
+     * core hands the title through uncapped and this adapter fits it to
+     * Paseo's bound, so the identity refusal stays the only core-owned part.
+     * A plain return of the host's own promise: no async wrapper adds a turn
+     * ahead of the native refresh.
      */
     setTaskWorkspaceTitle(
       task: Task,

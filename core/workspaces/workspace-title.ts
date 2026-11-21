@@ -1,8 +1,7 @@
-import {formatTaskNumber,MAX_TITLE_LENGTH,type HoldKind,type Task} from '../../shared/contracts';
+import {formatTaskNumber,type HoldKind,type Task} from '../../shared/contracts';
 import {taskTitleStateLabel} from '../../shared/task-state';
 import {PREREQUISITE_WAIT_PREFIX} from '../../shared/wait-state';
 
-export { capPaseoTitle } from '../../shared/paseo-title';
 
 /** `Working*: 012 Title` while a hold is in place but not what the task waits on. */
 type WorkspaceTitleTask=Pick<Task,'held'|'phase'|'title'|'number'>&Partial<Pick<Task,'holds'|'disposition'|'holdOwner'|'holdReason'|'reason'|'holdUntil'|'dependsOn'>>&{holdKind?:HoldKind;waitState?:{owner:string;state?:string}};

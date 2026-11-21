@@ -58,7 +58,7 @@ import {
   observedTurnState,
   readToolTimeline,
 } from "../core/recovery/stall";
-import { capPaseoTitle } from "../shared/paseo-title";
+import { capT3Title } from "../hosts/t3code/titles";
 import { WIRE_LABEL_KEYS, WIRE_PLUGIN_LABEL_KEY } from "../shared/wire-labels";
 import {
   t3Fake,
@@ -326,7 +326,7 @@ test("worker thread titles use the shared task state title once per change", asy
     server.commands
       .filter((command) => command.type === "thread.metadata.update")
       .at(-1)?.title,
-    capPaseoTitle(longTitle),
+    capT3Title(longTitle),
   );
 });
 

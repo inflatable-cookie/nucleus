@@ -44,10 +44,6 @@ import {
 import { WorkspaceLifecycle } from "../workspaces/workspace-lifecycle";
 import { WorkspaceContinuation } from "../workspaces/workspace-continuation";
 import type { ProcessSearch } from "../machine/process-identity";
-import {
-  capPaseoTitle,
-  taskWorkspaceTitle,
-} from "../workspaces/workspace-title";
 import type { RecoveryDispatchSnapshot } from "../recovery/recovery-context";
 import type { OwnerReviewContext } from "../review/owner-review-context";
 import { type BuildOutputCleanupHooks } from "../workspaces/worktree-cleanup";

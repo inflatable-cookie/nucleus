@@ -37,11 +37,12 @@ import type {
   ProjectQaRun,
   Task,
 } from "../../shared/contracts";
+import { MAX_TITLE_LENGTH } from "../../shared/contracts";
 import { hostRunSupervisorPaths } from "../host-runs/host-run-files";
 import { projectValidationSupervisorPaths } from "../qa/project-validation-supervisor";
 import { qaRunLiveOutputPath, qaRunRootPath } from "../qa/project-qa-supervision-files";
 import { overdueHostRun, taskForHostRun } from "./ui-snapshot";
-import { capPaseoTitle } from "../workspaces/workspace-title";
+import { fitTitle } from "../../shared/title-fit";
 
 /** The two live kinds, each with the label the operator asked for (Tom, 2026-11-01: "Both"). */
 export type LiveRunKind = "milestone_qa" | "test";
@@ -116,7 +117,7 @@ export interface LiveRunPresenceInput {
 const cleanSelector = (selector: string) =>
   selector.replace(/\s+/g, " ").trim();
 export const liveRunTabName = (kind: LiveRunKind, selector: string) =>
-  capPaseoTitle(`${TAB_PREFIX[kind]} · ${cleanSelector(selector) || "run"}`);
+  fitTitle(`${TAB_PREFIX[kind]} · ${cleanSelector(selector) || "run"}`, MAX_TITLE_LENGTH);
 /**
  * One tab per workspace directory and selector. The directory, not the workspace
  * id, is the identity, and presence is placed only in an already-open,
