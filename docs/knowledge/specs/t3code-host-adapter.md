@@ -1724,8 +1724,8 @@ through the helper and ticket named in the prompt. Service composition injects
 verification (live author/reviewer independence and exact-head checks) and
 retained-thread continuation, recovery and checkpoint delivery use the same
 core policy as Paseo. The Adapter supplies `askReviewer` (a T3 message that sends the core consult
-prompt unchanged) and `findRunAgents` (exact `nucleus.run` plus `nucleus.task`
-label lookup). Core names `question.answer` with the reissued recipient run
+prompt unchanged) and `findRunAgents` ([run creation lookup](#run-creation-lookup)).
+Core names `question.answer` with the reissued recipient run
 ticket for any host that has a recipient run on that proven host; MCP hosts
 without a matching run clear an inherited `NUCLEUS_TICKET` so the host's identity
 answers. Equal native IDs on different hosts do not share a consult ticket. A
@@ -1744,6 +1744,21 @@ unroutable. Uncertain reviewer or coordinator creation can bind.
 task lifecycle dispatch. An unconfigured T3 adapter changes no default route. A
 configured second host never causes implicit rerouting of a live task, origin
 notice or pending question.
+
+### Run creation lookup
+
+`findRunAgents` uses exact `nucleus.run` and `nucleus.task` labels to select
+local launch records, then reads each native thread by ID. A fresh thread
+snapshot supplies placement. On `ThreadNotFoundError`, it checks a fresh,
+synchronized live and archived inventory and counts any surviving row as a
+match. A candidate missing from both lists after that response contributes
+no match. A generic projection error leaves the lookup unanswered.
+
+If the inventory's five live and archived pairs keep returning different
+sequences, the lookup retries once from fresh reads. Persistent churn surfaces
+as a read refusal. The
+[absent-creation contract](../contracts/orchestration.md#uncertain-creation-and-absence)
+owns the grace and producer checks that allow a replacement.
 
 ## Operator install route
 
