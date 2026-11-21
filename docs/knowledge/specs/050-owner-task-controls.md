@@ -318,7 +318,11 @@ delivery, and that stale uncertain control then fenced ordinary review through
 the recovery-effect projection). The fence is a read-only store projection, so
 the typed refusal is the proof nothing was bound or sent; only an effect whose
 adapter call may have started stays uncertain. A failed pre-send control is not
-a blocking recovery effect. A legacy refused-but-uncertain operation whose
+a blocking recovery effect. The recovery-effect projection reads all unfinished
+operations for the task before classifying history and unresolved effects; an
+inspection page cannot prove the gate open. The enclosing operation remains excluded.
+
+A legacy refused-but-uncertain operation whose
 diagnostic is one of Nucleus's own fence-refusal messages for a run the task
 still names, and whose journal shows no pre-send boundary, no retry and no
 bound delivery, relabels through `operation-status` with

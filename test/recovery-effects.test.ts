@@ -651,6 +651,38 @@ test("operations, hooks, merge response, validation, delivery and notice effects
   }
 });
 
+test("operation gates see unresolved effects after a full page of historical refusals", () => {
+  const { store, task } = fixture();
+  try {
+    const row = (index: number, diagnostic: string) => {
+      const id = index.toString(16).padStart(64, "0");
+      store.putOperation(queueOperationSchema.parse({
+        id, key: `history-${index}`, kind: "task_control",
+        inputHash: "a".repeat(64), state: "needs_attention", taskId: task.id,
+        expectedVersion: null, repoPath: "/fixture", submissionId: null,
+        createdAt: at, startedAt: at, settledAt: at, attempts: 1,
+        diagnostic, result: null, effect: null,
+      }));
+      return id;
+    };
+    for (let i = 0; i < 1001; i++) {
+      row(i, "Task execution participants or effects are not settled: operation o");
+    }
+    assert.deepEqual(blockingRecoveryEffects(store, task, { kinds: ["operation"] }), []);
+    assert.deepEqual(blockingTaskOperations(store, task), []);
+
+    const id = row(1001, "Unknown delivery: the connection closed");
+    assert.deepEqual(
+      blockingRecoveryEffects(store, task, { kinds: ["operation"] }).map((effect) => effect.identity),
+      [id],
+    );
+    assert.deepEqual(blockingTaskOperations(store, task).map((operation) => operation.id), [id]);
+    assert.deepEqual(blockingTaskOperations(store, task, { excludeId: id }), []);
+  } finally {
+    store.close();
+  }
+});
+
 test("a historical fence refusal row owes nothing; a real uncertain task control still blocks", () => {
   const { store, task } = fixture();
   try {

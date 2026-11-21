@@ -153,11 +153,7 @@ export function recoveryEffects(
   // pending, running or needs_attention row still owes work. The single
   // authenticated enclosing operation (Spec 012/317) is not a competing effect.
   if (include("operation")) {
-    for (const operation of store.operations({
-      taskId: task.id,
-      states: ["pending", "running", "needs_attention"],
-      limit: 1000,
-    })) {
+    for (const operation of store.unfinishedTaskOperations(task.id)) {
       if (options.enclosing && operation.id === options.enclosing.operationId)
         continue;
       if (historicalFenceRefusal(operation)) continue;
@@ -970,11 +966,7 @@ export function blockingTaskOperations(
     ),
   );
   return store
-    .operations({
-      taskId: task.id,
-      states: ["pending", "running", "needs_attention"],
-      limit: 1000,
-    })
+    .unfinishedTaskOperations(task.id)
     .filter(
       (operation) =>
         operation.id !== options.excludeId && blocking.has(operation.id),
