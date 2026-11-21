@@ -13,7 +13,7 @@ import * as api from "../shared/contracts";
 import type { HostRunRecord, TaskSummary } from "../shared/contracts";
 import { hiddenQueuedByProject } from "../shared/queued-more";
 import { planSaveInput } from "../shared/planning-tab";
-import { activeSelection, effectiveSelection, pickProjects, projectHasRepository, scopeContains } from "../shared/project-scope";
+import { effectiveSelection, projectHasRepository, scopeContains } from "../shared/project-scope";
 import { isOpenTask, navigationViews, openTaskCount, workspaceNavigationViews, type SettingsTarget } from "../shared/queue-navigation";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
@@ -68,7 +68,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   // Spec 026 row 14c: the workspace panel's selection is preset to the workspace's
   // project and lives in the panel, never in the main surface's persisted scope.
   const [panelScope, setPanelScope] = usePanelScope(workspaceBoard?.key ?? null);
-  const scope = workspaceBoard ? panelScope ?? { projects: [workspaceBoard.key], statusFilter: true } : surfaceScope;
+  const scope = workspaceBoard ? panelScope ?? { projects: [workspaceBoard.key] } : surfaceScope;
   const setScope = workspaceBoard ? setPanelScope : setSurfaceScope;
   const [scopeOpen, setScopeOpen] = useState(false);
   const { selected, setSelected, selectedLeadId, setSelectedLeadId, leadLane, setLeadLane, openPapercutId, setOpenPapercutId, openDecisionId, setOpenDecisionId, qaFocusId, selectTask, selectDecision, selectLead, selectPapercut, openQaRun } = useBoardSelection(setTab);
@@ -102,13 +102,11 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   useEffect(() => { setRecordNotice(null); }, [selectedLeadId, openPapercutId, openDecisionId]);
   const recordKey = `${selectedLeadId ?? ""}|${openPapercutId ?? ""}|${openDecisionId ?? ""}`;
   const liveTasks = state?.tasks.filter(isOpenTask) ?? [];
-  const setScopeProjects = (projects: string[]) => setScope({ ...scope, projects });
+  const setScopeProjects = (projects: string[]) => setScope({ projects });
   // Stale saved keys (a removed project) drop out, so every view treats them alike.
-  // The Pipeline filter switch scopes the Pipeline view only: off shows all
-  // projects without clearing the selection, on applies it. Papercuts, Lanes
-  // and Planning keep the selection either way.
-  // The selector's Enabled switch applies to every scoped view (Tom, 2026-09-28).
-  const selection = effectiveSelection(state?.projects ?? [], activeSelection(scope));
+  // The selection is the only filter state (nucleus#1476): an empty selection shows
+  // all projects in every scoped view, and clearing the last project restores them.
+  const selection = effectiveSelection(state?.projects ?? [], scope.projects);
   const pipelineFilterSelection = selection;
   const belongs = scopeContains(state?.projects ?? [], selection);
   const projectForRepository = (repoPath: string, origin?: string | null) => state?.projects.find(project => projectHasRepository(project, repoPath, origin));
@@ -178,18 +176,15 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                   tab === "planning" ||
                   tab === "qa") && (
                   <ProjectSelector
-                    enabled={scope.statusFilter}
-                    onEnabledChange={(statusFilter) =>
-                      setScope({ ...scope, statusFilter })
-                    }
                     projects={state?.projects ?? []}
                     tasks={state?.tasks ?? []}
                     leads={boardLeads}
                     queuedCounts={state?.queuedCounts ?? []}
                     projectActivity={state?.projectActivity ?? []}
                     value={scope.projects}
-                    // An explicit nonempty pick turns a disabled filter back on (nucleus#1432); other scope entry points keep it.
-                    onChange={(projects) => setScope(pickProjects(scope, projects))}
+                    // The picker commits the selection it reports, and an empty pick
+                    // (Clear, or Shift-clearing the last project) restores all projects.
+                    onChange={(projects) => setScope({ projects })}
                     onSettings={settingsOpener ? () => settingsOpener?.("projects") : undefined}
                     projectActions={{ ...projectSelector.actions, remove: setRemovingProject }}
                     onOpenChange={setScopeOpen}
@@ -226,7 +221,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
               lanes={state?.lanes ?? []}
               projects={state?.projects ?? []}
               projectActivity={state?.projectActivity ?? []}
-              selection={activeSelection(scope)}
+              selection={scope.projects}
               plans={planQuery.data ?? []}
               plansError={planMessage(planQuery.error)}
               lanesLoading={!state && !stateQuery.error}
@@ -283,7 +278,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                     compact={compact}
                     projects={state?.projects ?? []}
                     plans={planQuery.data ?? []}
-                    selected={activeSelection(scope)}
+                    selected={scope.projects}
                     busy={busy}
                     canEdit
                     doc={{ data: documentQuery.data, error: documentQuery.error ? planMessage(documentQuery.error) : undefined }}
@@ -335,7 +330,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                 ? qaFenceQuery.data?.inventory
                 : undefined
             }
-            selectedProjects={activeSelection(scope)}
+            selectedProjects={scope.projects}
             busy={busy}
             loading={hostRunQuery.isLoading || qaQuery.isLoading}
             loadError={

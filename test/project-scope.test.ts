@@ -6,7 +6,6 @@ import {
   defaultProjectScope,
   effectiveSelection,
   isAdditivePress,
-  pipelineSelection,
   planningScopeLanes,
   projectHasRepository,
   projectSelectorRows,
@@ -15,7 +14,6 @@ import {
   scopedProjects,
   selectionLabel,
   selectProject,
-  statusSelection,
   toggleProject,
   writeProjectScope,
 } from "../shared/project-scope";
@@ -122,27 +120,37 @@ test("026-14b a stale selected key is ignored rather than hiding everything", ()
   );
 });
 
-test("026-14b the Pipeline filter switch off shows all projects and on restores the kept selection", () => {
-  const scope = {
-    projects: ["consumer-b-v2", "project-a-accelerator"],
-    statusFilter: true,
-  };
-  assert.deepEqual(pipelineSelection(scope), scope.projects);
-  const off = { ...scope, statusFilter: false };
-  assert.deepEqual(pipelineSelection(off), []);
+test("026-14b an empty selection shows every project; clearing the last project restores them", () => {
   assert.deepEqual(
-    off.projects,
-    scope.projects,
-    "switching off keeps the selection",
+    scopedProjects(projects, []).map((p) => p.key),
+    ["consumer-b-v2", "other", "project-a-accelerator"],
   );
   assert.deepEqual(
-    pipelineSelection({ ...off, statusFilter: true }),
-    scope.projects,
+    scopedProjects(
+      projects,
+      toggleProject(projects.map((p) => p.key), "other"),
+    ).map((p) => p.key),
+    ["consumer-b-v2", "project-a-accelerator"],
+    "a Shift-press toggles one project",
   );
-  assert.equal(
-    statusSelection,
-    pipelineSelection,
-    "the pre-retirement alias still resolves",
+  assert.deepEqual(
+    scopedProjects(
+      projects,
+      toggleProject(["consumer-b-v2"], "consumer-b-v2"),
+    ),
+    scopedProjects(projects, []),
+    "clearing the last project shows all projects",
+  );
+  assert.deepEqual(
+    selectProject([], "other"),
+    ["other"],
+    "a plain press replaces the selection",
+  );
+  assert.deepEqual(selectProject(["consumer-b-v2"], "other"), ["other"]);
+  assert.deepEqual(
+    selectProject(["consumer-b-v2"], "consumer-b-v2"),
+    ["consumer-b-v2"],
+    "pressing the sole selected project keeps it selected",
   );
 });
 
@@ -280,7 +288,7 @@ test("1421 single-select by default: a plain press replaces, Shift toggles one p
   );
 });
 
-test("026-14b the selection and Pipeline filter switch persist in local storage, else for the session", () => {
+test("026-14b the selection persists in local storage, else for the session", () => {
   const items = new Map<string, string>();
   const storage = {
     getItem: (key: string) => items.get(key) ?? null,
@@ -289,10 +297,14 @@ test("026-14b the selection and Pipeline filter switch persist in local storage,
   };
   const scope = {
     projects: ["consumer-b-v2", "project-a-accelerator"],
-    statusFilter: false,
   };
   writeProjectScope(storage, scope);
   assert.deepEqual(readProjectScope(storage), scope);
+  assert.equal(
+    JSON.parse(items.get("nucleus:project-scope")!).statusFilter,
+    undefined,
+    "only the selection is stored (nucleus#1476)",
+  );
   assert.deepEqual(
     readProjectScope(undefined),
     scope,
@@ -304,13 +316,49 @@ test("026-14b the selection and Pipeline filter switch persist in local storage,
   assert.deepEqual(readProjectScope(undefined), defaultProjectScope);
 });
 
+test("1476: a legacy statusFilter=false selection opens as all projects; an active one is kept", () => {
+  const stored = (value: unknown) => {
+    const items = new Map<string, string>([
+      ["nucleus:project-scope", JSON.stringify(value)],
+    ]);
+    return {
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => void items.set(key, value),
+      removeItem: (key: string) => void items.delete(key),
+    };
+  };
+  assert.deepEqual(
+    readProjectScope(
+      stored({ projects: ["consumer-b-v2"], statusFilter: false }),
+    ),
+    { projects: [] },
+    "the retired switch's off state is no selection, so every project shows",
+  );
+  assert.deepEqual(
+    readProjectScope(
+      stored({ projects: ["consumer-b-v2"], statusFilter: true }),
+    ),
+    { projects: ["consumer-b-v2"] },
+    "an active stored selection is kept",
+  );
+  assert.deepEqual(
+    readProjectScope(stored({ projects: ["consumer-b-v2"] })),
+    { projects: ["consumer-b-v2"] },
+    "the shape without the retired field reads as a selection",
+  );
+  assert.deepEqual(
+    readProjectScope(stored({ projects: [], statusFilter: false })),
+    { projects: [] },
+  );
+});
+
 test("026-14b project scope migrates the old local key once and uses the Nucleus key after", () => {
   const items = new Map<string, string>([
     [
       "northstar-queue:project-scope",
       JSON.stringify({
         projects: ["project-a-accelerator"],
-        statusFilter: false,
+        statusFilter: true,
       }),
     ],
   ]);
@@ -325,18 +373,36 @@ test("026-14b project scope migrates the old local key once and uses the Nucleus
   };
   assert.deepEqual(readProjectScope(storage), {
     projects: ["project-a-accelerator"],
-    statusFilter: false,
   });
   assert.equal(items.has("northstar-queue:project-scope"), false);
   assert.deepEqual(JSON.parse(items.get("nucleus:project-scope")!), {
     projects: ["project-a-accelerator"],
-    statusFilter: false,
   });
   assert.deepEqual(readProjectScope(storage), {
     projects: ["project-a-accelerator"],
-    statusFilter: false,
   });
   assert.equal(reads.get("northstar-queue:project-scope"), 1);
+});
+
+test("1476: the old key's statusFilter=false migrates to all projects", () => {
+  const items = new Map<string, string>([
+    [
+      "northstar-queue:project-scope",
+      JSON.stringify({
+        projects: ["project-a-accelerator"],
+        statusFilter: false,
+      }),
+    ],
+  ]);
+  const storage = {
+    getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => void items.set(key, value),
+    removeItem: (key: string) => void items.delete(key),
+  };
+  assert.deepEqual(readProjectScope(storage), { projects: [] });
+  assert.deepEqual(JSON.parse(items.get("nucleus:project-scope")!), {
+    projects: [],
+  });
 });
 
 test("026-14a Planning lanes in scope: selected plans plus lanes listing a selected repository", () => {
@@ -373,7 +439,7 @@ test("026-14a Planning lanes in scope: selected plans plus lanes listing a selec
   ]);
 });
 
-test("026-14b one header selector scopes every view; its Enabled switch turns filtering off everywhere", () => {
+test("026-14b one header selector scopes every view through the selection alone", () => {
   const ui = boardSource();
   const controls = readFileSync(
     new URL("../client/project-scope-controls.tsx", import.meta.url),
@@ -393,13 +459,13 @@ test("026-14b one header selector scopes every view; its Enabled switch turns fi
   );
   assert.match(
     ui,
-    /const selection = effectiveSelection\(state\?\.projects \?\? \[\], activeSelection\(scope\)\)/,
+    /const selection = effectiveSelection\(state\?\.projects \?\? \[\], scope\.projects\)/,
     "stale keys drop out for every view",
   );
   assert.match(
     ui,
-    /const selection = effectiveSelection\(state\?\.projects \?\? \[\], activeSelection\(scope\)\);/,
-    "the Enabled switch scopes every view",
+    /const selection = effectiveSelection\(state\?\.projects \?\? \[\], scope\.projects\);/,
+    "the selection scopes every view",
   );
   assert.match(ui, /const pipelineFilterSelection = selection;/);
   assert.match(
@@ -415,7 +481,7 @@ test("026-14b one header selector scopes every view; its Enabled switch turns fi
   );
   assert.match(
     ui,
-    /selection=\{activeSelection\(scope\)\}/,
+    /selection=\{scope\.projects\}/,
     "the Planning chooser writes the one project scope",
   );
   assert.match(
@@ -437,13 +503,18 @@ test("026-14b one header selector scopes every view; its Enabled switch turns fi
   assert.match(ui, /usePlanningLane\(planningInScope,/);
   assert.match(
     ui,
-    /<ProjectSelector\s+enabled=\{scope\.statusFilter\}\s+onEnabledChange=\{\(statusFilter\) =>\s*setScope\(\{ \.\.\.scope, statusFilter \}\)\s*\}\s*projects=/,
-    "the switch lives in the selector and keeps the selection",
+    /<ProjectSelector\s+projects=\{state\?\.projects \?\? \[\]\}/,
+    "the selector holds the selection, with no second filter switch",
   );
   assert.doesNotMatch(
     ui,
-    /<ProjectFilterSwitch/,
-    "no separate switch on the board",
+    /<ProjectFilterSwitch|statusFilter/,
+    "no switch on the board and no retired flag",
+  );
+  assert.doesNotMatch(
+    controls,
+    /ProjectFilterSwitch|accessibilityLabel="Enabled"|statusFilter/,
+    "the switch and its stored flag are retired (nucleus#1476)",
   );
   assert.match(controls, /writeProjectScope\(storage\(\), scope\)/);
   assert.doesNotMatch(ui, /projectFilter/);

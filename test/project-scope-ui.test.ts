@@ -6,8 +6,6 @@ import { boardSource } from "./support/board-source";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import {
-  pickProjects,
-  pipelineSelection,
   planningLaneLeads,
   type ProjectScope,
 } from "../shared/project-scope";
@@ -59,9 +57,7 @@ test("1421 rendered: a plain click replaces the selection, Shift-click toggles o
         tasks: [],
         leads: [],
         value: scope.projects,
-        onChange: (keys) => setScope({ ...scope, projects: keys }),
-        enabled: scope.statusFilter,
-        onEnabledChange: (statusFilter) => setScope({ ...scope, statusFilter }),
+        onChange: (keys) => setScope({ projects: keys }),
         onOpenChange: () => {},
         compact: false,
         c,
@@ -212,7 +208,7 @@ test("1421 bundled: the Shift modifier survives the real client bundle (RN Web e
   );
 });
 
-test("026-14b rendered: single-select, clear to all, and the selector's Enabled switch keeps the selection", async () => {
+test("026-14b rendered: single-select, Clear back to all, and one top row of search and icons", async () => {
   const { ProjectSelector, useProjectScope } = await load();
   const storage = memory();
   let seen: ProjectScope | null = null;
@@ -227,9 +223,7 @@ test("026-14b rendered: single-select, clear to all, and the selector's Enabled 
         tasks: [],
         leads: [],
         value: scope.projects,
-        onChange: (keys) => setScope({ ...scope, projects: keys }),
-        enabled: scope.statusFilter,
-        onEnabledChange: (statusFilter) => setScope({ ...scope, statusFilter }),
+        onChange: (keys) => setScope({ projects: keys }),
         onOpenChange: () => {},
         compact: false,
         c,
@@ -245,13 +239,23 @@ test("026-14b rendered: single-select, clear to all, and the selector's Enabled 
   ui.press(/^Projects, /);
   assert.ok(ui.get("Project selector"));
   assert.equal(ui.ofType("Modal").length, 0, "a popover at the wide size");
+  // The open picker's top row: the search and the two icon actions. The Enabled
+  // switch, All and None and the selection-count row are gone (nucleus#1476).
+  assert.equal(ui.query("Enabled"), undefined, "no Enabled switch");
+  assert.equal(ui.query("Select all projects"), undefined, "no All button");
+  assert.ok(ui.get("Filter projects"));
+  assert.ok(ui.get("Clear project selection"), "Clear is an icon action");
+  assert.doesNotMatch(
+    ui.text(),
+    /selected/,
+    "no separate selection-count row",
+  );
   ui.press(/^Project consumer-b-v2/);
   assert.deepEqual(seen!.projects, ["consumer-b-v2"]);
   assert.equal(
     ui.get(/^Projects, /).props.accessibilityLabel,
     "Projects, consumer-b-v2",
   );
-  // Shift-click builds the multi-project selection the switch test needs.
   ui.press(/^Projects, /);
   ui.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
@@ -267,35 +271,6 @@ test("026-14b rendered: single-select, clear to all, and the selector's Enabled 
     "Projects, 2 projects",
   );
 
-  assert.equal(
-    ui.get("Enabled").props.accessibilityState.checked,
-    true,
-    "the switch sits in the open selector",
-  );
-  ui.press("Enabled");
-  assert.equal(ui.get("Enabled").props.accessibilityState.checked, false);
-  assert.equal(
-    ui.get(/^Projects, /).props.accessibilityLabel,
-    "Projects, 2 projects · filter off",
-    "the closed label says filtering is off",
-  );
-  assert.deepEqual(
-    pipelineSelection(seen!),
-    [],
-    "every scoped view shows every project",
-  );
-  assert.deepEqual(
-    seen!.projects,
-    ["consumer-b-v2", "project-a-accelerator"],
-    "the selection is kept",
-  );
-  ui.press("Enabled");
-  assert.deepEqual(
-    pipelineSelection(seen!),
-    ["consumer-b-v2", "project-a-accelerator"],
-    "on restores it",
-  );
-
   ui.type("Filter projects", "project-a");
   assert.deepEqual(
     ui
@@ -305,22 +280,25 @@ test("026-14b rendered: single-select, clear to all, and the selector's Enabled 
     ["Project project-a-accelerator, 0 tasks"],
   );
   ui.type("Filter projects", "");
+  // Clear empties the selection, so every project shows at once, and the picker stays open.
   ui.press("Clear project selection");
   assert.deepEqual(seen!.projects, []);
+  assert.ok(ui.get("Project selector"), "Clear keeps the picker open");
+  assert.equal(
+    ui.all(/^Project /).filter((node) => node.props.accessibilityRole === "checkbox")
+      .length,
+    3,
+    "all projects show immediately",
+  );
   assert.equal(
     ui.get(/^Projects, /).props.accessibilityLabel,
     "Projects, All projects",
     "none means all",
   );
-  ui.press("Select all projects");
-  assert.deepEqual(seen!.projects, [
-    "consumer-b-v2",
-    "project-a-accelerator",
-    "other",
-  ]);
-  assert.match(
-    storage.getItem("nucleus:project-scope")!,
-    /"statusFilter":true/,
+  assert.equal(
+    storage.getItem("nucleus:project-scope"),
+    JSON.stringify({ projects: [] }),
+    "only the selection is stored",
   );
 });
 
@@ -342,6 +320,11 @@ test("026-14b rendered: the compact selector is a modal", async () => {
   assert.equal(ui.ofType("Modal").length, 1);
   assert.ok(ui.get("Project selector"));
   assert.ok(ui.get("Close project selector"));
+  assert.ok(ui.get("Filter projects"), "the search sits in the modal");
+  assert.ok(
+    ui.get("Clear project selection"),
+    "the compact modal carries the same icon action",
+  );
   ui.press("Close project selector");
   assert.equal(ui.query("Project selector"), undefined);
   assert.equal(ui.ofType("Modal").length, 0);
@@ -1000,6 +983,18 @@ test("chooser settings icon: closes the chooser and opens Settings at Projects; 
       }),
     );
     ui.press(/^Projects, /);
+    const { control } = await import("../client/design");
+    assert.equal(
+      ui.get("Filter projects").props.style.flex,
+      1,
+      `${compact}: the search takes the row's remaining width`,
+    );
+    for (const label of ["Clear project selection", "Project settings"])
+      assert.equal(
+        ui.get(label).props.style.minWidth,
+        control.height,
+        `${compact}: ${label} is an icon control on the search's row`,
+      );
     assert.equal(
       ui.query("Manage projects"),
       undefined,
@@ -1026,22 +1021,21 @@ test("chooser settings icon: closes the chooser and opens Settings at Projects; 
     );
     bare.press(/^Projects, /);
     assert.equal(bare.query("Project settings"), undefined);
+    assert.ok(
+      bare.get("Clear project selection"),
+      "Clear stays usable on a host without Settings",
+    );
   }
 });
 
-test("1432: an explicit nonempty pick turns a disabled filter back on; an empty pick keeps the switch", () => {
-  const off: ProjectScope = { projects: ["other"], statusFilter: false };
-  assert.deepEqual(pickProjects(off, ["consumer-b-v2"]), { projects: ["consumer-b-v2"], statusFilter: true });
-  assert.deepEqual(pickProjects(off, []), { projects: [], statusFilter: false }, "None keeps it off");
-  assert.deepEqual(pickProjects({ projects: ["other"], statusFilter: true }, []), { projects: [], statusFilter: true });
-});
-
-test("1432 rendered: plain, Shift and All picks while the filter is off turn it on and persist both; None, clearing the last key, opening and disclosure leave it", async () => {
+test("1476 rendered: a legacy filter-off preference opens as all projects and Clear restores them", async () => {
   const { ProjectSelector, useProjectScope } = await load();
   const storage = memory();
-  storage.setItem("nucleus:project-scope", JSON.stringify({ projects: ["other"], statusFilter: false }));
+  storage.setItem(
+    "nucleus:project-scope",
+    JSON.stringify({ projects: ["other"], statusFilter: false }),
+  );
   let seen: ProjectScope | null = null;
-  let setScopeRef: ((scope: ProjectScope) => void) | null = null;
   const actions = {
     park: () => Promise.resolve(),
     unpark: () => Promise.resolve(),
@@ -1050,16 +1044,12 @@ test("1432 rendered: plain, Shift and All picks while the filter is off turn it 
   function Harness() {
     const [scope, setScope] = useProjectScope(() => storage);
     seen = scope;
-    setScopeRef = setScope;
-    // The board's wiring (client/queue.tsx): one scope value carries the keys and the switch.
     return h(ProjectSelector, {
       projects,
       tasks: [],
       leads: [],
       value: scope.projects,
-      onChange: (keys: string[]) => setScope(pickProjects(scope, keys)),
-      enabled: scope.statusFilter,
-      onEnabledChange: (statusFilter: boolean) => setScope({ ...scope, statusFilter }),
+      onChange: (keys: string[]) => setScope({ projects: keys }),
       projectActions: actions,
       onOpenChange: () => {},
       compact: false,
@@ -1068,48 +1058,43 @@ test("1432 rendered: plain, Shift and All picks while the filter is off turn it 
   }
   const ui = mount(h(Harness));
   const stored = () => JSON.parse(storage.getItem("nucleus:project-scope")!);
-  const current = (): ProjectScope => seen!;
-  const turnOff = () => setScopeRef!({ ...current(), statusFilter: false });
+  // The stored switch's off state is no selection now, so the board opens showing every project.
+  assert.deepEqual(seen, { projects: [] }, "opens as all projects");
+  assert.equal(
+    ui.get(/^Projects, /).props.accessibilityLabel,
+    "Projects, All projects",
+  );
+  assert.deepEqual(
+    stored(),
+    { projects: [] },
+    "the retired flag is rewritten on load",
+  );
+  assert.equal(ui.query("Enabled"), undefined, "the switch is retired");
 
-  // Opening, disclosure and rename leave the switch off.
+  // A plain pick scopes the board at once, with no second switch to turn back on.
   ui.press(/^Projects, /);
-  ui.press("Project actions for consumer-b-v2");
-  ui.press("Rename consumer-b-v2");
-  ui.press("Cancel rename of consumer-b-v2");
-  assert.equal(current().statusFilter, false);
-  assert.equal(ui.get("Enabled").props.accessibilityState.checked, false);
-
-  // A plain pick turns it on with the new key, persisted together.
   ui.press(/^Project consumer-b-v2/);
-  assert.deepEqual(current(), { projects: ["consumer-b-v2"], statusFilter: true });
-  assert.deepEqual(stored(), { projects: ["consumer-b-v2"], statusFilter: true });
-  assert.deepEqual(pipelineSelection(current()), ["consumer-b-v2"], "the board filters at once");
+  assert.deepEqual(seen, { projects: ["consumer-b-v2"] });
+  assert.deepEqual(stored(), { projects: ["consumer-b-v2"] });
 
-  // Shift-adding while off turns it on.
-  turnOff();
+  // Clear empties the selection, restores every project and keeps the picker open.
+  ui.press(/^Projects, /);
+  ui.press("Clear project selection");
+  assert.deepEqual(seen, { projects: [] });
+  assert.deepEqual(stored(), { projects: [] });
+  assert.ok(ui.get("Project selector"), "the picker stays open");
+
+  // Shift-clearing the last project restores all projects too.
+  ui.press(/^Project other/);
+  assert.deepEqual(seen, { projects: ["other"] });
   ui.press(/^Projects, /);
   ui.press(/^Project other/, { nativeEvent: { shiftKey: true } });
-  assert.deepEqual(current(), { projects: ["consumer-b-v2", "other"], statusFilter: true });
-
-  // Shift-clearing down to nothing keeps the switch as it was.
-  turnOff();
-  ui.press(/^Project other/, { nativeEvent: { shiftKey: true } });
-  assert.deepEqual(current(), { projects: ["consumer-b-v2"], statusFilter: true }, "a nonempty Shift-removal is a pick");
-  turnOff();
-  ui.press(/^Project consumer-b-v2/, { nativeEvent: { shiftKey: true } });
-  assert.deepEqual(current(), { projects: [], statusFilter: false }, "clearing the last key keeps it off");
-
-  // None keeps it off; All turns it on.
-  ui.press("Clear project selection");
-  assert.equal(current().statusFilter, false);
-  ui.press("Select all projects");
-  assert.equal(current().statusFilter, true);
-  assert.deepEqual(stored().statusFilter, true);
+  assert.deepEqual(seen, { projects: [] }, "clearing the last key shows all projects");
 });
 
-test("1432: the board's selector commits picks through pickProjects; other scope entry points keep the switch", () => {
+test("1476: the board's selector commits the selection it reports; the other scope entry points write it too", () => {
   const source = boardSource();
-  assert.match(source, /onChange=\{\(projects\) => setScope\(pickProjects\(scope, projects\)\)\}/);
-  assert.match(source, /const setScopeProjects = \(projects: string\[\]\) => setScope\(\{ \.\.\.scope, projects \}\);/);
+  assert.match(source, /onChange=\{\(projects\) => setScope\(\{ projects \}\)\}/);
+  assert.match(source, /const setScopeProjects = \(projects: string\[\]\) => setScope\(\{ projects \}\);/);
   assert.match(source, /onSelectProjects=\{setScopeProjects\}/);
 });

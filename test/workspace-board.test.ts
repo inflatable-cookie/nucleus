@@ -251,6 +251,6 @@ test("026-14c the panel reuses the main surface board; there is no second copy o
   assert.match(ui, /usePanelScope\(workspaceBoard\?\.key \?\? null\)/);
   assert.match(
     ui,
-    /const scope = workspaceBoard \? panelScope \?\? \{ projects: \[workspaceBoard\.key\], statusFilter: true \} : surfaceScope;/,
+    /const scope = workspaceBoard \? panelScope \?\? \{ projects: \[workspaceBoard\.key\] \} : surfaceScope;/,
   );
 });

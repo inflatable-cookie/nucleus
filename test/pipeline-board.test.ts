@@ -699,11 +699,11 @@ test("026-13 Tasks keeps Pipeline with no Lanes switch; the Lanes destination is
   );
   assert.match(
     ui,
-    /<ProjectSelector\s+enabled=\{scope\.statusFilter\}\s+onEnabledChange=/,
-    "the project filter switch moved into the selector",
+    /<ProjectSelector\s+projects=\{state\?\.projects \?\? \[\]\}/,
+    "the selector holds the project selection",
   );
-  assert.match(controls, /export function ProjectFilterSwitch\(/);
-  assert.match(controls, /accessibilityLabel="Enabled"/);
+  assert.doesNotMatch(controls, /ProjectFilterSwitch/);
+  assert.doesNotMatch(controls, /accessibilityLabel="Enabled"/);
   // A lane opened from Planning's lane search keeps the plan and lane columns.
   assert.match(
     ui,

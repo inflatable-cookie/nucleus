@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
 import type { UiQueueState } from "../../shared/contracts";
-import { activeSelection, effectiveSelection, planningLaneLeads, planningScopeLanes, scopedProjects, type ProjectScope } from "../../shared/project-scope";
+import { effectiveSelection, planningLaneLeads, planningScopeLanes, scopedProjects, type ProjectScope } from "../../shared/project-scope";
 import { lanePlaces } from "../../shared/lane-finder";
 import { useRpc } from "../shell";
 import { domainRevision, useBoardState } from "../board-state";
@@ -68,7 +68,7 @@ export function usePlanningData({ scope, state, tab, records, onLeaveLane }: { s
   // A lane opened from Planning keeps the project context it was found in (#866): the
   // search reaches past the chosen project, so the open lane stays in scope.
   const [planningPin, setPlanningPin] = useState("");
-  const planningProjects = effectiveSelection(state?.projects ?? [], activeSelection(scope)).length ? scopedProjects(state?.projects ?? [], activeSelection(scope)) : [...state?.projects ?? []].sort((a,b)=>Number(a.visibility === 'parked')-Number(b.visibility === 'parked')||a.name.localeCompare(b.name));
+  const planningProjects = effectiveSelection(state?.projects ?? [], scope.projects).length ? scopedProjects(state?.projects ?? [], scope.projects) : [...state?.projects ?? []].sort((a,b)=>Number(a.visibility === 'parked')-Number(b.visibility === 'parked')||a.name.localeCompare(b.name));
   // A lane whose projects leave the selection closes; the compact view returns to the plan.
   const planningInScope = state&&planQuery.data ? [...new Set([...planningScopeLanes(state.projects, scope.projects.length ? scope.projects : planningProjects.map(project=>project.key), planQuery.data, state.lanes ?? []), ...(planningPin?[planningPin]:[])])] : null;
   const {lane:planningLane,setLane:setPlanningLane,step:planningStep,setStep:setPlanningStep} = usePlanningLane(planningInScope, onLeaveLane);
