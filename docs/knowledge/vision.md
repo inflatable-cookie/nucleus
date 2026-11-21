@@ -304,6 +304,8 @@ Usage display is the host's job, not Nucleus's (Tom, 2026-11-17).
 
 Current operating host (Tom, 2026-11-19/20): T3 is the current operating host for Nucleus planning and execution. On 2026-11-19 Tom said the T3 ACP solution removed the need for BB to execute Nucleus work; on 2026-11-20 he confirmed, "we're fully in T3 now already!" The former migration lead was dropped as redundant. The Nov 17 BB-executes target and the Paseo-primary conditional above are superseded historical quotes; BB stays available as opt-in per-repository host support with its recorded evidence.
 
+No route needs Paseo (Tom, 2026-11-21): "there shouldn't be anything that Nucleus does that requires Paseo specifically". Every Nucleus route, including review entry, `task.register`, the service lifecycle and the CLI, works on T3 Code and BB without Paseo present; a capability only Paseo implements is a gap to close or remove, not a host requirement. Paseo stays a supported host while it exists.
+
 Profiles (Tom, 2026-11-06): Nucleus takes its agent profiles from Paseo's profile system today, and other apps have none. "We'll need to switch nucleus to a more traditional model picker system - have the host app provide a list of all the providers and models, then allow the operator to create profiles based on their selections". Profiles become Nucleus's own, and the host only lists what's available.
 On provider options (Tom, 2026-11-06): the picker shows whatever the host reports for a model. "We need to be able to control permission settings and agent-specific modes".
 
