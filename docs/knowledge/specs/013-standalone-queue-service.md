@@ -271,7 +271,11 @@ prefers callbacks and controls over observation, workspace, inventory, title and
 cleanup work. Equivalent in-flight work is shared
 by identity key, and a settled quiet observation is cached for a short bounded
 window that is invalidated by every send, creation, archive, title confirmation
-and lifecycle signal. `workspaceAdmission` defers new creation while the breaker
+and lifecycle signal; the shared read's identity carries that invalidation
+epoch, so a read starting after a send cannot join a stale read already in
+flight. An ordered send to one retained thread is admitted once, by the chain
+that keeps its order, deadline and host-call fence through the native send.
+`workspaceAdmission` defers new creation while the breaker
 is degraded or the workspace budget matching the current global Dispatch Limits task-slot limit is full; the caller records
 durable creation intent only after admission, so a deferral leaves the task
 queued and plainly visible. `Admission.snapshot()` reports class depth,

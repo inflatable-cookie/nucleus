@@ -103,6 +103,19 @@ const DEFAULT_HELD_SLOT_WARN_MS = 5_000;
 /** How often one still-held slot is re-logged while it keeps holding its slot. */
 const HELD_SLOT_LOG_INTERVAL_MS = 30_000;
 
+/** How one admitted effect is shaped and named, for `run` and the ordered chain alike. */
+type AdmittedRunOptions = {
+  innerTiming?: boolean;
+  breakerExempt?: boolean;
+  longRunning?: boolean;
+  ordinaryInnerDeadlines?: boolean;
+  holder?: string;
+  onWaiting?: () => void;
+  onAdmitted?: (waitMs: number) => void;
+};
+/** The ordered chain names the holder itself, so a forwarder never overrides it. */
+type OrderedRunOptions = Omit<AdmittedRunOptions, "holder">;
+
 /** Typed refusal the engine converts into "wait and retry", never operator attention. */
 export class AdmissionDeferred extends Error {
   constructor(
@@ -543,16 +556,26 @@ export class Admission {
     return promise;
   }
 
-  /** Serialize distinct messages to one retained thread, while identical calls still coalesce above. */
+  /**
+   * Serialize distinct messages to one retained thread, while identical calls
+   * still coalesce above. This chain is the one owner of an ordered send's
+   * admission: the native send takes the single class slot here, under this
+   * chain's deadline and fence, and nothing admits it a second time. Admitting
+   * it again inside the chain would take a second slot — which self-blocks at a
+   * total limit of one — and would let the send outlive the outer deadline that
+   * fenced it (nucleus#1472).
+   */
   private orderedNotify<T>(
+    cls: AdmissionClass,
     agentId: string,
     holder: string,
     work: () => Promise<T>,
+    options: OrderedRunOptions = {},
   ): Promise<T> {
     const previous = this.notifyTails.get(agentId) ?? Promise.resolve();
     const current = previous
       .catch(() => undefined)
-      .then(() => this.run("callback", work, undefined, { holder }));
+      .then(() => this.run(cls, work, undefined, { ...options, holder }));
     this.notifyTails.set(agentId, current);
     void current
       .finally(() => {
@@ -563,15 +586,21 @@ export class Admission {
     return current;
   }
 
-  /** Coalesce an identical notification, then admit distinct notifications in target order. */
+  /**
+   * Coalesce an identical notification, then admit distinct notifications in
+   * target order. `work` is the native send itself: the ordered chain admits it
+   * once, never a second time.
+   */
   notify<T>(
+    cls: AdmissionClass,
     agentId: string,
     requestIdentity: string | undefined,
     work: () => Promise<T>,
     holder = `notify:${agentId}`,
+    options: OrderedRunOptions = {},
   ): Promise<T> {
-    return this.withKey("callback", requestIdentity, () =>
-      this.orderedNotify(agentId, holder, work),
+    return this.withKey(cls, requestIdentity, () =>
+      this.orderedNotify(cls, agentId, holder, work, options),
     );
   }
 
@@ -712,15 +741,7 @@ export class Admission {
     cls: AdmissionClass,
     work: () => Promise<T>,
     key?: string,
-    options: {
-      innerTiming?: boolean;
-      breakerExempt?: boolean;
-      longRunning?: boolean;
-      ordinaryInnerDeadlines?: boolean;
-      holder?: string;
-      onWaiting?: () => void;
-      onAdmitted?: (waitMs: number) => void;
-    } = {},
+    options: AdmittedRunOptions = {},
   ): Promise<T> {
     const breaker = options.breakerExempt !== true;
     // The holder names the effect and its identity, so a stuck slot is attributable.
@@ -865,7 +886,13 @@ export class Admission {
       return hit.value as T;
     }
     const epoch = this.observationEpoch;
-    const value = await this.run("observation", work, key);
+    // The coalescing identity carries the invalidation epoch, so a read that
+    // starts after a send never joins the stale pre-send read in flight before
+    // it; joining it would answer from the old epoch and then repopulate the new
+    // one with that same stale value (nucleus#1472).
+    const value = await this.run("observation", work, `${key}@${epoch}`, {
+      holder: key,
+    });
     if (epoch !== this.observationEpoch) return value; // A signal during the read must prevent stale repopulation.
     const workspaceId = stable(value);
     if (workspaceId !== null)
@@ -1167,24 +1194,23 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
       const identity = key(args);
       const target = orderedTarget?.(args);
       const holder = requestHolder(name, args);
-      const invoke = () =>
-        admission.run(
-          cls,
-          () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args),
-          target === undefined ? identity : undefined,
-          {
-            innerTiming: INNER_TIMED.has(name),
-            breakerExempt: BREAKER_EXEMPT.has(name),
-            longRunning: LONG_RUNNING.has(name),
-            ordinaryInnerDeadlines: ORDINARY_INNER_DEADLINES.has(name),
-            holder,
-          },
-        );
-      return (
+      const send = () =>
+        (fn as (...a: unknown[]) => Promise<T>).apply(raw, args);
+      const options: OrderedRunOptions = {
+        innerTiming: INNER_TIMED.has(name),
+        breakerExempt: BREAKER_EXEMPT.has(name),
+        longRunning: LONG_RUNNING.has(name),
+        ordinaryInnerDeadlines: ORDINARY_INNER_DEADLINES.has(name),
+      };
+      // One owner admits the call. An ordered call's chain takes the single
+      // callback slot itself and keeps its deadline and host-call fence through
+      // the native send; the send is never admitted a second time inside it
+      // (nucleus#1472).
+      const admitted =
         target === undefined
-          ? invoke()
-          : admission.notify(target, identity, invoke, holder)
-      ).then((result) => {
+          ? admission.run(cls, send, identity, { ...options, holder })
+          : admission.notify(cls, target, identity, send, holder, options);
+      return admitted.then((result) => {
         invalidate?.(args, result);
         return result;
       });
@@ -1533,6 +1559,7 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
       ) =>
         admission
           .notify(
+            "callback",
             agentId,
             requestIdentity("notify", [
               agentId,
