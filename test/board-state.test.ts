@@ -8,6 +8,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // own SDK imports resolve to (one React context instance).
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { boardShellPlugin, mount, useNativeStubs } from "./support/render";
+import { acrossViews, openView } from "./support/inbox";
+/** The inbox lists one view at a time; card reads reach every view (support/inbox.ts). */
+const mountInbox = (element: React.ReactElement) => acrossViews(mount(element));
 import { build } from "esbuild";
 import { createRequire } from "node:module";
 import { taskSummarySchema, type UiBoard } from "../shared/contracts";
@@ -182,52 +185,38 @@ async function settle(probe: () => boolean) {
 test("026-14c both surfaces hydrate one board projection: a surface mounting after the board is cached renders at once and both keep planning", async () => {
   await load();
   const client = new QueryClient();
-  const first = mount(surfaceTree(client));
-  await settle(
-    () =>
-      first.text().includes("Running · 0/32 global slots") &&
-      first.text().includes("Parked (no slot held)"),
-  );
+  const first = mountInbox(surfaceTree(client));
+  await settle(() => first.text().includes("Parked (no slot held)"));
   // The second surface mounts with the board already cached (the workspace panel
   // opening while the operator's main surface is running).
-  const second = mount(surfaceTree(client));
+  const second = mountInbox(surfaceTree(client));
   // It hydrates from the shared cached projection at once — no wait for its own poll.
-  assert.match(
-    second.text(),
-    /Running · 0\/32 global slots/,
-    "the second surface renders the board without waiting for its own poll",
-  );
   assert.ok(
     second.text().includes("Parked (no slot held)"),
-    "the board labels parked tasks",
+    "the second surface renders the board without waiting for its own poll",
   );
   // Both surfaces reach the planning projection: sections and plan reads work on each.
   second.press("Planning");
-  await settle(() => second.text().includes("Plan · App"));
+  await settle(() => second.raw.text().includes("Plan · App"));
   first.press("Planning");
-  await settle(() => first.text().includes("Plan · App"));
+  await settle(() => first.raw.text().includes("Plan · App"));
   // An unchanged refresh merges the bounded counters into the shared projection.
   await client.refetchQueries({ queryKey: ["nucleus", "state"] });
   assert.ok(ackFetches >= 1, "the refresh sent the observed revision");
-  assert.match(
-    first.text(),
-    /Running · 0\/32 global slots/,
-    "the first surface keeps the projection through an unchanged refresh",
-  );
-  assert.match(
-    second.text(),
-    /Running · 0\/32 global slots/,
-    "the second surface keeps the projection through an unchanged refresh",
+  assert.ok(
+    second.raw.text().includes("Plan · App"),
+    "planning survives the unchanged refresh",
   );
   assert.ok(
-    second.text().includes("Plan · App"),
-    "planning survives the unchanged refresh",
+    first.text().includes("Parked (no slot held)") && second.text().includes("Parked (no slot held)"),
+    "both surfaces keep the projection through an unchanged refresh",
   );
   first.update(h("View", null));
   second.update(h("View", null));
 });
 
-test("026 rendered bundle in dark theme folds papercuts into Triage and filters tags", async () => {
+
+test("026 rendered bundle in dark theme splits leads and papercuts and filters tags", async () => {
   await loadBundle();
   // The board read's narrow card rows; lead.get still serves the full record on selection.
   const makeLead = (id: string, tags: string[]) => ({
@@ -261,7 +250,7 @@ test("026 rendered bundle in dark theme folds papercuts into Triage and filters 
     { surface0: "#111111", surface1: "#1b1b1b", foreground: "#eeeeee" },
     { get: (value, key) => value[key as keyof typeof value] ?? "#888888" },
   ) as never;
-  const ui = mount(
+  const ui = mountInbox(
     h(QueryClientProvider, {
       client,
       children: h(PluginRpcProvider, {
@@ -277,41 +266,50 @@ test("026 rendered bundle in dark theme folds papercuts into Triage and filters 
     await settle(
       () => ui.text().includes("Tagged") && ui.text().includes("Plain"),
     );
-    assert.equal(ui.query(/^Papercuts, /), undefined);
-    assert.ok(ui.text().includes("Papercut"));
-    // The tag filter is a dropdown of the tags Triage shows, with counts (Tom, 2026-10-15).
-    ui.press("Filter Triage by tag, All tags (2)");
-    assert.ok(ui.get("Filter Triage by tag: idea (1)"));
-    assert.ok(ui.get("Filter Triage by tag: Papercut (1)"));
+    // Leads and papercuts are the Leads view's two tabs (Tom, 2026-11-21).
+    openView(ui, "Leads");
+    const leads = ui.raw;
+    assert.ok(leads.query("Leads tab, 1") && leads.query("Papercuts tab, 1"));
+    assert.ok(leads.text().includes("Plain") && !leads.text().includes("Tagged"));
+    leads.press("Papercuts tab, 1");
+    assert.ok(leads.text().includes("Tagged") && leads.text().includes("Papercut"));
+    leads.press("Leads tab, 1");
+    // The tag filter is a dropdown of the tags the Leads view shows, with counts (Tom, 2026-10-15).
+    leads.press("Filter leads by tag, All tags (2)");
+    assert.ok(leads.get("Filter leads by tag: idea (1)"));
+    assert.ok(leads.get("Filter leads by tag: Papercut (1)"));
     // Reserved tags lead under their display names, then free-form tags (Tom, 2026-10-15).
     assert.deepEqual(
-      ui
-        .all(/^Filter Triage by tag: /)
+      leads
+        .all(/^Filter leads by tag: /)
         .map((node) => node.props.accessibilityLabel),
       [
-        "Filter Triage by tag: All tags (2)",
-        "Filter Triage by tag: Papercut (1)",
-        "Filter Triage by tag: idea (1)",
+        "Filter leads by tag: All tags (2)",
+        "Filter leads by tag: Papercut (1)",
+        "Filter leads by tag: idea (1)",
       ],
     );
     assert.ok(
-      ui.text().includes("Reserved") &&
-        ui.text().indexOf("Reserved") < ui.text().indexOf("Tags") &&
-        ui.text().indexOf("Tags") < ui.text().indexOf("idea (1)"),
+      leads.text().includes("Reserved") &&
+        leads.text().indexOf("Reserved") < leads.text().indexOf("Tags") &&
+        leads.text().indexOf("Tags") < leads.text().indexOf("idea (1)"),
       "the Reserved group heads the list, then Tags",
     );
     assert.equal(
-      ui.query(/^Filter Triage by tag: briefed/),
+      leads.query(/^Filter leads by tag: briefed/),
       undefined,
       "a tag only on briefed leads is not offered",
     );
-    ui.press("Filter Triage by tag: idea (1)");
-    assert.ok(ui.text().includes("Plain"));
-    assert.equal(ui.query("Triage: Tagged"), undefined);
-    ui.press("Filter Triage by tag, idea (1)");
-    ui.press("Filter Triage by tag: Papercut (1)");
-    assert.ok(ui.text().includes("Tagged"));
-    assert.equal(ui.query("Triage: Plain"), undefined);
+    leads.press("Filter leads by tag: idea (1)");
+    assert.ok(leads.text().includes("Plain"));
+    leads.press("Papercuts tab, 0");
+    assert.equal(leads.query("Triage: Tagged"), undefined);
+    leads.press("Filter leads by tag, idea (1)");
+    leads.press("Filter leads by tag: Papercut (1)");
+    leads.press("Papercuts tab, 1");
+    assert.ok(leads.text().includes("Tagged"));
+    leads.press("Leads tab, 0");
+    assert.equal(leads.query("Triage: Plain"), undefined);
   } finally {
     ui.update(h("View", null));
     leadRows = [];
@@ -392,7 +390,7 @@ function mountDomainBoard(
   rpc: (method: string, input: unknown) => Promise<unknown>,
   compact = false,
 ) {
-  return mount(
+  return mountInbox(
     h(QueryClientProvider, {
       client,
       children: h(PluginRpcProvider, {
@@ -527,7 +525,7 @@ test("an unavailable decision read stays visible on the board", async () => {
     if (method === "decision.list") throw Error("Decisions unavailable");
     return invoke(method, input);
   };
-  const ui = mount(
+  const ui = mountInbox(
     h(QueryClientProvider, {
       client,
       children: h(PluginRpcProvider, {
@@ -603,7 +601,7 @@ test("late RPC ack and full responses do not overwrite newer live frames, and ol
     return invoke(method, input);
   };
 
-  const ui = mount(
+  const ui = mountInbox(
     h(QueryClientProvider, {
       client,
       children: h(PluginRpcProvider, {

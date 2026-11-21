@@ -165,12 +165,13 @@ test("026-14c rendered: the panel resolves a workspace inside a project reposito
     /Nucleus board · Consumer-B/,
     "the panel header names the resolved project",
   );
-  // Tasks renders the Pipeline with no Lanes switch (retired 2026-11-08); the separate
+  // The panel has the same inbox menu as the main surface (Tom, 2026-11-21); the separate
   // Lanes destination is folded into Planning (#866), so nothing is labelled Lanes.
   assert.equal(ui.all("Lanes").length, 0, "no Lanes switch or tab");
   assert.equal(ui.query("Drafts"), undefined);
-  assert.ok(ui.get(/^Tasks \(/));
-  assert.ok(ui.get(/^QA runs \(/));
+  for (const entry of [/^Needs you(, \d+)?$/, /^Planning$/, /^Leads(, \d+)?$/, /^Queue(, \d+)?$/, /^Active(, \d+)?$/])
+    assert.ok(ui.get(entry), `the menu has ${entry}`);
+  assert.equal(ui.query(/^QA runs/), undefined, "QA runs is not a board view");
   assert.equal(
     ui.all(/^Lanes/).length,
     0,
@@ -178,10 +179,6 @@ test("026-14c rendered: the panel resolves a workspace inside a project reposito
   );
   ui.get(/^Planning$/).props.onPress();
   assert.ok(ui.get("Find lanes"), "Planning carries lane discovery now");
-  assert.ok(
-    ui.get("Project: Consumer-B"),
-    "and its own project chooser over the preset scope",
-  );
   assert.ok(
     ui.query(/^Projects, /),
     "the header project selector stays available on Planning",
@@ -235,17 +232,16 @@ test("026-14c the panel reuses the main surface board; there is no second copy o
     "one selector, preset by the workspace variant",
   );
   assert.equal(
-    ui.match(/ref=\{pipelineHorizontal\}/g)?.length,
+    ui.match(/<InboxList\b/g)?.length,
     1,
-    "one pipeline view",
+    "one list view",
   );
-  // Both Lanes modes project the one shared pipeline input, so adding a further
-  // consumer of it cannot be mistaken for a divergent board. A second board
-  // would have to introduce its own input instead of spreading this one.
-  assert.match(
-    ui,
-    /const columns = useMemo\(\s*\(\) => pipelineBoard\(pipelineInput\),/,
-    "the shared input feeds the one board projection",
+  // The menu counts and the list read one memoised projection; a second board
+  // would have to introduce its own derivation.
+  assert.equal(
+    ui.match(/pipelineBoard\(/g)?.length,
+    1,
+    "the one board projection",
   );
   // The panel's scope is preset in the panel and never touches the main surface's persisted scope.
   assert.match(ui, /usePanelScope\(\s*workspaceBoard\?\.key \?\? null,?\s*\)/);

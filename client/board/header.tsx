@@ -10,19 +10,38 @@ import { ActionButton, Button, muted, row, type Colors } from "../controls";
 import { errorText } from "../error-text";
 import { QaFenceNotice } from "../qa-fence-notice";
 import { Popover } from "../popover";
+import { Badge } from "./badges";
 import type { BoardAct } from "./use-board-data";
 import { control as controlSize, space, type as typeScale, radius, overlay } from "../design";
 
 /**
- * Queue #665: the header's slot popover lists only projects with at least one
- * slot occupied, most-used first, then name. Visibility is by slots in use
- * only: a project with tasks in flight and no live agent does not appear. The
- * filter copies the array, so sorting never mutates the board projection and a
- * refresh keeps a deterministic order unless counts change.
+ * Queue #665: the slot table lists only projects with at least one slot occupied,
+ * most-used first, then name. Visibility is by slots in use only: a project with
+ * tasks in flight and no live agent does not appear. The filter copies the array,
+ * so sorting never mutates the board projection and a refresh keeps a
+ * deterministic order unless counts change.
  */
-function slotPopoverRows(capacities: UiQueueState["projectCapacities"] | undefined) {
+export function slotPopoverRows(capacities: UiQueueState["projectCapacities"] | undefined) {
   return (capacities ?? []).filter(project => project.occupiedSlots > 0)
     .sort((a, b) => b.occupiedSlots - a.occupiedSlots || (a.projectName < b.projectName ? -1 : a.projectName > b.projectName ? 1 : 0));
+}
+
+/**
+ * The run state the header shows (Tom, 2026-11-21: the status line left the
+ * header). A normal running queue shows nothing; only a state the operator
+ * should notice gets a pill. Slot usage lives in the queue menu.
+ */
+export function headerStatePills(state: UiQueueState | undefined): Array<{ label: string; tone: "warning" | "neutral" }> {
+  if (!state) return [];
+  if (!state.connected) return [{ label: "Connecting to the queue backend…", tone: "neutral" }];
+  const pills: Array<{ label: string; tone: "warning" | "neutral" }> = [];
+  if (state.paused)
+    pills.push({ label: state.quiet ? "Paused · managed threads are idle" : `Draining · ${state.activeWorkers} active · ${state.unsettled} unconfirmed`, tone: "warning" });
+  if (state.dispatchHeld) pills.push({ label: "Dispatch held", tone: "warning" });
+  if (state.stoppedThreads) pills.push({ label: state.paused ? `${state.stoppedThreads} stopped` : `${state.stoppedThreads} waiting to resume`, tone: "warning" });
+  if (!state.paused && state.resumedThreads) pills.push({ label: `${state.resumedThreads} resumed`, tone: "neutral" });
+  if (state.operationBacklog) pills.push({ label: `${state.operationBacklog} operation${state.operationBacklog === 1 ? "" : "s"} queued`, tone: "neutral" });
+  return pills;
 }
 
 export type BoardHeaderProps = {
@@ -41,20 +60,22 @@ export type BoardHeaderProps = {
   staleRead: readonly [string, unknown] | null;
   inset: number;
   settingsOpener: ((section?: SettingsTarget) => void) | null;
-  /** The navigation row: tabs and the project selector. */
-  navigation: React.ReactNode;
+  /** The project filter, to the left of the header controls. */
+  filter: React.ReactNode;
+  /** Opens the menu drawer on a narrow board; absent when the menu is always shown. */
+  onMenu?: () => void;
   /** The surface below the header. */
   children: React.ReactNode;
 };
 
 /**
- * The board header: title, run summary with the slot popover, service and QA
- * fence notices, queue controls, errors and the navigation row. It owns the
- * queue-menu and slot-popover state, so opening either re-renders the header
- * alone. The body renders between the header and the outside-press layers,
- * which cover the whole surface.
+ * The board header: one row with the title, any run-state pills, the project
+ * filter and the queue controls, then the service and QA fence notices and errors
+ * when there are any. It owns the queue menu's state, so opening it re-renders
+ * the header alone. The body renders between the header and the outside-press
+ * layer, which covers the whole surface.
  */
-export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, error, onDismissError, readError, staleRead, inset, settingsOpener, navigation, children }: BoardHeaderProps) {
+export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, error, onDismissError, readError, staleRead, inset, settingsOpener, filter, onMenu, children }: BoardHeaderProps) {
   const workspacePanel = workspaceName !== undefined;
   const { height: viewportHeight } = useWindowDimensions();
   const setQueue = useRpc(api.queueControl);
@@ -63,134 +84,60 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
   const writeQaFence = useRpc(api.projectQaFence);
   const fetchServiceState = useRpc(api.serviceState);
   const [queueMenuOpen, setQueueMenuOpen] = useState(false);
-  // Queue #665: the header's slot count opens the per-project popover. The flag
-  // lives in the header, so a live board refresh never closes it.
-  const [slotsOpen, setSlotsOpen] = useState(false);
-  // Queue #1391: the header menus' anchors. Their panels render in the shell's
-  // popover layer, positioned from these anchors' window coordinates.
-  const slotsAnchor = useRef<View | null>(null), slotsMenu = useRef<View | null>(null);
+  // Queue #1391: the queue menu's anchor. Its panel renders in the shell's
+  // popover layer, positioned from the anchor's window coordinates.
   const queueAnchor = useRef<View | null>(null), queueMenu = useRef<View | null>(null);
-  // Queue #665: Escape closes the slot popover on hosts with a DOM. The
-  // anchored dropdown has no Modal onRequestClose to lean on; guarded like
-  // localStore in project-scope-controls, so native hosts skip it.
+  // Queue #665: Escape closes the queue menu on hosts with a DOM. The anchored
+  // dropdown has no Modal onRequestClose to lean on; native hosts skip it.
   useEffect(() => {
-    if (!slotsOpen && !queueMenuOpen) return;
+    if (!queueMenuOpen) return;
     const documentHost = (globalThis as { document?: { addEventListener: (type: string, listener: (event: { key?: string }) => void) => void; removeEventListener: (type: string, listener: (event: { key?: string }) => void) => void } }).document;
     if (!documentHost) return;
-    const onKey = (event: { key?: string }) => { if (event?.key === "Escape") { setSlotsOpen(false); setQueueMenuOpen(false); } };
+    const onKey = (event: { key?: string }) => { if (event?.key === "Escape") setQueueMenuOpen(false); };
     documentHost.addEventListener("keydown", onKey);
     return () => documentHost.removeEventListener("keydown", onKey);
-  }, [slotsOpen, queueMenuOpen]);
+  }, [queueMenuOpen]);
   const overrideCount = Object.keys(state?.projectLimitOverrides ?? {}).length;
   const slotRows = useMemo(() => slotPopoverRows(state?.projectCapacities), [state?.projectCapacities]);
   const serviceStateQuery = useQuery({ queryKey: ["nucleus", "service-state"], queryFn: () => fetchServiceState({}), refetchInterval: 15_000, retry: false });
   const qaFence = state?.qaFence.fence ?? null;
+  const pills = headerStatePills(state);
+  const notices = !workspacePanel && serviceStateQuery.data ? serviceNotices(serviceStateQuery.data) : [];
+  const meta = { fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight } as const;
+  const hasNotices = notices.length > 0 || Boolean(!workspacePanel && state && qaFence) || Boolean(error || readError) || Boolean(staleRead);
   return <>
       <View
         style={{
-          paddingTop: inset,
           paddingHorizontal: inset,
-          paddingBottom: space.lg,
-          gap: space.lg,
+          paddingVertical: space.sm,
+          gap: space.xs,
+          borderBottomWidth: 1,
+          borderBottomColor: c.border,
           position: "relative",
           // Queue #665 / #706: no zIndex here, so this block is not a stacking
-          // context. The open header menus render in the shell's popover layer,
-          // above the nav row and the board columns (Tom, 2026-11-19): an
-          // anchored dropdown inside the header is painted over by the column
-          // cards that follow it. The title+controls row keeps zIndex 50 while a
-          // menu is open, so the outside-press layer (40) still covers the nav
-          // row (20) and the board while the menu keeps its presses.
+          // context. The open queue menu renders in the shell's popover layer,
+          // above the list and detail panes. The row keeps zIndex 50 while the
+          // menu is open, so the outside-press layer (40) covers the board while
+          // the menu keeps its presses.
         }}
       >
-        <View style={{ ...row, justifyContent: "space-between", ...(queueMenuOpen || slotsOpen ? { zIndex: 50 } : {}) }}>
-          <View style={{ gap: space.xxs, flexShrink: 1 }}>
+        <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between", ...(queueMenuOpen ? { zIndex: 50 } : {}) }}>
+          <View style={{ ...row, flexWrap: "nowrap", gap: space.sm, flexShrink: 1, minWidth: 0 }}>
+            {onMenu && <Button small iconOnly c={c} icon="Menu" text="Menu" label="Open the board menu" onPress={onMenu} />}
             <Text
               accessibilityRole="header"
-              style={{ color: c.foreground, fontSize: typeScale.heading.fontSize, fontWeight: "600" }}
+              numberOfLines={1}
+              style={{ color: c.foreground, fontSize: typeScale.page.fontSize, lineHeight: typeScale.page.lineHeight, fontWeight: "600", flexShrink: 0 }}
             >
-              {workspacePanel
-                ? `Nucleus board · ${workspaceName}`
-                : "Nucleus"}
+              {workspacePanel ? `Nucleus board · ${workspaceName}` : "Nucleus"}
             </Text>
-            {/* Queue #665: the summary keeps its line; the slot count above is the
-              trigger. The panel is an anchored dropdown in the ProjectFilter /
-              SelectFilter pattern (relative wrapper, absolute panel, the same
-              surface and shadow tokens), never a Modal. */}
-            <View ref={slotsAnchor} style={{ position: "relative", zIndex: slotsOpen ? 50 : 0 }}>
-            <Text style={muted(c)}>
-              {state?.connected
-                ? state.paused
-                  ? state.quiet
-                    ? `Paused · managed threads are idle${state.stoppedThreads ? ` · ${state.stoppedThreads} stopped` : ""}`
-                    : `Draining · ${state.activeWorkers} active · ${state.unsettled} unconfirmed${state.stoppedThreads ? ` · ${state.stoppedThreads} stopped` : ""}`
-                  : state.stoppedThreads || state.resumedThreads
-                    ? [`Running`, state.resumedThreads ? `${state.resumedThreads} resumed` : "", state.stoppedThreads ? `${state.stoppedThreads} waiting to resume` : ""].filter(Boolean).join(" · ")
-                    : workspacePanel
-                      ? `Running · ${state.occupiedSlots ?? 0}/${state.globalLimit} global slots · project default ${state.projectLimit}${overrideCount ? ` · ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : ""}`
-                      : <>{`Running · `}<Text accessibilityRole="button" accessibilityLabel={`Project slot usage (${state.occupiedSlots ?? 0}/${state.globalLimit} in use): ${slotsOpen ? "hide" : "show"} projects using slots`} accessibilityState={{ expanded: slotsOpen }} onPress={() => { setSlotsOpen(!slotsOpen); setQueueMenuOpen(false); }} style={{ color: c.accent, fontWeight: "600" }}>{`${state.occupiedSlots ?? 0}/${state.globalLimit} global slots`}</Text>{` · project default ${state.projectLimit}${overrideCount ? ` · ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : ""}`}</>
-                : "Connecting to the queue backend…"}
-              {state?.dispatchHeld && <>{" · Dispatch held · "}<Text accessibilityRole="button" accessibilityLabel="Release dispatch hold" accessibilityState={{ disabled: busy || !state.connected }}
-                style={{ color: busy || !state.connected ? c.foregroundMuted : c.accent }}
-                onPress={() => { if (!busy && state.connected) void act(() => setQueue({ dispatchHeld: false })); }}>Release</Text></>}
-              {state?.operationBacklog
-                ? ` · ${state.operationBacklog} operation${state.operationBacklog === 1 ? "" : "s"} queued`
-                : ""}
-            </Text>
-            {/* Queue #665: per-project counts live in the popover, never inline. Outside a host it renders in place, positioned as before. */}
-            {!workspacePanel && slotsOpen && state && <Popover anchor={slotsAnchor} contentRef={slotsMenu} align="start" inlineStyle={{ top: space.lg, left: 0, width: 380 }}>
-              <ScrollView accessibilityRole="menu" accessibilityLabel="Projects using slots" nestedScrollEnabled
-              contentContainerStyle={{ gap: space.xs }}
-              style={{ width: 380, maxWidth: "92%", maxHeight: 320, padding: space.sm, borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
-                shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
-              <Text accessibilityRole="header" style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>Projects using slots</Text>
-              {slotRows.length === 0
-                ? <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>No project is using a slot.</Text>
-                : slotRows.map(project => <View key={project.projectKey} accessibilityLabel={`${project.projectName}, ${project.occupiedSlots} of ${project.slotLimit} slots, ${project.inFlightTasks} of ${project.inFlightLimit} in flight`} style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
-                  <Text numberOfLines={1} style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, flex: 1 }}>{project.projectName}</Text>
-                  <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, fontFamily: "monospace", minWidth: 84, textAlign: "right" }}>{`${project.occupiedSlots}/${project.slotLimit} slots`}</Text>
-                  <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, fontFamily: "monospace", minWidth: 104, textAlign: "right" }}>{`${project.inFlightTasks}/${project.inFlightLimit} in flight`}</Text>
-                </View>)}
-              </ScrollView>
-            </Popover>}
-            </View>
-            {!workspacePanel &&
-              serviceStateQuery.data &&
-              serviceNotices(serviceStateQuery.data).map((notice) =>
-                notice.tone === "warning" ? (
-                  <Text
-                    key={notice.text}
-                    accessibilityRole="alert"
-                    style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}
-                  >
-                    {notice.text}
-                  </Text>
-                ) : (
-                  <Text key={notice.text} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-                    {notice.text}
-                  </Text>
-                ),
-              )}
-            {!workspacePanel && state && qaFence && (
-              <QaFenceNotice
-                fence={qaFence}
-                busy={busy}
-                c={c}
-                onClear={() =>
-                  void act(async () => {
-                    await writeQaFence({
-                      action: "clear",
-                      expectedRevision: state.qaFence.revision,
-                      caller: "operator (board)",
-                    });
-                    await refetchState();
-                  })
-                }
-              />
-            )}
+            {pills.length > 0 && <View accessibilityLabel="Queue state" style={{ ...row, gap: space.xs, flexShrink: 1, minWidth: 0, overflow: "hidden", flexWrap: "nowrap" }}>
+              {pills.map(pill => <Badge key={pill.label} label={pill.label} tone={pill.tone} c={c} a11y={pill.label} />)}
+            </View>}
           </View>
-          {!workspacePanel && (
-            <View accessibilityLabel="Nucleus header controls" style={row}>
-              {headerControls(
+          <View accessibilityLabel="Nucleus header controls" style={{ ...row, flexWrap: "nowrap", flexShrink: 0 }}>
+            {filter}
+            {!workspacePanel && headerControls(
                 Boolean(state?.paused),
                 Boolean(state?.connected),
                 busy,
@@ -200,16 +147,16 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                     <Button small iconOnly joined="start" c={c} icon={control.icon} text={control.label} disabled={control.disabled}
                       onPress={() => { setQueueMenuOpen(false); if (state) void act(() => setQueue({ paused: !state.paused })); }} />
                     <Pressable ref={queueAnchor} accessibilityRole="button" accessibilityLabel="Queue controls menu" accessibilityState={{ expanded: queueMenuOpen, disabled: control.disabled }} disabled={control.disabled}
-                      onPress={() => { setQueueMenuOpen(!queueMenuOpen); setSlotsOpen(false); }}
+                      onPress={() => setQueueMenuOpen(!queueMenuOpen)}
                       style={{ minHeight: 36, minWidth: 28, alignItems: "center", justifyContent: "center", paddingHorizontal: space.xxs, backgroundColor: c.surface2,
                         borderTopRightRadius: radius.control, borderBottomRightRadius: radius.control, borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
                         borderLeftWidth: 1, borderLeftColor: c.border, opacity: control.disabled ? 0.45 : 1 }}>
                       <Icon name={queueMenuOpen ? "ChevronUp" : "ChevronDown"} size={16} color={c.foreground} />
                     </Pressable>
                   </View>
-                  {/* The open menu renders in the shell's popover layer, above the board columns. Outside a host it renders in place, positioned as before. */}
-                  {queueMenuOpen && <Popover anchor={queueAnchor} contentRef={queueMenu} align="end" inlineStyle={{ top: controlSize.height + space.xxs / 2, right: 0, width: 260 }}>
-                    <View accessibilityRole="menu" accessibilityLabel="Queue controls" style={{ width: 260, maxHeight: Math.max(0, viewportHeight - inset - controlSize.height - space.lg), borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
+                  {/* The open menu renders in the shell's popover layer, above the panes. Outside a host it renders in place. */}
+                  {queueMenuOpen && <Popover anchor={queueAnchor} contentRef={queueMenu} align="end" inlineStyle={{ top: controlSize.height + space.xxs / 2, right: 0, width: 340 }}>
+                    <ScrollView accessibilityRole="menu" accessibilityLabel="Queue controls" nestedScrollEnabled style={{ width: 340, maxHeight: Math.max(0, viewportHeight - inset - controlSize.height - space.lg), borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
                     shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
                     {([
                       { key: "pause", icon: control.icon, label: state?.paused ? "Resume" : "Pause", run: () => { if (state) void act(() => setQueue({ paused: !state.paused })); } },
@@ -225,12 +172,28 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                       <Icon name={item.icon} size={14} color={c.foreground} />
                       <Text numberOfLines={1} style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>{item.label}</Text>
                     </Pressable>)}
-                    {state && <ScrollView accessibilityRole="text" accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} nestedScrollEnabled contentContainerStyle={{ gap: space.xxs }} style={{ paddingHorizontal: space.sm, paddingVertical: space.xs, borderTopWidth: 1, borderTopColor: c.border, flexShrink: 1, minHeight: 0, maxHeight: 320 }}>
-                      <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`}</Text>
+                    {state?.paused && <Text style={{ ...muted(c), ...meta, paddingHorizontal: space.sm, paddingBottom: space.xs }}>
+                      Submissions are stored. No new run starts. In-flight work drains. Idle status covers this plugin’s managed runs only.
+                    </Text>}
+                    {/* Queue #665: per-project slot usage, moved here from the header's status line (Tom, 2026-11-21). */}
+                    {state && <View accessibilityLabel={`Project slot usage (${state.occupiedSlots ?? 0}/${state.globalLimit} in use)`} style={{ gap: space.xxs, paddingHorizontal: space.sm, paddingVertical: space.xs, borderTopWidth: 1, borderTopColor: c.border }}>
+                      <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between" }}>
+                        <Text style={{ color: c.foreground, ...meta, fontWeight: "600" }}>Slots</Text>
+                        <Text numberOfLines={1} style={{ ...muted(c), ...meta, flexShrink: 1 }}>{`${state.occupiedSlots ?? 0}/${state.globalLimit} global · project default ${state.projectLimit}${overrideCount ? ` · ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : ""}`}</Text>
+                      </View>
+                      {slotRows.length === 0
+                        ? <Text style={{ ...muted(c), ...meta }}>No project is using a slot.</Text>
+                        : slotRows.map(project => <View key={project.projectKey} accessibilityLabel={`${project.projectName}, ${project.occupiedSlots} of ${project.slotLimit} slots, ${project.inFlightTasks} of ${project.inFlightLimit} in flight`} style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
+                          <Text numberOfLines={1} style={{ color: c.foreground, ...meta, flex: 1 }}>{project.projectName}</Text>
+                          <Text numberOfLines={1} style={{ color: c.foregroundMuted, ...meta, fontFamily: "monospace", textAlign: "right" }}>{`${project.occupiedSlots}/${project.slotLimit} slots · ${project.inFlightTasks}/${project.inFlightLimit} in flight`}</Text>
+                        </View>)}
+                    </View>}
+                    {state && <View accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} style={{ gap: space.xxs, paddingHorizontal: space.sm, paddingVertical: space.xs, borderTopWidth: 1, borderTopColor: c.border }}>
+                      <Text style={{ color: c.foreground, ...meta, fontWeight: "600" }}>{state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`}</Text>
                       {!state.drained && state.boundRuns.slice(0, 8).map(run =>
-                        <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
-                    </ScrollView>}
-                    </View>
+                        <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, ...meta }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
+                    </View>}
+                    </ScrollView>
                   </Popover>}
                 </View>
               ) : (
@@ -238,50 +201,55 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                   disabled={control.disabled}
                   onPress={() => {
                     setQueueMenuOpen(false);
-                    setSlotsOpen(false);
                     if (control.id === "settings") settingsOpener?.();
                     else if (control.id === "refresh") void act(() => refresh({}));
                   }} />
               ))}
-
+          </View>
+        </View>
+        {hasNotices && <View style={{ gap: space.xxs }}>
+          {notices.map((notice) =>
+            <Text key={notice.text} accessibilityRole={notice.tone === "warning" ? "alert" : undefined}
+              style={notice.tone === "warning" ? { color: c.statusWarning, ...meta } : { ...muted(c), ...meta }}>
+              {notice.text}
+            </Text>)}
+          {!workspacePanel && state && qaFence && (
+            <QaFenceNotice
+              fence={qaFence}
+              busy={busy}
+              c={c}
+              onClear={() =>
+                void act(async () => {
+                  await writeQaFence({
+                    action: "clear",
+                    expectedRevision: state.qaFence.revision,
+                    caller: "operator (board)",
+                  });
+                  await refetchState();
+                })
+              }
+            />
+          )}
+          {Boolean(error || readError) && (
+            <View style={{ ...row, flexWrap: "nowrap" }}>
+              <Text accessibilityRole="alert" style={{ color: c.statusDanger, flex: 1 }}>
+                {error || readError}
+              </Text>
+              {error && <ActionButton c={c} action="close" label="Dismiss error" onPress={onDismissError} />}
             </View>
           )}
-        </View>
-        {state?.paused && (
-          <Text style={muted(c)}>
-            Submissions are stored. No new run starts. In-flight work drains.
-            Idle status covers this plugin’s managed runs only.
-          </Text>
-        )}
-        {Boolean(error || readError) && (
-          <View style={{ ...row, flexWrap: "nowrap" }}>
-            <Text
-              accessibilityRole="alert"
-              style={{ color: c.statusDanger, flex: 1 }}
-            >
-              {error || readError}
+          {staleRead && (
+            <Text accessibilityRole="alert" style={{ color: c.statusWarning }}>
+              {`${staleRead[0]} not refreshed: ${errorText(staleRead[1])}. Showing the last loaded list.`}
             </Text>
-            {error && (
-              <ActionButton c={c} action="close" label="Dismiss error" onPress={onDismissError} />
-            )}
-          </View>
-        )}
-        {staleRead && (
-          <Text accessibilityRole="alert" style={{ color: c.statusWarning }}>
-            {`${staleRead[0]} not refreshed: ${errorText(staleRead[1])}. Showing the last loaded list.`}
-          </Text>
-        )}
-        {navigation}
+          )}
+        </View>}
       </View>
       {children}
-      {/* Queue #665 / #706: an outside click closes the open header menu. The
-        layer sits above the nav row (zIndex 20) and the board (zIndex 40) and
-        below the raised title+controls row (zIndex 50) and the popover layer
-        (zIndex 1000), so a press on the project filter or the board dismisses
-        while the menu in the layer keeps its presses. Other header icons live
-        in that raised row, so they close the menu in their own onPress.
-        Follows RecordModal's outside-press layer without a Modal. */}
+      {/* Queue #665 / #706: an outside click closes the open queue menu. The layer
+        sits above the board (zIndex 40) and below the raised header row (zIndex 50)
+        and the popover layer (zIndex 1000), so a press anywhere else dismisses
+        while the menu keeps its presses. */}
       {!workspacePanel && queueMenuOpen && <Pressable accessibilityRole="button" accessibilityLabel="Close queue controls" onPress={() => setQueueMenuOpen(false)} style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 40 }} />}
-      {!workspacePanel && slotsOpen && <Pressable accessibilityRole="button" accessibilityLabel="Close project slot usage" onPress={() => setSlotsOpen(false)} style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 40 }} />}
   </>;
 }

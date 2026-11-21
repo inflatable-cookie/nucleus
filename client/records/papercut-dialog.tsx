@@ -14,7 +14,7 @@ const papercutPromoteReason = (cut: Papercut) => cut.state === "open" ? undefine
 const papercutCloseReason = (cut: Papercut) => cut.state === "closed" ? "Already closed" : undefined;
 
 /** The papercut detail dialog. It owns its edit form, chosen complexity and close note. */
-export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordNotice, setRecordNotice, laneName, onClose, c }: { id: string; compact: boolean; busy: boolean; act: BoardAct; recordNotice: RecordNoticeValue | null; setRecordNotice: (notice: RecordNoticeValue | null) => void; laneName: (key: string) => string; onClose: () => void; c: Colors }) {
+export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordNotice, setRecordNotice, laneName, onClose, c, inline = false }: { inline?: boolean; id: string; compact: boolean; busy: boolean; act: BoardAct; recordNotice: RecordNoticeValue | null; setRecordNotice: (notice: RecordNoticeValue | null) => void; laneName: (key: string) => string; onClose: () => void; c: Colors }) {
   const fetchPapercut = useRpc(api.papercutGet), editPapercut = useRpc(api.papercutEdit), promotePapercut = useRpc(api.papercutPromoteTask), closePapercut = useRpc(api.papercutClose);
   const [closeNote,setCloseNote] = useState("");
   // Spec 053: a promoted papercut names its complexity; nothing is preselected.
@@ -31,6 +31,7 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
   return (
     <RecordModal
       label="Papercut detail"
+      inline={inline}
       title={papercutDetail?.title ?? "Papercut"}
       compact={compact}
       c={c}

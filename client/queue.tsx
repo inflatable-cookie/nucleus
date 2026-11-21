@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { Text, View } from "react-native";
+import { Modal, Pressable, Text, View } from "react-native";
 import {
   useRpc,
   useWorkspace,
   type BoardSurfaceProps,
   type BoardWorkspacePanelProps,
 } from "./shell";
-import { muted, row, TabRow, type Colors } from "./controls";
+import { muted, type Colors } from "./controls";
 import { useBoardState } from "./board-state";
 import { PopoverHost } from "./popover";
 import { PlanningTab, type PlanEdit } from "./planning-panel";
@@ -19,7 +19,7 @@ import { useProjectSelectorActions } from "./project-selector-actions";
 import { ProjectManagementView } from "./project-management-view";
 import { useQueryClient } from "@tanstack/react-query";
 import * as api from "../shared/contracts";
-import type { HostRunRecord, TaskSummary } from "../shared/contracts";
+import type { TaskSummary } from "../shared/contracts";
 import { hiddenQueuedByProject } from "../shared/queued-more";
 import { planSaveInput } from "../shared/planning-tab";
 import {
@@ -27,19 +27,21 @@ import {
   projectHasRepository,
   scopeContains,
 } from "../shared/project-scope";
+import { isOpenTask, type SettingsTarget } from "../shared/queue-navigation";
 import {
-  isOpenTask,
-  navigationViews,
-  openTaskCount,
-  workspaceNavigationViews,
-  type SettingsTarget,
-} from "../shared/queue-navigation";
+  inboxLayout,
+  inboxListWidth,
+  inboxMenuWidth,
+  type ActiveSection,
+  type InboxView,
+  type LeadsTab,
+} from "../shared/inbox-board";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
-import { QaRunsTab, liveHostRun, type RunAccounting } from "./qa-runs-tab";
 import { attention } from "./board/text";
 import { BoardHeader } from "./board/header";
-import { PipelineBoard, usePipelineState } from "./board/pipeline";
+import { InboxList, useInboxBoard, usePipelineState } from "./board/inbox-list";
+import { InboxMenu } from "./board/inbox-menu";
 import { useBoardSelection } from "./board/use-board-selection";
 import {
   useBoardAct,
@@ -55,7 +57,7 @@ import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
 import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
-import { space, type as typeScale } from "./design";
+import { overlay, space, type as typeScale } from "./design";
 export { TaskCard, DecisionCard } from "./board/cards";
 export { TriageLeadCard } from "./board/triage-lead-card";
 export {
@@ -76,9 +78,6 @@ export {
   CompactTelemetrySummary,
 } from "./telemetry-parts";
 
-/** Live host runs: queued, admitted or running with charged accounting, plus settled runs still holding capacity. */
-const activeHostRuns = (runs?: HostRunRecord[], accounting?: RunAccounting) =>
-  (runs ?? []).filter((run) => liveHostRun(run, accounting));
 export type WorkspaceBoardScope = { key: string; name: string };
 
 /** The header's Settings icon opens Queue's native Paseo settings screen; the
@@ -92,31 +91,37 @@ export function registerSettingsOpener(
 }
 
 /**
- * The board shell: tabs, project scope and the open task or record. The header
- * (`board/header.tsx`), the Pipeline (`board/pipeline.tsx`) and the reads
- * (`board/use-board-data.ts`) live in their own modules.
+ * The board shell (Tom, 2026-11-21: an inbox, not kanban columns): the menu on the
+ * left, the open view's list in the middle and the open record on the right. A
+ * medium panel drops the detail pane and opens records in a modal; a narrow one
+ * also folds the menu into a drawer. The header (`board/header.tsx`), the list
+ * (`board/inbox-list.tsx`) and the reads (`board/use-board-data.ts`) live in their
+ * own modules.
  */
 export function MainSurface({
   theme,
   layout,
   navigation,
   workspaceBoard,
-  now,
 }: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number }) {
-  const workspacePanel = Boolean(workspaceBoard);
   const c = theme.colors;
   const [panelWidth, setPanelWidth] = useState(0);
-  const compact = layout.compact || (panelWidth > 0 && panelWidth < 700);
+  const mode = inboxLayout(panelWidth, layout.compact);
+  const wide = mode === "wide", narrow = mode === "narrow";
+  const menuWidth = inboxMenuWidth[wide ? "wide" : "medium"];
+  // The detail pane's room decides whether a record lays out compactly.
+  const detailWidth = panelWidth - menuWidth - inboxListWidth;
+  const compact = !wide || (detailWidth > 0 && detailWidth < 700);
   const savePlan = useRpc(api.planSet);
-  const runQa = useRpc(api.projectQaRun),
-    cancelQa = useRpc(api.projectQaCancel),
-    retryQaTeardown = useRpc(api.projectQaRetryTeardown);
-  const releaseHostRunCapacity = useRpc(api.hostRunCapacityRelease);
   const saveLaneDocument = useRpc(api.laneDocumentEdit);
   const changeLaneStatus = useRpc(api.laneStatus);
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<BoardTab>("queue");
-  // A board QA card opens the QA runs page on its run (Tom, 2026-11-01).
+  const [view, setView] = useState<InboxView>("needs");
+  const [activeSection, setActiveSection] = useState<ActiveSection | null>(null);
+  const [leadsTab, setLeadsTab] = useState<LeadsTab>("leads");
+  const [menuOpen, setMenuOpen] = useState(false);
+  // The reads still key on the two data shapes: Planning's, and the card lists'.
+  const tab: BoardTab = view === "planning" ? "planning" : "queue";
   const [surfaceScope, setSurfaceScope] = useProjectScope();
   // Spec 026 row 14c: the workspace panel's selection is preset to the workspace's
   // project and lives in the panel, never in the main surface's persisted scope.
@@ -139,20 +144,19 @@ export function MainSurface({
     setOpenPapercutId,
     openDecisionId,
     setOpenDecisionId,
-    qaFocusId,
     selectTask,
     selectDecision,
     selectLead,
     selectPapercut,
-    openQaRun,
-  } = useBoardSelection(setTab);
+    clearSelection,
+  } = useBoardSelection();
   // Unsaved plan drafts, one per project section: entries, idle mark and the version they were based on.
   const [planEdits, setPlanEdits] = useState<Record<string, PlanEdit>>({});
   // The last failed save per project. The draft stays; the section says why it was not saved.
   const [planSaveErrors, setPlanSaveErrors] = useState<Record<string, string>>(
     {},
   );
-  // The open lane's unsaved document text. Leaving the lane or the Planning tab keeps it until it is saved or discarded.
+  // The open lane's unsaved document text. Leaving the lane or Planning keeps it until it is saved or discarded.
   const [laneDraft, setLaneDraft] = useState<LaneDraft | null>(null);
   const [recordNotice, setRecordNotice] = useState<RecordNoticeValue | null>(
     null,
@@ -197,10 +201,9 @@ export function MainSurface({
     records,
     onLeaveLane: () => setLaneDraft(null),
   });
-  const { qaQuery, hostRunQuery, runAccountingState, qaFence, qaFenceQuery } =
-    useQaData({ tab, selected, state });
-  // The Pipeline's Triage filter, pages and measurements outlive a visit to another tab.
-  const pipelineView = usePipelineState();
+  const { qaQuery } = useQaData({ tab, selected, state });
+  // The list's tag filter, pages and queued-more read outlive a visit to another view.
+  const pipeline = usePipelineState();
   const { act, leadAct, busy, error, setError } = useBoardAct({
     selected,
     selectedLeadId,
@@ -210,22 +213,20 @@ export function MainSurface({
   });
   // Record dialogs own their drafts and remount per record, so they clear when it closes or
   // moves on. Task-detail drafts live in the draft store: the dispose, escalation, replacement,
-  // work-disposition and note drafts clear when the task or tab changes; the rest persist.
+  // work-disposition and note drafts clear when the task or view changes; the rest persist.
   useEffect(() => {
     setError("");
-  }, [selected, tab]);
-  const taskDrafts = useTaskDraftStore(`${selected ?? ""}|${tab}`);
+  }, [selected, view]);
+  const taskDrafts = useTaskDraftStore(`${selected ?? ""}|${view}`);
   useEffect(() => {
     setRecordNotice(null);
   }, [selectedLeadId, openPapercutId, openDecisionId]);
   const recordKey = `${selectedLeadId ?? ""}|${openPapercutId ?? ""}|${openDecisionId ?? ""}`;
   const liveTasks = state?.tasks.filter(isOpenTask) ?? [];
-  const setScopeProjects = (projects: string[]) => setScope({ projects });
   // Stale saved keys (a removed project) drop out, so every view treats them alike.
   // The selection is the only filter state (nucleus#1476): an empty selection shows
   // all projects in every scoped view, and clearing the last project restores them.
   const selection = effectiveSelection(state?.projects ?? [], scope.projects);
-  const pipelineFilterSelection = selection;
   const belongs = scopeContains(state?.projects ?? [], selection);
   const projectForRepository = (repoPath: string, origin?: string | null) =>
     state?.projects.find((project) =>
@@ -248,6 +249,15 @@ export function MainSurface({
   );
   const queuedHidden = hiddenQueuedByProject(queuedCounts, state?.tasks ?? []);
   const hiddenQueued = queuedHidden.reduce((sum, item) => sum + item.hidden, 0);
+  const inbox = useInboxBoard({
+    state,
+    selection,
+    boardLeads,
+    leadLinks,
+    decisions: decisionsQuery.data,
+    hiddenQueued,
+    triageTag: pipeline.triageTag,
+  });
   const projectForTask = (task: {
     repoPath: string;
     repository?: string | null;
@@ -277,16 +287,23 @@ export function MainSurface({
     setLaneDraft(null);
     setPlanningStep("lane");
   };
-  /** Lane projects' "Show plan": the chooser moves to that project and the lane stays open. */
+  /** Lane projects' "Show plan": the filter moves to that project and the lane stays open. */
   const showLanePlan = (project: string) => {
-    setScopeProjects([project]);
+    setScope({ projects: [project] });
     setPlanningStep("plan");
+  };
+  /** A menu pick opens that view with nothing selected, so the detail pane never shows a record the list hides. */
+  const openView = (next: InboxView, section: ActiveSection | null = null) => {
+    if (next !== view || section !== activeSection) clearSelection();
+    setView(next);
+    setActiveSection(next === "active" ? section : null);
+    setMenuOpen(false);
   };
 
   const laneName = (key: string) =>
     (state?.lanes ?? []).find((lane) => lane.key === key)?.title ?? key;
   const task = detailQuery.data?.task;
-  const inset = compact ? 16 : 24;
+  const inset = space.md;
   // The first failed board read, in plain words: which read failed and why.
   // A raw schema dump never reaches the header (nucleus#1141).
   const failedRead = (
@@ -304,7 +321,124 @@ export function MainSurface({
     : state?.error
       ? storedBoardErrorText(state.error)
       : null;
-  // Every popover on the board renders in this host's layer, above the columns (Tom, 2026-11-08).
+  // Records open in the detail pane on a wide board's lists. Planning's detail pane
+  // holds the lane, so a record opened from it is a modal, as on a narrower board.
+  const inlineDetail = wide && view !== "planning";
+  const anyRecord = Boolean(selected || selectedLeadId || openPapercutId || openDecisionId);
+  const detail = task ? (
+    <TaskDialog
+      key={`task:${task.id}`}
+      task={task}
+      detailQuery={detailQuery}
+      nextQuery={nextQuery}
+      state={state}
+      decisions={decisionsQuery.data}
+      qaRuns={qaQuery.data}
+      spansRepositories={multiRepository(task)}
+      compact={compact}
+      busy={busy}
+      act={act}
+      drafts={taskDrafts}
+      navigation={navigation}
+      inline={inlineDetail}
+      onClose={() => setSelected(null)}
+      onSelectTask={setSelected}
+      c={c}
+    />
+  ) : selectedLeadId ? (
+    <LeadDialog
+      key={`lead:${selectedLeadId}`}
+      id={selectedLeadId}
+      lane={leadLane}
+      compact={compact}
+      busy={busy}
+      leadAct={leadAct}
+      inline={inlineDetail}
+      onClose={() => {
+        setLeadLane(null);
+        setSelectedLeadId(null);
+      }}
+      c={c}
+    />
+  ) : openPapercutId ? (
+    // A record dialog remounts when any open record changes, which clears its drafts.
+    <PapercutDialog
+      key={recordKey}
+      id={openPapercutId}
+      compact={compact}
+      busy={busy}
+      act={act}
+      recordNotice={recordNotice}
+      setRecordNotice={setRecordNotice}
+      laneName={laneName}
+      inline={inlineDetail}
+      onClose={() => setOpenPapercutId(null)}
+      c={c}
+    />
+  ) : openDecisionId ? (
+    <DecisionDialog
+      key={recordKey}
+      id={openDecisionId}
+      compact={compact}
+      busy={busy}
+      act={act}
+      recordNotice={recordNotice}
+      setRecordNotice={setRecordNotice}
+      onOpenDecision={setOpenDecisionId}
+      onOpenTask={(id) => {
+        setOpenDecisionId(null);
+        setSelected(id);
+      }}
+      inline={inlineDetail}
+      onClose={() => setOpenDecisionId(null)}
+      c={c}
+    />
+  ) : null;
+  const detailPane = (
+    <View accessibilityLabel="Detail" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+      {detail ?? (
+        <View accessibilityLabel={anyRecord ? "Loading detail" : "No item selected"} style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: space.lg }}>
+          <Text style={muted(c)}>
+            {anyRecord ? "Loading…" : "Select an item to see its detail."}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+  const menu = (
+    <InboxMenu
+      c={c}
+      view={view}
+      activeSection={activeSection}
+      counts={inbox.counts}
+      loaded={Boolean(state)}
+      onSelect={openView}
+    />
+  );
+  const filter = (
+    <ProjectSelector
+      projects={state?.projects ?? []}
+      tasks={state?.tasks ?? []}
+      leads={boardLeads}
+      queuedCounts={state?.queuedCounts ?? []}
+      projectActivity={state?.projectActivity ?? []}
+      value={scope.projects}
+      // The picker commits the selection it reports, and an empty pick
+      // (Clear, or Shift-clearing the last project) restores all projects.
+      onChange={(projects) => setScope({ projects })}
+      onSettings={
+        settingsOpener ? () => settingsOpener?.("projects") : undefined
+      }
+      projectActions={{
+        ...projectSelector.actions,
+        remove: setRemovingProject,
+      }}
+      onOpenChange={setScopeOpen}
+      compact={narrow}
+      c={c}
+    />
+  );
+  // Every popover on the board renders in this host's layer, above the panes (Tom, 2026-11-08).
   return (
     <PopoverHost>
       <View
@@ -324,71 +458,20 @@ export function MainSurface({
           staleRead={staleRead}
           inset={inset}
           settingsOpener={settingsOpener}
-          navigation={
-            <View
-              style={{ ...row, justifyContent: "space-between", zIndex: 20 }}
-            >
-              <TabRow
-                c={c}
-                label="Nucleus navigation"
-                tabs={(workspacePanel
-                  ? workspaceNavigationViews
-                  : navigationViews
-                ).map((view) => ({
-                  id: view.id,
-                  text:
-                    view.id === "queue" && state
-                      ? `Tasks (${openTaskCount(state.tasks, attentionBelongs) + hiddenQueued} open)`
-                      : view.id === "qa"
-                        ? `QA runs (${activeHostRuns(hostRunQuery.data, runAccountingState).length})`
-                        : view.label,
-                }))}
-                value={tab}
-                onChange={setTab}
-              />
-              <View style={row}>
-                {(tab === "queue" || tab === "planning" || tab === "qa") && (
-                  <ProjectSelector
-                    projects={state?.projects ?? []}
-                    tasks={state?.tasks ?? []}
-                    leads={boardLeads}
-                    queuedCounts={state?.queuedCounts ?? []}
-                    projectActivity={state?.projectActivity ?? []}
-                    value={scope.projects}
-                    // The picker commits the selection it reports, and an empty pick
-                    // (Clear, or Shift-clearing the last project) restores all projects.
-                    onChange={(projects) => setScope({ projects })}
-                    onSettings={
-                      settingsOpener
-                        ? () => settingsOpener?.("projects")
-                        : undefined
-                    }
-                    projectActions={{
-                      ...projectSelector.actions,
-                      remove: setRemovingProject,
-                    }}
-                    onOpenChange={setScopeOpen}
-                    compact={compact}
-                    c={c}
-                  />
-                )}
-              </View>
-            </View>
-          }
+          filter={filter}
+          onMenu={narrow ? () => setMenuOpen(true) : undefined}
         >
-          {tab === "planning" && (
-            <View
-              style={{
-                flex: 1,
-                minHeight: 0,
-                paddingHorizontal: inset,
-                paddingBottom: inset,
-                gap: space.sm,
-              }}
-            >
+          <View style={{ flex: 1, minHeight: 0, flexDirection: "row", zIndex: 0 }}>
+            {!narrow && (
+              <View style={{ width: menuWidth, minHeight: 0, borderRightWidth: 1, borderRightColor: c.border }}>
+                {menu}
+              </View>
+            )}
+            {view === "planning" ? (
               <PlanningTab
                 c={c}
                 compact={compact}
+                inbox={{ listWidth: wide ? inboxListWidth : null, laneModal: !wide }}
                 leads={boardLeads}
                 onCloseLane={(lane) =>
                   void act(() =>
@@ -408,7 +491,6 @@ export function MainSurface({
                 plansError={planMessage(planQuery.error)}
                 lanesLoading={!state && !stateQuery.error}
                 lanesError={planMessage(stateQuery.error)}
-                onSelectProjects={setScopeProjects}
                 onRetryLanes={() => {
                   void stateQuery.refetch();
                   void planQuery.refetch();
@@ -419,11 +501,7 @@ export function MainSurface({
                 onRetryQa={() => {
                   void qaQuery.refetch();
                 }}
-                onOpenQaRun={openQaRun}
-                onOpenTask={(id) => {
-                  selectTask(id);
-                  setTab("queue");
-                }}
+                onOpenTask={selectTask}
                 sections={planningProjects.map((project) => {
                   const latest = planQuery.data?.find(
                     (plan) => plan.project === project.key,
@@ -548,175 +626,61 @@ export function MainSurface({
                       c={c}
                     />
                   ) : (
-                    <>
-                      <Text
-                        accessibilityRole="header"
-                        style={{
-                          color: c.foreground,
-                          fontSize: typeScale.section.fontSize,
-                          fontWeight: "600",
-                        }}
-                      >
-                        Lane
-                      </Text>
+                    <View style={{ alignItems: "center", justifyContent: "center", padding: space.lg }}>
                       <Text style={muted(c)}>Select a lane from the plan.</Text>
-                    </>
+                    </View>
                   )
                 }
               />
-            </View>
-          )}
-          {tab === "qa" && (
-            <QaRunsTab
-              focusRunId={qaFocusId}
-              runs={hostRunQuery.data}
-              qaRuns={qaQuery.data}
-              accounting={runAccountingState}
-              projects={state?.projects ?? []}
-              tasks={state?.tasks ?? []}
-              fence={qaFence}
-              fenceInventory={
-                qaFenceQuery.data?.view.fence?.id === qaFence?.id
-                  ? qaFenceQuery.data?.inventory
-                  : undefined
-              }
-              selectedProjects={scope.projects}
-              busy={busy}
-              loading={hostRunQuery.isLoading || qaQuery.isLoading}
-              loadError={
-                hostRunQuery.error || qaQuery.error
-                  ? String(hostRunQuery.error || qaQuery.error)
-                  : undefined
-              }
-              onRunQa={(repository) =>
-                void act(async () => {
-                  await runQa({ repository });
-                  await qaQuery.refetch();
-                })
-              }
-              onCancelQa={(id, reason) =>
-                void act(async () => {
-                  await cancelQa({ id, reason });
-                  await qaQuery.refetch();
-                })
-              }
-              onRetryTeardownQa={(id, reason) =>
-                void act(async () => {
-                  await retryQaTeardown({ id, reason });
-                  await qaQuery.refetch();
-                })
-              }
-              onReleaseCapacity={(runId, reason) =>
-                void act(async () => {
-                  await releaseHostRunCapacity({ runId, reason });
-                  await hostRunQuery.refetch();
-                })
-              }
-              onOpenTask={selectTask}
-              c={c}
-            />
-          )}
-          {tab === "queue" && (
-            <View style={{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 }}>
-              <PipelineBoard
-                c={c}
-                state={state}
-                stateError={stateQuery.error}
-                compact={compact}
-                inset={inset}
-                panelWidth={panelWidth}
-                pipelineFilterSelection={pipelineFilterSelection}
-                boardLeads={boardLeads}
-                leadLinks={leadLinks}
-                leadsLoading={leadsQuery.isLoading}
-                decisions={decisionsQuery.data}
-                queuedHidden={queuedHidden}
-                parkedRepository={parkedRepository}
-                projectForRepository={projectForRepository}
-                selected={selected}
-                selectedLeadId={selectedLeadId}
-                openPapercutId={openPapercutId}
-                openDecisionId={openDecisionId}
-                onSelectTask={selectTask}
-                onOpenQueuedTask={setSelected}
-                onSelectDecision={selectDecision}
-                onSelectLead={selectLead}
-                onSelectPapercut={selectPapercut}
-                onOpenQaRun={openQaRun}
-                busy={busy}
-                act={act}
-                refetchQa={qaQuery.refetch}
-                view={pipelineView}
-              />
-              {task && (
-                <TaskDialog
-                  task={task}
-                  detailQuery={detailQuery}
-                  nextQuery={nextQuery}
-                  state={state}
-                  decisions={decisionsQuery.data}
-                  qaRuns={qaQuery.data}
-                  spansRepositories={multiRepository(task)}
-                  compact={compact}
-                  busy={busy}
-                  act={act}
-                  drafts={taskDrafts}
-                  navigation={navigation}
-                  onClose={() => setSelected(null)}
-                  onSelectTask={setSelected}
-                  c={c}
-                />
-              )}
-              {selectedLeadId && (
-                <LeadDialog
-                  id={selectedLeadId}
-                  lane={leadLane}
-                  compact={compact}
-                  busy={busy}
-                  leadAct={leadAct}
-                  onClose={() => {
-                    setLeadLane(null);
-                    setSelectedLeadId(null);
-                  }}
-                  c={c}
-                />
-              )}
-              {/* A record dialog remounts when any open record changes, which clears its drafts. */}
-              {openPapercutId && (
-                <PapercutDialog
-                  key={recordKey}
-                  id={openPapercutId}
-                  compact={compact}
-                  busy={busy}
-                  act={act}
-                  recordNotice={recordNotice}
-                  setRecordNotice={setRecordNotice}
-                  laneName={laneName}
-                  onClose={() => setOpenPapercutId(null)}
-                  c={c}
-                />
-              )}
-              {openDecisionId && (
-                <DecisionDialog
-                  key={recordKey}
-                  id={openDecisionId}
-                  compact={compact}
-                  busy={busy}
-                  act={act}
-                  recordNotice={recordNotice}
-                  setRecordNotice={setRecordNotice}
-                  onOpenDecision={setOpenDecisionId}
-                  onOpenTask={(id) => {
-                    setOpenDecisionId(null);
-                    setSelected(id);
-                  }}
-                  onClose={() => setOpenDecisionId(null)}
-                  c={c}
-                />
-              )}
-            </View>
-          )}
+            ) : (
+              <>
+                <View style={wide
+                  ? { width: inboxListWidth, minHeight: 0, borderRightWidth: 1, borderRightColor: c.border }
+                  : { flex: 1, minWidth: 0, minHeight: 0 }}>
+                  <InboxList
+                    c={c}
+                    state={state}
+                    stateError={stateQuery.error}
+                    inbox={inbox}
+                    view={view}
+                    activeSection={activeSection}
+                    leadsTab={leadsTab}
+                    onLeadsTab={setLeadsTab}
+                    leadsLoading={leadsQuery.isLoading}
+                    decisions={decisionsQuery.data}
+                    queuedHidden={queuedHidden}
+                    parkedRepository={parkedRepository}
+                    projectForRepository={projectForRepository}
+                    selected={selected}
+                    selectedLeadId={selectedLeadId}
+                    openPapercutId={openPapercutId}
+                    openDecisionId={openDecisionId}
+                    onSelectTask={selectTask}
+                    onSelectDecision={selectDecision}
+                    onSelectLead={selectLead}
+                    onSelectPapercut={selectPapercut}
+                    busy={busy}
+                    act={act}
+                    pipeline={pipeline}
+                  />
+                </View>
+                {wide && detailPane}
+              </>
+            )}
+          </View>
+          {!inlineDetail && detail}
         </BoardHeader>
+        {narrow && menuOpen && (
+          <Modal visible transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+            <View style={{ flex: 1, flexDirection: "row" }}>
+              <View accessibilityViewIsModal accessibilityLabel="Board menu" style={{ width: 260, maxWidth: "85%", backgroundColor: c.surface0, borderRightWidth: 1, borderRightColor: c.border, paddingTop: space.sm }}>
+                <Text style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600", paddingHorizontal: space.md, paddingBottom: space.xs }}>Nucleus</Text>
+                {menu}
+              </View>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close the board menu" onPress={() => setMenuOpen(false)} style={{ flex: 1, backgroundColor: overlay.scrim }} />
+            </View>
+          </Modal>
+        )}
         {removingProject && (
           <ProjectManagementView
             c={c}

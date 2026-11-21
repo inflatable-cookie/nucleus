@@ -11,7 +11,7 @@ import { RecordModal } from "./record-modal";
  * The lead detail dialog. The lead screen owns its forms and reports each action's result
  * beside its control; the board passes `leadAct`, which refreshes the board and this record.
  */
-export function LeadDialog({ id: selectedLeadId, lane: leadLane, compact, busy, leadAct, onClose, c }: { id: string; lane: { key: string; title: string } | null; compact: boolean; busy: boolean; leadAct: <T>(fn: () => Promise<T>) => Promise<T>; onClose: () => void; c: Colors }) {
+export function LeadDialog({ id: selectedLeadId, lane: leadLane, compact, busy, leadAct, onClose, c, inline = false }: { inline?: boolean; id: string; lane: { key: string; title: string } | null; compact: boolean; busy: boolean; leadAct: <T>(fn: () => Promise<T>) => Promise<T>; onClose: () => void; c: Colors }) {
   const fetchLead = useRpc(api.leadGet), dropLead = useRpc(api.leadDrop), checkLead = useRpc(api.leadCheck), approveLead = useRpc(api.leadApprove);
   const reopenLead = useRpc(api.leadReopen), promoteLeadTo = useRpc(api.leadPromote), fetchLeadVersion = useRpc(api.leadVersion), promoteLead = useRpc(api.leadPromoteTask);
   const leadDetailQuery = useQuery({queryKey:["nucleus","lead",selectedLeadId],queryFn:()=>fetchLead({id:selectedLeadId!}),enabled:Boolean(selectedLeadId),refetchInterval:4000});
@@ -44,6 +44,7 @@ export function LeadDialog({ id: selectedLeadId, lane: leadLane, compact, busy, 
   return (
     <RecordModal
       label="Lead detail"
+      inline={inline}
       title={leadDetail?.title ?? "Lead"}
       compact={compact}
       c={c}

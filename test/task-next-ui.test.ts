@@ -6,6 +6,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // entry; the invoke stub below stands in for the Queue service.
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { boardShellPlugin, mount, useNativeStubs } from "./support/render";
+import { acrossViews } from "./support/inbox";
+/** The inbox lists one view at a time; card reads reach every view (support/inbox.ts). */
+const mountInbox = (element: React.ReactElement) => acrossViews(mount(element));
 import { Store } from "../core/store/store";
 import {
   agentMessageRecordSchema,
@@ -160,7 +163,7 @@ function mountBoard(
     layout: { compact, platform: "ios" as const },
   };
   const client = new QueryClient();
-  return mount(
+  return mountInbox(
     h(QueryClientProvider, {
       client,
       children: h(PluginRpcProvider, {
@@ -851,7 +854,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
         return {};
       };
       const client = new QueryClient();
-      const tree = mount(
+      const tree = mountInbox(
         h(QueryClientProvider, {
           client,
           children: h(PluginRpcProvider, {
@@ -1097,7 +1100,7 @@ test("Spec 052: bundled dark choosers name an unavailable subscription group ins
         return {};
       };
       const client = new QueryClient();
-      const tree = mount(
+      const tree = mountInbox(
         h(QueryClientProvider, {
           client,
           children: h(PluginRpcProvider, {

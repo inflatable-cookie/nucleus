@@ -1,13 +1,3 @@
-/** The board's destinations: Tasks, Planning and QA runs. */
-export const navigationViews = [
-  { id: "queue", label: "Tasks" },
-  { id: "planning", label: "Planning" },
-  { id: "qa", label: "QA runs" },
-] as const;
-
-/** The workspace panel uses the same primary tabs as the main surface. */
-export const workspaceNavigationViews = navigationViews;
-
 export const settingsViews = [
   { id: "capacity", label: "Dispatch limits", short: "Limits" },
   // Spec 052 / nucleus#934: one Profiles page holds the stored records and their dispatch settings;
@@ -43,11 +33,7 @@ export function headerControls(
   return controls;
 }
 
-/**
- * The Tasks tab's open count. It follows the project selector, so a filtered board
- * counts only its projects' open tasks (Tom, 2026-09-28: it counted every project).
- * A task with an origin error stays counted, as before.
- */
+/** Whether a task is still open. A task with an origin error stays open, so it stays visible. */
 export function isOpenTask(task: {
   phase: string;
   originError?: string;
@@ -57,21 +43,4 @@ export function isOpenTask(task: {
     !["done", "cancelled"].includes(task.phase) ||
     Boolean(task.originError || task.originLookupError)
   );
-}
-
-export function openTaskCount<
-  T extends {
-    phase: string;
-    repoPath: string;
-    repository?: string | null;
-    originError?: string;
-    originLookupError?: string;
-  },
->(
-  tasks: readonly T[],
-  belongs: (repoPath: string, origin?: string | null) => boolean,
-): number {
-  return tasks.filter(
-    (task) => isOpenTask(task) && belongs(task.repoPath, task.repository),
-  ).length;
 }

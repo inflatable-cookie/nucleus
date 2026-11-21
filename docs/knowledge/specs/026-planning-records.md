@@ -504,39 +504,50 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 
 ## Board
 
-- **Columns:** Triage → Attention → Queued → Working → Review →
+- **An inbox, not columns** (Tom, 2026-11-21). The board is three panes: a menu on
+  the left, the open view's list in the middle and the open record on the right.
+  Below 1100 points of panel width the detail pane goes and a record opens in a
+  modal; below 720 the menu folds into a drawer behind a menu button. The menu is
+  **Needs you** (decisions, Nucleus-raised holds, drained-lane prompts, then tasks
+  needing attention), **Planning** (the plan in the list pane, the open lane in the
+  detail pane, or a modal without one), **Leads** (leads and papercuts as two tabs,
+  with the tag filter and pages of eight), **Queue** (queued tasks, pending
+  submissions and the per-project "…and N more" rows) and **Active** (Working, In
+  review and Closing, together or one at a time from its three sub-entries). Each
+  entry shows its real total; only Needs you is highlighted. Opening a view clears
+  the open record. The card-once projection below decides where a card goes; the
+  menu groups its columns. Milestone QA is not a board surface: QA runs as an
+  ordinary task, and the QA runs tab is gone.
+- **The header is one row** (Tom, 2026-11-21): the title, a state pill only when
+  something is abnormal (paused or draining, dispatch held, stopped or resumed
+  threads, queued operations, connecting), the project selector, then Settings,
+  Refresh and the Pause split button. There is no status line. The queue menu behind
+  the split button holds Pause or Resume, Dispatch hold, Stop, the paused note, the
+  slot table (global use, the project default and overrides, then each project using
+  a slot) and the bound runs.
+- **Columns:** Triage → Decisions → Attention → Queued → Working → Review →
   Closing (Drafts retired with brief drafts; Attention and Closing added, Tom,
-  2026-09-27). Attention sits before Queued so it is visible without scrolling
-  when the view opens. There is no Done column (Tom, 2026-09-27): finished and cancelled
+  2026-09-27). These are the projection's buckets, which the inbox menu groups.
+  There is no Done column (Tom, 2026-09-27): finished and cancelled
   work leaves the board, and outcome search answers what landed.
-  Each column title shows its count (Tom, 2026-09-28): every record in scope once,
-  whatever its lane count, with Queued including the cards held back behind its
-  "…and N more" card.
-- **Empty columns collapse** (nucleus-ui finding 1, 2026-11-08): a column whose total
-  is zero shows as a slim stub at every width, with only its name visible on the same
-  header line as populated columns. Its accessible label includes the real count (0)
-  and says it is empty. Populated columns share the width the stubs leave. A stub expands
-  as soon as it holds a card. Pipeline order and totals are unchanged, and the header
-  gains no control. Triage stays open under a tag filter so the filter can be cleared.
-  Only a loaded board collapses a column. While the board loads, every column stays open
-  and reads "loading"; a failed read reads "not loaded" and names the failure in the
-  error banner. Neither reads "empty".
+  Counts are every record in scope once, whatever its lane count, with Queue
+  including the cards held back behind its "…and N more" rows. While the board
+  loads, a list reads "Loading…"; a failed read reads "Not loaded" and names the
+  failure in the error banner. Neither reads as empty.
   Queued is `queued`; Working is `dispatching`, `working` and `changes_requested`
   (revision, with its "changes requested" chip); Attention is `blocked`, `error`
   and `needs_attention`; Review is `awaiting_review` and `reviewing`; Closing is
   `verifying`, `merging`, `syncing` and `closing`.
-- **One set of columns** (Tom, 2026-11-08: "We can lose the swim-lane rendering
-  concept on the board, I never use it"). The board always renders one row of
-  columns holding every card in scope, each card once, whatever its lane count.
+- **Each card once** (Tom, 2026-11-08: "We can lose the swim-lane rendering
+  concept on the board, I never use it"). The board lists every card in scope
+  once, whatever its lane count.
   The swim-lane view, its header switch, per-lane rows, row and cell expand and
   collapse, and the card chip naming a shared task's other lanes are retired.
   A card keeps its lane membership, shown in the task view; lane records,
   documents, Planning, lane drain and every lane RPC and CLI route are
   unchanged. Lane discovery is Planning's "Find lanes".
-- **The Status view is retired** (Tom, 2026-09-27): the Pipeline view covers it,
-  column for column, plus planning records. Tasks has one view, the Pipeline; the
-  separate Lanes destination is folded into Planning (Spec 019, revision
-  2026-11-07).
+- **The Status view is retired** (Tom, 2026-09-27); the separate Lanes destination
+  is folded into Planning (Spec 019, revision 2026-11-07).
 - **Badge colours** (Tom, 2026-09-28): card badges take one of four theme
   tones, keyed on their text so tags share them (`shared/badge-tones.ts`).
   - Papercut red, Lead green; the kind distinction matters most.
@@ -553,17 +564,17 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     existing tones.
   - Everything else (areas, lanes, repository, parked, queued) stays neutral.
   - The tone colours text and outline over the usual badge surface.
-- **Cards and long columns** (Tom, 2026-09-27): pipeline cards use the standard
-  task card component and size. Each column is a full-height list that fills the
-  visible pipeline area and scrolls on its own, so the page never grows into one
-  long scroll (Tom, 2026-09-28). There is no "N more" or "Show less"; Triage pages
-  its cards and Queued ends with its "…and N more" card.
+- **Cards and long lists** (Tom, 2026-09-27): every card uses the standard card
+  component, drawn as a flat row in the inbox list. The list fills its pane and
+  scrolls on its own, so the page never grows into one long scroll (Tom,
+  2026-09-28). Leads pages its cards and Queue ends with its "…and N more" rows.
 - **Pending submissions** (Tom, 2026-09-27): a submitted brief or handoff whose
   operation has not yet created its task shows as a Queued card marked
   "submitting", so an accepted submission is never invisible. Brief-bearing leads
   show in Triage from their first version, with their check and approval state.
-- **No side pane.** The board shows only its columns; planning lives on
-  its own tab (Tom, 2026-09-27: a pane beside the board made it unreadable).
+- **The detail pane holds one record.** Planning lives in its own menu view (Tom,
+  2026-09-27: a planning pane beside the board made it unreadable); the inbox's
+  right pane shows only the open task, decision, lead or papercut.
 - **Scope: one project selector, single-select by default** (Tom, 2026-09-27;
   single-select nucleus#1421; compact header nucleus#1476). A single project
   selector in the header replaces the single-project filter everywhere. It is a
@@ -714,12 +725,10 @@ render. The lane document `nucleus-ui` (U5) carries the design.
 
 > Superseded in part by [Spec 041](041-planning-roadmap.md) (Tom, 2026-10-03): one project at a time, Now/Next/Later/Done bands, `doneWhen`, and lane close-out prompts. The Lane column stays.
 
-The Planning tab is top-level beside Tasks and QA runs (Tom, 2026-10-03; the Lanes
-tab was folded into Planning in Spec 019's 2026-11-07 revision). The Tasks tab
-always shows Pipeline. The projects column is
-gone: the header's multi-project selector chooses the projects (Board, "Scope"),
-and Planning also has its own project chooser over that same selection (Spec 041,
-Tom 2026-11-07). The tab has two columns:
+Planning is a menu view of the inbox board (Tom, 2026-11-21; top-level since
+2026-10-03; the Lanes tab was folded into Planning in Spec 019's 2026-11-07 revision).
+The header's project selector chooses the projects (Board, "Scope"); Planning has no
+chooser of its own since 2026-11-21. It has two panes:
 
 - **Plan:** for each selected project, a section with that project's lanes in plan order, each with its live-task
   count and last activity, grouped under **Now** and **Later** (each plan entry
@@ -737,8 +746,9 @@ Tom 2026-11-07). The tab has two columns:
   lane's own; a lane no project lists falls back to the projects in scope. Counts show
   only from complete reads. Lane key, repositories and status actions sit behind Details.
 
-At the compact viewport the columns become a drill-down: plan, then lane, with a back
-control. Editing uses the existing dark-theme styling.
+The plan fills the list pane and the lane the detail pane. Without a detail pane
+(below 1100 points), the lane opens in a modal over the plan, and closing it returns
+to the plan. Editing uses the existing dark-theme styling.
 
 ## Tasks and order
 

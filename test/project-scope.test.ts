@@ -495,10 +495,9 @@ test("026-14b one header selector scopes every view through the selection alone"
     1,
     "one selector in the header",
   );
-  assert.match(
-    ui,
-    /\(tab === "queue" \|\|\s*tab === "planning" \|\|\s*tab === "qa"\) && \(\s*<ProjectSelector/,
-  );
+  // The inbox header shows the selector for every view (Tom, 2026-11-21).
+  assert.match(ui, /const filter = \(\s*<ProjectSelector/);
+  assert.match(ui, /filter=\{filter\}/);
   assert.match(
     ui,
     /const selection = effectiveSelection\(state\?\.projects \?\? \[\], scope\.projects\)/,
@@ -509,13 +508,12 @@ test("026-14b one header selector scopes every view through the selection alone"
     /const selection = effectiveSelection\(state\?\.projects \?\? \[\], scope\.projects\);/,
     "the selection scopes every view",
   );
-  assert.match(ui, /const pipelineFilterSelection = selection;/);
   assert.match(
     ui,
-    /const pipelineInput = \{[^}]*selection:pipelineFilterSelection,/,
-    "Pipeline input carries the filtered selection",
+    /useInboxBoard\(\{\s*state,\s*selection,/,
+    "the inbox projection receives the selection",
   );
-  assert.match(ui, /pipelineBoard\(pipelineInput\)/, "Pipeline");
+  assert.match(ui, /pipelineBoard\(\{[\s\S]{0,200}selection,/, "the one projection reads it");
   assert.match(
     ui,
     /lanes=\{state\?\.lanes \?\? \[\]\}/,
@@ -524,7 +522,7 @@ test("026-14b one header selector scopes every view through the selection alone"
   assert.match(
     ui,
     /selection=\{scope\.projects\}/,
-    "the Planning chooser writes the one project scope",
+    "Planning reads the one project scope",
   );
   assert.match(
     ui,

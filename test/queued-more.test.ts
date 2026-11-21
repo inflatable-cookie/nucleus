@@ -14,15 +14,17 @@ test("each project reports what the board holds back, and a fully shown project 
 
 // Tom, 2026-11-06: "we need to stop adding things to the header on the board", and the column
 // header "MUST show how many actual tasks are queued".
-test("the Queued column counts every queued task, and queue paging stays out of the board header", () => {
+test("the Queue counts every queued task, and queue paging stays out of the board header", () => {
   const source = boardSource();
-  assert.ok(!source.includes("' shown'"), "the column count is the real total");
+  assert.ok(!source.includes("' shown'"), "the count is the real total");
   assert.ok(!/queued · \$\{item\.repoPath\}/.test(source), "no per-project queue pills in the header");
-  assert.match(source, /Queued: pipelineCounts\.Queued \+ hiddenQueued/, "the Queued header total includes the held-back cards");
-  assert.match(source, /…and \$\{item\.hidden\} more/);
-  assert.match(source, /const more = name === 'Queued' \? queuedMoreCards : triageMore/);
-  assert.match(source, /contentContainerStyle=\{\{ gap: space.xs \}\}[\s\S]*?\{cards\}[\s\S]*?\{more\}[\s\S]*?<\/ScrollView>/,
-    "the overflow card is rendered inside the column's own scrolling cell");
+  const inbox = readFileSync(new URL("../shared/inbox-board.ts", import.meta.url), "utf8");
+  assert.match(inbox, /queue: n\('Queued'\) \+ hiddenQueued/, "the Queue total includes the held-back cards");
+  assert.match(source, /inboxCounts\(columns, hiddenQueued\)/, "the menu counts receive them");
+  assert.match(source, /…and \$\{item\.hidden\} more in/);
+  assert.match(source, /const queuedMore = view === "queue" \? queuedHidden\.map/, "the overflow rows belong to the Queue list");
+  assert.match(source, /\{sections\.map\([\s\S]*?\{queuedMore\}[\s\S]*?<\/ScrollView>/,
+    "the overflow rows render inside the list's own scroll");
 });
 
 test("frontier grants live on the Limits tab, not the board header", () => {
