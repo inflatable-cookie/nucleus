@@ -1,0 +1,1 @@
+- Keep host observation failures (`HostReadRefusalError`) in bounded host-read recovery instead of routing exhausted reads to generic coordinator recovery, excluding eligible profiles, re-wrapping prior rendered task reasons, or emitting repeated notices.

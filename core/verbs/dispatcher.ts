@@ -120,6 +120,12 @@ export class TaskControlDispatcher {
         })(),
     );
     const result = await this.engine.appliedWithVersionHint(input, operationId);
+    if (
+      ["restart", "move", "route", "complete", "cancel", "supersede"].includes(
+        input.action,
+      )
+    )
+      this.engine.clearHostReadTransient(input.taskId, "task");
     if (before) {
       this.engine.settleLadderControl(before, result, input.action);
       // An applied owner instruction replaces open questions about the prior

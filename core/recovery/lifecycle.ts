@@ -21,6 +21,7 @@ import {
   ForgeOutageError,
 } from "../forge/forge-health";
 import { GitReadTimeoutError } from "../git/index";
+import { HostReadRefusalError } from "../host";
 import {
   LoginSessionFaultError,
   isLoginSessionFault,
@@ -32,6 +33,7 @@ export type RecoveryLifecycleContext = Pick<
   | "attentionUnknownEscalation"
   | "environmentDeferred"
   | "gitTransientFailure"
+  | "hostReadTransientFailure"
   | "responsibleBlockerLadder"
   | "store"
   | "update"
@@ -190,6 +192,22 @@ export class RecoveryLifecycle {
     supersededBy: (current: Task) => string | null,
   ): void {
     const current = this.context.store.task(t.id);
+    if (
+      error instanceof HostReadRefusalError &&
+      (!current.resolution.mergeIntent || current.resolution.mergedCommit) &&
+      this.context.hostReadTransientFailure
+    ) {
+      const successor = current.resolution.mergeIntent
+        ? null
+        : supersededBy(current);
+      if (!successor) {
+        const step = stages.includes(current.phase)
+          ? `${current.phase} check`
+          : "Host check";
+        this.context.hostReadTransientFailure(current, error, step);
+        return;
+      }
+    }
     const uncertainCurrentSend = current.resolution.currentRunId
       ? this.context.store.run(current.resolution.currentRunId)?.status ===
         "uncertain"

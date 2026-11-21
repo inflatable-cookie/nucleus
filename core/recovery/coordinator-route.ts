@@ -44,6 +44,10 @@ import {
   creationFailureSummary,
 } from "./task-reasons";
 import { HostReadRefusalError } from "../host";
+import {
+  isHostReadRecoveryHeld,
+  readHostReadTransientEpisode,
+} from "./host-read-transient";
 import { refusedLaunchProfiles } from "./refused-launch";
 import { unreleasedExecutorRun } from "../qa/proof-admission";
 import {
@@ -281,11 +285,27 @@ export class CoordinatorRoute {
           : null;
         waiting = Boolean(row && groupIsUnavailable(row));
       } else if (stop.reason === "external_unavailable") {
-        waiting = !this.resolution.hostAvailable(t);
+        const hostReadHold = isHostReadRecoveryHeld(this.store, t);
+        if (hostReadHold === "exhausted") return undefined;
+        const hostReadEpisode =
+          hostReadHold === "waiting"
+            ? readHostReadTransientEpisode(this.store, t.id, "task")
+            : null;
+        waiting =
+          !this.resolution.hostAvailable(t) ||
+          (hostReadHold === "waiting" &&
+            hostReadEpisode?.step !== "Coordinator admission");
       } else if (stop.reason === "route_unavailable") {
+        if (isHostReadRecoveryHeld(this.store, t) === "exhausted")
+          return undefined;
         // A coordinator can route the waiting role elsewhere (Tom, 2026-10-19), so
         // the wait holds only while no coordinator is routable either.
-        const selection = this.resolution.select(t, "coordinator");
+        const selection = this.resolution.select(
+          t,
+          "coordinator",
+          [],
+          refusedLaunchProfiles(this.store, t.id),
+        );
         waiting = !selection;
       } else if (stop.reason === "workspace_unavailable") {
         waiting =
@@ -367,6 +387,19 @@ export class CoordinatorRoute {
     if (isCloseoutHookHold(t)) return undefined;
     // Git already spent its bounded environment retries; a coordinator cannot repair host keys.
     if (isSshAuthExhausted(t.reason)) return undefined;
+    // Host-read recovery owns its bounded retries and sustained owner notice; a
+    // coordinator launch or profile exclusion cannot repair a host observation fault.
+    const hostReadHold = isHostReadRecoveryHeld(this.store, t);
+    const hostReadEpisode =
+      hostReadHold === "waiting"
+        ? readHostReadTransientEpisode(this.store, t.id, "task")
+        : null;
+    if (
+      hostReadHold === "waiting" &&
+      hostReadEpisode?.step !== "Coordinator admission"
+    )
+      return null;
+    if (hostReadHold === "exhausted") return undefined;
     // An exact automatic replay still owns a held integration-base occurrence
     // inside its bounded window, so coordinator attention waits for it.
     if (this.resolution.automaticHookReplayPending(t)) return null;
@@ -984,10 +1017,9 @@ export class CoordinatorRoute {
         (!attempted || !attempted.agentId)
       ) {
         if (attempted) {
-          this.episode.releaseRefusedCreation(
+          this.episode.releaseTransientReadCreation(
             this.store.task(t.id),
             attempted,
-            error.message,
           );
           const afterRelease = this.store.task(t.id);
           this.resolution.update(afterRelease, {
@@ -1012,12 +1044,17 @@ export class CoordinatorRoute {
           );
           return null;
         }
-        return this.episode.escalate(
-          this.store.task(t.id),
-          creationFailureSummary(
-            this.store.task(t.id).reason || error.message,
-          ),
-        );
+        const exhaustedTask = this.store.task(t.id);
+        if (exhaustedTask.resolution.recovery) {
+          this.resolution.update(
+            exhaustedTask,
+            { recovery: null, recoveryActive: false },
+            {},
+            "recovery_transient_read_exhausted",
+            exhaustedTask.reason,
+          );
+        }
+        return undefined;
       }
       // A proven pre-send refusal never crossed the send boundary: settle that
       // occurrence now (run, credential and the episode's agent binding) rather

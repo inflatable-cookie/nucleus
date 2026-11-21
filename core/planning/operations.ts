@@ -532,6 +532,7 @@ export class Operations {
       states: ["pending", "running"],
     }))
       this.engine.scheduleOperation(operation.id);
+    this.engine.resumeHostReadTransients();
     if (!this.engine.stopped && this.store.pendingDecisionDeliveries().length > 0) {
       void this.engine.scheduleDecisionNotices().catch(() => {
         /* decision delivery records its own wait or fault */

@@ -20,6 +20,7 @@ import {
 } from "../store/store-task-funnel";
 import { creationLookup } from "./absent-creation/restarts";
 import { CREATION_REFUSED_BEFORE_SEND, refusedRunIds } from "./refused-launch";
+import { unwrapCoordinatorRouteWrapper } from "./host-read-transient";
 import {
   taskProgressDigest,
   reportNamesNoAction,
@@ -90,7 +91,9 @@ export const cause = (t: Task, runs: Run[]) => {
         ? t.completion
         : null))
     : null;
-  return c ? `Worker ${c.status}: ${c.summary}` : t.reason;
+  return c
+    ? `Worker ${c.status}: ${c.summary}`
+    : unwrapCoordinatorRouteWrapper(t.reason);
 };
 export const key = (t: Task, runs: Run[]) =>
   t.resolution.stop
@@ -805,6 +808,43 @@ export class CoordinatorEpisode {
     )
       return null;
     return refusedRunIds(this.store.eventsAll(t.id)).has(run.id) ? run : null;
+  }
+  /**
+   * A proved pre-send transient host-read failure never created or refused a
+   * profile launch: release the unsent run and credential cleanly without
+   * emitting `CREATION_REFUSED_BEFORE_SEND` or excluding eligible profiles.
+   */
+  releaseTransientReadCreation(
+    t: Task,
+    run: Run,
+    resolveEpisode = false,
+  ): Task | null {
+    return this.store.transaction(() => {
+      const current = this.store.task(t.id),
+        latest = this.store.run(run.id),
+        episode = current.resolution.recovery;
+      if (!latest || latest.released || latest.agentId || latest.completion)
+        return null;
+      if (!episode || episode.runId !== latest.id) return null;
+      this.store.deleteCredential(latest.id);
+      this.store.putRun({
+        ...latest,
+        status: "superseded",
+        released: true,
+        active: false,
+      });
+      return this.resolution.update(
+        this.store.task(current.id),
+        {
+          recovery: resolveEpisode
+            ? null
+            : { ...episode, runId: null, agentId: null, status: "pending" },
+        },
+        {},
+        "recovery_transient_read_released",
+        latest.id,
+      );
+    });
   }
   /**
    * A coordinator creation the host refused before send settles that occurrence
