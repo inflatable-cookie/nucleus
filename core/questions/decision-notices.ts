@@ -8,7 +8,9 @@ import { now, type Store } from "../store/store";
 export const DECISION_NOTICE_OBSERVE_TIMEOUT_MS = 5_000;
 export const DECISION_NOTICE_SEND_TIMEOUT_MS = 15_000;
 export const DECISION_NOTICE_CONCURRENCY = 4;
-export const DECISION_NOTICE_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+export const DECISION_NOTICE_RETRY_DELAYS_MS = [
+  1_000, 2_000, 4_000, 8_000, 16_000,
+];
 
 const UNROUTABLE_WAIT = "Cannot route this identity";
 const GONE_WAIT = "The asking agent thread is no longer available";
@@ -44,7 +46,8 @@ export interface DecisionNoticePassContext {
   readonly resolution: DecisionNoticeResolutionPorts;
 }
 
-export interface DecisionNoticeDeliveryContext extends DecisionNoticePassContext {
+export interface DecisionNoticeDeliveryContext
+  extends DecisionNoticePassContext {
   cleanContext<T>(work: () => T): T;
   scheduleLane(
     key: string,
@@ -332,11 +335,7 @@ export async function deliverDecisionNoticesPass(
   const actionable: Decision[] = [];
   for (const decision of candidates) {
     const delivery = decision.delivery;
-    if (
-      !delivery ||
-      delivery.version !== decision.version ||
-      !delivery.agentId
-    )
+    if (!delivery || delivery.version !== decision.version || !delivery.agentId)
       continue;
     if (delivery.status === "intent") {
       // An intent remaining when no delivery pass is active in this process

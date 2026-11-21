@@ -120,7 +120,10 @@ export class HostPass {
   }
 
   /** Refresh host thread titles and Inbox offers after a sweep opens a new decision. */
-  async reconcileInboxTitles(host: string, tasks: readonly Task[]): Promise<void> {
+  async reconcileInboxTitles(
+    host: string,
+    tasks: readonly Task[],
+  ): Promise<void> {
     if (!this.adapter.reconcileThreadTitles) return;
     await this.step(host, "reconcileThreadTitles", () =>
       this.adapter.reconcileThreadTitles?.(tasks, this.taskRows(host)),

@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { Engine } from "../core/engine";
 import { Decisions } from "../core/planning/decisions";
 import { proposedOwner } from "../core/acp/decisions";
-import { reconcileRoutingSignoffs, signoffApprove } from "../core/dispatch/routing-signoff";
+import {
+  reconcileRoutingSignoffs,
+  signoffApprove,
+} from "../core/dispatch/routing-signoff";
 import { poolSchema } from "../shared/contracts";
 import { Store } from "../core/store/store";
 import { startCallbacks } from "../service/callbacks/callback";
@@ -136,7 +139,12 @@ async function acpFixture(hostId = "host") {
   let parentSessionId = "";
   let parentUnknown = false;
   const acp = new AcpSessions(engine, {
-    parentStatus: () => parentUnknown ? { state: "unknown" } : parentSessionId ? { state: "parent", sessionId: parentSessionId } : { state: "absent" },
+    parentStatus: () =>
+      parentUnknown
+        ? { state: "unknown" }
+        : parentSessionId
+          ? { state: "parent", sessionId: parentSessionId }
+          : { state: "absent" },
     dataHome: dir,
     socketPath,
     pollMs: 50,
@@ -168,8 +176,13 @@ async function acpFixture(hostId = "host") {
     worktree,
     notified,
     minted,
-    setParent: (present: boolean) => { parentSessionId = present ? minted.sessionId : ""; parentUnknown = false; },
-    setParentUnknown: () => { parentUnknown = true; },
+    setParent: (present: boolean) => {
+      parentSessionId = present ? minted.sessionId : "";
+      parentUnknown = false;
+    },
+    setParentUnknown: () => {
+      parentUnknown = true;
+    },
     binding,
     token: binding.token,
     get turns(): number {
@@ -1253,29 +1266,73 @@ test("a queued held task keeps its first Inbox owner after its parent appears an
     fixture.store.update(fixture.taskId, { phase: "queued", held: true });
     const stamp = new Date().toISOString();
     const id = "11111111-1111-4111-8111-111111111114";
-    fixture.store.addDecision(decisionSchema.parse({ id, version: 1, question: "Approve?", askedBy: { agentId: "synthetic" },
-      choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }], links: { tasks: [fixture.taskId] }, status: "open", createdAt: stamp, updatedAt: stamp }));
+    fixture.store.addDecision(
+      decisionSchema.parse({
+        id,
+        version: 1,
+        question: "Approve?",
+        askedBy: { agentId: "synthetic" },
+        choices: [
+          { label: "Yes", consequence: "Proceed" },
+          { label: "No", consequence: "Hold" },
+        ],
+        links: { tasks: [fixture.taskId] },
+        status: "open",
+        createdAt: stamp,
+        updatedAt: stamp,
+      }),
+    );
     const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
     const token = readAcpBinding(inbox.bindingPath).token;
-    const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
+    const caller = {
+      kind: "inbox" as const,
+      hostId: inbox.hostId,
+      sessionId: inbox.sessionId,
+    };
     fixture.acp.observedCards({ hostId: inbox.hostId }, []);
-    assert.equal(fixture.acp.pendingInboxDecisionKey(inbox.hostId), JSON.stringify([[id, 1]]));
-    assert.deepEqual((await fixture.acp.turn({ ...caller, waitMs: 0 }, token)).elicitations?.map(d => d.id), [id]);
+    assert.equal(
+      fixture.acp.pendingInboxDecisionKey(inbox.hostId),
+      JSON.stringify([[id, 1]]),
+    );
+    assert.deepEqual(
+      (
+        await fixture.acp.turn({ ...caller, waitMs: 0 }, token)
+      ).elicitations?.map((d) => d.id),
+      [id],
+    );
     fixture.acp.observedCards({ hostId: inbox.hostId }, [{ id, version: 1 }]);
     fixture.setParent(true);
-    fixture.acp.observedCards({ taskId: fixture.taskId, sessionId: fixture.sessionId }, []);
+    fixture.acp.observedCards(
+      { taskId: fixture.taskId, sessionId: fixture.sessionId },
+      [],
+    );
     assert.deepEqual((await fixture.turn()).elicitations, []);
     assert.equal(fixture.acp.pendingDecisionKey(fixture.taskId), null);
-    const restarted = new AcpSessions(fixture.engine, { dataHome: fixture.dir, socketPath: "unused",
+    const restarted = new AcpSessions(fixture.engine, {
+      dataHome: fixture.dir,
+      socketPath: "unused",
       parentStatus: () => ({ state: "parent", sessionId: fixture.sessionId }),
-      answerDecision: input => new Decisions(fixture.store).answer(input, { trustedT3: true }) });
-    assert.deepEqual((await restarted.turn({ ...caller, waitMs: 0 }, token)).elicitations, []);
+      answerDecision: (input) =>
+        new Decisions(fixture.store).answer(input, { trustedT3: true }),
+    });
+    assert.deepEqual(
+      (await restarted.turn({ ...caller, waitMs: 0 }, token)).elicitations,
+      [],
+    );
     restarted.observedCards({ hostId: inbox.hostId }, [{ id, version: 1 }]);
-    assert.deepEqual((await restarted.turn({ ...caller, waitMs: 0 }, token)).elicitations, []);
-    await restarted.answer({ ...caller, id, version: 1, action: "accept", answer: "Yes" }, token);
+    assert.deepEqual(
+      (await restarted.turn({ ...caller, waitMs: 0 }, token)).elicitations,
+      [],
+    );
+    await restarted.answer(
+      { ...caller, id, version: 1, action: "accept", answer: "Yes" },
+      token,
+    );
     assert.equal(fixture.store.decision(id).status, "answered");
     assert.equal(fixture.store.task(fixture.taskId).held, true);
-  } finally { await fixture.close(); }
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("an Inbox routing sign-off authorizes the requested role without releasing an independent hold", async () => {
@@ -1283,41 +1340,117 @@ test("an Inbox routing sign-off authorizes the requested role without releasing 
   try {
     fixture.setParent(false);
     const requested = profile("frontier", "synthetic-frontier", "pi");
-    fixture.store.setMeta("pool", [poolSchema.parse({ profileId: requested.id, enabled: true,
-      group: "frontier", roles: ["reviewer"], weight: "default", scopes: ["general"], capability: "frontier" })]);
-    fixture.store.update(fixture.taskId, { phase: "queued", held: true, profileRequests: {
-      reviewer: { profileId: requested.id, reason: "Independent review", required: true, requestedBy: "planner" },
-    } });
+    fixture.store.setMeta("pool", [
+      poolSchema.parse({
+        profileId: requested.id,
+        enabled: true,
+        group: "frontier",
+        roles: ["reviewer"],
+        weight: "default",
+        scopes: ["general"],
+        capability: "frontier",
+      }),
+    ]);
+    fixture.store.update(fixture.taskId, {
+      phase: "queued",
+      held: true,
+      profileRequests: {
+        reviewer: {
+          profileId: requested.id,
+          reason: "Independent review",
+          required: true,
+          requestedBy: "planner",
+        },
+      },
+    });
     const decisions = new Decisions(fixture.store);
-    reconcileRoutingSignoffs(fixture.store, decisions, fixture.taskId, [requested]);
-    const decisionId = fixture.store.task(fixture.taskId).profileRequests!.reviewer!.signoff!.decisionId!;
+    reconcileRoutingSignoffs(fixture.store, decisions, fixture.taskId, [
+      requested,
+    ]);
+    const decisionId = fixture.store.task(fixture.taskId).profileRequests!
+      .reviewer!.signoff!.decisionId!;
     const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
     const token = readAcpBinding(inbox.bindingPath).token;
-    const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
+    const caller = {
+      kind: "inbox" as const,
+      hostId: inbox.hostId,
+      sessionId: inbox.sessionId,
+    };
     fixture.acp.observedCards({ hostId: inbox.hostId }, []);
-    assert.deepEqual((await fixture.acp.turn({ ...caller, waitMs: 0 }, token)).elicitations?.map(row => row.id), [decisionId]);
-    await fixture.acp.answer({ ...caller, id: decisionId, version: 1, action: "accept", answer: signoffApprove(requested.name) }, token);
-    reconcileRoutingSignoffs(fixture.store, decisions, fixture.taskId, [requested]);
+    assert.deepEqual(
+      (
+        await fixture.acp.turn({ ...caller, waitMs: 0 }, token)
+      ).elicitations?.map((row) => row.id),
+      [decisionId],
+    );
+    await fixture.acp.answer(
+      {
+        ...caller,
+        id: decisionId,
+        version: 1,
+        action: "accept",
+        answer: signoffApprove(requested.name),
+      },
+      token,
+    );
+    reconcileRoutingSignoffs(fixture.store, decisions, fixture.taskId, [
+      requested,
+    ]);
     const task = fixture.store.task(fixture.taskId);
     assert.equal(task.profileRequests!.reviewer!.signoff!.status, "approved");
     assert.equal(task.held, true);
-  } finally { await fixture.close(); }
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("a later linked task with a parent is preferred over an earlier task without one", async () => {
   const fixture = await acpFixture("t3code:synthetic");
   try {
-    const other = fixture.store.insert(submissionSchema.parse({ submissionId: "second-linked-task", title: "Second task",
-      repoPath: join(fixture.dir, "second"), planningCommit: base, brief: { text: "Synthetic brief" }, originAgentId: "origin" }),
-      "t3code:synthetic", "brief", base);
+    const other = fixture.store.insert(
+      submissionSchema.parse({
+        submissionId: "second-linked-task",
+        title: "Second task",
+        repoPath: join(fixture.dir, "second"),
+        planningCommit: base,
+        brief: { text: "Synthetic brief" },
+        originAgentId: "origin",
+      }),
+      "t3code:synthetic",
+      "brief",
+      base,
+    );
     const stamp = new Date().toISOString();
-    const row = decisionSchema.parse({ id: "11111111-1111-4111-8111-111111111117", version: 1, question: "Approve?",
-      askedBy: { agentId: "synthetic" }, choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }],
-      links: { tasks: [other.id, fixture.taskId] }, status: "open", createdAt: stamp, updatedAt: stamp });
-    assert.deepEqual(proposedOwner(fixture.store, row, "t3code:synthetic", (_host, taskId) =>
-      taskId === fixture.taskId ? { state: "parent", sessionId: fixture.sessionId } : { state: "absent" }),
-      { kind: "task", hostId: "t3code:synthetic", taskId: fixture.taskId, sessionId: fixture.sessionId });
-  } finally { await fixture.close(); }
+    const row = decisionSchema.parse({
+      id: "11111111-1111-4111-8111-111111111117",
+      version: 1,
+      question: "Approve?",
+      askedBy: { agentId: "synthetic" },
+      choices: [
+        { label: "Yes", consequence: "Proceed" },
+        { label: "No", consequence: "Hold" },
+      ],
+      links: { tasks: [other.id, fixture.taskId] },
+      status: "open",
+      createdAt: stamp,
+      updatedAt: stamp,
+    });
+    assert.deepEqual(
+      proposedOwner(fixture.store, row, "t3code:synthetic", (_host, taskId) =>
+        taskId === fixture.taskId
+          ? { state: "parent", sessionId: fixture.sessionId }
+          : { state: "absent" },
+      ),
+      {
+        kind: "task",
+        hostId: "t3code:synthetic",
+        taskId: fixture.taskId,
+        sessionId: fixture.sessionId,
+      },
+    );
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("an unknown parent status falls back to the Inbox without dropping the decision, and binding keeps one owner per version", async () => {
@@ -1325,22 +1458,52 @@ test("an unknown parent status falls back to the Inbox without dropping the deci
   try {
     const stamp = new Date().toISOString();
     const id = "11111111-1111-4111-8111-111111111116";
-    fixture.store.addDecision(decisionSchema.parse({ id, version: 1, question: "Approve?", askedBy: { agentId: "synthetic" },
-      choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }],
-      links: { tasks: [fixture.taskId] }, status: "open", createdAt: stamp, updatedAt: stamp }));
+    fixture.store.addDecision(
+      decisionSchema.parse({
+        id,
+        version: 1,
+        question: "Approve?",
+        askedBy: { agentId: "synthetic" },
+        choices: [
+          { label: "Yes", consequence: "Proceed" },
+          { label: "No", consequence: "Hold" },
+        ],
+        links: { tasks: [fixture.taskId] },
+        status: "open",
+        createdAt: stamp,
+        updatedAt: stamp,
+      }),
+    );
     const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
     const token = readAcpBinding(inbox.bindingPath).token;
-    const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
+    const caller = {
+      kind: "inbox" as const,
+      hostId: inbox.hostId,
+      sessionId: inbox.sessionId,
+    };
     fixture.setParentUnknown();
     fixture.acp.observedCards({ hostId: inbox.hostId }, []);
-    assert.equal(fixture.acp.pendingInboxDecisionKey(inbox.hostId), JSON.stringify([[id, 1]]));
-    assert.deepEqual((await fixture.acp.turn({ ...caller, waitMs: 0 }, token)).elicitations?.map(row => row.id), [id]);
+    assert.equal(
+      fixture.acp.pendingInboxDecisionKey(inbox.hostId),
+      JSON.stringify([[id, 1]]),
+    );
+    assert.deepEqual(
+      (
+        await fixture.acp.turn({ ...caller, waitMs: 0 }, token)
+      ).elicitations?.map((row) => row.id),
+      [id],
+    );
     // Once bound to the Inbox, a parent later becoming known does not offer a duplicate card.
     fixture.setParent(true);
-    fixture.acp.observedCards({ taskId: fixture.taskId, sessionId: fixture.sessionId }, []);
+    fixture.acp.observedCards(
+      { taskId: fixture.taskId, sessionId: fixture.sessionId },
+      [],
+    );
     assert.equal(fixture.acp.pendingDecisionKey(fixture.taskId), null);
     assert.deepEqual((await fixture.turn()).elicitations, []);
-  } finally { await fixture.close(); }
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("a legacy Inbox card is adopted before a healthy parent can offer it", async () => {
@@ -1348,15 +1511,39 @@ test("a legacy Inbox card is adopted before a healthy parent can offer it", asyn
   try {
     const stamp = new Date().toISOString();
     const id = "11111111-1111-4111-8111-111111111115";
-    fixture.store.addDecision(decisionSchema.parse({ id, version: 1, question: "Approve?", askedBy: { agentId: "synthetic" },
-      choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }], links: { tasks: [fixture.taskId] }, status: "open", createdAt: stamp, updatedAt: stamp }));
+    fixture.store.addDecision(
+      decisionSchema.parse({
+        id,
+        version: 1,
+        question: "Approve?",
+        askedBy: { agentId: "synthetic" },
+        choices: [
+          { label: "Yes", consequence: "Proceed" },
+          { label: "No", consequence: "Hold" },
+        ],
+        links: { tasks: [fixture.taskId] },
+        status: "open",
+        createdAt: stamp,
+        updatedAt: stamp,
+      }),
+    );
     fixture.acp.observedCards({ hostId: "t3code:synthetic" }, null);
-    fixture.acp.observedCards({ taskId: fixture.taskId, sessionId: fixture.sessionId }, []);
+    fixture.acp.observedCards(
+      { taskId: fixture.taskId, sessionId: fixture.sessionId },
+      [],
+    );
     assert.deepEqual((await fixture.turn()).elicitations, []);
-    fixture.acp.observedCards({ hostId: "t3code:synthetic" }, [{ id, version: 1 }]);
+    fixture.acp.observedCards({ hostId: "t3code:synthetic" }, [
+      { id, version: 1 },
+    ]);
     assert.deepEqual((await fixture.turn()).elicitations, []);
-    assert.equal(fixture.acp.pendingInboxDecisionKey("t3code:synthetic"), JSON.stringify([[id, 1]]));
-  } finally { await fixture.close(); }
+    assert.equal(
+      fixture.acp.pendingInboxDecisionKey("t3code:synthetic"),
+      JSON.stringify([[id, 1]]),
+    );
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("a decision card the host's own read shows pending is not offered again, and its absence is", async () => {

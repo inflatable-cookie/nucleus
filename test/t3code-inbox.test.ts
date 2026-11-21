@@ -1069,7 +1069,11 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
     },
   ];
   const store = new Store(join(root, "queue.sqlite"));
-  const engine = new Engine(store, fakeAdapter({}) as unknown as Adapter, 60_000);
+  const engine = new Engine(
+    store,
+    fakeAdapter({}) as unknown as Adapter,
+    60_000,
+  );
   t.after(async () => {
     await engine.stop();
     store.close();
@@ -1080,8 +1084,10 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
   const acp = new AcpSessions(engine, {
     dataHome: root,
     socketPath: join(root, "cb.sock"),
-    parentStatus: (_hostId, taskId) =>
-      forceUnknown ? { state: "unknown" } : host.decisionParent(taskId),
+    parentStatus: (hostId, taskId) =>
+      forceUnknown || hostId !== host.hostId
+        ? { state: "unknown" }
+        : host.decisionParent(taskId),
   });
   host = new T3CodeHost({
     endpoint: fake.endpoint,
@@ -1177,5 +1183,52 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
   assert.deepEqual(
     turn2.elicitations?.map((item) => item.id).sort(),
     [id1, id2].sort(),
+  );
+
+  // 3. A task on a different registered T3 host causes T3HostConnection.decisionParent
+  // to answer `unknown`; proposedOwner must fall back to the connected Inbox rather than
+  // pinning the unavailable host's Inbox.
+  forceUnknown = false;
+  const foreignTask = store.insert(
+    submissionSchema.parse({
+      submissionId: "queued-other-t3-host",
+      title: "Task on different registered T3 host",
+      repoPath: join(root, "repo-other"),
+      planningCommit: "b".repeat(40),
+      brief: { text: "Synthetic brief" },
+      originAgentId: "origin",
+    }),
+    "t3code:other-registered-host",
+    "brief",
+    "b".repeat(40),
+  );
+  const id3 = "33333333-3333-4333-8333-333333331516";
+  store.addDecision(
+    decisionSchema.parse({
+      id: id3,
+      version: 1,
+      headline: "Different registered host decision?",
+      question: "Should this fall back to the connected Inbox?",
+      askedBy: { agentId: "planner" },
+      choices: [
+        { label: "Yes", consequence: "Offer" },
+        { label: "No", consequence: "Drop" },
+      ],
+      links: { tasks: [foreignTask.id] },
+      status: "open",
+      createdAt: stamp,
+      updatedAt: stamp,
+    }),
+  );
+  assert.ok(
+    acp.pendingInboxDecisionKey(host.hostId)?.includes(id3),
+    "connected Inbox key counts decision whose linked host answered unknown",
+  );
+  await host.reconcileThreadTitles([queuedTask, foreignTask]);
+  assert.equal(projection.thread.title, "3 decisions to answer");
+  const turn3 = await acp.turn({ ...caller, waitMs: 0 }, token);
+  assert.deepEqual(
+    turn3.elicitations?.map((item) => item.id).sort(),
+    [id1, id2, id3].sort(),
   );
 });

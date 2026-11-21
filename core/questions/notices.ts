@@ -25,6 +25,7 @@ import {
 } from "./origin";
 import type { AgentObservation } from "../host/adapter";
 import {
+  HostReadRefusalError,
   ProvenPreSendRefusalError,
   isAgentGoneRefusal,
 } from "../host/errors";
@@ -289,9 +290,16 @@ export class Notices {
         this.resolution.responsibleThreads.cache.invalidateMatching(
           d.recipient,
         );
-        if (error instanceof ProvenPreSendRefusalError && d.refused) {
+        if (
+          (error instanceof ProvenPreSendRefusalError ||
+            error instanceof HostReadRefusalError) &&
+          d.refused
+        ) {
           d.refused(record, error.message);
-        } else if (error instanceof ProvenPreSendRefusalError) {
+        } else if (
+          error instanceof ProvenPreSendRefusalError ||
+          error instanceof HostReadRefusalError
+        ) {
           // A refusal proved nothing left this process, so the notice is not an
           // unknown delivery: it stays pending and is retried on a later pass
           // (nucleus#1445).
@@ -357,9 +365,16 @@ export class Notices {
       d.mark(record, "delivered", "");
     } catch (error) {
       this.resolution.responsibleThreads.cache.invalidateMatching(d.recipient);
-      if (error instanceof ProvenPreSendRefusalError && d.refused) {
+      if (
+        (error instanceof ProvenPreSendRefusalError ||
+          error instanceof HostReadRefusalError) &&
+        d.refused
+      ) {
         d.refused(record, error.message);
-      } else if (error instanceof ProvenPreSendRefusalError) {
+      } else if (
+        error instanceof ProvenPreSendRefusalError ||
+        error instanceof HostReadRefusalError
+      ) {
         // A refusal proved nothing left this process, so the notice is not an unknown
         // delivery: it stays pending and is retried on a later pass, when the reason
         // the host named (a manual snooze, a thread that is not active yet) no longer
