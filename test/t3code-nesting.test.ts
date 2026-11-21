@@ -1359,11 +1359,14 @@ test("#1460 a reserved launch is never resent behind the generic absent read", a
   assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
   assert.equal(server.threads.has(bound.threadId), false);
 
+  // A sent parent keeps its transient wait: the generic read cannot prove it deleted,
+  // and the inventory is not consulted for it (nucleus#1451 fence).
   await host.connect();
   await assert.rejects(
     () => host.createAgent(spec("worker-create", "Do the work")),
-    /parent thread is deleted/,
+    (error: unknown) => error instanceof HostReadRefusalError,
   );
   assert.equal(commandsOf(server, "orchestration.launchThread").length, 1, "never resent");
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
+  assert.equal(parentOf(host)!.archivedAt, undefined, "a wait marks nothing finished");
 });

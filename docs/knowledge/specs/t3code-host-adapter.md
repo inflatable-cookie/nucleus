@@ -1410,8 +1410,10 @@ adapter's state before the send, and a lost reply is settled by finding the thre
 before anything is launched again. The binding is stored before the parent's
 launch read, so a read failure in between leaves a **prepared** binding
 (nucleus#1458). The generic incomplete projection error grants no absence, so the
-parent observation and the launch's own existence check both fall back to the
-complete paired inventory (nucleus#1460). An unreadable inventory keeps the wait.
+parent observation and the launch's own existence check fall back to the complete
+paired inventory for a prepared binding only (nucleus#1460). A sent parent's generic
+read keeps its transient wait, so churn never turns it into archive scans or a finished
+marker (nucleus#1451). An unreadable inventory keeps the wait.
 Prepared is one decision, shared by first dispatch, the retained launch and owner
 restart: the complete inventory shows no row for the parent, and the `parent-launch`
 command has no ledger intent, which proves nothing was reserved for a send. Only that

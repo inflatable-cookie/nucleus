@@ -758,7 +758,7 @@ export class T3Nesting {
         at: new Date().toISOString(),
       };
     });
-    const known = await this.knownParentThread(threadId);
+    const known = await this.knownParentThread(taskId, threadId);
     if (known) {
       if (known.deletedAt) return null;
       this.core.state.update((state) => {
@@ -1085,11 +1085,13 @@ export class T3Nesting {
    * read cannot prove absence, so the complete inventory answers it (nucleus#1460);
    * an unreadable inventory keeps the refusal. Child adoption keeps `knownThread`.
    */
-  private async knownParentThread(threadId: string) {
+  private async knownParentThread(taskId: string, threadId: string) {
     try {
       return await this.knownThread(threadId);
     } catch (error) {
-      if (!(error instanceof T3TransientReadError)) throw error;
+      // Only a prepared launch (nothing reserved for a send) is settled by inventory.
+      if (!(error instanceof T3TransientReadError) || this.parentLaunchReserved(taskId))
+        throw error;
       const [row] = await this.inventoryRows(threadId, true);
       return row ?? null;
     }
@@ -1138,7 +1140,8 @@ export class T3Nesting {
    * `ThreadNotFoundError`, and the generic incomplete read that the installed nightly
    * also gives for an absent thread (`OrchestrationV2GetThreadProjectionError`,
    * nucleus#1460). The generic error alone grants no absence; only the inventory can
-   * prove it. An inventory that cannot be read is a transient refusal, never absence.
+   * prove it, and only for a prepared binding. A sent parent's generic read stays a
+   * transient wait. An inventory that cannot be read is a transient refusal, never absence.
    */
   private async classifyParent(
     parent: ParentThread,
@@ -1177,8 +1180,13 @@ export class T3Nesting {
         return { kind: "archived", row: thread, projection };
       return { kind: "live", row: thread, projection };
     } catch (error) {
-      if (!isThreadNotFoundRpcError(error) && !isTransientT3ReadRpcError(error))
-        throw error;
+      if (isTransientT3ReadRpcError(error)) {
+        // Only a prepared binding (nothing reserved for a send) may be settled by the
+        // complete inventory. A sent parent keeps its transient wait, so churn never
+        // turns its read into archive scans or a finished marker (nucleus#1451, #1460).
+        if (this.parentLaunchReserved(parent.taskId))
+          throw new T3TransientReadError(error);
+      } else if (!isThreadNotFoundRpcError(error)) throw error;
     }
     const matches = await this.inventoryRows(parent.threadId, fresh);
     const thread = matches[0];
