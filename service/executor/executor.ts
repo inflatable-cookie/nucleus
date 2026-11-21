@@ -21,13 +21,18 @@ import type { HostSettings, RuntimeHealth } from "../runtime-owner";
 import { isUnchangedBoard, type UiBoard } from "../../shared/contracts";
 import type { CatalogueSurface } from "../../shared/web-surface";
 import { ProtocolError } from "../../shared/service/protocol";
-import { defaultDataDir, SPAWN_TOKEN_ENV, STANDBY_WAIT_MS, startupExtensionMs } from "../install/standby";
+import {
+  defaultDataDir,
+  SPAWN_TOKEN_ENV,
+  STANDBY_WAIT_MS,
+  startupExtensionMs,
+} from "../install/standby";
 
 export interface ExecutorOptions {
   /** Cloneable runtime-owner options; handler functions stay on the worker side. */
   owner: {
     dataDir?: string;
-    paseoHome?: string;
+    hostHome?: string;
     sourcePath?: string;
     settings?: HostSettings;
     timers?: boolean;
@@ -56,7 +61,10 @@ export interface ExecutorSnapshot {
   board: UiBoard | null;
 }
 
-interface SerializedError { code: string; message: string }
+interface SerializedError {
+  code: string;
+  message: string;
+}
 
 /**
  * The retained cause while the executor cannot serve health or a cached board.
@@ -76,13 +84,31 @@ export interface ExecutorFault {
 
 type WorkerMessage =
   | { kind: "boot"; ok: boolean; error?: SerializedError }
-  | { kind: "reply"; id: number; ok: boolean; result?: unknown; error?: SerializedError; timing?: { queueMs: number; handlerMs: number; publicationMs: number } }
-  | { kind: "snapshot"; revision: number; health: RuntimeHealth; board?: UiBoard }
+  | {
+      kind: "reply";
+      id: number;
+      ok: boolean;
+      result?: unknown;
+      error?: SerializedError;
+      timing?: { queueMs: number; handlerMs: number; publicationMs: number };
+    }
+  | {
+      kind: "snapshot";
+      revision: number;
+      health: RuntimeHealth;
+      board?: UiBoard;
+    }
   | { kind: "projection"; at: string; message: string; stack: string };
 
 export interface ExecutorRequestTiming {
-  method: string; at: string; outcome: "ok" | "error" | "timeout" | "unavailable";
-  totalMs: number; queueMs: number | null; handlerMs: number | null; publicationMs: number | null; returnMs: number | null;
+  method: string;
+  at: string;
+  outcome: "ok" | "error" | "timeout" | "unavailable";
+  totalMs: number;
+  queueMs: number | null;
+  handlerMs: number | null;
+  publicationMs: number | null;
+  returnMs: number | null;
 }
 
 /**
@@ -90,7 +116,11 @@ export interface ExecutorRequestTiming {
  * makes a starved read diagnosable. The executor serves every catalogue read on
  * that thread, so this is the slot a read waits behind.
  */
-export interface ExecutorHeldSlot { method: string; ageMs: number; startedAt: string }
+export interface ExecutorHeldSlot {
+  method: string;
+  ageMs: number;
+  startedAt: string;
+}
 export interface ExecutorHeldSlots {
   /** Requests outstanding past the warning threshold, oldest first, bounded to five. */
   held: ExecutorHeldSlot[];
@@ -118,9 +148,16 @@ function boundedText(text: string, max: number): string {
 
 /** The label one request is named by in health and in the held-slot log. */
 function debugLabel(payload: { op?: unknown }, kind: RequestKind): string {
-  const op = payload.op as { target?: unknown; method?: unknown; action?: unknown } | undefined;
+  const op = payload.op as
+    | { target?: unknown; method?: unknown; action?: unknown }
+    | undefined;
   if (kind === "debug" && op && typeof op.target === "string") {
-    const detail = typeof op.method === "string" ? op.method : typeof op.action === "string" ? op.action : "";
+    const detail =
+      typeof op.method === "string"
+        ? op.method
+        : typeof op.action === "string"
+          ? op.action
+          : "";
     return detail ? `debug:${op.target}.${detail}` : `debug:${op.target}`;
   }
   return kind;
@@ -133,14 +170,28 @@ function stackSuffix(fault: ExecutorFault): string {
 
 /** Deserialized error from the executor, carrying its typed service code. */
 export class ExecutorError extends Error {
-  constructor(readonly code: string, message: string) { super(message); }
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export class PersistenceExecutor {
   private worker: Worker | null = null;
   private bootPromise: Promise<void> | null = null;
   private nextId = 1;
-  private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: unknown) => void; startedAt: number; method: string; timer?: NodeJS.Timeout }>();
+  private readonly pending = new Map<
+    number,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: unknown) => void;
+      startedAt: number;
+      method: string;
+      timer?: NodeJS.Timeout;
+    }
+  >();
   private readonly recentTimings: ExecutorRequestTiming[] = [];
   private readonly heldSlotLoggedAt = new Map<string, number>();
   private readonly heldSlotWarnMs: number;
@@ -155,30 +206,64 @@ export class PersistenceExecutor {
   heldSlotEvidence(): ExecutorHeldSlots {
     const at = performance.now();
     const outstanding = [...this.pending.values()]
-      .map(entry => ({ method: entry.method, ageMs: Math.max(0, at - entry.startedAt), startedAt: new Date(performance.timeOrigin + entry.startedAt).toISOString() }))
+      .map((entry) => ({
+        method: entry.method,
+        ageMs: Math.max(0, at - entry.startedAt),
+        startedAt: new Date(
+          performance.timeOrigin + entry.startedAt,
+        ).toISOString(),
+      }))
       .sort((left, right) => right.ageMs - left.ageMs);
     const oldestAge = outstanding[0]?.ageMs ?? 0;
     return {
-      held: outstanding.filter(slot => slot.ageMs >= this.heldSlotWarnMs).slice(0, 5),
+      held: outstanding
+        .filter((slot) => slot.ageMs >= this.heldSlotWarnMs)
+        .slice(0, 5),
       inFlight: outstanding.length,
-      waiting: outstanding.filter(slot => slot.ageMs < oldestAge).length,
+      waiting: outstanding.filter((slot) => slot.ageMs < oldestAge).length,
       thresholdMs: this.heldSlotWarnMs,
     };
   }
 
-  requestTimings() { return { inFlight: this.inFlight, recent: [...this.recentTimings], held: this.heldSlotEvidence() }; }
-  private recordTiming(pending: { startedAt: number; method: string }, outcome: ExecutorRequestTiming["outcome"], timing?: { queueMs: number; handlerMs: number; publicationMs: number }) {
-    const totalMs=performance.now()-pending.startedAt;
-    this.recentTimings.push({ method: pending.method, at: new Date().toISOString(), outcome, totalMs,
-      queueMs: timing?.queueMs ?? null, handlerMs: timing?.handlerMs ?? null, publicationMs: timing?.publicationMs ?? null,
-      returnMs: timing ? Math.max(0,totalMs-timing.queueMs-timing.handlerMs-timing.publicationMs) : null });
-    if(this.recentTimings.length>32)this.recentTimings.shift();
+  requestTimings() {
+    return {
+      inFlight: this.inFlight,
+      recent: [...this.recentTimings],
+      held: this.heldSlotEvidence(),
+    };
+  }
+  private recordTiming(
+    pending: { startedAt: number; method: string },
+    outcome: ExecutorRequestTiming["outcome"],
+    timing?: { queueMs: number; handlerMs: number; publicationMs: number },
+  ) {
+    const totalMs = performance.now() - pending.startedAt;
+    this.recentTimings.push({
+      method: pending.method,
+      at: new Date().toISOString(),
+      outcome,
+      totalMs,
+      queueMs: timing?.queueMs ?? null,
+      handlerMs: timing?.handlerMs ?? null,
+      publicationMs: timing?.publicationMs ?? null,
+      returnMs: timing
+        ? Math.max(
+            0,
+            totalMs - timing.queueMs - timing.handlerMs - timing.publicationMs,
+          )
+        : null,
+    });
+    if (this.recentTimings.length > 32) this.recentTimings.shift();
   }
   private inFlight = 0;
   /** True once the worker is gone, deliberately (terminate) or by fault. */
   private dead = false;
   private faultState: ExecutorFault | null = null;
-  private readonly snapshot: ExecutorSnapshot = { revision: -1, health: emptyHealth(), board: null };
+  private readonly snapshot: ExecutorSnapshot = {
+    revision: -1,
+    health: emptyHealth(),
+    board: null,
+  };
   /** Invoked once when the worker dies unexpectedly; the service fails closed and records the cause. */
   onFailure: ((fault: ExecutorFault) => void) | null = null;
   /** Called after every executor-pushed snapshot; the web board's live channel subscribes here. */
@@ -186,7 +271,7 @@ export class PersistenceExecutor {
 
   constructor(private readonly options: ExecutorOptions) {
     this.heldSlotWarnMs = options.heldSlotWarnMs ?? DEFAULT_HELD_SLOT_WARN_MS;
-    this.log = options.log ?? (line => console.error(line));
+    this.log = options.log ?? ((line) => console.error(line));
   }
 
   /**
@@ -204,9 +289,11 @@ export class PersistenceExecutor {
       if (at - last < HELD_SLOT_LOG_INTERVAL_MS) continue;
       if (this.heldSlotLoggedAt.size > 64) this.heldSlotLoggedAt.clear();
       this.heldSlotLoggedAt.set(slot.method, at);
-      this.log(`Queue service request ${slot.method} has held the executor for ${Math.round(slot.ageMs)} ms`
-        + `${evidence.waiting ? `; ${evidence.waiting} request(s) are queued behind it` : ""}`
-        + `; service.health.requestTimings.held names it`);
+      this.log(
+        `Queue service request ${slot.method} has held the executor for ${Math.round(slot.ageMs)} ms` +
+          `${evidence.waiting ? `; ${evidence.waiting} request(s) are queued behind it` : ""}` +
+          `; service.health.requestTimings.held names it`,
+      );
     }
   }
 
@@ -220,15 +307,21 @@ export class PersistenceExecutor {
       // While the executor thread is blocked, this loop is the only thing still
       // running: it is what can say who is holding the thread and for how long.
       this.startHeldSlotWatch();
-      const worker = new Worker(new URL(runtimeEntry("./executor-worker.ts"), import.meta.url), {
-        workerData: {
-          owner: { ...this.options.owner, admission: this.options.owner.admission },
-          fixture: this.options.fixture,
-          fixtureState: this.options.fixtureState ?? {},
-          debug: this.options.debug === true,
-          standbyFor: this.options.standbyFor,
+      const worker = new Worker(
+        new URL(runtimeEntry("./executor-worker.ts"), import.meta.url),
+        {
+          workerData: {
+            owner: {
+              ...this.options.owner,
+              admission: this.options.owner.admission,
+            },
+            fixture: this.options.fixture,
+            fixtureState: this.options.fixtureState ?? {},
+            debug: this.options.debug === true,
+            standbyFor: this.options.standbyFor,
+          },
         },
-      });
+      );
       this.worker = worker;
       // Boot settles exactly once: a worker that errors or exits before its first
       // snapshot rejects now instead of waiting out the boot timeout.
@@ -237,43 +330,84 @@ export class PersistenceExecutor {
         if (booted) return;
         booted = true;
         clearTimeout(timer);
-        if (error) reject(error); else resolve();
+        if (error) reject(error);
+        else resolve();
       };
       // Time this spawn reports spending on its bounded start-up work (a store migration, then
       // the store-maintenance window) does not count against the boot bound.
-      const bootStartedAt = Date.now(), bootBudget = BOOT_TIMEOUT_MS + (this.options.standbyFor ? STANDBY_WAIT_MS : 0);
+      const bootStartedAt = Date.now(),
+        bootBudget =
+          BOOT_TIMEOUT_MS + (this.options.standbyFor ? STANDBY_WAIT_MS : 0);
       const dataDir = this.options.owner.dataDir ?? defaultDataDir();
-      const bootDeadline = () => bootStartedAt + bootBudget + startupExtensionMs(dataDir, process.pid, process.env[SPAWN_TOKEN_ENV]);
+      const bootDeadline = () =>
+        bootStartedAt +
+        bootBudget +
+        startupExtensionMs(dataDir, process.pid, process.env[SPAWN_TOKEN_ENV]);
       let timer: NodeJS.Timeout;
       const arm = () => {
-        timer = setTimeout(() => {
-          if (Date.now() < bootDeadline()) { arm(); return; }
-          this.terminate();
-          settleBoot(new ProtocolError("timeout", `Persistence executor did not publish a snapshot inside ${BOOT_TIMEOUT_MS} ms`));
-        }, Math.max(1, bootDeadline() - Date.now()));
+        timer = setTimeout(
+          () => {
+            if (Date.now() < bootDeadline()) {
+              arm();
+              return;
+            }
+            this.terminate();
+            settleBoot(
+              new ProtocolError(
+                "timeout",
+                `Persistence executor did not publish a snapshot inside ${BOOT_TIMEOUT_MS} ms`,
+              ),
+            );
+          },
+          Math.max(1, bootDeadline() - Date.now()),
+        );
         if (typeof timer.unref === "function") timer.unref();
       };
       arm();
-      worker.on("message", message => {
+      worker.on("message", (message) => {
         const frame = message as WorkerMessage;
         if (frame.kind === "boot") {
-          if (frame.ok) { settleBoot(); return; }
+          if (frame.ok) {
+            settleBoot();
+            return;
+          }
           this.terminate();
-          settleBoot(new ExecutorError(frame.error?.code ?? "internal", frame.error?.message ?? "Persistence executor failed to boot"));
+          settleBoot(
+            new ExecutorError(
+              frame.error?.code ?? "internal",
+              frame.error?.message ?? "Persistence executor failed to boot",
+            ),
+          );
           return;
         }
         this.receive(frame);
       });
-      worker.on("error", error => {
+      worker.on("error", (error) => {
         this.fail(error, null);
-        settleBoot(new ProtocolError("unavailable", `Persistence executor failed to boot: ${this.faultState?.message ?? "unknown error"}`));
+        settleBoot(
+          new ProtocolError(
+            "unavailable",
+            `Persistence executor failed to boot: ${this.faultState?.message ?? "unknown error"}`,
+          ),
+        );
       });
-      worker.on("exit", code => {
+      worker.on("exit", (code) => {
         // Only a deliberate terminate() marks the worker dead first. Any other exit,
         // including code 0, is a loss: pending requests reject and the cause is kept.
-        if (!this.dead) this.fail(new Error(`Persistence executor exited unexpectedly (code ${code})`), code);
+        if (!this.dead)
+          this.fail(
+            new Error(
+              `Persistence executor exited unexpectedly (code ${code})`,
+            ),
+            code,
+          );
         this.dead = true;
-        settleBoot(new ProtocolError("unavailable", `Persistence executor exited before publishing a snapshot (code ${code})`));
+        settleBoot(
+          new ProtocolError(
+            "unavailable",
+            `Persistence executor exited before publishing a snapshot (code ${code})`,
+          ),
+        );
       });
     });
   }
@@ -284,19 +418,35 @@ export class PersistenceExecutor {
       this.snapshot.health = frame.health;
       if (isUnchangedBoard(frame.board)) {
         const { unchanged: _, ...counters } = frame.board;
-        if (this.snapshot.board) this.snapshot.board = { ...this.snapshot.board, ...counters };
+        if (this.snapshot.board)
+          this.snapshot.board = { ...this.snapshot.board, ...counters };
       } else if (frame.board) this.snapshot.board = frame.board;
       // A completed publication is the only thing that clears a projection fault.
-      if (!this.dead && this.faultState?.kind === "projection") this.faultState = null;
+      if (!this.dead && this.faultState?.kind === "projection")
+        this.faultState = null;
       for (const listener of this.snapshotListeners) {
-        try { listener(); } catch { /* a subscriber never changes publication */ }
+        try {
+          listener();
+        } catch {
+          /* a subscriber never changes publication */
+        }
       }
       return;
     }
     if (frame.kind === "projection") {
       if (this.dead) return;
-      const repeats = this.faultState?.kind === "projection" ? this.faultState.repeats + 1 : 1;
-      this.faultState = { kind: "projection", at: frame.at, exitCode: null, message: boundedText(frame.message, MAX_FAULT_MESSAGE), stack: boundedText(frame.stack, MAX_FAULT_STACK), repeats };
+      const repeats =
+        this.faultState?.kind === "projection"
+          ? this.faultState.repeats + 1
+          : 1;
+      this.faultState = {
+        kind: "projection",
+        at: frame.at,
+        exitCode: null,
+        message: boundedText(frame.message, MAX_FAULT_MESSAGE),
+        stack: boundedText(frame.stack, MAX_FAULT_STACK),
+        repeats,
+      };
       return;
     }
     if (frame.kind !== "reply") return;
@@ -307,7 +457,13 @@ export class PersistenceExecutor {
     this.recordTiming(pending, frame.ok ? "ok" : "error", frame.timing);
     this.inFlight--;
     if (frame.ok) pending.resolve(frame.result);
-    else pending.reject(new ExecutorError(frame.error?.code ?? "internal", frame.error?.message ?? "Persistence executor call failed"));
+    else
+      pending.reject(
+        new ExecutorError(
+          frame.error?.code ?? "internal",
+          frame.error?.message ?? "Persistence executor call failed",
+        ),
+      );
   }
 
   private fail(error: unknown, exitCode: number | null) {
@@ -316,18 +472,30 @@ export class PersistenceExecutor {
     this.dead = true;
     if (wasDead) return;
     this.faultState = {
-      kind: exitCode === null ? "error" : "exited", at: new Date().toISOString(), exitCode,
-      message: boundedText(failure.message, MAX_FAULT_MESSAGE), stack: boundedText(failure.stack ?? "", MAX_FAULT_STACK), repeats: 1,
+      kind: exitCode === null ? "error" : "exited",
+      at: new Date().toISOString(),
+      exitCode,
+      message: boundedText(failure.message, MAX_FAULT_MESSAGE),
+      stack: boundedText(failure.stack ?? "", MAX_FAULT_STACK),
+      repeats: 1,
     };
     for (const [id, pending] of [...this.pending]) {
       this.pending.delete(id);
       clearTimeout(pending.timer);
       this.recordTiming(pending, "unavailable");
       this.inFlight--;
-      pending.reject(new ProtocolError("unavailable", `Persistence executor is gone: ${failure.message}`));
+      pending.reject(
+        new ProtocolError(
+          "unavailable",
+          `Persistence executor is gone: ${failure.message}`,
+        ),
+      );
     }
-    try { this.onFailure?.(this.faultState); }
-    catch { /* the diagnostic hook never changes the fail-closed state */ }
+    try {
+      this.onFailure?.(this.faultState);
+    } catch {
+      /* the diagnostic hook never changes the fail-closed state */
+    }
   }
 
   /**
@@ -339,7 +507,8 @@ export class PersistenceExecutor {
     if (fault?.kind === "projection") {
       return `Persistence projection is not publishing (${fault.repeats} consecutive failure${fault.repeats === 1 ? "" : "s"}; last at ${fault.at}): ${fault.message}. Health and the cached board are withheld until a fresh projection publishes.${stackSuffix(fault)}`;
     }
-    if (fault) return `Persistence executor is gone (${fault.kind} at ${fault.at}${fault.exitCode === null ? "" : `, exit code ${fault.exitCode}`}): ${fault.message}${stackSuffix(fault)}`;
+    if (fault)
+      return `Persistence executor is gone (${fault.kind} at ${fault.at}${fault.exitCode === null ? "" : `, exit code ${fault.exitCode}`}): ${fault.message}${stackSuffix(fault)}`;
     if (this.dead) return "Persistence executor was terminated";
     return null;
   }
@@ -352,32 +521,71 @@ export class PersistenceExecutor {
   /** Subscribe to executor-pushed snapshots; returns the unsubscribe. */
   onSnapshot(listener: () => void): () => void {
     this.snapshotListeners.add(listener);
-    return () => { this.snapshotListeners.delete(listener); };
+    return () => {
+      this.snapshotListeners.delete(listener);
+    };
   }
 
-  private send(kind: RequestKind, payload: { method?: string; input?: unknown; handler?: string; op?: unknown; via?: CatalogueSurface }, timeoutMs: number): Promise<unknown> {
-    if (this.dead) throw new ProtocolError("unavailable", this.unavailableReason() ?? "Persistence executor is gone");
+  private send(
+    kind: RequestKind,
+    payload: {
+      method?: string;
+      input?: unknown;
+      handler?: string;
+      op?: unknown;
+      via?: CatalogueSurface;
+    },
+    timeoutMs: number,
+  ): Promise<unknown> {
+    if (this.dead)
+      throw new ProtocolError(
+        "unavailable",
+        this.unavailableReason() ?? "Persistence executor is gone",
+      );
     if (this.inFlight >= MAX_EXECUTOR_IN_FLIGHT) {
       // Typed backpressure (Spec 013): saturation is visible, never a longer timeout.
-      throw new ProtocolError("busy", `Persistence executor has ${this.inFlight} in-flight operations at its bound of ${MAX_EXECUTOR_IN_FLIGHT}; retry after the executor drains`);
+      throw new ProtocolError(
+        "busy",
+        `Persistence executor has ${this.inFlight} in-flight operations at its bound of ${MAX_EXECUTOR_IN_FLIGHT}; retry after the executor drains`,
+      );
     }
     const id = this.nextId++;
     this.inFlight++;
     return new Promise((resolve, reject) => {
-      const pendingEntry = { resolve, reject, startedAt: performance.now(), method: payload.method ?? payload.handler ?? debugLabel(payload, kind), timer: undefined as NodeJS.Timeout | undefined };
+      const pendingEntry = {
+        resolve,
+        reject,
+        startedAt: performance.now(),
+        method: payload.method ?? payload.handler ?? debugLabel(payload, kind),
+        timer: undefined as NodeJS.Timeout | undefined,
+      };
       this.pending.set(id, pendingEntry);
-      const timer = kind === "rpc" && waitsForSettlement(payload.method, payload.input) ? undefined : setTimeout(() => {
-        const pending = this.pending.get(id);
-        if (!pending) return;
-        this.pending.delete(id);
-        this.recordTiming(pending, "timeout");
-        this.inFlight--;
-        reject(new ProtocolError("timeout", `Persistence executor call did not settle inside ${timeoutMs} ms`));
-      }, timeoutMs);
+      const timer =
+        kind === "rpc" && waitsForSettlement(payload.method, payload.input)
+          ? undefined
+          : setTimeout(() => {
+              const pending = this.pending.get(id);
+              if (!pending) return;
+              this.pending.delete(id);
+              this.recordTiming(pending, "timeout");
+              this.inFlight--;
+              reject(
+                new ProtocolError(
+                  "timeout",
+                  `Persistence executor call did not settle inside ${timeoutMs} ms`,
+                ),
+              );
+            }, timeoutMs);
       pendingEntry.timer = timer;
       timer?.unref();
-      try { this.worker!.postMessage({ kind, id, ...payload, sentAt: performance.timeOrigin + performance.now() }); }
-      catch (error) {
+      try {
+        this.worker!.postMessage({
+          kind,
+          id,
+          ...payload,
+          sentAt: performance.timeOrigin + performance.now(),
+        });
+      } catch (error) {
         clearTimeout(timer);
         this.pending.delete(id);
         this.recordTiming(pendingEntry, "unavailable");
@@ -388,8 +596,17 @@ export class PersistenceExecutor {
   }
 
   /** One catalogue RPC, validated inside the executor. `via` rides along for the dispatch point's Settings-only capacity rule; `key` records the request in the ledger when the caller named one. */
-  rpc(method: string, input: unknown, via?: CatalogueSurface, key?: string): Promise<unknown> {
-    return this.send("rpc", { method, input, ...(via ? { via } : {}), ...(key ? { key } : {}) }, CALL_TIMEOUT_MS);
+  rpc(
+    method: string,
+    input: unknown,
+    via?: CatalogueSurface,
+    key?: string,
+  ): Promise<unknown> {
+    return this.send(
+      "rpc",
+      { method, input, ...(via ? { via } : {}), ...(key ? { key } : {}) },
+      CALL_TIMEOUT_MS,
+    );
   }
 
   /** One owner handler that is not on the public catalogue (lifecycle hints). */
@@ -399,7 +616,11 @@ export class PersistenceExecutor {
 
   /** Fixture-only debug channel for seeding and inspecting the executor store. */
   debug(op: unknown): Promise<unknown> {
-    if (!this.options.debug) throw new ProtocolError("method_unknown", "The debug channel is disabled");
+    if (!this.options.debug)
+      throw new ProtocolError(
+        "method_unknown",
+        "The debug channel is disabled",
+      );
     return this.send("debug", { op }, CALL_TIMEOUT_MS);
   }
 
@@ -427,7 +648,9 @@ export class PersistenceExecutor {
       clearTimeout(pending.timer);
       this.recordTiming(pending, "unavailable");
       this.inFlight--;
-      pending.reject(new ProtocolError("unavailable", "Persistence executor was terminated"));
+      pending.reject(
+        new ProtocolError("unavailable", "Persistence executor was terminated"),
+      );
     }
     if (worker) void worker.terminate();
   }
@@ -439,8 +662,12 @@ export class PersistenceExecutor {
 
   private startHeldSlotWatch(): void {
     if (this.heldSlotTimer) return;
-    this.heldSlotTimer = setInterval(() => this.noteHeldSlots(), Math.max(50, Math.min(1_000, this.heldSlotWarnMs)));
-    if (typeof this.heldSlotTimer.unref === "function") this.heldSlotTimer.unref();
+    this.heldSlotTimer = setInterval(
+      () => this.noteHeldSlots(),
+      Math.max(50, Math.min(1_000, this.heldSlotWarnMs)),
+    );
+    if (typeof this.heldSlotTimer.unref === "function")
+      this.heldSlotTimer.unref();
   }
 
   private stopHeldSlotWatch(): void {
@@ -452,9 +679,21 @@ export class PersistenceExecutor {
 
 function emptyHealth(): RuntimeHealth {
   return {
-    phase: "constructing", ready: false, startError: "", engineError: "", retentionError: "",
-    paused: true, drained: false, boundRuns: [], hostId: "", connected: false, schema: null, lastStoreAccessAt: null,
-    taskIdentities: 0, admission: {} as RuntimeHealth["admission"], reconciliation: {} as RuntimeHealth["reconciliation"],
+    phase: "constructing",
+    ready: false,
+    startError: "",
+    engineError: "",
+    retentionError: "",
+    paused: true,
+    drained: false,
+    boundRuns: [],
+    hostId: "",
+    connected: false,
+    schema: null,
+    lastStoreAccessAt: null,
+    taskIdentities: 0,
+    admission: {} as RuntimeHealth["admission"],
+    reconciliation: {} as RuntimeHealth["reconciliation"],
     hostIdentityConflict: null,
     prStateRead: {
       state: "unknown",
@@ -463,7 +702,13 @@ function emptyHealth(): RuntimeHealth {
       lastKnownAt: null,
     },
     bootstrap: { pending: false, startedAt: null },
-    eventLoop: { windowSeconds: 0, p50Ms: 0, p99Ms: 0, maxMs: 0, maxSinceStartMs: 0 },
+    eventLoop: {
+      windowSeconds: 0,
+      p50Ms: 0,
+      p99Ms: 0,
+      maxMs: 0,
+      maxSinceStartMs: 0,
+    },
     hostRunEndpoint: null,
     admissionRpc: null,
   };

@@ -49,7 +49,8 @@ import type { HostPolicyConstructor } from "../core/host";
 import { formatAgentId, parseAgentId } from "../shared/agent-identity";
 import { hostKindOf, type HostKind } from "../shared/host-kind";
 import { hostConnected } from "../core/host";
-import { createHost, paseoHome } from "../hosts/paseo";
+import { createHost } from "../hosts/paseo";
+import { hostHome as hostHomeFromEnvironment } from "./host-environment.mjs";
 import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
@@ -237,8 +238,8 @@ export interface HostSettings {
 export interface RuntimeOwnerOptions {
   /** Data directory override; defaults to the one data-home resolver (`shared/data-home.mjs`). */
   dataDir?: string;
-  /** Paseo home used to locate the installed plugin source. */
-  paseoHome?: string;
+  /** Host config home used to locate the installed plugin source (the host's own registration file). */
+  hostHome?: string;
   /** Installed plugin source path override (checked for `mcp-report.mjs`). */
   sourcePath?: string;
   /** Adapter override for fixtures; the default builds the real Paseo adapter. */
@@ -680,13 +681,13 @@ export class QueueRuntime {
       );
       this.adapter = admitAdapter(raw, this.admission);
     } else {
-      const hostHome = options.paseoHome ?? paseoHome();
+      const configHome = options.hostHome ?? hostHomeFromEnvironment();
       const sourcePath =
         options.sourcePath ??
         (compiledIdentity
           ? stableInstalledPath(sourcePathFromModule())
           : pluginRegistration(
-              JSON.parse(readFileSync(join(hostHome, "config.json"), "utf8"))
+              JSON.parse(readFileSync(join(configHome, "config.json"), "utf8"))
                 .plugins,
             )?.path);
       if (!sourcePath || !existsSync(join(sourcePath, "mcp-report.mjs")))
@@ -784,7 +785,9 @@ export class QueueRuntime {
       (task) => this.engine.queuedExternalWait(task),
       () => this.engine.queuedWaitSignature(),
       () =>
-        this.hostSession?.id || this.hostRegistry.legacyPaseoPrimary()?.id || "unknown",
+        this.hostSession?.id ||
+        this.hostRegistry.legacyPaseoPrimary()?.id ||
+        "unknown",
     );
     this.questions = new RuntimeQuestions({
       store: this.store,

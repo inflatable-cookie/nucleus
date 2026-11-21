@@ -12,7 +12,12 @@ export interface BridgeOptions {
   processActions: BridgeProcessActions;
   /** Queue data directory; defaults to the one data-home resolver (`shared/data-home.mjs`). */
   dataDir?: string;
-  paseoHome?: string;
+  /**
+   * Host config home a spawned service reads, for a fixture or isolated probe.
+   * The composition maps it to the host's own environment names; unset uses the
+   * composed host's default, and the shared roll never names a host variable.
+   */
+  hostHome?: string;
   /** Installed plugin source path override (the exact checkout the service may be spawned from). */
   sourcePath?: string;
   /** Spawn command override for fixtures; defaults to `node --import tsx bin/queue-service.mjs` from the installed checkout. */

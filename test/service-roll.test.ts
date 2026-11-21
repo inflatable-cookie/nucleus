@@ -778,7 +778,7 @@ timingTest(
       // A fresh roll owner (after a restart or a plugin reload) settles the record once the target answers.
       const owner = trackedOwner({
         dataDir,
-        paseoHome: root,
+        hostHome: root,
         sourcePath: checkout,
         rollCheckMs: 0,
         rollSettleMs: 0,
@@ -1123,7 +1123,7 @@ test("a pending activation is retried on each unchanged roll check, not on conne
     processActions: bridgeProcessActions,
     sourcePath: checkout,
     dataDir,
-    paseoHome: root,
+    hostHome: root,
     rollCheckMs: 0,
     readinessBudgetMs: 2_000,
     serviceCommand: () => {
@@ -1218,7 +1218,7 @@ test("a seeded retrying replacement is not marked rolled when activation succeed
     processActions: bridgeProcessActions,
     sourcePath: checkout,
     dataDir,
-    paseoHome: root,
+    hostHome: root,
     rollCheckMs: 0,
     readinessBudgetMs: 2_000,
     serviceCommand: () => {
@@ -1285,7 +1285,7 @@ test("a quiet unchanged check returns null rather than the standing record", asy
     processActions: bridgeProcessActions,
     sourcePath: checkout,
     dataDir,
-    paseoHome: root,
+    hostHome: root,
     rollCheckMs: 0,
   });
   try {
@@ -1336,7 +1336,7 @@ test("an unreadable checkout leaves the roll record alone even when the data dir
         processActions: bridgeProcessActions,
         sourcePath: checkout,
         dataDir: dir,
-        paseoHome: root,
+        hostHome: root,
         rollCheckMs: 0,
       }),
   );
@@ -1369,7 +1369,7 @@ test("main rolls coalesce revisions, defer for followers, honor force and retain
     processActions: bridgeProcessActions,
     sourcePath: root,
     dataDir,
-    paseoHome: root,
+    hostHome: root,
     rollSettleMs: 60_000,
     heavyFollowers: () => attached,
   });
@@ -1472,7 +1472,7 @@ test("a checkout without an installed main channel never rolls changed source", 
     processActions: bridgeProcessActions,
     sourcePath: root,
     dataDir: join(root, "data"),
-    paseoHome: root,
+    hostHome: root,
   });
   assert.equal(
     typeof (bridge as unknown as { session: { expected: unknown } }).session

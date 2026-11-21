@@ -6,7 +6,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { install, installBase, verifyVersion } from './install.mjs';
 import { scratchDirectory } from '../../shared/scratch-root.mjs';
 import { dataHome } from '../../shared/data-home.mjs';
-import { paseoHomeEnvironment } from '../../hosts/paseo/index.mjs';
+import { hostEnvironment } from '../host-environment.mjs';
 
 const exec = promisify(execFile);
 const configPath = () => join(installBase(), 'channel.json');
@@ -106,7 +106,7 @@ export class MainChannel {
     return { key: revision, revision };
   }
   async buildNode() {
-    // Paseo's process.execPath can be an Electron helper. Prefer the active
+    // A host app's process.execPath can be an Electron helper. Prefer the active
     // self-contained install, and accept a checkout host only after probing it.
     const candidates = [join(installBase(), 'current/runtime/node'), process.execPath];
     const failures = [];
@@ -146,10 +146,10 @@ export class MainChannel {
     const data = join(proof, 'q');
     await mkdir(data, { recursive: true });
     await writeFile(join(data, 'settings.json'), JSON.stringify({ daemonUrl: 'ws://127.0.0.1:0/ws' }));
-    // A short separate store avoids Unix socket path limits and never opens
-    // the running service's database or connects to the operator's Paseo.
+    // A short separate store avoids Unix socket path limits and never opens the
+    // running service's database or connects to the operator's host.
     await this.startService(node, ['bin/queue-service.mjs', `--data-dir=${data}`], staged.root, {
-      HOME: join(proof, 'h'), ...paseoHomeEnvironment(join(proof, 'p')),
+      HOME: join(proof, 'h'), ...hostEnvironment(join(proof, 'p')),
       TMPDIR: scratch, TMP: scratch, TEMP: scratch,
     });
   }
@@ -175,8 +175,8 @@ export class MainChannel {
     const packageRoot = join(this.checkout, `package-${revision}`);
     // A failed build is suppressed by the bridge until a different revision.
     await this.command(await this.buildNode(), ['scripts/build-runtime.mjs', packageRoot], source);
-    // Paseo rebundles the installed entry as CommonJS. Prove that exact
-    // entry loads before the package can be called a verified main build.
+    // The host's plugin loader rebundles the installed entry as CommonJS. Prove
+    // that exact entry loads before the package can be called a verified build.
     await this.command(await this.buildNode(), ['scripts/prove-plugin-load.mjs', join(packageRoot, 'index.server.ts')], source);
     const archive = join(this.checkout, `package-${revision}.tgz`);
     await this.command('/usr/bin/tar', ['--format=ustar', '-czf', archive, '-C', packageRoot, '.']);

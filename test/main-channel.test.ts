@@ -153,7 +153,7 @@ timingTest(
     assert.equal(before.state, "running", before.detail);
     const pinned = trackedOwner({
       sourcePath: current,
-      paseoHome: process.env.PASEO_HOME,
+      hostHome: process.env.PASEO_HOME,
       rollSettleMs: 0,
       rollCheckMs: 0,
     });
@@ -167,7 +167,7 @@ timingTest(
     await configureChannel("main", source);
     const rolling = trackedOwner({
       sourcePath: current,
-      paseoHome: process.env.PASEO_HOME,
+      hostHome: process.env.PASEO_HOME,
       rollSettleMs: 60_000,
       rollCheckMs: 0,
     });

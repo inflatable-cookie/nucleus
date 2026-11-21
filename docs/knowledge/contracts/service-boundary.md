@@ -51,7 +51,12 @@ machine, `owner.ts` the detached roll owner, and `bb-plugin-roll.ts` the BB plug
 The spawn claim, warm standby, drain and readiness waits, the roll session, the
 options and the startup-output capture live in `shared/service/roll/`, which the
 Paseo bridge and the owner both import, so the bridge graph reaches no service
-module. A local T3Code launch (`bin/nucleus-acp.mjs`) and a Paseo bridge both start
+module. The environment a spawned service reads from its host is composed once in
+`service/host-environment.mjs`: the standalone entry, the roll owner, the spawner
+and the installer's isolated startup proof ask it instead of naming a host
+variable, and `hostHome` pins a private host home for a fixture or proof. Each
+host integration keeps its own names: Paseo's bridge supplies its own home
+override, and `nucleus integrate paseo` keeps Paseo's registration format. A local T3Code launch (`bin/nucleus-acp.mjs`) and a Paseo bridge both start
 the one owner through its heartbeat (`queue-roll-owner.json`), the bridge through an
 injected process binding, and the launcher and entry through `service/transport`. The
 owner connects without a presence claim, so it is never a host and never keeps a

@@ -457,7 +457,7 @@ for (const phase of ["build", "startup proof"]) {
       processActions: bridgeProcessActions,
       dataDir: fixture.dataDir,
       sourcePath: sourcePathFromModule(),
-      paseoHome: fixture.root,
+      hostHome: fixture.root,
       serviceCommand: () => {
         throw new Error("fixture must not spawn");
       },

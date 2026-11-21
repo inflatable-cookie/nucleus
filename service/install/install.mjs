@@ -222,6 +222,8 @@ export async function version() {
   return { version: pkg.version, revision: build?.revision || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), channel: root.startsWith(join(base(), 'versions') + '/') ? (configured?.channel === 'main' ? 'main' : 'release') : 'development', dataHome: dataHome() };
 }
 export async function integrate(host) {
+  // The explicit host route names its host, so Paseo's own registration format
+  // stays here rather than in a shared option or a generic error.
   if (host !== 'paseo') throw Error('Supported integration: paseo. Run nucleus integrate paseo');
   await realpath(current());
   const path = join(paseoHome(), 'config.json');
@@ -283,5 +285,8 @@ export async function recoverPrevious() {
     writeOwnedJson(configPath, { ...config, rollback: undefined, ignoredRevision: active.revision });
   }
   await activateVersion(prior.root);
-  return { revision: prior.revision, next: 'Run paseo plugin reload nucleus' };
+  // The reload command belongs to the host that owns the installed plugin
+  // (shared/host-kind.ts owns the canonical table); name both plugin hosts here
+  // rather than presuming Paseo. Recovery never restarts a host or its daemon.
+  return { revision: prior.revision, next: 'Reload the connected host\'s Nucleus plugin (Paseo: paseo plugin reload nucleus; BB: bb plugin reload nucleus)' };
 }

@@ -237,6 +237,14 @@ launch/install actions stay outside shared. The installed local-client entry
 remains `server/service/local-client.mjs`. Pure review text lives in
 `shared/review-text.ts`.
 
+Host environment for a spawned service is composed once in
+`service/host-environment.mjs`, which the standalone entry, the roll owner, the
+spawner and the installer's startup proof read, so the shared roll options and the
+host-independent owner name no host. `hostHome` pins a private host home for a
+fixture or probe; the Paseo bridge maps it to Paseo's own variable and keeps its
+`paseoHome` option, and `nucleus integrate paseo` keeps Paseo's registration
+format.
+
 The plugin registration entry (`hosts/paseo/plugin/index.ts`) binds the shared structural
 bridge action port through `service/install/bridge-process-actions.ts`. That is
 its only service-process composition import; the forwarder folder — `bridge.ts`

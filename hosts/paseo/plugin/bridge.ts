@@ -69,6 +69,11 @@ export type {
 } from "../../../shared/service/roll/session";
 export { ServiceBridgeUnavailable } from "../../../shared/service/roll/session";
 export type { BridgeOptions } from "../../../shared/service/roll/options";
+/** Paseo's bridge options: the shared roll options plus the host home this plugin reads. */
+export interface PaseoBridgeOptions extends BridgeOptions {
+  /** Paseo's own config home; defaults to `PASEO_HOME`, then `~/.paseo`. */
+  paseoHome?: string;
+}
 export type { BridgeProcessActions } from "../../../shared/service/bridge-process";
 
 /** Forwarded RPC window: covers the legacy compatibility waits (submit/task 15 s, handoff 60 s) with latency headroom. */
@@ -98,7 +103,7 @@ export class ServiceBridge {
   private presenceTimer: NodeJS.Timeout | null = null;
   private readonly dataDir: string;
 
-  constructor(private readonly options: BridgeOptions) {
+  constructor(private readonly options: PaseoBridgeOptions) {
     this.dataDir = options.dataDir ?? dataHome();
     // The host's registry entry is the anchor that survives every loading format,
     // because it is a file the host wrote rather than a module URL: the bridge side
@@ -118,7 +123,7 @@ export class ServiceBridge {
       processActions: options.processActions,
       session: this.session,
       connect: (info, connectOptions) => this.tryConnect(info, connectOptions),
-      paseoEnvironment: () => ({ PASEO_HOME: this.paseoHome() }),
+      hostEnvironment: () => ({ PASEO_HOME: this.paseoHome() }),
       currentSession: () => this.currentSession(),
     });
   }
@@ -153,9 +158,11 @@ export class ServiceBridge {
     return this.options.sessionId ?? currentLoginSession();
   }
 
+  /** Paseo's own home: its option, the neutral host home a fixture pins, then the host's default. */
   private paseoHome(): string {
     return (
       this.options.paseoHome ??
+      this.options.hostHome ??
       process.env.PASEO_HOME ??
       join(homedir(), ".paseo")
     );
