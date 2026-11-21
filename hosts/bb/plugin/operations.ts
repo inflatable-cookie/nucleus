@@ -588,9 +588,10 @@ export function createHostOperations(
    * it would mistake an archived thread for absent. Both partitions must answer arrays.
    */
   async function listExactThreads(threadIds: string[]): Promise<ThreadRow[]> {
+    const uniqueIds = [...new Set(threadIds)];
     const live = await call("threads.list", () =>
       sdk.threads.list({
-        threadIds,
+        threadIds: uniqueIds,
         includeHidden: true,
         archived: false,
         limit: 200,
@@ -601,28 +602,40 @@ export function createHostOperations(
         "unavailable",
         "threads.list did not answer an array for live threads",
       );
-    const archived = await call("threads.list", () =>
-      sdk.threads.list({
-        threadIds,
-        includeHidden: true,
-        archived: true,
-        limit: 200,
-      }),
-    );
-    if (!Array.isArray(archived))
-      throw new HostOperationError(
-        "unavailable",
-        "threads.list did not answer an array for archived threads",
-      );
     const merged = new Map<string, ThreadRow>();
-    for (const row of [...live, ...archived]) {
+    for (const row of live) {
       if (
         row &&
         typeof row.id === "string" &&
-        threadIds.includes(row.id) &&
+        uniqueIds.includes(row.id) &&
         !merged.has(row.id)
       )
         merged.set(row.id, row);
+    }
+    const missing = uniqueIds.filter((id) => !merged.has(id));
+    if (missing.length > 0) {
+      const archived = await call("threads.list", () =>
+        sdk.threads.list({
+          threadIds: missing,
+          includeHidden: true,
+          archived: true,
+          limit: 200,
+        }),
+      );
+      if (!Array.isArray(archived))
+        throw new HostOperationError(
+          "unavailable",
+          "threads.list did not answer an array for archived threads",
+        );
+      for (const row of archived) {
+        if (
+          row &&
+          typeof row.id === "string" &&
+          missing.includes(row.id) &&
+          !merged.has(row.id)
+        )
+          merged.set(row.id, row);
+      }
     }
     return [...merged.values()];
   }
