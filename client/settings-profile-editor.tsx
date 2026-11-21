@@ -17,7 +17,13 @@ import {
   row,
   type Colors,
 } from "./controls";
-import { control, space, type as typeScale, radius } from "./design";
+import {
+  control,
+  space,
+  type as typeScale,
+  radius,
+  usageStripColors,
+} from "./design";
 import { createAutoSave, type AutoSave } from "../shared/autosave";
 import {
   hostModelFor,
@@ -93,7 +99,7 @@ function ProfileUsageBar({
   const percent = ratio * 100;
   const channel = (start: number, end: number) =>
     Math.round(start + (end - start) * ratio);
-  const color = `rgb(${channel(82, 224)}, ${channel(182, 126)}, ${channel(209, 151)})`;
+  const color = `rgb(${channel(usageStripColors.cool.red, usageStripColors.warm.red)}, ${channel(usageStripColors.cool.green, usageStripColors.warm.green)}, ${channel(usageStripColors.cool.blue, usageStripColors.warm.blue)})`;
   return (
     <View
       accessibilityRole="image"

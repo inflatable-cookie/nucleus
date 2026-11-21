@@ -44,6 +44,18 @@ export const control = {
   compact: { height: 28, paddingX: space.xs, text: type.metadata },
 } as const;
 
+/** Cool-to-warm usage-strip endpoints; separate from action and warning roles. */
+export const usageStripColors = {
+  cool: { red: 82, green: 182, blue: 209 },
+  warm: { red: 224, green: 126, blue: 151 },
+};
+
+/** Cool-to-warm usage-strip endpoints; separate from action and warning roles. */
+export const usageStripColors = {
+  cool: { red: 82, green: 182, blue: 209 },
+  warm: { red: 224, green: 126, blue: 151 },
+};
+
 /** The caption above any field, with or without a (?) beside it. */
 export const caption = type.metadata;
 
