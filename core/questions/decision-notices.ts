@@ -35,7 +35,7 @@ export interface DecisionNoticeResolutionPorts {
 }
 
 export interface DecisionNoticePassContext {
-  readonly adapter: Pick<Adapter, "notify">;
+  readonly adapter: Pick<Adapter, "notify" | "steerOrNotify">;
   readonly stopped: boolean;
   readonly store: Pick<
     Store,
@@ -194,13 +194,14 @@ async function deliverOneDecision(
     return "done";
   }
   let available = false;
+  let canSteer = false;
   try {
-    available = context.resolution.withHost(
-      host,
-      () =>
+    context.resolution.withHost(host, () => {
+      available =
         context.resolution.originHostAvailable(host) &&
-        Boolean(context.adapter.notify),
-    );
+        Boolean(context.adapter.steerOrNotify ?? context.adapter.notify);
+      canSteer = Boolean(context.adapter.steerOrNotify);
+    });
   } catch {
     available = false;
   }
@@ -237,6 +238,7 @@ async function deliverOneDecision(
         lookupWait: (message) => `Waiting for the asking agent: ${message}`,
         busyWait: (state) =>
           `Waiting for the asking agent to finish (${state.status})`,
+        ...(canSteer ? { ready: () => true, steer: true } : {}),
         wait: (reason) => {
           if (stepAborted || context.stopped) return;
           wait(reason, false);

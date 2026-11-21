@@ -119,6 +119,14 @@ export class HostPass {
       .map((task) => ({ task, attention: taskRowAttention(this.store, task) }));
   }
 
+  /** Refresh host thread titles and Inbox offers after a sweep opens a new decision. */
+  async reconcileInboxTitles(host: string, tasks: readonly Task[]): Promise<void> {
+    if (!this.adapter.reconcileThreadTitles) return;
+    await this.step(host, "reconcileThreadTitles", () =>
+      this.adapter.reconcileThreadTitles?.(tasks, this.taskRows(host)),
+    );
+  }
+
   /**
    * The task's one row, from the one attention projection (nucleus#1366): a person
    * who must act unsnoozes it, a task that waits on nothing Nucleus runs snoozes it,

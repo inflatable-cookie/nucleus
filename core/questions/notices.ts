@@ -195,6 +195,8 @@ export interface DurableSendOptions<T> {
     text: string;
     sourceAgentId?: string;
   };
+  /** Steer into a live turn when the host supports it, instead of `sendMessage`. */
+  steer?: boolean;
   refused?: (record: T, reason: string) => void;
   sendTimeoutMs?: number;
   registerStopWaiter?: (wake: () => void) => () => void;
@@ -268,11 +270,17 @@ export class Notices {
     if (!record) return "done";
     const target = d.target(record);
     d.mark(record, "intent", "");
-    const sendPromise = this.resolution.host.sendMessage(target.agentId, {
-      messageId: target.id,
-      text: target.text,
-      sourceAgentId: target.sourceAgentId,
-    });
+    const sendPromise = d.steer
+      ? this.resolution.host.steerOrNotify(target.agentId, {
+          messageId: target.id,
+          text: target.text,
+          sourceAgentId: target.sourceAgentId,
+        })
+      : this.resolution.host.sendMessage(target.agentId, {
+          messageId: target.id,
+          text: target.text,
+          sourceAgentId: target.sourceAgentId,
+        });
     if (d.sendTimeoutMs === undefined && !d.registerStopWaiter) {
       try {
         await sendPromise;

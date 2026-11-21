@@ -354,7 +354,7 @@ already present.
 | Continue a manually settled thread | Unsettle, then send | A message, decision, follow-up or re-entry for a thread the operator settled unsettles it first and then delivers (Tom, 2026-11-19). Refusing before send is retired |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
-| Tell or relayed answer (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own reminders and notices keep `queue_after_active` |
+| Tell, relayed answer or decision notice (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own lifecycle reminders and notices keep `queue_after_active` |
 
 Use `launchThread` for creation because it supplies the native workspace strategy
 and initial-message preparation. Other mutations use `dispatchCommand`. Each
@@ -1043,11 +1043,14 @@ expiry is not evidence that the original answer was never delivered.
 ## Operator decisions on T3
 
 An open decision linked to a T3 task goes to its recorded ACP parent when one is
-available; when no eligible parent exists (before a parent is created or after a
-recorded parent is archived) it goes to that host's single pinned **Nucleus**
-inbox. Other operator decisions also go to the inbox. No parent is created to ask a
-question. A disconnected host or an unreadable parent stays unknown, rather than
-authorizing a second offer. The
+available; when no eligible parent exists (before a parent is created, after a
+recorded parent is archived, or while a parent lookup transiently answers
+`unknown`) it falls back to that host's single pinned **Nucleus** inbox rather
+than being offered nowhere (nucleus#1516). Other operator decisions also go to
+the inbox. No parent is created to ask a question. Opening, withdrawing or
+superseding a decision (including a routing sign-off opened during a task
+quantum) wakes the reconciliation sweep so the inbox refreshes its title and
+raises or settles cards without waiting for an unrelated wake. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,
 but cannot send a task message, report a run or exercise task controls. Re-minting
@@ -1056,9 +1059,11 @@ not a role thread and retention and task archiving never select it.
 
 The service durably binds a decision version to the exact scope of its first offer
 before returning the form. A later parent does not move an Inbox offer, and a
-restart keeps the same owner. Fresh reads of the candidate scopes precede a first
-offer; a legacy pending card is adopted from positive T3 evidence before a
-competing scope can offer it. An unknown read never proves a card absent, and a
+restart keeps the same owner. Fresh reads of the offering inbox and any known
+linked parent precede a first offer; a legacy pending card is adopted from
+positive T3 evidence before a competing scope can offer it, while a transient
+`unknown` parent status does not block an observed Inbox from offering and
+binding the version. An unknown card read never proves a card absent, and a
 bound version is re-offered only after its own scope is read again. Offer, count,
 callback authorization and card settlement use the same owner. An Inbox sign-off
 uses the ordinary authenticated T3 operator answer route and leaves independent

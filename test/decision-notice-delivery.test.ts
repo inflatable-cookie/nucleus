@@ -19,7 +19,11 @@ import {
   ProvenPreSendRefusalError,
   type Adapter,
   type AgentObservation,
+  type HostPolicyConstructor,
 } from "../core/host";
+import { HostPolicies } from "../core/host/host-policies";
+import { createAdapter, T3CodeHost } from "../hosts/t3code";
+import { t3Fake, syntheticRun } from "./support/t3code-fake";
 import { submissionSchema } from "../shared/contracts";
 import { formatAgentId, parseAgentId } from "../shared/agent-identity";
 import { fakeAdapter, profile } from "./support/fakes";
@@ -633,4 +637,150 @@ test("late and uncertain sends keep the answer committed, never resend blindly, 
   lateTimeoutGate.resolve();
   await waitFor(() => f.decisions.get({ id: dSlow.id }).delivery?.status === "delivered", 2_000);
   assert.equal(sendCount, 3, "no duplicate planner turn when slow send resolves late");
+});
+
+test("decision answer notice to a busy T3 thread steers into the active turn via real T3 adapter and delivers exactly once (nucleus#1516)", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "ns-dec-t3-steer-")));
+  const fake = await t3Fake(t, root);
+  const host = new T3CodeHost({
+    endpoint: fake.endpoint,
+    bearer: "synthetic-bearer",
+    statePath: join(root, "state.json"),
+    probeThreadId: "synthetic-probe",
+  });
+  await host.connect();
+  const t3Adapter = createAdapter(
+    HostPolicies as unknown as HostPolicyConstructor,
+    host,
+    {
+      socketPath: join(root, "callback.sock"),
+      helperPath: join(root, "worker-report.mjs"),
+    },
+  );
+  const store = new Store(join(root, "queue.sqlite"));
+  store.setMeta("paused", false);
+  const engine = new Engine(store, t3Adapter as unknown as Adapter, 60_000);
+  engine.resolveHostAdapter = (id) =>
+    id === host.hostId ? (t3Adapter as unknown as Adapter) : (t3Adapter as unknown as Adapter);
+  engine.identifyOriginHost = async (agentId) =>
+    parseAgentId(agentId)?.hostId ?? host.hostId;
+  engine.hostAvailable = (hostId) => hostId === host.hostId;
+  engine.decisionNotices.observeTimeoutMs = 2_000;
+  engine.decisionNotices.sendTimeoutMs = 2_000;
+  engine.decisionNotices.retryDelaysMs = [30, 30, 30];
+
+  t.after(async () => {
+    await engine.stop();
+    host.close();
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // Put the asking T3 thread mid-turn with an active run.
+  const threadId = "synthetic-probe";
+  const projection = fake.threads.get(threadId)!;
+  const activeRun = syntheticRun(threadId, 1, { status: "running" });
+  projection.runs = [activeRun];
+
+  const decisions = new Decisions(store);
+  const questions = new RuntimeQuestions({
+    store,
+    engine,
+    decisions,
+    markStoreAccess: () => {},
+  });
+
+  // Opening a decision via RuntimeQuestions wakes reconciliation immediately.
+  let wakes = 0;
+  const origWake = engine.wake.bind(engine);
+  engine.wake = () => {
+    wakes++;
+    return origWake();
+  };
+
+  const asker = formatAgentId(host.hostId, threadId);
+  const decision = questions.addDecision({
+    question: "Use Opus frontier for queued task?",
+    askedBy: asker,
+    project,
+  });
+  assert.equal(wakes, 1, "addDecision wakes the engine without waiting for an unrelated wake");
+
+  questions.answerDecision({
+    id: decision.id,
+    version: 1,
+    answer: "Approve Opus",
+    answeredBy: "operator (board)",
+    relayed: false,
+    note: "",
+  });
+
+  await waitFor(
+    () => decisions.get({ id: decision.id }).delivery?.status === "delivered",
+    3_000,
+    "busy T3 thread decision answer notice steered",
+  );
+
+  const dispatches = fake.commands.filter(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === threadId &&
+      typeof command.text === "string" &&
+      command.text.includes("Approve Opus"),
+  );
+  assert.equal(dispatches.length, 1, "answer notice delivered exactly once");
+  assert.deepEqual(dispatches[0]!.dispatchMode, {
+    type: "steer_active",
+    targetRunId: activeRun.id,
+  });
+  assert.equal(decisions.get({ id: decision.id }).delivery?.attempts, 1);
+
+  // Repeat schedules remain no-ops (no duplicate steer).
+  await engine.scheduleDecisionNotices();
+  const afterRepeat = fake.commands.filter(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === threadId &&
+      typeof command.text === "string" &&
+      command.text.includes("Approve Opus"),
+  );
+  assert.equal(afterRepeat.length, 1);
+
+  // Remote failure during steer marks uncertain and never resends blindly.
+  const second = questions.addDecision({
+    question: "Second question during remote fault?",
+    askedBy: asker,
+    project,
+  });
+  fake.controls.refuseMutation = true;
+  questions.answerDecision({
+    id: second.id,
+    version: 1,
+    answer: "Fault answer",
+    answeredBy: "operator (board)",
+    relayed: false,
+    note: "",
+  });
+  await waitFor(
+    () => decisions.get({ id: second.id }).delivery?.status === "uncertain",
+    3_000,
+    "remote steer failure marks uncertain",
+  );
+  const faultDispatches = fake.commands.filter(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === threadId &&
+      typeof command.text === "string" &&
+      command.text.includes("Fault answer"),
+  );
+  assert.equal(faultDispatches.length, 1);
+  await engine.scheduleDecisionNotices();
+  const faultDispatchesAfter = fake.commands.filter(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === threadId &&
+      typeof command.text === "string" &&
+      command.text.includes("Fault answer"),
+  );
+  assert.equal(faultDispatchesAfter.length, 1, "uncertain steer is never resent");
 });

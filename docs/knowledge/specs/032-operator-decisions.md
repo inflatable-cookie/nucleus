@@ -128,14 +128,18 @@ reachable recipient.
 
 Notices use the deterministic version identity (`decision:<id>:<version>`) and
 the shared durable send path (`intent` before send, fresh recipient and host
-availability checks, pause gates). Notification failure never rolls back the
+availability checks, pause gates). When the asking thread's host supports
+live-turn steering (`steerOrNotify`, as T3 Code does), the notice steers into a
+busy asking thread's running turn (or delivers normally when idle) instead of
+waiting for the turn to finish (nucleus#1516); hosts without steering keep
+waiting for idle. Notification failure never rolls back the
 committed answer: an agent that resumes still lists its answered decisions.
-Proven pre-send refusals, busy threads and unavailable hosts keep the notice
-pending for retry; interrupted `intent` records on restart and non-pre-send
-send failures settle as `uncertain` and are never resent blindly (a late
-acknowledgement on an abandoned send settles `uncertain` to `delivered` without
-resending). An answer the asking agent relays itself sends no notice: that
-thread already has it (Tom, 2026-09-29).
+Proven pre-send refusals, busy non-steering threads and unavailable hosts keep
+the notice pending for retry; interrupted `intent` records on restart and
+non-pre-send send failures settle as `uncertain` and are never resent blindly (a
+late acknowledgement on an abandoned send settles `uncertain` to `delivered`
+without resending). An answer the asking agent relays itself sends no notice:
+that thread already has it (Tom, 2026-09-29).
 
 ## Staleness
 

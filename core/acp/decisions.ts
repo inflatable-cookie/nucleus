@@ -23,14 +23,13 @@ export function bindOwner(store: Store, decision: Pick<Decision, "id" | "version
 }
 
 /** A linked T3 task supplies both the host identity and its recorded parent. */
-export function proposedOwner(store: Store, decision: Decision, inboxHost: string, parent: ParentLookup): DecisionScope | null {
+export function proposedOwner(store: Store, decision: Decision, inboxHost: string, parent: ParentLookup): DecisionScope {
   let fallback: string | null = null;
   for (const id of decision.links.tasks) {
     const task = store.taskOrNull(id);
     if (!task || task.removedAt || !task.hostId || hostKindOf(task.hostId) !== "t3code") continue;
     fallback ??= task.hostId;
     const status = parent(task.hostId, task.id);
-    if (status.state === "unknown") return null;
     if (status.state === "parent")
       return { kind: "task", taskId: task.id, hostId: task.hostId, sessionId: status.sessionId };
   }

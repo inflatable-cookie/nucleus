@@ -151,7 +151,11 @@ export class RuntimeQuestions {
     return view;
   }
 
-  addDecision(input: Parameters<Decisions["add"]>[0]) { return this.context.decisions.add(input); }
+  addDecision(input: Parameters<Decisions["add"]>[0]) {
+    const view = this.context.decisions.add(input);
+    void this.context.engine.wake?.().catch(() => { /* a failed drain is recorded as engineError */ });
+    return view;
+  }
 
   backfillDecisions(input: { dryRun?: boolean }) { return this.context.decisions.backfillDecisionProjects(input.dryRun ?? true); }
 
@@ -161,9 +165,17 @@ export class RuntimeQuestions {
 
   decisionAgentProjects(input: Parameters<Decisions["agentProjects"]>[0]) { this.context.markStoreAccess(); return this.context.decisions.agentProjects(input); }
 
-  withdrawDecision(input: Parameters<Decisions["withdraw"]>[0]) { return this.context.decisions.withdraw(input); }
+  withdrawDecision(input: Parameters<Decisions["withdraw"]>[0]) {
+    const view = this.context.decisions.withdraw(input);
+    void this.context.engine.wake?.().catch(() => { /* a failed drain is recorded as engineError */ });
+    return view;
+  }
 
   linkDecision(input: Parameters<Decisions["link"]>[0]) { return this.context.decisions.link(input); }
 
-  supersedeDecision(input: Parameters<Decisions["supersede"]>[0]) { return this.context.decisions.supersede(input); }
+  supersedeDecision(input: Parameters<Decisions["supersede"]>[0]) {
+    const view = this.context.decisions.supersede(input);
+    void this.context.engine.wake?.().catch(() => { /* a failed drain is recorded as engineError */ });
+    return view;
+  }
 }

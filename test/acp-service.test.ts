@@ -1320,7 +1320,7 @@ test("a later linked task with a parent is preferred over an earlier task withou
   } finally { await fixture.close(); }
 });
 
-test("an unavailable parent does not authorize an Inbox offer", async () => {
+test("an unknown parent status falls back to the Inbox without dropping the decision, and binding keeps one owner per version", async () => {
   const fixture = await acpFixture("t3code:synthetic");
   try {
     const stamp = new Date().toISOString();
@@ -1333,10 +1333,13 @@ test("an unavailable parent does not authorize an Inbox offer", async () => {
     const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
     fixture.setParentUnknown();
     fixture.acp.observedCards({ hostId: inbox.hostId }, []);
-    assert.equal(fixture.acp.pendingInboxDecisionKey(inbox.hostId), null);
-    assert.deepEqual((await fixture.acp.turn({ ...caller, waitMs: 0 }, token)).elicitations, []);
-    fixture.setParent(false);
+    assert.equal(fixture.acp.pendingInboxDecisionKey(inbox.hostId), JSON.stringify([[id, 1]]));
     assert.deepEqual((await fixture.acp.turn({ ...caller, waitMs: 0 }, token)).elicitations?.map(row => row.id), [id]);
+    // Once bound to the Inbox, a parent later becoming known does not offer a duplicate card.
+    fixture.setParent(true);
+    fixture.acp.observedCards({ taskId: fixture.taskId, sessionId: fixture.sessionId }, []);
+    assert.equal(fixture.acp.pendingDecisionKey(fixture.taskId), null);
+    assert.deepEqual((await fixture.turn()).elicitations, []);
   } finally { await fixture.close(); }
 });
 
