@@ -122,7 +122,13 @@ export const HOST_SEND_MODES = ["queue", "steer"] as const;
 export type HostSendMode = (typeof HOST_SEND_MODES)[number];
 
 /** The native decision a permission answer carries, as the host contract names it. */
-export const HOST_PERMISSION_DECISIONS = ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"] as const;
+export const HOST_PERMISSION_DECISIONS = [
+  "accept",
+  "acceptForSession",
+  "acceptAlways",
+  "decline",
+  "cancel",
+] as const;
 
 export type HostPermissionAnswer = (typeof HOST_PERMISSION_DECISIONS)[number];
 
@@ -140,9 +146,15 @@ export interface HostOperationOutcome {
 }
 
 /** Every code a plugin may answer an operation with. */
-export const HOST_OPERATION_ERROR_CODES = ["invalid_input", "refused", "unavailable", "internal"] as const;
+export const HOST_OPERATION_ERROR_CODES = [
+  "invalid_input",
+  "refused",
+  "unavailable",
+  "internal",
+] as const;
 
-export type HostOperationErrorCode = (typeof HOST_OPERATION_ERROR_CODES)[number];
+export type HostOperationErrorCode =
+  (typeof HOST_OPERATION_ERROR_CODES)[number];
 
 /**
  * The only codes that prove an operation's write could not have landed.
@@ -154,12 +166,20 @@ export type HostOperationErrorCode = (typeof HOST_OPERATION_ERROR_CODES)[number]
  * that case — the thread exists, so resending it would duplicate the spawn (Spec
  * 062, decision 6).
  */
-export const HOST_OPERATION_NON_DELIVERY_CODES = ["invalid_input", "refused"] as const;
+export const HOST_OPERATION_NON_DELIVERY_CODES = [
+  "invalid_input",
+  "refused",
+] as const;
 
-export type HostOperationNonDeliveryCode = (typeof HOST_OPERATION_NON_DELIVERY_CODES)[number];
+export type HostOperationNonDeliveryCode =
+  (typeof HOST_OPERATION_NON_DELIVERY_CODES)[number];
 
-export function isHostOperationNonDelivery(code: HostOperationErrorCode): code is HostOperationNonDeliveryCode {
-  return (HOST_OPERATION_NON_DELIVERY_CODES as readonly string[]).includes(code);
+export function isHostOperationNonDelivery(
+  code: HostOperationErrorCode,
+): code is HostOperationNonDeliveryCode {
+  return (HOST_OPERATION_NON_DELIVERY_CODES as readonly string[]).includes(
+    code,
+  );
 }
 
 /** One operation refusal, carried in a `ServiceResponse` error like any protocol refusal. */
@@ -188,7 +208,9 @@ function realDataDir(dataDir: string): string {
  * answers an existing one.
  */
 export function hostIdFromDataDir(dataDir: string): string {
-  const digest = createHash("sha256").update(realDataDir(dataDir)).digest("hex");
+  const digest = createHash("sha256")
+    .update(realDataDir(dataDir))
+    .digest("hex");
   return `${BB_HOST_ID_PREFIX}${digest.slice(0, 32)}`;
 }
 
@@ -202,6 +224,8 @@ export function isBbHostId(value: unknown): value is string {
  * standalone environment create, so the handle exists before any thread does.
  */
 export function workspaceHandleForPath(directory: string): string {
-  const digest = createHash("sha256").update(realDataDir(directory)).digest("hex");
+  const digest = createHash("sha256")
+    .update(realDataDir(directory))
+    .digest("hex");
   return `bb-worktree-${digest.slice(0, 40)}`;
 }

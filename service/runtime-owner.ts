@@ -2455,16 +2455,56 @@ export class QueueRuntime {
   }
   /**
    * The live-run presence projection, or null when this runtime's adapter has no
-   * native terminal/label presence daemon. Inactive presence is reported explicitly
-   * in `service.health` via `liveRunPresenceStatus()`.
+   * native terminal/label presence daemon. Presence status inspects the actual
+   * connected hosts — a constructed but disconnected Paseo adapter never reads as
+   * active on a T3-only or BB-only deployment, and mixed deployments explicitly
+   * name connected hosts that lack a native presence surface.
    */
-  private liveRunPresenceStatus(): { active: boolean; reason: string } {
-    if (this.liveRunPresence) return { active: true, reason: "" };
-    return {
-      active: false,
-      reason:
-        "Live-run terminal and workspace-label presence is unavailable because no connected host exposes a native presence surface",
-    };
+  private liveRunPresenceStatus(): {
+    active: boolean;
+    reason: string;
+    unsupportedHosts?: string[];
+  } {
+    const onlineIds = this.hostRegistry.onlineIds();
+    const unsupportedHosts = onlineIds.filter((id) => {
+      const entry = this.hostRegistry.get(id);
+      return (
+        entry &&
+        !(entry.adapter as Adapter & { liveRunPresence?: RunPresenceDaemon })
+          .liveRunPresence
+      );
+    });
+    const hasConnectedPresenceHost =
+      Boolean(this.liveRunPresence) &&
+      (this.paseoAdapter
+        ? this.connected() ||
+          onlineIds.some((id) =>
+            Boolean(
+              (
+                this.hostRegistry.get(id)?.adapter as
+                  | (Adapter & { liveRunPresence?: RunPresenceDaemon })
+                  | undefined
+              )?.liveRunPresence,
+            ),
+          )
+        : true);
+    if (!hasConnectedPresenceHost) {
+      return {
+        active: false,
+        reason: unsupportedHosts.length
+          ? `Live-run terminal and workspace-label presence is unavailable: connected host(s) (${unsupportedHosts.join(", ")}) do not expose a native presence surface`
+          : "Live-run terminal and workspace-label presence is unavailable because no connected host exposes a native presence surface",
+        ...(unsupportedHosts.length ? { unsupportedHosts } : {}),
+      };
+    }
+    if (unsupportedHosts.length) {
+      return {
+        active: true,
+        reason: `Live-run terminal and workspace-label presence is active only for hosts with a native presence surface; unavailable on connected host(s): ${unsupportedHosts.join(", ")}`,
+        unsupportedHosts,
+      };
+    }
+    return { active: true, reason: "" };
   }
   private createLiveRunPresence(): LiveRunPresence | null {
     const daemon = () =>

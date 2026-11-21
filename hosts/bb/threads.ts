@@ -165,12 +165,18 @@ export class BbThreads {
   workspaceFor(row: BbRow, agent: BbAgent | undefined): string | null {
     if (agent) {
       const workspace = this.ports.workspace(agent.workspaceId);
-      return workspace && workspace.environmentId === row.environmentId &&
-        workspace.directory === row.environmentPath ? agent.workspaceId : null;
+      return workspace &&
+        workspace.environmentId === row.environmentId &&
+        workspace.directory === row.environmentPath
+        ? agent.workspaceId
+        : null;
     }
     if (!row.environmentId) return null;
-    const directory = row.environmentPath && linkedWorktreePath(row.environmentPath);
-    return directory ? workspaceHandleForPath(directory) : `bb-environment:${row.environmentId}`;
+    const directory =
+      row.environmentPath && linkedWorktreePath(row.environmentPath);
+    return directory
+      ? workspaceHandleForPath(directory)
+      : `bb-environment:${row.environmentId}`;
   }
 
   private observation(row: BbRow): AgentObservation {
@@ -768,7 +774,10 @@ export class BbThreads {
       this.ports.save(state);
       return;
     }
-    if (expectedTurnId !== undefined && observation.activeTurnId !== expectedTurnId) {
+    if (
+      expectedTurnId !== undefined &&
+      observation.activeTurnId !== expectedTurnId
+    ) {
       throw new ProvenPreSendRefusalError(
         `Intended turn ${expectedTurnId} ended or changed to ${observation.activeTurnId ?? "unknown"}; refusing to stop newer turn`,
       );
@@ -918,12 +927,20 @@ export class BbThreads {
     if (previous?.status === "unknown")
       throw new HostUnknownDeliveryError({ command: "bb.thread.send" });
     if (previous?.status === "settled") return;
-    await this.write(key, "thread.send", {
-      threadId: id,
-      text,
-      messageId,
-      mode: "steer",
-    });
+    try {
+      await this.write(key, "thread.send", {
+        threadId: id,
+        text,
+        messageId,
+        mode: "steer",
+      });
+    } catch (error) {
+      if (this.ports.notSent(error))
+        throw new ProvenPreSendRefusalError(
+          error instanceof Error ? error.message : String(error),
+        );
+      throw error;
+    }
   }
   /**
    * One message into a live turn. A steer the plugin proved it never wrote (its own

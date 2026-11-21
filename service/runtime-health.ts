@@ -173,6 +173,7 @@ export interface RuntimeHealth {
   liveRunPresence?: {
     active: boolean;
     reason: string;
+    unsupportedHosts?: string[];
   };
   /**
    * Spec 028: the store's compaction facts and the last durable maintenance record.
@@ -218,7 +219,11 @@ export interface RuntimeHealthContext {
   /** Set while the plugin's presence is lost and a host is still connected. */
   pluginPresenceFaultMessage(): string;
   /** Whether the live-run presence projection is active, or why it is inactive. */
-  liveRunPresenceStatus?: () => { active: boolean; reason: string };
+  liveRunPresenceStatus?: () => {
+    active: boolean;
+    reason: string;
+    unsupportedHosts?: string[];
+  };
   /** The claimed primary session's host id, when one is claimed. */
   hostSessionId(): string | null;
   readonly serveHostRunEndpoint: boolean;
@@ -447,7 +452,9 @@ export class RuntimeHealthProjection {
       paused: store.getMeta<boolean>("paused") ?? true,
       ...this.context.drainProjection(),
       hostId:
-        this.context.hostSessionId() || hostRegistry.legacyPaseoPrimary()?.id || "unknown",
+        this.context.hostSessionId() ||
+        hostRegistry.legacyPaseoPrimary()?.id ||
+        "unknown",
       connected: this.context.anyHostConnected(),
       hostIdentityConflict: lifecycle.identityConflict,
       ...(t3 ? { t3code: t3 } : {}),

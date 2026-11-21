@@ -5,9 +5,19 @@
  */
 import type { Store } from "../store/store";
 import type { Run } from "../../shared/contracts";
-import { applyRunUsageEvent, type RunUsageEvent, type RunUsageSource, type RunUsageStream, type RunUsageStreamEvent } from "./run-usage";
+import {
+  applyRunUsageEvent,
+  type RunUsageEvent,
+  type RunUsageSource,
+  type RunUsageStream,
+  type RunUsageStreamEvent,
+} from "./run-usage";
 
-interface Tracked { agentId: string; hostId?: string; stream: RunUsageStream | null }
+interface Tracked {
+  agentId: string;
+  hostId?: string;
+  stream: RunUsageStream | null;
+}
 
 export class RunUsageTracker {
   private readonly tracked = new Map<string, Tracked>();
@@ -17,8 +27,12 @@ export class RunUsageTracker {
   private readonly notedUnavailable = new Set<string>();
   private readonly startedAt: number;
 
-  constructor(private readonly store: Store, private readonly source: RunUsageSource, private readonly clock: () => Date = () => new Date(),
-    private readonly sourceForRun?: (run: Run) => RunUsageSource | undefined) {
+  constructor(
+    private readonly store: Store,
+    private readonly source: RunUsageSource,
+    private readonly clock: () => Date = () => new Date(),
+    private readonly sourceForRun?: (run: Run) => RunUsageSource | undefined,
+  ) {
     this.startedAt = this.clock().getTime();
   }
 
@@ -29,13 +43,28 @@ export class RunUsageTracker {
    */
   sync(): void {
     // The store's in-memory set of unreleased retained runs: no SQL scan per sweep tick.
-    const live = new Map(this.store.pendingRuns().filter(run => !run.released && run.agentId !== null).map(run => [run.id, run] as const));
+    const live = new Map(
+      this.store
+        .pendingRuns()
+        .filter((run) => !run.released && run.agentId !== null)
+        .map((run) => [run.id, run] as const),
+    );
     for (const [runId, entry] of [...this.tracked]) {
       const run = live.get(runId);
-      if (!run || run.agentId !== entry.agentId || run.hostId !== entry.hostId || this.sourceForRun && !this.sourceForRun(run)) this.release(runId);
-      else if (entry.stream && entry.stream.subscriptionId === null) { this.release(runId); this.gap(runId); }
+      if (
+        !run ||
+        run.agentId !== entry.agentId ||
+        run.hostId !== entry.hostId ||
+        (this.sourceForRun && !this.sourceForRun(run))
+      )
+        this.release(runId);
+      else if (entry.stream && entry.stream.subscriptionId === null) {
+        this.release(runId);
+        this.gap(runId);
+      }
     }
-    for (const run of live.values()) if (!this.tracked.has(run.id)) this.open(run);
+    for (const run of live.values())
+      if (!this.tracked.has(run.id)) this.open(run);
   }
 
   /** Close every stream. The runtime calls this on shutdown, before the store closes. */
@@ -50,19 +79,32 @@ export class RunUsageTracker {
       this.noteUnavailable(run);
       return;
     }
-    const entry: Tracked = { agentId: run.agentId!, hostId: run.hostId, stream: null };
+    const entry: Tracked = {
+      agentId: run.agentId!,
+      hostId: run.hostId,
+      stream: null,
+    };
     this.tracked.set(run.id, entry);
     // A run dispatched before this process started may have turns Queue never observed.
     const predatesProcess = Date.parse(run.createdAt) < this.startedAt;
-    source.subscribeRunUsage(entry.agentId, event => this.record(run.id, event)).then(stream => {
-      if (this.tracked.get(run.id) !== entry) { stream(); return; }
-      entry.stream = stream;
-      const owed = this.owedGap.delete(run.id);
-      if (predatesProcess || owed) this.gap(run.id);
-    }).catch(() => {
-      // Establishment failed: the run stays partial and the next pass tries again.
-      if (this.tracked.get(run.id) === entry) { this.tracked.delete(run.id); this.gap(run.id); }
-    });
+    source
+      .subscribeRunUsage(entry.agentId, (event) => this.record(run.id, event))
+      .then((stream) => {
+        if (this.tracked.get(run.id) !== entry) {
+          stream();
+          return;
+        }
+        entry.stream = stream;
+        const owed = this.owedGap.delete(run.id);
+        if (predatesProcess || owed) this.gap(run.id);
+      })
+      .catch(() => {
+        // Establishment failed: the run stays partial and the next pass tries again.
+        if (this.tracked.get(run.id) === entry) {
+          this.tracked.delete(run.id);
+          this.gap(run.id);
+        }
+      });
   }
 
   private release(runId: string): void {
@@ -73,7 +115,9 @@ export class RunUsageTracker {
   }
 
   private gap(runId: string): void {
-    this.store.updateRunUsage(runId, usage => applyRunUsageEvent(usage, { type: "gap" }, this.at()));
+    this.store.updateRunUsage(runId, (usage) =>
+      applyRunUsageEvent(usage, { type: "gap" }, this.at()),
+    );
   }
 
   /** Record once per run when its connected host exposes no usage stream, so skipped telemetry is never silent. */
@@ -82,7 +126,16 @@ export class RunUsageTracker {
     this.notedUnavailable.add(run.id);
     try {
       const prefix = `${run.id}: `;
-      if (this.store.eventsAll(run.taskId).some(event => event.kind === "run_usage_unavailable" && event.detail.startsWith(prefix))) return;
+      if (
+        this.store
+          .eventsAll(run.taskId)
+          .some(
+            (event) =>
+              event.kind === "run_usage_unavailable" &&
+              event.detail.startsWith(prefix),
+          )
+      )
+        return;
       this.store.event(
         run.taskId,
         "run_usage_unavailable",
@@ -97,7 +150,9 @@ export class RunUsageTracker {
     const event = toUsageEvent(streamed.event);
     if (!event) return;
     try {
-      this.store.updateRunUsage(runId, usage => applyRunUsageEvent(usage, event, this.at()));
+      this.store.updateRunUsage(runId, (usage) =>
+        applyRunUsageEvent(usage, event, this.at()),
+      );
     } catch {
       // The store is closing or unavailable: this event is lost. The stream closes and
       // the next pass reopens it with a gap owed, so the run reads partial, not complete.
@@ -112,7 +167,9 @@ export class RunUsageTracker {
 }
 
 /** Map a stream item to the reducer's events; anything else (a message, an unknown type) is ignored. */
-function toUsageEvent(event: RunUsageStreamEvent["event"]): RunUsageEvent | null {
+function toUsageEvent(
+  event: RunUsageStreamEvent["event"],
+): RunUsageEvent | null {
   switch (event.type) {
     case "replacement":
     case "subscription_restored":

@@ -282,7 +282,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         attempt: () => ({
           prompt:
             "You are the Nucleus decider for this task. Wait for the decision prompt arriving in your next message, then answer it using the command it provides.",
-          requestId: `ns-decider-${input.decisionId}`,
+          requestId: `ns-decider-launch-${input.decisionId}`,
           labels: {
             [WIRE_LABEL_KEYS.task]: task.id,
             [WIRE_LABEL_KEYS.role]: "decider",
@@ -311,7 +311,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         attempt: () => ({
           prompt:
             "You are the Nucleus reviewer for this task. Wait for the question arriving in your next message, then answer it using the command it provides.",
-          requestId: `ns-reviewer-consult-${input.id}`,
+          requestId: `ns-reviewer-consult-launch-${input.id}`,
           labels: {
             [WIRE_LABEL_KEYS.task]: task.id,
             [WIRE_LABEL_KEYS.role]: "reviewer",

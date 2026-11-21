@@ -51,7 +51,13 @@ import {
   type Descriptor,
   type ModelThinking,
 } from "./thinking";
-import { T3StateFile, canonical, retiredRecord, restoredRecord, t3WorkspaceId } from "./state";
+import {
+  T3StateFile,
+  canonical,
+  retiredRecord,
+  restoredRecord,
+  t3WorkspaceId,
+} from "./state";
 import { linkedWorktreePath } from "../../core/git/git-identity";
 import { mainCheckoutOf } from "../../core/host/registration";
 import {
@@ -966,7 +972,9 @@ export class T3CodeHost implements Host {
         ...(metadata?.projectRootPath
           ? { projectRootPath: metadata.projectRootPath }
           : {}),
-        ...(metadata?.worktreeSlug ? { worktreeSlug: metadata.worktreeSlug } : {}),
+        ...(metadata?.worktreeSlug
+          ? { worktreeSlug: metadata.worktreeSlug }
+          : {}),
       };
     });
     return { id, directory };
@@ -1003,19 +1011,30 @@ export class T3CodeHost implements Host {
     const recorded = Object.hasOwn(workspaces, id) ? workspaces[id] : undefined;
     if (recorded?.archivedAt) return null;
     const shell = await this.reads.shell();
-    const external = !recorded && shell.threads.find((row) =>
-      !row.archivedAt && !row.deletedAt && this.reads.workspaceFor(row) === id,
-    );
-    const project = shell.projects.find((p) =>
-      p.id === (recorded?.projectId ?? (external ? external.projectId : null)) && p.archivedAt == null,
+    const external =
+      !recorded &&
+      shell.threads.find(
+        (row) =>
+          !row.archivedAt &&
+          !row.deletedAt &&
+          this.reads.workspaceFor(row) === id,
+      );
+    const project = shell.projects.find(
+      (p) =>
+        p.id ===
+          (recorded?.projectId ?? (external ? external.projectId : null)) &&
+        p.archivedAt == null,
     );
     if (!project) return null;
-    const directory = recorded?.directory ?? (external && linkedWorktreePath(external.worktreePath ?? project.workspaceRoot));
+    const directory =
+      recorded?.directory ??
+      (external &&
+        linkedWorktreePath(external.worktreePath ?? project.workspaceRoot));
     if (!directory) return null;
     const projectRootPath =
       recorded?.projectRootPath ??
       (project.workspaceRoot === directory && linkedWorktreePath(directory)
-        ? await mainCheckoutOf(directory) ?? project.workspaceRoot
+        ? ((await mainCheckoutOf(directory)) ?? project.workspaceRoot)
         : project.workspaceRoot);
     return {
       id,
@@ -1023,7 +1042,9 @@ export class T3CodeHost implements Host {
       title: recorded?.title ?? (external ? external.title : ""),
       projectId: project.id,
       projectRootPath,
-      ...(recorded?.worktreeSlug ? { worktreeSlug: recorded.worktreeSlug } : {}),
+      ...(recorded?.worktreeSlug
+        ? { worktreeSlug: recorded.worktreeSlug }
+        : {}),
     };
   }
 
@@ -1040,7 +1061,9 @@ export class T3CodeHost implements Host {
     let resolved: Awaited<ReturnType<T3CodeHost["resolveWorkspace"]>> = null;
     return {
       get directory() {
-        return resolved?.directory ?? host.state.read().workspaces[id]?.directory;
+        return (
+          resolved?.directory ?? host.state.read().workspaces[id]?.directory
+        );
       },
       async refresh() {
         resolved = await host.resolveWorkspace(id);
@@ -1151,8 +1174,9 @@ export class T3CodeHost implements Host {
       const external = await this.resolveWorkspace(spec.workspaceId);
       if (external) {
         const { id, directory, projectId, title } = external;
-        workspace = this.state.update((state) =>
-          state.workspaces[id] ??= { id, directory, projectId, title },
+        workspace = this.state.update(
+          (state) =>
+            (state.workspaces[id] ??= { id, directory, projectId, title }),
         );
       }
     }
@@ -1198,6 +1222,9 @@ export class T3CodeHost implements Host {
         id: spec.workspaceId,
         projectId: workspace.projectId,
         directory: workspace.directory,
+        ...(workspace.worktreeSlug
+          ? { worktreeSlug: workspace.worktreeSlug }
+          : {}),
       },
       title,
     });
@@ -1539,7 +1566,10 @@ export class T3CodeHost implements Host {
         `Intended turn ${expectedTurnId} ended; active turn ${runs.join(", ")} left untouched`,
       );
     }
-    const key = identity("stop", canonical([id, expectedTurnId ? [expectedTurnId] : runs]));
+    const key = identity(
+      "stop",
+      canonical([id, expectedTurnId ? [expectedTurnId] : runs]),
+    );
     await this.intents.effect(key, "orchestration.dispatchCommand", {
       type: "thread.stop",
       commandId: key,

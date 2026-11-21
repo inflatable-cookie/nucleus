@@ -48,7 +48,9 @@ export interface BbWorkspaces
     | "workspaceIdAccepted"
     | "taskWorkspaceArchived"
   > {
-  createWorkspace(task: Pick<Task, "directory" | "repoPath" | "title">): Promise<{ id: string; directory: string }>;
+  createWorkspace(
+    task: Pick<Task, "directory" | "repoPath" | "title">,
+  ): Promise<{ id: string; directory: string }>;
   workspaceRef(id: string): HostWorkspaceRef;
   repositoryProject(
     root: string,
@@ -79,7 +81,9 @@ export function composeBbAdapter(input: {
       return {
         id: row.threadId,
         workspaceId: threads.workspaceFor(row, agent),
-        ...(includeWorkspaceDirectory ? { workspaceDirectory: row.environmentPath } : {}),
+        ...(includeWorkspaceDirectory
+          ? { workspaceDirectory: row.environmentPath }
+          : {}),
         labels: agent?.labels,
         archived: row.archivedAt !== null,
         status: row.archivedAt !== null ? "closed" : row.status,
@@ -207,11 +211,19 @@ export function composeBbAdapter(input: {
         const workspace = workspaces.workspaceRef(spec.workspaceId);
         await workspace.refresh();
         const current = workspace.current();
-        if (!task || workspace.directory !== task.directory || current?.projectRootPath !== task.repoPath)
-          throw new ProvenPreSendRefusalError("BB workspace is no longer attached to the task checkout");
+        if (
+          !task ||
+          workspace.directory !== task.directory ||
+          current?.projectRootPath !== task.repoPath
+        )
+          throw new ProvenPreSendRefusalError(
+            "BB workspace is no longer attached to the task checkout",
+          );
         const registered = await workspaces.createWorkspace(task);
         if (registered.id !== spec.workspaceId)
-          throw new ProvenPreSendRefusalError("BB workspace registration returned a different handle");
+          throw new ProvenPreSendRefusalError(
+            "BB workspace registration returned a different handle",
+          );
       }
       return threads.createAgent(spec);
     }

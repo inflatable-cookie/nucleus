@@ -60,7 +60,7 @@ import {
   type T3IntentLedger,
 } from "./intents";
 import { canonical, type T3State, type T3StateFile } from "./state";
-import { labelTask } from "./one-row";
+import { labelRole, labelTask } from "./one-row";
 
 /**
  * The provider instance an operator registers in T3's settings, the model the Nucleus
@@ -198,7 +198,12 @@ export interface NestedCreateInput {
   /** The role's own provider entry and model from the launch's config read. */
   roleProvider: ConfigProvider;
   roleModel: ConfigModel | undefined;
-  workspace: { id: string; projectId: string; directory: string };
+  workspace: {
+    id: string;
+    projectId: string;
+    directory: string;
+    worktreeSlug?: string;
+  };
   /** The launch's one `server.getConfig` read. */
   observed: z.infer<typeof config>;
   /** The child's title, already numbered by the host. */
@@ -298,21 +303,45 @@ export class T3Nesting {
       input.roleProvider,
       input.profile,
     );
-    const existing = this.parentOf(taskId);
+    let existing = this.parentOf(taskId);
     let existingSharedProjection: Projection | undefined;
     // A binding stored before its launch was sent (nucleus#1458) is resumed, not
     // treated as a parent that already ran.
     let prepared: ParentThread | undefined;
+    let recoveredCloseoutScope: string | undefined;
     if (existing) {
       // A child with no workspace strategy inherits the parent's checkout, and one
       // with a strategy never starts outside T3's own MCP handler. A role whose run
       // needs another checkout therefore cannot be a child, and there is no
       // top-level fallback any more: the task waits visibly instead.
-      if (existing.workspaceId !== input.workspace.id)
-        return this.unavailable(
-          taskId,
-          `the task's parent thread is bound to another checkout (${existing.workspaceId}, this run uses ${input.workspace.id}); move the task to another host or restart it on a new workspace`,
-        );
+      // Exception: a recovered closeout workspace (`ns-closeout-<taskId>`) on the
+      // same project retires the lost-checkout parent and binds a replacement parent
+      // on the recovered closeout worktree so the closeout child runs in it.
+      if (existing.workspaceId !== input.workspace.id) {
+        const isRecoveredCloseout =
+          labelRole(input.attempt.labels) === "closeout" &&
+          input.workspace.worktreeSlug === `ns-closeout-${taskId}` &&
+          existing.projectId === input.workspace.projectId;
+        if (!isRecoveredCloseout)
+          return this.unavailable(
+            taskId,
+            `the task's parent thread is bound to another checkout (${existing.workspaceId}, this run uses ${input.workspace.id}); move the task to another host or restart it on a new workspace`,
+          );
+        acp.release(existing.sessionId, "closeout workspace recovered");
+        const archiveKey = identity("archive", existing.threadId);
+        await this.core.intents
+          .effect(archiveKey, "orchestration.dispatchCommand", {
+            type: "thread.archive",
+            commandId: archiveKey,
+            threadId: existing.threadId,
+          })
+          .catch(() => undefined);
+        this.forgetParent(taskId);
+        existing = undefined;
+        recoveredCloseoutScope = input.workspace.id;
+      }
+    }
+    if (existing) {
       // Old markers did not distinguish archive from deletion. Re-read the exact
       // binding before acting on either an old marker or a new observation,
       // sharing its narrow projection with the held-turn check below.
@@ -366,7 +395,13 @@ export class T3Nesting {
     const parent =
       existing && !prepared
         ? existing
-        : await this.launchParent(input, provider, acp, prepared);
+        : await this.launchParent(
+            input,
+            provider,
+            acp,
+            prepared,
+            recoveredCloseoutScope,
+          );
     if (!parent)
       return this.unavailable(
         taskId,
@@ -1043,11 +1078,16 @@ export class T3Nesting {
     },
     acp: AcpSessionSurface,
     bound?: ParentThread,
+    workspaceScope?: string,
   ): Promise<ParentThread | null> {
     const taskId = labelTask(input.attempt.labels)!;
     const threadId = identity(
       "thread",
-      canonical([this.core.hostId(), taskId, "parent"]),
+      canonical(
+        workspaceScope
+          ? [this.core.hostId(), taskId, "parent", workspaceScope]
+          : [this.core.hostId(), taskId, "parent"],
+      ),
     );
     const binding = bound
       ? { sessionId: bound.sessionId, bindingPath: bound.bindingPath }
@@ -1095,7 +1135,12 @@ export class T3Nesting {
       offered.length === 0 || offered.includes("full-access")
         ? "full-access"
         : "approval-required";
-    const commandId = this.parentLaunchId(taskId);
+    const commandId = workspaceScope
+      ? identity(
+          "parent-launch",
+          canonical([this.core.hostId(), taskId, workspaceScope]),
+        )
+      : this.parentLaunchId(taskId);
     const payload = {
       commandId,
       threadId,
