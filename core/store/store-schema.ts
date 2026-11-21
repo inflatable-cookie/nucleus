@@ -27,6 +27,7 @@ export const STORE_OPEN_DDL = [
    CREATE INDEX IF NOT EXISTS events_brief_amendment_intent ON events(taskId) WHERE kind='brief_amendment_delivery_intent';
    CREATE INDEX IF NOT EXISTS events_paused_resume ON events(at,json_extract(detail,'$.agentId')) WHERE kind='paused_resume';
    CREATE INDEX IF NOT EXISTS runs_task ON runs(taskId);
+   CREATE INDEX IF NOT EXISTS runs_host ON runs(json_extract(data,'$.hostId'));
    CREATE INDEX IF NOT EXISTS notices_task ON notices(taskId);
    CREATE INDEX IF NOT EXISTS notices_status ON notices(json_extract(data,'$.status'));
    CREATE INDEX IF NOT EXISTS operations_submission ON operations(json_extract(data,'$.submissionId'));
@@ -47,6 +48,8 @@ export const STORE_OPEN_DDL = [
   ...[
     ['agent', 'agentId'], ['coordinator', 'coordinatorAgentId'], ['reviewer', 'resolution.reviewerAgentId'],
     ['workspace', 'workspaceId'], ['coordinator_workspace', 'resolution.coordinatorWorkspaceId'], ['closeout_workspace', 'resolution.closeoutWorkspaceId'],
+    // nucleus#1495: Settings → Hosts reads one host's dependents per host row; a host seek, not a scan of settled history.
+    ['host', 'hostId'],
   ].map(([name, path]) => `CREATE INDEX IF NOT EXISTS tasks_identity_${name} ON tasks(json_extract(data,'$.${path}')) WHERE json_extract(data,'$.removedAt') IS NULL`),
   ...[['agent', 'agentId'], ['workspace', 'workspaceId']].map(([name, path]) =>
     `CREATE INDEX IF NOT EXISTS runs_identity_${name}_host ON runs(json_extract(data,'$.${path}'),taskId,json_extract(data,'$.hostId'))`),

@@ -1,0 +1,1 @@
+Settings → Hosts now reads each host's dependents through host indexes instead of scanning settled task and run history, so cheap Settings reads queue behind less synchronous work on the executor. Dependents and the removal recheck are unchanged.

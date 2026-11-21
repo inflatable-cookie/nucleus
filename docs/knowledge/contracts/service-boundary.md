@@ -1484,6 +1484,14 @@ and admission pressure are separate for each registered identity; reconnecting
 keeps that host's admission state. The local service credential remains a
 same-user accident-prevention boundary, not adversarial per-host authentication.
 
+`host.list` reads each host's dependents by host seek, through additive expression
+indexes on the task and run `hostId` (nucleus#1495), so a small Settings read no longer
+scans settled history on the executor. Results are unchanged: the primary host still
+counts unqualified legacy records, and `host.remove` rechecks current dependents inside
+its own write. Remaining executor cost is the per-host dependent queries themselves,
+`backup.list`'s one stat per retained snapshot, and the shared executor queue that
+serialises every read behind them; none is cached.
+
 The runtime retains one admission and breaker state for each observed host ID.
 Paseo remains the default connection. Optional owner-only `settings.json`
 configuration `t3code: {endpoint, bearer, probeThreadId?}` registers a second

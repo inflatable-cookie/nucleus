@@ -404,3 +404,28 @@ test("host.remove is operator-only: an agent route is refused with nothing chang
   const answer = await remove(RETIRED_T3, "paseo");
   assert.deepEqual(runtime.store.getMeta("hostRemovals"), [answer.removed]);
 });
+
+test("host dependents read by index seek and keep legacy primary ownership (nucleus#1495)", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "host-dependents-seek-"));
+  const store = new Store(join(dir, "queue.sqlite"));
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const { hostDependents } = await import("../core/host/host-dependents");
+  const insertTask = store.db.prepare("INSERT INTO tasks(id,submission,input_hash,data) VALUES(?,?,?,?)");
+  const insertRun = store.db.prepare("INSERT INTO runs(id,taskId,data) VALUES(?,?,?)");
+  insertTask.run("legacy", "s1", "h", JSON.stringify({ phase: "running" }));
+  insertTask.run("other", "s2", "h", JSON.stringify({ phase: "running", hostId: "t3code:env-x" }));
+  insertTask.run("settled", "s3", "h", JSON.stringify({ phase: "done", hostId: "t3code:env-x" }));
+  insertRun.run("r1", "legacy", JSON.stringify({ role: "worker" }));
+  insertRun.run("r2", "other", JSON.stringify({ role: "worker", hostId: "t3code:env-x" }));
+  const names = (id: string, kind: "paseo" | "t3code", primary: boolean) =>
+    hostDependents(store, { id, kind, primary }).filter(d => d.kind === "task" || d.kind === "run").map(d => d.names.length);
+  assert.deepEqual(names(PASEO, "paseo", true), [1, 1], "legacy records belong to the primary host");
+  assert.deepEqual(names("t3code:env-x", "t3code", false), [1, 1], "a qualified host sees only its own live records");
+  for (const sql of [
+    "SELECT id FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.hostId')=?",
+    "SELECT id FROM runs WHERE json_extract(data,'$.hostId')=?",
+  ]) {
+    const plan = store.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("x").map(row => String(row.detail)).join(" ");
+    assert.match(plan, /USING INDEX/, plan);
+  }
+});

@@ -41,10 +41,13 @@ export function hostDependents(
 ): HostDependency[] {
   const { db } = source;
   const ref = (taskId: string) => source.numberFor(taskId)?.reference ?? taskId;
-  // `?2` admits unqualified legacy records for the primary host only.
+  // Unqualified legacy records belong to the primary host only. The match is spelled as
+  // plain index-able terms (nucleus#1495) so each host reads by seek, not by scanning history.
   const hostMatch = (column: string) =>
-    `(${column}=?1 OR (?2=1 AND COALESCE(${column},'')=''))`;
-  const params = [host.id, host.primary ? 1 : 0] as const;
+    host.primary
+      ? `(${column}=?1 OR ${column} IS NULL OR ${column}='')`
+      : `${column}=?1`;
+  const params = [host.id] as const;
   const out: HostDependency[] = [];
 
   const tasks = db
