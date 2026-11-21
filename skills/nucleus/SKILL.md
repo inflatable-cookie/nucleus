@@ -674,12 +674,16 @@ threads. It grants no authority, and there is no project owner to claim or assig
 Repository settings (`repository.set`, `repository.get`, `repositories`) carry
 closeout authority, the prospective-merge validation command, formal-review
 login, the optional `affectedTests: { command }` used for worker and reviewer
-validation prompts, and the optional milestone `qa`
-command and the optional hosted-check policy
+validation prompts, the optional `qa` command (`qa.argv` / `qa.stages`, used by
+worktree validation detection), and the optional hosted-check policy
 (`checksPolicy`: `all` by default, or `required` to gate only the checks GitHub
 requires for the PR's base branch and record the rest as advisory evidence).
 The operator edits these fields in Settings → Projects, inside each project's
-repository rows. Worker, revision and reviewer prompts include the affected-test
+repository rows (milestone QA schedule and timeout controls are retired and
+removed from Settings, and the QA runs board surface is removed after PR #403 /
+nucleus#1498; milestone QA runs as an ordinary report-only task per
+[milestone QA](../../docs/knowledge/contracts/milestone-qa.md), while legacy
+history and cleanup use the `project.qa` CLI/RPC verbs). Worker, revision and reviewer prompts include the affected-test
 rule only when `repository.get` shows an `affectedTests.command` for that repository.
 Formal reviews need macOS: the reviewer token is read at call
 time from the macOS login keychain (service `nucleus.github-reviewer`, account

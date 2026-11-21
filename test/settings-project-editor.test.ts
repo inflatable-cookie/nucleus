@@ -681,10 +681,23 @@ test("one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
       ui.get("QA command for acme/nucleus").props.value,
       "effigy qa",
     );
-    assert.equal(ui.get("QA timeout for acme/nucleus").props.value, "120");
+    assert.equal(
+      ui.query("QA timeout for acme/nucleus"),
+      undefined,
+      "the retired milestone QA timeout control is removed",
+    );
+    assert.equal(
+      ui.query("QA schedule for acme/nucleus"),
+      undefined,
+      "the retired milestone QA schedule toggle is removed",
+    );
+    assert.equal(
+      ui.query("Merges between QA runs for acme/nucleus"),
+      undefined,
+      "the retired milestone QA merge threshold is removed",
+    );
     app.calls.length = 0;
     ui.type("QA command for acme/nucleus", 'effigy qa --suite "unit all"');
-    ui.press("QA schedule for acme/nucleus");
     ui.get("QA command for acme/nucleus").props.onBlur();
     await settle(() => app.calls.length === 1, "qa");
     assert.deepEqual(
@@ -697,12 +710,10 @@ test("one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
             maxOutputBytes: 1000,
             terminationGraceMs: 5000,
             argv: ["effigy", "qa", "--suite", "unit all"],
-            timeoutMs: 7_200_000,
-            schedule: { afterMerges: 10, maxIntervalHours: 24 },
           },
         },
       ],
-      "quotes honoured, caps kept, the 24-hour ceiling untouched",
+      "quotes honoured, caps kept, and no schedule or timeout is written",
     );
     ui.type("QA command for acme/nucleus", 'effigy "qa');
     assert.equal(
@@ -711,11 +722,6 @@ test("one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
       "an open quote is held back",
     );
     ui.type("QA command for acme/nucleus", "");
-    assert.equal(
-      ui.get("QA timeout for acme/nucleus").props.accessibilityState.disabled,
-      true,
-      "no command: no timeout to set",
-    );
     ui.get("QA command for acme/nucleus").props.onBlur();
     await settle(() => app.calls.length === 2, "qa cleared");
     assert.deepEqual(
@@ -723,6 +729,52 @@ test("one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
       ["repository.set", { repository: "acme/nucleus", qa: null }],
       "an empty command clears qa",
     );
+
+    // Legacy stored schedule is hidden in Settings and cleared when QA command saves.
+    const legacyApp = harness(
+      settingsOf([
+        row("legacy", "Legacy", [nucleus], {
+          settings: [
+            settingsRow(nucleus, {
+              qa: {
+                argv: ["effigy", "qa"],
+                timeoutMs: 7_200_000,
+                maxOutputBytes: 1000,
+                terminationGraceMs: 5000,
+                schedule: { afterMerges: 5, maxIntervalHours: 24 },
+              },
+            }),
+          ],
+        }),
+      ]),
+    );
+    const legacyUi = await legacyApp.mount(true);
+    try {
+      legacyUi.press("Legacy, Active");
+      assert.equal(legacyUi.query("QA schedule for acme/nucleus"), undefined);
+      assert.equal(
+        legacyUi.query("Merges between QA runs for acme/nucleus"),
+        undefined,
+      );
+      assert.equal(legacyUi.query("QA timeout for acme/nucleus"), undefined);
+      legacyUi.type("QA command for acme/nucleus", "bun run qa");
+      legacyUi.get("QA command for acme/nucleus").props.onBlur();
+      await settle(() => legacyApp.calls.length === 1, "legacy qa cleared");
+      assert.deepEqual(legacyApp.calls[0], [
+        "repository.set",
+        {
+          repository: "acme/nucleus",
+          qa: {
+            maxOutputBytes: 1000,
+            terminationGraceMs: 5000,
+            argv: ["bun", "run", "qa"],
+            schedule: null,
+          },
+        },
+      ]);
+    } finally {
+      done(legacyUi);
+    }
 
     app.calls.length = 0;
     ui.press("Host for acme/nucleus, Inherit");

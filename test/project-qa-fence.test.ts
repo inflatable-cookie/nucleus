@@ -858,7 +858,7 @@ test("a fence set while a batch is due leaves no request to reconcile and admits
   assert.equal(f.state()?.pending ?? null, null);
 });
 
-test("the board shows the fence with its reason, setter and countdown, the operator Clear on the current revision, and fenced Run QA buttons", async () => {
+test("the board shows the fence with its reason, setter and countdown, the operator Clear on the current revision, and no Run QA launch button", async () => {
   const now = Date.parse("2026-10-22T20:00:00Z");
   const fence = {
     id: "f",
@@ -894,15 +894,7 @@ test("the board shows the fence with its reason, setter and countdown, the opera
     board,
     /<QaFenceNotice\s+fence=\{qaFence\}[\s\S]*?writeQaFence\(\{\s*action: "clear",\s*expectedRevision: state\.qaFence\.revision,\s*caller: "operator \(board\)",?\s*\}\)/,
   );
-  assert.match(
-    read("qa-runs-tab.tsx"),
-    /text=\{fence \? "QA fenced" : "Run QA"\} label="Run QA" disabled=\{busy \|\| !launchProjects\.length \|\| Boolean\(fence\)\}/,
-  );
-  assert.match(
-    read("qa-runs-tab.tsx"),
-    /<QaFenceNotice fence=\{fence\} inventory=\{fenceInventory\}/,
-  );
-  // #869 moved QA launch out of Planning; the fenced launch is only in QA runs.
+  assert.doesNotMatch(board, /Run full QA|Run QA/);
   assert.doesNotMatch(read("planning-panel.tsx"), /Run full QA|Run QA/);
   assert.match(
     read("qa-fence-notice.tsx"),

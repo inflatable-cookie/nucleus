@@ -156,7 +156,17 @@ export class RuntimeRepositories {
     }
     const { repository: _repository, ...patch } = input;
     if (patch.qa?.schedule) throw new Error(QA_SCHEDULE_RETIRED);
-    if (patch.checksPolicy === "required") {
+    const normalizedPatch: Parameters<Store["patchRepository"]>[1] =
+      patch.qa && !patch.qa.argv && !patch.qa.stages
+        ? (() => {
+            const existing = this.context.store.repositorySettingsFor(identity);
+            return {
+              ...patch,
+              qa: existing?.qa ? { ...existing.qa, schedule: null } : null,
+            };
+          })()
+        : patch;
+    if (normalizedPatch.checksPolicy === "required") {
       // The decision reads the row this patch would update, then proves nothing
       // newer landed while the capability was observed: no await runs inside a
       // transaction and a concurrent settings write is never overwritten.
@@ -172,7 +182,7 @@ export class RuntimeRepositories {
           `checksPolicy "required" refused: repository settings for ${identity.origin ?? identity.path} changed while the required-check capability was observed (revision ${target?.revision ?? "none"} to ${current?.revision ?? "none"}). Nothing was written`,
         );
     }
-    return this.context.store.patchRepository(identity, patch);
+    return this.context.store.patchRepository(identity, normalizedPatch);
   }
 
   async getRepository(input: { repository: string }) {

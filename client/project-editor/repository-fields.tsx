@@ -1,12 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import {
-  Button,
   DropdownSelect,
   Field,
   FieldCaption,
   NumberStepper,
-  muted,
   row,
   type Colors,
 } from "../controls";
@@ -19,7 +17,6 @@ import {
 } from "../project-helpers";
 import {
   PROJECT_QA_DEFAULT_MAX_OUTPUT_BYTES,
-  PROJECT_QA_TIMEOUT_MAX_MS,
   VALIDATION_TIMEOUT_MAX_MS,
   type RepositorySetInput,
   type RepositorySettings,
@@ -35,11 +32,8 @@ const HOST_HELP =
   "Choose a preferred host for new tasks, or Inherit the operator default. The worker profile may choose another host; dispatched tasks keep theirs.";
 const MERGE_HELP = "Runs on every task's prospective merge.";
 const STAGED_HELP = "A staged QA is edited with `nucleus repository.set`.";
-const QA_TIMEOUT_MAX_MIN = PROJECT_QA_TIMEOUT_MAX_MS / 60_000;
 const MERGE_TIMEOUT_MAX_MIN = VALIDATION_TIMEOUT_MAX_MS / 60_000;
-const QA_TIMEOUT_DEFAULT_MIN = 60,
-  MERGE_TIMEOUT_DEFAULT_MIN = 15,
-  AFTER_MERGES_DEFAULT = 10;
+const MERGE_TIMEOUT_DEFAULT_MIN = 15;
 const minutes = (ms: number | undefined, fallback: number, max: number) =>
   ms ? Math.min(max, Math.max(1, Math.round(ms / 60_000))) : fallback;
 
@@ -80,13 +74,6 @@ export function RepositoryFields({
   const qa = settings?.qa ?? null,
     validation = settings?.validation ?? null;
   const [command, setCommand] = useState(qa?.argv ? joinCommand(qa.argv) : "");
-  const [qaTimeout, setQaTimeout] = useState(
-    minutes(qa?.timeoutMs, QA_TIMEOUT_DEFAULT_MIN, QA_TIMEOUT_MAX_MIN),
-  );
-  const [scheduled, setScheduled] = useState(Boolean(qa?.schedule));
-  const [afterMerges, setAfterMerges] = useState(
-    qa?.schedule?.afterMerges ?? AFTER_MERGES_DEFAULT,
-  );
   const [checks, setChecks] = useState(settings?.checksPolicy ?? "all");
   const [hostKind, setHostKind] = useState(settings?.hostKind ?? "inherit");
   const [reviewer, setReviewer] = useState(settings?.reviewer?.login ?? "");
@@ -105,11 +92,6 @@ export function RepositoryFields({
   useEffect(() => {
     if (!saves.quiet()) return;
     setCommand(qa?.argv ? joinCommand(qa.argv) : "");
-    setQaTimeout(
-      minutes(qa?.timeoutMs, QA_TIMEOUT_DEFAULT_MIN, QA_TIMEOUT_MAX_MIN),
-    );
-    setScheduled(Boolean(qa?.schedule));
-    setAfterMerges(qa?.schedule?.afterMerges ?? AFTER_MERGES_DEFAULT);
     setChecks(settings?.checksPolicy ?? "all");
     setHostKind(settings?.hostKind ?? "inherit");
     setReviewer(settings?.reviewer?.login ?? "");
@@ -122,17 +104,9 @@ export function RepositoryFields({
       ),
     );
   }, [saves.landed, revision]);
-  const writeQa = (next: {
-    command?: string;
-    timeout?: number;
-    scheduled?: boolean;
-    afterMerges?: number;
-  }) => {
+  const writeQa = (next: { command?: string }) => {
     const value = {
       command,
-      timeout: qaTimeout,
-      scheduled,
-      afterMerges,
       ...next,
     };
     const parsed = splitCommand(value.command);
@@ -161,13 +135,7 @@ export function RepositoryFields({
         qa: {
           ...kept,
           argv: parsed.argv,
-          timeoutMs: value.timeout * 60_000,
-          schedule: value.scheduled
-            ? {
-                afterMerges: value.afterMerges,
-                maxIntervalHours: qa?.schedule?.maxIntervalHours ?? 24,
-              }
-            : null,
+          ...(qa?.schedule ? { schedule: null } : {}),
         },
       },
       {},
@@ -240,7 +208,6 @@ export function RepositoryFields({
       { revert: () => setHostKind(server.current?.hostKind ?? "inherit") },
     );
   };
-  const hasCommand = Boolean(command.trim());
   const hasMerge = Boolean(mergeCommand.trim());
 
   return (
@@ -261,76 +228,21 @@ export function RepositoryFields({
           </Text>
         </View>
       ) : (
-        <>
-          <Pair>
-            <Field
-              c={c}
-              label="QA"
-              a11yLabel={`QA command for ${label}`}
-              placeholder="Command"
-              value={command}
-              disabled={disabled}
-              onChange={(text) => {
-                setCommand(text);
-                writeQa({ command: text });
-              }}
-              onBlur={saves.flush}
-            />
-            <View style={{ gap: space.xxs }}>
-              <FieldCaption c={c} text="Timeout" />
-              <View style={{ flexDirection: "row" }}>
-                <NumberStepper
-                  c={c}
-                  a11yLabel={`QA timeout for ${label}`}
-                  unit="min"
-                  value={qaTimeout}
-                  min={1}
-                  max={QA_TIMEOUT_MAX_MIN}
-                  disabled={disabled || !hasCommand}
-                  onChange={(next) => {
-                    setQaTimeout(next);
-                    writeQa({ timeout: next });
-                  }}
-                  onCommit={saves.flush}
-                />
-              </View>
-            </View>
-          </Pair>
-          <View style={{ ...row }}>
-            <FieldCaption c={c} text="Schedule" />
-            <Button
-              matchField
-              c={c}
-              checked={scheduled}
-              text={scheduled ? "On" : "Off"}
-              label={`QA schedule for ${label}`}
-              disabled={disabled || !hasCommand}
-              onPress={() => {
-                setScheduled(!scheduled);
-                writeQa({ scheduled: !scheduled });
-              }}
-            />
-            {scheduled && (
-              <>
-                <Text style={muted(c)}>After</Text>
-                <NumberStepper
-                  c={c}
-                  a11yLabel={`Merges between QA runs for ${label}`}
-                  unit="merges"
-                  value={afterMerges}
-                  min={1}
-                  max={1000}
-                  disabled={disabled || !hasCommand}
-                  onChange={(next) => {
-                    setAfterMerges(next);
-                    writeQa({ afterMerges: next });
-                  }}
-                  onCommit={saves.flush}
-                />
-              </>
-            )}
-          </View>
-        </>
+        <Pair>
+          <Field
+            c={c}
+            label="QA"
+            a11yLabel={`QA command for ${label}`}
+            placeholder="Command"
+            value={command}
+            disabled={disabled}
+            onChange={(text) => {
+              setCommand(text);
+              writeQa({ command: text });
+            }}
+            onBlur={saves.flush}
+          />
+        </Pair>
       )}
       <Pair>
         <View style={{ gap: space.xxs }}>
