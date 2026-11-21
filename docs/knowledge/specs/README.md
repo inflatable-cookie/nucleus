@@ -60,6 +60,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [062 — BB host adapter](062-bb-host-adapter.md) | approved; phases 0–6 implemented, phase 0 proved against isolated BB; phase 7 (trial and parity call) not started |
 | [065 — A host-agnostic ACP task session](065-acp-task-session.md) | implemented: the agent, its minted binding, the hold/release API and lifecycle text |
 | [066 — One reconciler](066-one-reconciler.md) | approved; merge and terminal-cleanup slice delivered |
+| [067 — Explicit resolution](067-explicit-resolution.md) | proposed |
 
 ## Host adapters
 
