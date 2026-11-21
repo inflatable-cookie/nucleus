@@ -11,6 +11,7 @@ import {
 } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { isSshAuthExhausted } from "../../shared/ssh-auth";
+import { isHostReadRecoveryHeld } from "../recovery/host-read-transient";
 import { isWaitingTaskStop, recordedStopIsWait } from "../../shared/task-stop";
 import { parseHostOutageNoticeId } from "../../shared/host-outage";
 import { isCloseoutHookHold } from "../hooks/hooks";
@@ -83,6 +84,7 @@ export function noticeSettlement(facts: {
   awaitingProof: boolean;
   closeoutHookHold: boolean;
   sshAuthExhausted: boolean;
+  hostReadExhausted?: boolean;
   /** The task's recovery episode is escalated, so its notice is delivered as an escalation. */
   recoveryEscalated: boolean;
   /** The other completion notices that resolve to the same recipient: one already settled, or the first pending. */
@@ -141,7 +143,8 @@ export function noticeSettlement(facts: {
     !facts.coordinatorNeedsOwner &&
     !facts.awaitingProof &&
     !facts.closeoutHookHold &&
-    !facts.sshAuthExhausted
+    !facts.sshAuthExhausted &&
+    !facts.hostReadExhausted
   )
     return {
       kind: "superseded",
@@ -801,10 +804,13 @@ export class Notices {
           (recovery!.status !== "pending" &&
             recovery!.action?.status === "refused"));
       const awaitingProof = stop?.reason === "awaiting_proof";
+      const hostReadExhausted =
+        isHostReadRecoveryHeld(this.store, task) === "exhausted";
       const locallyActionable =
         awaitingProof ||
         isCloseoutHookHold(task) ||
-        isSshAuthExhausted(task.reason);
+        isSshAuthExhausted(task.reason) ||
+        hostReadExhausted;
       // A recorded stop whose reason is not a wait is attention whatever the
       // phase says: Queue has stopped and named an owner verb it cannot apply
       // itself (nucleus#1159: a review blocked on an uncertain side effect keeps
@@ -968,6 +974,8 @@ export class Notices {
         awaitingProof: task.resolution.stop?.reason === "awaiting_proof",
         closeoutHookHold: isCloseoutHookHold(task),
         sshAuthExhausted: isSshAuthExhausted(task.reason),
+        hostReadExhausted:
+          isHostReadRecoveryHeld(this.store, task) === "exhausted",
         recoveryEscalated: task.resolution.recovery?.status === "escalated",
         completionCohort,
       };

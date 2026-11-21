@@ -19,9 +19,20 @@ import { missingOriginHasPlanner } from "../questions/origin";
 import {
   isSettledWaitProse,
   taskStopClassification,
+  taskStopRecord,
   taskStopVerbsFor,
   UNKNOWN_TASK_ATTENTION_REASON,
 } from "../../shared/task-stop";
+import {
+  hostReadTransientKey,
+  isHostReadRecoveryHeld,
+  readHostReadTransientEpisode,
+  taskHostReadOccurrenceKey,
+  taskHostReadStep,
+  taskHostReadTarget,
+  unwrapCoordinatorRouteWrapper,
+  type HostReadTransientEpisode,
+} from "../recovery/host-read-transient";
 import { holdsOf, taskHasUnreleasedRun } from "../../shared/contracts";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { isDispositionActive } from "../../shared/contracts";
@@ -74,6 +85,7 @@ export type TaskQuantumContext = Pick<
     Resolution,
     | "advance"
     | "beginValidationScanPass"
+    | "clearHostReadTransient"
     | "holdProofOnlyGoWait"
     | "ownedToolHold"
     | "owns"
@@ -374,6 +386,54 @@ export class TaskQuantum {
       // nucleus#1437: a stored settled-wait prose stop with no live owner settles before
       // the ordinary pass reads ownership, so a released verdict is not held behind it.
       task = this.context.resolution.settleSettledWaitStop(task);
+      // nucleus#1461: normalize any persisted host-read exhaustion record that
+      // previously fell into `route_unavailable` or a coordinator recovery wrapper.
+      if (
+        isHostReadRecoveryHeld(this.context.store, task) === "exhausted" &&
+        (task.resolution.stop?.reason === "route_unavailable" ||
+          task.reason.startsWith(
+            "No coordinator profile is available for recovery",
+          ) ||
+          task.resolution.recovery)
+      ) {
+        const normalizedReason = unwrapCoordinatorRouteWrapper(task.reason);
+        task = this.context.resolution.update(
+          task,
+          {
+            recovery: null,
+            recoveryActive: false,
+            stop: taskStopRecord(
+              "operator_needed",
+              normalizedReason,
+              task.resolution.stop,
+              undefined,
+              ["restart", "move"],
+            ),
+          },
+          { reason: normalizedReason },
+          "host_read_transient_normalized",
+          normalizedReason,
+        );
+        if (
+          !readHostReadTransientEpisode(this.context.store, task.id, "task")
+        ) {
+          const startedAt =
+            Date.parse(task.resolution.stop?.since ?? "") || Date.now();
+          this.context.store.setMeta(hostReadTransientKey("task", task.id), {
+            startedAt,
+            attempts: 0,
+            retryAt: 0,
+            detail: normalizedReason.slice(0, 1000),
+            step: taskHostReadStep(task),
+            hostId: task.hostId ?? null,
+            target: taskHostReadTarget(task),
+            occurrenceKey: taskHostReadOccurrenceKey(task),
+            exhaustedAt: Date.now(),
+            resumePhase: null,
+            movedToAttention: task.phase === "needs_attention",
+          } satisfies HostReadTransientEpisode);
+        }
+      }
       // The sweep owns discovery for an accepted worker creation restart.
       if (staleWorkerIntent(task) && deferredWorkerCreationRestart(task))
         return;
@@ -427,6 +487,41 @@ export class TaskQuantum {
         );
         return;
       }
+      const hostReadHold = isHostReadRecoveryHeld(this.context.store, task);
+      const hostReadEpisode = hostReadHold
+        ? readHostReadTransientEpisode(this.context.store, task.id, "task")
+        : null;
+      const canResumeHostReadQueued =
+        task.phase === "needs_attention" &&
+        !task.workspaceId &&
+        !task.agentId &&
+        hostReadHold !== null &&
+        hostReadEpisode?.resumePhase === "queued" &&
+        !startsNoRuns(this.context.store);
+      const canResumeHostReadDispatch =
+        task.phase === "needs_attention" &&
+        Boolean(task.directory && task.workspaceId && task.profile) &&
+        !task.agentIntent &&
+        !task.agentId &&
+        hostReadHold === "exhausted" &&
+        (hostReadEpisode?.resumePhase === "dispatching" ||
+          (!hostReadEpisode?.resumePhase && task.retiredWorkers.length === 0));
+      if (canResumeHostReadQueued) {
+        if (task.directory && onCheckoutVolume(task.directory))
+          await this.context.adapter.preflightWorkspaceStorage?.(task);
+        this.context.resolution.clearHostReadTransient?.(task.id, "task");
+        const restored = this.context.resolution.update(
+          this.context.store.task(task.id),
+          { stop: null, attention: false },
+          { phase: "queued", reason: "Fresh host observation recovered; requeued" },
+          "host_read_transient_phase_restored",
+          "queued",
+        );
+        this.context.cleanContext(() => {
+          void this.context.wakeRepository(restored.repoPath);
+        });
+        return;
+      }
       if (
         (task.workspaceIntent && !task.workspaceId) ||
         (task.agentIntent && !task.agentId)
@@ -443,7 +538,7 @@ export class TaskQuantum {
         !task.agentIntent &&
         (task.phase === "dispatching" ||
           (task.phase === "needs_attention" &&
-            task.retiredWorkers.length > 0)) &&
+            (task.retiredWorkers.length > 0 || canResumeHostReadDispatch))) &&
         !startsNoRuns(this.context.store)
       ) {
         const current = this.context.store.task(task.id);

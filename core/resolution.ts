@@ -751,6 +751,7 @@ export class Resolution {
         "attentionUnknownEscalation",
         "environmentDeferred",
         "gitTransientFailure",
+        "hostReadTransientFailure",
         "reconcileLegacyPlaceholderDecisions",
         "responsibleBlockerLadder",
         "store",

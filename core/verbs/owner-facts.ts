@@ -41,6 +41,11 @@ import { recoveryBoundStatus } from "../recovery/recovery-bound";
 import { runFenceRefusal, runSettlementFence } from "../intake/run-settlement";
 import { supersededIdleBinding } from "../recovery/fence-settlement";
 import { reviewResultFencesRun } from "../review/review-continuation";
+import {
+  isHostReadRecoveryHeld,
+  readHostReadTransientEpisode,
+  unwrapCoordinatorRouteWrapper,
+} from "../recovery/host-read-transient";
 
 /** Everything the registry reads about one task; a store read, never a remote call. */
 export interface OwnerVerbFacts {
@@ -640,7 +645,37 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
       evidence: `recovery ${recovery.id} (${recovery.status}, generation ${recovery.generation}) on ${recovery.runId ?? "no run"}`,
     });
   }
-  if (kind === "attention")
+  if (kind === "attention") {
+    const hostReadHold = isHostReadRecoveryHeld(facts.store, task);
+    const hostReadEpisode = hostReadHold
+      ? readHostReadTransientEpisode(facts.store, task.id, "task")
+      : null;
+    if (hostReadHold === "exhausted") {
+      const scopeParts = [
+        hostReadEpisode?.hostId ? `host ${hostReadEpisode.hostId}` : null,
+        hostReadEpisode?.target || null,
+      ].filter(Boolean);
+      const scopeText = scopeParts.length ? ` (${scopeParts.join(", ")})` : "";
+      const detail = unwrapCoordinatorRouteWrapper(stopFields.detail);
+      const verbs = stopFields.suggestedVerbs.filter((v) => v !== "route");
+      return taskNextStopSchema.parse({
+        kind,
+        ...stopFields,
+        reason:
+          stopFields.reason === "route_unavailable"
+            ? "operator_needed"
+            : stopFields.reason,
+        suggestedVerbs: verbs.length ? verbs : ["restart", "move"],
+        detail,
+        owner: "host-read recovery",
+        evidence:
+          facts.notices.find(
+            (notice) =>
+              notice.kind === "attention" && notice.status === "pending",
+          )?.text ??
+          `${hostReadEpisode?.step ?? "Host check"}${scopeText}: ${hostReadEpisode?.detail ?? detail}; clears when host state is observable or via restart/move`,
+      });
+    }
     return taskNextStopSchema.parse({
       kind,
       ...stopFields,
@@ -651,6 +686,7 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
             notice.kind === "attention" && notice.status === "pending",
         )?.text ?? null,
     });
+  }
   if (kind === "run") {
     const checkpointed = retainedCheckpointRun(runs);
     if (checkpointed) {
@@ -707,6 +743,27 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
       owner: "queue",
       evidence: `waiting for ${task.prerequisiteWait.waitsFor.join(", ")}`,
     });
+  const hostReadHold = isHostReadRecoveryHeld(facts.store, task);
+  const hostReadEpisode = hostReadHold
+    ? readHostReadTransientEpisode(facts.store, task.id, "task")
+    : null;
+  if (hostReadHold !== null) {
+    const scopeParts = [
+      hostReadEpisode?.hostId ? `host ${hostReadEpisode.hostId}` : null,
+      hostReadEpisode?.target || null,
+    ].filter(Boolean);
+    const scopeText = scopeParts.length ? ` (${scopeParts.join(", ")})` : "";
+    return taskNextStopSchema.parse({
+      kind,
+      ...stopFields,
+      suggestedVerbs: hostReadHold === "exhausted" ? ["restart", "move"] : [],
+      owner: "host-read recovery",
+      evidence:
+        hostReadHold === "waiting"
+          ? `${hostReadEpisode?.step ?? "Host check"}${scopeText} retrying automatically (attempt ${hostReadEpisode?.attempts ?? 1}): ${hostReadEpisode?.detail ?? stopFields.detail}; clears when host state is observable`
+          : `${hostReadEpisode?.step ?? "Host check"}${scopeText}: ${hostReadEpisode?.detail ?? stopFields.detail}; clears when host state is observable or via restart/move`,
+    });
+  }
   return taskNextStopSchema.parse({
     kind,
     ...stopFields,

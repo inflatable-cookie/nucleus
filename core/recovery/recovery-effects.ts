@@ -15,6 +15,7 @@ import {
 } from "../store/store";
 import { readCreationAttempt } from "../store/store-task-funnel";
 import { provenAbsentCreation } from "./absent-creation/decisions";
+import { isHostReadExhaustedReason } from "./host-read-transient";
 
 /**
  * Spec 012/016/033/039/049: one read-only projection of the durable recovery
@@ -160,6 +161,12 @@ export function recoveryEffects(
       if (options.enclosing && operation.id === options.enclosing.operationId)
         continue;
       if (historicalFenceRefusal(operation)) continue;
+      if (
+        !operation.preSendBoundaryStartedAt &&
+        operation.effect?.status === "reconciled" &&
+        isHostReadExhaustedReason(operation.diagnostic)
+      )
+        continue;
       // A control whose host effect later evidence has answered is history for
       // this projection: it gates no phase, so it cannot hold review or merge
       // behind an uncertainty the task itself has already settled

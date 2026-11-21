@@ -39,6 +39,7 @@ import {
   recordHostFailure,
 } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
+import { readHostReadTransientEpisode } from "./host-read-transient";
 import {
   observeResolutionCreation,
   recordResolutionCreationBinding,
@@ -295,15 +296,37 @@ export class Observation {
         if (this.resolution.stopped()) return;
         const latest = this.store.run(run.id);
         if (!latest || JSON.stringify(latest) !== JSON.stringify(run)) continue;
+        const transientBeforeClear = readHostReadTransientEpisode(
+          this.store,
+          task.id,
+          "task",
+        );
         this.resolution.clearHostReadTransient?.(task.id, "task");
         const taskStop = this.store.taskOrNull(task.id);
-        if (taskStop?.resolution.stop?.reason === "external_unavailable")
+        if (
+          taskStop &&
+          transientBeforeClear?.movedToAttention &&
+          transientBeforeClear.resumePhase &&
+          taskStop.phase === "needs_attention"
+        ) {
+          this.resolution.update(
+            taskStop,
+            { stop: null },
+            { phase: transientBeforeClear.resumePhase, reason: "Fresh host observation recovered; resuming task" },
+            "host_read_transient_phase_restored",
+            transientBeforeClear.resumePhase,
+          );
+        } else if (
+          taskStop &&
+          (taskStop.resolution.stop?.reason === "external_unavailable" ||
+            transientBeforeClear?.exhaustedAt != null)
+        )
           this.resolution.update(
             taskStop,
             { stop: null },
             {},
             "task_wait_cleared",
-            "external_unavailable",
+            taskStop.resolution.stop?.reason ?? "host_read_transient",
           );
         if (state.id !== run.agentId || state.workspaceId !== run.workspaceId)
           throw new Error(

@@ -13,9 +13,14 @@ import {
 } from "../git/git-transient-backoff";
 import {
   claimHostReadTransientError,
+  hasUnresolvedHostReadExhaustionEvent,
   hostReadTransientEscalationReason,
   hostReadTransientKey,
+  isHostReadExhaustedReason,
   nextHostReadTransientAttempt,
+  readHostReadTransientEpisode,
+  taskHostReadContext,
+  type HostReadFailureContext,
   type HostReadTransientEpisode,
 } from "../recovery/host-read-transient";
 import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
@@ -391,12 +396,48 @@ export class TaskWakes {
     scope: "task" | "op" | "question" = "task",
   ): void {
     const key = hostReadTransientKey(scope, id);
+    const old = readHostReadTransientEpisode(this.store, id, scope);
     this.store.deleteMeta(key);
     const timerKey = `${scope}:${id}`;
     const timer = this.hostReadTransientTimers.get(timerKey);
     if (timer) {
       clearTimeout(timer);
       this.hostReadTransientTimers.delete(timerKey);
+    }
+    if (
+      scope === "task" &&
+      (old?.exhaustedAt != null ||
+        hasUnresolvedHostReadExhaustionEvent(this.store, id))
+    ) {
+      this.store.event(
+        id,
+        "host_read_transient_recovered",
+        "Fresh host observation or owner control cleared the host-read wait",
+      );
+      this.resolution.settleAttentionEpisode(
+        id,
+        "Fresh host observation or owner control cleared the host-read wait",
+      );
+    }
+  }
+  resumeHostReadTransients(): void {
+    if (this.engine.stopped) return;
+    for (const task of this.store.liveTasks()) {
+      if (task.removedAt || ["done", "cancelled"].includes(task.phase)) continue;
+      const episode = readHostReadTransientEpisode(this.store, task.id, "task");
+      if (episode && episode.exhaustedAt == null)
+        this.armHostReadTransient(task.id, episode.retryAt, "task");
+    }
+    for (const operation of this.store.operations({
+      states: ["pending", "running"],
+    })) {
+      const episode = readHostReadTransientEpisode(
+        this.store,
+        operation.id,
+        "op",
+      );
+      if (episode && episode.exhaustedAt == null)
+        this.armHostReadTransient(operation.id, episode.retryAt, "op");
     }
   }
   armHostReadTransient(
@@ -445,25 +486,80 @@ export class TaskWakes {
     const scope = operation ? "op" : "task";
     const key = hostReadTransientKey(scope, id);
     const detail = error instanceof Error ? error.message : String(error);
-    const old =
-      this.store.getMeta<HostReadTransientEpisode | null>(key) ?? null;
-    if (!claimHostReadTransientError(error) && old)
-      return "wait";
+    const old = readHostReadTransientEpisode(this.store, id, scope);
+    const currentTask = !operation ? this.store.taskOrNull(id) : null;
+    const currentOp = operation ? this.store.operation(id) : null;
+    const context: HostReadFailureContext = !operation && currentTask
+      ? taskHostReadContext(currentTask, step, old)
+      : {
+          step,
+          hostId: currentOp?.hostId ?? old?.hostId ?? null,
+          target: currentOp?.taskId ? `task ${currentOp.taskId}` : old?.target ?? null,
+          occurrenceKey: id,
+        };
+    const occurrenceMismatch = Boolean(
+      old?.occurrenceKey &&
+        context.occurrenceKey &&
+        old.occurrenceKey !== context.occurrenceKey,
+    );
+    if (!claimHostReadTransientError(error) && old && !occurrenceMismatch)
+      return old.exhaustedAt != null ? "exhausted" : "wait";
+    const activeOld = occurrenceMismatch ? null : old;
     const limits = {
       limitMs: this.store.getMeta<number>("hostReadTransientLimitMs"),
       minAttempts: this.store.getMeta<number>("hostReadTransientMinAttempts"),
       maxAttempts: this.store.getMeta<number>("hostReadTransientMaxAttempts"),
     };
-    const next = nextHostReadTransientAttempt(old, detail, Date.now(), limits);
+    const nowMs = Date.now();
+    const legacyAlreadyExhausted = Boolean(
+      !operation &&
+        !activeOld &&
+        currentTask &&
+        hasUnresolvedHostReadExhaustionEvent(this.store, id) &&
+        (isHostReadExhaustedReason(currentTask.reason) ||
+          isHostReadExhaustedReason(currentTask.resolution.stop?.detail ?? "")),
+    );
+    const next = legacyAlreadyExhausted
+      ? null
+      : nextHostReadTransientAttempt(
+          activeOld,
+          detail,
+          nowMs,
+          limits,
+          context,
+        );
     if (!next) {
-      this.clearHostReadTransient(id, scope);
-      const reason = hostReadTransientEscalationReason(step, old, detail);
+      const timerKey = `${scope}:${id}`;
+      const timer = this.hostReadTransientTimers.get(timerKey);
+      if (timer) {
+        clearTimeout(timer);
+        this.hostReadTransientTimers.delete(timerKey);
+      }
+      const reason = hostReadTransientEscalationReason(
+        context.step ?? step,
+        activeOld,
+        detail,
+        nowMs,
+        context,
+      );
       if (operation) {
         const current = this.store.operation(id);
-        if (current)
+        const exhaustedEpisode: HostReadTransientEpisode = {
+          startedAt: activeOld?.startedAt ?? nowMs,
+          attempts: activeOld?.attempts ?? 0,
+          retryAt: 0,
+          detail: detail.slice(0, 1000),
+          step: context.step ?? activeOld?.step ?? step,
+          hostId: context.hostId ?? activeOld?.hostId ?? null,
+          target: context.target ?? activeOld?.target ?? null,
+          occurrenceKey: context.occurrenceKey ?? activeOld?.occurrenceKey ?? null,
+          exhaustedAt: activeOld?.exhaustedAt ?? nowMs,
+        };
+        this.store.setMeta(key, exhaustedEpisode);
+        if (current && !["succeeded", "failed"].includes(current.state)) {
           this.store.putOperation({
             ...current,
-            state: "needs_attention",
+            state: current.preSendBoundaryStartedAt ? "needs_attention" : "failed",
             settledAt: now(),
             diagnostic: reason.slice(0, 4000),
             effect: current.effect
@@ -475,36 +571,115 @@ export class TaskWakes {
                 }
               : null,
           });
+        }
       } else {
         const current = this.store.taskOrNull(id);
-        const episodeTag = `${old?.startedAt ?? 0}:${detail.slice(0, 120)}`;
-        const alreadyEscalated =
-          current?.phase === "needs_attention" &&
-          this.store
-            .eventsAll(id)
-            .some(
-              (event) =>
-                event.kind === "host_read_transient_exhausted" &&
-                event.detail.startsWith(episodeTag),
+        const episodeTag = `${activeOld?.startedAt ?? 0}:${detail.slice(0, 120)}`;
+        const alreadyExhaustedAttention = Boolean(
+          current &&
+            (legacyAlreadyExhausted ||
+              ((current.phase === "needs_attention" ||
+                current.resolution.stop?.reason === "operator_needed") &&
+                (activeOld?.exhaustedAt != null ||
+                  this.store
+                    .eventsAll(id)
+                    .some(
+                      (event) =>
+                        event.kind === "host_read_transient_exhausted" &&
+                        event.detail.startsWith(episodeTag),
+                    )))),
+        );
+        const moveTaskToAttention = Boolean(
+          current &&
+            !this.store.getMeta("paused") &&
+            ["queued", "dispatching"].includes(current.phase),
+        );
+        if (!alreadyExhaustedAttention) {
+          this.store.setMeta(key, {
+            startedAt: activeOld?.startedAt ?? nowMs,
+            attempts: activeOld?.attempts ?? 0,
+            retryAt: 0,
+            detail: detail.slice(0, 1000),
+            step: context.step ?? activeOld?.step ?? step,
+            hostId: context.hostId ?? activeOld?.hostId ?? null,
+            target: context.target ?? activeOld?.target ?? null,
+            occurrenceKey:
+              context.occurrenceKey ?? activeOld?.occurrenceKey ?? null,
+            exhaustedAt: activeOld?.exhaustedAt ?? nowMs,
+            resumePhase:
+              activeOld?.resumePhase ?? context.resumePhase ?? null,
+            movedToAttention:
+              activeOld?.movedToAttention || moveTaskToAttention,
+          } satisfies HostReadTransientEpisode);
+          if (
+            !this.store
+              .eventsAll(id)
+              .some(
+                (event) =>
+                  event.kind === "host_read_transient_exhausted" &&
+                  event.detail.startsWith(episodeTag),
+              )
+          ) {
+            this.store.event(
+              id,
+              "host_read_transient_exhausted",
+              `${episodeTag}: ${reason}`.slice(0, 2000),
             );
-        if (!alreadyEscalated) {
-          this.store.event(
-            id,
-            "host_read_transient_exhausted",
-            `${episodeTag}: ${reason}`.slice(0, 2000),
-          );
+          }
           this.engine.note(
             id,
             reason,
             "operator_needed",
-            this.store.getMeta("paused") ? undefined : "needs_attention",
+            moveTaskToAttention ? "needs_attention" : undefined,
+            ["restart", "move"],
           );
+        } else {
+          if (!activeOld || activeOld.exhaustedAt == null) {
+            this.store.setMeta(key, {
+              startedAt: activeOld?.startedAt ?? nowMs,
+              attempts: activeOld?.attempts ?? 0,
+              retryAt: 0,
+              detail: activeOld?.detail ?? detail.slice(0, 1000),
+              step: context.step ?? activeOld?.step ?? step,
+              hostId: context.hostId ?? activeOld?.hostId ?? null,
+              target: context.target ?? activeOld?.target ?? null,
+              occurrenceKey:
+                context.occurrenceKey ?? activeOld?.occurrenceKey ?? null,
+              exhaustedAt: nowMs,
+              resumePhase:
+                activeOld?.resumePhase ?? context.resumePhase ?? null,
+              movedToAttention:
+                activeOld?.movedToAttention ||
+                current?.phase === "needs_attention",
+            } satisfies HostReadTransientEpisode);
+          }
+          if (
+            current &&
+            (current.reason === "Creating worker" ||
+              current.resolution.stop?.reason === "route_unavailable")
+          ) {
+            this.engine.note(
+              id,
+              current.resolution.stop?.detail &&
+                isHostReadExhaustedReason(current.resolution.stop.detail)
+                ? current.resolution.stop.detail
+                : reason,
+              "operator_needed",
+              moveTaskToAttention ? "needs_attention" : undefined,
+              ["restart", "move"],
+            );
+          }
         }
       }
       return "exhausted";
     }
     this.store.setMeta(key, next);
-    const visible = `${step} read incomplete; retrying automatically (attempt ${next.attempts}): ${detail}`;
+    const scopeParts = [
+      next.hostId ? `host ${next.hostId}` : null,
+      next.target || null,
+    ].filter(Boolean);
+    const scopeText = scopeParts.length ? ` (${scopeParts.join(", ")})` : "";
+    const visible = `${next.step ?? step} read incomplete${scopeText}; retrying automatically (attempt ${next.attempts}): ${detail}`;
     if (operation) {
       const current = this.store.operation(id);
       if (current)

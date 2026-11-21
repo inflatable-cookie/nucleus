@@ -420,6 +420,17 @@ export class WorkerLauncher {
                 agentIntent: false,
                 restartRunId: runId,
                 runId: null,
+                ...(current.reason === "Creating worker"
+                  ? { reason: task.reason }
+                  : {}),
+                ...(!current.resolution.stop && task.resolution.stop
+                  ? {
+                      resolution: {
+                        ...current.resolution,
+                        stop: task.resolution.stop,
+                      },
+                    }
+                  : {}),
                 briefRuns: current.briefRuns.filter(
                   (item) => item.runId !== runId,
                 ),
@@ -551,6 +562,13 @@ export class WorkerLauncher {
       }
       throw error;
     }
-    this.store.update(task.id, { phase: "working", reason: "Worker running" });
+    const latest = this.store.task(task.id);
+    this.store.update(task.id, {
+      phase: "working",
+      reason: "Worker running",
+      ...(latest.resolution.stop
+        ? { resolution: { ...latest.resolution, stop: null } }
+        : {}),
+    });
   }
 }

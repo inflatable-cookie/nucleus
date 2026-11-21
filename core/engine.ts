@@ -54,7 +54,7 @@ import type {
 } from "../shared/contracts";
 import { isTransportFailure } from "../shared/transport";
 
-import { type TaskStopReason } from "../shared/task-stop";
+import { type TaskStopReason, type TaskStopVerb } from "../shared/task-stop";
 export { capacityFor, occupiesSlot } from "./dispatch/capacity";
 import { capacityFor, occupiesSlot } from "./dispatch/capacity";
 export { isTransportFailure };
@@ -1615,6 +1615,9 @@ export class Engine {
   ): void {
     this.taskWakes.clearHostReadTransient(id, scope);
   }
+  resumeHostReadTransients(): void {
+    this.taskWakes.resumeHostReadTransients();
+  }
   deferHostReadTransient(
     id: string,
     error: unknown,
@@ -2828,8 +2831,9 @@ export class Engine {
     reason: string,
     stop: TaskStopReason | "classify",
     phase?: Task["phase"],
+    suggestedVerbs?: TaskStopVerb[],
   ): void {
-    return this.engineStop.note(id, reason, stop, phase);
+    return this.engineStop.note(id, reason, stop, phase, suggestedVerbs);
   }
   enqueueTitle(taskId: string): void {
     this.titles.enqueue(taskId);
