@@ -784,7 +784,9 @@ export class QueueRuntime {
       (task) => this.engine.queuedExternalWait(task),
       () => this.engine.queuedWaitSignature(),
       () =>
-        this.hostSession?.id || this.hostRegistry.legacyPaseoPrimary()?.id || "unknown",
+        this.hostSession?.id ||
+        this.hostRegistry.legacyPaseoPrimary()?.id ||
+        "unknown",
     );
     this.questions = new RuntimeQuestions({
       store: this.store,
@@ -870,6 +872,7 @@ export class QueueRuntime {
       anyHostConnected: () => this.anyHostConnected(),
       backupHealthProjection: () => this.backupHealthProjection(),
       projectObservations: () => this.t3Host?.projectObservations() ?? [],
+      boardLeads: () => this.planning.leadBoard(),
       boardError: () => this.boardError(),
       get prStates() {
         return runtime.lifecycle.prStateMap();

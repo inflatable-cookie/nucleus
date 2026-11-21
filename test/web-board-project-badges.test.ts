@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { BOARD_SURFACE_T3, WebBoard, uiLinkInputSchema } from "../service/web/web-board";
+import {
+  BOARD_SURFACE_T3,
+  WebBoard,
+  uiLinkInputSchema,
+} from "../service/web/web-board";
 import { uiBoardSchema } from "../shared/contracts";
 
 /**
@@ -13,7 +17,14 @@ import { uiBoardSchema } from "../shared/contracts";
  * by the real wire schema, so a badge the schema drops would fail here.
  */
 
-const BADGES = { "t3code:env-a": { "/synthetic/repos/biock-aase": { monogram: "BA", color: "fuchsia" } } };
+const BADGES = {
+  "t3code:env-a": {
+    "/synthetic/repos/biock-aase": { monogram: "BA", color: "fuchsia" },
+  },
+};
+const REPOSITORY_BADGES = {
+  "/synthetic/repos/biock-aase": { monogram: "BA", color: "fuchsia" },
+};
 
 function boardWithBadges() {
   return uiBoardSchema.parse({
@@ -38,11 +49,14 @@ function boardWithBadges() {
     projects: [],
     prStates: {},
     projectBadges: BADGES,
+    repositoryBadges: REPOSITORY_BADGES,
   });
 }
 
 async function withBoard(run: (board: WebBoard, tmp: string) => Promise<void>) {
-  const tmp = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "web-badges-"));
+  const tmp = await mkdtemp(
+    join(process.env.TMPDIR ?? tmpdir(), "web-badges-"),
+  );
   const board = boardWithBadges();
   const server = new WebBoard({
     sessionFile: join(tmp, "web-sessions.json"),
@@ -81,7 +95,8 @@ async function snapshotOver(port: number, cookie: string) {
     body: JSON.stringify({ method: "queue.ui-snapshot", input: {} }),
   });
   assert.equal(response.status, 200);
-  return (await response.json() as { result: Record<string, unknown> }).result;
+  return ((await response.json()) as { result: Record<string, unknown> })
+    .result;
 }
 
 async function firstBoardFrame(port: number, cookie: string) {
@@ -105,9 +120,16 @@ async function firstBoardFrame(port: number, cookie: string) {
     text += decoder.decode(chunk.value);
   }
   controller.abort();
-  const frame = text.split("\n\n").find((part) => part.includes("event: board"));
+  const frame = text
+    .split("\n\n")
+    .find((part) => part.includes("event: board"));
   assert.ok(frame, "the first live frame is the board");
-  return JSON.parse(frame.split("\n").find((line) => line.startsWith("data: "))!.slice(6)) as Record<string, unknown>;
+  return JSON.parse(
+    frame
+      .split("\n")
+      .find((line) => line.startsWith("data: "))!
+      .slice(6),
+  ) as Record<string, unknown>;
 }
 
 test("a T3 surface session receives the generated badges over the RPC route", async () => {
@@ -115,6 +137,7 @@ test("a T3 surface session receives the generated badges over the RPC route", as
     const { port, cookie } = await pair(server, BOARD_SURFACE_T3);
     const board = await snapshotOver(port, cookie);
     assert.deepEqual(board.projectBadges, BADGES);
+    assert.deepEqual(board.repositoryBadges, REPOSITORY_BADGES);
   });
 });
 
@@ -123,8 +146,10 @@ test("a standalone session receives the same board without the badges, over RPC 
     const { port, cookie } = await pair(server);
     const board = await snapshotOver(port, cookie);
     assert.equal("projectBadges" in board, false);
+    assert.equal("repositoryBadges" in board, false);
     const live = await firstBoardFrame(port, cookie);
     assert.equal("projectBadges" in live, false);
+    assert.equal("repositoryBadges" in live, false);
     assert.equal(live.revision, 7);
   });
 });
@@ -134,6 +159,7 @@ test("the T3 surface receives the badges over the live channel too", async () =>
     const { port, cookie } = await pair(server, BOARD_SURFACE_T3);
     const live = await firstBoardFrame(port, cookie);
     assert.deepEqual(live.projectBadges, BADGES);
+    assert.deepEqual(live.repositoryBadges, REPOSITORY_BADGES);
   });
 });
 
@@ -141,7 +167,9 @@ test("the surface survives a restart from the session file, and a session withou
   await withBoard(async (server, tmp) => {
     const { cookie } = await pair(server, BOARD_SURFACE_T3);
     await server.close();
-    const persisted = JSON.parse(await readFile(join(tmp, "web-sessions.json"), "utf8")) as {
+    const persisted = JSON.parse(
+      await readFile(join(tmp, "web-sessions.json"), "utf8"),
+    ) as {
       sessions: Array<{ surface?: string }>;
     };
     assert.equal(persisted.sessions.length, 1);
@@ -159,6 +187,7 @@ test("the surface survives a restart from the session file, and a session withou
       const port = await restarted.listen();
       const board = await snapshotOver(port, cookie);
       assert.deepEqual(board.projectBadges, BADGES);
+      assert.deepEqual(board.repositoryBadges, REPOSITORY_BADGES);
     } finally {
       await restarted.close();
     }
@@ -166,7 +195,13 @@ test("the surface survives a restart from the session file, and a session withou
 });
 
 test("the owner's link request names only the T3 surface, and anything else is refused", () => {
-  assert.equal(uiLinkInputSchema.parse({ action: "issue", surface: "t3code" }).surface, "t3code");
+  assert.equal(
+    uiLinkInputSchema.parse({ action: "issue", surface: "t3code" }).surface,
+    "t3code",
+  );
   assert.equal(uiLinkInputSchema.parse({ action: "issue" }).surface, undefined);
-  assert.equal(uiLinkInputSchema.safeParse({ action: "issue", surface: "bb" }).success, false);
+  assert.equal(
+    uiLinkInputSchema.safeParse({ action: "issue", surface: "bb" }).success,
+    false,
+  );
 });

@@ -244,7 +244,7 @@ test("026-14c the panel reuses the main surface board; there is no second copy o
   // would have to introduce its own input instead of spreading this one.
   assert.match(
     ui,
-    /const columns = useMemo\(\(\) => pipelineBoard\(pipelineInput\),/,
+    /const columns = useMemo\(\s*\(\) => pipelineBoard\(pipelineInput\),/,
     "the shared input feeds the one board projection",
   );
   // The panel's scope is preset in the panel and never touches the main surface's persisted scope.

@@ -40,7 +40,11 @@ import {
   SurfaceRefusalError,
 } from "../transport/dispatch";
 import { ExecutorError } from "../executor/executor";
-import { MAX_FRAME_BYTES, METHOD_PATTERN, ProtocolError } from "../../shared/service/protocol";
+import {
+  MAX_FRAME_BYTES,
+  METHOD_PATTERN,
+  ProtocolError,
+} from "../../shared/service/protocol";
 import { sourcePathFromModule } from "../../shared/service/build";
 
 const LOOPBACK = "127.0.0.1";
@@ -116,19 +120,36 @@ function digest(token: string): string {
  * anything that is not a board pass through unchanged.
  */
 export function boardForSurface<T>(board: T, t3: boolean): T {
-  if (t3 || !board || typeof board !== "object" || Array.isArray(board) || "unchanged" in board) return board;
-  const { projectBadges: _badges, ...rest } = board as Record<string, unknown>;
+  if (
+    t3 ||
+    !board ||
+    typeof board !== "object" ||
+    Array.isArray(board) ||
+    "unchanged" in board
+  )
+    return board;
+  const {
+    projectBadges: _badges,
+    repositoryBadges: _repoBadges,
+    ...rest
+  } = board as Record<string, unknown>;
   return rest as T;
 }
 
 /** In-memory token table: digests only, bounded, expiring, revocable. */
 export class WebTokens {
-  private readonly live = new Map<string, { expiresAt: number; surface: BoardSurface | null }>();
+  private readonly live = new Map<
+    string,
+    { expiresAt: number; surface: BoardSurface | null }
+  >();
 
   constructor(private readonly now: () => number = Date.now) {}
 
   /** Mint a token that lives for `ttlMs`, for the board surface it was minted for. The table keeps only its digest. */
-  issue(ttlMs: number, surface: BoardSurface | null = null): { token: string; expiresAt: number } {
+  issue(
+    ttlMs: number,
+    surface: BoardSurface | null = null,
+  ): { token: string; expiresAt: number } {
     this.prune();
     while (this.live.size >= MAX_OUTSTANDING_TOKENS) {
       const oldest = this.live.keys().next().value;
@@ -149,7 +170,9 @@ export class WebTokens {
   }
 
   /** Consume a valid one-time link token during browser pairing; the session key and the surface it names. */
-  consume(token: string | undefined): { key: string; surface: BoardSurface | null } | null {
+  consume(
+    token: string | undefined,
+  ): { key: string; surface: BoardSurface | null } | null {
     const key = this.admit(token);
     if (!key) return null;
     const { surface } = this.live.get(key)!;
@@ -275,15 +298,23 @@ export class WebBoard {
   }
 
   /** Whether the preferred port was occupied and the board selected an ephemeral one. */
-  get usedFallbackPort(): boolean { return this.portFallback; }
+  get usedFallbackPort(): boolean {
+    return this.portFallback;
+  }
 
   /** Mint a link: the board URL with a fresh token in its fragment, for one board surface. */
-  issueLink(ttlMinutes: number, surface: BoardSurface | null = null): {
+  issueLink(
+    ttlMinutes: number,
+    surface: BoardSurface | null = null,
+  ): {
     url: string;
     expiresAt: string;
     ttlMinutes: number;
   } {
-    const { token, expiresAt } = this.tokens.issue(ttlMinutes * 60_000, surface);
+    const { token, expiresAt } = this.tokens.issue(
+      ttlMinutes * 60_000,
+      surface,
+    );
     return {
       url: `http://${LOOPBACK}:${this.boundPort}/#token=${token}&expiresAt=${expiresAt}`,
       expiresAt: new Date(expiresAt).toISOString(),
@@ -438,7 +469,10 @@ export class WebBoard {
     );
   }
 
-  private async pair(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async pair(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     if (request.method !== "POST") {
       sendJson(response, 405, refusal("method", "POST to pair this browser."));
       return;
@@ -449,7 +483,10 @@ export class WebBoard {
       sendJson(
         response,
         401,
-        refusal("unauthenticated", "A valid, unexpired one-time board link is required to pair this browser."),
+        refusal(
+          "unauthenticated",
+          "A valid, unexpired one-time board link is required to pair this browser.",
+        ),
         { "www-authenticate": 'Bearer realm="nucleus-board"' },
       );
       return;
@@ -465,43 +502,78 @@ export class WebBoard {
     this.sessions.set(sessionKey, this.now() + WEB_SESSION_IDLE_MS);
     if (consumed.surface) this.surfaces.set(sessionKey, consumed.surface);
     await this.saveSessions();
-    sendJson(response, 200, { paired: true }, {
-      "set-cookie": sessionCookie(cookie),
-    });
+    sendJson(
+      response,
+      200,
+      { paired: true },
+      {
+        "set-cookie": sessionCookie(cookie),
+      },
+    );
   }
 
-  private async session(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async session(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     if (request.method !== "GET") {
-      sendJson(response, 405, refusal("method", "GET to check the paired board session."));
+      sendJson(
+        response,
+        405,
+        refusal("method", "GET to check the paired board session."),
+      );
       return;
     }
-    if (!await this.authorize(request, response)) return;
+    if (!(await this.authorize(request, response))) return;
     sendJson(response, 200, { paired: true });
   }
 
-  private async authorize(request: IncomingMessage, response: ServerResponse, write = false): Promise<string | null> {
+  private async authorize(
+    request: IncomingMessage,
+    response: ServerResponse,
+    write = false,
+  ): Promise<string | null> {
     const key = this.cookieSession(request);
-    if (!key) { this.refuseUnauthorized(response); return null; }
+    if (!key) {
+      this.refuseUnauthorized(response);
+      return null;
+    }
     if (write && !this.originAllowed(request.headers.origin)) {
-      sendJson(response, 403, refusal("origin", "Cookie-authenticated writes require this board's exact Origin."));
+      sendJson(
+        response,
+        403,
+        refusal(
+          "origin",
+          "Cookie-authenticated writes require this board's exact Origin.",
+        ),
+      );
       return null;
     }
     const expiry = this.sessions.get(key)!;
     if (expiry <= this.now() + WEB_SESSION_IDLE_MS - WEB_SESSION_REFRESH_MS) {
       this.sessions.set(key, this.now() + WEB_SESSION_IDLE_MS);
-      response.setHeader("set-cookie", sessionCookie(sessionCookieValue(request)!));
+      response.setHeader(
+        "set-cookie",
+        sessionCookie(sessionCookieValue(request)!),
+      );
       await this.saveSessions();
     }
     return key;
   }
 
   private cookieSession(request: IncomingMessage): string | null {
-    const cookie = request.headers.cookie?.split(";").map(part => part.trim()).find(part => part.startsWith(`${SESSION_COOKIE}=`));
+    const cookie = request.headers.cookie
+      ?.split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${SESSION_COOKIE}=`));
     const value = cookie?.slice(SESSION_COOKIE.length + 1);
     if (!value || !TOKEN_PATTERN.test(value)) return null;
     const key = digest(value);
     const expiry = this.sessions.get(key);
-    if (expiry === undefined || expiry <= this.now()) { this.sessions.delete(key); return null; }
+    if (expiry === undefined || expiry <= this.now()) {
+      this.sessions.delete(key);
+      return null;
+    }
     return key;
   }
 
@@ -516,16 +588,36 @@ export class WebBoard {
   private async loadSessions(): Promise<void> {
     if (!this.options.sessionFile) return;
     let parsed: unknown;
-    try { parsed = JSON.parse(await readFile(this.options.sessionFile, "utf8")); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-    if (!parsed || typeof parsed !== "object" || (parsed as { version?: unknown }).version !== 1 || !Array.isArray((parsed as { sessions?: unknown }).sessions))
+    try {
+      parsed = JSON.parse(await readFile(this.options.sessionFile, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      (parsed as { version?: unknown }).version !== 1 ||
+      !Array.isArray((parsed as { sessions?: unknown }).sessions)
+    )
       throw new Error("The web session file is invalid");
     for (const entry of (parsed as { sessions: unknown[] }).sessions) {
       if (!entry || typeof entry !== "object") continue;
-      const { digest: key, expiresAt, surface } = entry as { digest?: unknown; expiresAt?: unknown; surface?: unknown };
-      if (typeof key === "string" && /^[a-f0-9]{64}$/.test(key) && typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > this.now()) {
+      const {
+        digest: key,
+        expiresAt,
+        surface,
+      } = entry as { digest?: unknown; expiresAt?: unknown; surface?: unknown };
+      if (
+        typeof key === "string" &&
+        /^[a-f0-9]{64}$/.test(key) &&
+        typeof expiresAt === "number" &&
+        Number.isFinite(expiresAt) &&
+        expiresAt > this.now()
+      ) {
         this.sessions.set(key, expiresAt);
-        if (surface === BOARD_SURFACE_T3) this.surfaces.set(key, BOARD_SURFACE_T3);
+        if (surface === BOARD_SURFACE_T3)
+          this.surfaces.set(key, BOARD_SURFACE_T3);
       }
     }
   }
@@ -540,7 +632,11 @@ export class WebBoard {
     const save = async () => {
       await mkdir(join(file, ".."), { recursive: true, mode: 0o700 });
       const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-      await writeFile(temporary, JSON.stringify({ version: 1, sessions: rows }), { mode: 0o600 });
+      await writeFile(
+        temporary,
+        JSON.stringify({ version: 1, sessions: rows }),
+        { mode: 0o600 },
+      );
       await chmod(temporary, 0o600);
       await rename(temporary, file);
       await chmod(file, 0o600);
@@ -581,13 +677,31 @@ export class WebBoard {
       body = JSON.parse(await readBody(request, MAX_FRAME_BYTES));
     } catch (error) {
       if (error instanceof BodyTooLarge)
-        sendJson(response, 413, refusal("oversize", `The request body is over the ${MAX_FRAME_BYTES}-byte bound.`), { connection: "close" });
-      else sendJson(response, 400, refusal("invalid_input", "The request body is not JSON."));
+        sendJson(
+          response,
+          413,
+          refusal(
+            "oversize",
+            `The request body is over the ${MAX_FRAME_BYTES}-byte bound.`,
+          ),
+          { connection: "close" },
+        );
+      else
+        sendJson(
+          response,
+          400,
+          refusal("invalid_input", "The request body is not JSON."),
+        );
       return;
     }
     const call = rpcBodySchema.safeParse(body);
     if (!call.success) {
-      if (!response.headersSent) sendJson(response, 400, refusal("invalid_input", formatSchemaRefusal(call.error)));
+      if (!response.headersSent)
+        sendJson(
+          response,
+          400,
+          refusal("invalid_input", formatSchemaRefusal(call.error)),
+        );
       return;
     }
     const catalogue = this.options.host.isMutating?.(call.data.method) ?? false;
@@ -604,7 +718,10 @@ export class WebBoard {
       return;
     }
     try {
-      const raw = await this.options.host.call(call.data.method, call.data.input ?? {});
+      const raw = await this.options.host.call(
+        call.data.method,
+        call.data.input ?? {},
+      );
       const result =
         call.data.method === "queue.ui-snapshot"
           ? boardForSurface(raw, this.surfaces.get(key) === BOARD_SURFACE_T3)
@@ -616,7 +733,10 @@ export class WebBoard {
     }
   }
 
-  private async events(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async events(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     if (request.method !== "GET") {
       sendJson(
         response,
@@ -706,7 +826,11 @@ export class WebBoard {
 
   private dropRevokedStreams(): void {
     for (const stream of [...this.streams]) {
-      if (!this.sessions.has(stream.key) || this.sessions.get(stream.key)! <= this.now()) stream.response.end();
+      if (
+        !this.sessions.has(stream.key) ||
+        this.sessions.get(stream.key)! <= this.now()
+      )
+        stream.response.end();
     }
   }
 
@@ -723,11 +847,13 @@ export class WebBoard {
       origin === `http://localhost:${this.boundPort}`
     );
   }
-
 }
 
 function sessionCookieValue(request: IncomingMessage): string | null {
-  const cookie = request.headers.cookie?.split(";").map(part => part.trim()).find(part => part.startsWith(`${SESSION_COOKIE}=`));
+  const cookie = request.headers.cookie
+    ?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${SESSION_COOKIE}=`));
   const value = cookie?.slice(SESSION_COOKIE.length + 1);
   return value && TOKEN_PATTERN.test(value) ? value : null;
 }
@@ -742,13 +868,21 @@ function clearSessionCookie(): string {
 
 function bearerToken(request: IncomingMessage): string | undefined {
   const header = request.headers.authorization;
-  return typeof header === "string" ? /^Bearer (\S+)$/.exec(header)?.[1] : undefined;
+  return typeof header === "string"
+    ? /^Bearer (\S+)$/.exec(header)?.[1]
+    : undefined;
 }
 
 async function bind(server: Server, port: number): Promise<void> {
   await new Promise<void>((resolveListen, rejectListen) => {
-    const onError = (error: Error) => { server.off("listening", onListening); rejectListen(error); };
-    const onListening = () => { server.off("error", onError); resolveListen(); };
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      rejectListen(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolveListen();
+    };
     server.once("error", onError);
     server.once("listening", onListening);
     server.listen({ host: LOOPBACK, port, exclusive: true });

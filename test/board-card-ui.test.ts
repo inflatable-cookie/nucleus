@@ -1466,3 +1466,98 @@ test("a Triage card names its project, not its repository, when the two are name
     store.close();
   }
 });
+
+test("lead-only and papercut-only repositories render T3 project badges on the board and keep folders on non-T3 boards", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let t3Mounted: ReturnType<typeof mountBoard> | undefined;
+  let plainMounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const named = { ...project, name: "Biock Aase" };
+    const leads = [
+      triageLead("lead-only", "Lead without tasks", { tags: ["idea"] }),
+      triageLead("cut-only", "Papercut without tasks", {
+        tags: ["papercut"],
+        papercutArea: "board",
+      }),
+    ];
+    const detailOpened: string[] = [];
+    const rpcFor =
+      (snapshot: ReturnType<typeof board>) =>
+      async (method: string, input: unknown) => {
+        if (method === "queue.ui-snapshot") return snapshot;
+        if (method === "lead.board") return { cards: leads, links: [] };
+        if (method === "lead.get" || method === "papercut.get") {
+          detailOpened.push(`${method}:${(input as { id: string }).id}`);
+          return null;
+        }
+        if (method === "decision.list") return [];
+        if (method === "plans") return [];
+        if (method === "queue.service-state") return serviceState;
+        return { tasks: [], hasMore: false };
+      };
+    const t3Snapshot = {
+      ...board([]),
+      projects: [named],
+      repositoryBadges: {
+        [repo.path]: { monogram: "BA", color: "fuchsia" as const },
+      },
+    };
+    t3Mounted = mountBoard(rpcFor(t3Snapshot));
+    await settle(() => Boolean(t3Mounted?.query("Triage: Lead without tasks")));
+    const monograms = t3Mounted
+      .ofType("Text")
+      .filter((node) => node.children.join("") === "BA");
+    assert.equal(
+      monograms.length,
+      2,
+      "both lead and papercut cards render the T3 badge with no tasks on the board",
+    );
+    for (const node of monograms) {
+      assert.equal(node.props.style.color, "rgb(237, 106, 255)");
+      assert.equal(
+        node.props.style.backgroundColor,
+        "rgba(237, 106, 255, 0.14)",
+      );
+    }
+    assert.match(t3Mounted.text(), /Biock Aase/);
+    assert.match(t3Mounted.text(), /Lead/);
+    assert.match(t3Mounted.text(), /Papercut/);
+    const cardFolderCount = (mounted: ReturnType<typeof mountBoard>) => {
+      const count = (node: HostNode | string): number =>
+        typeof node === "string"
+          ? 0
+          : (node.type === "Icon" && node.props.name === "Folder" ? 1 : 0) +
+            node.children.reduce((sum, child) => sum + count(child), 0);
+      return mounted
+        .all(/^Triage: /)
+        .reduce((sum, card) => sum + count(card), 0);
+    };
+    assert.equal(cardFolderCount(t3Mounted), 0);
+    t3Mounted.press("Triage: Lead without tasks");
+    t3Mounted.press("Triage: Papercut without tasks");
+    await settle(() => detailOpened.length === 2);
+    assert.deepEqual(detailOpened, [
+      "lead.get:lead-only",
+      "papercut.get:cut-only",
+    ]);
+
+    const plainSnapshot = { ...board([]), projects: [named] };
+    plainMounted = mountBoard(rpcFor(plainSnapshot));
+    await settle(() =>
+      Boolean(plainMounted?.query("Triage: Lead without tasks")),
+    );
+    assert.equal(
+      plainMounted
+        .ofType("Text")
+        .filter((node) => node.children.join("") === "BA").length,
+      0,
+      "non-T3 boards never render monograms",
+    );
+    assert.equal(cardFolderCount(plainMounted), 2);
+  } finally {
+    t3Mounted?.update(h("View", null));
+    plainMounted?.update(h("View", null));
+    store.close();
+  }
+});

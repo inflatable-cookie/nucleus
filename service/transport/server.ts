@@ -235,11 +235,14 @@ function serviceError(
   return { code: "internal", message };
 }
 
-
-/** A board without the T3 project badges, for surfaces that do not render them (nucleus#1450). */
+/** A board without the T3 project badges, for surfaces that do not render them (nucleus#1450, nucleus#1490). */
 function withoutProjectBadges(board: UiBoard): UiBoard {
   if ("unchanged" in board) return board;
-  const { projectBadges: _badges, ...rest } = board;
+  const {
+    projectBadges: _badges,
+    repositoryBadges: _repoBadges,
+    ...rest
+  } = board;
   return rest;
 }
 

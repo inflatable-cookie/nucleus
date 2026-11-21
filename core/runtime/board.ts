@@ -1,4 +1,7 @@
-import { effectiveDefaultHostKind, type HostKind } from "../../shared/host-kind";
+import {
+  effectiveDefaultHostKind,
+  type HostKind,
+} from "../../shared/host-kind";
 import {
   visibleTaskSummaries,
   availabilitySchema,
@@ -46,6 +49,7 @@ import {
 import type { BbSidebarGroups } from "../../shared/schema/bb-sidebar";
 import {
   matchProjectBadges,
+  matchRepositoryBadges,
   type ProjectObservation,
 } from "../../shared/t3/project-badge";
 import { realpathSync } from "node:fs";
@@ -83,6 +87,8 @@ export interface BoardContext {
   readonly hostId: string;
   /** Each live T3 host's projects from its last shell read (nucleus#1450); none when disconnected. */
   projectObservations?(): ProjectObservation[];
+  /** Cached board-lead projection for hostless repository badge matching (nucleus#1490). */
+  boardLeads?(): ReturnType<Store["listBoardLeads"]>;
 }
 
 /**
@@ -439,6 +445,19 @@ export class RuntimeBoard {
         error,
       };
     }
+    const canonical = observations.length ? canonicalPathResolver() : undefined;
+    const leadRepoPaths = observations.length
+      ? ((
+          this.context.boardLeads?.() ?? this.context.store.listBoardLeads?.()
+        )?.cards.flatMap((lead) =>
+          lead.repositories.map((repo) => repo.path),
+        ) ?? [])
+      : [];
+    const projectRepoPaths = observations.length
+      ? facts.projects.flatMap((project) =>
+          project.repositories.map((repo) => repo.path),
+        )
+      : [];
     return {
       prStates: this.context.prStates,
       connected: counters.connected,
@@ -470,7 +489,14 @@ export class RuntimeBoard {
               repoPath: task.repoPath,
             })),
             observations,
-            canonical: canonicalPathResolver(),
+            canonical,
+          })
+        : {},
+      repositoryBadges: observations.length
+        ? matchRepositoryBadges({
+            repoPaths: [...leadRepoPaths, ...projectRepoPaths],
+            observations,
+            canonical,
           })
         : {},
       queuedCounts: facts.queuedCounts,

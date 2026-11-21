@@ -57,6 +57,7 @@ import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
 import { space, type as typeScale } from "./design";
 export { TaskCard, DecisionCard } from "./board/cards";
+export { TriageLeadCard } from "./board/triage-lead-card";
 export {
   taskIdentityFields,
   EventRow,
