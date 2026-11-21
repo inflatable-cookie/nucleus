@@ -7604,3 +7604,290 @@ test("a move to work re-creates a gone task workspace and keeps the recorded PR"
     await f.close();
   }
 });
+
+/**
+ * nucleus#1449: a PR-bearing author whose revision launch was refused before send.
+ * The task keeps a worker-creation intent with no bound run, the accepted PR and
+ * the changes-required review. `variant` selects the stored shape of the refused
+ * occurrence (or its absence) so each twin is one realistic row set.
+ */
+function refusedRevisionTask(
+  f: ReturnType<typeof fixture>,
+  variant: "refused" | "uncertain" | "non-revision refused" | "recovery live",
+) {
+  const directory = join(f.dir, "worktree");
+  mkdirSync(directory);
+  f.store.update(f.taskId, {
+    phase: "needs_attention",
+    reason:
+      "Exact worker creation lookup is unavailable; the intent remains owned",
+    workspaceIntent: true,
+    workspaceId: "workspace",
+    directory,
+    profile: f.profiles.worker,
+    profileGroup: "worker",
+    agentIntent: true,
+    agentId: null,
+    runId: null,
+    prUrl: "https://github.com/example/repo/pull/7",
+    prHead: head,
+    completion: {
+      taskId: f.taskId,
+      runId: "author-run",
+      eventId: "author-ready",
+      status: "ready_for_review",
+      summary: "Opened the PR",
+      prNumber: 7,
+      head,
+    } as never,
+    resolution: {
+      ...f.current().resolution,
+      attention: true,
+      currentRunId: null,
+      review: {
+        taskId: f.taskId,
+        runId: "review-run",
+        eventId: "review-1",
+        status: "changes_required",
+        summary: "Fix the failing check",
+        head,
+      } as never,
+    },
+  });
+  f.store.putRun(
+    runSchema.parse({
+      id: "author-run",
+      taskId: f.taskId,
+      role: "revision",
+      generation: 1,
+      head,
+      base,
+      agentId: "old-author",
+      workspaceId: "workspace",
+      profile: f.profiles.worker,
+      status: "finished",
+      createdAt: new Date().toISOString(),
+      lastObservedAt: null,
+      active: false,
+      idleSince: null,
+      completion: {
+        taskId: f.taskId,
+        runId: "author-run",
+        eventId: "author-ready",
+        status: "ready_for_review",
+        summary: "Opened the PR",
+        prNumber: 7,
+        head,
+      },
+      released: true,
+    }),
+  );
+  f.store.putRun(
+    runSchema.parse({
+      id: "revision-run",
+      taskId: f.taskId,
+      role: "revision",
+      generation: 2,
+      head,
+      base,
+      agentId: null,
+      workspaceId: "workspace",
+      profile: f.profiles.worker,
+      status: variant === "uncertain" ? "uncertain" : "superseded",
+      createdAt: new Date().toISOString(),
+      lastObservedAt: null,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: variant !== "uncertain",
+    }),
+  );
+  if (variant === "refused")
+    f.store.event(f.taskId, "creation_refused_before_send", "revision-run");
+  if (variant === "non-revision refused") {
+    // The revision occurrence was never refused; only a reviewer's creation was.
+    f.store.db.prepare("DELETE FROM runs WHERE id=?").run("revision-run");
+    f.store.putRun(
+      runSchema.parse({
+        id: "reviewer-run",
+        taskId: f.taskId,
+        role: "reviewer",
+        generation: 3,
+        head,
+        base,
+        agentId: null,
+        workspaceId: "workspace",
+        profile: f.profiles.reviewer,
+        status: "superseded",
+        createdAt: new Date().toISOString(),
+        lastObservedAt: null,
+        active: false,
+        idleSince: null,
+        completion: null,
+        released: true,
+      }),
+    );
+    f.store.event(f.taskId, "creation_refused_before_send", "reviewer-run");
+  }
+  if (variant === "recovery live") {
+    f.store.event(f.taskId, "creation_refused_before_send", "revision-run");
+    f.store.putRun(
+      runSchema.parse({
+        id: "recovery-live",
+        taskId: f.taskId,
+        hostId: f.current().hostId,
+        role: "recovery",
+        head,
+        base,
+        generation: 4,
+        workspaceId: "workspace",
+        profile: f.profiles.coord,
+        status: "uncertain",
+        createdAt: new Date().toISOString(),
+        active: false,
+        released: false,
+        agentId: null,
+        lastObservedAt: null,
+        idleSince: null,
+        completion: null,
+      }),
+    );
+  }
+}
+
+test("a refused author revision with an accepted PR resumes through move to=work", async () => {
+  const f = fixture();
+  try {
+    refusedRevisionTask(f, "refused");
+    const before = f.current();
+    const view = f
+      .next()
+      .verbs.find(
+        (verb) =>
+          verb.verb === "move" &&
+          (verb.args?.to === "work" || /^move work:/.test(verb.refusal ?? "")),
+      );
+    assert.equal(view?.available, true, JSON.stringify(view));
+    assert.equal(f.createdRunTokens.size, 0);
+
+    const task = await f.control({
+      action: "move",
+      to: "work",
+      reason: "Resume the refused revision",
+      instruction: "Fix the failing check on the PR",
+    });
+    assert.equal(task.phase, "changes_requested");
+    assert.equal(
+      task.agentIntent,
+      false,
+      "the obsolete creation intent is retired",
+    );
+    assert.equal(task.runId, null);
+    assert.equal(task.resolution.currentRunId, null);
+    assert.equal(
+      task.resolution.pendingWorkerInstruction,
+      "Fix the failing check on the PR",
+    );
+    assert.equal(task.prUrl, before.prUrl, "the PR is kept");
+    assert.equal(task.prHead, before.prHead, "the recorded head is kept");
+    assert.equal(task.workspaceId, before.workspaceId);
+    assert.equal(task.directory, before.directory);
+    assert.equal(
+      task.resolution.review?.status,
+      "changes_required",
+      "the independent verdict is kept",
+    );
+    assert.equal(f.events("refused_revision_reservation_retired").length, 1);
+    assert.equal(
+      f.createdRunTokens.size,
+      0,
+      "move to=work launches nothing by itself",
+    );
+    assert.equal(
+      f.store.run("revision-run")?.released,
+      true,
+      "the refused occurrence stays settled",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a refused author revision resumes on the PR head as it now stands", async () => {
+  const f = fixture();
+  try {
+    refusedRevisionTask(f, "refused");
+    // The PR moved after the verdict: the continuation binds the head the task now records.
+    const moved = "c".repeat(40);
+    f.store.update(f.taskId, {
+      prHead: moved,
+      completion: { ...f.current().completion!, head: moved } as never,
+    });
+    const task = await f.control({
+      action: "move",
+      to: "work",
+      reason: "Resume at the current head",
+      instruction: "Rebase onto the new head",
+    });
+    assert.equal(task.phase, "changes_requested");
+    assert.equal(task.prHead, moved, "the recorded head is not rewritten");
+    assert.equal(
+      task.resolution.review?.head,
+      head,
+      "the independent verdict keeps its own head",
+    );
+    assert.equal(task.agentIntent, false);
+    assert.equal(
+      task.resolution.pendingWorkerInstruction,
+      "Rebase onto the new head",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+for (const variant of [
+  "uncertain",
+  "non-revision refused",
+  "recovery live",
+] as const) {
+  test(`a refused-revision intent stays owned without a proven refusal (${variant})`, async () => {
+    const f = fixture();
+    try {
+      refusedRevisionTask(f, variant);
+      const before = restartState(f);
+      const view = f
+        .next()
+        .verbs.find(
+          (verb) =>
+            verb.verb === "move" &&
+            (verb.args?.to === "work" ||
+              /^move work:/.test(verb.refusal ?? "")),
+        );
+      assert.equal(view?.available, false, JSON.stringify(view));
+      assert.match(view?.refusal ?? "", /^move work: /);
+      await assert.rejects(
+        f.control({
+          action: "move",
+          to: "work",
+          reason: "Resume",
+          instruction: "Fix it",
+        }),
+      );
+      assert.equal(
+        f.current().agentIntent,
+        true,
+        "the creation intent is still owned",
+      );
+      assert.equal(f.events("refused_revision_reservation_retired").length, 0);
+      assert.equal(f.createdRunTokens.size, 0);
+      assert.equal(f.current().phase, before.task.phase);
+      assert.deepEqual(
+        f.store.runs(f.taskId).map((run) => run.id),
+        before.runs.map((run) => run.id),
+      );
+    } finally {
+      await f.close();
+    }
+  });
+}
