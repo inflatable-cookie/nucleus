@@ -50,7 +50,12 @@ import {
   type Projection,
   type T3Reads,
 } from "./reads";
-import { identity, intentKindOf, intentThreadId, type T3IntentLedger } from "./intents";
+import {
+  identity,
+  intentKindOf,
+  intentThreadId,
+  type T3IntentLedger,
+} from "./intents";
 import { canonical, type T3State, type T3StateFile } from "./state";
 import { labelTask } from "./one-row";
 
@@ -321,7 +326,8 @@ export class T3Nesting {
         if (existing.archivedAt) {
           this.core.state.update((state) => {
             const current = state.parents?.[taskId];
-            if (current?.threadId === existing.threadId) delete current.archivedAt;
+            if (current?.threadId === existing.threadId)
+              delete current.archivedAt;
           });
         }
         // The create owns the turn from here: a concurrent sweep must not release it
@@ -454,10 +460,21 @@ export class T3Nesting {
     const parent = this.parentOf(task.id);
     if (!parent) return;
     const workspace = this.core.state.read().workspaces[parent.workspaceId];
-    if (!task.workspaceId || parent.workspaceId !== task.workspaceId || task.directory !== parent.directory ||
-        !workspace || workspace.archivedAt || workspace.projectId !== parent.projectId || workspace.directory !== parent.directory ||
-        task.removedAt || ["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit)
-      throw new ProvenPreSendRefusalError("T3Code parent restore requires the same nonterminal task and workspace");
+    if (
+      !task.workspaceId ||
+      parent.workspaceId !== task.workspaceId ||
+      task.directory !== parent.directory ||
+      !workspace ||
+      workspace.archivedAt ||
+      workspace.projectId !== parent.projectId ||
+      workspace.directory !== parent.directory ||
+      task.removedAt ||
+      ["done", "cancelled"].includes(task.phase) ||
+      task.resolution.mergedCommit
+    )
+      throw new ProvenPreSendRefusalError(
+        "T3Code parent restore requires the same nonterminal task and workspace",
+      );
     // Null: a prepared binding (nucleus#1458). Nothing reached T3, so there is no
     // parent to restore, and the worker's create launches the same parent.
     const observe = async () => {
@@ -475,27 +492,58 @@ export class T3Nesting {
     };
     let row = await observe();
     if (!row) {
-      if (!stillAllowed()) throw new ProvenPreSendRefusalError("restart authorization changed during parent restore");
+      if (!stillAllowed())
+        throw new ProvenPreSendRefusalError(
+          "restart authorization changed during parent restore",
+        );
       return;
     }
     if (row.archivedAt) {
-      if (!operationId) throw new ProvenPreSendRefusalError("An archived parent requires a durable owner restart operation");
+      if (!operationId)
+        throw new ProvenPreSendRefusalError(
+          "An archived parent requires a durable owner restart operation",
+        );
       const unknown = Object.values(this.core.state.read().intents).some(
-        (intent) => intentKindOf(intent) === "thread.unarchive" && intentThreadId(intent) === parent.threadId && intent.status === "unknown",
+        (intent) =>
+          intentKindOf(intent) === "thread.unarchive" &&
+          intentThreadId(intent) === parent.threadId &&
+          intent.status === "unknown",
       );
-      if (unknown) throw new Error("the parent unarchive delivery remains unknown; observe the same parent before retrying");
-      const commandId = identity("parent-unarchive", canonical([this.core.hostId(), parent.threadId, operationId]));
+      if (unknown)
+        throw new Error(
+          "the parent unarchive delivery remains unknown; observe the same parent before retrying",
+        );
+      const commandId = identity(
+        "parent-unarchive",
+        canonical([this.core.hostId(), parent.threadId, operationId]),
+      );
       try {
-        await this.core.intents.effect(commandId, "orchestration.dispatchCommand", {
-          type: "thread.unarchive", commandId, threadId: parent.threadId,
-        }, () => {
-          const current = this.parentOf(task.id);
-          if (!stillAllowed() || !current || current.threadId !== parent.threadId ||
-              current.workspaceId !== parent.workspaceId || current.projectId !== parent.projectId ||
-              current.directory !== parent.directory || current.sessionId !== parent.sessionId || current.bindingPath !== parent.bindingPath)
-            throw new ProvenPreSendRefusalError("restart authorization or parent binding changed before parent restore");
-          beforeSend();
-        });
+        await this.core.intents.effect(
+          commandId,
+          "orchestration.dispatchCommand",
+          {
+            type: "thread.unarchive",
+            commandId,
+            threadId: parent.threadId,
+          },
+          () => {
+            const current = this.parentOf(task.id);
+            if (
+              !stillAllowed() ||
+              !current ||
+              current.threadId !== parent.threadId ||
+              current.workspaceId !== parent.workspaceId ||
+              current.projectId !== parent.projectId ||
+              current.directory !== parent.directory ||
+              current.sessionId !== parent.sessionId ||
+              current.bindingPath !== parent.bindingPath
+            )
+              throw new ProvenPreSendRefusalError(
+                "restart authorization or parent binding changed before parent restore",
+              );
+            beforeSend();
+          },
+        );
       } catch (error) {
         if (error instanceof ProvenPreSendRefusalError) throw error;
         // A live exact parent proves the desired state even if the reply was lost.
@@ -510,28 +558,64 @@ export class T3Nesting {
         if (!row || row.archivedAt) throw error;
       }
       row = await observe();
-      if (!row || row.archivedAt) throw new Error("the parent unarchive is not yet observable; no child was created");
+      if (!row || row.archivedAt)
+        throw new Error(
+          "the parent unarchive is not yet observable; no child was created",
+        );
     }
-    if (!stillAllowed()) throw new ProvenPreSendRefusalError("restart authorization changed during parent restore");
+    if (!stillAllowed())
+      throw new ProvenPreSendRefusalError(
+        "restart authorization changed during parent restore",
+      );
     this.core.state.update((state) => {
       const current = state.parents?.[task.id];
-      if (current?.threadId === parent.threadId && current.workspaceId === parent.workspaceId)
+      if (
+        current?.threadId === parent.threadId &&
+        current.workspaceId === parent.workspaceId
+      )
         delete current.archivedAt;
     });
   }
 
   /** Observe only the exact restore occurrence of an interrupted restart. */
-  async observeRestartRestore(task: Task, operationId: string): Promise<"not_found" | "live" | "archived" | "deleted" | "mismatched" | "unobservable"> {
+  async observeRestartRestore(
+    task: Task,
+    operationId: string,
+  ): Promise<
+    | "not_found"
+    | "live"
+    | "archived"
+    | "deleted"
+    | "mismatched"
+    | "unobservable"
+  > {
     const parent = this.parentOf(task.id);
     if (!parent || !operationId) return "not_found";
-    const commandId = identity("parent-unarchive", canonical([this.core.hostId(), parent.threadId, operationId]));
+    const commandId = identity(
+      "parent-unarchive",
+      canonical([this.core.hostId(), parent.threadId, operationId]),
+    );
     const intent = this.core.state.read().intents[commandId];
-    if (!intent || intentKindOf(intent) !== "thread.unarchive" || intentThreadId(intent) !== parent.threadId ||
-        (intent.status !== "unknown" && intent.status !== "settled")) return "not_found";
+    if (
+      !intent ||
+      intentKindOf(intent) !== "thread.unarchive" ||
+      intentThreadId(intent) !== parent.threadId ||
+      (intent.status !== "unknown" && intent.status !== "settled")
+    )
+      return "not_found";
     const workspace = this.core.state.read().workspaces[parent.workspaceId];
-    if (!task.workspaceId || parent.workspaceId !== task.workspaceId || task.directory !== parent.directory ||
-        !workspace || workspace.archivedAt || workspace.projectId !== parent.projectId || workspace.directory !== parent.directory ||
-        task.removedAt || ["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit)
+    if (
+      !task.workspaceId ||
+      parent.workspaceId !== task.workspaceId ||
+      task.directory !== parent.directory ||
+      !workspace ||
+      workspace.archivedAt ||
+      workspace.projectId !== parent.projectId ||
+      workspace.directory !== parent.directory ||
+      task.removedAt ||
+      ["done", "cancelled"].includes(task.phase) ||
+      task.resolution.mergedCommit
+    )
       return "mismatched";
     try {
       return (await this.parentGone(parent)) ?? "live";
@@ -700,7 +784,9 @@ export class T3Nesting {
 
   /** Whether this task's parent launch was ever reserved for a send (nucleus#1458). */
   private parentLaunchReserved(taskId: string): boolean {
-    return this.core.state.read().intents[this.parentLaunchId(taskId)] !== undefined;
+    return (
+      this.core.state.read().intents[this.parentLaunchId(taskId)] !== undefined
+    );
   }
 
   /**
@@ -1090,7 +1176,10 @@ export class T3Nesting {
       return await this.knownThread(threadId);
     } catch (error) {
       // Only a prepared launch (nothing reserved for a send) is settled by inventory.
-      if (!(error instanceof T3TransientReadError) || this.parentLaunchReserved(taskId))
+      if (
+        !(error instanceof T3TransientReadError) ||
+        this.parentLaunchReserved(taskId)
+      )
         throw error;
       const [row] = await this.inventoryRows(threadId, true);
       return row ?? null;

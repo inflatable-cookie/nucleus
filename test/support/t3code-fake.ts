@@ -1481,7 +1481,13 @@ export async function t3Fake(t: TestContext, directory: string) {
               break;
             case "thread.unarchive":
               if (!p.thread.archivedAt)
-                return failure({ _tag: "Fail", error: { _tag: "OrchestrationV2DispatchCommandError", message: "Thread is not archived." } });
+                return failure({
+                  _tag: "Fail",
+                  error: {
+                    _tag: "OrchestrationV2DispatchCommandError",
+                    message: "Thread is not archived.",
+                  },
+                });
               p.thread.archivedAt = null;
               break;
             case "thread.delete":
