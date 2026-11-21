@@ -33,7 +33,7 @@ const CAPACITY: CapacityAuthorityValues = {
   globalLimit: 32,
   projectLimit: 5,
   papercutProjectLimit: 2,
-  paseoCallLimit: 6,
+  hostCallLimit: 6,
   stallThresholdMinutes: 30,
   holdReminderMinutes: 120,
   holdEscalationMinutes: 240,
@@ -207,7 +207,11 @@ test("a full record adds nothing to the screen: Frontier grants is the last sect
       "Project overrides",
       "Frontier grants",
     ]);
-    assert.doesNotMatch(ui.text(), /Role demand/, "the Role demand section is gone (Tom, 2026-11-19)");
+    assert.doesNotMatch(
+      ui.text(),
+      /Role demand/,
+      "the Role demand section is gone (Tom, 2026-11-19)",
+    );
   } finally {
     done();
   }
@@ -382,7 +386,7 @@ test("Advanced limits stays folded until opened, and its six limits keep their a
       false,
     );
     assert.equal(
-      ui.query("Paseo calls dispatch limit (calls, 1–32)"),
+      ui.query("Concurrent host calls dispatch limit (calls, 1–32)"),
       undefined,
       "folded: the timing fields are not on the page",
     );
@@ -392,13 +396,48 @@ test("Advanced limits stays folded until opened, and its six limits keep their a
       true,
     );
     assert.equal(
-      ui.get("Paseo calls dispatch limit (calls, 1–32)").props.value,
+      ui.get("Concurrent host calls dispatch limit (calls, 1–32)").props.value,
       "6",
     );
     assert.equal(
       ui.get("Stall threshold dispatch limit (minutes, 1–240)").props.value,
       "30",
       "an advanced field keeps its value",
+    );
+  } finally {
+    done();
+  }
+});
+
+test("a limit saved under the Paseo-era name shows as Concurrent host calls, says it is per host, and an edit saves the canonical name", async () => {
+  const saves: Array<Record<string, unknown>> = [];
+  const { ui, done } = await mountLimits({
+    authority: authority({ effective: { hostCallLimit: 9 } }),
+    saveCapacity: async (values: Record<string, unknown>) => {
+      saves.push(values);
+    },
+  });
+  try {
+    ui.press("Advanced limits");
+    assert.equal(
+      ui.get("Concurrent host calls dispatch limit (calls, 1–32)").props.value,
+      "9",
+      "the persisted legacy value is the value in force",
+    );
+    assert.match(
+      ui.get("Concurrent host calls help").props.accessibilityHint,
+      /ceiling for each host, not a total across hosts/,
+      "the (?) says the ceiling is per host",
+    );
+    ui.press("Increase Concurrent host calls dispatch limit (calls, 1–32)");
+    for (let attempt = 0; attempt < 60 && saves.length === 0; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(saves.length, 1, "the edit saves once");
+    assert.equal(saves[0]!.hostCallLimit, 10, "the canonical name is written");
+    assert.equal(
+      "paseoCallLimit" in saves[0]!,
+      false,
+      "the legacy name is not written back",
     );
   } finally {
     done();
@@ -788,7 +827,7 @@ test("Advanced limits stack every label; Task slots keep theirs inline, at narro
   try {
     ui.press("Advanced limits");
     for (const name of [
-      "Paseo calls",
+      "Concurrent host calls",
       "Stall threshold",
       "Hold reminder",
       "Hold escalation",
@@ -803,11 +842,7 @@ test("Advanced limits stack every label; Task slots keep theirs inline, at narro
         `${name} is stacked: its label has its own line`,
       );
     }
-    for (const name of [
-      "Global",
-      "Per project",
-      "Papercuts",
-    ]) {
+    for (const name of ["Global", "Per project", "Papercuts"]) {
       const text = textNode(ui, name);
       assert.ok(text, `${name} shows`);
       assert.equal(text.props.style.flexShrink, 0, `${name} stays inline`);
@@ -917,7 +952,7 @@ test("Advanced limits has a gap above it, closed and open, and the advanced card
     }
     const cards = sharedView(
       ui,
-      ui.get("Paseo calls dispatch limit (calls, 1–32)"),
+      ui.get("Concurrent host calls dispatch limit (calls, 1–32)"),
       ui.get("Lane drain dispatch limit (minutes, 1–10080)"),
     );
     assert.equal(

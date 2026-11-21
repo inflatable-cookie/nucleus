@@ -638,7 +638,7 @@ export class QueueRuntime {
     const createAdmission = () =>
       new Admission({
         ...options.admission,
-        totalLimit: () => this.store.configuredPaseoCallLimit(),
+        totalLimit: () => this.store.configuredHostCallLimit(),
         workspaceBudget: () =>
           this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
       });

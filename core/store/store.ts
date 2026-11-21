@@ -238,7 +238,8 @@ export class Store {
     revisionAdvanced: () => {
       this.tasksStore.projectionClock = this.tasksStore.readProjectionClock();
     },
-    eventWritten: (taskId, kind, detail, at) => this.eventWritten(taskId, kind, detail, at),
+    eventWritten: (taskId, kind, detail, at) =>
+      this.eventWritten(taskId, kind, detail, at),
     taskChanged: (taskId) => this.taskChanged(taskId),
   });
   /**
@@ -1048,7 +1049,11 @@ export class Store {
     };
   }
   advanceTriagePlanningRevision(): void {
-    this.db.prepare("INSERT INTO projection_clock(name,version) VALUES('planInputs',1) ON CONFLICT(name) DO UPDATE SET version=version+1").run();
+    this.db
+      .prepare(
+        "INSERT INTO projection_clock(name,version) VALUES('planInputs',1) ON CONFLICT(name) DO UPDATE SET version=version+1",
+      )
+      .run();
     this.advanceRevision();
   }
   private advanceLeadRevision() {
@@ -1325,7 +1330,12 @@ export class Store {
   event(taskId: string, kind: string, detail: string) {
     return this.core.event(taskId, kind, detail);
   }
-  private eventWritten(taskId: string, kind: string, detail: string, at: string) {
+  private eventWritten(
+    taskId: string,
+    kind: string,
+    detail: string,
+    at: string,
+  ) {
     this.projectActivityStore.eventWritten(taskId, kind, detail, at);
     if (this.lastEventAtByTask) {
       if (at > (this.lastEventAtByTask.get(taskId) ?? ""))
@@ -2582,8 +2592,8 @@ export class Store {
   configuredOperationLimit(): number {
     return this.operationsStore.configuredOperationLimit();
   }
-  configuredPaseoCallLimit(): number {
-    return this.operationsStore.configuredPaseoCallLimit();
+  configuredHostCallLimit(): number {
+    return this.operationsStore.configuredHostCallLimit();
   }
   putOperation(operation: QueueOperation, payload?: unknown): QueueOperation {
     return this.operationsStore.putOperation(operation, payload);

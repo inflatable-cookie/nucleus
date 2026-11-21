@@ -31,7 +31,7 @@ import { terminalArchiveFixture } from "./support/terminal-archive-fixture";
  * preserved-external catalog archives now match.
  */
 
-const deferral = `${BACKPRESSURE_DEFERRAL}3 slow critical Paseo calls in 60s: inventory 19540 ms (threshold 10000 ms)`;
+const deferral = `${BACKPRESSURE_DEFERRAL}3 slow critical host calls in 60s: inventory 19540 ms (threshold 10000 ms)`;
 
 function admission(degraded: boolean) {
   const clock = { now: 0 };
@@ -198,7 +198,7 @@ test("an owner retry while the breaker holds reports the deferral and sends no r
       (error: unknown) => {
         assert.match(
           (error as Error).message,
-          /^Workspace archive retry for ws attempt 5 failed: Paseo admission backpressure:/,
+          /^Workspace archive retry for ws attempt 5 failed: Host admission backpressure:/,
         );
         return true;
       },
@@ -566,7 +566,7 @@ test("an owner retry of a preserved-external deferral while the breaker holds re
     assert.match(
       (error as Error).message,
       new RegExp(
-        `^External workspace catalog archive for ${workspaceId} is held: Paseo admission backpressure:`,
+        `^External workspace catalog archive for ${workspaceId} is held: Host admission backpressure:`,
       ),
     );
     return true;

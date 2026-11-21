@@ -1,6 +1,6 @@
 import {
-  DEFAULT_PASEO_CALL_LIMIT,
-  MAX_PASEO_CALL_LIMIT,
+  DEFAULT_HOST_CALL_LIMIT,
+  MAX_HOST_CALL_LIMIT,
   type Run,
 } from "../../shared/contracts";
 import {
@@ -184,15 +184,23 @@ export class StoreOperations {
   }
 
   /**
-   * Operator bound on concurrent Paseo daemon calls (Spec 012): default sized to
-   * Paseo's interactive capacity and bounded 1-32. The admission controller reads
-   * it live, so a saved change applies without a restart.
+   * Operator ceiling on concurrent calls to each host (Spec 012): default sized to
+   * a host's interactive capacity and bounded 1-32. Every host's admission reads
+   * it live, so a saved change applies without a restart, and each host still
+   * holds its own partition of the bound. The canonical `hostCallLimit` is the only
+   * authority once it has been saved; the legacy `paseoCallLimit` mirror is read
+   * only before that first save (a store saved by a Paseo-era build).
    */
-  configuredPaseoCallLimit(): number {
-    const configured = this.core.getMeta<number>("paseoCallLimit");
-    if (configured === undefined || !Number.isFinite(configured))
-      return DEFAULT_PASEO_CALL_LIMIT;
-    return Math.min(Math.max(Math.trunc(configured), 1), MAX_PASEO_CALL_LIMIT);
+  configuredHostCallLimit(): number {
+    const canonical = this.core.getMeta<number>("hostCallLimit");
+    const configured = canonical ?? this.core.getMeta<number>("paseoCallLimit");
+    if (
+      configured === undefined ||
+      configured === null ||
+      !Number.isFinite(configured)
+    )
+      return DEFAULT_HOST_CALL_LIMIT;
+    return Math.min(Math.max(Math.trunc(configured), 1), MAX_HOST_CALL_LIMIT);
   }
 
   putOperation(operation: QueueOperation, payload?: unknown): QueueOperation {

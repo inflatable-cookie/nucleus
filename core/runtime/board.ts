@@ -236,7 +236,7 @@ export class RuntimeBoard {
           : this.context.store.getMeta<
               import("../../shared/host-kind").HostKind | null
             >("operatorDefaultHostKind")!,
-      paseoCallLimit: this.context.store.configuredPaseoCallLimit(),
+      hostCallLimit: this.context.store.configuredHostCallLimit(),
       operationLimit: this.context.store.configuredOperationLimit(),
       operationBacklog: this.context.store.operationBacklog(),
     };

@@ -608,7 +608,7 @@ JSON
 ### Dispatch limits are the operator's, in Settings
 
 Nucleus's host-wide dispatch limits (global and per-project task slots, the
-papercut allowance, the Paseo-call bound, the stall threshold, and the hold and
+papercut allowance, the per-host call bound, the stall threshold, and the hold and
 lane-drain timers) change only from the operator's Settings → Dispatch limits
 screen, on the plugin or on the local board with a link from `nucleus ui`.
 `queue.capacity` refuses every other route plainly: "only the operator

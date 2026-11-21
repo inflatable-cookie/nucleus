@@ -984,7 +984,7 @@ test("prefixes and reasons that code compares are byte-identical", () => {
       QA_CAPACITY_WAIT_PREFIX: "Waiting for QA capacity (position ",
       RETAINED_WORKER_PROFILE_REASON:
         "Retained worker profile is disabled or unavailable",
-      BACKPRESSURE_DEFERRAL: "Paseo admission backpressure: ",
+      BACKPRESSURE_DEFERRAL: "Host admission backpressure: ",
       EXTERNAL_MERGE_CHECK_REASON_PREFIX: "External merge check:",
       EXTERNAL_MERGE_CHECK_RECOVERED_REASON:
         "External merge check recovered; resuming task",
