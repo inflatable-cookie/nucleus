@@ -748,8 +748,12 @@ export async function provisionWorktreeLinks(input: {
             break;
           }
         }
+        // A pin is keyed by the identity its member was recorded under (origin, else
+        // the recorded path, as `siblingIdentity` and the BB wait key it), never by the
+        // realpath, which differs when the project entry reaches the checkout by a symlink.
+        const identity = row ? row.origin || row.path : source.root;
         const pin = input.pinned.pins.find(
-          (item) => item.repository === (row?.origin || source.root),
+          (item) => item.repository === identity,
         );
         if (row && !pin)
           throw new Error(

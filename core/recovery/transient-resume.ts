@@ -11,6 +11,7 @@ import type { Adapter } from '../host/adapter';
 import type { Resolution } from '../resolution';
 import { reviewAuthorizationRequired } from '../review/review-continuation';
 import { chooseProfile } from '../dispatch/routing';
+import { retainedCallbackSentence } from '../dispatch/retained-callback';
 import { digest, now } from '../store/store';
 import { ProvenPreSendRefusalError, TRANSIENT_PROVIDER_WAIT, active, coordinative } from './task-reasons';
 
@@ -301,7 +302,8 @@ export class TransientResume {
     const intent: TransientProviderRetry = { ...pending, resumes: attempt, status: 'intent', retryAt: null, messageId, error: state.error.slice(0, 2000) };
     save(intent);
     this.store.event(task.id, 'transient_provider_resume_intent', `${run.role} ${run.id}: attempt ${attempt}/${TRANSIENT_MAX_RESUMES} at exact head ${run.head}`);
-    const prompt = `Nucleus transient provider continuation for task ${task.id}, run ${run.id}, exact head ${run.head}. Continue where you left off; report via your existing authenticated callback for this same run. Do not start a new run or change the requested head.`;
+    const callback = retainedCallbackSentence({ run, helperPath: this.adapter.helperPath, perThreadEnvironment: this.adapter.capabilities?.().perThreadEnvironment });
+    const prompt = `Nucleus transient provider continuation for task ${task.id}, run ${run.id}, exact head ${run.head}. Continue where you left off; report via your existing authenticated callback for this same run. Do not start a new run or change the requested head.${callback ? ` ${callback}` : ""}`;
     try {
       if (!stillCurrent()) throw new Error('Retained run changed before the continuation was sent');
       await this.resolution.onTaskHost(run, () => this.adapter.continueRun!(run, messageId, prompt));

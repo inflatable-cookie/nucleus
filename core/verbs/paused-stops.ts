@@ -5,6 +5,7 @@ import type { Engine } from "../engine";
 import type { AgentObservation } from "../host/adapter";
 import { digest, now } from "../store/store";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
+import { retainedCallbackSentence } from "../dispatch/retained-callback";
 
 /**
  * The operator's stop-every-active-thread control while paused, and resuming
@@ -210,7 +211,8 @@ export class PausedStops {
       this.dropPausedStopCoordinatorRun(taskId, run, marker, attempts >= 3 ? "its paused-stop continuation could not be delivered after 3 attempts" : "no delivery channel exists for the retained continuation");
       return;
     }
-    const text = `Nucleus paused-stop continuation for task ${taskId}, run ${run.id}, exact head ${run.head}. Nucleus was paused and the operator stopped this thread while it was mid-turn; Nucleus is running again. Continue where you left off; report via your existing authenticated callback for this same run. Do not start a new run or change the requested head.`;
+    const callback = retainedCallbackSentence({ run, helperPath: this.adapter.helperPath, perThreadEnvironment: this.adapter.capabilities?.().perThreadEnvironment });
+    const text = `Nucleus paused-stop continuation for task ${taskId}, run ${run.id}, exact head ${run.head}. Nucleus was paused and the operator stopped this thread while it was mid-turn; Nucleus is running again. Continue where you left off; report via your existing authenticated callback for this same run. Do not start a new run or change the requested head.${callback ? ` ${callback}` : ""}`;
     this.store.event(taskId, "paused_resume_intent", JSON.stringify({ runId: run.id, agentId: marker.agentId, role: run.role, attempt: attempts + 1 }));
     try {
       await this.engine.onTaskHost(run, () => this.adapter.continueRun!(run, `ns-paused-resume-${run.id}`, text));
