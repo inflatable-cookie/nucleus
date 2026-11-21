@@ -1114,7 +1114,8 @@ export class Operations {
     } catch {
       return false;
     }
-    const matchingStop = task.resolution.ownerStop?.operationId === operation.id;
+    const matchingStop =
+      task.resolution.ownerStop?.operationId === operation.id;
     if (!operation.preSendBoundaryStartedAt && !matchingStop) return false;
     if (
       operation.result?.taskId &&
@@ -1157,7 +1158,10 @@ export class Operations {
         const diagnostic = hostId
           ? `Waiting for host ${hostId}`
           : "Waiting for a proven host identity";
-        if (operation.state !== "pending" || operation.diagnostic !== diagnostic)
+        if (
+          operation.state !== "pending" ||
+          operation.diagnostic !== diagnostic
+        )
           this.store.putOperation({
             ...operation,
             state: "pending",

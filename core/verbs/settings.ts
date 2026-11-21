@@ -639,7 +639,9 @@ export class SettingsControls {
       // nomination or its own subscription) leaves a task's future cohort, so it
       // runs on the durable workspace binding that record holds (Spec 040).
       if (!live && input.action !== "unsubscribe") {
-        const hostLabel = hostId ? HOST_KIND_LABELS[hostKindOf(hostId)] : "host";
+        const hostLabel = hostId
+          ? HOST_KIND_LABELS[hostKindOf(hostId)]
+          : "host";
         throw Error(
           `Completion subscription requires a live ${hostLabel} agent with a workspace`,
         );
