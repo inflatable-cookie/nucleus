@@ -51,7 +51,9 @@ import {
   type Descriptor,
   type ModelThinking,
 } from "./thinking";
-import { T3StateFile, canonical, retiredRecord, restoredRecord } from "./state";
+import { T3StateFile, canonical, retiredRecord, restoredRecord, t3WorkspaceId } from "./state";
+import { linkedWorktreePath } from "../../core/git/git-identity";
+import { mainCheckoutOf } from "../../core/host/registration";
 import {
   decode,
   config,
@@ -564,8 +566,8 @@ export class T3CodeHost implements Host {
       return null;
     }
   }
-  async activeThreads() {
-    return await this.reads.activeThreads();
+  async activeThreads(includeWorkspaceDirectory = false) {
+    return await this.reads.activeThreads(includeWorkspaceDirectory);
   }
   async findAgents(labels: Record<string, string>) {
     return await this.reads.findAgents(labels);
@@ -601,13 +603,7 @@ export class T3CodeHost implements Host {
         this.presentation.retireDeletedPresentationIntents(id);
       return {
         id,
-        workspaceId:
-          this.reads.workspaceFor(found) ??
-          (
-            this.state.read().agents[id] ??
-            this.state.read().retiredAgents?.[id]
-          )?.workspaceId ??
-          `t3-project:${found.projectId}`,
+        workspaceId: this.reads.threadWorkspace(found),
         title: found.title,
         archived: !!found.archivedAt,
         deleted: !!found.deletedAt,
@@ -620,8 +616,7 @@ export class T3CodeHost implements Host {
       this.presentation.retireDeletedPresentationIntents(id);
     return {
       id,
-      workspaceId:
-        this.reads.workspaceFor(p.thread) ?? `t3-project:${p.thread.projectId}`,
+      workspaceId: this.reads.threadWorkspace(p.thread),
       title: p.thread.title,
       archived: !!p.thread.archivedAt,
       deleted: !!p.thread.deletedAt,
@@ -953,7 +948,7 @@ export class T3CodeHost implements Host {
       throw new ProvenPreSendRefusalError(
         createWireGuidance(repositoryRoot ?? directory),
       );
-    const id = identity("worktree", canonical([selected.id, directory]));
+    const id = t3WorkspaceId(selected.id, directory);
     this.state.update((state) => {
       const old = state.workspaces[id];
       if (old && (old.directory !== directory || old.projectId !== selected.id))
@@ -995,15 +990,29 @@ export class T3CodeHost implements Host {
       .map((w) => ({ id: w.id, directory: w.directory }));
   }
 
-  async workspaceAvailable(id: string) {
-    const w = this.state.read().workspaces[id];
-    return (
-      !!w &&
-      !w.archivedAt &&
-      (await this.reads.shell()).projects.some(
-        (p) => p.id === w.projectId && p.archivedAt == null,
-      )
+  private async resolveWorkspace(id: string) {
+    if (!this.workspaceIdAccepted(id)) return null;
+    const workspaces = this.state.read().workspaces;
+    const recorded = Object.hasOwn(workspaces, id) ? workspaces[id] : undefined;
+    if (recorded?.archivedAt) return null;
+    const shell = await this.reads.shell();
+    const external = !recorded && shell.threads.find((row) =>
+      !row.archivedAt && !row.deletedAt && this.reads.workspaceFor(row) === id,
     );
+    const project = shell.projects.find((p) =>
+      p.id === (recorded?.projectId ?? (external ? external.projectId : null)) && p.archivedAt == null,
+    );
+    if (!project) return null;
+    const directory = recorded?.directory ?? (external && linkedWorktreePath(external.worktreePath ?? project.workspaceRoot));
+    if (!directory) return null;
+    const projectRootPath = project.workspaceRoot === directory && linkedWorktreePath(directory)
+      ? await mainCheckoutOf(directory) ?? project.workspaceRoot
+      : project.workspaceRoot;
+    return { id, directory, title: recorded?.title ?? (external ? external.title : ""), projectId: project.id, projectRootPath };
+  }
+
+  async workspaceAvailable(id: string) {
+    return Boolean(await this.resolveWorkspace(id));
   }
 
   workspaceIdAccepted(id: unknown) {
@@ -1012,22 +1021,21 @@ export class T3CodeHost implements Host {
 
   workspaceRef(id: string): HostWorkspaceRef {
     const host = this;
-    let available = false;
+    let resolved: Awaited<ReturnType<T3CodeHost["resolveWorkspace"]>> = null;
     return {
       get directory() {
-        return host.state.read().workspaces[id]?.directory;
+        return resolved?.directory ?? host.state.read().workspaces[id]?.directory;
       },
       async refresh() {
-        available = await host.workspaceAvailable(id);
-        return available;
+        resolved = await host.resolveWorkspace(id);
+        return Boolean(resolved);
       },
       current() {
-        const w = host.state.read().workspaces[id];
-        return available && w
+        return resolved
           ? {
-              projectRootPath: w.directory,
-              workspaceDirectory: w.directory,
-              projectId: w.projectId,
+              projectRootPath: resolved.projectRootPath,
+              workspaceDirectory: resolved.directory,
+              projectId: resolved.projectId,
               placement: {
                 kind: "external",
                 provenance: "t3code",
@@ -1118,8 +1126,17 @@ export class T3CodeHost implements Host {
     if (spec.mcpBindingPath) unsupported("per-thread MCP reporting");
     if (spec.guard && !(await spec.guard.allowed()))
       throw new ProvenPreSendRefusalError("T3Code launch guard refused");
-    const attempt = spec.attempt(false, false),
-      workspace = this.state.read().workspaces[spec.workspaceId];
+    const attempt = spec.attempt(false, false);
+    let workspace = this.state.read().workspaces[spec.workspaceId];
+    if (!workspace) {
+      const external = await this.resolveWorkspace(spec.workspaceId);
+      if (external) {
+        const { id, directory, projectId, title } = external;
+        workspace = this.state.update((state) =>
+          state.workspaces[id] ??= { id, directory, projectId, title },
+        );
+      }
+    }
     if (!workspace || workspace.archivedAt)
       throw new ProvenPreSendRefusalError("T3Code workspace is not registered");
     if (Object.keys(attempt.environment).length)
@@ -1495,10 +1512,15 @@ export class T3CodeHost implements Host {
    * turn stop keeps working; with nothing live there is nothing to send
    * (nucleus#1328 review).
    */
-  async stopAgentTurn(id: string) {
+  async stopAgentTurn(id: string, expectedTurnId?: string) {
     const runs = await this.reads.activeRunIds(id);
     if (!runs.length) return;
-    const key = identity("stop", canonical([id, runs]));
+    if (expectedTurnId !== undefined && !runs.includes(expectedTurnId)) {
+      throw new ProvenPreSendRefusalError(
+        `Intended turn ${expectedTurnId} ended; active turn ${runs.join(", ")} left untouched`,
+      );
+    }
+    const key = identity("stop", canonical([id, expectedTurnId ? [expectedTurnId] : runs]));
     await this.intents.effect(key, "orchestration.dispatchCommand", {
       type: "thread.stop",
       commandId: key,

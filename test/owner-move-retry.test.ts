@@ -4021,7 +4021,7 @@ test("stop refuses a run with unknown delivery, changing nothing; the refusal is
   }
 });
 
-test("stop is refused for finished work and a cancellation that cannot be confirmed refuses the verb for a retry", async () => {
+test("stop is refused for finished work and an uncertain cancellation preserves the hold until observed settled", async () => {
   const f = fixture();
   try {
     dispatched(f);
@@ -4050,10 +4050,12 @@ test("stop is refused for finished work and a cancellation that cannot be confir
     };
     await assert.rejects(
       stopControl(f),
-      /could not stop the live reviewer run \(review-run\): daemon unreachable; retry the same verb/,
+      /could not stop the live reviewer run \(review-run\): daemon unreachable/,
     );
     assert.equal(f.events("owner_stop_uncertain").length, 1);
-    assert.equal(f.task().holds?.dispatch, undefined, "nothing was parked");
+    assert.ok(f.task().holds?.dispatch, "accepted stop hold is persisted before native cancellation");
+    assert.equal(f.task().resolution.ownerStop?.cancellations[0]?.status, "uncertain");
+    assert.equal(f.view("stop").available, false);
     f.store.update(f.taskId, { phase: "done" });
     assert.equal(f.view("stop").available, false);
     assert.match(f.view("stop").refusal!, /stop applies to unfinished work/);

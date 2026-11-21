@@ -727,7 +727,7 @@ export function ownerEffectRetryRefusal(
   if (
     operation?.kind === "task_control" &&
     operation.state === "needs_attention" &&
-    ["restart", "route"].includes(operation.effect?.target ?? "")
+    ["restart", "route", "stop"].includes(operation.effect?.target ?? "")
   )
     return `${item.summary}. Waiting for the sweep to observe its target.`;
 

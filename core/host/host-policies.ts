@@ -1,6 +1,7 @@
 import type { WorkerPromptMeasurement } from "../dispatch/prompt-text/measure";
 import { AgentPolicy } from "../dispatch/agent-policy";
 import { ReviewPolicy } from "../review/review-policy";
+import { createHostedReviewEntryWorkspace, type ReviewEntryAdapter } from "../review/review-entry";
 import {
   OwnedWorkspaceArchive,
   type WorkspaceArchiveOptions,
@@ -83,7 +84,8 @@ import type { ReviewPolicyHost } from "../review/review-policy";
 
 /** Core policy delegates, injected when the service composes a host. */
 export abstract class HostPolicies extends MachinePorts {
-  hostId?: string;
+  abstract readonly hostId: string;
+  declare reviewEntryGithubCommand?: ReviewEntryAdapter["reviewEntryGithubCommand"];
   abstract readonly socketPath: string;
   abstract readonly helperPath: string;
   abstract readonly reportingViaMcp: boolean;
@@ -199,6 +201,10 @@ export abstract class HostPolicies extends MachinePorts {
 
   createWorkspace(task: Task, options: { freshlyPopulated?: boolean } = {}) {
     return this.workspaceLifecycle.createWorkspace(task, options);
+  }
+
+  createReviewEntryWorkspace(spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0]) {
+    return createHostedReviewEntryWorkspace(this, spec);
   }
 
   /**

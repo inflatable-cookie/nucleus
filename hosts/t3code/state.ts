@@ -607,6 +607,13 @@ export class T3StateFile {
   }
 }
 
+/** The same purpose and fact always name the same host identity. */
+export const identity = (purpose: string, value: string) =>
+  `nucleus-${purpose}-${createHash("sha256").update(value).digest("hex").slice(0, 40)}`;
+
+export const t3WorkspaceId = (projectId: string, directory: string) =>
+  identity("worktree", canonical([projectId, directory]));
+
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object")

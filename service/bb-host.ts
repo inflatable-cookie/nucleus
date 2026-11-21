@@ -41,6 +41,8 @@ import {
 } from "../shared/host-operation";
 import type { Task } from "../shared/contracts";
 import type { HostWorkspaceRef } from "../shared/host";
+import { linkedWorktreePath } from "../core/git/git-identity";
+import { mainCheckoutOf } from "../core/host/registration";
 
 /**
  * A live host that has not sent its heartbeat inside this bound is reported stale:
@@ -208,9 +210,31 @@ export function createBbWorkspaceAdapter(
     delete next[id];
     store.setMeta(WORKSPACES_KEY, next);
   };
+  const workspaceIdAccepted = (id: unknown) =>
+    typeof id === "string" && /^bb-worktree-[a-f0-9]{40}$/.test(id);
+  async function liveEnvironments() {
+    const read = await operation("environment.list", {});
+    const { environments } = read.value as {
+      environments: Array<{ environmentId: string; path: string; status: string }>;
+    };
+    return environments.filter((row) => row.status !== "destroyed");
+  }
+  async function resolveExternalWorkspace(id: string) {
+    if (!workspaceIdAccepted(id)) return null;
+    // A BB thread's observed path and the current native environment must agree.
+    // Git proves the path is a linked checkout even for an unmanaged BB environment.
+    const environment = (await liveEnvironments()).find((row) =>
+      row.path && workspaceHandleForPath(row.path) === id,
+    );
+    const directory = environment && linkedWorktreePath(environment.path);
+    if (!directory) return null;
+    const repositoryRoot = await mainCheckoutOf(directory);
+    return repositoryRoot ? { directory, repositoryRoot } : null;
+  }
   async function workspaceAvailable(id: string): Promise<boolean> {
     let record = getWorkspace(id);
-    if (!record || record.archivedAt || !existsSync(record.directory))
+    if (!record) return Boolean(await resolveExternalWorkspace(id));
+    if (record.archivedAt || !existsSync(record.directory))
       return false;
     const result = await operation("workspace.inspect", {
       repositoryRoot: record.repositoryRoot,
@@ -226,21 +250,10 @@ export function createBbWorkspaceAdapter(
     }
     if (!inspected.projectFound) return false;
     if (record.environmentId) {
-      const read = await operation("environment.list", {});
-      const rows = (
-        read.value as {
-          environments: Array<{
-            environmentId: string;
-            path: string;
-            status: string;
-          }>;
-        }
-      ).environments;
-      return rows.some(
+      return (await liveEnvironments()).some(
         (row) =>
           row.environmentId === record.environmentId &&
-          row.path === record.directory &&
-          row.status !== "destroyed",
+          row.path === record.directory,
       );
     }
     return true;
@@ -264,8 +277,7 @@ export function createBbWorkspaceAdapter(
     findAgents: async () => refusal("thread lookup"),
     archiveAgent: async () => refusal("thread archive"),
     validate: async () => refusal("workspace validation"),
-    workspaceIdAccepted: (id: unknown) =>
-      typeof id === "string" && /^bb-worktree-[a-f0-9]{40}$/.test(id),
+    workspaceIdAccepted,
     async repositoryProject(root: string) {
       const repositoryRoot = realpathSync(root);
       const result = await operation("workspace.inspect", { repositoryRoot });
@@ -280,7 +292,7 @@ export function createBbWorkspaceAdapter(
         workspaceRoot: repositoryRoot,
       };
     },
-    async createWorkspace(task: Task) {
+    async createWorkspace(task: Pick<Task, "directory" | "repoPath" | "title">) {
       if (!task.directory)
         throw new ProvenPreSendRefusalError(
           "BB workspace creation requires the task's recorded worktree directory",
@@ -377,22 +389,23 @@ export function createBbWorkspaceAdapter(
     },
     workspaceAvailable,
     workspaceRef(id: string): HostWorkspaceRef {
-      let available = false;
+      let resolved: { directory: string; repositoryRoot: string; projectId?: string } | null = null;
       return {
         get directory() {
-          return getWorkspace(id)?.directory ?? null;
+          return resolved?.directory ?? getWorkspace(id)?.directory ?? null;
         },
         async refresh() {
-          available = await workspaceAvailable(id);
-          return available;
+          resolved = getWorkspace(id)
+            ? (await workspaceAvailable(id) ? getWorkspace(id) ?? null : null)
+            : await resolveExternalWorkspace(id);
+          return Boolean(resolved);
         },
         current() {
-          const record = getWorkspace(id);
-          return available && record
+          return resolved
             ? {
-                projectRootPath: record.directory,
-                workspaceDirectory: record.directory,
-                projectId: record.projectId,
+                projectRootPath: resolved.repositoryRoot,
+                workspaceDirectory: resolved.directory,
+                projectId: resolved.projectId,
                 placement: {
                   kind: "external",
                   provenance: "bb",
@@ -424,6 +437,20 @@ export function createBbWorkspaceAdapter(
   return native;
 }
 
+export function createBbHostAdapter(
+  hostId: string,
+  connected: () => boolean,
+  dataDir: string,
+  store: Store,
+  requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
+): ReturnType<typeof composeBbAdapter>;
+export function createBbHostAdapter(
+  hostId: string,
+  connected: () => boolean,
+  dataDir?: string,
+  store?: Store,
+  requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
+): Adapter;
 export function createBbHostAdapter(
   hostId: string,
   connected: () => boolean,

@@ -1,6 +1,6 @@
 import { isHostOperationTimeout } from "../core/host/errors";
 import { HostPolicies } from "../core/host/host-policies";
-import type { Adapter, HostPolicyConstructor } from "../core/host";
+import type { Adapter, HostPolicyConstructor, HostPolicyPort } from "../core/host";
 import {
   ArchiveNotDeliveredError,
   ProvenPreSendRefusalError,
@@ -37,12 +37,12 @@ import type {
 export interface BbWorkspaces
   extends Pick<
     Adapter,
-    | "createWorkspace"
     | "findWorkspaces"
     | "workspaceAvailable"
     | "workspaceIdAccepted"
     | "taskWorkspaceArchived"
   > {
+  createWorkspace(task: Pick<Task, "directory" | "repoPath" | "title">): Promise<{ id: string; directory: string }>;
   workspaceRef(id: string): HostWorkspaceRef;
   repositoryProject(
     root: string,
@@ -63,21 +63,18 @@ export function composeBbAdapter(input: {
   notSent(error: unknown): boolean;
   records(): Record<string, BbWorkspaceRecord>;
   put(record: BbWorkspaceRecord): void;
-}): Adapter {
+}): Adapter & HostPolicyPort & { readonly hostId: string } {
   const { workspaces, store, hostId } = input;
-  async function nativeWorkspaceThreads() {
+  async function nativeWorkspaceThreads(includeWorkspaceDirectory = false) {
     const rows = await threads.inventoryRows();
-    const handles = Object.values(input.records());
+    const agents = new Map(threads.agents().map((agent) => [agent.id, agent]));
     return rows.map((row) => {
-      const workspace = handles.find(
-        (w) =>
-          w.environmentId === row.environmentId &&
-          w.directory === row.environmentPath,
-      );
+      const agent = agents.get(row.threadId);
       return {
         id: row.threadId,
-        workspaceId: workspace?.id ?? null,
-        labels: threads.agents().find((a) => a.id === row.threadId)?.labels,
+        workspaceId: threads.workspaceFor(row, agent),
+        ...(includeWorkspaceDirectory ? { workspaceDirectory: row.environmentPath } : {}),
+        labels: agent?.labels,
         archived: row.archivedAt !== null,
         status: row.archivedAt !== null ? "closed" : row.status,
         activeTurn:
@@ -173,7 +170,7 @@ export function composeBbAdapter(input: {
         prepareRunScratch: true,
       };
     }
-    nativeAgentCreate(spec: HostAgentSpec, mcp: boolean) {
+    async nativeAgentCreate(spec: HostAgentSpec, mcp: boolean) {
       if (!input.dataDir || mcp)
         throw new ProvenPreSendRefusalError(
           "BB dispatch requires helper reporting",
@@ -200,6 +197,16 @@ export function composeBbAdapter(input: {
           );
         }
       }
+      if (!input.records()[spec.workspaceId]) {
+        const workspace = workspaces.workspaceRef(spec.workspaceId);
+        await workspace.refresh();
+        const current = workspace.current();
+        if (!task || workspace.directory !== task.directory || current?.projectRootPath !== task.repoPath)
+          throw new ProvenPreSendRefusalError("BB workspace is no longer attached to the task checkout");
+        const registered = await workspaces.createWorkspace(task);
+        if (registered.id !== spec.workspaceId)
+          throw new ProvenPreSendRefusalError("BB workspace registration returned a different handle");
+      }
       return threads.createAgent(spec);
     }
     unsupportedMcp() {
@@ -225,7 +232,7 @@ export function composeBbAdapter(input: {
             directory: spec.directory,
             repoPath: spec.project?.workspaceRoot ?? spec.directory,
             title: spec.title,
-          } as Task),
+          }),
         workspaceRef: (id: string) => workspaces.workspaceRef(id),
         workspaceIdAccepted: workspaces.workspaceIdAccepted,
         createCloseoutWorkspace: async () => {
@@ -261,7 +268,7 @@ export function composeBbAdapter(input: {
           reason: "BB terminal inventory is not a lifecycle fact",
         }),
         activeThreads: async () =>
-          (await nativeWorkspaceThreads()).filter((r) => r.activeTurn),
+          (await nativeWorkspaceThreads(true)).filter((r) => !r.archived),
       };
     }
     get messageHost() {
@@ -456,7 +463,7 @@ export function composeBbAdapter(input: {
     }
     async listLiveAgents() {
       const rows = await threads.inventoryRows();
-      const known = threads.agents();
+      const known = new Map(threads.agents().map((agent) => [agent.id, agent]));
       const workspaces = Object.values(input.records());
       return rows
         .filter((row) => row.archivedAt === null && row.status !== "closed")
@@ -469,13 +476,13 @@ export function composeBbAdapter(input: {
           return {
             id: row.threadId,
             title: row.title ?? "",
-            workspaceId: workspace?.id ?? null,
+            workspaceId: threads.workspaceFor(row, known.get(row.threadId)),
             directory: row.environmentPath,
             repositoryRoot: workspace?.repositoryRoot ?? null,
             updatedAt: Number.isFinite(row.updatedAt)
               ? new Date(row.updatedAt).toISOString()
               : null,
-            labels: known.find((agent) => agent.id === row.threadId)?.labels,
+            labels: known.get(row.threadId)?.labels,
           };
         });
     }
@@ -486,24 +493,19 @@ export function composeBbAdapter(input: {
       return threads.observationInventory(ids);
     }
     async originAgent(id: string) {
-      const { observation, environmentId } = await threads.origin(id);
-      // A planner thread Nucleus did not create has no recorded workspace handle,
-      // but it does run in a BB environment, and naming it as a task's new owner
-      // needs a workspace on the owner record (T3 answers its project scope the
-      // same way). Task threads keep their recorded handle.
-      const workspaceId =
-        observation.workspaceId ??
-        (environmentId ? `bb-environment:${environmentId}` : null);
+      const observation = await threads.observe(id);
       return {
         id,
-        workspaceId,
+        workspaceId: observation.workspaceId,
         title: "",
         archived: observation.status === "closed",
         labels: observation.labels,
       };
     }
-    stopAgentTurn(id: string) {
-      return threads.stopAgentTurn(id);
+    stopAgentTurn(id: string, expectedTurnId?: string) {
+      return expectedTurnId !== undefined
+        ? threads.stopAgentTurn(id, expectedTurnId)
+        : threads.stopAgentTurn(id);
     }
     archiveAgent(id: string) {
       // A refusal the adapter or the plugin proves before its write is a not-delivered
@@ -689,5 +691,5 @@ export function composeBbAdapter(input: {
       }
     }
   }
-  return new BbAdapter() as unknown as Adapter;
+  return new BbAdapter();
 }

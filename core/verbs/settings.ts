@@ -2,6 +2,7 @@ import { independentReviewRoutingConflict } from "../dispatch/routing";
 import { parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
+import { ownerStopPendingRefusal } from "./owner-stop";
 import type {
   ReparentInput,
   Task,
@@ -556,6 +557,9 @@ export class SettingsControls {
           ? `No ${kind} hold to release; pass kind: "${other}" to release the ${other} hold`
           : `No ${kind} hold to release`,
       );
+    }
+    if (kind === "dispatch" && task.resolution.ownerStop) {
+      throw new Error(ownerStopPendingRefusal(task.resolution.ownerStop));
     }
     return this.store.update(
       task.id,

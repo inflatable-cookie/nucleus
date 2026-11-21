@@ -457,6 +457,15 @@ test("BB busy rows never fabricate a positive turn id or prove turn absence", as
   const state = await f.native.observe(agent.id);
   assert.equal(state.active, true);
   assert.equal(state.activeTurnId, undefined);
+  await assert.rejects(
+    f.native.stopAgentTurn(agent.id, "expected-turn-1"),
+    /Intended turn expected-turn-1 ended or changed/,
+  );
+  assert.equal(
+    f.calls.filter((c) => c.method === "threads.stop").length,
+    0,
+    "expectedTurnId mismatch refuses before issuing threads.stop",
+  );
 });
 
 test("nucleus#1315 a BB role thread runs in Full Access whatever mode the profile names", async () => {

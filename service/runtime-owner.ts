@@ -166,6 +166,7 @@ import {
   prepareReviewEntryWorkspace,
   previewReviewEntry,
   reconcileReviewEntryOperation,
+  unavailableReviewEntry,
   type ReviewEntryAdapter,
 } from "../core/review/review-entry";
 import {
@@ -2062,7 +2063,7 @@ export class QueueRuntime {
     return this.engine.withHost(hostId, async () => {
       const adapter = this.engine.adapter as Adapter & ReviewEntryAdapter;
       if (!adapter.inspectReviewEntry || !adapter.originAgent)
-        throw Error("Review entry is unavailable on this adapter");
+        throw unavailableReviewEntry(adapter.hostId);
       const routingConflict = this.engine.independentReviewRoutingRefusal({
         ...input.submission,
         declaredAuthorModels: input.authorDeclaration.models,
@@ -2123,7 +2124,7 @@ export class QueueRuntime {
       async () => {
         const adapter = this.engine.adapter as Adapter & ReviewEntryAdapter;
         if (!adapter.inspectReviewEntry || !adapter.originAgent)
-          throw Error("Review entry is unavailable on this adapter");
+          throw unavailableReviewEntry(adapter.hostId);
         const payload = this.store.operationPayload(input.operationId) as {
           input?: ReviewEntryInput;
         };

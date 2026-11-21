@@ -97,7 +97,7 @@ export interface Host {
     id: AgentId,
     limit?: number,
   ): Promise<HostTimelineEntry[] | null>;
-  stopAgentTurn(id: AgentId): Promise<void>;
+  stopAgentTurn(id: AgentId, expectedTurnId?: string): Promise<void>;
   archiveAgent(id: AgentId): Promise<void>;
   /**
    * Permanently remove one thread (T3Code, nucleus#1155). Optional: a host that
@@ -329,6 +329,7 @@ export type HostTerminalInventory =
  * idleness. Core applies those decisions; the host only reports what it sees.
  */
 export interface HostThread {
+  readonly workspaceDirectory?: string | null;
   /** The native identity; an empty value is an unreadable thread, which core refuses. */
   id: AgentId;
   workspaceId: WorkspaceId | null;

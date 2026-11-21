@@ -7,7 +7,7 @@ import type { TaskControlInput } from "../../shared/contracts";
  * acceptance is already one short transaction.
  */
 const EXTERNAL_EFFECT_ACTIONS: ReadonlySet<TaskControlInput["action"]> = new Set([ "cancel", "withdraw_cancel", "supersede",
-  "complete", "restart", "move", "retry_effect", "proof",
+  "complete", "restart", "move", "retry_effect", "proof", "stop",
 ]);
 /**
  * A brief amendment with no text is a handoff instruction re-pin, which reads

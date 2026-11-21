@@ -72,11 +72,12 @@ submitting, inspect the operation receipt as described below.
    initial agent is a reviewer; `worker_mode: implementation` defines only a
    later revision worker's contract. Resolve planning identity/number collisions
    without silently changing another PR's scope.
-4. Reuse a suitable isolated Paseo workspace on the existing branch. If absent,
-   the takeover request permits preparation through Paseo `create_workspace`
-   with `isolation: worktree`, `mode: checkout-pr`, the canonical repository
-   `path` and exact `prNumber`. Inspect the returned workspace ID, directory,
-   branch and Git common directory. For this newly created intake workspace, set
+4. Reuse a suitable isolated workspace on the existing branch on Paseo, T3Code
+   or BB. When the branch has no suitable checkout, the approved-lead helper
+   prepares the exact PR branch on the selected host if `--workspace` is omitted.
+   If the branch is already checked out, use that workspace and prove the writer
+   has yielded before review launches. Inspect the workspace ID, directory,
+   branch and Git common directory. For a newly created intake workspace, set
    `workspaceOwnership: "intake"` in the input so successful closeout archives it.
    For a pre-existing external workspace, leave the default `external` ownership.
    Never infer intake ownership from a name alone. Do not use the canonical

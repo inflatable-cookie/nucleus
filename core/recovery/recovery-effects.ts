@@ -1,5 +1,7 @@
 import type { Run, Task } from "../../shared/contracts";
+import { isDispositionActive } from "../../shared/contracts";
 import type { QueueOperation } from "../../shared/operations";
+import { ownerStopPendingRefusal } from "../verbs/owner-stop";
 import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import {
   classifyReviewPublication,
@@ -664,12 +666,12 @@ export function observedHostEffectEvidence(
     return hasRecordedOperationSettlement(store, task, operation)
       ? "the occurrence has a durable supersession"
       : null;
-  if (
-    operation.kind !== "task_control" ||
-    operation.effect?.kind !== "task_control" ||
-    operation.effect.target !== "restart"
-  )
-    return null;
+  const target =
+    operation.kind === "task_control" &&
+    operation.effect?.kind === "task_control"
+      ? operation.effect.target
+      : null;
+  if (target !== "restart" && target !== "stop") return null;
   if (hasRecordedOperationSettlement(store, task, operation))
     return "the occurrence has a durable supersession";
   const owner = task.resolution.ownerSettlements.find((record) =>
@@ -682,6 +684,34 @@ export function observedHostEffectEvidence(
   const boundary = Date.parse(operation.settledAt ?? "");
   const started = Date.parse(operation.startedAt ?? "");
   const events = store.eventsAll(task.id);
+  if (target === "stop") {
+    const activeForOp = task.resolution.ownerStop?.operationId === operation.id;
+    if (!activeForOp) {
+      const settledStop = events.find((event) => {
+        if (event.kind !== "owner_stopped") return false;
+        try {
+          const parsed = JSON.parse(event.detail) as { operationId?: string };
+          if (parsed.operationId === operation.id) return true;
+        } catch {
+          /* fall back to monotonic timestamp + absent ownerStop */
+        }
+        return (
+          !task.resolution.ownerStop &&
+          Number.isFinite(accepted) &&
+          Date.parse(event.at) >= accepted
+        );
+      });
+      if (settledStop)
+        return `owner stop ${operation.id} settled (${settledStop.kind} at ${settledStop.at})`;
+      if (
+        ["done", "cancelled"].includes(task.phase) ||
+        Boolean(task.resolution.mergedCommit) ||
+        isDispositionActive(task)
+      )
+        return `task reached ${task.phase} state past owner stop ${operation.id}`;
+    }
+    return null;
+  }
   const payload = store.operationPayload(operation.id) as {
     control?: {
       action?: string;
@@ -706,7 +736,7 @@ export function observedHostEffectEvidence(
     operation.id === operationIdForKey(operation.key) &&
     operation.inputHash === operationInputHash(payload) &&
     operation.attempts > 0 &&
-    operation.effect.status === "uncertain"
+    operation.effect?.status === "uncertain"
   ) {
     // A terminal task answers a restart only once every possible participant
     // has been released. An untracked worker needs a direct archive
@@ -1028,22 +1058,34 @@ export function unsettledControlRefusal(
   task: Task,
   observingOperationId?: string,
 ): string | null {
-  return recoveryEffectsRefusal(
-    blockingRecoveryEffects(store, task, { kinds: ["operation"] }).filter(
-      (effect) => {
-        if (
-          effect.state !== "uncertain" ||
-          effect.identity === observingOperationId
-        )
-          return false;
-        const operation = store.operation(effect.identity);
-        return (
-          operation?.kind === "task_control" &&
-          ["restart", "route"].includes(operation.effect?.target ?? "")
-        );
-      },
-    ),
-  );
+  const blocking = blockingRecoveryEffects(store, task, {
+    kinds: ["operation"],
+  }).filter((effect) => {
+    if (
+      effect.state !== "uncertain" ||
+      effect.identity === observingOperationId
+    )
+      return false;
+    const operation = store.operation(effect.identity);
+    return (
+      operation?.kind === "task_control" &&
+      ["restart", "route", "stop"].includes(operation.effect?.target ?? "")
+    );
+  });
+  const opRefusal = recoveryEffectsRefusal(blocking);
+  const stop = task.resolution.ownerStop;
+  if (
+    stop &&
+    (!observingOperationId || stop.operationId !== observingOperationId) &&
+    !(
+      stop.operationId &&
+      blocking.some((effect) => effect.identity === stop.operationId)
+    )
+  ) {
+    const stopRefusal = ownerStopPendingRefusal(stop);
+    return opRefusal ? `${opRefusal}; ${stopRefusal}` : stopRefusal;
+  }
+  return opRefusal;
 }
 
 /** Format a selected blocking set without hiding secondary identities. */

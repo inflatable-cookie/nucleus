@@ -31,7 +31,7 @@ export interface HostThreads {
   ): Promise<{ id: string; workspaceId: string | null }>;
   findAgents(task: Task): Promise<{ id: string; workspaceId: string | null }[]>;
   /** Stop the assigned agent's current turn without delivering a follow-up message. */
-  stopAgentTurn?(agentId: string): Promise<void>;
+  stopAgentTurn?(agentId: string, expectedTurnId?: string): Promise<void>;
   archiveAgent(agentId: string): Promise<void>;
   /**
    * Permanently remove one thread at closeout (nucleus#1155). Present exactly
