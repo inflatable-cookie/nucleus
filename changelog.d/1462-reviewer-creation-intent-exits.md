@@ -1,0 +1,1 @@
+A reviewer creation a service roll left at `intent` now has the same exits as an uncertain one: the sweep's absence proof is read by `next`, `restart` and `route now`, and an authorized continuation retires only that reservation and starts one review on the same head.

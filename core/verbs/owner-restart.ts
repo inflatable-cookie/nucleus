@@ -62,6 +62,7 @@ import {
   workerProducerStopped,
 } from "../recovery/absent-creation/stale-worker";
 import { resolutionCreationRestartRefusal } from "../recovery/absent-creation/restarts";
+import { agentlessCreation } from "../recovery/absent-creation/decisions";
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -490,8 +491,7 @@ export function restartShape(
     const absent = runs.find(
       (run) =>
         !run.released &&
-        !run.agentId &&
-        run.status === "uncertain" &&
+        agentlessCreation(run) &&
         restartResolutionRoles.includes(
           run.role as (typeof restartResolutionRoles)[number],
         ),
@@ -530,16 +530,14 @@ export function restartShape(
         run.id === recovery.runId &&
         run.role === "recovery" &&
         !run.released &&
-        !run.agentId &&
         !run.completion &&
-        ["intent", "uncertain"].includes(run.status),
+        agentlessCreation(run),
     );
   if (agentlessRecovery) return "coordinator";
   const absent = runs.find(
     (run) =>
       !run.released &&
-      !run.agentId &&
-      run.status === "uncertain" &&
+      agentlessCreation(run) &&
       restartResolutionRoles.includes(
         run.role as (typeof restartResolutionRoles)[number],
       ),

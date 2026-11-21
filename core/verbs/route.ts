@@ -54,6 +54,7 @@ import {
 } from "./reviewer-report";
 import { observeRecoveryCreation } from "../recovery/coordinator-episode";
 import { observeResolutionCreation } from "../recovery/absent-creation/restarts";
+import { agentlessCreation } from "../recovery/absent-creation/decisions";
 import { readCreationAttempt } from "../store/store-task-funnel";
 import { taskPrNumber } from "../forge/index";
 
@@ -472,8 +473,14 @@ export class RouteControls {
           : null;
       let absentRun: { run: Run; attemptId: string } | null = null;
       if (agentless && !recoveryObservation) {
+        // The durable creation state, not one status: a rolled reservation sits at
+        // `intent` and a send that threw sits at `uncertain`, and both owe the same
+        // exact lookup (nucleus#1462).
+        if (!agentlessCreation(agentless))
+          throw Error(
+            `route now cannot replace the ${role}'s creation: run ${agentless.id} is ${agentless.status} with no agent, which is not an unanswered creation reservation`,
+          );
         if (
-          agentless.status !== "uncertain" ||
           agentless.hostId !== task.hostId ||
           agentless.workspaceId !== task.workspaceId
         )
