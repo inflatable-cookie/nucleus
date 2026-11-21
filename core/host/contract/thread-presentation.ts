@@ -37,6 +37,34 @@ export interface TaskRowProjection {
   readonly attention: TaskAttention;
 }
 
+/**
+ * One finished parent a host pass could not archive (nucleus#1459). The typed state
+ * names why, so the sweep records a reason the operator can act on instead of leaving
+ * a done task's parent silently in the host's snoozed list:
+ *
+ * - `unknown` — the archive command's delivery is unknown and is read, never resent
+ *   blind; the next pass settles it from the same thread's archive fact.
+ * - `refused` — a proven pre-send refusal. Nothing reached the host, and the same
+ *   command identity may be sent again on a later pass.
+ * - `unobserved` — the host accepted the archive, but the same thread is not archived;
+ *   a settled receipt is never sent twice, so this is a person's own action to see.
+ * - `mismatched` — the binding does not positively name this task's own parent thread.
+ * - `shared` — two task records claim the same parent thread.
+ * - `read_failed` — the host could not answer this parent's state this pass.
+ */
+export interface ParentArchiveWait {
+  readonly taskId: string;
+  readonly threadId: string;
+  readonly state:
+    | "unknown"
+    | "refused"
+    | "unobserved"
+    | "mismatched"
+    | "shared"
+    | "read_failed";
+  readonly reason: string;
+}
+
 /** How a task's threads are presented to the operator: the task's one row and thread titles. */
 export interface HostThreadPresentation {
   /**
@@ -75,4 +103,15 @@ export interface HostThreadPresentation {
     tasks: readonly Task[],
     rows?: readonly TaskRowProjection[],
   ): Promise<void>;
+  /**
+   * Settle the finished-parent archive obligation (nucleus#1459), from the host's
+   * durable parent bindings and the pass's own task list. It is the terminal step's
+   * work alone: no Inbox, decision-card, row or title read can gate it, and one
+   * host's parent fault never covers another. A pass visits a bounded batch of the
+   * oldest attempts, and every entry it cannot settle comes back as a typed wait for
+   * the caller to record. A host that keeps no parent binding omits the method.
+   */
+  reconcileFinishedParents?(
+    tasks: readonly Task[],
+  ): Promise<readonly ParentArchiveWait[]>;
 }

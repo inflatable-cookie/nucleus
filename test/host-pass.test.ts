@@ -9,7 +9,11 @@ import {
 import { Engine } from "../core/engine";
 import { enginePorts } from "../core/port-context";
 import { HostPass } from "../core/scheduling/host-pass";
-import type { Adapter, AgentObservation } from "../core/host";
+import type {
+  Adapter,
+  AgentObservation,
+  ParentArchiveWait,
+} from "../core/host";
 import { fakeAdapter, submission, observeIdle } from "./support/fakes";
 import { catchUpFinishedTaskThreads } from "../core/workspaces/thread-archive";
 import { archiveProbeKey } from "../core/workspaces/thread-archive-effect";
@@ -73,6 +77,99 @@ function fixture(
   );
   return { store, engine, hostPass };
 }
+
+/**
+ * nucleus#1459: the finished-parent archive is its own terminal step, ahead of every
+ * presentation read, so an Inbox, row or title fault never strands a done task's parent
+ * and each typed wait is recorded once for the operator.
+ */
+test("the finished-parent archive step runs before presentation and records its typed waits once", async (t) => {
+  const ran: string[] = [];
+  const waits: ParentArchiveWait[] = [];
+  const f = fixture(
+    t,
+    {
+      reconcileFinishedParents: async () => {
+        ran.push("parents");
+        return waits;
+      },
+      reconcileTaskRow: async () => {
+        ran.push("rows");
+        throw new Error("rows fault");
+      },
+      reconcileThreadTitles: () => {
+        ran.push("titles");
+        throw new Error("titles fault");
+      },
+    },
+    { task: true },
+  );
+  const task = f.store.tasks().find((candidate) => candidate.hostId === HOST)!;
+  waits.push({
+    taskId: task.id,
+    threadId: "thread-parent-1",
+    state: "unknown",
+    reason: "the parent archive delivery is unknown",
+  });
+
+  const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.deepEqual(
+    ran,
+    ["parents", "rows", "titles"],
+    "the terminal step runs first and the presentation faults never stop it",
+  );
+  assert.match(
+    String(f.store.getMeta("hostPassError")),
+    /reconcileThreadTitles: titles fault/,
+  );
+  const events = f.store
+    .events(task.id)
+    .filter((event) => event.kind === "parent_archive_uncertain");
+  assert.equal(events.length, 1, "the unknown delivery is named on the task");
+  assert.match(
+    events[0]!.detail,
+    /thread-parent-1 \(unknown\): the parent archive delivery is unknown/,
+  );
+  assert.equal(
+    f.store.getMeta("parentArchiveWait:host-1:" + task.id),
+    "thread-parent-1 (unknown): the parent archive delivery is unknown",
+  );
+
+  // The same wait on the next pass is the same fact: no second event.
+  await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.equal(
+    f.store
+      .events(task.id)
+      .filter((event) => event.kind === "parent_archive_uncertain").length,
+    1,
+  );
+  assert.equal(result.transportAnswered, true);
+});
+
+test("a finished-parent archive fault stays that step's own and the host still passes", async (t) => {
+  const ran: string[] = [];
+  const f = fixture(
+    t,
+    {
+      reconcileFinishedParents: async () => {
+        ran.push("parents");
+        throw new Error("parent archive fault");
+      },
+      reconcileThreadTitles: () => {
+        ran.push("titles");
+      },
+    },
+    { task: true },
+  );
+
+  const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.deepEqual(ran, ["parents", "titles"]);
+  assert.match(
+    String(f.store.getMeta("hostPassError")),
+    /reconcileFinishedParents: parent archive fault/,
+  );
+  assert.equal(result.transportAnswered, true);
+});
 
 test("a step that throws is recorded and the host's later steps still run", async (t) => {
   const ran: string[] = [];

@@ -1,5 +1,6 @@
 export type * from "./adapter";
 export type {
+  ParentArchiveWait,
   RowSnoozeVisibility,
   TaskRowProjection,
 } from "./contract/thread-presentation";

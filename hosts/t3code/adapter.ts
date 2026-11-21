@@ -25,7 +25,11 @@ import {
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import { isHostOperationTimeout } from "../../core/host";
-import type { RowSnoozeVisibility, TaskRowProjection } from "../../core/host";
+import type {
+  ParentArchiveWait,
+  RowSnoozeVisibility,
+  TaskRowProjection,
+} from "../../core/host";
 import { T3RpcClient, type T3ConnectionConfig } from "./rpc";
 import {
   canonicalThinkingValue,
@@ -389,7 +393,9 @@ export class T3CodeHost implements Host {
     }
   }
   /** Only this host's durable parent record can identify a task's ACP row. */
-  decisionParent(taskId: string): import("../../core/acp/decisions").ParentStatus {
+  decisionParent(
+    taskId: string,
+  ): import("../../core/acp/decisions").ParentStatus {
     if (!this.connected) return { state: "unknown" };
     const parent = this.state.read().parents?.[taskId];
     return !parent || parent.archivedAt
@@ -451,7 +457,10 @@ export class T3CodeHost implements Host {
     const state = this.state.read();
     if (state.hostId) acp?.observedCards?.({ hostId: state.hostId }, null);
     for (const parent of Object.values(state.parents ?? {}))
-      acp?.observedCards?.({ taskId: parent.taskId, sessionId: parent.sessionId }, null);
+      acp?.observedCards?.(
+        { taskId: parent.taskId, sessionId: parent.sessionId },
+        null,
+      );
     this.ready = false;
     this.rpc.close();
   }
@@ -605,7 +614,8 @@ export class T3CodeHost implements Host {
       };
     }
     const p =
-      record?.projection ?? (await this.reads.readProjection(id, "observation"));
+      record?.projection ??
+      (await this.reads.readProjection(id, "observation"));
     if (p.thread.deletedAt)
       this.presentation.retireDeletedPresentationIntents(id);
     return {
@@ -673,8 +683,7 @@ export class T3CodeHost implements Host {
     const acp = this.acp();
     return rows.filter(
       ({ task, attention }) =>
-        attention.state === "active" &&
-        !acp?.pendingDecisionKey?.(task.id),
+        attention.state === "active" && !acp?.pendingDecisionKey?.(task.id),
     ).length;
   }
   /**
@@ -695,7 +704,7 @@ export class T3CodeHost implements Host {
     return await this.inbox.showBoard();
   }
 
-  /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
+  /** The ordinary host sweep's nesting pass: dispose owed wakes and hold or release a live parent's turn. A finished task's parent is archived by the terminal step instead. */
   async reconcileThreadTitles(
     tasks: readonly Task[],
     rows: readonly TaskRowProjection[] = [],
@@ -755,6 +764,21 @@ export class T3CodeHost implements Host {
       if (error instanceof T3CompatibilityError) incompatible ??= error;
     }
     if (incompatible) throw incompatible;
+  }
+
+  /**
+   * Settle the finished-parent archive obligation (nucleus#1459), before any other
+   * presentation read: the host pass runs it as its own step, so an Inbox, decision-card,
+   * row or title fault (or a timeout further along the pass) can never leave a done task's
+   * parent in the operator's snoozed list. The obligation comes from this host's durable
+   * parent bindings, so it survives workspace retirement and a service roll, and each entry
+   * the pass cannot settle is returned as a typed wait for the caller to record.
+   */
+  async reconcileFinishedParents(
+    tasks: readonly Task[],
+  ): Promise<readonly ParentArchiveWait[]> {
+    if (!this.connected) return [];
+    return await this.nesting.archiveFinishedParents(tasks);
   }
 
   async catalog(): Promise<HostCatalog> {

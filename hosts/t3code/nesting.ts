@@ -36,9 +36,12 @@ import {
   HostReadRefusalError,
   isHostOperationTimeout,
   ProvenPreSendRefusalError,
+  sanitizeHostFailureDetail,
 } from "../../core/host";
+import type { ParentArchiveWait } from "../../core/host";
 import type { HostAgentAttempt, HostAgentSpec } from "../../shared/host";
 import type { Profile, Task } from "../../shared/contracts";
+import { isDispositionActive } from "../../shared/disposition";
 import type { AcpSessionSurface } from "../../shared/acp/surface";
 import type { T3RpcClient } from "./rpc";
 import { config, T3CompatibilityError, type RuntimeMode } from "./contracts";
@@ -114,6 +117,12 @@ export const childTaskId = (commandId: string): string =>
 
 /** How long a re-entry waits for the parent's run to appear before the create refuses. */
 export const REENTRY_TIMEOUT_MS = 20_000;
+/**
+ * Finished parents one host pass visits (nucleus#1459): a backlog drains over passes in
+ * bounded batches, and the oldest attempt goes first, so no parent waits behind a
+ * steady stream of newer ones.
+ */
+export const PARENT_ARCHIVE_BATCH = 4;
 /** How long a just-launched parent gets to show its run before it counts as released. */
 const LAUNCH_RUN_TIMEOUT_MS = 5_000;
 const REENTRY_POLL_MS = 500;
@@ -125,6 +134,20 @@ type ConfigModel = z.infer<
 >["providers"][number]["models"][number];
 type ConfigProvider = z.infer<typeof config>["providers"][number];
 type ParentThread = NonNullable<T3State["parents"]>[string];
+
+/** A task Nucleus will not run again: removed, done or cancelled. */
+const terminalTask = (task: Task): boolean =>
+  task.removedAt != null || task.phase === "done" || task.phase === "cancelled";
+
+/**
+ * One bounded, remote-text-free reason for a finished parent's archive attempt
+ * (nucleus#1459). The adapter's own failure text passes the same sanitizer a host
+ * diagnostic does, so only an authored shape reaches the task's event or its binding.
+ */
+const parentArchiveDetail = (error: unknown): string =>
+  sanitizeHostFailureDetail(
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+  ) ?? "an unnamed T3Code failure";
 
 export interface T3NestingContext {
   rpc: T3RpcClient;
@@ -663,8 +686,11 @@ export class T3Nesting {
 
   /**
    * The ordinary host sweep's nesting pass: dispose every wake still owed, release the
-   * parent's turn when no child runs, and archive the parent of a finished task. Every
-   * step reads first, so a lost reply is settled by a fact and never resent blindly.
+   * parent's turn when no child runs, and read a live task's parent. Every step reads
+   * first, so a lost reply is settled by a fact and never resent blindly. A finished
+   * task's parent is not this pass's work: the host pass settles it from its own
+   * terminal step (`archiveFinishedParents`), so presentation faults never strand it
+   * (nucleus#1459).
    */
   async reconcile(tasks: readonly Task[]): Promise<void> {
     if (!Object.keys(this.core.state.read().parents ?? {}).length) return;
@@ -672,26 +698,10 @@ export class T3Nesting {
     for (const task of tasks) {
       const parent = this.parentOf(task.id);
       if (!parent || parent.archivedAt) continue;
-      if (
-        task.removedAt != null ||
-        task.phase === "done" ||
-        task.phase === "cancelled"
-      ) {
-        // A finished task creates no further child, so its held turn is released at
-        // once — the create grace window is for live work and must never keep a
-        // terminal thread busy against the closeout lane (nucleus#1366). The
-        // release is a local ACP call, so a thread that left observation is still
-        // released: the workspace archive proof reads its run state.
-        await this.release(parent).catch((error) => {
-          if (isHostOperationTimeout(error)) throw error;
-        });
-        await this.archiveParent(parent).catch((error) => {
-          if (isHostOperationTimeout(error)) throw error;
-        });
-        continue;
-      }
+      // The terminal owner archives a finished task's parent; this pass never does.
+      if (terminalTask(task)) continue;
       // A parent that left observation is read no further: its task is over, and the
-      // archive above is the whole remaining work for it (nucleus#1328).
+      // terminal step's archive is the whole remaining work for it (nucleus#1328).
       if (!this.core.reads.observes(parent.threadId)) continue;
       let projection: Projection;
       try {
@@ -718,6 +728,233 @@ export class T3Nesting {
       if (await this.anyChildLive(task.id)) continue;
       await this.release(parent);
     }
+  }
+
+  // ------------------------------------------------------- finished parent archive
+
+  /**
+   * The terminal owner's finished-parent archive (nucleus#1459). A finished task's
+   * parent leaves T3's snoozed list through this one obligation, and the obligation is
+   * discovered from this host's durable parent binding: an Inbox read, a row write, a
+   * sibling parent's fault or a service roll never hides it. One pass visits a bounded
+   * batch, oldest attempt first, so a backlog drains over passes rather than in a burst.
+   *
+   * A binding is archived only when it positively names this task's own parent thread:
+   * the task is stored for this host and terminal, the record is the task's, and the
+   * thread is neither the Inbox nor a recorded role/follow-up thread. Nothing here
+   * touches a planner thread, a person's thread, an operator's snooze or the archived
+   * thread retention pass. Each entry it cannot settle is answered as a typed wait for
+   * the caller to record, and the binding keeps the same reason.
+   */
+  async archiveFinishedParents(
+    tasks: readonly Task[],
+  ): Promise<readonly ParentArchiveWait[]> {
+    const state = this.core.state.read();
+    const bindings = Object.entries(state.parents ?? {}).filter(
+      ([, parent]) => !parent.archivedAt,
+    );
+    if (!bindings.length) return [];
+    this.core.requireConnection();
+    const terminal = new Map(
+      tasks
+        .filter(
+          (task) =>
+            task.hostId === this.core.hostId() &&
+            terminalTask(task) &&
+            !isDispositionActive(task),
+        )
+        .map((task) => [task.id, task]),
+    );
+    if (!terminal.size) return [];
+    // One thread claimed by two task records is never archived on a guess: the binding
+    // pair is not a positively proved identity (nucleus#1459 review).
+    const claims = new Map<string, number>();
+    for (const [, parent] of Object.entries(state.parents ?? {}))
+      claims.set(parent.threadId, (claims.get(parent.threadId) ?? 0) + 1);
+    const visit = (parent: ParentThread) =>
+      parent.archive?.at ?? parent.createdAt;
+    const due = bindings
+      .filter(([taskId]) => terminal.has(taskId))
+      .sort(
+        ([leftId, left], [rightId, right]) =>
+          visit(left).localeCompare(visit(right)) ||
+          leftId.localeCompare(rightId),
+      )
+      .slice(0, PARENT_ARCHIVE_BATCH);
+    const waits: ParentArchiveWait[] = [];
+    for (const [taskId, parent] of due) {
+      let wait: ParentArchiveWait | null;
+      try {
+        wait = await this.settleFinishedParent(
+          terminal.get(taskId)!,
+          parent,
+          (claims.get(parent.threadId) ?? 0) > 1,
+        );
+      } catch (error) {
+        // A host timeout is this pass's own answer; every other fault stays this
+        // parent's, so one binding's fault never strands another (nucleus#1459).
+        if (isHostOperationTimeout(error)) throw error;
+        wait = {
+          taskId,
+          threadId: parent.threadId,
+          state: "read_failed",
+          reason: `the parent archive state could not be read: ${parentArchiveDetail(error)}`,
+        };
+      }
+      this.recordParentArchiveAttempt(parent.taskId, wait);
+      if (wait) waits.push(wait);
+    }
+    return waits;
+  }
+
+  /**
+   * Settle one finished task's parent archive: release the held turn, then archive the
+   * same thread through its durable intent and observe it archived before the
+   * obligation is settled. A recorded intent whose delivery is unknown is read, never
+   * resent blind — an archived thread settles it, and a live one is the fresh positive
+   * read that lets the same command replay under its own identity.
+   */
+  private async settleFinishedParent(
+    task: Task,
+    parent: ParentThread,
+    shared: boolean,
+  ): Promise<ParentArchiveWait | null> {
+    const wait = (
+      state: ParentArchiveWait["state"],
+      reason: string,
+    ): ParentArchiveWait => ({
+      taskId: task.id,
+      threadId: parent.threadId,
+      state,
+      reason,
+    });
+    if (parent.taskId !== task.id)
+      return wait(
+        "mismatched",
+        "the durable parent binding does not name this task",
+      );
+    if (shared)
+      return wait(
+        "mismatched",
+        "the durable parent thread is claimed by more than one task",
+      );
+    const state = this.core.state.read();
+    // Only the exact parent thread of exactly this task: never the Inbox, an agent
+    // thread or a follow-up child (nucleus#1459 — no planner or personal thread).
+    if (
+      !parent.threadId ||
+      parent.threadId === state.inbox?.threadId ||
+      state.agents[parent.threadId] ||
+      state.followUps?.[parent.threadId]
+    )
+      return wait(
+        "mismatched",
+        "the durable parent thread is not this task's parent thread",
+      );
+    // A parent this host removed owes nothing; its binding is forgotten, never re-sent.
+    if (this.core.intents.confirmedDeletion(state, parent.threadId)) {
+      this.forgetParent(task.id);
+      return null;
+    }
+    let observed: "archived" | "deleted" | "mismatched" | null;
+    try {
+      observed = await this.parentGone(parent);
+    } catch (error) {
+      if (isHostOperationTimeout(error)) throw error;
+      return wait(
+        "read_failed",
+        `the parent's own archive state could not be read: ${parentArchiveDetail(error)}`,
+      );
+    }
+    if (observed === "mismatched")
+      return wait(
+        "mismatched",
+        "the parent thread no longer reports this task's checkout and provider",
+      );
+    if (observed === "archived" || observed === "deleted") {
+      this.observeParentArchiveSettled(task.id);
+      return null;
+    }
+    // A finished task creates no further child, so its held turn is released at once —
+    // the create grace window is for live work and must never keep a terminal thread
+    // busy against the closeout lane (nucleus#1366). The release is a local ACP call, so
+    // a thread that left observation is still released.
+    await this.release(parent);
+    const key = identity(
+      "parent-archive",
+      canonical([this.core.hostId(), parent.threadId]),
+    );
+    const prior = this.core.state.read().intents[key];
+    try {
+      await this.core.intents.effect(
+        key,
+        "orchestration.dispatchCommand",
+        { type: "thread.archive", commandId: key, threadId: parent.threadId },
+        undefined,
+        undefined,
+        prior?.status === "unknown"
+          ? { resendUnknownAfterRead: true }
+          : prior?.status === "refused"
+            ? { retryRefusedBeforeSend: true }
+            : {},
+      );
+    } catch (error) {
+      if (error instanceof ProvenPreSendRefusalError)
+        return wait(
+          "refused",
+          `the parent archive was refused before it was sent: ${parentArchiveDetail(error)}`,
+        );
+      return wait(
+        "unknown",
+        `the parent archive delivery is unknown; it is read before any repeat: ${parentArchiveDetail(error)}`,
+      );
+    }
+    const after = await this.core.reads.threadArchiveState(parent.threadId);
+    // The same thread archived, removed or gone is the observation this obligation
+    // needs; a settled receipt T3 still shows live is a person's own action, never a
+    // reason to send again.
+    if (!after || after.archivedAt || after.deleted) {
+      this.observeParentArchiveSettled(task.id);
+      return null;
+    }
+    return wait(
+      "unobserved",
+      "the parent archive was accepted but the same thread is not archived",
+    );
+  }
+
+  /** Record one finished parent's settlement on its durable binding. */
+  private observeParentArchiveSettled(taskId: string): void {
+    this.core.state.update((state) => {
+      const current = state.parents?.[taskId];
+      if (!current) return;
+      current.archivedAt ??= new Date().toISOString();
+      delete current.archive;
+    });
+  }
+
+  /**
+   * Keep one finished parent's last attempt on its binding: the typed wait is what the
+   * host pass reports to the operator, and its timestamp is what rotates a bounded
+   * batch, so a binding that cannot settle never starves the ones behind it.
+   */
+  private recordParentArchiveAttempt(
+    taskId: string,
+    wait: ParentArchiveWait | null,
+  ): void {
+    this.core.state.update((state) => {
+      const current = state.parents?.[taskId];
+      if (!current) return;
+      if (!wait) {
+        delete current.archive;
+        return;
+      }
+      current.archive = {
+        state: wait.state,
+        reason: wait.reason.slice(0, 300),
+        at: new Date().toISOString(),
+      };
+    });
   }
 
   // ---------------------------------------------------------------- parent thread
@@ -1028,31 +1265,6 @@ export class T3Nesting {
   private holding(parent: ParentThread): boolean {
     if (!parent.holdingSince) return false;
     return Date.now() - Date.parse(parent.holdingSince) < HOLD_GRACE_MS;
-  }
-
-  private async archiveParent(parent: ParentThread): Promise<void> {
-    if (
-      this.core.intents.confirmedDeletion(
-        this.core.state.read(),
-        parent.threadId,
-      )
-    ) {
-      this.forgetParent(parent.taskId);
-      return;
-    }
-    const key = identity(
-      "parent-archive",
-      canonical([this.core.hostId(), parent.threadId]),
-    );
-    await this.core.intents.effect(key, "orchestration.dispatchCommand", {
-      type: "thread.archive",
-      commandId: key,
-      threadId: parent.threadId,
-    });
-    this.core.state.update((state) => {
-      const current = state.parents?.[parent.taskId];
-      if (current) current.archivedAt = new Date().toISOString();
-    });
   }
 
   // ---------------------------------------------------------------------- children

@@ -78,8 +78,18 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         );
       };
     }
-    restoreTaskParent(task: Task, operationId: string, stillAllowed: () => boolean, beforeSend: () => void) {
-      return this.native.nesting.restoreForRestart(task, operationId, stillAllowed, beforeSend);
+    restoreTaskParent(
+      task: Task,
+      operationId: string,
+      stillAllowed: () => boolean,
+      beforeSend: () => void,
+    ) {
+      return this.native.nesting.restoreForRestart(
+        task,
+        operationId,
+        stillAllowed,
+        beforeSend,
+      );
     }
     observeTaskParentRestore(task: Task, operationId: string) {
       return this.native.nesting.observeRestartRestore(task, operationId);
@@ -297,6 +307,9 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       rows?: readonly TaskRowProjection[],
     ) {
       return this.native.reconcileThreadTitles(tasks, rows);
+    }
+    reconcileFinishedParents(tasks: readonly Task[]) {
+      return this.native.reconcileFinishedParents(tasks);
     }
     agentTimelinePage(id: string, limit?: number) {
       return this.native.agentTimelinePage(id, limit);
