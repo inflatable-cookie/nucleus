@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
 import type { UiBoard, UnchangedBoard } from "../../shared/contracts";
-import { BOARD_STATE_KEY, nextBoardState } from "../board-state";
+import { commitBoardUpdate, invalidateBoardState } from "../board-state";
 
 /**
  * The web board's live channel: the frames the service writes on
@@ -18,7 +18,10 @@ export type LiveFrame = { event: string | null; data: string | null };
  * Split the complete frames off the read buffer. The tail is the next read's
  * prefix, so a frame split across two reads is decoded once, whole.
  */
-export function readLiveFrames(pending: string): { frames: LiveFrame[]; rest: string } {
+export function readLiveFrames(pending: string): {
+  frames: LiveFrame[];
+  rest: string;
+} {
   const text = pending.replace(/\r\n/g, "\n");
   const frames: LiveFrame[] = [];
   let rest = text;
@@ -49,14 +52,31 @@ export type LiveUpdate =
 
 const LIVE_EVENTS = new Set(["board", "counters", "unavailable"]);
 
-function refused(event: string, error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> }): LiveUpdate {
+function refused(
+  event: string,
+  error: {
+    issues: ReadonlyArray<{
+      path: ReadonlyArray<PropertyKey>;
+      message: string;
+    }>;
+  },
+): LiveUpdate {
   const issue = error.issues[0];
-  const at = issue && issue.path.length ? `${issue.path.map(String).join(".")} ` : "";
-  return { kind: "refused", reason: `Live ${event} frame does not match the board contract: ${at}${issue?.message ?? "unknown shape"}` };
+  const at =
+    issue && issue.path.length ? `${issue.path.map(String).join(".")} ` : "";
+  return {
+    kind: "refused",
+    reason: `Live ${event} frame does not match the board contract: ${at}${issue?.message ?? "unknown shape"}`,
+  };
 }
 
 export function decodeLiveFrame(frame: LiveFrame): LiveUpdate {
-  if (frame.event === null || frame.data === null || !LIVE_EVENTS.has(frame.event)) return { kind: "ignored" };
+  if (
+    frame.event === null ||
+    frame.data === null ||
+    !LIVE_EVENTS.has(frame.event)
+  )
+    return { kind: "ignored" };
   let value: unknown;
   try {
     value = JSON.parse(frame.data);
@@ -66,10 +86,14 @@ export function decodeLiveFrame(frame: LiveFrame): LiveUpdate {
   if (frame.event === "unavailable") return { kind: "unavailable" };
   if (frame.event === "board") {
     const parsed = api.uiSnapshot.output.safeParse(value);
-    return parsed.success ? { kind: "board", board: parsed.data } : refused(frame.event, parsed.error);
+    return parsed.success
+      ? { kind: "board", board: parsed.data }
+      : refused(frame.event, parsed.error);
   }
   const parsed = api.boardAckSchema.safeParse(value);
-  return parsed.success ? { kind: "counters", counters: parsed.data } : refused(frame.event, parsed.error);
+  return parsed.success
+    ? { kind: "counters", counters: parsed.data }
+    : refused(frame.event, parsed.error);
 }
 
 /**
@@ -80,8 +104,8 @@ export function decodeLiveFrame(frame: LiveFrame): LiveUpdate {
 export function applyLiveUpdate(query: QueryClient, update: LiveUpdate): void {
   if (update.kind === "board" || update.kind === "counters") {
     const response = update.kind === "board" ? update.board : update.counters;
-    void query.setQueryData<UiBoard>(BOARD_STATE_KEY, retained => nextBoardState(retained, response));
+    commitBoardUpdate(query, response);
   } else if (update.kind === "unavailable") {
-    void query.invalidateQueries({ queryKey: BOARD_STATE_KEY });
+    invalidateBoardState(query);
   }
 }

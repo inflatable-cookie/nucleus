@@ -1,4 +1,5 @@
 import { BoardLiveContext } from "../board-live";
+import { markBoardReconnect } from "../board-state";
 import { useEffect, useMemo, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MainSurface, registerSettingsOpener } from "../queue";
@@ -52,11 +53,16 @@ export function WebApp() {
   useEffect(() => {
     const controller = new AbortController();
     async function listen() {
+      let reconnecting = false;
       while (!controller.signal.aborted) {
         try {
           const response = await transport.events(controller.signal);
           if (!response.ok || !response.body)
             throw new Error(`Live channel: ${response.status}`);
+          if (reconnecting) {
+            markBoardReconnect(query);
+            reconnecting = false;
+          }
           setLive(true);
           setLiveError(null);
           const reader = response.body.getReader();
@@ -81,6 +87,7 @@ export function WebApp() {
           if (controller.signal.aborted) break;
           setLiveError(errorText(error));
         }
+        reconnecting = true;
         setLive(false);
         await new Promise<void>((resolve) => setTimeout(resolve, 3000));
       }

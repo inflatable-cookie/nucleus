@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { recentProjectActivity } from './support/fakes';
+import { recentProjectActivity } from "./support/fakes";
 import assert from "node:assert/strict";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,7 +10,9 @@ import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { boardShellPlugin, mount, useNativeStubs } from "./support/render";
 import { build } from "esbuild";
 import { createRequire } from "node:module";
-import { taskSummarySchema } from "../shared/contracts";
+import { taskSummarySchema, type UiBoard } from "../shared/contracts";
+import { BOARD_STATE_KEY } from "../client/board-state";
+import { applyLiveUpdate, decodeLiveFrame } from "../client/web/live-channel";
 
 useNativeStubs();
 
@@ -536,6 +538,214 @@ test("an unavailable decision read stays visible on the board", async () => {
   );
   try {
     await settle(() => ui.text().includes("Decisions unavailable"));
+  } finally {
+    ui.update(h("View", null));
+    client.clear();
+  }
+});
+
+function boardWithTask(
+  revision: number,
+  taskId: string,
+  title: string,
+  activeWorkers = 0,
+) {
+  return {
+    ...board,
+    revision,
+    activeWorkers,
+    occupiedSlots: activeWorkers,
+    tasks: [{ ...parkedTask, id: taskId, title }],
+  };
+}
+
+function boardAck(revision: number, activeWorkers: number) {
+  return {
+    unchanged: true as const,
+    revision,
+    connected: true,
+    paused: false,
+    dispatchHeld: false,
+    drained: false,
+    boundRuns: [],
+    quiet: true,
+    activeWorkers,
+    unsettled: 0,
+    occupiedSlots: activeWorkers,
+    stoppedThreads: 0,
+    resumedThreads: 0,
+    error: "",
+  };
+}
+
+test("late RPC ack and full responses do not overwrite newer live frames, and older live frames do not overwrite RPC projections", async () => {
+  await load();
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const requestedRevisions: Array<number | undefined> = [];
+  let heldSnapshot: ((value: unknown) => void) | null = null;
+  let nextRpcResponse: unknown = boardWithTask(1, "task-1", "Initial board", 0);
+
+  const rpc = async (method: string, input: unknown) => {
+    if (method === "queue.ui-snapshot") {
+      requestedRevisions.push((input as { revision?: number }).revision);
+      if (heldSnapshot) {
+        return new Promise((resolve) => {
+          const resolveHeld = heldSnapshot!;
+          heldSnapshot = null;
+          // Expose resolver so the test controls exact arrival ordering.
+          resolveHeld(resolve);
+        });
+      }
+      return nextRpcResponse;
+    }
+    return invoke(method, input);
+  };
+
+  const ui = mount(
+    h(QueryClientProvider, {
+      client,
+      children: h(PluginRpcProvider, {
+        invoke: rpc,
+        children: h(queue.MainSurface as never, surfaceProps),
+      }),
+    }),
+  );
+
+  try {
+    await settle(() => ui.text().includes("Initial board"));
+    assert.equal(requestedRevisions[0], undefined);
+
+    // Arrival order 1 (ack): RPC starts at rev 1, live board rev 2 commits while RPC is in flight,
+    // then RPC resolves with ack(1). Revision 2 must remain in cache and on screen.
+    let releaseAckRpc!: (value: unknown) => void;
+    heldSnapshot = (resolve) => {
+      releaseAckRpc = resolve as (value: unknown) => void;
+    };
+    const ackRefetch = client.refetchQueries({
+      queryKey: BOARD_STATE_KEY,
+      exact: true,
+    });
+    await settle(() => typeof releaseAckRpc === "function");
+    assert.equal(
+      requestedRevisions.at(-1),
+      1,
+      "bounded read sends the retained revision",
+    );
+
+    applyLiveUpdate(
+      client,
+      decodeLiveFrame({
+        event: "board",
+        data: JSON.stringify(boardWithTask(2, "task-2", "Live rev 2", 3)),
+      }),
+    );
+    await settle(() => ui.text().includes("Live rev 2"));
+
+    releaseAckRpc(boardAck(1, 0));
+    await ackRefetch;
+    const afterLateAck = client.getQueryData<UiBoard>(BOARD_STATE_KEY);
+    assert.equal(afterLateAck?.revision, 2);
+    assert.equal(afterLateAck?.activeWorkers, 3);
+    assert.ok(ui.text().includes("Live rev 2"));
+
+    // Arrival order 1 (same-revision live counters while RPC ack is in flight):
+    // live counters at rev 2 must not be clobbered by an in-flight ack(2) captured earlier.
+    let releaseSameRevAck!: (value: unknown) => void;
+    heldSnapshot = (resolve) => {
+      releaseSameRevAck = resolve as (value: unknown) => void;
+    };
+    const sameRevRefetch = client.refetchQueries({
+      queryKey: BOARD_STATE_KEY,
+      exact: true,
+    });
+    await settle(() => typeof releaseSameRevAck === "function");
+    applyLiveUpdate(
+      client,
+      decodeLiveFrame({
+        event: "counters",
+        data: JSON.stringify(boardAck(2, 7)),
+      }),
+    );
+    assert.equal(
+      client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers,
+      7,
+    );
+    releaseSameRevAck(boardAck(2, 1));
+    await sameRevRefetch;
+    assert.equal(
+      client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers,
+      7,
+    );
+
+    // Arrival order 1 (older full response): RPC starts at rev 2, live rev 4 commits while in flight,
+    // then RPC resolves with an older full response (rev 3). Revision 4 must remain.
+    let releaseOldFullRpc!: (value: unknown) => void;
+    heldSnapshot = (resolve) => {
+      releaseOldFullRpc = resolve as (value: unknown) => void;
+    };
+    const oldFullRefetch = client.refetchQueries({
+      queryKey: BOARD_STATE_KEY,
+      exact: true,
+    });
+    await settle(() => typeof releaseOldFullRpc === "function");
+    applyLiveUpdate(
+      client,
+      decodeLiveFrame({
+        event: "board",
+        data: JSON.stringify(boardWithTask(4, "task-4", "Live rev 4", 4)),
+      }),
+    );
+    await settle(() => ui.text().includes("Live rev 4"));
+    releaseOldFullRpc(boardWithTask(3, "task-3", "Older full rev 3", 0));
+    await oldFullRefetch;
+    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 4);
+    assert.ok(ui.text().includes("Live rev 4"));
+    assert.ok(!ui.text().includes("Older full rev 3"));
+
+    // Arrival order 2 (RPC commits newer projection first, then older live full board and ack arrive):
+    nextRpcResponse = boardWithTask(6, "task-6", "RPC rev 6", 5);
+    await client.refetchQueries({ queryKey: BOARD_STATE_KEY, exact: true });
+    await settle(() => ui.text().includes("RPC rev 6"));
+    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 6);
+
+    applyLiveUpdate(
+      client,
+      decodeLiveFrame({
+        event: "board",
+        data: JSON.stringify(boardWithTask(5, "task-5", "Older live rev 5", 1)),
+      }),
+    );
+    applyLiveUpdate(
+      client,
+      decodeLiveFrame({
+        event: "counters",
+        data: JSON.stringify(boardAck(5, 1)),
+      }),
+    );
+    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 6);
+    assert.equal(
+      client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers,
+      5,
+    );
+    assert.ok(ui.text().includes("RPC rev 6"));
+
+    // Same-revision counter refresh via RPC ack is preserved when no newer live commit intervened.
+    nextRpcResponse = boardAck(6, 8);
+    await client.refetchQueries({ queryKey: BOARD_STATE_KEY, exact: true });
+    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 6);
+    assert.equal(
+      client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers,
+      8,
+    );
+    assert.ok(ui.text().includes("RPC rev 6"));
+
+    // Server replacement via RPC poll: a lower-revision full board when nothing committed in flight replaces the cache.
+    nextRpcResponse = boardWithTask(1, "task-r1", "Replaced server rev 1", 0);
+    await client.refetchQueries({ queryKey: BOARD_STATE_KEY, exact: true });
+    await settle(() => ui.text().includes("Replaced server rev 1"));
+    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 1);
   } finally {
     ui.update(h("View", null));
     client.clear();
