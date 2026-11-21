@@ -25,11 +25,20 @@ export type SettingsSectionId = (typeof settingsViews)[number]["id"];
 
 export type SettingsTarget = SettingsSectionId;
 
-export function headerControls(paused: boolean, connected: boolean, busy: boolean) {
+export function headerControls(
+  paused: boolean,
+  connected: boolean,
+  busy: boolean,
+) {
   const controls = [
     { id: "settings", icon: "Settings", label: "Settings", disabled: false },
     { id: "refresh", icon: "RefreshCw", label: "Refresh", disabled: busy },
-    { id: "pause", icon: paused ? "Play" : "Pause", label: paused ? "Resume orchestration" : "Pause and drain", disabled: busy || !connected },
+    {
+      id: "pause",
+      icon: paused ? "Play" : "Pause",
+      label: paused ? "Resume orchestration" : "Pause and drain",
+      disabled: busy || !connected,
+    },
   ] as const;
   return controls;
 }
@@ -39,13 +48,30 @@ export function headerControls(paused: boolean, connected: boolean, busy: boolea
  * counts only its projects' open tasks (Tom, 2026-09-28: it counted every project).
  * A task with an origin error stays counted, as before.
  */
-export function isOpenTask(task: { phase: string; originError?: string; originLookupError?: string }): boolean {
-  return !['done', 'cancelled'].includes(task.phase) || Boolean(task.originError || task.originLookupError);
+export function isOpenTask(task: {
+  phase: string;
+  originError?: string;
+  originLookupError?: string;
+}): boolean {
+  return (
+    !["done", "cancelled"].includes(task.phase) ||
+    Boolean(task.originError || task.originLookupError)
+  );
 }
 
-export function openTaskCount<T extends { phase: string; repoPath: string; repository?: string | null; originError?: string; originLookupError?: string }>(
-  tasks: readonly T[], belongs: (repoPath: string, origin?: string | null) => boolean,
+export function openTaskCount<
+  T extends {
+    phase: string;
+    repoPath: string;
+    repository?: string | null;
+    originError?: string;
+    originLookupError?: string;
+  },
+>(
+  tasks: readonly T[],
+  belongs: (repoPath: string, origin?: string | null) => boolean,
 ): number {
-  return tasks.filter(task => isOpenTask(task)
-    && belongs(task.repoPath, task.repository)).length;
+  return tasks.filter(
+    (task) => isOpenTask(task) && belongs(task.repoPath, task.repository),
+  ).length;
 }
