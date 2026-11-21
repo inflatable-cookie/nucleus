@@ -208,13 +208,21 @@ export class SettingsControls {
       }
       // Only a named profile can be falsely called absent before the catalog loads;
       // complexity- or scope-only routing applies on an unrefreshed engine (QA 622c955c).
-      if (
-        after.preferredProfileId ||
-        Object.values(after.profileRequests).some((request) =>
-          Boolean(request?.profileId),
-        )
-      )
-        this.engine.requireProfileCatalog();
+      // The evidence is the one this control reads, per host (nucleus#1500): a
+      // worker request is decided from the eligible host catalogs, a reviewer or
+      // coordinator request from the task's bound host.
+      const namedRoles = (
+        ["worker", "reviewer", "coordinator"] as const
+      ).filter(
+        (role) =>
+          Boolean(after.profileRequests[role]?.profileId) ||
+          (role === "worker" && Boolean(after.preferredProfileId)),
+      );
+      const catalogRefusal = this.engine.profileCatalogRefusal(
+        task,
+        namedRoles,
+      );
+      if (catalogRefusal) throw Error(catalogRefusal);
       // The task's own host decides availability (nucleus#1139 review): a mode
       // or feature value this host's catalog does not report refuses here.
       const hostProfiles = this.engine.workerRoutingProfiles(task);
@@ -576,8 +584,11 @@ export class SettingsControls {
       let hostId: string | undefined;
       let legacyHostId: string | undefined;
       try {
-        const nativeId = parseAgentId(input.agentId)?.nativeAgentId ?? input.agentId;
-        legacyHostId = this.engine.legacyPaseoHostId() ?? await this.engine.identifyOriginHost(nativeId);
+        const nativeId =
+          parseAgentId(input.agentId)?.nativeAgentId ?? input.agentId;
+        legacyHostId =
+          this.engine.legacyPaseoHostId() ??
+          (await this.engine.identifyOriginHost(nativeId));
         hostId =
           parseAgentId(input.agentId)?.hostId ??
           (await this.engine.identifyOriginHost(input.agentId));
@@ -615,10 +626,20 @@ export class SettingsControls {
         );
       const recorded =
         current.completionSubscriptionOverrides.find((entry) =>
-          sameCallerIdentity(entry.agentId, input.agentId, legacyHostId, hostId),
+          sameCallerIdentity(
+            entry.agentId,
+            input.agentId,
+            legacyHostId,
+            hostId,
+          ),
         ) ??
         current.creatorCompletionRecipients.find((recipient) =>
-          sameCallerIdentity(recipient.agentId, input.agentId, legacyHostId, hostId),
+          sameCallerIdentity(
+            recipient.agentId,
+            input.agentId,
+            legacyHostId,
+            hostId,
+          ),
         );
       if (!live && !recorded)
         throw Error(
@@ -635,7 +656,13 @@ export class SettingsControls {
         );
       const workspaceId = live ? agent!.workspaceId! : recorded!.workspaceId;
       const overrides = current.completionSubscriptionOverrides.filter(
-        (entry) => !sameCallerIdentity(entry.agentId, input.agentId, legacyHostId, hostId),
+        (entry) =>
+          !sameCallerIdentity(
+            entry.agentId,
+            input.agentId,
+            legacyHostId,
+            hostId,
+          ),
       );
       overrides.push({
         agentId: input.agentId,

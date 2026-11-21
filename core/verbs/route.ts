@@ -297,7 +297,10 @@ export class RouteControls {
             )
           : "") ??
         "";
-      this.engine.requireProfileCatalog();
+      // nucleus#1500: the route reads the catalog evidence its own decision
+      // reads, per host, instead of the legacy primary's snapshot alone.
+      const catalogRefusal = this.profileCatalogRefusal(task, [role]);
+      if (catalogRefusal) throw Error(catalogRefusal);
       const unbound = this.engine.firstWorkerUnbound(task);
       const workerCatalogs =
         role === "worker" ? this.engine.workerHostCatalogs(task) : [];
@@ -1175,6 +1178,36 @@ export class RouteControls {
       `Subscription group ${entry.group} is unavailable: ${status.reason}${status.retryAt ? ` (retry ${status.retryAt})` : ""}` +
         `; eligible ${role} alternatives: ${alternatives.length ? alternatives.join(", ") : "none"}`,
     );
+  }
+
+  /**
+   * The profile-catalog evidence a named-profile control's own decision reads,
+   * per host, or null when it is present (nucleus#1500). A worker profile is
+   * decided from every eligible online host catalog, and from the task host's
+   * own snapshot when no host answered; the reviewer and coordinator stay on the
+   * task's bound host. The legacy primary is consulted only when it is one of
+   * those hosts, so an offline primary whose catalog was never read no longer
+   * refuses a route the eligible catalogs can answer. An unread catalog is absent
+   * evidence, never a profile's absence, so the control waits and names the host
+   * it needs; offline, transport, incompatibility and sign-off rules stay.
+   */
+  profileCatalogRefusal(
+    task: Task,
+    roles: readonly RouteRole[],
+  ): string | null {
+    if (roles.includes("worker")) {
+      const [unreadHostId] = this.engine.workerCatalogWaitHostIds(task);
+      if (unreadHostId)
+        return this.engine.profileCatalogWaitRefusal(unreadHostId);
+      if (
+        !this.engine.firstWorkerUnbound(task) &&
+        this.engine.workerHostCatalogs(task).length === 0
+      )
+        return this.engine.profileCatalogWaitRefusal(task.hostId);
+    }
+    if (roles.some((role) => role !== "worker"))
+      return this.engine.profileCatalogWaitRefusal(task.hostId);
+    return null;
   }
 
   /**

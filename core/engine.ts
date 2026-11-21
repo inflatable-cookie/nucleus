@@ -1424,7 +1424,9 @@ export class Engine {
   ): { kind: HostKind; source: "repository" | "operator_default" } | null {
     const repository = this.store.repositoryFor(task.repoPath)?.hostKind;
     if (repository) return { kind: repository, source: "repository" };
-    const kind = effectiveDefaultHostKind(this.store.getMeta<HostKind | null>("operatorDefaultHostKind"));
+    const kind = effectiveDefaultHostKind(
+      this.store.getMeta<HostKind | null>("operatorDefaultHostKind"),
+    );
     return kind ? { kind, source: "operator_default" } : null;
   }
   /**
@@ -1457,21 +1459,39 @@ export class Engine {
   ): (import("../shared/host-kind").HostKind | null | undefined)[] {
     return [
       this.store.repositoryFor(task.repoPath)?.hostKind,
-      effectiveDefaultHostKind(this.store.getMeta<HostKind | null>(
-        "operatorDefaultHostKind",
-      )),
+      effectiveDefaultHostKind(
+        this.store.getMeta<HostKind | null>("operatorDefaultHostKind"),
+      ),
     ];
   }
-  workerHostCatalogPending(task: { hostId?: string | null }): boolean {
+  /**
+   * The online hosts whose own profile catalog has not been read yet: the absent
+   * evidence a worker decision waits on, never a profile's absence. One rule for
+   * dispatch and for the owner controls that read the same eligible catalogs
+   * (nucleus#1500).
+   */
+  workerCatalogWaitHostIds(task: { hostId?: string | null }): string[] {
     const ids = [
       ...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])]),
     ];
-    return ids.some(
+    return ids.filter(
       (id) =>
         !this.auditUnavailableHosts.has(id) &&
         this.withHost(id, () => this.hostAvailable(id)) &&
         !this.profileCatalogKnownFor(id),
     );
+  }
+  workerHostCatalogPending(task: { hostId?: string | null }): boolean {
+    return this.workerCatalogWaitHostIds(task).length > 0;
+  }
+  /**
+   * The retryable refusal when one host's profile catalog is not loaded yet, or
+   * null when it is (nucleus#1500). The legacy primary keeps its one wording; a
+   * named host says which catalog the caller needs, so an owner control explains
+   * the evidence it actually reads instead of the primary's snapshot.
+   */
+  profileCatalogWaitRefusal(hostId?: string | null): string | null {
+    return this.catalogs.profileCatalogWaitRefusal(hostId);
   }
   workerRoutingProfiles(task: Task): Profile[] {
     const catalogs = this.workerHostCatalogs(task);
@@ -1917,7 +1937,11 @@ export class Engine {
   selfForceRole(task: Task): "worker" | "reviewer" | "recovery" | null {
     return this.forceVerbs.selfForceRole(task);
   }
-  forcePlannerMatches(task: Task, caller: string, projectOnly = false): boolean {
+  forcePlannerMatches(
+    task: Task,
+    caller: string,
+    projectOnly = false,
+  ): boolean {
     return this.forceVerbs.forcePlannerMatches(task, caller, projectOnly);
   }
   forcePlanners(task: Task): Array<string | undefined> {
@@ -2308,6 +2332,13 @@ export class Engine {
 
   requireAvailableGroup(profileId: string): void {
     this.routeControls.requireAvailableGroup(profileId);
+  }
+  /** The named-profile control's own per-host catalog evidence (nucleus#1500). */
+  profileCatalogRefusal(
+    task: Task,
+    roles: readonly RouteRole[],
+  ): string | null {
+    return this.routeControls.profileCatalogRefusal(task, roles);
   }
   briefStageProfileRefusal(text: string, _scope: Task["scope"]): string | null {
     return this.briefControls.briefStageProfileRefusal(text, _scope);

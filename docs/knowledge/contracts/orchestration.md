@@ -481,7 +481,10 @@ on Engine.
 
 **RouteControls** (`core/verbs/route.ts`). The owner `route` verb, its
 live-run stop and subscription-group refusal, and the profile checks submission
-and brief amendment share. Enforces [Profile selection](#profile-selection) and
+and brief amendment share: `profileCatalogRefusal` reads the per-host catalog
+evidence a named role's control needs, and `profileCatalogWaitRefusal`
+(`core/host/profile-catalogs.ts`) names the host whose catalog is unread.
+Enforces [Profile selection](#profile-selection) and
 [Routing issues](#routing-issues). Pure: `routePatch`. Delegates remain on
 Engine.
 
@@ -1366,6 +1369,21 @@ request identities and stored committed-handoff rows are not rewritten.
   host has no snapshot read (a host removed from the registry, or one not read
   yet) waits on its own catalog with the host named, and never selects from
   another host's profiles (nucleus#1364).
+- An owner profile control reads the catalog evidence its own decision reads,
+  per host, never the legacy primary's snapshot alone (nucleus#1500). A worker
+  request (`route` and `set_routing`) is decided from every eligible online host
+  catalog, and from the task host's own snapshot when no host answered; a
+  reviewer or coordinator request stays on the task's bound host. An online host
+  whose catalog has not been read is absent evidence, so the control waits with
+  that host named (`The T3Code host <id> profile catalog is still loading after
+  service start; retry shortly`), while the legacy primary keeps the daemon
+  wording; offline hosts, transport faults, a genuinely incompatible profile,
+  the replacement rule and routing sign-off stay as they are. `next` reads the
+  same per-host evidence through `routingHostViews`, so the preview and the
+  control agree. The requested reviewer on `move to=review` and on the
+  proof-only receipt review still preflights against the primary profile set
+  (`engine.profiles`); `MoveControls` owns that admission and this rule does not
+  reach it.
 - Enabled flag, provider and group availability and thinking support are the
   eligibility gates; every profile can work, review and coordinate
   ([Spec 053](../specs/053-demand-based-selection.md), Tom, 2026-10-21).
