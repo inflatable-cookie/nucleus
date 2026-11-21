@@ -5,6 +5,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import { laneListsRepository, normalizeRepositoryOrigin } from "../../shared/lanes";
 import { briefDigest } from "../planning/brief";
+import { DurableFenceRefusal } from "../intake/run-settlement";
+import { ownerStopPendingRefusal } from "./owner-stop";
 import type { Engine } from "../engine";
 import { settleSupersededFencesInTx } from "../recovery/fence-settlement";
 import { observationAdvanceSince, runsUnchangedSince } from "../recovery/observation-advance";
@@ -45,6 +47,8 @@ export class TaskCompletion {
     if (!observationAdvanceSince(task, input.version)) throw new TaskChangedRefusal("Task changed; refresh before completing", input.version, task.version);
     const refusal = completeStateRefusal(task, this.store.runs(task.id));
     if (refusal) throw new Error(refusal);
+    if (task.resolution.ownerStop)
+      throw new DurableFenceRefusal(ownerStopPendingRefusal(task.resolution.ownerStop));
     if (artifact) {
       const delivered = task.completion?.status === "report_ready" ? task.completion.artifact : undefined;
       if (!delivered || !isDeepStrictEqual(delivered, artifact))

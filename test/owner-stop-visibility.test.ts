@@ -358,40 +358,45 @@ test('stopping a live worker cancels the turn durably and leaves the run to sett
   } finally { await f.close(); }
 });
 
-test('an unknown cancellation never reads as an accepted stop, and the retry cancels exactly once', async () => {
+test('an unknown cancellation preserves the accepted hold and intent, never replays blindly, and settles once observed inactive', async () => {
   const f = fixture(); try {
     liveWorker(f);
-    const before = f.task();
     const cancel = f.adapter.stopAgentTurn!;
     (f.adapter as unknown as { stopAgentTurn: (id: string) => Promise<void> }).stopAgentTurn = async () => { throw new Error('daemon unreachable'); };
-    await assert.rejects(stopControl(f), /could not stop the live revision run \(worker-run\): daemon unreachable; retry the same verb/);
-    // Refused means refused: no fence, no hold stop, the run still owned.
-    assert.deepEqual(f.task(), before, 'a refused cancellation writes nothing to the task');
-    assert.deepEqual(holdsOf(f.task()), {});
-    assert.notEqual(f.next().stop?.kind, 'hold');
-    assert.deepEqual(f.next().holds, {});
-    assert.equal(f.next().activeRun?.released, false);
-    assert.equal(f.board().stop, 'wait', 'the board keeps the pre-stop wait, never a hold');
-    assert.equal(f.board().holdKind, undefined);
-    assert.equal(f.board().holds, undefined, 'the board claims no fence');
+    await assert.rejects(stopControl(f), /could not stop the live revision run \(worker-run\): daemon unreachable/);
+    // Spec 050 durable stop: hold + held stop + intent persist before crossing the boundary,
+    // while uncertain delivery leaves a visible wait under the hold and never claims owner_stopped yet.
+    const held = f.task();
+    assert.ok(held.holds?.dispatch, 'the accepted dispatch hold is preserved');
+    assert.equal(held.resolution.stop?.reason, 'held');
+    assert.ok(held.resolution.ownerStop, 'pending owner stop record is persisted');
+    assert.equal(held.resolution.ownerStop?.cancellations[0]?.status, 'uncertain');
+    assert.equal(f.next().stop?.kind, 'hold');
+    assert.equal(f.board().stop, 'hold');
+    assert.equal(f.board().holdKind, 'dispatch');
     assert.equal(f.events('owner_stop_intent').length, 1);
     assert.equal(f.events('owner_stop_uncertain').length, 1);
     assert.equal(f.events('owner_stop_sent').length, 0, 'an unknown outcome never claims a sent stop');
     assert.equal(f.events('owner_stopped').length, 0);
     assert.equal(f.events('owner_control').length, 0);
-    const refusals = f.store.verbOutcomes('1970-01-01T00:00:00.000Z').filter(entry => entry.action === 'stop');
-    assert.equal(refusals.at(-1)!.outcome, 'refused');
-    assert.match(String(refusals.at(-1)!.detail.reason), /could not stop the live revision run/);
+    assert.equal(verb(f, 'release')[0]?.available, false, 'release refuses while ownerStop confirmation is pending');
 
-    // After the adapter recovers, the same control cancels once and applies once.
+    // Even after the adapter recovers, retrying stop while agent is still running on uncertain delivery never blindly replays stopAgentTurn.
     (f.adapter as unknown as { stopAgentTurn: (id: string) => Promise<void> }).stopAgentTurn = cancel;
-    const stopped = await stopControl(f);
-    assert.deepEqual(f.stops, ['worker-agent']);
-    assert.equal(f.events('owner_stop_sent').length, 1);
-    assert.ok(stopped.holds?.dispatch);
-    assert.equal(f.next().stop?.kind, 'hold');
-    const outcomes = f.store.verbOutcomes('1970-01-01T00:00:00.000Z').filter(entry => entry.action === 'stop');
-    assert.deepEqual(outcomes.map(entry => entry.outcome), ['refused', 'applied']);
+    await assert.rejects(stopControl(f), /An accepted owner stop still awaits cancellation confirmation/);
+    assert.deepEqual(f.stops, [], 'ambiguous post-boundary run never blindly replays stopAgentTurn');
+
+    // Once host observation confirms the worker is idle, sweep settles the hold cleanly and release becomes available.
+    f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+    await f.engine.observeOwnerStop(f.taskId);
+    const settled = f.task();
+    assert.equal(settled.resolution.ownerStop, null);
+    assert.ok(settled.holds?.dispatch, 'dispatch hold stays in place after confirmation');
+    assert.equal(f.events('owner_stopped').length, 1);
+    assert.equal(f.events('owner_stop_settled').length, 1);
+    assert.deepEqual(f.stops, [], 'idle confirmation settles without sending a second stopAgentTurn');
+    assert.equal(verb(f, 'release')[0]?.available, true);
+    assert.equal(verb(f, 'stop')[0]?.available, true);
   } finally { await f.close(); }
 });
 

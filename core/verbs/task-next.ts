@@ -1,4 +1,5 @@
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
+import { ownerStopPendingRefusal } from "./owner-stop";
 import { taskNeverDispatched } from "../task-decision-rules";
 import { workerStepLabel } from "../../shared/demand";
 import { holdOwnerOf } from "../../shared/contracts";
@@ -626,13 +627,24 @@ function holdViews(task: Task): TaskNextVerb[] {
     if (!fence) return [];
     const summary = `${kind === "merge" ? "Merge" : "Dispatch"} held by ${holdOwnerOf(task, fence.owner)}: ${fence.reason}. Release only once that condition is met.`;
     const args = { taskId: task.id, version: task.version, kind, summary };
+    const releaseRefusal =
+      kind === "dispatch" && task.resolution.ownerStop
+        ? ownerStopPendingRefusal(task.resolution.ownerStop)
+        : null;
     return [
-      taskNextVerbSchema.parse({
-        verb: "release",
-        action: "release",
-        available: true,
-        args: { action: "release", ...args },
-      }),
+      releaseRefusal
+        ? taskNextVerbSchema.parse({
+            verb: "release",
+            action: "release",
+            available: false,
+            refusal: releaseRefusal,
+          })
+        : taskNextVerbSchema.parse({
+            verb: "release",
+            action: "release",
+            available: true,
+            args: { action: "release", ...args },
+          }),
       keepRefusal
         ? taskNextVerbSchema.parse({
             verb: "keep_hold",

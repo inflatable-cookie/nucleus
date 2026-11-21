@@ -258,7 +258,7 @@ export class TaskControlDispatcher {
         operationId,
       );
     if (input.action === "stop")
-      return operated(await this.engine.stopTask(input));
+      return operated(await this.engine.stopTask(input, operationId));
     if (input.action === "move" && input.to === "review" && input.prNumber) {
       const task = this.store.task(input.taskId);
       // A retained number is already the task's PR identity. An optional

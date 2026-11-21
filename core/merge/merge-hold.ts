@@ -277,6 +277,10 @@ export class Holds {
       t = this.store.task(taskId);
       const fence = holdsOf(t)[kind];
       if (!fence?.until) continue;
+      if (kind === "dispatch" && t.resolution.ownerStop) {
+        waiting = true;
+        continue;
+      }
       const outcome = this.holdUntilState({ holdUntil: fence.until });
       if (!outcome) continue;
       if (outcome.state === "waiting") {
