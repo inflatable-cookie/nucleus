@@ -7,9 +7,7 @@ export const UNBOUND_HOST_REFUSAL = "No host is bound for this operation";
 const UNBOUND_ADAPTER = Symbol("unbound-host-adapter");
 
 /** True when `adapter` is the host-neutral sentinel used when no host is bound. */
-export function isUnboundAdapter(
-  adapter: Adapter | null | undefined,
-): boolean {
+export function isUnboundAdapter(adapter: Adapter | null | undefined): boolean {
   return Boolean(adapter && Reflect.get(adapter, UNBOUND_ADAPTER) === true);
 }
 

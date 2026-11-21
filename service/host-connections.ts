@@ -78,8 +78,7 @@ export function wireEngineHosts(
       const storedDefault = runtime.store.getMeta<
         import("../shared/host-kind").HostKind | null
       >("operatorDefaultHostKind");
-      const operatorDefaultHostKind =
-        effectiveDefaultHostKind(storedDefault);
+      const operatorDefaultHostKind = effectiveDefaultHostKind(storedDefault);
       if (operatorDefaultHostKind) {
         const ofKind = online.filter(
           (id) => hostKindOf(id) === operatorDefaultHostKind,
@@ -95,8 +94,7 @@ export function wireEngineHosts(
     const storedDefault = runtime.store.getMeta<
       import("../shared/host-kind").HostKind | null
     >("operatorDefaultHostKind");
-    const operatorDefaultHostKind =
-      effectiveDefaultHostKind(storedDefault);
+    const operatorDefaultHostKind = effectiveDefaultHostKind(storedDefault);
     try {
       return resolveIngressHost({
         explicit,
@@ -126,7 +124,8 @@ export function wireEngineHosts(
   engine.selectIngressHost = (explicit, repoPath, origin, plannerHostId) =>
     engine.selectIngressSelection(explicit, repoPath, origin, plannerHostId)
       ?.hostId;
-  engine.legacyPaseoHostId = () => runtime.hostRegistry.legacyPaseoPrimary()?.id;
+  engine.legacyPaseoHostId = () =>
+    runtime.hostRegistry.legacyPaseoPrimary()?.id;
   engine.resolveHostAdapter = (id) => runtime.hostRegistry.get(id)?.adapter;
   engine.hostIds = () => runtime.hostRegistry.known().map((host) => host.id);
   engine.inventoryHostMatches = (id) => runtime.hostSession?.id === id;
@@ -272,9 +271,7 @@ export class HostConnections {
       this.owner.closing ||
       this.owner.idleShutdownLatched ||
       this.connected() ||
-      (this.primaryAdapter()
-        ? hostConnected(this.primaryAdapter()!)
-        : false) ||
+      (this.primaryAdapter() ? hostConnected(this.primaryAdapter()!) : false) ||
       this.owner.bootstrapRunning ||
       (this.owner.serveHostRunEndpoint &&
         !this.owner.hostRunEndpoint?.serving())

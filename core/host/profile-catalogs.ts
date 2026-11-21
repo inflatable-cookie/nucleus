@@ -331,7 +331,8 @@ export class ProfileCatalogs {
    * host's answer.
    */
   profileCatalogKnownFor(hostId?: string | null): boolean {
-    if (!hostId || this.isPrimaryHost(hostId)) return this.profileCatalogKnown();
+    if (!hostId || this.isPrimaryHost(hostId))
+      return this.profileCatalogKnown();
     return this.hostCatalogRefreshed.has(hostId);
   }
 

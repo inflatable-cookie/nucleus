@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * A project's chosen host kind. No host is built in as a default: `paseo`,
@@ -9,7 +9,9 @@ export const hostKindSchema = z.enum(["paseo", "t3code", "bb"]);
 export type HostKind = z.infer<typeof hostKindSchema>;
 export const DEFAULT_HOST_KIND: HostKind | null = null;
 /** An absent or null setting means no operator default (follow repository override, planner host, or an online host). */
-export function effectiveDefaultHostKind(stored: HostKind | null | undefined): HostKind | null {
+export function effectiveDefaultHostKind(
+  stored: HostKind | null | undefined,
+): HostKind | null {
   return stored ?? DEFAULT_HOST_KIND;
 }
 
@@ -49,8 +51,10 @@ export function hostKindOf(hostId: string | null | undefined): HostKind {
  * the service uses it only as evidence about that same thread — it never grants
  * host attribution to another identity or authority to run anything anywhere.
  */
-export const identitySourceSchema = z.object({
-  agent: z.string().trim().min(1).max(240),
-  hostId: z.string().min(1).max(500),
-}).strict();
+export const identitySourceSchema = z
+  .object({
+    agent: z.string().trim().min(1).max(240),
+    hostId: z.string().min(1).max(500),
+  })
+  .strict();
 export type IdentitySource = z.infer<typeof identitySourceSchema>;

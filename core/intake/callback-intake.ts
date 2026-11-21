@@ -151,7 +151,13 @@ export class CallbackIntake {
     this.store.authenticate(presentedRunId, token);
     const identityTask = this.store.task(input.taskId);
     return this.engine.onTaskHost(identityTask, () =>
-      this.completeOnHost(input, token, presentedRunId, presented, identityTask),
+      this.completeOnHost(
+        input,
+        token,
+        presentedRunId,
+        presented,
+        identityTask,
+      ),
     );
   }
   private async completeOnHost(

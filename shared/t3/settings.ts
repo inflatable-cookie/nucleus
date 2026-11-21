@@ -117,9 +117,7 @@ export function writeT3Connection(
   connection: T3ConnectionSettings | null,
 ): void {
   const path = t3SettingsPath(dataDir);
-  const settings = readSettingsObject(path) ?? {
-    daemonUrl: T3_DEFAULT_DAEMON_URL,
-  };
+  const settings = readSettingsObject(path) ?? {};
   if (connection) settings.t3code = connection;
   else delete settings.t3code;
   const temporary = `${path}.${process.pid}.tmp`;

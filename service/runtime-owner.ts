@@ -222,6 +222,28 @@ const PROFILE_REFRESH_INTERVAL_MS = 120_000;
 /** After the last plugin presence closes while a host is still connected, wait this long before raising the board fault. A successful reload inside the window is silent. */
 const PLUGIN_PRESENCE_GRACE_MS = 45_000;
 
+/**
+ * Resolve the Paseo plugin source path only when Paseo is explicitly configured
+ * or registered. An installed/compiled service launched with `--data-dir` (which
+ * also passes a default `hostHome`) must not connect to Paseo unless `daemonUrl`
+ * or a Paseo plugin registration is present.
+ */
+export function resolveOptionalPaseoSourcePath(options: {
+  explicitSourcePath?: string;
+  compiledIdentity: boolean;
+  daemonUrl?: string;
+  registeredPath?: string;
+  installedSourcePath?: string;
+}): string | undefined {
+  if (options.explicitSourcePath) return options.explicitSourcePath;
+  if (options.compiledIdentity) {
+    return options.daemonUrl || options.registeredPath
+      ? options.installedSourcePath
+      : undefined;
+  }
+  return options.registeredPath;
+}
+
 /** The host's `settings.json` shape. Uncertain merge timing and the trusted Effigy runtime are per-host settings. */
 export interface HostSettings {
   daemonUrl?: string;
@@ -707,13 +729,15 @@ export class QueueRuntime {
           registeredPath = undefined;
         }
       }
-      const sourcePath =
-        options.sourcePath ??
-        (compiledIdentity
-          ? this.settings.daemonUrl || registeredPath || options.hostHome
-            ? stableInstalledPath(sourcePathFromModule())
-            : undefined
-          : registeredPath);
+      const sourcePath = resolveOptionalPaseoSourcePath({
+        explicitSourcePath: options.sourcePath,
+        compiledIdentity: Boolean(compiledIdentity),
+        daemonUrl: this.settings.daemonUrl,
+        registeredPath,
+        installedSourcePath: compiledIdentity
+          ? stableInstalledPath(sourcePathFromModule())
+          : undefined,
+      });
       if (sourcePath && existsSync(join(sourcePath, "mcp-report.mjs"))) {
         const raw = createHost(
           HostPolicies as unknown as HostPolicyConstructor,
@@ -1561,7 +1585,9 @@ export class QueueRuntime {
     try {
       this.t3Host?.close();
       await settled(
-        (this.paseoAdapter as unknown as { close?(): Promise<void> } | null)?.close?.(),
+        (
+          this.paseoAdapter as unknown as { close?(): Promise<void> } | null
+        )?.close?.(),
         5_000,
       );
       await settled(this.started, 10_000);

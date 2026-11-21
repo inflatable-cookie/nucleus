@@ -590,34 +590,36 @@ export function HostsPanel({
             None yet. A host registers when it connects.
           </Text>
         )}
-        {list && list.hosts.length > 0 && (() => {
-          const { online, rest } = groupHosts(list.hosts);
-          // One flat keyed array: keys stay on the host id in a single
-          // sequence, so an updated status moves the row between groups
-          // without remounting it and losing its expanded details.
-          const rows: React.ReactNode[] = [
-            ...online.map((host) => (
-              <HostRow key={host.id} c={c} host={host} remove={remove} />
-            )),
-          ];
-          if (online.length > 0 && rest.length > 0)
+        {list &&
+          list.hosts.length > 0 &&
+          (() => {
+            const { online, rest } = groupHosts(list.hosts);
+            // One flat keyed array: keys stay on the host id in a single
+            // sequence, so an updated status moves the row between groups
+            // without remounting it and losing its expanded details.
+            const rows: React.ReactNode[] = [
+              ...online.map((host) => (
+                <HostRow key={host.id} c={c} host={host} remove={remove} />
+              )),
+            ];
+            if (online.length > 0 && rest.length > 0)
+              rows.push(
+                <View
+                  key="hosts-divider"
+                  accessibilityLabel="Offline hosts"
+                  style={{
+                    borderTopWidth: 1,
+                    borderTopColor: roles(c).border,
+                  }}
+                />,
+              );
             rows.push(
-              <View
-                key="hosts-divider"
-                accessibilityLabel="Offline hosts"
-                style={{
-                  borderTopWidth: 1,
-                  borderTopColor: roles(c).border,
-                }}
-              />,
+              ...rest.map((host) => (
+                <HostRow key={host.id} c={c} host={host} remove={remove} />
+              )),
             );
-          rows.push(
-            ...rest.map((host) => (
-              <HostRow key={host.id} c={c} host={host} remove={remove} />
-            )),
-          );
-          return <View style={{ gap: space.sm }}>{rows}</View>;
-        })()}
+            return <View style={{ gap: space.sm }}>{rows}</View>;
+          })()}
       </Section>
     </View>
   );

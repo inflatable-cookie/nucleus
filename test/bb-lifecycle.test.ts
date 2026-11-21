@@ -275,7 +275,9 @@ async function fixture(t: TestContext): Promise<Fixture> {
     createAgent: async () => {
       throw new Error("T3 must never create this task's worker");
     },
-    listLiveAgents: async () => [{ id: "planner", title: "T3 planner", workspaceId: "t3-planner-ws" }],
+    listLiveAgents: async () => [
+      { id: "planner", title: "T3 planner", workspaceId: "t3-planner-ws" },
+    ],
     observe: async (id: string) => {
       if (id !== "planner") throw new Error("Agent was not found");
       return {
@@ -958,7 +960,9 @@ test("BB trial: a T3 planner submits, the standalone task executes end to end on
       true,
       "the T3 author lead passed its check",
     );
-    await f.runtime.engine.resolution.responsibleThread(f.runtime.store.projectByKey("lifecycle")!);
+    await f.runtime.engine.resolution.responsibleThread(
+      f.runtime.store.projectByKey("lifecycle")!,
+    );
     assert.equal(
       f.runtime.store.projectPlannerRecipient(
         f.runtime.store.projectFor(f.repo, f.repo),

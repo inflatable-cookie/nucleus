@@ -4,15 +4,23 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { QueueRuntime } from "../service/runtime-owner";
+import {
+  QueueRuntime,
+  resolveOptionalPaseoSourcePath,
+} from "../service/runtime-owner";
 import { UNBOUND_HOST_REFUSAL } from "../core/host";
 import { resolveIngressHost } from "../core/host/ingress-host";
 import { hostEnvironment } from "../service/host-environment.mjs";
 import { formatAgentId } from "../shared/agent-identity";
-import { submissionSchema, type Task } from "../shared/contracts";
+import { hostIdFromDataDir } from "../shared/host-operation";
+import { leadSubmit, submissionSchema, type Task } from "../shared/contracts";
+import { hostOutageNoticeId } from "../shared/host-outage";
 import type { Adapter } from "../core/host/adapter";
 
-function makeTempDir(t: { after(fn: () => void): void }, prefix: string): string {
+function makeTempDir(
+  t: { after(fn: () => void): void },
+  prefix: string,
+): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
@@ -178,7 +186,10 @@ test("service starts and serves board and capacity reads with no Paseo install o
   assert.equal(runtime.startError, "");
   assert.equal(runtime.health().ready, true);
   assert.equal(runtime.health().startError, "");
-  assert.equal(runtime.capacityAuthorityState().effective.operatorDefaultHostKind, null);
+  assert.equal(
+    runtime.capacityAuthorityState().effective.operatorDefaultHostKind,
+    null,
+  );
 
   // Board snapshot and UI snapshot work with no Paseo config or adapter.
   const snap = runtime.snapshot();
@@ -189,7 +200,8 @@ test("service starts and serves board and capacity reads with no Paseo install o
   // Unbound host calls refuse with a clear, host-neutral message instead of falling back to Paseo.
   await assert.rejects(
     () => runtime.engine.adapter.observe("agent-1"),
-    (err: unknown) => err instanceof Error && err.message === UNBOUND_HOST_REFUSAL,
+    (err: unknown) =>
+      err instanceof Error && err.message === UNBOUND_HOST_REFUSAL,
   );
   assert.equal(runtime.engine.adapter.originAgent, undefined);
   assert.equal(runtime.engine.adapter.pendingQuestions, undefined);
@@ -241,7 +253,8 @@ test("unbound calls refuse instead of falling back to Paseo even when Paseo is c
   // Outside withHost, calls must refuse rather than silently hitting Paseo.
   await assert.rejects(
     () => runtime.engine.adapter.observe("agent-1"),
-    (err: unknown) => err instanceof Error && err.message === UNBOUND_HOST_REFUSAL,
+    (err: unknown) =>
+      err instanceof Error && err.message === UNBOUND_HOST_REFUSAL,
   );
   assert.equal(paseoObserved, 0);
   assert.equal(runtime.engine.adapter.originAgent, undefined);
@@ -321,8 +334,16 @@ test("T3-only runtime covers startup, ingress selection, dispatch, and host-boun
   await runtime.engine.wake();
   const after = runtime.store.task(task.id);
   assert.equal(after.hostId, t3HostId);
-  assert.equal(workspaceCreated, 1, `expected workspace creation, got phase=${after.phase} reason=${after.reason}`);
-  assert.equal(agentCreated, 1, `expected agent creation, got phase=${after.phase} reason=${after.reason}`);
+  assert.equal(
+    workspaceCreated,
+    1,
+    `expected workspace creation, got phase=${after.phase} reason=${after.reason}`,
+  );
+  assert.equal(
+    agentCreated,
+    1,
+    `expected agent creation, got phase=${after.phase} reason=${after.reason}`,
+  );
   assert.equal(after.phase, "working");
 });
 
@@ -389,8 +410,16 @@ test("BB-only runtime covers startup, ingress selection, dispatch, and host-boun
   await runtime.engine.wake();
   const after = runtime.store.task(task.id);
   assert.equal(after.hostId, bbHostId);
-  assert.equal(workspaceCreated, 1, `expected workspace creation, got phase=${after.phase} reason=${after.reason}`);
-  assert.equal(agentCreated, 1, `expected agent creation, got phase=${after.phase} reason=${after.reason}`);
+  assert.equal(
+    workspaceCreated,
+    1,
+    `expected workspace creation, got phase=${after.phase} reason=${after.reason}`,
+  );
+  assert.equal(
+    agentCreated,
+    1,
+    `expected agent creation, got phase=${after.phase} reason=${after.reason}`,
+  );
   assert.equal(after.phase, "working");
 });
 
@@ -442,4 +471,318 @@ test("hostEnvironment returns empty object when no Paseo home override or Paseo 
     else process.env.HOME = prevHome;
   });
   assert.deepEqual(hostEnvironment(), {});
+});
+
+test("resolveOptionalPaseoSourcePath requires Paseo config or registration even for compiled installs", () => {
+  assert.equal(
+    resolveOptionalPaseoSourcePath({
+      compiledIdentity: true,
+      installedSourcePath: "/opt/nucleus/installed",
+    }),
+    undefined,
+  );
+  assert.equal(
+    resolveOptionalPaseoSourcePath({
+      compiledIdentity: true,
+      daemonUrl: "ws://127.0.0.1:6767/ws",
+      installedSourcePath: "/opt/nucleus/installed",
+    }),
+    "/opt/nucleus/installed",
+  );
+  assert.equal(
+    resolveOptionalPaseoSourcePath({
+      compiledIdentity: true,
+      registeredPath: "/synthetic/paseo/plugins/nucleus",
+      installedSourcePath: "/opt/nucleus/installed",
+    }),
+    "/opt/nucleus/installed",
+  );
+  assert.equal(
+    resolveOptionalPaseoSourcePath({
+      compiledIdentity: false,
+      registeredPath: "/synthetic/paseo/plugins/nucleus",
+    }),
+    "/synthetic/paseo/plugins/nucleus",
+  );
+});
+
+test("ordinary sweep runs origin reconciliation and planner notice delivery without Paseo", async (t) => {
+  const root = makeTempDir(t, "ns-sweep-no-paseo-");
+  const dataDir = join(root, "data");
+  const repoPath = join(root, "repo");
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(repoPath, { recursive: true });
+
+  const t3HostId = "t3code:sweep-env";
+  const plannerThread = formatAgentId(t3HostId, "planner-sweep");
+  const originChecks: string[] = [];
+  const notifications: Array<{ agentId: string; id: string; text: string }> =
+    [];
+  const t3Adapter = {
+    ...makeFakeHostAdapter(t3HostId, {
+      onOriginAgent: (id) => originChecks.push(id),
+    }),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "origin-ws",
+      status: "idle" as const,
+      active: false,
+      permissions: false,
+      error: "",
+    }),
+    notify: async (agentId: string, id: string, text: string) => {
+      notifications.push({ agentId, id, text });
+    },
+    listLiveAgents: async () => [
+      {
+        id: "planner-sweep",
+        cwd: repoPath,
+        workspaceId: "origin-ws",
+        title: "Sweep Planner",
+        status: "idle" as const,
+        archived: false,
+      },
+    ],
+  } as unknown as Adapter;
+
+  const runtime = new QueueRuntime({
+    dataDir,
+    hostHome: join(root, "no-paseo"),
+    timers: false,
+  });
+  t.after(async () => {
+    await runtime.drain();
+  });
+
+  await runtime.started;
+  runtime.hostRegistry.connect(t3HostId, "ws://127.0.0.1:3773/ws", {
+    adapter: t3Adapter,
+    admission: runtime.admission,
+  });
+  await runtime.ensureBootstrap();
+  runtime.store.setMeta("paused", false);
+
+  // Create a project with a live T3 planner and a task whose origin needs reconciliation.
+  const project = runtime.store.upsertProject({
+    key: "sweep-proj",
+    name: "Sweep Project",
+    repositories: [{ origin: null, path: repoPath }],
+  });
+  runtime.store.setProjectPlanner({
+    key: project.key,
+    agentId: plannerThread,
+    setBy: "operator",
+  });
+  const task = runtime.store.insert(
+    submissionSchema.parse({
+      submissionId: "sub-sweep-origin",
+      title: "Sweep origin reconciliation",
+      repoPath,
+      planningCommit: "a".repeat(40),
+      handoffPath: "brief.md",
+      originAgentId: plannerThread,
+    }),
+    t3HostId,
+    "brief.md",
+    "a".repeat(40),
+  );
+  // Seed a pending host-outage notice for a live outage on another host.
+  const outageSince = "2026-11-21T20:00:00.000Z";
+  runtime.store.setMeta("hostOutages", {
+    "bb:down-host": {
+      since: outageSince,
+      notifiedProjects: {},
+    },
+  });
+  runtime.store.putNotice({
+    id: hostOutageNoticeId("bb:down-host", project.key, outageSince),
+    taskId: `project:${project.key}`,
+    kind: "host_outage",
+    agentId: plannerThread,
+    recipientAgentId: plannerThread,
+    workspaceId: null,
+    sources: [],
+    originEntry: false,
+    text: "Host bb:down-host is offline",
+    status: "pending",
+    error: "",
+  });
+
+  await runtime.engine.wake();
+
+  assert.ok(
+    originChecks.includes("planner-sweep"),
+    "ordinary sweep ran origin reconciliation on the bound T3 host",
+  );
+  assert.equal(
+    runtime.store.task(task.id).originWorkspaceId,
+    "origin-ws",
+    "origin reconciliation recorded originWorkspaceId",
+  );
+  assert.ok(
+    notifications.some((n) => n.text.includes("Host bb:down-host is offline")),
+    `ordinary sweep delivered host-outage notice to the bound T3 planner; notices=${JSON.stringify(runtime.store.notices(`project:${project.key}`))}`,
+  );
+});
+
+test("BB submission with unset default selects the BB planner host even when Paseo and T3 are online", async (t) => {
+  const root = makeTempDir(t, "ns-bb-submit-no-default-");
+  const dataDir = join(root, "data");
+  const originPath = join(root, "origin.git");
+  const repoPath = join(root, "repo");
+  const bbDataDir = join(root, "bb-data");
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(bbDataDir, { recursive: true });
+  execFileSync("git", [
+    "init",
+    "-q",
+    "--bare",
+    "--initial-branch=main",
+    originPath,
+  ]);
+  execFileSync("git", ["clone", "-q", originPath, repoPath]);
+  execFileSync("git", ["config", "user.email", "test@example.com"], {
+    cwd: repoPath,
+  });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoPath });
+  mkdirSync(join(repoPath, ".paseo"), { recursive: true });
+  writeFileSync(
+    join(repoPath, ".paseo", "queue.json"),
+    JSON.stringify({ schema: "paseo.queue.control.v5", closeout: "queue" }),
+  );
+  execFileSync("git", ["add", "."], { cwd: repoPath });
+  execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: repoPath });
+  execFileSync("git", ["push", "-q", "origin", "main"], { cwd: repoPath });
+
+  const bbHostId = hostIdFromDataDir(bbDataDir);
+  const t3HostId = "t3code:peer-env";
+  const paseoHostId = "paseo-peer";
+  const caller = formatAgentId(bbHostId, "thr_bb_planner");
+
+  const runtime = new QueueRuntime({
+    dataDir,
+    hostHome: join(root, "no-paseo"),
+    timers: false,
+  });
+  t.after(async () => {
+    await runtime.drain();
+  });
+
+  await runtime.started;
+  runtime.hostRegistry.connect(paseoHostId, "ws://127.0.0.1:6767/ws", {
+    adapter: makeFakeHostAdapter(paseoHostId),
+    admission: runtime.admission,
+  });
+  runtime.hostRegistry.connect(t3HostId, "ws://127.0.0.1:3773/ws", {
+    adapter: makeFakeHostAdapter(t3HostId),
+    admission: runtime.admission,
+  });
+  runtime.bbHostVerified({
+    hostId: bbHostId,
+    dataDir: bbDataDir,
+    bbVersion: "0.49.0",
+    sdkVersion: "0.6.132",
+    hostIds: ["host_synthetic"],
+    connectedAt: new Date().toISOString(),
+  });
+  await runtime.ensureBootstrap();
+
+  // Operator default is unset on a fresh store.
+  assert.equal(
+    runtime.capacityAuthorityState().effective.operatorDefaultHostKind,
+    null,
+  );
+
+  const brief = [
+    "---",
+    "title: BB submission stays on BB planner host",
+    "queue:",
+    "  complexity: medium",
+    "---",
+    "",
+    "## Outcome",
+    "Verify BB submission selects the BB planner host without falling back to Paseo.",
+  ].join("\n");
+
+  const submitted = leadSubmit.output.parse(
+    await runtime.submitLead(
+      leadSubmit.input.parse({
+        repository: { origin: repoPath, path: repoPath },
+        title: "BB submission stays on BB planner host",
+        body: brief,
+        agent: caller,
+        hostId: bbHostId,
+        note: "submit from BB with unset default",
+        identitySource: { agent: caller, hostId: bbHostId },
+      }),
+    ),
+  );
+  assert.ok("taskId" in submitted);
+  const task = runtime.store.task(submitted.taskId);
+  assert.equal(task.originHostId, bbHostId);
+  assert.equal(task.hostId, bbHostId);
+  assert.deepEqual(task.hostSelection, {
+    hostId: bbHostId,
+    basis: "planner_host",
+    reason: "Planner host",
+  });
+});
+
+test("workspaceCreationProgress propagates through routed adapter onto registered host adapters", async (t) => {
+  const root = makeTempDir(t, "ns-ws-progress-");
+  const dataDir = join(root, "data");
+  const repoPath = join(root, "repo");
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(repoPath, { recursive: true });
+
+  const paseoHostId = "paseo-progress";
+  const observedReasons: string[] = [];
+  const rawPaseoAdapter = makeFakeHostAdapter(paseoHostId);
+  const origCreateWorkspace =
+    rawPaseoAdapter.createWorkspace.bind(rawPaseoAdapter);
+  rawPaseoAdapter.createWorkspace = async (task, onProgress) => {
+    rawPaseoAdapter.workspaceCreationProgress?.(
+      task.id,
+      "cloning worktree",
+      "started",
+    );
+    return origCreateWorkspace(task, onProgress);
+  };
+
+  const runtime = new QueueRuntime({
+    dataDir,
+    hostHome: join(root, "no-paseo"),
+    timers: false,
+  });
+  t.after(async () => {
+    await runtime.drain();
+  });
+
+  await runtime.started;
+  runtime.hostRegistry.connect(paseoHostId, "ws://127.0.0.1:6767/ws", {
+    adapter: rawPaseoAdapter,
+    admission: runtime.admission,
+  });
+  await runtime.ensureBootstrap();
+
+  const task = seedProfileAndTask(runtime, paseoHostId, repoPath);
+  const origUpdate = runtime.store.update.bind(runtime.store);
+  runtime.store.update = ((
+    id: string,
+    patch: Partial<Task>,
+    ...rest: unknown[]
+  ) => {
+    if (id === task.id && typeof patch.reason === "string") {
+      observedReasons.push(patch.reason);
+    }
+    return origUpdate(id, patch, ...(rest as [string?, string?]));
+  }) as typeof runtime.store.update;
+
+  runtime.engine.rebuildProfiles();
+  await runtime.engine.wake();
+
+  assert.ok(
+    observedReasons.some((reason) => reason.includes("cloning worktree")),
+    `expected workspaceCreationProgress to update task reason, got: ${JSON.stringify(observedReasons)}`,
+  );
 });

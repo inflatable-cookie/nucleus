@@ -214,6 +214,13 @@ export function routeHostAdapter(
         selected.workspaceAllocationBridge =
           selectedFallback.workspaceAllocationBridge;
       }
+      if (
+        !selected.workspaceCreationProgress &&
+        selectedFallback.workspaceCreationProgress
+      ) {
+        selected.workspaceCreationProgress =
+          selectedFallback.workspaceCreationProgress;
+      }
       let value: unknown;
       try {
         value = Reflect.get(selected, property, selected);

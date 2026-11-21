@@ -398,7 +398,8 @@ export class RuntimeLifecycle {
           this.owner.daemonUrl ?? "ws://127.0.0.1:6767/ws",
           { adapter, admission: this.owner.admission },
           () => {
-            const previousHost = this.owner.hostRegistry.legacyPaseoPrimary()?.id;
+            const previousHost =
+              this.owner.hostRegistry.legacyPaseoPrimary()?.id;
             if (previousHost && previousHost !== observed)
               throw this.refusal(
                 "Configured daemon identity changed; existing tasks belong to another host",
@@ -628,18 +629,16 @@ export class RuntimeLifecycle {
         timeoutMs,
       );
       if (typeof timer.unref === "function") timer.unref();
-      (adapter as unknown as { connect(): Promise<void> })
-        .connect()
-        .then(
-          () => {
-            clearTimeout(timer);
-            resolve();
-          },
-          (error: unknown) => {
-            clearTimeout(timer);
-            reject(error instanceof Error ? error : new Error(String(error)));
-          },
-        );
+      (adapter as unknown as { connect(): Promise<void> }).connect().then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
     });
   }
 

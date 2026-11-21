@@ -1312,11 +1312,12 @@ The shared board's historical `plans` method name is translated by the BB bridge
 `queue.plans` catalogue method. BB threads may also call the CLI through `BB_THREAD_ID`; the service
 verifies that exact thread on one online BB host before recording its host-qualified identity. An
 online BB host is valid for authenticated submission ingress. A BB caller can submit and promote
-tasks using the configured repository or operator-default work host, including BB when that route
-explicitly selects it; caller identity alone never selects the BB work host. An offline BB caller or
+tasks using the standard repository, operator-default, planner-host, and online selection order:
+when a repository override or operator default selects another host, that route wins; when neither
+is set, the verified BB planner host is selected without falling back implicitly to Paseo or another
+non-BB host. An offline BB caller or
 selected BB host refuses with typed `invalid_input` during dry-run and before operation acceptance,
-even when a separate work host is online. When no repository or operator-default route is set, the
-sole online non-BB host remains the unambiguous work-host fallback. An exact-payload retry from the
+even when a separate work host is online. An exact-payload retry from the
 same BB caller returns the accepted operation even when its ingress host differs from the recorded
 work host, preserving the original work-host selection. The bridge forwards
 service-catalogue methods over the retained BB

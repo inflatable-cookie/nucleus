@@ -73,7 +73,7 @@ test("the connection is written owner-only, read back whole, and cleared without
   assert.equal(cleared.workRoot, "/synthetic/work");
 });
 
-test("a fresh data home gets the service default daemon url, and a malformed block is refused by name", () => {
+test("a fresh data home does not seed a Paseo daemon url, and a malformed block is refused by name", () => {
   const dataDir = dataHome();
   writeT3Connection(dataDir, {
     endpoint: "http://127.0.0.1:3773",
@@ -82,7 +82,7 @@ test("a fresh data home gets the service default daemon url, and a malformed blo
   const stored = JSON.parse(
     readFileSync(join(dataDir, "settings.json"), "utf8"),
   ) as Record<string, unknown>;
-  assert.equal(stored.daemonUrl, "ws://127.0.0.1:6767/ws");
+  assert.equal(stored.daemonUrl, undefined);
 
   writeFileSync(
     join(dataDir, "settings.json"),

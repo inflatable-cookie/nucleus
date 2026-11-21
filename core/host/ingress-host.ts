@@ -113,10 +113,13 @@ export function resolveIngressHost(input: {
       hostId: input.online[0]!,
       selection: {
         hostId: input.online[0]!,
-        basis: input.online.length === 1 ? "sole_online_host" : "available_host",
+        basis:
+          input.online.length === 1 ? "sole_online_host" : "available_host",
         ...(input.online.length === 1
           ? {}
-          : { reason: "No default or planner host; selected first online host" }),
+          : {
+              reason: "No default or planner host; selected first online host",
+            }),
       },
     };
   }

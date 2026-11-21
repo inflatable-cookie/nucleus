@@ -24,10 +24,7 @@ import {
   originUsesProject,
 } from "./origin";
 import type { AgentObservation } from "../host/adapter";
-import {
-  ProvenPreSendRefusalError,
-  isAgentGoneRefusal,
-} from "../host/errors";
+import { ProvenPreSendRefusalError, isAgentGoneRefusal } from "../host/errors";
 import { qaSettlementHostMessageId } from "../qa/project-qa-notice";
 import {
   qaNoticeOwner,
@@ -378,7 +375,7 @@ export class Notices {
    * for a T3 project), so delivery resolves that host before sending.
    */
   async deliverHostOutageNotices() {
-    if (!this.adapter.notify || this.paused()) return;
+    if (this.paused()) return;
     for (let n of this.store.pendingNotices()) {
       if (this.paused()) return;
       if (n.kind !== "host_outage") continue;
@@ -443,8 +440,11 @@ export class Notices {
         continue;
       }
       if (
-        !this.resolution.withHost(recipientHost, () =>
-          this.resolution.originHostAvailable(recipientHost),
+        !this.resolution.withHost(
+          recipientHost,
+          () =>
+            this.resolution.originHostAvailable(recipientHost) &&
+            Boolean(this.adapter.notify),
         )
       ) {
         const reason = `Waiting for host ${recipientHost}`;
@@ -502,7 +502,7 @@ export class Notices {
    * escalation timer covers an unreachable owner, so the operator still sees the item.
    */
   async deliverDrainNotices() {
-    if (!this.adapter.notify || this.paused()) return;
+    if (this.paused()) return;
     for (let n of this.store.pendingNotices()) {
       if (this.paused()) return;
       if (
@@ -639,8 +639,11 @@ export class Notices {
         (await this.resolution.identifyOriginHost(n.agentId));
       if (
         !recipientHost ||
-        !this.resolution.withHost(recipientHost, () =>
-          this.resolution.originHostAvailable(recipientHost),
+        !this.resolution.withHost(
+          recipientHost,
+          () =>
+            this.resolution.originHostAvailable(recipientHost) &&
+            Boolean(this.adapter.notify),
         )
       )
         continue;
@@ -1236,8 +1239,11 @@ export class Notices {
           : await this.resolution.identifyOriginHost(n.agentId);
       if (
         !recipientHost ||
-        !this.resolution.withHost(recipientHost, () =>
-          this.resolution.originHostAvailable(recipientHost),
+        !this.resolution.withHost(
+          recipientHost,
+          () =>
+            this.resolution.originHostAvailable(recipientHost) &&
+            Boolean(this.adapter.notify),
         )
       )
         continue;
