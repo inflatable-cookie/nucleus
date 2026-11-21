@@ -3831,10 +3831,7 @@ test("a continuation whose prior run has no cleanup record is told so, and a fin
       /no run-bound cleanup record names run worker-run/,
       "the missing record is named, not inferred",
     );
-    assert.match(
-      work.note ?? "",
-      /earlier build outputs may be gone/,
-    );
+    assert.match(work.note ?? "", /earlier build outputs may be gone/);
     // A skipped or uncertain record is quoted with its own state, never as a removal.
     f.store.update(f.taskId, {
       resolution: {

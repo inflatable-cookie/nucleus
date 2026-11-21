@@ -17,10 +17,7 @@ import {
 import { workerRouteProfile } from "../../shared/pool";
 import type { Run, StalledTurnStop, Task } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
-import {
-  HostReadRefusalError,
-  isHostOperationTimeout,
-} from "../host/errors";
+import { HostReadRefusalError, isHostOperationTimeout } from "../host/errors";
 import { HostTransportFault } from "../host/adapter-routing";
 import { isTransportFailure } from "../../shared/transport";
 import type { Resolution } from "../resolution";
@@ -835,8 +832,7 @@ export class Stalls {
             ...latestStop,
             status: "stopped",
             observedInactiveAt: at,
-            detail:
-              `${HOST_KIND_LABELS[hostKindOf(latest.hostId)]} reported the assigned agent inactive; the run lease was released without accepting a result`,
+            detail: `${HOST_KIND_LABELS[hostKindOf(latest.hostId)]} reported the assigned agent inactive; the run lease was released without accepting a result`,
           },
         },
         { phase: "needs_attention", reason },

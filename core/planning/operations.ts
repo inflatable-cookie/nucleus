@@ -533,7 +533,10 @@ export class Operations {
     }))
       this.engine.scheduleOperation(operation.id);
     this.engine.resumeHostReadTransients();
-    if (!this.engine.stopped && this.store.pendingDecisionDeliveries().length > 0) {
+    if (
+      !this.engine.stopped &&
+      this.store.pendingDecisionDeliveries().length > 0
+    ) {
       void this.engine.scheduleDecisionNotices().catch(() => {
         /* decision delivery records its own wait or fault */
       });
@@ -596,8 +599,10 @@ export class Operations {
     if (
       pending.state === "running" &&
       (!pending.preSendBoundaryStartedAt ||
-        (pending.kind === "task_control" && pending.effect?.kind === "task_control" &&
-          pending.effect.target === "restart" && pending.effect.result === `parent-unarchive:${pending.id}`)) &&
+        (pending.kind === "task_control" &&
+          pending.effect?.kind === "task_control" &&
+          pending.effect.target === "restart" &&
+          pending.effect.result === `parent-unarchive:${pending.id}`)) &&
       !pending.preSendReceipt &&
       pending.result &&
       pending.effect?.status === "reconciled"
@@ -637,7 +642,11 @@ export class Operations {
       });
       return;
     }
-    if (pending.preSendBoundaryStartedAt && await this.resumeParentRestore(pending)) return;
+    if (
+      pending.preSendBoundaryStartedAt &&
+      (await this.resumeParentRestore(pending))
+    )
+      return;
     if (pending.preSendBoundaryStartedAt) {
       this.store.putOperation({
         ...pending,
@@ -803,7 +812,11 @@ export class Operations {
       // A parent restore has its own exact intent. Preserve the operation until
       // that intent can be observed, rather than classifying a lost reply as a
       // refusal or replaying the restart.
-      if (currentOperation?.preSendBoundaryStartedAt && await this.holdParentRestore(currentOperation)) return;
+      if (
+        currentOperation?.preSendBoundaryStartedAt &&
+        (await this.holdParentRestore(currentOperation))
+      )
+        return;
       // A proved pre-send transient host read failure never crossed the send
       // boundary: retain the authorized operation without consuming attempts or
       // recording a refusal, and retry automatically until settled or exhausted.
@@ -860,8 +873,11 @@ export class Operations {
             committed?.result &&
               committed.effect?.status === "reconciled" &&
               (!committed.preSendBoundaryStartedAt ||
-                (committed.kind === "task_control" && committed.effect?.kind === "task_control" &&
-                  committed.effect.target === "restart" && committed.effect.result === `parent-unarchive:${committed.id}`)) &&
+                (committed.kind === "task_control" &&
+                  committed.effect?.kind === "task_control" &&
+                  committed.effect.target === "restart" &&
+                  committed.effect.result ===
+                    `parent-unarchive:${committed.id}`)) &&
               !committed.preSendReceipt,
           ),
           submissionDeferrable:
@@ -955,72 +971,155 @@ export class Operations {
     }
   }
   /** The original worker restart and host are the only owners of this observation. */
-  private async parentRestoreObservation(operation: QueueOperation): Promise<"not_found" | "live" | "archived" | "deleted" | "mismatched" | "unobservable"> {
-    if (operation.kind !== "task_control" || !operation.taskId || !operation.hostId ||
-        operation.id !== operationIdForKey(operation.key)) return "not_found";
-    const payload = this.store.operationPayload(operation.id) as { type?: unknown; control?: unknown } | null;
+  private async parentRestoreObservation(
+    operation: QueueOperation,
+  ): Promise<
+    | "not_found"
+    | "live"
+    | "archived"
+    | "deleted"
+    | "mismatched"
+    | "unobservable"
+  > {
+    if (
+      operation.kind !== "task_control" ||
+      !operation.taskId ||
+      !operation.hostId ||
+      operation.id !== operationIdForKey(operation.key)
+    )
+      return "not_found";
+    const payload = this.store.operationPayload(operation.id) as {
+      type?: unknown;
+      control?: unknown;
+    } | null;
     const parsed = taskControlInputSchema.safeParse(payload?.control);
-    if (!payload || payload.type !== "task_control" || operationInputHash(payload) !== operation.inputHash ||
-        !parsed.success || parsed.data.action !== "restart" || parsed.data.taskId !== operation.taskId ||
-        parsed.data.version !== operation.expectedVersion) return "not_found";
+    if (
+      !payload ||
+      payload.type !== "task_control" ||
+      operationInputHash(payload) !== operation.inputHash ||
+      !parsed.success ||
+      parsed.data.action !== "restart" ||
+      parsed.data.taskId !== operation.taskId ||
+      parsed.data.version !== operation.expectedVersion
+    )
+      return "not_found";
     const task = this.store.taskOrNull(operation.taskId);
     if (!task || task.hostId !== operation.hostId) return "not_found";
-    if (!this.engine.withHost(operation.hostId, () => this.engine.hostAvailable(operation.hostId!)))
-      return operation.effect?.result === `parent-unarchive:${operation.id}` ? "unobservable" : "not_found";
+    if (
+      !this.engine.withHost(operation.hostId, () =>
+        this.engine.hostAvailable(operation.hostId!),
+      )
+    )
+      return operation.effect?.result === `parent-unarchive:${operation.id}`
+        ? "unobservable"
+        : "not_found";
     return this.engine.withHost(operation.hostId, async () => {
       const observe = this.engine.adapter.observeTaskParentRestore;
-      const result = observe ? await observe.call(this.engine.adapter, task, operation.id) : "not_found";
-      return result === "not_found" && operation.effect?.result === `parent-unarchive:${operation.id}`
-        ? "unobservable" : result;
+      const result = observe
+        ? await observe.call(this.engine.adapter, task, operation.id)
+        : "not_found";
+      return result === "not_found" &&
+        operation.effect?.result === `parent-unarchive:${operation.id}`
+        ? "unobservable"
+        : result;
     });
   }
 
-  private parentRestoreWait(operation: QueueOperation, observed: "archived" | "deleted" | "mismatched" | "unobservable"): void {
-    const reason = observed === "archived"
-      ? "Parent unarchive delivery remains unknown; the same parent is still archived"
-      : observed === "unobservable"
-        ? "Parent unarchive delivery remains unknown; the same parent cannot be observed"
-        : `Parent unarchive cannot be reconciled: the same parent is ${observed}; inspect its retained binding`;
+  private parentRestoreWait(
+    operation: QueueOperation,
+    observed: "archived" | "deleted" | "mismatched" | "unobservable",
+  ): void {
+    const reason =
+      observed === "archived"
+        ? "Parent unarchive delivery remains unknown; the same parent is still archived"
+        : observed === "unobservable"
+          ? "Parent unarchive delivery remains unknown; the same parent cannot be observed"
+          : `Parent unarchive cannot be reconciled: the same parent is ${observed}; inspect its retained binding`;
     const attention = observed === "deleted" || observed === "mismatched";
-    this.store.putOperation({ ...operation, state: attention ? "needs_attention" : "pending", settledAt: attention ? now() : null, diagnostic: reason });
+    this.store.putOperation({
+      ...operation,
+      state: attention ? "needs_attention" : "pending",
+      settledAt: attention ? now() : null,
+      diagnostic: reason,
+    });
   }
 
   private async holdParentRestore(operation: QueueOperation): Promise<boolean> {
     const observed = await this.parentRestoreObservation(operation).catch(() =>
-      operation.effect?.result === `parent-unarchive:${operation.id}` ? "unobservable" as const : "not_found" as const);
+      operation.effect?.result === `parent-unarchive:${operation.id}`
+        ? ("unobservable" as const)
+        : ("not_found" as const),
+    );
     if (observed === "not_found") return false;
     if (observed === "live") {
-      this.store.putOperation({ ...operation, state: "pending", settledAt: null, diagnostic: "Parent restored; restart admission awaits reconciliation" });
+      this.store.putOperation({
+        ...operation,
+        state: "pending",
+        settledAt: null,
+        diagnostic: "Parent restored; restart admission awaits reconciliation",
+      });
       setTimeout(() => this.engine.scheduleOperation(operation.id), 0);
     } else this.parentRestoreWait(operation, observed);
     return true;
   }
 
-  private async resumeParentRestore(operation: QueueOperation): Promise<boolean> {
+  private async resumeParentRestore(
+    operation: QueueOperation,
+  ): Promise<boolean> {
     const observed = await this.parentRestoreObservation(operation).catch(() =>
-      operation.effect?.result === `parent-unarchive:${operation.id}` ? "unobservable" as const : "not_found" as const);
+      operation.effect?.result === `parent-unarchive:${operation.id}`
+        ? ("unobservable" as const)
+        : ("not_found" as const),
+    );
     if (observed === "not_found") return false;
     if (observed !== "live") {
       this.parentRestoreWait(operation, observed);
       return true;
     }
     if (operation.result && operation.effect?.status === "reconciled") {
-      this.store.putOperation({ ...operation, state: "succeeded", settledAt: now(), diagnostic: "" });
+      this.store.putOperation({
+        ...operation,
+        state: "succeeded",
+        settledAt: now(),
+        diagnostic: "",
+      });
       return true;
     }
-    const payload = this.store.operationPayload(operation.id) as { control: unknown };
+    const payload = this.store.operationPayload(operation.id) as {
+      control: unknown;
+    };
     const input = taskControlInputSchema.parse(payload.control);
-    this.store.putOperation({ ...operation, state: "running", settledAt: null });
+    this.store.putOperation({
+      ...operation,
+      state: "running",
+      settledAt: null,
+    });
     try {
-      const task = await this.engine.withHost(operation.hostId!, () => this.engine.restartControls.resumeRestoredWorker(input, operation.id));
+      const task = await this.engine.withHost(operation.hostId!, () =>
+        this.engine.restartControls.resumeRestoredWorker(input, operation.id),
+      );
       const committed = this.store.operation(operation.id)!;
-      if (!committed.result || committed.effect?.status !== "reconciled") throw Error("Restart admission did not commit its operation result");
-      this.store.putOperation({ ...committed, state: "succeeded", settledAt: now(), diagnostic: "" });
+      if (!committed.result || committed.effect?.status !== "reconciled")
+        throw Error("Restart admission did not commit its operation result");
+      this.store.putOperation({
+        ...committed,
+        state: "succeeded",
+        settledAt: now(),
+        diagnostic: "",
+      });
       void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
     } catch (error) {
       const current = this.store.operation(operation.id)!;
-      this.store.putOperation({ ...current, state: "needs_attention", settledAt: now(),
-        diagnostic: `Parent was restored, but restart admission did not settle: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000) });
+      this.store.putOperation({
+        ...current,
+        state: "needs_attention",
+        settledAt: now(),
+        diagnostic:
+          `Parent was restored, but restart admission did not settle: ${error instanceof Error ? error.message : String(error)}`.slice(
+            0,
+            4000,
+          ),
+      });
     }
     return true;
   }
