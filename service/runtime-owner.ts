@@ -2316,7 +2316,13 @@ export class QueueRuntime {
   ): Promise<
     import("../shared/contracts").TaskControlTask | OperationAcceptance
   > {
-    if (request.action === "run.release" || request.action === "record.clear")
+    if (
+      request.action === "run.release" ||
+      request.action === "record.clear" ||
+      request.action === "run.start" ||
+      request.action === "phase.set" ||
+      request.action === "message.send"
+    )
       return resolveExplicitly(this.engine, request, task => {
         if (task.removedAt) return "The scheduler leaves this removed task alone.";
         const next = this.taskNext({ taskId: task.id });

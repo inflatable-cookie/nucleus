@@ -47,17 +47,13 @@ export async function settleResponsibleFault(engine: RecoverySettlementContext, 
   // task row, so even a refused restart leaves one recorded decision.
   engine.store.event(current.id, "responsible_fault_restart", identity);
   try {
+    const fresh = Boolean(run.retainedAgentClosedAt) || shape === "checkpoint_reviewer";
     const request = {
-      taskId: current.id, version: current.version, action: "restart", role: "reviewer", fresh: true, caller: "queue",
+      taskId: current.id, version: current.version, action: "restart", role: "reviewer", fresh, caller: "queue",
       reason: "Responsible task: the reviewer stopped without a result; Nucleus restarts it at the same exact head (Spec 058). "
         + (shape === "checkpoint_reviewer" ? "Its saved checkpoint cannot receive a same-agent continuation because the agent is closed." : "Recover the retained reviewer on the same task."),
     };
-    try {
-      await engine.performTaskControl(taskControlInputSchema.parse(request));
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('The retained reviewer is still live or its absence is unproven')) throw error;
-      await engine.performTaskControl(taskControlInputSchema.parse({ ...request, fresh: false }));
-    }
+    await engine.performTaskControl(taskControlInputSchema.parse(request));
     return true;
   } catch (error) {
     engine.store.event(current.id, "responsible_fault_restart_refused", `${identity}: ${error instanceof Error ? error.message : String(error)}`);

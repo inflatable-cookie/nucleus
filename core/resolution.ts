@@ -116,8 +116,6 @@ import { RunCallbackIntake } from "./intake/run-callback-intake";
 import { MergeGates } from "./merge/merge-gates";
 import { RetryRoutes } from "./recovery/retry-orchestration";
 import { ExternalMerge } from "./merge/external-merge";
-import { AbsentRestarts } from "./recovery/absent-creation";
-import type { ResolutionCreationObservation } from "./recovery/absent-creation";
 import { Delegation } from "./questions/delegation";
 import type { PlannerRung } from "./questions/delegation";
 import { Ladder } from "./questions/ladder";
@@ -1038,21 +1036,6 @@ export class Resolution {
       },
     ),
   );
-  readonly absentRestarts = new AbsentRestarts(
-    portsContext(this, [
-      "adapter",
-      "attention",
-      "ensureIncident",
-      "graceMs",
-      "paused",
-      "recordIncidentEvent",
-      "resolveIncident",
-      "settleVerbFences",
-      "store",
-      "update",
-      "waiting",
-    ]),
-  );
   readonly observation = new Observation(
     portsContext(this, [
       "adapter",
@@ -1070,7 +1053,6 @@ export class Resolution {
       "onTaskHost",
       "orphanRuns",
       "paused",
-      "reconcileAbsentCreation",
       "reconcileStalledTurnStop",
       "recoverRefusedReviewer",
       "remindStoppedRun",
@@ -2022,40 +2004,6 @@ export class Resolution {
       settleRunIds,
     );
   }
-  absentResolutionRun(t: Task) {
-    return this.absentRestarts.absentResolutionRun(t);
-  }
-  admitAbsentResolution(
-    t: Task,
-    runId: string,
-    settleRunIds: string[] = [],
-  ): Run {
-    return this.absentRestarts.admitAbsentResolution(t, runId, settleRunIds);
-  }
-  /** Spec 050 `restart` of a proven-absent resolution run: a fresh run from the current route. */
-  replaceAbsentRunFromRoute(
-    t: Task,
-    runId: string,
-    instruction: string | null,
-    settleFences?: {
-      detail: string;
-      runIds: string[];
-      displacedRunIds?: string[];
-    },
-  ): Task {
-    return this.absentRestarts.replaceAbsentRunFromRoute(
-      t,
-      runId,
-      instruction,
-      settleFences,
-    );
-  }
-  releaseAbsentRun(t: Task, runId: string, detail: string): void {
-    return this.absentRestarts.releaseAbsentRun(t, runId, detail);
-  }
-  settleAbsentProof(t: Task, run: Run): void {
-    return this.absentRestarts.settleAbsentProof(t, run);
-  }
   recordBlockedPrIdentity(
     t: Task,
     prNumber: number,
@@ -2161,22 +2109,6 @@ export class Resolution {
     return this.providerRefusals.refusalGap(current, run, expectedVersion);
   }
 
-  /**
-   * Settle one uncertain creation from its own observation. After the bounded
-   * grace: record a proved absence and its owner exits, keep a partial lookup as
-   * an owner decision bound to this occurrence, or name the missing fact.
-   */
-  reconcileAbsentCreation(
-    t: Task,
-    run: Run,
-    observation: ResolutionCreationObservation,
-  ) {
-    return this.absentRestarts.reconcileAbsentCreation(t, run, observation);
-  }
-  /** Atomically revoke one proven-absent callback and issue exactly one same-role replacement. */
-  private replaceAbsentCreation(t: Task, run: Run) {
-    return this.absentRestarts.replaceAbsentCreation(t, run);
-  }
   reconcileStalledTurnStop(
     task: Task,
     run: Run | null,

@@ -4,13 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { formatAgentId } from "../shared/agent-identity";
-import { OPERATOR_BOARD_CALLER, runSchema, submissionSchema, taskControlTaskSchema } from "../shared/contracts";
+import { OPERATOR_BOARD_CALLER, REVISION_BUDGET, runSchema, submissionSchema, taskControlTaskSchema } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
-import { resolutionCreationRestartRefusal } from "../core/recovery/absent-creation/restarts";
 import { operationInputHash } from "../core/store/store";
 import { collectOwnerVerbFacts, ownerPendingEffects } from "../core/verbs/owner-verbs";
 import { taskControlOperation } from "../core/verbs/task-control-key";
@@ -28,12 +27,22 @@ async function fixture(t: TestContext) {
   const calls: string[] = [];
   const adapter = {
     hostId: host, socketPath: join(root, "callback.sock"), helperPath: join(root, "helper.mjs"),
-    client: { isConnected: true }, isConnected: () => true,
+    client: { isConnected: true }, isConnected: () => true, supportsCoordinatorRecovery: true,
     connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }),
     listLiveAgents: async () => [{ id: "live-planner", title: "Planner", directory: repo, workspaceId: null }],
     originAgent: async (id: string) => ({ id, title: id, workspaceId: null, archived: id === "retired-planner" }),
     stopAgentTurn: async (id: string) => { calls.push(`stop ${id}`); },
     archiveAgent: async (id: string) => { calls.push(`archive ${id}`); },
+    createRun: async (_task: unknown, r: { id: string; role: string; head: string; workspaceId: string }) => {
+      calls.push(`create ${r.role} ${r.head.slice(0, 8)}`);
+      return { id: `${r.role}-agent-${r.id.slice(0, 8)}`, workspaceId: r.workspaceId || "workspace" };
+    },
+    continueRun: async (r: { id: string; role: string; agentId: string | null }, _msgId: string, text: string) => {
+      calls.push(`continue ${r.role} ${r.agentId}: ${text.slice(0, 40)}`);
+    },
+    steerOrNotify: async (agentId: string, _msgId: string, text: string) => {
+      calls.push(`steer ${agentId}: ${text.slice(0, 40)}`);
+    },
   } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: join(root, "nucleus"), adapterFactory: () => adapter, timers: false });
   t.after(async () => {
@@ -218,20 +227,6 @@ test("record.clear retires an owned-tool hold and a stale escalation without usi
   assert.equal(current().resolution.stop, null);
 });
 
-test("creation restart decisions read the stored stop fact across detail edits", async t => {
-  const { store, current, run, runtime } = await fixture(t);
-  const reviewer = run("review-run", "reviewer", null);
-  store.putRun(reviewer);
-  store.update(current().id, { prHead: head });
-  runtime.engine.resolution.ensureIncident(current(), reviewer, "Uncertain launch", "exact_lookup");
-  runtime.engine.resolution.waiting(current(), "Exact reviewer creation lookup is unavailable", "lifecycle");
-  const task = current();
-  const stop = task.resolution.stop!;
-  assert.equal(resolutionCreationRestartRefusal(task, reviewer), stop.detail);
-  store.update(task.id, { resolution: { ...task.resolution, stop: { ...stop, detail: "Renamed diagnostic" } } });
-  assert.equal(resolutionCreationRestartRefusal(current(), reviewer), "Renamed diagnostic");
-});
-
 test("a new task reason keeps its own fact when a resolution update carries an older stop", async t => {
   const { store, current, runtime } = await fixture(t);
   runtime.engine.resolution.waiting(current(), "Waiting for the slot", "lifecycle", { fact: { code: "integration_turn" } });
@@ -243,4 +238,194 @@ test("a new task reason keeps its own fact when a resolution update carries an o
   } });
   assert.deepEqual(current().reasonFact, { code: "prerequisite" });
   assert.deepEqual(current().resolution.stop?.fact, { code: "integration_turn" });
+});
+
+test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolves uncertain reviewer in one step", async t => {
+  const { store, current, run, command, audit, calls, runtime } = await fixture(t);
+  const stuck = run("stuck-reviewer", "reviewer", null);
+  store.putRun(stuck);
+  store.setCredential(stuck.id, "old-secret");
+  store.update(current().id, { phase: "reviewing", prHead: head, workspaceId: "workspace",
+    resolution: { ...current().resolution, currentRunId: stuck.id } });
+  runtime.engine.profiles = [profile("fresh-reviewer")];
+  store.setMeta("pool", [{ profileId: "fresh-reviewer", enabled: true, group: "reviews", weight: "default",
+    scopes: ["general"], roles: ["reviewer"] }]);
+
+  const args = { action: "run.start", role: "reviewer", agent: "fresh", replacing: stuck.id };
+  const probe = await command(args);
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  assert.deepEqual(probe.explicitResolution?.warnings.map(w => w.id), ["duplicate_thread"]);
+  assert.equal(store.run(stuck.id)?.released, false);
+  assert.equal(audit().length, 0);
+
+  const applied = await command({ ...args, accept: ["duplicate_thread"] });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  const newRunId = applied.explicitResolution?.runId;
+  assert.ok(newRunId && newRunId !== stuck.id);
+  assert.equal(applied.phase, "reviewing");
+  assert.equal(store.run(stuck.id)?.released, true);
+  assert.throws(() => store.authenticate(stuck.id, "old-secret"), /unauthorized/i);
+  assert.equal(store.run(newRunId)?.status, "running");
+  assert.equal(current().resolution.currentRunId, newRunId);
+  assert.ok(current().resolution.reviewerAgentId?.startsWith("reviewer-agent-"));
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!, /^create reviewer aaaaaaaa$/);
+  assert.equal(audit().length, 1);
+});
+
+test("#1508: run.start reviewer head=<pushed> warns on head_mismatch and starts at the pushed head", async t => {
+  const { store, current, command, runtime } = await fixture(t);
+  const pushed = "b".repeat(40);
+  store.update(current().id, { phase: "working", prHead: head, workspaceId: "workspace" });
+  runtime.engine.profiles = [profile("rev-1")];
+  store.setMeta("pool", [{ profileId: "rev-1", enabled: true, group: "reviews", weight: "default",
+    scopes: ["general"], roles: ["reviewer"] }]);
+
+  const args = { action: "run.start", role: "reviewer", head: pushed };
+  const probe = await command(args);
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  assert.deepEqual(probe.explicitResolution?.warnings.map(w => w.id), ["head_mismatch"]);
+
+  const applied = await command({ ...args, accept: ["head_mismatch"] });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(applied.phase, "working");
+  const created = store.run(applied.explicitResolution!.runId!);
+  assert.equal(created?.head, pushed);
+  assert.equal(created?.status, "running");
+});
+
+test("#1498: run.start worker retained starts a revision run on the bound worker thread", async t => {
+  const { store, current, command, calls } = await fixture(t);
+  store.update(current().id, {
+    phase: "changes_requested", prHead: head, workspaceId: "workspace",
+    agentId: "worker-1", runId: "initial-worker", agentActive: false, profile: profile("worker-prof"),
+  });
+  const applied = await command({ action: "run.start", role: "worker", agent: "retained", instruction: "Apply the review fix" });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(applied.phase, "changes_requested");
+  const created = store.run(applied.explicitResolution!.runId!);
+  assert.equal(created?.role, "revision");
+  assert.equal(created?.agentId, "worker-1");
+  assert.equal(created?.status, "running");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!, /^continue revision worker-1: Apply the review fix/);
+});
+
+test("run.start enforces two_writers, budget, and route_policy warnings and coordinator authority", async t => {
+  const { store, current, run, command, runtime } = await fixture(t);
+  const coord = run("coord-run", "recovery", "coordinator");
+  store.putRun(coord);
+  store.update(current().id, {
+    phase: "working", prHead: head, workspaceId: "workspace",
+    agentId: "worker-1", runId: "initial-worker", agentActive: true, profile: profile("worker-prof"),
+    profileRequests: { worker: { profileId: "worker-prof", reason: "Need frontier", required: false, signoff: { status: "pending", decisionId: "dec-1", by: planner, at: new Date().toISOString(), note: "" } } },
+    resolution: { ...current().resolution, revisionRuns: REVISION_BUDGET, recoveryActive: true,
+      recovery: { id: "ep", key: "k", generation: 1, runId: coord.id, agentId: coord.agentId, status: "running", summary: "Stall", idleSince: null, incidentId: null } },
+  });
+  runtime.engine.profiles = [profile("worker-prof")];
+  store.setMeta("pool", [{ profileId: "worker-prof", enabled: true, group: "work", weight: "default", scopes: ["general"], roles: ["worker"] }]);
+
+  const args = { action: "run.start", role: "worker", agent: "fresh" };
+  const probe = await command(args);
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  const ids = probe.explicitResolution?.warnings.map(w => w.id) ?? [];
+  assert.ok(ids.includes("duplicate_thread"));
+  assert.ok(ids.includes("two_writers"));
+  assert.ok(ids.includes("budget"));
+  assert.ok(ids.includes("route_policy"));
+
+  const coordCaller = formatAgentId(host, "coordinator");
+  await assert.rejects(command({ ...args, caller: coordCaller, accept: ["two_writers"] }), /only the live responsible planner/i);
+  await assert.rejects(command({ ...args, caller: coordCaller, accept: ["route_policy"] }), /only the live responsible planner/i);
+
+  const applied = await command({ ...args, caller: planner, accept: ["duplicate_thread", "two_writers", "budget", "route_policy"] });
+  assert.equal(applied.explicitResolution?.status, "applied");
+});
+
+test("phase.set warns on live_runs and writes only phase and reason", async t => {
+  const { store, current, run, command, audit } = await fixture(t);
+  const activeRun = run("rev-1", "reviewer", "reviewer-1");
+  store.putRun(activeRun);
+  store.update(current().id, { phase: "reviewing", resolution: { ...current().resolution, currentRunId: activeRun.id } });
+
+  const args = { action: "phase.set", to: "awaiting_review", reason: "Reset phase for explicit re-review" };
+  const probe = await command(args);
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  assert.deepEqual(probe.explicitResolution?.warnings.map(w => w.id), ["live_runs"]);
+  assert.equal(current().phase, "reviewing");
+
+  const applied = await command({ ...args, accept: ["live_runs"] });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(applied.phase, "awaiting_review");
+  assert.equal(applied.reason, "Reset phase for explicit re-review");
+  assert.equal(applied.resolution.currentRunId, activeRun.id);
+  assert.equal(audit().length, 1);
+});
+
+test("message.send warns on queued and no_thread, delivers without changing task state", async t => {
+  const { store, current, run, command, calls } = await fixture(t);
+  const noThread = await command({ action: "message.send", role: "reviewer", text: "Please report your verdict" });
+  assert.equal(noThread.explicitResolution?.status, "warnings");
+  assert.deepEqual(noThread.explicitResolution?.warnings.map(w => w.id), ["no_thread"]);
+  const acceptedNoThread = await command({ action: "message.send", role: "reviewer", text: "Please report your verdict", accept: ["no_thread"] });
+  assert.equal(acceptedNoThread.explicitResolution?.status, "applied");
+  assert.equal(acceptedNoThread.explicitResolution?.delivery, "unknown");
+
+  const rev = run("rev-1", "reviewer", "reviewer-1");
+  store.putRun(rev);
+  store.update(current().id, { phase: "reviewing", resolution: { ...current().resolution, currentRunId: rev.id, reviewerAgentId: "reviewer-1" } });
+  const queued = await command({ action: "message.send", role: "reviewer", text: "Resend your report now" });
+  assert.equal(queued.explicitResolution?.status, "warnings");
+  assert.deepEqual(queued.explicitResolution?.warnings.map(w => w.id), ["queued"]);
+
+  const delivered = await command({ action: "message.send", role: "reviewer", text: "Resend your report now", accept: ["queued"] });
+  assert.equal(delivered.explicitResolution?.status, "applied");
+  assert.equal(delivered.explicitResolution?.delivery, "delivered");
+  assert.equal(delivered.phase, "reviewing");
+  assert.ok(calls.some(c => c.startsWith("steer reviewer-1: Resend your report now")));
+});
+
+test("an uncertain-creation stall launches a coordinator that can resolve it with run.start", async t => {
+  const { store, current, run, command, runtime } = await fixture(t);
+  const stuck = run("uncertain-rev", "reviewer", null);
+  store.putRun(stuck);
+  store.update(current().id, {
+    phase: "reviewing", prHead: head, workspaceId: "workspace",
+    resolution: { ...current().resolution, currentRunId: stuck.id },
+  });
+  runtime.engine.profiles = [profile("coord-prof"), profile("rev-prof")];
+  store.setMeta("pool", [
+    { profileId: "coord-prof", enabled: true, group: "coord", weight: "default", scopes: ["general"], roles: ["coordinator"] },
+    { profileId: "rev-prof", enabled: true, group: "reviews", weight: "default", scopes: ["general"], roles: ["reviewer"] },
+  ]);
+  store.setMeta("paused", false);
+
+  // Observation records the uncertain creation as a lifecycle stop with creation_lookup fact.
+  await runtime.engine.resolution.observe();
+  const stopped = current();
+  assert.equal(stopped.resolution.stop?.reason, "lifecycle");
+  assert.equal(stopped.resolution.stop?.fact?.code, "creation_lookup");
+  assert.match(stopped.resolution.stop?.detail ?? "", /run\.start reviewer fresh replacing=uncertain-rev/);
+
+  // Backdate stop.since past grace so the mechanical stall launches a coordinator.
+  store.update(stopped.id, {
+    resolution: {
+      ...stopped.resolution,
+      stop: { ...stopped.resolution.stop!, since: new Date(Date.now() - 120_000).toISOString() },
+    },
+  });
+  await runtime.engine.withHost(host, () => runtime.engine.resolution.recovery.route(current()));
+  const withCoord = current();
+  assert.equal(withCoord.resolution.recoveryActive, true);
+  assert.ok(withCoord.resolution.recovery?.agentId, "coordinator launched for uncertain-creation stall");
+
+  // The launched coordinator resolves the stall in one step with run.start.
+  const coordCaller = formatAgentId(host, withCoord.resolution.recovery!.agentId!);
+  const resolved = await command({
+    action: "run.start", role: "reviewer", agent: "fresh", replacing: stuck.id,
+    caller: coordCaller, accept: ["duplicate_thread"],
+  });
+  assert.equal(resolved.explicitResolution?.status, "applied");
+  assert.equal(store.run(stuck.id)?.released, true);
+  assert.equal(store.run(resolved.explicitResolution!.runId!)?.status, "running");
 });

@@ -217,16 +217,6 @@ test('move to=review on a responsible task keeps the retained reviewer at the ne
   } finally { await f.close(); }
 });
 
-test('move to=review refuses a fresh reviewer while the retained one is available', async () => {
-  const f = fixture();
-  try {
-    responsibleShape(f);
-    priorReviewerRound(f);
-    await assert.rejects(moveReview(f, { fresh: true }), /retained reviewer is still live or its absence is unproven/);
-    assert.equal(f.current().resolution.reviewerAgentId, 'review-agent');
-    assert.equal(f.createdRuns.length, 0);
-  } finally { await f.close(); }
-});
 
 test('move to review asks the same idle reviewer to resend its missing report', async () => {
   const f = fixture();

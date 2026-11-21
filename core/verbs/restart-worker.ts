@@ -28,14 +28,6 @@ import { taskHasPr } from "../forge/index";
 import { digest, now } from "../store/store";
 import { occupiesSlot } from "../dispatch/capacity";
 import { resolveWorkerHostForProfile } from "../dispatch/first-host-selection";
-import {
-  bindWorkerCreation,
-  observeWorkerCreation,
-  releaseStaleWorkerIntent,
-  recordWorkerCreationRestart,
-  sameWorkerCreation,
-  workerCreationRefusal,
-} from "../recovery/absent-creation/stale-worker";
 import type { Engine } from "../engine";
 import { restartResumeChoice } from "../task-decision-rules";
 import {
@@ -217,76 +209,9 @@ export class WorkerRestarts {
         ]
       : [];
     if (task.agentIntent && !task.agentId) {
-      const refusal = workerCreationRefusal(this.store, task, settling);
-      if (refusal) throw new RestartRefusal(refusal);
-      if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
-        throw new RestartRefusal(RETAINED_PREREQUISITE_REFUSAL);
-      const observed = await observeWorkerCreation(
-        this.store,
-        this.adapter,
-        task,
-        this.resolution.graceMs,
+      throw new RestartRefusal(
+        `Worker creation is uncertain; use run.start worker fresh${task.runId ? ` replacing=${task.runId}` : ""} or run.release`,
       );
-      const current = check();
-      if (current.resolution.deferredVerb)
-        throw new RestartRefusal(
-          "Another recorded direction already owns this task",
-        );
-      if (!sameWorkerCreation(this.store, current, observed))
-        throw new TaskChangedRefusal(
-          "Worker creation changed during restart",
-          input.version,
-          current.version,
-        );
-      if (observed.kind !== "absent") {
-        // The direction remains owned while other runs settle through their
-        // ordinary lifecycle. Binding by itself authorizes no cancellation.
-        return this.store.transaction(() => {
-          const recorded = recordWorkerCreationRestart(
-            this.store,
-            current,
-            input.instruction,
-          );
-          if (observed.kind === "bound")
-            return bindWorkerCreation(this.store, recorded, observed.agentId);
-          if (
-            !recorded.resolution.stop ||
-            ["lifecycle", "operator_needed"].includes(
-              recorded.resolution.stop.reason,
-            )
-          )
-            this.resolution.waiting(recorded, observed.detail, "lifecycle");
-          return this.store.task(task.id);
-        });
-      }
-      if (
-        this.adapter.workspaceAvailable &&
-        !(await this.adapter.workspaceAvailable(task.workspaceId!))
-      )
-        throw new RestartRefusal(
-          "Worker creation recovery requires the retained workspace online",
-        );
-      return () =>
-        this.store.transaction(() => {
-          const latest = check();
-          const refusal = workerCreationRefusal(this.store, latest, settling);
-          if (refusal) throw new RestartRefusal(refusal);
-          if (!sameWorkerCreation(this.store, latest, observed))
-            throw new TaskChangedRefusal(
-              "Worker creation changed during restart",
-              input.version,
-              latest.version,
-            );
-          if (input.settleFences)
-            this.engine.settleVerbFences(task.id, input.settleFences);
-          const result = releaseStaleWorkerIntent(
-            this.store,
-            this.store.task(task.id),
-            observed.proof,
-            input.instruction,
-          );
-          return input.record ? input.record(result) : result;
-        });
     }
     this.resolution.prepareResumeWorker(
       task,

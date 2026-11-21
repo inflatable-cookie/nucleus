@@ -55,9 +55,6 @@ import {
   type ExhaustedReviewerReplacement,
 } from "./reviewer-report";
 import { observeRecoveryCreation } from "../recovery/coordinator-episode";
-import { observeResolutionCreation } from "../recovery/absent-creation/restarts";
-import { agentlessCreation } from "../recovery/absent-creation/decisions";
-import { readCreationAttempt } from "../store/store-task-funnel";
 import { taskPrNumber } from "../forge/index";
 
 import {
@@ -68,15 +65,6 @@ import {
   moveTaskToWorkerHost,
   verifyMoveSourceClean,
 } from "../dispatch/worker-host-move";
-
-import {
-  bindWorkerCreation,
-  observeWorkerCreation,
-  releaseStaleWorkerIntent,
-  sameWorkerCreation,
-  staleWorkerIntent,
-  workerCreationRefusal,
-} from "../recovery/absent-creation/stale-worker";
 
 /** Build the route's task patch from facts captured in the transaction. */
 export function routePatch(f: {
@@ -440,22 +428,14 @@ export class RouteControls {
         throw Error(this.engine.replacementCeilingRefusal(task));
       }
 
-      let workerCreation: Awaited<
-        ReturnType<typeof observeWorkerCreation>
-      > | null = null;
       if (
         replaceLive &&
         role === "worker" &&
         task.agentIntent &&
         !task.agentId
       ) {
-        const refusal = workerCreationRefusal(this.store, task);
-        if (refusal) throw Error(refusal);
-        workerCreation = await observeWorkerCreation(
-          this.store,
-          this.adapter,
-          task,
-          this.resolution.graceMs,
+        throw Error(
+          `Worker creation is uncertain; use run.start worker fresh${task.runId ? ` replacing=${task.runId}` : ""} or run.release`,
         );
       }
 
@@ -476,44 +456,11 @@ export class RouteControls {
               recoveryCreation,
             )
           : null;
-      let absentRun: { run: Run; attemptId: string } | null = null;
       if (agentless && !recoveryObservation) {
-        // The durable creation state, not one status: a rolled reservation sits at
-        // `intent` and a send that threw sits at `uncertain`, and both owe the same
-        // exact lookup (nucleus#1462).
-        if (!agentlessCreation(agentless))
-          throw Error(
-            `route now cannot replace the ${role}'s creation: run ${agentless.id} is ${agentless.status} with no agent, which is not an unanswered creation reservation`,
-          );
-        if (
-          agentless.hostId !== task.hostId ||
-          agentless.workspaceId !== task.workspaceId
-        )
-          throw Error(
-            `route now cannot replace the ${role}'s creation until an exact lookup proves no agent exists after its producer has stopped`,
-          );
-        const observation = await observeResolutionCreation(
-          this.store,
-          this.resolution.adapter,
-          agentless,
-          this.resolution.graceMs,
+        const roleLabel = agentless.role === "recovery" ? "coordinator" : agentless.role;
+        throw Error(
+          `The ${role} creation ${agentless.id} is uncertain; use run.start ${roleLabel} fresh replacing=${agentless.id} or run.release run=${agentless.id}`,
         );
-        if (observation.kind !== "absent")
-          throw Error(
-            `route now cannot replace the ${role}'s creation until an exact lookup proves absence. ${observation.kind === "bound" ? `The lookup found retained agent ${observation.agentId}` : observation.detail}`,
-          );
-        if (agentless.role !== "closeout") {
-          const pr = await this.adapter.verifyPr(task, taskPrNumber(task));
-          if (
-            pr.url !== task.prUrl ||
-            pr.head !== task.prHead ||
-            pr.head !== agentless.head
-          )
-            throw Error(
-              "PR head changed; inspect it before replacing the absent run",
-            );
-        }
-        absentRun = { run: agentless, attemptId: observation.attemptId };
       }
       if (
         recoveryObservation &&
@@ -652,7 +599,6 @@ export class RouteControls {
       );
       const willMoveDispatchedNow =
         hostMoveRequested &&
-        !workerCreation &&
         !archivePending &&
         (replaceLive || !live) &&
         !this.store.runs(task.id).some((run) => !run.released);
@@ -676,22 +622,6 @@ export class RouteControls {
               "Recovery creation changed during route; refresh before retrying",
             );
           current = released;
-        }
-        if (absentRun) {
-          const { run, attemptId } = absentRun;
-          if (
-            JSON.stringify(this.store.run(run.id)) !== JSON.stringify(run) ||
-            readCreationAttempt(this.store, run)?.attemptId !== attemptId
-          )
-            throw Error(
-              "Run creation changed during route; refresh before retrying",
-            );
-          this.resolution.releaseAbsentRun(
-            current,
-            run.id,
-            `route now ${role} to ${profileId}`,
-          );
-          current = this.store.task(task.id);
         }
         const thinkingPatch =
           role === "worker" && !unsignedRoute
@@ -761,29 +691,20 @@ export class RouteControls {
               explicitOperatorRelay: false,
               freshRestart: false,
             });
-            if (!workerCreation && !decision.allowed)
+            if (!decision.allowed)
               replacementRefusal = {
                 rule: decision.rule,
                 detail: decision.detail,
               };
           }
         }
-        if (workerCreation) {
-          const refusal = workerCreationRefusal(this.store, current);
-          if (refusal) throw Error(refusal);
-          if (!sameWorkerCreation(this.store, current, workerCreation))
-            throw Error(
-              "Worker creation changed during route; refresh before retrying",
-            );
-        }
         const patch = routePatch({
           current,
           role,
           profileId,
           reason,
-          replaceLive: replaceLive && !workerCreation,
-          live:
-            Boolean(live) || (role === "worker" && staleWorkerIntent(current)),
+          replaceLive,
+          live: Boolean(live),
           currentRun,
           waitingOnRole,
           hasUnreleasedRun:
@@ -834,7 +755,6 @@ export class RouteControls {
           hostMoveRequested &&
           targetHostSelection &&
           targetHostSelection.hostId !== current.hostId &&
-          !workerCreation &&
           !archivePending &&
           !replacementRefusal &&
           Boolean(patch.phase === "changes_requested" || !live) &&
@@ -900,24 +820,7 @@ export class RouteControls {
             routeAuditDetail,
           );
         }
-        if (!workerCreation) return routed;
-        if (workerCreation.kind === "absent")
-          return releaseStaleWorkerIntent(
-            this.store,
-            routed,
-            workerCreation.proof,
-            continuation,
-          );
-        if (workerCreation.kind === "bound")
-          return bindWorkerCreation(this.store, routed, workerCreation.agentId);
-        if (
-          !routed.resolution.stop ||
-          ["lifecycle", "operator_needed"].includes(
-            routed.resolution.stop.reason,
-          )
-        )
-          this.resolution.waiting(routed, workerCreation.detail, "lifecycle");
-        return this.store.task(routed.id);
+        return routed;
       });
       if (
         (replaceLive && live && !agentless) ||

@@ -1,5 +1,10 @@
 import { recordPromptSize } from "../dispatch/prompt-text/measure";
-import { taskStopVerbsFor } from "../../shared/task-stop";
+import {
+  isMechanicalStallStop,
+  isUncertainCreationStop,
+  taskStopVerbsFor,
+} from "../../shared/task-stop";
+import { DEFAULT_STALL_THRESHOLD_MINUTES } from "../../shared/schema/settings";
 import {
   reviewContinuationState,
   reviewFenceHoldsCoordinators,
@@ -260,8 +265,35 @@ export class CoordinatorRoute {
     // the planner ladder. Its `extend_budget` suggestion is an owner verb, not work
     // a coordinator can settle, so it never opens a coordinator episode.
     if (t.resolution.stop?.reason === "budget") return null;
+    let mechanicalStallDue = false;
     if (t.resolution.stop && !t.resolution.stop.suggestedVerbs.length) {
       const stop = t.resolution.stop;
+      const stallWindowMs =
+        (this.store.getMeta<number>("stallThresholdMinutes") ??
+          DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
+      const stopAgeMs = Math.max(0, Date.now() - Date.parse(stop.since));
+      const hasUncertainCreation =
+        isUncertainCreationStop(stop) ||
+        (stop.reason === "lifecycle" &&
+          (Boolean(t.agentIntent && !t.agentId) ||
+            this.store
+              .runs(t.id)
+              .some(
+                (r) =>
+                  !r.released &&
+                  !r.agentId &&
+                  !r.completion &&
+                  ["intent", "uncertain"].includes(r.status),
+              )));
+      mechanicalStallDue =
+        !t.failoverReason &&
+        isMechanicalStallStop(stop.reason) &&
+        (hasUncertainCreation
+          ? stopAgeMs >= this.resolution.graceMs
+          : stopAgeMs >= stallWindowMs);
+      // Spec 067: a mechanical stall that no fact cleared within its window launches
+      // the task's coordinator with the explicit commands available (loop breaker stays).
+      if (!mechanicalStallDue) {
       // A wait on progressing work belongs to the loop that recorded it (dispatch,
       // resolution, the quantum), and exhaustion failover re-evaluates its own wait
       // every sweep. Rechecking those with another predicate cleared live waits.
@@ -337,6 +369,7 @@ export class CoordinatorRoute {
       // A wait that no longer holds leaves nothing for a coordinator unless the
       // task still needs attention; ordinary progress resumes on its own.
       if (!needsAttention(t, this.store)) return null;
+      }
     }
     // An open linked decision owns the next move; an unchanged reason must not
     // turn that operator wait into a coordinator recovery attempt.
@@ -653,7 +686,7 @@ export class CoordinatorRoute {
         this.episode.wait(t, capacityWait, "capacity");
         return null;
       }
-      if (!(await this.resolution.lease(t)) || this.resolution.startsNoRuns())
+      if ((!mechanicalStallDue && !(await this.resolution.lease(t))) || this.resolution.startsNoRuns())
         return null;
       let agentId = t.coordinatorAgentId || null,
         workspaceId = t.resolution.coordinatorWorkspaceId ?? t.workspaceId,

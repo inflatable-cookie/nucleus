@@ -16,10 +16,15 @@ import { threadServesAnotherTask } from "../workspaces/thread-ownership";
 import { collectOwnerVerbFacts, ownerPendingEffects } from "./owner-verbs";
 import { splitOwnerEffectKey } from "./owner-effects";
 
+import { messageSendPlan, phaseSetPlan, resolveMessageTarget, runStartPlan } from "./explicit-run-start";
+
 type Source = "operator_board" | "project_planner" | "coordinator";
-type Warning = { id: ResolutionWarningId; text: string };
-type Change = { patch?: Partial<Task>; before: unknown };
-type Plan = { warnings: Warning[]; apply(): Change; finish?(): Promise<string[]> };
+export type ExplicitWarning = { id: ResolutionWarningId; text: string };
+export type ExplicitChange = { patch?: Partial<Task>; before: unknown };
+export type ExplicitFinishResult = { issues: string[]; runId?: string; delivery?: "delivered" | "queued" | "unknown" };
+export type ExplicitPlan = { warnings: ExplicitWarning[]; apply(): ExplicitChange; finish?(): Promise<ExplicitFinishResult> };
+type Warning = ExplicitWarning;
+type Plan = ExplicitPlan;
 
 const plannerWarnings = new Set<ResolutionWarningId>(["hold_owner", "route_policy", "two_writers"]);
 const missing = (kind: string, id: string): never => { throw Error(`No current ${kind} ${id} belongs to this task`); };
@@ -63,6 +68,7 @@ export async function resolveExplicitly(
   const id = store.resolveTaskId(input.taskId);
   const before = store.task(id);
   const source = await authority(engine, before, input.caller);
+  const messageTarget = input.action === "message.send" ? await resolveMessageTarget(engine, before, input.role) : null;
   const result = store.transaction(() => {
     const task = store.task(id);
     const reply = (status: "stale" | "warnings", warnings: Warning[] = []): { task: Task; status: typeof status; warnings: Warning[] } =>
@@ -72,7 +78,15 @@ export async function resolveExplicitly(
     if (source === "coordinator" && input.accept.some(id => plannerWarnings.has(id)))
       throw Error("Only the live responsible planner or operator board can accept hold_owner, route_policy or two_writers");
 
-    const plan = input.action === "run.release" ? releasePlan(engine, task, input) : clearPlan(engine, task, input);
+    const plan = input.action === "run.release"
+      ? releasePlan(engine, task, input)
+      : input.action === "record.clear"
+        ? clearPlan(engine, task, input)
+        : input.action === "run.start"
+          ? runStartPlan(engine, task, input)
+          : input.action === "phase.set"
+            ? phaseSetPlan(engine, task, input)
+            : messageSendPlan(engine, task, input, messageTarget!);
     if (plan.warnings.some(warning => !input.accept.includes(warning.id))) return reply("warnings", plan.warnings);
 
     const { patch, before } = plan.apply();
@@ -84,14 +98,28 @@ export async function resolveExplicitly(
     }));
     return { task: saved, status: "applied" as const, warnings: plan.warnings, finish: plan.finish };
   });
-  const issues = "finish" in result ? await result.finish?.() : undefined;
-  const next = describeNext(result.task);
-  return { ...result.task, explicitResolution: { status: result.status, warnings: result.warnings,
-    next: [result.status === "stale" ? `Task is now at version ${result.task.version}. Repeat with that version.` : "",
-      ...issues ?? [], next].filter(Boolean).join(" ") } };
+  const finished = "finish" in result ? await result.finish?.() : undefined;
+  const latestTask = result.status === "applied" ? store.task(id) : result.task;
+  const next = describeNext(latestTask);
+  const deliveryNote = finished?.delivery ? `Message delivery: ${finished.delivery}.` : "";
+  return {
+    ...latestTask,
+    explicitResolution: {
+      status: result.status,
+      warnings: result.warnings,
+      ...(finished?.runId ? { runId: finished.runId } : {}),
+      ...(finished?.delivery ? { delivery: finished.delivery } : {}),
+      next: [
+        result.status === "stale" ? `Task is now at version ${latestTask.version}. Repeat with that version.` : "",
+        deliveryNote,
+        ...finished?.issues ?? [],
+        next,
+      ].filter(Boolean).join(" "),
+    },
+  };
 }
 
-function releasePlan(engine: Engine, task: Task, input: Extract<ExplicitResolution, { action: "run.release" }>): Plan {
+export function releasePlan(engine: Engine, task: Task, input: Extract<ExplicitResolution, { action: "run.release" }>): Plan {
   const store = engine.store;
   const run = store.run(input.run);
   const initial = !run && task.runId === input.run;
@@ -160,7 +188,7 @@ function releasePlan(engine: Engine, task: Task, input: Extract<ExplicitResoluti
         const releasedRetainedRevision = run?.role === "revision" && task.resolution.currentRunId === run.id &&
           current.runId === task.runId;
         if ((current.agentId === agentId && !releasedRetainedRevision) || threadServesAnotherTask(store, current, agentId))
-          return [...issues, "Another live assignment still owns this thread."];
+          return { issues: [...issues, "Another live assignment still owns this thread."] };
         const onHost = async () => {
           if (live) await attempt("Turn cancellation", () => engine.host.stopAgentTurn(agentId));
           if (!input.archive) return;
@@ -173,7 +201,7 @@ function releasePlan(engine: Engine, task: Task, input: Extract<ExplicitResoluti
         };
         await attempt("Host contact", () => hostId ? engine.withHost(hostId, onHost) : onHost());
       }
-      return issues;
+      return { issues };
     },
   };
 }

@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { branchPrLookupOutcome, blockedReturnDecision, classifyWorkerObservation } from '../core/recovery/worker-reconcile';
-import { workspaceReplayAllowed } from '../core/recovery/absent-creation';
 import type { Task } from '../shared/contracts';
 import type { AgentObservation } from '../core/host';
 
@@ -22,30 +21,6 @@ test('blocked return choices', () => {
   const base = { unfinished: false, providerFailureWithoutImpediment: false, unfinishedPushed: false, firstNonDelivery: false, nonDeliveryPushed: false };
   for (const [facts, expected] of [[{}, 'continue'], [{ unfinished: true }, 'unfinished'], [{ unfinished: true, providerFailureWithoutImpediment: true }, 'continue'], [{ unfinished: true, unfinishedPushed: true }, 'continue'], [{ firstNonDelivery: true }, 'non_delivery'], [{ firstNonDelivery: true, nonDeliveryPushed: true }, 'continue'], [{ unfinished: true, firstNonDelivery: true }, 'unfinished']] as const)
     assert.equal(blockedReturnDecision({ ...base, ...facts }), expected);
-});
-
-test('workspace replay facts', () => {
-  const task = { phase: 'dispatching', resolution: {} } as Task;
-  for (const [patch, kind, remove, runs, replay, expected] of [
-    [{}, 'absent', false, false, false, true], [{}, 'partial', true, false, false, true],
-    [{}, 'partial', false, false, false, false], [{}, 'found_done', true, false, false, false],
-    [{ agentId: 'a' }, 'absent', false, false, false, false], [{ phase: 'working' }, 'absent', false, false, false, false],
-    [{ resolution: { attention: true } }, 'absent', false, false, false, false], [{}, 'absent', false, true, false, false],
-    [{}, 'absent', false, false, true, false],
-  ] as const) assert.equal(workspaceReplayAllowed({ ...task, ...patch } as Task, kind, remove, runs, replay), expected);
-  // A parked refusal for this exact classified state stands where the dispatching
-  // phase would (nucleus#1106): attention, a foreign stop or a dispatch fence
-  // still keep the stop.
-  const stop = { reason: 'operator_needed', detail: 'Reworded display text', since: '', suggestedVerbs: [], fact: { code: 'workspace_orphan' } };
-  const parked = { phase: 'needs_attention', resolution: { stop } } as unknown as Task;
-  for (const [patch, kind, remove, expected] of [
-    [{}, 'partial', true, true], [{}, 'absent', false, false],
-    [{ resolution: { attention: true } }, 'partial', true, false],
-    [{ resolution: { stop: { ...stop, fact: null } } }, 'partial', true, false],
-    [{ held: true, holds: { dispatch: { owner: 'operator', reason: 'Owner stop', at: '', generation: 1 } } }, 'partial', true, false],
-    [{ phase: 'working' }, 'partial', true, false],
-    [{}, 'conflicting', true, false],
-  ] as const) assert.equal(workspaceReplayAllowed({ ...parked, ...patch } as Task, kind, remove, false, false), expected);
 });
 
 test('transient provider observation choices, including map bug 27', async () => {

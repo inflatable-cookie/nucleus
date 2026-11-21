@@ -16,7 +16,6 @@ import {
   type Store,
 } from "../store/store";
 import { readCreationAttempt } from "../store/store-task-funnel";
-import { provenAbsentCreation } from "./absent-creation/decisions";
 import { isHostReadExhaustedReason } from "./host-read-transient";
 
 /**
@@ -302,7 +301,7 @@ export function recoveryEffects(
     if (
       include("run-delivery") &&
       run.status === "uncertain" &&
-      !provenAbsentCreation(run)
+      !run.absentProvenAt
     ) {
       const checkpoint = run.reviewCheckpoints?.at(-1);
       const creationProven =

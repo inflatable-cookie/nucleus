@@ -44,23 +44,33 @@ another identity. Callback authentication remains separate and unchanged.
 ## Explicit resolution
 
 [Spec 067](067-explicit-resolution.md) defines the explicit command contract.
-Send `run.release` or `record.clear` as `action` on `queue.task`, or run
-`nucleus run.release -` or `nucleus record.clear -` with JSON on stdin. Each
+Send `run.start`, `run.release`, `record.clear`, `phase.set` or `message.send` as
+`action` on `queue.task`, or run `nucleus <command> -` with JSON on stdin. Each
 call carries `taskId` or `reference`, the task `version`, a `reason` and
 optional `accept` listing the warning IDs. The updated task includes
 `explicitResolution` with the result, warnings and what the scheduler does next.
 
+`run.start` takes `role` (`worker`, `reviewer` or `coordinator`), optional
+`agent` (`retained` or `fresh`), `head`, `instruction` and `replacing` (which
+releases that run first) and leaves the task phase unchanged. Its warnings are
+`duplicate_thread`, `two_writers`, `head_mismatch`, `budget` and `route_policy`.
 `run.release` takes `run` and optional `archive`. `record.clear` takes `kind`
 and `id`. Use the stop's `since` for a stop or stop-backed wait, the retained
 prerequisite wait ID for a retained wait, `dispatch` or `merge` for a hold,
 the escalation or incident ID for those records, and the named effect key
 for an effect. A host wait uses its host ID, an owner stop uses its operation
 ID or `recordedAt` when it has none, and a deferred verb uses its `at`.
+`phase.set` takes `to` (`working`, `changes_requested`, `awaiting_review`,
+`reviewing`, `verifying`, `needs_attention` or `blocked`) and writes phase and
+reason only (`live_runs` warning when unreleased runs exist). `message.send`
+takes `role` (`worker`, `reviewer`, `coordinator` or `planner`) and `text`,
+delivers immediately without changing task state, and reports `delivered`,
+`queued` or `unknown` (`queued`, `no_thread` warnings).
 
 The board, the task's live responsible project planner and its coordinator
-may use the explicit commands. Only the board or planner may override
-another owner's hold or resolve a critical task. Explicit resolution updates
-the named record and preserves its previous state in the audit history.
+may use the explicit commands. Only the board or planner may accept `hold_owner`,
+`route_policy` or `two_writers`, or resolve a critical task. Explicit resolution
+updates only the named record and preserves its previous state in the audit history.
 
 
 ## Problem

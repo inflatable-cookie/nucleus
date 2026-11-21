@@ -1,7 +1,3 @@
-import {
-  deferredWorkerCreationRestart,
-  staleWorkerIntent,
-} from "../recovery/absent-creation/stale-worker";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import {
@@ -65,7 +61,6 @@ export type TaskQuantumContext = Pick<
   | "reconcile"
   | "reconcileBlockedEffects"
   | "reconcileClosedRetainedReviewer"
-  | "recover"
   | "routeTask"
   | "scheduleLane"
   | "settleFinishedRuns"
@@ -436,9 +431,6 @@ export class TaskQuantum {
           } satisfies HostReadTransientEpisode);
         }
       }
-      // The sweep owns discovery for an accepted worker creation restart.
-      if (staleWorkerIntent(task) && deferredWorkerCreationRestart(task))
-        return;
       // Project-a #1837: a restart can leave the flag cleared on a recorded pre-attention
       // state. Restore it so the ordinary resolution path advances instead of idling.
       const resumed = this.context.resolution.resumeClearedAttention(task);
@@ -527,9 +519,18 @@ export class TaskQuantum {
       if (
         (task.workspaceIntent && !task.workspaceId) ||
         (task.agentIntent && !task.agentId)
-      )
-        await this.context.recover(task);
-      else if (
+      ) {
+        if (!task.resolution.stop) {
+          this.context.resolution.waiting(
+            task,
+            task.agentIntent && !task.agentId
+              ? `Worker creation is uncertain; use run.start worker fresh${task.runId ? ` replacing=${task.runId}` : ""} or run.release`
+              : "Workspace creation is uncertain; inspect the host and resolve explicitly",
+            "lifecycle",
+            { fact: { code: "worker_lookup", ...(task.runId ? { subject: task.runId } : {}) } },
+          );
+        }
+      } else if (
         task.agentId &&
         (["working", "needs_attention", "dispatching"].includes(task.phase) ||
           (!task.completion && ["blocked", "error"].includes(task.phase)))

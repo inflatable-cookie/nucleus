@@ -19,7 +19,6 @@ import {
   HOST_WAIT_PRESERVED_STOPS,
   hostUnavailableDetail,
 } from "../shared/host-outage";
-import { CreationRecovery } from "./recovery/absent-creation";
 import type { GitTransientEpisode } from "./git/git-transient-backoff";
 
 import { type WorkspaceDiscard } from "./workspaces/orphan-worktree";
@@ -301,7 +300,6 @@ export class Engine {
         "reconcile",
         "reconcileBlockedEffects",
         "reconcileClosedRetainedReviewer",
-        "recover",
         "routeTask",
         "scheduleLane",
         "settleFinishedRuns",
@@ -901,7 +899,6 @@ export class Engine {
   private readonly taskRemoval: TaskRemoval;
   private readonly workspaceProvisioning: WorkspaceProvisioning;
   private readonly workerLauncher: WorkerLauncher;
-  private readonly creationRecovery: CreationRecovery;
   private readonly briefControls: BriefControls;
   private readonly settingsControls: SettingsControls;
   readonly ownerStop: OwnerStop;
@@ -1096,28 +1093,6 @@ export class Engine {
     this.taskRemoval = new TaskRemoval(this);
     this.workspaceProvisioning = new WorkspaceProvisioning(this);
     this.workerLauncher = new WorkerLauncher(this);
-    this.creationRecovery = new CreationRecovery(
-      enginePorts(
-        this,
-        [
-          "adapter",
-          "idleGraceMs",
-          "launchAgent",
-          "launchProofOnly",
-          "note",
-          "reconcileAbsentWorker",
-          "recoverProofOnlyDispatch",
-          "stopped",
-          "store",
-        ],
-        [
-          "ensureIncident",
-          "resolveIncident",
-          "returnToDispatch",
-          "saveIncident",
-        ],
-      ),
-    );
     this.briefControls = new BriefControls(this);
     this.settingsControls = new SettingsControls(this);
     this.ownerStop = new OwnerStop(this);
@@ -3280,15 +3255,6 @@ export class Engine {
   }
   recoverExhaustedWorkers(): Promise<void> {
     return this.workerFailover.recoverExhaustedWorkers();
-  }
-  recover(task: Task) {
-    return this.creationRecovery.recover(task);
-  }
-  recoverProofOnlyDispatch(task: Task): Promise<void> {
-    return this.creationRecovery.recoverProofOnlyDispatch(task);
-  }
-  reconcileAbsentWorker(t: Task, matches: number) {
-    return this.creationRecovery.reconcileAbsentWorker(t, matches);
   }
   ensureSiblings(task: Task): Promise<Task> {
     return this.workspaceProvisioning.ensureSiblings(task);

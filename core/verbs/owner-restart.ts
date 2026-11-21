@@ -54,15 +54,9 @@ import {
   exhaustedReviewerRefusal,
   reviewerReportPlan,
 } from "./reviewer-report";
-import {
-  workerCreationRefusal,
-  workerCreationRestartWait,
-  workerCreationWait,
-  workerLookupWait,
-  workerProducerStopped,
-} from "../recovery/absent-creation/stale-worker";
-import { resolutionCreationRestartRefusal } from "../recovery/absent-creation/restarts";
-import { agentlessCreation } from "../recovery/absent-creation/decisions";
+
+const agentlessCreation = (run: Run): boolean =>
+  !run.agentId && !run.completion && ["intent", "uncertain"].includes(run.status);
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -363,7 +357,7 @@ export function plainHandoverFreshRestart(
     (reader.reviewCheckpoints?.length ?? 0) > 0
   )
     return null;
-  return `Reviewer ${reader.id} has no checkpoint to continue on its existing run; it has no pinned view. Use restart role=reviewer fresh to deliberately start a new reader and view; the old run stays history.`;
+  return `Reviewer ${reader.id} has no checkpoint to continue on its existing run; it has no pinned view. Use run.start reviewer fresh replacing=${reader.id} to start a new reader directly; the old run stays history.`;
 }
 
 const restartResolutionRoles = [
@@ -607,33 +601,22 @@ export function workerRestartRefusal(
     observed.activeTurnId ||
     ["running", "initializing"].includes(observed.status)
   )
-    return "The retained worker is active or awaiting a response; wait for idle, or use route now to stop and replace it. Route without now selects a subsequent run";
+    return "The retained worker is active or awaiting a response; wait for idle, or use run.start worker fresh replacing=<run> (or route now) to stop and replace it. Route without now selects a subsequent run";
   if (!["idle", "error", "closed"].includes(observed.status))
     return `The retained worker is not proven idle (status: ${observed.status}); wait for a supported idle observation before restarting`;
   return null;
 }
 
-/** Preview may require a fresh exact lookup, but a known pending producer is a wait. */
+/** Uncertain worker creations are resolved explicitly with `run.start worker fresh`. */
 export function absentWorkerRestartRefusal(
   facts: OwnerVerbFacts,
 ): string | null {
-  const { store, task, runs, reportingRunId } = facts;
+  const { task } = facts;
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
     return RETAINED_PREREQUISITE_REFUSAL;
-  const episodeId = task.resolution.recovery?.runId;
-  const settling = runs
-    .filter(
-      (run) =>
-        run.id === episodeId || run.id === reportingRunId || run.completion,
-    )
-    .map((run) => run.id);
-  return (
-    workerCreationRefusal(store, task, settling) ??
-    workerLookupWait(task) ??
-    (workerProducerStopped(store, task, facts.creationGraceMs ?? 0)
-      ? null
-      : workerCreationWait)
-  );
+  if (task.agentIntent && !task.agentId)
+    return `Worker creation is uncertain; use run.start worker fresh${task.runId ? ` replacing=${task.runId}` : ""} or run.release`;
+  return null;
 }
 
 /**
@@ -698,7 +681,7 @@ export function retainedContinuationPlan(
   if (current.reviewBudgetExhaustedAt && !current.retainedAgentClosedAt)
     return {
       kind: "refused",
-      refusal: `The checkpoint allowance is spent; restart role=reviewer or move to=review asks the retained reviewer to finish or redeliver its report.${rejectedReadingNote(current)}`,
+      refusal: `The checkpoint allowance is spent; use message.send reviewer or run.start reviewer retained to ask the retained reviewer to finish or redeliver its report.${rejectedReadingNote(current)}`,
     };
   if (current.retainedAgentClosedAt)
     return {
@@ -835,8 +818,6 @@ export const restart: OwnerVerb = {
           };
     const controlRefusal = unsettledControlRefusal(facts.store, task);
     if (controlRefusal) return { available: false, refusal: controlRefusal };
-    const pending = workerCreationRestartWait(facts.store, task);
-    if (pending) return { available: false, refusal: pending };
     const exhausted = exhaustedReviewer(task, runs);
     if (exhausted) {
       const refusal = exhaustedReviewerRefusal(facts.store, task, exhausted);
@@ -881,18 +862,13 @@ export const restart: OwnerVerb = {
           !candidate.released &&
           !candidate.agentId,
       );
-      if (
-        !run ||
-        run.hostId !== task.hostId ||
-        run.workspaceId !== task.workspaceId
-      )
-        return {
-          available: false,
-          refusal:
-            "The resolution creation needs its recorded run, host and workspace",
-        };
-      const refusal = resolutionCreationRestartRefusal(task, run);
-      if (refusal) return { available: false, refusal };
+      const roleLabel = run?.role === "recovery" ? "coordinator" : (run?.role ?? "reviewer");
+      return {
+        available: false,
+        refusal: run
+          ? `Resolution creation ${run.id} is uncertain; use run.start ${roleLabel} fresh replacing=${run.id} or run.release run=${run.id}`
+          : "Resolution creation is uncertain; use run.start to launch a fresh run explicitly",
+      };
     }
     // nucleus#1195: one bounded continuation asks a live proof executor whose
     // result never arrived to resend that report on its existing run and
@@ -944,13 +920,7 @@ export const restart: OwnerVerb = {
           refusal: parkedRestartRefusal(role, parked.refusal),
         };
     }
-    let observationNote =
-      shape === "absent_worker"
-        ? "Nucleus checks the exact creation on its recorded host before returning the work to ordinary dispatch."
-        : undefined;
-    if (shape === "absent_resolution")
-      observationNote =
-        "The sweep proved this creation absent. Nucleus rechecks the exact lookup and current source before restarting.";
+    let observationNote: string | undefined;
     if (shape === "checkpoint_reviewer") {
       // The same plan a preserving `move to=review` reads: one derivation, so the
       // two views cannot advertise different answers for the same checkpoint.

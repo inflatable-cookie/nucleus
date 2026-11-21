@@ -299,14 +299,6 @@ archives retired errored agents so a Paseo workspace stops reporting Failed. An
 unreadable read or a refused archive records a thread-archive wait instead of
 being dropped. `Engine.archiveRetiredErroredAgents` delegates to it.
 
-**CreationRecovery** (`core/recovery/absent-creation/creation.ts`). Recovers a
-proven-absent worker and an unowned workspace creation, including proof-only
-dispatch recovery. Enforces [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create)
-and [Parked dispatch and workspace repair](#parked-dispatch-and-workspace-repair).
-Pures (`absent-creation/decisions.ts`): `workspaceReplayAllowed`,
-`absentWorkerStep`. Control-flow strings: `ABSENT_WORKER_REASON`,
-`PRE_AGENT_LAUNCH_FAILURE_REASON`. Delegates remain on Engine.
-
 **CallbackIntake** (`core/intake/callback-intake.ts`). Authenticates, validates and
 records one worker report. `CallbackIntake` holds Engine's source gates and the
 checkpoint and review-progress receipts. **RunCallbackIntake**
@@ -680,16 +672,6 @@ replacement worker resumes, retry, worker resume, and the stopped-revision
 restart. Enforces the restart arms in [Verbs](#verbs). Pures: `retryRoute`,
 `resumeRoute`, `blockedRetryRoute`, `revisionRoute`. Delegates remain on
 Resolution, including `retry` so instance overrides still fire.
-
-**AbsentRestarts** (`core/recovery/absent-creation/restarts.ts`). Recreates
-uncertain creations: the worker sweep retains an intent while its producer might
-still deliver, and a resolution-role reservation is replaced only from the
-sweep's exact absence proof, whichever stored shape (`intent` or `uncertain`)
-the roll left behind. Owner-control and resolution-run cutover remain follow-up
-work; the one-replacement creation budget, whose record shape and reader are
-`absent-creation/budget.ts`. Enforces
-[Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
-Delegates remain on Resolution.
 
 **Recovery** (`core/recovery/recovery.ts`). The coordinator surface Resolution
 constructs: it wires the stages together and keeps the method shape its callers

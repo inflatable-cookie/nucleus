@@ -132,7 +132,7 @@ export class SettingsControls {
       }
       if (task.agentIntent || task.agentId)
         throw Error(
-          "Worker dispatch already started; use restart (fresh: true to replace the worker)",
+          "Worker dispatch already started; use run.start worker retained or run.start worker fresh",
         );
       if (!["queued", "needs_attention"].includes(task.phase))
         throw Error(

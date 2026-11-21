@@ -208,7 +208,7 @@ replacement.
 | Order | Change | Deletes in the same batch |
 | --- | --- | --- |
 | 1 (delivered in nucleus#1519) | Typed fields for every prose-matched decision. The command contract (warnings, `accept`, `owner_resolution` event, version-only check) and authority by live responsible planner. `run.release` and `record.clear`, settling the underlying fact. | `retry_effect force` settle-only path; force's stored-planner match |
-| 2 | `run.start`, `phase.set`, `message.send`. `next`, stop text and refusals name the explicit command. Coordinators launch for mechanical stalls. | `core/recovery/absent-creation/**`, creation gates in `route`/`restart`/`reviewer-report`, responsible-fault fallback |
+| 2 (delivered in nucleus#1520) | `run.start`, `phase.set`, `message.send`. `next`, stop text and refusals name the explicit command. Coordinators launch for mechanical stalls. | `core/recovery/absent-creation/**`, creation gates in `route`/`restart`/`reviewer-report`, responsible-fault fallback |
 | 3 | `turn.take`/`turn.release`, `merge.now`, `closeout.now`. Prerequisite wait releases the turn. | `merge-occurrence`, restart-to-closeout path, turn-lever refusals (nucleus#1513 retired in favour of this batch) |
 | 4 | Escalations bound to version, carrying explicit commands, closing when the cause clears. | escalation binding-hash refusals in `escalation-settlement` |
 | 5 | Host availability from health readings, not one call. | host-wide timeout stamping |

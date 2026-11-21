@@ -1,4 +1,3 @@
-import { workerCreationRestartWait } from "../recovery/absent-creation/stale-worker";
 import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { restartTerminalRefusal } from "./verb-refusal-text";
 import {
@@ -467,9 +466,6 @@ export class RestartControls {
       const escalated = this.applyEscalatedWorkerRestart(task, input, reason, operationId, restored);
       if (escalated) return escalated;
     }
-    const pending =
-      role === "worker" ? workerCreationRestartWait(this.store, task) : null;
-    if (pending) throw new RestartRefusal(pending);
     const runs = this.store.runs(task.id);
     const shape =
       role === "reviewer" && exhaustedReviewer(task, runs)
@@ -670,7 +666,7 @@ export class RestartControls {
       return this.restartBlockedWorkerWithPr(task, input, reason, fresh, operationId);
     if (shape === "coordinator" && fresh)
       throw Error(
-        "Coordinator restart retries the existing resolution; fresh is unsupported here. Use route role=coordinator with now to replace its agent",
+        "Coordinator restart retries the existing resolution; fresh is unsupported here. Use run.start coordinator fresh replacing=<run> to replace its agent",
       );
     const instruction =
       input.instruction?.trim() ||

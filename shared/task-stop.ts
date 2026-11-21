@@ -67,6 +67,19 @@ export const waitingTaskStopReasons = [
 export const isWaitingTaskStop = (reason: TaskStopReason): boolean => (waitingTaskStopReasons as readonly string[]).includes(reason);
 
 /**
+ * Spec 067: mechanical waits that no external fact is guaranteed to clear on its own.
+ * Once such a stop stays unresolved past its window (or holds an uncertain creation),
+ * Nucleus launches the task's coordinator with the explicit commands available.
+ */
+export const mechanicalStallStopReasons = [
+  "lifecycle", "workspace_unavailable", "pr_head_lag", "validation", "external_unavailable", "origin_busy",
+] as const satisfies readonly TaskStopReason[];
+export const isMechanicalStallStop = (reason: TaskStopReason): boolean =>
+  (mechanicalStallStopReasons as readonly string[]).includes(reason);
+export const isUncertainCreationStop = (stop: Pick<TaskStopRecord, "fact"> | null | undefined): boolean =>
+  stop?.fact?.code === "creation_lookup" || stop?.fact?.code === "worker_lookup";
+
+/**
  * A read-only GitHub or git probe that failed for a reason that clears on its
  * own: a forge 5xx, a truncated response or a fetch racing another fetch. A
  * mutating command (any `gh api -X`/`--method` other than GET, a merge, a push)
