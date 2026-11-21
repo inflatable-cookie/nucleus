@@ -19,6 +19,13 @@ import {
   syntheticRuntimeRequest,
   syntheticTurnItem,
 } from "./support/t3code-fake";
+import { Store } from "../core/store/store";
+import { Engine } from "../core/engine";
+import { AcpSessions } from "../core/acp/sessions";
+import { readAcpBinding } from "../shared/acp/binding";
+import { decisionSchema, submissionSchema } from "../shared/contracts";
+import { fakeAdapter } from "./support/fakes";
+import type { Adapter } from "../core/host";
 
 test("one host inbox is launched once and pinned outside task retention", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "t3-inbox-"));
@@ -1045,4 +1052,183 @@ test("decisionHold advances on a bounded long thread unless a previous hold is u
     /subscribeThread: incomplete projection/,
   );
   assert.equal(sent.length, 3);
+});
+
+test("a queued parentless T3 task decision and an unknown parent status both reach the Inbox title and card on the real adapter and AcpSessions (nucleus#1516)", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "t3-inbox-queued-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fake = await t3Fake(t, root);
+  fake.controls.providers = [
+    {
+      instanceId: "nucleus",
+      displayName: "Nucleus",
+      driver: "acpRegistry",
+      enabled: true,
+      status: "ready",
+      models: [{ slug: "nucleus", name: "Nucleus" }],
+    },
+  ];
+  const store = new Store(join(root, "queue.sqlite"));
+  const engine = new Engine(
+    store,
+    fakeAdapter({}) as unknown as Adapter,
+    60_000,
+  );
+  t.after(async () => {
+    await engine.stop();
+    store.close();
+  });
+
+  let forceUnknown = false;
+  let host!: T3CodeHost;
+  const acp = new AcpSessions(engine, {
+    dataHome: root,
+    socketPath: join(root, "cb.sock"),
+    parentStatus: (hostId, taskId) =>
+      forceUnknown || hostId !== host.hostId
+        ? { state: "unknown" }
+        : host.decisionParent(taskId),
+  });
+  host = new T3CodeHost({
+    endpoint: fake.endpoint,
+    bearer: "synthetic-bearer",
+    statePath: join(root, "state.json"),
+    probeThreadId: "synthetic-probe",
+    acp: () => acp,
+    boardLink: async () => "http://127.0.0.1:1234/#token=synthetic",
+  });
+  t.after(() => host.close());
+  await host.connect();
+
+  // First pass creates and idles the Inbox thread.
+  await host.reconcileThreadTitles([]);
+  const inbox = host.state.read().inbox!;
+  const projection = fake.threads.get(inbox.threadId)!;
+  for (const run of projection.runs) run.status = "completed";
+  assert.equal(projection.thread.title, "All quiet");
+
+  // 1. A queued, parentless T3 task's open decision reaches the Inbox title, wakes it, and offers a card.
+  const queuedTask = store.insert(
+    submissionSchema.parse({
+      submissionId: "queued-parentless",
+      title: "Queued T3 task",
+      repoPath: join(root, "repo"),
+      planningCommit: "a".repeat(40),
+      brief: { text: "Synthetic brief" },
+      originAgentId: "origin",
+    }),
+    host.hostId,
+    "brief",
+    "a".repeat(40),
+  );
+  const stamp = new Date().toISOString();
+  const id1 = "11111111-1111-4111-8111-111111111516";
+  store.addDecision(
+    decisionSchema.parse({
+      id: id1,
+      version: 1,
+      headline: "nucleus#1515 worker: use Opus frontier?",
+      question: "Approve Opus frontier for this queued task?",
+      askedBy: { agentId: "planner" },
+      choices: [
+        { label: "Approve", consequence: "Use frontier" },
+        { label: "Decline", consequence: "Use automatic" },
+      ],
+      links: { tasks: [queuedTask.id] },
+      status: "open",
+      createdAt: stamp,
+      updatedAt: stamp,
+    }),
+  );
+
+  await host.reconcileThreadTitles([queuedTask]);
+  assert.equal(projection.thread.title, "1 decision to answer");
+  assert.equal(holdPosts(fake, inbox.threadId).length, 1);
+
+  const token = readAcpBinding(inbox.bindingPath).token;
+  const caller = {
+    kind: "inbox" as const,
+    hostId: host.hostId,
+    sessionId: inbox.sessionId,
+  };
+  const turn1 = await acp.turn({ ...caller, waitMs: 0 }, token);
+  assert.deepEqual(
+    turn1.elicitations?.map((item) => item.id),
+    [id1],
+  );
+
+  // 2. A second queued task whose parent lookup transiently returns `unknown` is still counted and offered to the Inbox.
+  forceUnknown = true;
+  const id2 = "22222222-2222-4222-8222-222222221516";
+  store.addDecision(
+    decisionSchema.parse({
+      id: id2,
+      version: 1,
+      headline: "Transient unknown parent decision?",
+      question: "Should this still reach the Inbox?",
+      askedBy: { agentId: "planner" },
+      choices: [
+        { label: "Yes", consequence: "Offer" },
+        { label: "No", consequence: "Drop" },
+      ],
+      links: { tasks: [queuedTask.id] },
+      status: "open",
+      createdAt: stamp,
+      updatedAt: stamp,
+    }),
+  );
+  await host.reconcileThreadTitles([queuedTask]);
+  assert.equal(projection.thread.title, "2 decisions to answer");
+  const turn2 = await acp.turn({ ...caller, waitMs: 0 }, token);
+  assert.deepEqual(
+    turn2.elicitations?.map((item) => item.id).sort(),
+    [id1, id2].sort(),
+  );
+
+  // 3. A task on a different registered T3 host causes T3HostConnection.decisionParent
+  // to answer `unknown`; proposedOwner must fall back to the connected Inbox rather than
+  // pinning the unavailable host's Inbox.
+  forceUnknown = false;
+  const foreignTask = store.insert(
+    submissionSchema.parse({
+      submissionId: "queued-other-t3-host",
+      title: "Task on different registered T3 host",
+      repoPath: join(root, "repo-other"),
+      planningCommit: "b".repeat(40),
+      brief: { text: "Synthetic brief" },
+      originAgentId: "origin",
+    }),
+    "t3code:other-registered-host",
+    "brief",
+    "b".repeat(40),
+  );
+  const id3 = "33333333-3333-4333-8333-333333331516";
+  store.addDecision(
+    decisionSchema.parse({
+      id: id3,
+      version: 1,
+      headline: "Different registered host decision?",
+      question: "Should this fall back to the connected Inbox?",
+      askedBy: { agentId: "planner" },
+      choices: [
+        { label: "Yes", consequence: "Offer" },
+        { label: "No", consequence: "Drop" },
+      ],
+      links: { tasks: [foreignTask.id] },
+      status: "open",
+      createdAt: stamp,
+      updatedAt: stamp,
+    }),
+  );
+  assert.ok(
+    acp.pendingInboxDecisionKey(host.hostId)?.includes(id3),
+    "connected Inbox key counts decision whose linked host answered unknown",
+  );
+  await host.reconcileThreadTitles([queuedTask, foreignTask]);
+  assert.equal(projection.thread.title, "3 decisions to answer");
+  const turn3 = await acp.turn({ ...caller, waitMs: 0 }, token);
+  assert.deepEqual(
+    turn3.elicitations?.map((item) => item.id).sort(),
+    [id1, id2, id3].sort(),
+  );
 });

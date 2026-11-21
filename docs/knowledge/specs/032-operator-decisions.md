@@ -19,8 +19,14 @@ escalations are the only durable attention signal.
 An agent records a question that needs the operator as a **decision** in Nucleus.
 The board shows all open decisions. The operator can also answer in the Paseo
 composer pill or in T3. In T3, operator questions for T3-hosted tasks appear
-on their parent threads. Other decisions routed to that T3 operator appear in
-the pinned Nucleus inbox. See [operator decisions on T3](t3code-host-adapter.md#operator-decisions-on-t3).
+on their parent threads when a live parent exists; when a linked T3 task has no
+eligible parent yet (or its parent is archived) it goes to that host's pinned
+Nucleus inbox, and when the parent lookup answers `unknown` (for example, a
+disconnected host or a different registered T3 session) it falls back to the
+connected T3 host's pinned Nucleus inbox rather than dropping the decision, with
+durable first-offer binding keeping one owner per version. Other decisions
+routed to that T3 operator also appear in the pinned Nucleus inbox. See
+[operator decisions on T3](t3code-host-adapter.md#operator-decisions-on-t3).
 Decisions clear when answered, withdrawn or superseded. Answers reach the
 asking agent.
 
@@ -128,14 +134,18 @@ reachable recipient.
 
 Notices use the deterministic version identity (`decision:<id>:<version>`) and
 the shared durable send path (`intent` before send, fresh recipient and host
-availability checks, pause gates). Notification failure never rolls back the
+availability checks, pause gates). When the asking thread's host supports
+live-turn steering (`steerOrNotify`, as T3 Code does), the notice steers into a
+busy asking thread's running turn (or delivers normally when idle) instead of
+waiting for the turn to finish (nucleus#1516); hosts without steering keep
+waiting for idle. Notification failure never rolls back the
 committed answer: an agent that resumes still lists its answered decisions.
-Proven pre-send refusals, busy threads and unavailable hosts keep the notice
-pending for retry; interrupted `intent` records on restart and non-pre-send
-send failures settle as `uncertain` and are never resent blindly (a late
-acknowledgement on an abandoned send settles `uncertain` to `delivered` without
-resending). An answer the asking agent relays itself sends no notice: that
-thread already has it (Tom, 2026-09-29).
+Proven pre-send refusals, busy non-steering threads and unavailable hosts keep
+the notice pending for retry; interrupted `intent` records on restart and
+non-pre-send send failures settle as `uncertain` and are never resent blindly (a
+late acknowledgement on an abandoned send settles `uncertain` to `delivered`
+without resending). An answer the asking agent relays itself sends no notice:
+that thread already has it (Tom, 2026-09-29).
 
 ## Staleness
 
