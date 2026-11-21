@@ -8,7 +8,7 @@ import { Engine } from "../core/engine";
 import { enginePorts } from "../core/port-context";
 import { SweepMaintenance } from "../core/scheduling/sweep-maintenance";
 import type { Adapter } from "../core/host";
-import { createTelemetrySnapshotCache, telemetrySnapshot } from "../core/telemetry/telemetry";
+import { buildTelemetryBase, createTelemetrySnapshotCache, telemetrySnapshot, telemetrySnapshotFromBase } from "../core/telemetry/telemetry";
 import { runSchema, submissionSchema, taskSchema } from "../shared/contracts";
 import {
   retainedTaskTelemetrySchema, telemetryScreenWindows, telemetrySnapshotSchema,
@@ -155,6 +155,67 @@ test("a real purge reports the same filtered metrics at a fixed query time, thro
     const replayed = snapshots(f.store);
     for (let index = 0; index < FILTERS.length; index++) assert.deepEqual(comparable(replayed[index]), comparable(before[index]));
   } finally { f.close(); }
+});
+
+/**
+ * Task 1496 review: a purge can commit between the base's bounded pages. Detailed facts are
+ * read before the task rows and retained records after them, so a mid-build purge never
+ * leaves pre-purge task rows with post-purge facts or drops a purged task's record.
+ */
+test("a purge that commits between base pages keeps one consistent contribution per task", async () => {
+  const snapshotAtQueryTime = (f: Fixture) => telemetrySnapshot(f.store, { window: "30d" }, new Date(queryAt));
+  const buildWith = async (injection: "before facts" | "after first fact page" | "after first task page") => {
+    const f = fixture();
+    try {
+      populate(f);
+      const before = snapshotAtQueryTime(f);
+      if (injection === "before facts") f.store.purgeOldTasks(queryAt);
+      const pageKinds: string[] = [], factKinds = new Set(["events", "runs", "notices", "hooks"]);
+      let injected = injection === "before facts";
+      // A real purge is committed exactly at the inspected page boundary, synchronously, so
+      // the interleaving is deterministic rather than a timing hope.
+      const store = {
+        telemetryRevision: () => f.store.telemetryRevision(),
+        retainedTelemetryCoverage: () => f.store.retainedTelemetryCoverage(),
+        *telemetryFactChunks(pageSize = 500) {
+          for (const chunk of f.store.telemetryFactChunks(pageSize)) {
+            pageKinds.push(chunk.kind);
+            yield chunk;
+            if (!injected && injection === "after first fact page" && factKinds.has(chunk.kind)) {
+              injected = true;
+              f.store.purgeOldTasks(queryAt);
+            } else if (!injected && injection === "after first task page" && chunk.kind === "tasks") {
+              // Falls between task-row pages: rows already read stay live with the facts read
+              // above; rows not yet read are gone and arrive from their retained records.
+              injected = true;
+              f.store.purgeOldTasks(queryAt);
+            }
+          }
+        },
+      } as unknown as Store;
+      // Small pages put every boundary inside the fact pages, the task rows and the records.
+      const after = telemetrySnapshotFromBase(await buildTelemetryBase(store, new Date(queryAt), { pageSize: 2 }), { window: "30d" });
+      return { after, before, pageKinds };
+    } finally { f.close(); }
+  };
+
+  for (const injection of ["after first fact page", "after first task page", "before facts"] as const) {
+    const { after, before, pageKinds } = await buildWith(injection);
+    assert.deepEqual(comparable(after), comparable(before), `${injection}: metrics are unchanged`);
+    assert.equal(after.coverage.liveTasks + after.coverage.retainedTasks, after.matchingTasks, `${injection}: one contribution per task`);
+    // Facts always precede the liveness read, which precedes the retained records.
+    assert.ok(pageKinds.lastIndexOf("events") < pageKinds.indexOf("tasks"), `${injection}: facts before task rows`);
+    assert.ok(pageKinds.indexOf("tasks") < pageKinds.indexOf("retained"), `${injection}: task rows before retained records`);
+    if (injection === "after first task page") {
+      // The first two task pages are alpha and beta, read before the purge; gamma is not yet
+      // read when the purge commits, so it reports from its retained record alone.
+      assert.equal(after.coverage.liveTasks, 5);
+      assert.equal(after.coverage.retainedTasks, 1);
+    } else {
+      assert.equal(after.coverage.retainedTasks, 3, "a purge inside or before the facts reads reports the purged tasks from their records");
+      assert.equal(after.coverage.liveTasks, 3);
+    }
+  }
 });
 
 test("an interrupted pass commits capture and deletion together and the next pass converges", () => {

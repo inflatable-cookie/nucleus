@@ -145,16 +145,16 @@ export class StoreOutcomes {
   /**
    * Bounded bulk reads for the shared telemetry base. Each yielded chunk is one page so a
    * caller can hand the event loop back between pages instead of monopolising it.
+   *
+   * Page order carries the purge-consistency invariant: detailed facts first, then the task
+   * rows that decide liveness, then the retained records. The retention owner deletes a
+   * task's facts and its row and writes its retained record in one transaction, so a task row
+   * read here implies its facts were read before that purge, and an absent row implies its
+   * retained record is committed by the time the retained page is read. However a purge falls
+   * between pages, each task contributes through exactly one consistent source: pre-purge
+   * rows never meet post-purge facts, and a purged task never loses both.
    */
   *telemetryFactChunks(page = 500): Generator<TelemetryFactChunk> {
-    let taskCursor = 0;
-    while (true) {
-      const rows = this.db.prepare("SELECT rowid AS k,id FROM tasks WHERE json_extract(data, '$.removedAt') IS NULL AND rowid>? ORDER BY rowid LIMIT ?").all(taskCursor, page) as { k: number; id: string }[];
-      if (!rows.length) break;
-      taskCursor = Number(rows.at(-1)!.k);
-      // Parsed rows come from the incremental projection, not a per-row zod parse.
-      yield { kind: "tasks", tasks: rows.map(row => this.tasksStore.projectedTask(String(row.id)) ?? this.tasksStore.snapshotTask(String(row.id))) };
-    }
     let eventCursor = 0;
     while (true) {
       const rows = this.db.prepare("SELECT id,taskId,at,kind,detail FROM events WHERE id>? ORDER BY id LIMIT ?").all(eventCursor, page) as unknown as QueueEventRow[];
@@ -187,6 +187,17 @@ export class StoreOutcomes {
       if (!rows.length) break;
       hookCursor = Number(rows.at(-1)!.k);
       yield { kind: "hooks", hooks: rows.map(row => ({ taskId: String(row.taskId), hook: hookRecordSchema.parse(JSON.parse(String(row.data))) })) };
+    }
+    // Read the task rows only now that every detailed fact page above is in: a purge that
+    // commits in between leaves either the row (with its facts already read) or the retained
+    // record (for the page below), never a row without facts.
+    let taskCursor = 0;
+    while (true) {
+      const rows = this.db.prepare("SELECT rowid AS k,id FROM tasks WHERE json_extract(data, '$.removedAt') IS NULL AND rowid>? ORDER BY rowid LIMIT ?").all(taskCursor, page) as { k: number; id: string }[];
+      if (!rows.length) break;
+      taskCursor = Number(rows.at(-1)!.k);
+      // Parsed rows come from the incremental projection, not a per-row zod parse.
+      yield { kind: "tasks", tasks: rows.map(row => this.tasksStore.projectedTask(String(row.id)) ?? this.tasksStore.snapshotTask(String(row.id))) };
     }
     // Task 1496: one retained compact record per purged task. A task row that still exists
     // (live or removed) never contributes through its record, so each task counts once.

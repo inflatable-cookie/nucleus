@@ -246,6 +246,12 @@ table, keyed by task identity:
 The base reads live tasks and retained records through the same bounded pages
 and one aggregation. A task whose row still exists, live or removed,
 contributes only through its detailed history, so every task contributes once.
+The pages carry that guarantee across a concurrent purge: detailed facts are
+read before the task rows that decide liveness, and retained records after
+them. The retention owner deletes a task's facts and row and writes its record
+in one transaction, so a purge that commits between pages still leaves each
+task on exactly one side — pre-purge rows with pre-purge facts, or no row with
+its retained record — and a cold build never mixes the two or loses the task.
 Retained contributions restore the same filter, group, percentile, denominator
 and partial-evidence inputs the live derivation gives, and a purge does not
 change any reported metric at a fixed query time. A legacy task finished
