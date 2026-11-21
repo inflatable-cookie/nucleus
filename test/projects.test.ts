@@ -1,3 +1,4 @@
+import { seedLegacyQaRun } from "./support/legacy-qa";
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -514,7 +515,7 @@ test('nucleus#984 merge: a queued or running project QA or an in-flight re-key o
   try {
     await runtime.upsertProject({ key: 'site', name: 'Site', repositories: [alpha] });
     await runtime.upsertProject({ key: 'book', name: 'Book', repositories: [beta, gamma], primary: beta });
-    runtime.store.putQaRun(projectQaRunSchema.parse({ id: 'book-qa', repository: gamma, key: gamma.origin, state: 'running', baseBranch: 'main', base: 'a'.repeat(40), argv: ['effigy', 'qa'], digest: 'b'.repeat(64),
+    seedLegacyQaRun(runtime.store, projectQaRunSchema.parse({ id: 'book-qa', repository: gamma, key: gamma.origin, state: 'running', baseBranch: 'main', base: 'a'.repeat(40), argv: ['effigy', 'qa'], digest: 'b'.repeat(64),
       exitCode: null, durationMs: 0, outputTail: '', startedAt: stamp, finishedAt: null, pid: null, admission: null, capacityWait: null, capacityUnavailable: false }));
     const site = runtime.store.projectByKey('site')!, book = runtime.store.projectByKey('book')!;
     const versions = { source: book.version, target: site.version };
@@ -526,7 +527,7 @@ test('nucleus#984 merge: a queued or running project QA or an in-flight re-key o
     assert.deepEqual(runtime.store.projectByKey('site'), site);
     assert.deepEqual(runtime.store.projectByKey('book'), book);
     assert.deepEqual(runtime.store.projectTombstones(), []);
-    runtime.store.putQaRun({ ...runtime.store.qaRun('book-qa')!, state: 'passed', finishedAt: stamp });
+    seedLegacyQaRun(runtime.store, { ...runtime.store.qaRun('book-qa')!, state: 'passed', finishedAt: stamp });
     runtime.store.acceptOperation({ key: 'repository-rekey:x', kind: 'repository_rekey', inputHash: 'c'.repeat(64),
       payload: { type: 'repository_rekey', input: { source: 'acme/beta', target: { origin: 'acme/beta2' }, reason: 'renamed', relayedBy: null } } as never });
     assert.deepEqual(runtime.mergeCheck({ source: 'book' }).blockers, [{ kind: 'operation', label: 'repository re-key', names: ['acme/beta'] }]);
@@ -713,7 +714,7 @@ test('project management: active QA blocks both reassignment and deletion withou
     const source=store.upsertProject({key:'source',name:'Source',repositories:[alpha]});
     store.upsertProject({key:'target',name:'Target',repositories:[beta]});
     const run=projectQaRunSchema.parse({id:'active-qa',repository:alpha,key:alpha.origin,state:'queued',baseBranch:'main',base:'a'.repeat(40),argv:['effigy','qa'],digest:'b'.repeat(64),exitCode:null,durationMs:0,outputTail:'',startedAt:stamp,finishedAt:null,pid:null,admission:null,capacityWait:null,capacityUnavailable:false});
-    store.putQaRun(run);
+    seedLegacyQaRun(store, run);
     for (const target of [undefined,'target']) {
       const preview=store.projectManagementPreview({key:source.key,target});
       assert.ok(preview.items.some(item=>item.kind==='qa'));

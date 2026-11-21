@@ -12,11 +12,9 @@ import {
   routingGrantViewSchema,
   usageViewSchema,
 } from "./settings";
-import { qaFenceViewSchema } from "./qa-fence";
 import { backupHealthSchema } from "./backup";
 import { taskSummarySchema } from "../schema/task-view";
 import { laneViewSchema } from "./lanes";
-import { boardQaRunSchema } from "./qa";
 import {
   projectBadgeMapSchema,
   repositoryBadgeMapSchema,
@@ -144,11 +142,6 @@ export const stateSchema = z.object({
     expired: false,
   }),
   routingGrants: z.array(routingGrantViewSchema).default([]),
-  qaFence: qaFenceViewSchema.default({
-    revision: 0,
-    fence: null,
-    expired: null,
-  }),
   // The dispatch and timing limits are zero-owner duplicates if this schema
   // re-bounds them: the group comes from the limits catalogue in
   // `shared/schema/settings/capacity.ts`, defaults included.
@@ -224,7 +217,6 @@ export const uiStateSchema = stateSchema.omit({ tasks: true }).extend({
   projects: z.array(projectSchema).default([]),
   projectActivity: z.array(projectActivitySchema).default([]),
   pendingSubmissions: z.array(pendingSubmissionSchema).default([]),
-  qaRuns: z.lazy(() => z.array(boardQaRunSchema)).default([]),
 });
 
 export type UiQueueState = z.infer<typeof uiStateSchema>;

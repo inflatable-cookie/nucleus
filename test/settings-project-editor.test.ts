@@ -114,7 +114,6 @@ function row(
     slots: { value: 4, override: null },
     plannerLive: planner ? true : null,
     plannerTicket: planner ? "issued" : null,
-    latestQa: null,
     problems: [],
     ...rest,
   } as ProjectSettingsRow;
@@ -707,13 +706,11 @@ test("one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
         {
           repository: "acme/nucleus",
           qa: {
-            maxOutputBytes: 1000,
-            terminationGraceMs: 5000,
             argv: ["effigy", "qa", "--suite", "unit all"],
           },
         },
       ],
-      "quotes honoured, caps kept, and no schedule or timeout is written",
+      "quotes honoured and only the evidence command is written",
     );
     ui.type("QA command for acme/nucleus", 'effigy "qa');
     assert.equal(
@@ -765,8 +762,6 @@ test("one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
         {
           repository: "acme/nucleus",
           qa: {
-            maxOutputBytes: 1000,
-            terminationGraceMs: 5000,
             argv: ["bun", "run", "qa"],
             schedule: null,
           },

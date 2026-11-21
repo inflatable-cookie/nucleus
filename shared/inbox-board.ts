@@ -32,13 +32,6 @@ export type ActiveSection = (typeof activeSections)[number]["id"];
 
 export type InboxSection = { id: string; label: string; cards: PipelineCard[] };
 
-/**
- * Milestone QA is retired as a board surface (Tom, 2026-11-21): QA runs as an
- * ordinary task, so a leftover QA card is not listed anywhere.
- */
-const listed = (cards: readonly PipelineCard[]) =>
-  cards.filter((card) => card.kind !== "qa");
-
 /** Leads: the Triage column's leads. A papercut-tagged lead is a papercut, never a lead here. */
 export function leadsCards(board: PipelineBoard): PipelineCard[] {
   return board.cards.Triage.filter(
@@ -74,8 +67,8 @@ export function needsActionAt(card: PipelineCard): number {
 /** Needs you: decisions, Nucleus-raised holds, drained-lane prompts and attention tasks in one list, newest needing action first. */
 export function needsCards(board: PipelineBoard): PipelineCard[] {
   return [
-    ...listed(board.cards.Decisions),
-    ...listed(board.cards.Attention),
+    ...board.cards.Decisions,
+    ...board.cards.Attention,
   ].sort((a, b) => needsActionAt(b) - needsActionAt(a));
 }
 
@@ -89,7 +82,7 @@ export function inboxSections(
     id: string,
     label: string,
     name: PipelineColumn,
-  ): InboxSection => ({ id, label, cards: listed(board.cards[name]) });
+  ): InboxSection => ({ id, label, cards: board.cards[name] });
   switch (view) {
     case "needs":
       return [{ id: "needs", label: "Needs you", cards: needsCards(board) }];
@@ -115,7 +108,7 @@ export function inboxSections(
  * "…and N more" rows, so the count is the real total, never the loaded page.
  */
 export function inboxCounts(board: PipelineBoard, hiddenQueued = 0) {
-  const n = (name: PipelineColumn) => listed(board.cards[name]).length;
+  const n = (name: PipelineColumn) => board.cards[name].length;
   return {
     needs: needsCards(board).length,
     leads: leadsCards(board).length,

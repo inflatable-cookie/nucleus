@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { noticeSchema,outcomeSchema,type Notice,type Outcome,type OutcomeSearchInput,type OutcomeSearchResult,type RepositorySettings,type Run,type Task } from "../../shared/contracts";
+import { noticeSchema,outcomeSchema,type Notice,type Outcome,type OutcomeSearchInput,type OutcomeSearchResult,type Run,type Task } from "../../shared/contracts";
 import { hookRecordSchema,type HookRecord } from "../../shared/hooks";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { RETAINED_TELEMETRY_VERSION, type RetainedTaskTelemetry } from "../../shared/telemetry";
@@ -118,7 +118,6 @@ interface Ports {
   tasksStore: StoreTasks;
   numberFor: (taskId: string) => { number: number; reference: string } | null;
   settledDependents: Set<string>;
-  repositorySettingsFor: (repository: { origin: string | null; path: string }) => RepositorySettings | null;
   laneOutcomeIndex: Map<string, Outcome[]> | null;
   outcomeRowsClock: number;
 }
@@ -131,7 +130,6 @@ export class StoreOutcomes {
   private get tasksStore() { return this.ports.tasksStore; }
   private numberFor = (...args: Parameters<Ports["numberFor"]>) => this.ports.numberFor(...args);
   private get settledDependents() { return this.ports.settledDependents; }
-  private repositorySettingsFor = (...args: Parameters<Ports["repositorySettingsFor"]>) => this.ports.repositorySettingsFor(...args);
   private get laneOutcomeIndex() { return this.ports.laneOutcomeIndex; }
   private set laneOutcomeIndex(value: Ports["laneOutcomeIndex"]) { this.ports.laneOutcomeIndex = value; }
   private get outcomeRowsClock() { return this.ports.outcomeRowsClock; }
@@ -271,13 +269,6 @@ export class StoreOutcomes {
     // The search projection is written in the same transaction as the row, so
     // a row is searchable as soon as it exists (Spec 025).
     this.indexOutcome(parsed);
-    const task = this.db.prepare("SELECT json_extract(data,'$.baseBranch') AS branch FROM tasks WHERE id=?").get(parsed.taskId);
-    // Lean store 2 (task 987): only a repository with a QA schedule reads these rows, so an
-    // unscheduled repository never accumulates a backlog.
-    const scheduledMerge = parsed.outcome === "done" && parsed.mergeCommit && task?.branch === "main"
-      ? this.repositorySettingsFor(parsed.repository) : null;
-    if (scheduledMerge?.qa?.schedule)
-      this.db.prepare("INSERT OR IGNORE INTO qa_schedule_merges(taskId,repository) VALUES(?,?)").run(parsed.taskId, parsed.repository.origin ?? parsed.repository.path);
     this.indexOutcomeLanes(parsed);
     // A permanent outcome is a board fact — it moves the lane's terminal count and the
     // selected task's outcome view — whether it lands in a terminal task write or later on

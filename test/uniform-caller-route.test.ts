@@ -29,11 +29,6 @@ import {
 import { Engine } from "../core/engine";
 import { Decisions } from "../core/planning/decisions";
 import { HostUnknownDeliveryError } from "../core/host/errors";
-import {
-  qaSettlementHostMessageId,
-  qaSettlementNoticeId,
-} from "../core/qa/project-qa-notice";
-import { projectQaSettlement } from "../core/qa/project-qa-settle";
 import { Store } from "../core/store/store";
 import { projectEndpointId } from "../core/questions/agent-messages";
 import { wireEngineHosts } from "../service/host-connections";
@@ -53,32 +48,6 @@ const ticketOf = (path: string) =>
     participantId: string;
     token: string;
   };
-
-function qaRun(store: Store, extra: Record<string, unknown> = {}) {
-  return store.putQaRun(
-    projectQaRunSchema.parse({
-      id: "qa-settled-1",
-      key: "owner/repo",
-      repository: { origin: "owner/repo", path: "/repo" },
-      state: "passed",
-      baseBranch: "main",
-      base: "a".repeat(40),
-      argv: ["effigy", "qa"],
-      digest: "b".repeat(64),
-      capacityWait: null,
-      capacityUnavailable: false,
-      exitCode: 0,
-      durationMs: 1,
-      outputTail: "passed",
-      startedAt: "2026-11-17T00:00:00.000Z",
-      submittedAt: "2026-11-17T00:00:00.000Z",
-      finishedAt: "2026-11-17T00:00:01.000Z",
-      pid: null,
-      submitterAgentId: "planner-agent",
-      ...extra,
-    }),
-  );
-}
 
 test("a retained thread with a stale environment resolves its current run (d8158bc3)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "retained-stale-env-"));
@@ -352,117 +321,6 @@ test("an omitted host defaults to the sole online host of the kind (78c18e51)", 
       engine.selectIngressHost(undefined, "/unconfigured"),
       "t3code:env",
     );
-  } finally {
-    store.close();
-  }
-});
-
-test("a QA settlement notice whose host is unavailable is redelivered once the host answers (f749011c)", async () => {
-  const store = new Store(":memory:");
-  const delivered: Array<{ agentId: string; messageId: string; text: string }> =
-    [];
-  try {
-    const saved = qaRun(store);
-    await projectQaSettlement.notifySettled.call(
-      {
-        store,
-        options: {
-          notify: async () => {
-            throw new Error("QA notification host is unavailable");
-          },
-        },
-      },
-      saved,
-    );
-    const pending = store
-      .notices(`qa:${saved.id}`)
-      .find(
-        (notice) =>
-          notice.id === qaSettlementNoticeId(saved.id, "planner-agent"),
-      );
-    assert.ok(pending);
-    assert.equal(pending.status, "pending");
-    assert.match(pending.error, /QA notification host is unavailable/);
-
-    store.setMeta("paused", false);
-    store.setMeta("hostId", "host");
-    const adapter = {
-      hostId: "host",
-      observe: async (id: string) => ({
-        id,
-        status: "idle",
-        active: false,
-        permissions: false,
-        error: "",
-        updatedAt: "2026-11-17T00:00:00.000Z",
-      }),
-      notify: async (agentId: string, messageId: string, text: string) => {
-        delivered.push({ agentId, messageId, text });
-      },
-      profiles: async () => [],
-    } as unknown as Adapter;
-    const engine = new Engine(store, adapter, 0);
-    engine.identifyOriginHost = async () => "host";
-    engine.hostAvailable = () => true;
-    try {
-      await engine.resolution.deliverDrainNotices();
-    } finally {
-      await engine.stop();
-    }
-    const after = store.notices(`qa:${saved.id}`)[0]!;
-    assert.equal(delivered.length, 1, `${after.status}: ${after.error}`);
-    assert.equal(delivered[0]!.agentId, "planner-agent");
-    assert.equal(
-      delivered[0]!.messageId,
-      qaSettlementHostMessageId(saved.id, "planner-agent"),
-    );
-    assert.equal(after.status, "delivered");
-  } finally {
-    store.close();
-  }
-});
-
-test("a QA settlement notice with typed unknown delivery stays uncertain and is never resent", async () => {
-  const store = new Store(":memory:");
-  try {
-    const saved = qaRun(store, { id: "qa-unknown-1" });
-    await projectQaSettlement.notifySettled.call(
-      {
-        store,
-        options: {
-          notify: async () => {
-            throw new HostUnknownDeliveryError({
-              reason: "host_call_past_deadline",
-            });
-          },
-        },
-      },
-      saved,
-    );
-    const notice = store.notices(`qa:${saved.id}`)[0]!;
-    assert.equal(notice.status, "uncertain");
-    store.setMeta("paused", false);
-    store.setMeta("hostId", "host");
-    const adapter = {
-      observe: async (id: string) => ({
-        id,
-        status: "idle",
-        active: false,
-        permissions: false,
-        error: "",
-      }),
-      notify: async () => {
-        throw new Error("must not resend");
-      },
-      profiles: async () => [],
-    } as unknown as Adapter;
-    const engine = new Engine(store, adapter, 0);
-    try {
-      await engine.resolution.deliverDrainNotices();
-    } finally {
-      await engine.stop();
-    }
-    assert.equal(store.notices(`qa:${saved.id}`)[0]!.status, "uncertain");
   } finally {
     store.close();
   }

@@ -245,19 +245,13 @@ export function taskElapsed(runs: readonly Pick<Run, "createdAt">[], now = Date.
 
 export type CheckTick = { label: string; state: "pass" | "fail" | "pending" | "info" };
 
-const QA_TICK: Record<string, CheckTick["state"]> = {
-  queued: "pending", running: "pending", hold: "pending", passed: "pass",
-  failed: "fail", timed_out: "fail", cancelled: "info", lost: "info",
-};
-
 /**
  * The latest check results Queue already holds as short ticks: the task's
- * project validation, its repository's milestone QA run, and the last accepted
+ * project validation and the last accepted
  * review verdict. Nothing here is a new check or a merge permission.
  */
 export function checkTicks(input: {
   validation?: { state: string; exitCode: number | null; capacityUnavailable?: boolean; capacityWait?: unknown } | null;
-  milestoneQa?: { state: string } | null;
   verdict?: "ready_to_merge" | "changes_required" | null;
 }): CheckTick[] {
   const ticks: CheckTick[] = [];
@@ -269,7 +263,6 @@ export function checkTicks(input: {
       : validation.state === "running" || validation.exitCode === null ? "pending"
       : "fail",
   });
-  if (input.milestoneQa) ticks.push({ label: "Milestone QA", state: QA_TICK[input.milestoneQa.state] ?? "info" });
   if (input.verdict) ticks.push({ label: "Review", state: input.verdict === "ready_to_merge" ? "pass" : "fail" });
   return ticks;
 }

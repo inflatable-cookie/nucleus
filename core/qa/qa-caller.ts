@@ -1,8 +1,8 @@
 /**
- * The canonical caller identity Queue gives a host run it owns for milestone
+ * The canonical caller identity Queue gave a host run it owned for milestone
  * Project QA, and its exact inverse check.
  *
- * `ProjectQa` submits every QA host run with `queue:milestone:<digest(key)
+ * `ProjectQa` submitted every QA host run with `queue:milestone:<digest(key)
  * [0..24]>:<qaRunId>`, and the QA run row shares the host run's id. That gives
  * the retained-output sweep a durable ownership relation it can verify from
  * stored records alone (task 444): an exact host-run id, the QA record for that
@@ -10,7 +10,7 @@
  * with `queue:milestone:` proves nothing; the digest of the recorded key and the
  * exact run id must both agree.
  *
- * One owner decides the string, so the producer and the verifier cannot drift.
+ * Retained-output ownership still uses this exact recorded identity.
  */
 import { createHash } from "node:crypto";
 

@@ -181,13 +181,11 @@ export function TaskSummaryBlock({
   task,
   next,
   runs,
-  qaRun,
   c,
 }: {
   task: TaskDetail;
   next: TaskNext | null;
   runs: readonly Run[];
-  qaRun?: { state: string } | null;
   c: Colors;
 }) {
   const wait = taskOverviewWait(task.waitState, next, task.reason);
@@ -196,7 +194,6 @@ export function TaskSummaryBlock({
   const report = latestTaskReport(task, runs);
   const ticks = checkTicks({
     validation: task.resolution.projectValidation ?? null,
-    milestoneQa: qaRun ?? null,
     // A verdict at an older head, or one the task superseded, is history: it is not a current tick.
     verdict:
       next?.outcome.accepted &&

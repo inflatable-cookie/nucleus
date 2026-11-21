@@ -20,17 +20,15 @@ import { space, radius, type as typeScale, overlay } from "../design";
 
 /** What `queue.detail` returns for the open task. */
 export type TaskDetailRead = ZodOutput<typeof api.detail.output>;
-/** The milestone QA run for the task's repository (#121). */
-export type TaskQaRun = ZodOutput<typeof api.projectQaList.output>[number];
 
 /**
  * The task detail dialog: its frame, header and tabs. Each tab owns its own form state,
  * so typing in one re-renders that tab, not the board. The board keeps the detail and
  * next reads, keyed on the selected task.
  */
-export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaRuns, spansRepositories: taskSpansRepositories, compact, busy, act, drafts, navigation, onClose, onSelectTask, c, inline = false }: {
+export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, spansRepositories: taskSpansRepositories, compact, busy, act, drafts, navigation, onClose, onSelectTask, c, inline = false }: {
   task: TaskDetailRead["task"]; detailQuery: UseQueryResult<TaskDetailRead>; nextQuery: UseQueryResult<TaskNext>; state: UiQueueState | undefined;
-  decisions: readonly DecisionView[] | undefined; qaRuns: readonly TaskQaRun[] | undefined; spansRepositories: boolean; compact: boolean; busy: boolean; act: BoardAct; drafts: TaskDrafts;
+  decisions: readonly DecisionView[] | undefined; spansRepositories: boolean; compact: boolean; busy: boolean; act: BoardAct; drafts: TaskDrafts;
   navigation?: BoardNavigation; onClose: () => void; onSelectTask: (id: string) => void; c: Colors;
   /** Render the detail in place, filling its container, for a host panel tab (Spec 062, decision 5d); no modal, scrim or close. */
   inline?: boolean;
@@ -41,9 +39,6 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
   const [detailTab, setDetailTab] = useState<TaskDetailTab>("overview");
   useEffect(() => { setDetailTab("overview"); }, [task.id]);
   const taskParked = isParkedTask(task, detailQuery.data?.runs.some(run => !run.released) ?? false);
-  // #121: the task detail shows the milestone QA run for the task's repository,
-  // so its stages are visible from the task, not only from Planning.
-  const taskQaRun = qaRuns ? qaRuns.find(run => run.repository.path === task.repoPath || run.key === task.repository || run.key === task.repoPath) : undefined;
   // Task 538: the summary's elapsed clock runs from the first dispatch.
   const taskElapsedMs = taskElapsed(detailQuery.data?.runs ?? []);
   const pendingOperation = (detailQuery.data?.operations ?? []).some(operation => operation.state === "pending" || operation.state === "running");
@@ -155,7 +150,7 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
           padding: compact ? space.sm : space.md,
         }}
       >
-      <OverviewSummary task={task} detailTab={detailTab} nextQuery={nextQuery} detailQuery={detailQuery} qaRun={taskQaRun} c={c} />
+      <OverviewSummary task={task} detailTab={detailTab} nextQuery={nextQuery} detailQuery={detailQuery} c={c} />
       {task && (
         <PendingQuestions
           key={`questions-${task.id}`}
@@ -180,7 +175,7 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
         />
       )}
       <OverviewNext task={task} detailTab={detailTab} nextQuery={nextQuery} state={state} busy={busy} pendingOperation={pendingOperation} c={c} />
-      {detailTab === "technical" && <TechnicalTab key={task.id} task={task} detailQuery={detailQuery} nextQuery={nextQuery} state={state} qaRun={taskQaRun} pendingOperation={pendingOperation} compact={compact} busy={busy} act={act} drafts={drafts} navigation={navigation} onClose={onClose} c={c} />}
+      {detailTab === "technical" && <TechnicalTab key={task.id} task={task} detailQuery={detailQuery} nextQuery={nextQuery} state={state} pendingOperation={pendingOperation} compact={compact} busy={busy} act={act} drafts={drafts} navigation={navigation} onClose={onClose} c={c} />}
       {detailTab === "runs" && <RunsTab key={task.id} task={task} detailQuery={detailQuery} pendingOperation={pendingOperation} busy={busy} act={act} drafts={drafts} navigation={navigation} onSelectTask={onSelectTask} c={c} />}
       {detailTab === "messages" && <MessagesTab task={task} detailQuery={detailQuery} c={c} />}
       {detailTab === "activity" && <ActivityTab key={task.id} task={task} detailQuery={detailQuery} busy={busy} act={act} drafts={drafts} c={c} />}

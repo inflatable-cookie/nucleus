@@ -45,7 +45,6 @@ import { useBoardSelection } from "./board/use-board-selection";
 import {
   useBoardAct,
   usePlanningData,
-  useQaData,
   useRecordQueries,
   useTaskDetail,
   type BoardTab,
@@ -202,7 +201,6 @@ export function MainSurface({
     records,
     onLeaveLane: () => setLaneDraft(null),
   });
-  const { qaQuery } = useQaData({ tab, selected, state });
   // The list's tag filter, pages and queued-more read outlive a visit to another view.
   const pipeline = usePipelineState();
   const { act, leadAct, busy, error, setError } = useBoardAct({
@@ -341,7 +339,6 @@ export function MainSurface({
       nextQuery={nextQuery}
       state={state}
       decisions={decisionsQuery.data}
-      qaRuns={qaQuery.data}
       spansRepositories={multiRepository(task)}
       compact={compact}
       busy={busy}
@@ -525,12 +522,6 @@ export function MainSurface({
                 onRetryLanes={() => {
                   void stateQuery.refetch();
                   void planQuery.refetch();
-                }}
-                qaRuns={qaQuery.data}
-                qaLoading={qaQuery.isLoading}
-                qaError={planMessage(qaQuery.error)}
-                onRetryQa={() => {
-                  void qaQuery.refetch();
                 }}
                 onOpenTask={selectTask}
                 sections={planningProjects.map((project) => {

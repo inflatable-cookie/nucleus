@@ -223,7 +223,6 @@ export class RuntimeBoard {
         DEFAULT_PROJECT_LIMIT,
       usage: this.context.store.usageView(),
       routingGrants: activeRoutingGrants(this.context.store),
-      qaFence: this.context.store.qaFenceView(),
       papercutProjectLimit:
         this.context.store.getMeta<number>("papercutProjectLimit") ??
         DEFAULT_PAPERCUT_PROJECT_LIMIT,
@@ -518,7 +517,6 @@ export class RuntimeBoard {
       lanes: facts.lanes,
       projects: facts.projects,
       projectActivity: facts.projectActivity,
-      qaRuns: facts.qaRuns,
       pendingSubmissions: this.context.store.pendingSubmissions(),
       profiles: this.context.engine.profiles,
       pool: this.context.store.pool(),

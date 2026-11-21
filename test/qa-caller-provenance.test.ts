@@ -1,3 +1,4 @@
+import { seedLegacyQaRun } from "./support/legacy-qa";
 /**
  * Task 445: a milestone Project QA host run's caller is minted from the key the
  * run was submitted under, and a contract-010 host-run row is history — a
@@ -90,7 +91,7 @@ function fixture(t: { after(fn: () => void): void }) {
 test('the parent recomputation rejects a re-keyed run that the corrected check accepts', async t => {
   const f = fixture(t);
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('milestone-1'));
+  seedLegacyQaRun(f.store, qaRow('milestone-1'));
   f.rekey(OLD, NEW);
   const rekeyed = f.store.qaRun('milestone-1')!;
   assert.equal(rekeyed.key, NEW);
@@ -117,7 +118,7 @@ test('the parent recomputation rejects a re-keyed run that the corrected check a
 test('a legacy pre-receipt rename is resolved from the applied receipts, and without them stays unknown', async t => {
   const f = fixture(t);
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('legacy-1'));
+  seedLegacyQaRun(f.store, qaRow('legacy-1'));
   const applied = f.rekey(OLD, NEW);
   // The live shape of the 17 rows: re-keyed before per-run provenance existed.
   const stored = f.store.qaRun('legacy-1')!;
@@ -162,7 +163,7 @@ test('a legacy pre-receipt rename is resolved from the applied receipts, and wit
 test('a chained rename accepts only keys the verified chain establishes', async t => {
   const f = fixture(t);
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('chain-1'));
+  seedLegacyQaRun(f.store, qaRow('chain-1'));
   const first = f.rekey(OLD, MID);
   const second = f.rekey(MID, NEW);
   // SQLite timestamps have millisecond precision. Pin both receipts to the same
@@ -189,7 +190,7 @@ test('a chained rename accepts only keys the verified chain establishes', async 
   // A run submitted between the two moves names the intermediate identity, and
   // only the moves that happened after it are part of its lineage.
   const between = f.store.qaRun('chain-1')!;
-  f.store.putQaRun(qaRow('between-1', { submittedAt: first.receipt.at }));
+  seedLegacyQaRun(f.store, qaRow('between-1', { submittedAt: first.receipt.at }));
   f.store.db.prepare('UPDATE project_qa_runs SET data=? WHERE id=?').run(JSON.stringify({
     ...between, id: 'between-1', submittedAt: first.receipt.at, startedAt: first.receipt.at,
   }), 'between-1');
@@ -216,7 +217,7 @@ test('a two-way swap through a temporary namespace still names the submitted key
   const f = fixture(t);
   const temp = 'acme/temp-swap';
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('swap-1'));
+  seedLegacyQaRun(f.store, qaRow('swap-1'));
   const out = f.rekey(OLD, temp);
   const back = f.rekey(temp, NEW);
   const stored = f.store.qaRun('swap-1')! as Record<string, unknown>;
@@ -234,7 +235,7 @@ test('an out-and-back move through a temporary namespace is a net no-op for the 
   const TEMP = 'acme/relocating';
   const TEMP_PATH = '/fixture/preserved';
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('trip-1'));
+  seedLegacyQaRun(f.store, qaRow('trip-1'));
   const first = f.rekey(OLD, NEW);
   // The live shape (project-d, 2026-10-26): the first move predates per-run
   // provenance, so the round trip below records the already-moved key as the
@@ -271,7 +272,7 @@ test('a run submitted after a re-key under the vacated key is unknown, and a for
   const f = fixture(t);
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
   f.store.patchRepository({ origin: 'bob/beta', path: '/fixture/shared' }, { closeout: 'queue', note: 'beta settings' });
-  f.store.putQaRun(qaRow('before-1'));
+  seedLegacyQaRun(f.store, qaRow('before-1'));
   const applied = f.rekey(OLD, NEW);
 
   // Created after the re-key from stale configuration: its key names the vacated
@@ -285,7 +286,7 @@ test('a run submitted after a re-key under the vacated key is unknown, and a for
   // Another repository that shares the checkout path and later holds the vacated
   // name: its own digest never authorises the re-keyed run, and the re-keyed
   // run's digest never authorises its row.
-  f.store.putQaRun(qaRow('beta-1', { key: 'bob/beta', origin: 'bob/beta', path: '/fixture/shared' }));
+  seedLegacyQaRun(f.store, qaRow('beta-1', { key: 'bob/beta', origin: 'bob/beta', path: '/fixture/shared' }));
   const beta = f.store.qaRun('beta-1')!;
   const foreign = f.classify(runView('beta-1', { origin: 'bob/beta', path: '/fixture/shared', callerFor: OLD }), beta, f.receipts);
   assert.equal(foreign.owner, 'unknown');
@@ -303,7 +304,7 @@ test('a run submitted after a re-key under the vacated key is unknown, and a for
 test('the submitted key is bound by identity, and the epoch stays exact', async t => {
   const f = fixture(t);
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('shape-1'));
+  seedLegacyQaRun(f.store, qaRow('shape-1'));
   f.rekey(OLD, NEW);
   const row = f.store.qaRun('shape-1')!;
 
@@ -334,7 +335,7 @@ test('reversed, missing, corrupt and ambiguous re-key evidence all hold instead 
   const f = fixture(t);
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
   f.store.patchRepository({ origin: 'carol/gamma', path: '/fixture/gamma' }, { closeout: 'agent', note: 'gamma settings' });
-  f.store.putQaRun(qaRow('ev-1'));
+  seedLegacyQaRun(f.store, qaRow('ev-1'));
   const applied = f.rekey(OLD, NEW);
   const strip = () => {
     const stored = f.store.qaRun('ev-1')! as Record<string, unknown>;
@@ -387,7 +388,7 @@ test('an explicit path move is reconstructed from the receipt, never guessed fro
   const f = fixture(t);
   const NEW_PATH = '/fixture/new';
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('moved-1'));
+  seedLegacyQaRun(f.store, qaRow('moved-1'));
   f.rekey(OLD, NEW, { path: NEW_PATH });
   const stored = f.store.qaRun('moved-1')!;
   assert.equal(stored.repository.path, NEW_PATH, 'the row moved with the checkout');
@@ -440,7 +441,7 @@ test('a positively owned re-keyed run leaves the QA producer’s own logs untouc
   const log = join(qaRoot, 'qa.stdout.log');
   writeFileSync(log, 'qa output\n');
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('logs-1'));
+  seedLegacyQaRun(f.store, qaRow('logs-1'));
   f.rekey(OLD, NEW);
   const ownership = f.classify(runView('logs-1'), f.store.qaRun('logs-1')!, f.receipts);
   assert.equal(ownership.owner, 'project_qa');
@@ -449,7 +450,7 @@ test('a positively owned re-keyed run leaves the QA producer’s own logs untouc
 
 test('the provenance check reads receipts lazily and only when the current key cannot answer', async t => {
   const f = fixture(t);
-  f.store.putQaRun(qaRow('current-1'));
+  seedLegacyQaRun(f.store, qaRow('current-1'));
   let reads = 0;
   const counted = () => { reads += 1; return f.receipts(); };
   const current = f.classify(runView('current-1'), f.store.qaRun('current-1')!, counted);
@@ -463,7 +464,7 @@ test('the provenance check reads receipts lazily and only when the current key c
 test('a host-run record schema round-trips the QA row’s recorded provenance', async t => {
   const f = fixture(t);
   f.store.patchRepository({ origin: OLD, path: OLD_PATH }, { closeout: 'agent', note: 'old settings' });
-  f.store.putQaRun(qaRow('round-trip-1'));
+  seedLegacyQaRun(f.store, qaRow('round-trip-1'));
   f.rekey(OLD, NEW);
   // The QA row stays a strict contract record with the additive field, and a
   // contract-010 run row is untouched history that still names the old identity.

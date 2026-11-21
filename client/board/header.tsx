@@ -8,7 +8,6 @@ import { serviceNotices } from "../../shared/service-roll";
 import { useRpc, Icon } from "../shell";
 import { ActionButton, Button, muted, row, type Colors } from "../controls";
 import { errorText } from "../error-text";
-import { QaFenceNotice } from "../qa-fence-notice";
 import { Popover } from "../popover";
 import { Badge } from "./badges";
 import type { BoardAct } from "./use-board-data";
@@ -84,7 +83,6 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
   const setQueue = useRpc(api.queueControl);
   const stopThreadsRpc = useRpc(api.stopThreads);
   const refresh = useRpc(api.refreshCatalog);
-  const writeQaFence = useRpc(api.projectQaFence);
   const fetchServiceState = useRpc(api.serviceState);
   const [queueMenuOpen, setQueueMenuOpen] = useState(false);
   // Queue #1391: the queue menu's anchor. Its panel renders in the shell's
@@ -103,11 +101,10 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
   const overrideCount = Object.keys(state?.projectLimitOverrides ?? {}).length;
   const slotRows = useMemo(() => slotPopoverRows(state?.projectCapacities), [state?.projectCapacities]);
   const serviceStateQuery = useQuery({ queryKey: ["nucleus", "service-state"], queryFn: () => fetchServiceState({}), refetchInterval: 15_000, retry: false });
-  const qaFence = state?.qaFence.fence ?? null;
   const pills = headerStatePills(state);
   const notices = !workspacePanel && serviceStateQuery.data ? serviceNotices(serviceStateQuery.data) : [];
   const meta = { fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight } as const;
-  const hasNotices = notices.length > 0 || Boolean(!workspacePanel && state && qaFence) || Boolean(error || readError) || Boolean(staleRead);
+  const hasNotices = notices.length > 0 || Boolean(error || readError) || Boolean(staleRead);
   return <>
       <View
         style={{
@@ -216,23 +213,6 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
               style={notice.tone === "warning" ? { color: c.statusWarning, ...meta } : { ...muted(c), ...meta }}>
               {notice.text}
             </Text>)}
-          {!workspacePanel && state && qaFence && (
-            <QaFenceNotice
-              fence={qaFence}
-              busy={busy}
-              c={c}
-              onClear={() =>
-                void act(async () => {
-                  await writeQaFence({
-                    action: "clear",
-                    expectedRevision: state.qaFence.revision,
-                    caller: "operator (board)",
-                  });
-                  await refetchState();
-                })
-              }
-            />
-          )}
           {Boolean(error || readError) && (
             <View style={{ ...row, flexWrap: "nowrap" }}>
               <Text accessibilityRole="alert" style={{ color: c.statusDanger, flex: 1 }}>

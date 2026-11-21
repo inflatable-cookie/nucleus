@@ -4,24 +4,13 @@ import {
   PROCESS_TERMINATION_GRACE_MAX_MS,
 } from "./validation";
 
-/** Spec 022: permanent settings for one repository. */
-/**
- * Spec 033: the separate GitHub reviewer identity a repository opts into for
- * formal PR reviews. The login is the review author Queue verifies; the token
- * itself lives only in the macOS login keychain and is never stored here.
- */
-/**
- * Spec 022 / #104: the milestone QA command `project.qa.run` uses. It is separate from
- * `validation`, which also runs on every task's prospective merge, so a repository can
- * set its own milestone command without bringing back per-task full QA (Tom, 2026-09-30).
- */
-/** Task 1286: one QA timeout and a staged run's stage total may each run up to 6 hours, so a long milestone stage is never capped at 2 hours. */
+/** Legacy execution bounds remain part of stored QA configuration and run decoding. */
 export const PROJECT_QA_TIMEOUT_MAX_MS = 21_600_000;
 
 /** Bound on one stream's retained bytes when the setting names no cap. */
 export const PROJECT_QA_DEFAULT_MAX_OUTPUT_BYTES = 65_536;
 
-/** A staged milestone QA accepts at most this many ordered stages. */
+/** A staged QA setting accepts at most this many ordered stages. */
 export const PROJECT_QA_STAGE_MAX = 8;
 
 /** Stage names are slug-shaped so they can name a step and a log file safely. */
@@ -70,7 +59,7 @@ export const projectQaScheduleSchema = z
 
 export const projectQaSchema = z
   .object({
-    /** Explicit opt-in; omission or null disables automatic milestone admission. */
+    /** Stored schedules are inert. The repository write route accepts null to clear one. */
     schedule: projectQaScheduleSchema.nullable().optional(),
     argv: z
       .array(z.string().max(4096))
@@ -96,7 +85,7 @@ export const projectQaSchema = z
       .min(0)
       .max(PROCESS_TERMINATION_GRACE_MAX_MS)
       .default(DEFAULT_PROCESS_TERMINATION_GRACE_MS),
-    /** When present this replaces the single argv/timeoutMs; the run records each stage as its own step. */
+    /** Ordered validation evidence commands, with execution details retained for legacy rows. */
     stages: z
       .array(projectQaStageSchema)
       .min(1)

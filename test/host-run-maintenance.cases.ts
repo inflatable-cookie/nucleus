@@ -1,3 +1,4 @@
+import { seedLegacyQaRun } from "./support/legacy-qa";
 import { observeIdle } from './support/fakes';
 /**
  * Audit A7 (2026-10-25 performance audit, main at d5e20937): the endpoint's 30 s
@@ -684,7 +685,7 @@ test('verified Project QA ownership clears the milestone false positive and noth
   // The live shape: an authentic launched milestone run, its QA record, and an
   // empty generic run directory (QA writes its own step logs instead).
   writeRun(f.store, qaSettledRun('milestone-1'));
-  f.store.putQaRun(qaRecord('milestone-1'));
+  seedLegacyQaRun(f.store, qaRecord('milestone-1'));
   emptyRunDirectory(f.stateDir, 'milestone-1');
   const logs = writeQaLogs('milestone-1');
 
@@ -709,7 +710,7 @@ test('a recorded milestone false positive is cleared only by exact verified owne
     streams: absent,
   });
   writeRun(f.store, qaSettledRun('milestone-clear'));
-  f.store.putQaRun(qaRecord('milestone-clear'));
+  seedLegacyQaRun(f.store, qaRecord('milestone-clear'));
   emptyRunDirectory(f.stateDir, 'milestone-clear');
   plant('milestone-clear');
 
@@ -768,12 +769,12 @@ test('forged, missing, foreign and unreadable ownership keeps the failure visibl
   for (const entry of cases) {
     writeRun(f.store, entry.run);
     emptyRunDirectory(f.stateDir, entry.id);
-    if (entry.qa) f.store.putQaRun(entry.qa);
+    if (entry.qa) seedLegacyQaRun(f.store, entry.qa);
     plant(entry.id);
   }
   // A QA-owned run that nonetheless has a generic stream is contradictory evidence.
   writeRun(f.store, qaSettledRun('contradictory-stream'));
-  f.store.putQaRun(qaRecord('contradictory-stream'));
+  seedLegacyQaRun(f.store, qaRecord('contradictory-stream'));
   const contradictory = emptyRunDirectory(f.stateDir, 'contradictory-stream');
   writeFileSync(join(contradictory, 'stdout'), 'generic output\n', { mode: 0o600 });
   plant('contradictory-stream');

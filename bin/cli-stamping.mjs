@@ -176,16 +176,6 @@ export const STAMPING_RULES = [
       return stamp(input, 'caller', context);
     },
   },
-  // QA is submitted by the calling thread, with the request id the retry contract needs.
-  {
-    matches: (method, input) => method === 'project.qa.run' && isRecord(input),
-    apply: async (input, context) => {
-      input.requestId ??= context.newRequestId();
-      input.submitterAgentId = await context.callingThread();
-      context.onQaRequestId?.(input.requestId);
-      return input;
-    },
-  },
   // Spec 058 (task 540): the planner names itself, or the operator names one; the caller is the setter.
   {
     matches: method => method === 'project.set-planner',

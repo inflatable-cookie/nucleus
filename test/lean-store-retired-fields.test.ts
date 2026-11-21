@@ -1,3 +1,4 @@
+import { seedLegacyQaRun } from "./support/legacy-qa";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
@@ -48,7 +49,7 @@ test('schema 54 strips the retired row fields and creation-step events on open',
       reviewScopeDigest: 'b'.repeat(64), formalReviewerLogin: 'reviewer-login' } as unknown as Run);
     // putQaRun and putOutcome parse strictly, so their retired fields go in as raw bytes —
     // exactly the shape an older build left on disk.
-    store.putQaRun(projectQaRunSchema.parse({ id: 'qa', repository: { origin: 'owner/repo', path: '/repo' }, key: '/repo', state: 'passed', baseBranch: 'main',
+    seedLegacyQaRun(store, projectQaRunSchema.parse({ id: 'qa', repository: { origin: 'owner/repo', path: '/repo' }, key: '/repo', state: 'passed', baseBranch: 'main',
       base: HEAD, argv: ['effigy', 'qa'], digest: 'c'.repeat(64), exitCode: 0, durationMs: 1, outputTail: '',
       startedAt: '2026-11-01T00:00:00.000Z', submittedAt: '2026-11-01T00:00:00.000Z', finishedAt: '2026-11-01T00:00:01.000Z',
       pid: null, capacityWait: null, capacityUnavailable: false, queuePosition: null, steps: [], failedStep: null,

@@ -30,31 +30,15 @@ scheduler ("A reservation settles when its recorded process is gone" below). The
 heavy-work strip is gone (Tom, 2026-11-01); a task's test run stays on its task
 card (2026-11-01: 464 leaked Effigy admission records had filled the strip).
 
-### Milestone QA cards (Tom, 2026-11-01)
-
-Each milestone QA run is a projected record (`core/qa/qa-board.ts`). After PR #403 (`inbox-board`), milestone QA is retired as a board surface: `shared/inbox-board.ts` filters `card.kind !== "qa"` out of every inbox view and nucleus#1498 removed the unmounted `QaRunCard` and `QaRunsTab` UI (Tom, 2026-11-21). During transition, legacy runs remain accessible and manageable through the `project.qa.list`, `project.qa.get`, `project.qa.cancel`, `project.qa.dismiss`, and `project.qa.retry-teardown` CLI/RPC verbs.
-Dismissal is `project.qa.dismiss { id, reason, caller }`: it records who
-dismissed which run and never deletes the record. Legacy stale/failed comparison continues in `core/qa/qa-board.ts`, while board `QaRunCard` UI is removed.
-
-Tom (2026-09-30): "Effigy should be the runtime that executes QA, Queue and
-Nucleus should manage who runs what when." Tom ruled the same day that heavy
-runs fail closed when the scheduler is unreachable (contract 010).
+[Milestone QA](../contracts/milestone-qa.md) runs as a report-only task.
+Generic host-run records and accounting are available through `host.run.list`
+and `host-run.board`.
 
 ## Live run presence: a terminal tab and a workspace label (task 530)
 
-While a test, QA or proof run is live the operator sees it where they work
-(Tom, 2026-11-01: "Both").
-
-**The tab.** Nucleus opens one terminal tab per workspace and selector, named for
-the run (`QA · qa:stage:rust`, `Testing · qa:changed`), in the workspace that
-owns it: a task run in the task's workspace, a milestone QA run in the project's
-main checkout workspace, because its private QA checkout is not a sidebar
-workspace. Nucleus places a tab only in a workspace that is already open and
-not archived. It never opens or unarchives a workspace for one. When no such
-workspace exists, the run still goes ahead and its live output stays on the board
-(Tom, 2026-11-19, agreeing to stop reopening an archived checkout workspace for
-every QA run; this replaces the 2026-11-01 "Open one" rule). A task run never
-opens a workspace either: the task's own workspace is the only place it belongs.
+**The tab.** Nucleus adds a terminal tab for each live selector in an open
+workspace. A task run uses the task's workspace. Other host runs can use an
+open workspace for their recorded checkout.
 The tab runs `bin/queue-run-terminal.mjs` against a pointer file
 Nucleus writes under `<dataDir>/run-terminal/`. Nucleus launches it through
 `/usr/bin/env` with `ELECTRON_RUN_AS_NODE=1`, so it also runs under Paseo's
@@ -65,19 +49,13 @@ opening another, so Nucleus leaves no stream of dead tabs behind. If the followe
 tab exits during a run, Nucleus logs that once and does not reopen it for that run
 session; a later run session gets a fresh attempt.
 
-**The live log.** A client-protocol run is followed through the retained
-`runs/<id>/stdout` and `stderr` its supervisor writes. A Nucleus-submitted run had
-no such files: each detached supervisor now tees every output chunk to a per-run
-live log beside its own supervision files —
-`project-validation/<hash>/live.log` and `<qa root>/<run id>.live.log` — capped at
-512 KiB with the most recent bytes kept, and redacting the run's token across
-chunk boundaries. The live log is a window, never the record: the step logs and
-the result envelope stay authoritative.
+**The live log.** Client-protocol runs follow the retained stdout and stderr.
+Project validation follows its own capped and redacted live log at
+`project-validation/<hash>/live.log`.
 
-**The label.** A workspace with a live milestone QA run carries the amber
-"QA running" label; one with a live task, proof or other run carries the violet
-"Testing" label. Both clear when the run settles. The workspace title belongs to
-the operator and is never touched.
+**The label.** A workspace with a live run carries the violet "Testing" label.
+The service clears it after settlement and removes legacy "QA running" labels
+from open workspaces.
 
 **Reconciliation.** One pass runs every two seconds from the live run set, for
 launched runs only: a queued run has no live output to follow yet. Every pass
@@ -2289,9 +2267,6 @@ the same day took signals by hand, and Nucleus recorded the cancel as `failed`.
   "only the listed env"; this changes no protocol policy, and any wording change
   goes to Nucleus.
 - **Cancel.**
-  - **Milestone QA.** A new `project.qa.cancel { id, reason }` RPC, CLI and UI
-    button requests idempotent cancellation through the stop path, runs teardown
-    and settles the run `cancelled`. A cancelled run is distinct from `failed`.
   - **Project validation.** It cancels with its task: the task's cancel and
     hold controls stop a live validation the same way.
   - **Client left before launch** (papercut 19676b0f; Tom, 2026-10-21,
@@ -2636,14 +2611,8 @@ the same day took signals by hand, and Nucleus recorded the cancel as `failed`.
   `adopt_running`, launch, escape, classification, container reports and
   settlement.
 - **Operator view.**
-  - **Board runs surface retired (PR #403, nucleus#1498).** PR #403 removed the
-    QA runs tab from board navigation ("QA runs tab is gone", Spec 026) and
-    filtered `card.kind !== "qa"` out of the inbox board; nucleus#1498 deleted the
-    unmounted `QaRunsTab` and `QaRunCard` UI components (Tom, 2026-11-21). Host
-    run records and retired-accounting reads remain exposed over the `host.run`
-    and `project.qa` RPC/CLI endpoints (`project.qa.list`, `project.qa.get`,
-    `project.qa.cancel`, `project.qa.dismiss`, `project.qa.retry-teardown`,
-    `host-run.board`).
+  - **Host-run evidence.** Read generic run and capacity state with `host.run.list`
+    and `host-run.board`.
   - **Task detail.** A task's validation shows "Waiting for QA capacity
     (position N)" from Nucleus's own scheduler, not from Effigy's status.
 

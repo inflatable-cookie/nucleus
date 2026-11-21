@@ -548,7 +548,7 @@ test("Settings override removal stays locked across tab switches, distinguishes 
         },
         plannerLive: null,
         plannerTicket: null,
-        latestQa: null,
+
         problems: [],
       },
     ],
