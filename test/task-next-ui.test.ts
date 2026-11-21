@@ -474,9 +474,16 @@ test("a verb with fill fields requires them before submit and reports refusals i
     const tree = mountBoard(invoke);
     mounted = tree;
     await settle(() => tree.text().includes("Revise me"));
-    // A stopped task's card carries the stop-category badge; the progressing one carries none.
-    await settle(() => Boolean(tree.query("Stop: Incident")));
-    assert.equal(tree.all("Stop: Incident").length, 1);
+    // The stop category moved off the row into the task detail's header (nucleus#1515);
+    // the stopped row still names it in its accessible label.
+    await settle(() =>
+      Boolean(tree.query(/, Stopped mid-flight, .*, Incident/)),
+    );
+    assert.equal(
+      tree.all("Stop: Incident").length,
+      0,
+      "the row draws no stop badge",
+    );
     tree.press(/Revise me/);
     await settle(() =>
       tree.text().includes("No stop or wait; the task is progressing."),
@@ -732,7 +739,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       roles: ["worker", "reviewer"],
       weight: "default",
       scopes: ["general"],
-      
+
       capability: "frontier",
     },
     {
@@ -742,7 +749,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       roles: ["worker", "reviewer"],
       weight: "default",
       scopes: ["general"],
-      
+
       capability: "frontier",
     },
     {
@@ -752,7 +759,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       roles: ["coordinator"],
       weight: "default",
       scopes: ["general"],
-      
+
       capability: "frontier",
     },
     {
@@ -762,7 +769,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       roles: ["reviewer"],
       weight: "default",
       scopes: ["complex"],
-      
+
       capability: "frontier",
     },
   ];
@@ -992,7 +999,7 @@ test("Spec 052: bundled dark choosers name an unavailable subscription group ins
       roles: ["worker", "reviewer"],
       weight: "default",
       scopes: ["general"],
-      
+
       capability: "frontier",
     },
   ];

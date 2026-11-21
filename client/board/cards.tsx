@@ -972,7 +972,7 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
   return (
     <View accessibilityLabel={`Held ${kind}: ${task.title}`}>
       <BoardCard
-        label={`${kindWord}: ${task.title}, ${project}, ${statusLabel(status)}`}
+        label={`${kindWord}: ${task.title}, ${project}, ${statusLabel(status)}${hold ? plainCardText(`, owner ${hold.owner}`) : ""}`}
         onPress={onPress}
         selected={selected}
         c={c}

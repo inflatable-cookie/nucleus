@@ -260,10 +260,11 @@ test("Spec 041 rows 7 and 8 rendered: an escalated drained lane is answered on t
   // Needs you is one list, and the drained-lane prompt names its kind (Tom, 2026-11-21).
   assert.ok(tree.get("Needs you list"), "Needs you is one list");
   assert.equal(
-    tree.ofType("Text").filter((node) => node.children.join("") === "Lane")
-      .length,
+    tree
+      .ofType("Text")
+      .filter((node) => node.children.join("") === "Lane drained").length,
     1,
-    "the drained-lane prompt draws the Lane kind label",
+    "the drained-lane prompt names its kind on line 1",
   );
   // Keep needs a reason: the confirm button stays disabled until one is typed.
   tree.press("Keep drained lane alpha");

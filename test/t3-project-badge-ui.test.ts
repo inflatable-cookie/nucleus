@@ -288,8 +288,8 @@ test("lead and papercut cards share TaskCard's badge rendering in dark and light
         }
         assert.match(leadUi.text(), /Lead/);
         assert.match(cutUi.text(), /Papercut/);
-        leadUi.press(/^Lead: Lead card, Status: Unchecked$/);
-        cutUi.press(/^Papercut: Papercut card, Status: Open$/);
+        leadUi.press(/^Lead: Lead card, Status: Unchecked · awaiting a check$/);
+        cutUi.press(/^Papercut: Papercut card, Status: Open · board$/);
         assert.deepEqual(opened, ["lead:lead-1", "papercut:cut-1"]);
       } finally {
         taskUi.update(h("View", null));
