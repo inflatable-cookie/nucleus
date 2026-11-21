@@ -356,7 +356,7 @@ export function ProfilesPanel({
         label="Stored profiles"
         status={quietSaveStatus(actionStatus) || null}
         endsInRow={profilesEndInRow}
-        description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor."
+        description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor. The usage bar shows each profile's share of recent assignments, up to the last 50 recorded."
         action={
           <View style={{ ...row, flexWrap: "nowrap" }}>
             <ActionButton

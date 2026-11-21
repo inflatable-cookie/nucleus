@@ -1800,3 +1800,165 @@ test("nucleus#1322: the model picker shows each model's name and its model ID, o
     ui.update(h("View", null));
   }
 });
+
+/** The fill width inside the usage bar labelled `label`. */
+const usageFillWidth = (
+  ui: ReturnType<typeof mount>,
+  label: string,
+): unknown => {
+  const container = ui.get(label) as Node;
+  const inner = (container.children.filter((c) => typeof c !== "string") as Node[])[0];
+  const track = (inner.children.filter((c) => typeof c !== "string") as Node[])[0];
+  const fill = (track.children.filter((c) => typeof c !== "string") as Node[])[0];
+  return (fill.props as { style: { width: unknown } }).style.width;
+};
+
+/** Profiles rows for the usage-bar tests: board order B, A, C with no stored profiles. */
+function usageTree(
+  recent: Record<string, number>,
+  compact = false,
+) {
+  const snapshot = {
+    ...board(),
+    profiles: (["b", "a", "c"] as const).map((id) => ({
+      id,
+      name: `Sol ${id.toUpperCase()}`,
+      provider: "codex",
+      model: "gpt-5",
+      notes: "",
+      available: true,
+      problem: "",
+      supportedThinking: [],
+    })),
+    pool: (["b", "a", "c"] as const).map((profileId) => ({
+      profileId,
+      group: "codex",
+      enabled: true,
+      roles: ["worker"],
+      weight: "default",
+      scopes: ["general"],
+    })),
+    recentAssignments: recent,
+  };
+  const invoke = async (method: string) => {
+    if (method === "queue.ui-snapshot") return snapshot;
+    if (method === "backup.list") return { snapshots: [], localError: null };
+    if (method === "repositories") return [];
+    if (method === "profile.list") return { profiles: [] };
+    if (method === "profile.compatibility") return { hosts: [], rows: [] };
+    if (method === "profile.vocabulary") return catalog;
+    return {};
+  };
+  return h(QueryClientProvider, {
+    client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    children: h(PluginRpcProvider, {
+      invoke,
+      children: h(settings.QueueSettingsScreen as never, {
+        theme: { colors: c },
+        host: { id: "host", label: "Host" },
+        layout: { compact, platform: "ios" as const },
+      }),
+    }),
+  });
+}
+
+for (const compact of [false, true])
+  test(`nucleus#1497: rows show recent-assignment usage on one common scale, order kept (${compact ? "narrow" : "wide"})`, async () => {
+    await load();
+    const { profileUsage, RECENT_ASSIGNMENT_WINDOW } = await import(
+      "../client/settings-profile-helpers"
+    );
+    assert.equal(RECENT_ASSIGNMENT_WINDOW, 50, "the bar reads the rotation window");
+    assert.deepEqual(
+      profileUsage(
+        {
+          recentAssignments: {
+            "profile:a": 6,
+            "profile:b": 1,
+            "profile:retired": 1,
+            anthropic: 8,
+          },
+        } as never,
+        "a",
+      ),
+      { count: 6, total: 8 },
+      "the denominator sums profile keys only, including rows no longer shown",
+    );
+    assert.equal(profileUsage(null, "a"), null, "no board, no bar");
+    const ui = mount(
+      usageTree({
+        "profile:a": 6,
+        "profile:b": 1,
+        "profile:retired": 1,
+        anthropic: 8,
+      }, compact),
+    );
+    try {
+      await settle(() => ui.text().includes("Profiles"));
+      ui.press("Profiles");
+      await settle(
+        () =>
+          Boolean(ui.query("Sol A recent assignments: 6 of 8")) &&
+          Boolean(ui.query("Sol C recent assignments: 0 of 8")),
+      );
+      assert.ok(
+        ui.query("Sol B recent assignments: 1 of 8"),
+        "the exact count and denominator ride the accessible name",
+      );
+      assert.equal(usageFillWidth(ui, "Sol A recent assignments: 6 of 8"), "75%");
+      assert.equal(usageFillWidth(ui, "Sol B recent assignments: 1 of 8"), "12.5%");
+      assert.equal(
+        usageFillWidth(ui, "Sol C recent assignments: 0 of 8"),
+        "0%",
+        "zero is a neutral empty track",
+      );
+      assert.match(ui.text(), /6\/8/, "the exact share also reads on the row");
+      const flat = ui.text();
+      assert.ok(
+        flat.indexOf("Sol B") < flat.indexOf("Sol A") &&
+          flat.indexOf("Sol A") < flat.indexOf("Sol C"),
+        "usage never reorders the rows",
+      );
+      for (const name of ["Sol A", "Sol B", "Sol C"])
+        assert.ok(ui.query(`Edit ${name}`), `${name} stays editable`);
+      assert.match(
+        String(
+          (ui.get("Profiles help") as Node).props.accessibilityHint ?? "",
+        ),
+        /up to the last 50 recorded/,
+        "the section help names the window once",
+      );
+    } finally {
+      ui.update(h("View", null));
+    }
+  });
+
+test("nucleus#1497: an empty sample reads as words on every row", async () => {
+  await load();
+  const ui = mount(usageTree({}));
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() =>
+      Boolean(ui.query("Sol A recent assignments: none yet")),
+    );
+    for (const name of ["Sol A", "Sol B", "Sol C"])
+      assert.ok(
+        ui.query(`${name} recent assignments: none yet`),
+        `${name} names the empty sample`,
+      );
+    assert.match(ui.text(), /No recent assignments yet/);
+    assert.equal(
+      ui.query(/recent assignments: \d+ of/),
+      undefined,
+      "no bar claims a share of nothing",
+    );
+    const flat = ui.text();
+    assert.ok(
+      flat.indexOf("Sol B") < flat.indexOf("Sol A"),
+      "row order holds with no data either",
+    );
+  } finally {
+    ui.update(h("View", null));
+  }
+});
