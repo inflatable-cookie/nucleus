@@ -29,6 +29,7 @@ import {
   type ProjectQaRun,
 } from "../shared/contracts";
 import { CAPACITY_WAIT_PREFIX } from "../shared/wait-state";
+import { toneSurface } from "../client/design";
 import { createTaskDetailCache } from "../core/telemetry/task-detail";
 import { leadFromPapercut } from "../shared/papercut-lead";
 import type { Papercut } from "../shared/contracts";
@@ -725,7 +726,11 @@ const closeRecord = (ui: ReturnType<typeof mount>, backdrop: string) =>
 
 /** Every themed color resolves to the dark palette (or a fixed overlay literal). */
 function assertDarkTheme(ui: ReturnType<typeof mount>) {
-  const palette: Set<string> = new Set(Object.values(dark));
+  // A kind tile's tint is a palette role at low alpha (nucleus#1515), derived, not a literal.
+  const palette: Set<string> = new Set([
+    ...Object.values(dark),
+    ...Object.values(dark).map((value) => toneSurface(value, value)),
+  ]);
   const visit = (node: HostNode) => {
     const styles = Array.isArray(node.props.style)
       ? node.props.style
@@ -915,7 +920,7 @@ async function verifyViewport(compact: boolean) {
     );
     openView(ui, "Leads");
     assert.equal(countText(ui, "Lead one"), 1);
-    ui.press("Triage: Lead one");
+    ui.press(/^Lead: Lead one, Status: /);
     await settleUntil(
       ui,
       () =>
@@ -933,7 +938,7 @@ async function verifyViewport(compact: boolean) {
     closeRecord(ui, "Close lead detail");
     assert.equal(ui.query("Lead detail"), undefined);
     openView(ui, "Papercuts");
-    ui.press("Triage: Cut one");
+    ui.press(/^Papercut: Cut one, Status: /);
     await settleUntil(
       ui,
       () =>
@@ -1040,7 +1045,7 @@ test("141 the bundled inbox distinguishes dispatch and merge holds in the dark t
       .ofType("Pressable")
       .find((node) =>
         String(node.props.accessibilityLabel).startsWith(
-          "app, Merge hold, Queued, Merge held",
+          "App, Merge hold, Queued, Merge held",
         ),
       );
     assert.ok(
@@ -1244,8 +1249,12 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
     await settle(ui);
     // Needs you is one list: four agent decisions and one Nucleus-raised merge hold, with the
     // attention tasks after them. Each card names its kind; there are no section headers (Tom, 2026-11-21).
+    // The escalated merge hold names its kind on line 1 and draws the hold tile.
     assert.equal(
-      countText(ui, "Hold"),
+      ui
+        .ofType("Text")
+        .filter((node) => /^Merge hold( · #\d+)?$/.test(node.children.join("")))
+        .length,
       1,
       "the escalated merge hold names its kind",
     );
@@ -1268,11 +1277,12 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       1,
       "the list header counts the same total",
     );
-    // A Triage lead card carries no decision chip any more (Tom, 2026-11-07): its card is title, kind, project and state.
+    // Each decision row names its kind once on line 1. Linked-decision chips moved to the
+    // task detail (nucleus#1515), and lead rows never carried one (Tom, 2026-11-07).
     assert.equal(
       countAcross(ui, "Decision"),
-      11,
-      `the four decision cards, each naming its kind, plus chips on the linked shared, unlaned and Project-D cards; project selector:${ui
+      4,
+      `the four decision rows, each naming its kind; project selector:${ui
         .all(/^Projects,/)
         .map((node) => node.props.accessibilityLabel)
         .join(", ")}; decisions: ${ui
@@ -1287,15 +1297,16 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       1,
       "the stale decision shows as stale, never hidden",
     );
+    // The hold row names its kind on line 1; the Nucleus-raised chip is in its task detail (nucleus#1515).
     assert.equal(
       countText(ui, "Nucleus-raised"),
-      1,
-      "the escalated merge hold is visible under Needs you",
+      0,
+      "the row leaves the Nucleus-raised chip to the detail",
     );
     assert.ok(ui.query("Held merge: Held reviewed task"));
     assert.match(
       ui.text(),
-      /Ready to merge, held for External receipt pending/,
+      /Ready to merge · held for External receipt pending/,
     );
     assert.ok(ui.get("Release"));
     assert.ok(ui.get("Keep"));
@@ -1308,23 +1319,10 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       1,
       "the General decision has its own project label",
     );
-    assert.equal(
-      countText(ui, "linked: project-d"),
-      1,
-      "the General decision hints at its linked task project",
-    );
     assert.match(
       ui.text(),
-      /Asked project-a-accelerator#5747 worker · 3h ago · 2 links/,
-      "the card names the task reference and role",
-    );
-    assert.ok(
-      ui
-        .text()
-        .includes(
-          "Task · project-a-accelerator#5747 · Close the F1 and F3 checks",
-        ),
-      "decision cards name linked tasks by reference and title",
+      /Your answer · asked by project-a-accelerator#5747 worker/,
+      "the row names the task reference and role that asked",
     );
     // The linked shared task is working, so its card is in Active.
     openView(ui, "Active");
@@ -1363,7 +1361,11 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       /Choose this direction|Accept the proposed direction/,
       "missing consequences never become placeholder filler",
     );
-    assert.match(ui.text(), /Cut from main\./);
+    assert.doesNotMatch(
+      ui.text(),
+      /Cut from main\./,
+      "the choices stay in the decision detail",
+    );
     assertDarkTheme(ui);
     // The decision modal starts with the compact question and choices; full details stay collapsed.
     ui.press(/^Decision: Which branch do we cut\?/);
@@ -1394,7 +1396,11 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       /release — Cut from release\./,
       "the other choice shows its consequence",
     );
-    assert.match(ui.text(), /Task · shared/);
+    // A linked task reads by its reference, title and project (nucleus#1515).
+    assert.match(
+      ui.text(),
+      /Task · project-a-accelerator#5747 · Close the F1 and F3 checks · App/,
+    );
     assert.match(ui.text(), /Lead · lead-1/);
     assert.equal(
       ui.get("Answer").props.accessibilityState.disabled,
@@ -1484,8 +1490,8 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
     assert.equal(countText(ui, "Stale"), 1);
     assert.equal(
       countAcross(ui, "Decision"),
-      5,
-      "the stale and General decision cards keep their chips and kind labels, as does the linked Project-D task",
+      2,
+      "the stale and General decision rows keep their kind on line 1",
     );
     openView(ui, "Needs you");
     assertDarkTheme(ui);
@@ -1497,15 +1503,9 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       ui.get(/^Projects, /).props.accessibilityLabel,
       "Projects, App",
     );
-    assert.equal(
-      countText(ui, "Hold"),
-      1,
+    assert.ok(
+      ui.query("Held merge: Held reviewed task"),
       "the project filter keeps the held merge under Needs you",
-    );
-    assert.equal(
-      countText(ui, "linked: project-d"),
-      1,
-      "the General task hint survives its linked project being filtered out",
     );
     assert.ok(
       ui.query("Needs you list"),
@@ -1517,8 +1517,8 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       "agent decisions remain under Needs you without a separate tab",
     );
     assert.ok(ui.query(/^Decision: Still worth splitting\?/));
+    // The General decision's linked projects read in its detail's Links (nucleus#1515).
     assert.ok(ui.query(/^Decision: Where should this decision live\?/));
-    assert.equal(countText(ui, "linked: project-d"), 1);
     assertDarkTheme(ui);
   } finally {
     board.projects = originalProjects;
@@ -1895,7 +1895,7 @@ test("026-15a bundled inbox records run each action and report in their detail",
       "the 15a Leads list did not render",
     );
     assert.equal(ui.query("Promote"), undefined);
-    ui.press("Triage: Lead one");
+    ui.press(/^Lead: Lead one, Status: /);
     await settleUntil(
       ui,
       () => ui.text().includes("Brief missing queue.lane"),
@@ -1938,7 +1938,7 @@ test("026-15a bundled inbox records run each action and report in their detail",
       /Only open leads can be dropped; this lead is promoted/,
     );
     closeRecord(ui, "Close lead detail");
-    ui.press("Triage: Lead drop");
+    ui.press(/^Lead: Lead drop, Status: /);
     await settleUntil(
       ui,
       () => ui.query("More actions") !== undefined,
@@ -1959,7 +1959,7 @@ test("026-15a bundled inbox records run each action and report in their detail",
     );
     closeRecord(ui, "Close lead detail");
     openView(ui, "Papercuts");
-    ui.press("Triage: Cut one");
+    ui.press(/^Papercut: Cut one, Status: /);
     await settleUntil(
       ui,
       () =>
@@ -2089,7 +2089,8 @@ test("043 (a) the bundled inbox labels every declared wait state with owner and 
   const labels = [
     "Waiting for capacity",
     "Waiting for prerequisite",
-    "Waiting on you · operator decision",
+    // The status line's state; its detail reads "· operator decision" beside it.
+    "Waiting on you",
     "Needs source rights",
     "Merge hold",
   ] as const;
@@ -2107,7 +2108,7 @@ test("043 (a) the bundled inbox labels every declared wait state with owner and 
         "the wait-state merge hold replaces the duplicate Spec 040 badge",
       );
       const card = findCard(ui, (label) =>
-        label.startsWith("app, Capacity wait, Queued, Waiting for capacity"),
+        label.startsWith("App, Capacity wait, Queued, Waiting for capacity"),
       );
       assert.ok(card, "the card label names the wait state");
       const badge = ui
@@ -2247,7 +2248,7 @@ test("043 (a) bundled dark-theme task detail names the derived wait, its owner a
     try {
       await settle(ui);
       const waitCard = findCard(ui, (label) =>
-        label.startsWith("app, Wait detail, Queued, Waiting for capacity"),
+        label.startsWith("App, Wait detail, Queued, Waiting for capacity"),
       );
       assert.ok(waitCard, "the capacity wait card remains available");
       waitCard!.props.onPress();

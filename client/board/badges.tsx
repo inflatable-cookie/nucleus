@@ -1,26 +1,71 @@
 import { Text, View } from "react-native";
 import { Icon } from "../shell";
 import { muted, row, type Colors } from "../controls";
-import type { HeavyRunView, HoldKind, TaskSummary } from "../../shared/contracts";
-import { holdBadgeTone, recordBadgeTone, stopBadgeTone, type BadgeTone } from "../../shared/badge-tones";
+import type {
+  HeavyRunView,
+  HoldKind,
+  TaskSummary,
+} from "../../shared/contracts";
+import {
+  holdBadgeTone,
+  recordBadgeTone,
+  stopBadgeTone,
+  type BadgeTone,
+} from "../../shared/badge-tones";
 import { waitStateLabels } from "../../shared/wait-state";
-import { taskWaitCardLabel, waitOwnerLabel } from "../../shared/task-detail-summary";
-import { plainCardText, type DisplayTask, attention, holdKindLabel, presentHoldKinds, stopBadgeLabel, budgetFields, budgetSummary, interactiveBadgeLabel, elapsedRun } from "./text";
-import { pullRequestBadge, pullRequestBadgeLabel, pullRequestNumberLabel } from "../../shared/pull-request-badge";
+import {
+  taskWaitCardLabel,
+  waitOwnerLabel,
+} from "../../shared/task-detail-summary";
+import {
+  plainCardText,
+  type DisplayTask,
+  attention,
+  holdKindLabel,
+  presentHoldKinds,
+  stopBadgeLabel,
+  budgetFields,
+  budgetSummary,
+  interactiveBadgeLabel,
+  elapsedRun,
+} from "./text";
+import {
+  pullRequestBadge,
+  pullRequestBadgeLabel,
+  pullRequestNumberLabel,
+} from "../../shared/pull-request-badge";
 import { useTick } from "../use-tick";
 import { roles, space, type as typeScale, radius } from "../design";
 
 export function HoldBadge({ kind, c }: { kind: HoldKind; c: Colors }) {
   const label = holdKindLabel(kind);
-  return <Badge label={label} tone={holdBadgeTone(kind)} c={c} bold a11y={label} />;
+  return (
+    <Badge label={label} tone={holdBadgeTone(kind)} c={c} bold a11y={label} />
+  );
 }
-export function HoldChips({ task, c, decisionTitle }: { task: DisplayTask; c: Colors; decisionTitle?: string | null }) {
+export function HoldChips({
+  task,
+  c,
+  decisionTitle,
+}: {
+  task: DisplayTask;
+  c: Colors;
+  decisionTitle?: string | null;
+}) {
   const wait = task.waitState;
-  const kinds = presentHoldKinds(task).filter(kind => !(wait?.state === "merge_hold" && kind === "merge"));
-  return <>
-    {wait ? <WaitBadge wait={wait} c={c} decisionTitle={decisionTitle} /> : null}
-    {kinds.map(kind => <HoldBadge key={kind} kind={kind} c={c} />)}
-  </>;
+  const kinds = presentHoldKinds(task).filter(
+    (kind) => !(wait?.state === "merge_hold" && kind === "merge"),
+  );
+  return (
+    <>
+      {wait ? (
+        <WaitBadge wait={wait} c={c} decisionTitle={decisionTitle} />
+      ) : null}
+      {kinds.map((kind) => (
+        <HoldBadge key={kind} kind={kind} c={c} />
+      ))}
+    </>
+  );
 }
 /**
  * Spec 043 (a): the explicit wait badge. The visible label names the state; the
@@ -28,11 +73,36 @@ export function HoldChips({ task, c, decisionTitle }: { task: DisplayTask; c: Co
  * who acts and what clears it. A merge hold renders here instead of the Spec 040
  * `Merge held` badge: both state the same fact, and the wait state owns it once.
  */
-function WaitBadge({ wait, c, decisionTitle }: { wait: NonNullable<TaskSummary['waitState']>; c: Colors; decisionTitle?: string | null }) {
+function WaitBadge({
+  wait,
+  c,
+  decisionTitle,
+}: {
+  wait: NonNullable<TaskSummary["waitState"]>;
+  c: Colors;
+  decisionTitle?: string | null;
+}) {
   const plainWait = taskWaitCardLabel(wait, decisionTitle);
   const label = plainWait ? "Waiting on you" : waitStateLabels[wait.state];
-  const tone: BadgeTone = wait.state === 'needs_operator_input' || wait.state === 'needs_source_rights' ? 'warning' : wait.state === 'merge_hold' ? 'accent' : 'neutral';
-  return <Badge label={label} tone={tone} c={c} bold a11y={plainWait ?? `Wait state: ${label}; owner ${waitOwnerLabel(wait.owner)}; next ${wait.nextAction}`} />;
+  const tone: BadgeTone =
+    wait.state === "needs_operator_input" ||
+    wait.state === "needs_source_rights"
+      ? "warning"
+      : wait.state === "merge_hold"
+        ? "accent"
+        : "neutral";
+  return (
+    <Badge
+      label={label}
+      tone={tone}
+      c={c}
+      bold
+      a11y={
+        plainWait ??
+        `Wait state: ${label}; owner ${waitOwnerLabel(wait.owner)}; next ${wait.nextAction}`
+      }
+    />
+  );
 }
 /**
  * nucleus#1313 (Tom, 2026-11-17): the PR is the standard icon plus `#39` in the
@@ -40,54 +110,238 @@ function WaitBadge({ wait, c, decisionTitle }: { wait: NonNullable<TaskSummary['
  * The mapping is `shared/pull-request-badge.ts`, shared with the BB sidebar's
  * task-group chip so the two surfaces cannot drift.
  */
-export function PullRequestBadge({task,state,c,small=false,flag=false}:{task:DisplayTask;state?:"OPEN"|"CLOSED"|"MERGED";c:Colors;small?:boolean;flag?:boolean}) {
-  if(!task.prUrl)return null;
-  const status=task.resolution.mergedCommit?"MERGED":state;
+export function PullRequestBadge({
+  task,
+  state,
+  c,
+  small = false,
+  flag = false,
+}: {
+  task: DisplayTask;
+  state?: "OPEN" | "CLOSED" | "MERGED";
+  c: Colors;
+  small?: boolean;
+  flag?: boolean;
+}) {
+  if (!task.prUrl) return null;
+  const status = task.resolution.mergedCommit ? "MERGED" : state;
   // Terminal PR state takes precedence over task attention.
-  const badge = pullRequestBadge({state:status ?? null, blocked: attention(task)});
+  const badge = pullRequestBadge({
+    state: status ?? null,
+    blocked: attention(task),
+  });
   // Merged, closed, blocked and open read as the matching theme role: the board
   // carries no GitHub palette of its own.
   const r = roles(c);
-  const color = badge.tone==="accent" ? r.accent : badge.tone==="danger" ? r.danger : badge.tone==="warning" ? r.warning : badge.tone==="success" ? (r.success ?? r.accent) : c.foregroundMuted;
-  const completionNumber = "completionPrNumber" in task ? task.completionPrNumber : "completion" in task ? task.completion?.prNumber ?? undefined : undefined;
-  const number=task.resumePrNumber??completionNumber??task.prUrl.match(/\/pull\/(\d+)/)?.[1];
-  return <View accessible accessibilityLabel={pullRequestBadgeLabel(number, badge)} style={flag ? {flexDirection:"row",alignItems:"center",gap:space.xxs,paddingHorizontal:space.xs,paddingVertical:space.xxs / 2,borderRadius:radius.control,backgroundColor:c.surface2,borderWidth:1,borderColor:c.border} : {flexDirection:"row",alignItems:"center",gap:space.xxs}}>
-    <Icon name={badge.icon} size={small?12:14} color={color}/>
-    <Text style={{fontSize:small?typeScale.metadata.fontSize:typeScale.body.fontSize,color}}>{pullRequestNumberLabel(number)}</Text>
-  </View>;
+  const color =
+    badge.tone === "accent"
+      ? r.accent
+      : badge.tone === "danger"
+        ? r.danger
+        : badge.tone === "warning"
+          ? r.warning
+          : badge.tone === "success"
+            ? (r.success ?? r.accent)
+            : c.foregroundMuted;
+  const completionNumber =
+    "completionPrNumber" in task
+      ? task.completionPrNumber
+      : "completion" in task
+        ? (task.completion?.prNumber ?? undefined)
+        : undefined;
+  const number =
+    task.resumePrNumber ??
+    completionNumber ??
+    task.prUrl.match(/\/pull\/(\d+)/)?.[1];
+  return (
+    <View
+      accessible
+      accessibilityLabel={pullRequestBadgeLabel(number, badge)}
+      style={
+        flag
+          ? {
+              flexDirection: "row",
+              alignItems: "center",
+              gap: space.xxs,
+              paddingHorizontal: space.xs,
+              paddingVertical: space.xxs / 2,
+              borderRadius: radius.control,
+              backgroundColor: c.surface2,
+              borderWidth: 1,
+              borderColor: c.border,
+            }
+          : { flexDirection: "row", alignItems: "center", gap: space.xxs }
+      }
+    >
+      <Icon name={badge.icon} size={small ? 12 : 14} color={color} />
+      <Text
+        style={{
+          fontSize: small
+            ? typeScale.metadata.fontSize
+            : typeScale.body.fontSize,
+          color,
+        }}
+      >
+        {pullRequestNumberLabel(number)}
+      </Text>
+    </View>
+  );
 }
 /** The theme colour for a badge tone; neutral keeps the muted badge. */
 function toneColor(tone: BadgeTone, c: Colors) {
-  return tone === "danger" ? c.statusDanger : tone === "success" ? c.statusSuccess : tone === "warning" ? c.statusWarning : tone === "accent" ? c.accent : null;
+  return tone === "danger"
+    ? c.statusDanger
+    : tone === "success"
+      ? c.statusSuccess
+      : tone === "warning"
+        ? c.statusWarning
+        : tone === "accent"
+          ? c.accent
+          : null;
 }
 /** A card badge: toned badges carry their colour on text and outline over the usual surface. */
-export function Badge({ label, tone, c, bold = false, a11y }: { label: string; tone: BadgeTone; c: Colors; bold?: boolean; a11y?: string }) {
+export function Badge({
+  label,
+  tone,
+  c,
+  bold = false,
+  a11y,
+}: {
+  label: string;
+  tone: BadgeTone;
+  c: Colors;
+  bold?: boolean;
+  a11y?: string;
+}) {
   const color = toneColor(tone, c);
-  return <View accessible={Boolean(a11y)} accessibilityLabel={a11y ? plainCardText(a11y) : undefined} style={{maxWidth:'100%',paddingHorizontal:space.xs,paddingVertical:space.xxs / 2,borderRadius:radius.control,backgroundColor:c.surface2,borderWidth:1,borderColor:color??c.surface2}}>
-    <Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:typeScale.metadata.fontSize,...(color?{color}:{}),...(bold?{fontWeight:'600' as const}:{})}}>{plainCardText(label)}</Text></View>;
+  return (
+    <View
+      accessible={Boolean(a11y)}
+      accessibilityLabel={a11y ? plainCardText(a11y) : undefined}
+      style={{
+        maxWidth: "100%",
+        paddingHorizontal: space.xs,
+        paddingVertical: space.xxs / 2,
+        borderRadius: radius.control,
+        backgroundColor: c.surface2,
+        borderWidth: 1,
+        borderColor: color ?? c.surface2,
+      }}
+    >
+      <Text
+        numberOfLines={1}
+        ellipsizeMode="tail"
+        style={{
+          ...muted(c),
+          fontSize: typeScale.metadata.fontSize,
+          ...(color ? { color } : {}),
+          ...(bold ? { fontWeight: "600" as const } : {}),
+        }}
+      >
+        {plainCardText(label)}
+      </Text>
+    </View>
+  );
 }
-export function RecordChips({chips,c}:{chips:string[];c:Colors}) {
-  if(!chips.length)return null;
-  return <View style={{...row,gap:space.xs,flexWrap:'wrap'}}>{chips.map(chip=><Badge key={chip} label={chip} tone={recordBadgeTone(chip)} c={c}/>)}</View>;
+export function RecordChips({ chips, c }: { chips: string[]; c: Colors }) {
+  if (!chips.length) return null;
+  return (
+    <View style={{ ...row, gap: space.xs, flexWrap: "wrap" }}>
+      {chips.map((chip) => (
+        <Badge key={chip} label={chip} tone={recordBadgeTone(chip)} c={c} />
+      ))}
+    </View>
+  );
 }
-export function StopBadge({ task, c }: { task: Pick<TaskSummary, "stop">; c: Colors }) {
+export function StopBadge({
+  task,
+  c,
+}: {
+  task: Pick<TaskSummary, "stop">;
+  c: Colors;
+}) {
   const label = stopBadgeLabel(task.stop);
   if (!label || !task.stop) return null;
-  return <Badge label={label} tone={stopBadgeTone(task.stop)} c={c} a11y={`Stop: ${label}`} />;
+  return (
+    <Badge
+      label={label}
+      tone={stopBadgeTone(task.stop)}
+      c={c}
+      a11y={`Stop: ${label}`}
+    />
+  );
 }
-export function BudgetBadge({ task, c }: { task: Pick<TaskSummary, "budget">; c: Colors }) {
+export function BudgetBadge({
+  task,
+  c,
+}: {
+  task: Pick<TaskSummary, "budget">;
+  c: Colors;
+}) {
   if (!task.budget) return null;
   const exhausted = budgetFields(task.budget).exhausted;
   const label = `Budget ${budgetSummary(task.budget)}`;
-  return <Badge label={label} tone={exhausted ? "warning" : "neutral"} c={c} a11y={exhausted ? `${label}, reached` : label} />;
+  return (
+    <Badge
+      label={label}
+      tone={exhausted ? "warning" : "neutral"}
+      c={c}
+      a11y={exhausted ? `${label}, reached` : label}
+    />
+  );
 }
-export function InteractiveBadge({ task, c }: { task: Pick<TaskSummary, "interactive" | "stopRecord" | "phase">; c: Colors }) {
+export function InteractiveBadge({
+  task,
+  c,
+}: {
+  task: Pick<TaskSummary, "interactive" | "stopRecord" | "phase">;
+  c: Colors;
+}) {
   const label = interactiveBadgeLabel(task);
-  return label ? <Badge label={label} tone={task.stopRecord?.reason === "interactive" ? "warning" : "accent"} c={c} a11y={label} /> : null;
+  return label ? (
+    <Badge
+      label={label}
+      tone={task.stopRecord?.reason === "interactive" ? "warning" : "accent"}
+      c={c}
+      a11y={label}
+    />
+  ) : null;
 }
-export function HeavyRunStatus({run,c,detail=false}:{run:HeavyRunView;c:Colors;detail?:boolean}) {
+export function HeavyRunStatus({
+  run,
+  c,
+  detail = false,
+}: {
+  run: HeavyRunView;
+  c: Colors;
+  detail?: boolean;
+}) {
   useTick(30_000);
-  return <View style={{gap:space.xxs / 2}}><Text numberOfLines={1} accessibilityLabel={detail?"Heavy run status":undefined} style={{color:c.statusWarning,fontSize:typeScale.metadata.fontSize,lineHeight:typeScale.metadata.lineHeight,fontWeight:'600'}}>
-    {run.state==='queued'?`Waiting for QA capacity · position ${run.position??'—'}`:`Testing: ${run.selector} · ${elapsedRun(run.launchedAt??run.submittedAt)}`}{run.holder?` · behind ${run.holder}`:''}
-  </Text>{!detail&&<Text numberOfLines={1} style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{run.selector}</Text>}</View>;
+  return (
+    <View style={{ gap: space.xxs / 2 }}>
+      <Text
+        numberOfLines={1}
+        accessibilityLabel={detail ? "Heavy run status" : undefined}
+        style={{
+          color: c.statusWarning,
+          fontSize: typeScale.metadata.fontSize,
+          lineHeight: typeScale.metadata.lineHeight,
+          fontWeight: "600",
+        }}
+      >
+        {run.state === "queued"
+          ? `Waiting for QA capacity · position ${run.position ?? "—"}`
+          : `Testing: ${run.selector} · ${elapsedRun(run.launchedAt ?? run.submittedAt)}`}
+        {run.holder ? ` · behind ${run.holder}` : ""}
+      </Text>
+      {!detail && (
+        <Text
+          numberOfLines={1}
+          style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+        >
+          {run.selector}
+        </Text>
+      )}
+    </View>
+  );
 }

@@ -104,7 +104,13 @@ export const cardRow = {
   tile: 28,
   tileIcon: 14,
   dot: 6,
-  projectMark: { height: 16, maxWidth: 32, paddingX: 3, radius: 4, fontSize: 8 },
+  projectMark: {
+    height: 16,
+    maxWidth: 32,
+    paddingX: 3,
+    radius: 4,
+    fontSize: 8,
+  },
 } as const;
 
 /** Overlay colours that are structure, not theme roles: the modal scrim and popover shadow. */

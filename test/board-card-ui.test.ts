@@ -414,10 +414,10 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
 
     // Long content: the full title stays in the accessible label, and the visible title is capped at two lines.
     assert.ok(
-      tree.query(new RegExp(`^app, ${LONG_TITLE.slice(0, 40)}`)),
+      tree.query(new RegExp(`^App, ${LONG_TITLE.slice(0, 40)}`)),
       "the accessible label names the whole task",
     );
-    const stoppedLabel = tree.query(/^app, stopped,/)?.props
+    const stoppedLabel = tree.query(/^App, stopped,/)?.props
       .accessibilityLabel as string;
     assert.match(stoppedLabel, /Operator decides whether to restart/);
     assert.match(stoppedLabel, /Action: open task details/);
@@ -467,7 +467,7 @@ test("the card lays out the same content at a narrow and a wide board", async ()
       );
       const label = compact ? "narrow" : "wide";
       assert.ok(
-        tree.query(/^app, Board cards keep the title/),
+        tree.query(/^App, Board cards keep the title/),
         `the ${label} card keeps its accessible label`,
       );
       assert.match(
@@ -481,7 +481,7 @@ test("the card lays out the same content at a narrow and a wide board", async ()
         `the ${label} card keeps the error next action`,
       );
       assert.equal(
-        emptyChipRows(tree.get(/^app, Board cards keep the title/) as HostNode),
+        emptyChipRows(tree.get(/^App, Board cards keep the title/) as HostNode),
         0,
         `the ${label} card has no empty chips row`,
       );
@@ -623,15 +623,15 @@ test("a card with nothing to show renders no empty chips row, and its state line
       invokeWith(snapshot, async () => ({ tasks: [], hasMore: false })),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query(/^app, empty-card,/)));
-    const card = tree.query(/^app, empty-card,/) as HostNode;
+    await settle(() => Boolean(tree.query(/^App, empty-card,/)));
+    const card = tree.query(/^App, empty-card,/) as HostNode;
     assert.equal(
       emptyChipRows(card),
       0,
       "a suppressed stop leaves no empty chips row",
     );
     assert.ok(
-      tree.query(/^app, empty-card, Attention/),
+      tree.query(/^App, empty-card, Attention/),
       "the accessible label still says what is happening",
     );
   } finally {
@@ -780,10 +780,10 @@ test("waits, holds and progress stops use operator words in visible and accessib
       assert.match(tree.text(), /\d+d ago/);
       assert.ok(
         !tree
-          .query(/^app, progress,/)
+          .query(/^App, progress,/)
           ?.props.accessibilityLabel?.includes("no owner verb"),
       );
-      const prerequisiteLabel = tree.query(/^app, dependency,/)?.props
+      const prerequisiteLabel = tree.query(/^App, dependency,/)?.props
         .accessibilityLabel as string;
       assert.ok(
         prerequisiteLabel.includes(
@@ -798,7 +798,7 @@ test("waits, holds and progress stops use operator words in visible and accessib
       );
       assert.ok(
         tree
-          .query(/^app, progress,/)
+          .query(/^App, progress,/)
           ?.props.accessibilityLabel?.includes(
             "Waiting: lifecycle: Reviewer continuing from checkpoint 2",
           ),
@@ -940,7 +940,7 @@ test("every task and decision card keeps stored IDs and hashes out of visible an
         compact,
       );
       const tree = mounted;
-      await settle(() => Boolean(tree.query(/^app, reason-card,/)));
+      await settle(() => Boolean(tree.query(/^App, reason-card,/)));
       const raw = new RegExp(
         `(?:${uuid}|\\b[0-9a-f]{40}\\b|\\b[0-9a-f]{64}\\b)`,
         "i",
@@ -1120,7 +1120,7 @@ test("a long shell command card shows only its recorded elapsed time", async () 
       const tree = mounted;
       await settle(() => tree.text().includes("Long shell command"));
       assert.match(tree.text(), /Long shell command · 26m/);
-      const label = tree.query(/^app, long-command,/)?.props
+      const label = tree.query(/^App, long-command,/)?.props
         .accessibilityLabel as string;
       assert.match(label, /Long shell command · 26m/);
       assert.ok(!label.includes("TMPDIR="));
@@ -1181,7 +1181,7 @@ test("the card keeps two-line titles, drops the repository and phase chips, and 
     ui.indexOf("export const BoardCard"),
     ui.indexOf("\n});\n", ui.indexOf("export const BoardCard")),
   );
-  assert.match(shared, /numberOfLines=\{2\}[\s\S]{0,200}\{plainCardText\(title\)\}/);
+  assert.match(shared, /numberOfLines=\{2\}[\s\S]{0,200}\{title\}/);
   assert.match(card, /taskNumberLabel\(task, false\)/);
   assert.doesNotMatch(card, /repoChip|phaseChip|laneChips|profile\?\.name/);
   // The board call site passes only what the card still uses.
@@ -1276,17 +1276,32 @@ test("a long papercut and a long lead render as three-line rows: kind and projec
       const rowNode = tree.raw.query(new RegExp(`^${kind}: `)) as HostNode;
       assert.ok(rowNode, `the ${kind} row is listed on its own view`);
       const rowText = nodeText(rowNode);
-      assert.match(rowText, new RegExp(`^\\s*${kind}\\s+App\\s`), "line 1 reads the kind, then the project");
-      assert.match(rowText, new RegExp(`${status.replace(" · ", "\\s+· ")}\\s*$`), "the status line closes the row");
+      assert.match(
+        rowText,
+        new RegExp(`^\\s*${kind}\\s+App\\s`),
+        "line 1 reads the kind, then the project",
+      );
+      assert.match(
+        rowText,
+        new RegExp(`${status.replace(" · ", "\\s+· ")}\\s*$`),
+        "the status line closes the row",
+      );
       assert.ok(
-        nodeHas(rowNode, (child) => child.type === "Icon" && child.props.name === icon),
+        nodeHas(
+          rowNode,
+          (child) => child.type === "Icon" && child.props.name === icon,
+        ),
         `the ${kind} row draws its kind tile`,
       );
       const lines = tree
         .ofType("Text")
         .filter((node) => node.children.join("") === title)
         .map((node) => node.props.numberOfLines);
-      assert.deepEqual(lines, [2], `the title "${title.slice(0, 24)}…" is up to two lines`);
+      assert.deepEqual(
+        lines,
+        [2],
+        `the title "${title.slice(0, 24)}…" is up to two lines`,
+      );
     }
   } finally {
     mounted?.update(h("View", null));
@@ -1320,7 +1335,9 @@ test("Papercuts show a page of eight, an in-list row loads the rest, and the men
       "the overflow row carries the rest of the total",
     );
     tree.press("Show 2 more papercuts");
-    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Papercut /).length === 10);
+    await settle(
+      () => tree.raw.all(/^(?:Lead|Papercut): Papercut /).length === 10,
+    );
     assert.equal(
       tree.raw.query("Show 2 more papercuts"),
       undefined,
@@ -1448,7 +1465,9 @@ test("the Leads tag filter narrows the leads and their paging; papercuts have no
     tree.press("Filter leads by tag, All tags (2)");
     assert.equal(tree.query("Filter leads by tag: Papercut (10)"), undefined);
     tree.press("Filter leads by tag: idea (1)");
-    await settle(() => Boolean(tree.query(/^(?:Lead|Papercut): Idea lead, Status: /)));
+    await settle(() =>
+      Boolean(tree.query(/^(?:Lead|Papercut): Idea lead, Status: /)),
+    );
     assert.equal(
       tree.all(/^(?:Lead|Papercut): (Papercut|Plain)/).length,
       0,
@@ -1503,7 +1522,9 @@ test("the Leads tag, Papercuts page and open queued-more page survive a round tr
     );
     openView(tree, "Papercuts");
     tree.press("Show 2 more papercuts");
-    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Papercut /).length === 10);
+    await settle(
+      () => tree.raw.all(/^(?:Lead|Papercut): Papercut /).length === 10,
+    );
     openView(tree, "Queue");
     tree.press("3 more queued in app");
     await settle(() => Boolean(tree.raw.query("Previous")));
@@ -1583,7 +1604,9 @@ test("a Triage card names its project, not its repository, when the two are name
       ]),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query(/^(?:Lead|Papercut): Named lead, Status: /)));
+    await settle(() =>
+      Boolean(tree.query(/^(?:Lead|Papercut): Named lead, Status: /)),
+    );
     const eyebrows = tree
       .ofType("Text")
       .map((node) => node.children.join(""))
@@ -1636,7 +1659,11 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
       },
     };
     t3Mounted = mountBoard(rpcFor(t3Snapshot));
-    await settle(() => Boolean(t3Mounted?.query(/^(?:Lead|Papercut): Lead without tasks, Status: /)));
+    await settle(() =>
+      Boolean(
+        t3Mounted?.query(/^(?:Lead|Papercut): Lead without tasks, Status: /),
+      ),
+    );
     /** Badge text nodes on the Leads and Papercuts lists: the lead card and the papercut card. */
     const tabMonograms = (mounted: ReturnType<typeof mountBoard>) => {
       openView(mounted, "Leads");
@@ -1698,7 +1725,9 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
     const plainSnapshot = { ...board([]), projects: [named] };
     plainMounted = mountBoard(rpcFor(plainSnapshot));
     await settle(() =>
-      Boolean(plainMounted?.query(/^(?:Lead|Papercut): Lead without tasks, Status: /)),
+      Boolean(
+        plainMounted?.query(/^(?:Lead|Papercut): Lead without tasks, Status: /),
+      ),
     );
     assert.equal(
       tabMonograms(plainMounted).length,
@@ -1790,7 +1819,7 @@ test("the narrow header keeps the title, and its project selector becomes an ico
       invokeWith(board([f.long]), async () => ({ tasks: [], hasMore: false })),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query(/^app, Board cards keep the title/)));
+    await settle(() => Boolean(tree.query(/^App, Board cards keep the title/)));
     // The board measures its own pane; 390 points is below the 720-point breakpoint.
     const measured = tree.raw
       .ofType("View")
@@ -1925,12 +1954,10 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
             (child) =>
               child.props.accessibilityLabel === "Close drained lane alpha",
           ) &&
-          nodeHas(
-            node,
-            (child) =>
-              /^Drained lane: Alpha lane, Status: Drained/.test(
-                String(child.props.accessibilityLabel ?? ""),
-              ),
+          nodeHas(node, (child) =>
+            /^Drained lane: Alpha lane, Status: Drained/.test(
+              String(child.props.accessibilityLabel ?? ""),
+            ),
           ),
       );
     assert.ok(rowFrame, "the drained-lane controls sit inside its row");
@@ -1945,10 +1972,13 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
     // the status; the lane's aim is in the plan view the row opens.
     assert.match(
       nodeText(rowFrame!),
-      /^\s*Lane drained\s+alpha\s+\d+d ago\s+Alpha lane has drained\s+Drained\s+· plan owner has not answered\s+Close lane\s+Keep\s*$/,
+      /^\s*Lane drained\s+App\s+\d+d ago\s+Alpha lane has drained\s+Drained\s+· plan owner has not answered\s+Close lane\s+Keep\s*$/,
     );
     assert.ok(
-      nodeHas(rowFrame!, (child) => child.type === "Icon" && child.props.name === "Layers"),
+      nodeHas(
+        rowFrame!,
+        (child) => child.type === "Icon" && child.props.name === "Layers",
+      ),
       "the drained lane draws its kind tile",
     );
 
@@ -1962,6 +1992,14 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
       "the board switches to Planning",
     );
     await settle(() => tree.raw.text().includes("Alpha lane"));
+    // The lane it opens keeps the row's Nucleus-raised provenance (nucleus#1515).
+    await settle(() =>
+      Boolean(
+        tree.raw.query(
+          /^Nucleus-raised: Alpha lane drained and escalated to you/,
+        ),
+      ),
+    );
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -1995,12 +2033,12 @@ test("a task row keeps one status line and no host identity, while the detail ke
       );
     assert.ok(row, "the task row is on the board");
     const text = nodeText(row as HostNode);
-    assert.equal(
-      text.match(/on the host/g)?.length,
-      1,
-      "the wait reads once",
+    assert.equal(text.match(/on the host/g)?.length, 1, "the wait reads once");
+    assert.match(
+      text,
+      /Waiting\s+· on the host/,
+      `the status line names the wait: ${text}`,
     );
-    assert.match(text, /Waiting\s+· on the host/, `the status line names the wait: ${text}`);
     assert.doesNotMatch(
       text,
       /T3Code host/,
@@ -2127,7 +2165,9 @@ test("lead and papercut rows name their kind once, on line 1, with no kind chip"
       "the meta line names the kind once; the old kind chip is gone",
     );
     openView(tree, "Papercuts");
-    const cut = tree.raw.query(/^Papercut: Tiny papercut, Status: /) as HostNode;
+    const cut = tree.raw.query(
+      /^Papercut: Tiny papercut, Status: /,
+    ) as HostNode;
     assert.ok(cut, "the papercut row is listed");
     assert.equal(nodeText(cut).match(/\bPapercut\b/g)?.length, 1);
   } finally {
@@ -2154,15 +2194,18 @@ test("a task needing attention on Needs you draws the task tile and its referenc
     // Reading every view leaves the last one open, so open Needs you before reading its list.
     openView(tree, "Needs you");
     assert.ok(tree.raw.query("Needs you list"), "Needs you is one list");
-    const rowNode = tree.raw.query(/^app, blocked-task,/) as HostNode;
+    const rowNode = tree.raw.query(/^App, blocked-task,/) as HostNode;
     assert.ok(rowNode, "the task row is listed");
     assert.ok(
-      nodeHas(rowNode, (child) => child.type === "Icon" && child.props.name === "ListChecks"),
+      nodeHas(
+        rowNode,
+        (child) => child.type === "Icon" && child.props.name === "ListChecks",
+      ),
       "the row draws the task kind tile",
     );
     assert.match(
       nodeText(rowNode),
-      new RegExp(`^\\s*#${String(summary.number).padStart(3, "0")}\\s+app\\s`),
+      new RegExp(`^\\s*#${String(summary.number).padStart(3, "0")}\\s+App\\s`),
       "line 1 leads with the task reference, then the project",
     );
     assert.equal(
@@ -2399,7 +2442,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       const tree = mounted;
       await settle(
         () =>
-          Boolean(tree.query(/^app, plain-working,/)) &&
+          Boolean(tree.query(/^App, plain-working,/)) &&
           Boolean(tree.query(/^Decision: Ship the row/)),
       );
       const row = (label: RegExp) => {
@@ -2414,12 +2457,12 @@ test("every card kind draws the three-line row, with flags only for exceptions a
         );
 
       // A normal task: reference and project, the title, its phase and report. No flags.
-      const plain = row(/^app, plain-working,/);
+      const plain = row(/^App, plain-working,/);
       assert.ok(tile(plain, "ListChecks"), "a task row draws the task tile");
       assert.match(
         nodeText(plain),
         new RegExp(
-          `^\\s*${number(normal.id)}\\s+app\\s+plain-working\\s+Working\\s+· Worker is editing\\s*$`,
+          `^\\s*${number(normal.id)}\\s+App\\s+plain-working\\s+Working\\s+· Worker is editing\\s*$`,
         ),
         "a normal task is three lines and shows no flags",
       );
@@ -2430,7 +2473,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       );
 
       // The PR is a small flag after the status line.
-      const pr = row(/^app, with-pr,/);
+      const pr = row(/^App, with-pr,/);
       assert.match(
         nodeText(pr),
         /In review\s+· Reviewer reading the diff\s+#39\s*$/,
@@ -2438,14 +2481,19 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       );
       assert.ok(
         nodeHas(pr, (child) =>
-          /^Pull request #39, /.test(String(child.props.accessibilityLabel ?? "")),
+          /^Pull request #39, /.test(
+            String(child.props.accessibilityLabel ?? ""),
+          ),
         ),
         "the PR flag names its state accessibly",
       );
 
       // A decision: the kind in words, the project, the age; then the question and who asked.
       const asked = row(/^Decision: Ship the row redesign this week\?/);
-      assert.ok(tile(asked, "CircleHelp"), "a decision draws the decision tile");
+      assert.ok(
+        tile(asked, "CircleHelp"),
+        "a decision draws the decision tile",
+      );
       assert.match(
         nodeText(asked),
         /^\s*Decision\s+General\s+\d+d ago\s+Ship the row redesign this week\?\s+Your answer\s+· asked by the App planner\s*$/,
@@ -2454,12 +2502,17 @@ test("every card kind draws the three-line row, with flags only for exceptions a
 
       // A merge hold prompt: the kind and reference, the title, ready-to-merge and why it is held, then Release and Keep.
       openView(tree.raw, "Needs you");
-      const holdRow = row(/^Ready to merge, held for receipt pending: merge-ready$/);
-      assert.ok(tile(holdRow, "CirclePause"), "a hold prompt draws the hold tile");
+      const holdRow = row(
+        /^Merge hold: merge-ready, App, Status: Ready to merge · held for receipt pending$/,
+      );
+      assert.ok(
+        tile(holdRow, "CirclePause"),
+        "a hold prompt draws the hold tile",
+      );
       assert.match(
         nodeText(holdRow),
         new RegExp(
-          `^\\s*Merge hold · ${number(held.id)}\\s+app\\s+\\d+d ago\\s+merge-ready\\s+Ready to merge\\s+· held for receipt pending\\s*$`,
+          `^\\s*Merge hold · ${number(held.id)}\\s+App\\s+\\d+d ago\\s+merge-ready\\s+Ready to merge\\s+· held for receipt pending\\s*$`,
         ),
       );
       assert.ok(
@@ -2480,6 +2533,155 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       );
       calls.length = 0;
     }
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+// nucleus#1515 review: what the row keeps when another fact wins the status line, the
+// lead's current check, the named project and age on line 1, and full accessible names.
+test("rows keep holds behind another status, a failed recheck, named projects with ages, and full labels", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const uuidTitle = "Rename 7a3c4bc4-e0db-48bb-9071-4ae6f3a09222 everywhere";
+    const heldAway = seed(store, "held-and-away", {
+      phase: "queued",
+      reason: "Waiting for dispatch",
+      ...syncHoldProjection({ dispatch: fence("Planner ruling owed.") }),
+    });
+    const titled = seed(store, "uuid-title", {
+      title: uuidTitle,
+      phase: "working",
+      reason: "Worker is editing",
+    });
+    const tasks = [
+      {
+        ...summarizeTask(store.task(heldAway.id)),
+        hostId: "t3code:32be2844",
+        hostWait: { hostId: "t3code:32be2844", since: at },
+      },
+      summarizeTask(store.task(titled.id)),
+    ];
+    const leads = [
+      {
+        ...triageLead("rechecked", "Rechecked lead", {
+          tags: ["idea"],
+          check: { ok: false },
+          approved: true,
+        }),
+        createdAt: at,
+      },
+    ];
+    const decision = {
+      id: "decision-badged",
+      version: 1,
+      question: "Which repo hosts the badge?",
+      choices: [
+        { label: "This one", consequence: "" },
+        { label: "Another", consequence: "" },
+      ],
+      recommended: "This one",
+      details: null,
+      context: null,
+      options: [],
+      recommendation: null,
+      overtakenBy: [],
+      askedBy: { agentId: "agent-asker", project: repo },
+      askerLabel: "the App planner",
+      links: { tasks: [], leads: [], papercuts: [] },
+      status: "open",
+      answer: null,
+      withdrawal: null,
+      supersededBy: null,
+      delivery: null,
+      createdAt: at,
+      updatedAt: at,
+      versions: [],
+      stale: false,
+      projectKey: "app",
+    };
+    const snapshot = {
+      ...board(tasks),
+      revision: 1516,
+      repositoryBadges: {
+        [repo.path]: { monogram: "AP", color: "fuchsia" as const },
+      },
+      pendingSubmissions: [
+        {
+          id: "op-1",
+          submissionId: "sub-1",
+          title: "Freshly submitted",
+          repoPath: "/app",
+          repository: "owner/app",
+          lanes: [],
+          state: "pending" as const,
+          createdAt: at,
+        },
+      ],
+    };
+    mounted = mountBoard(
+      invokeWith(snapshot, async () => ({ tasks: [], hasMore: false }), leads, [
+        decision,
+      ]),
+    );
+    const tree = mounted;
+    await settle(
+      () =>
+        Boolean(tree.query(/^App, held-and-away,/)) &&
+        Boolean(tree.query(/^Decision: Which repo hosts the badge\?/)),
+    );
+
+    // A host wait wins the status line, so the dispatch hold stays visible as a flag.
+    const away = tree.query(/^App, held-and-away,/) as HostNode;
+    assert.match(nodeText(away), /Waiting\s+· on the host/);
+    assert.match(
+      nodeText(away),
+      /Dispatch held\s*$/,
+      "the hold the status does not name stays a flag",
+    );
+
+    // The record's own title is announced as written, with the status and its detail.
+    const titledRow = tree.query(/^App, Rename 7a3c4bc4/) as HostNode;
+    assert.ok(titledRow, "the label keeps the actual title");
+    assert.match(
+      String(titledRow.props.accessibilityLabel),
+      new RegExp(
+        `^App, ${uuidTitle}, Working, .*Status: Working · Worker is editing, Action: open task details$`,
+      ),
+    );
+
+    // A failed recheck wins over a retained approval; the lead row carries its age and full status.
+    const lead = tree.query(/^Lead: Rechecked lead,/) as HostNode;
+    assert.equal(
+      lead.props.accessibilityLabel,
+      "Lead: Rechecked lead, Status: Checks failed · brief needs revising",
+    );
+    assert.match(
+      nodeText(lead),
+      /^\s*Lead\s+AP\s+App\s+\d+d ago\s+Rechecked lead\s+Checks failed\s+· brief needs revising\s*$/,
+    );
+
+    // A decision from a T3-matched repository draws that project's badge.
+    const asked = tree.query(
+      /^Decision: Which repo hosts the badge\?/,
+    ) as HostNode;
+    assert.ok(
+      nodeHas(
+        asked,
+        (child) => child.type === "Text" && child.children.join("") === "AP",
+      ),
+      "the decision's asking repository shows its T3 badge",
+    );
+
+    // A pending submission names its project and carries its age.
+    const submitted = tree.query(/^Queued: Freshly submitted,/) as HostNode;
+    assert.match(
+      nodeText(submitted),
+      /^\s*Submitting\s+App\s+\d+d ago\s+Freshly submitted\s+Submitting/,
+    );
   } finally {
     mounted?.update(h("View", null));
     store.close();

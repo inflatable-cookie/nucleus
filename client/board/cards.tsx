@@ -19,7 +19,6 @@ import {
   type Task,
   type TaskSummary,
 } from "../../shared/contracts";
-import { recordBadgeTone } from "../../shared/badge-tones";
 import { waitStateLabels } from "../../shared/wait-state";
 import { recordedStopIsHeld, recordedStopIsWait } from "../../shared/task-stop";
 import { hostDisplayLabel } from "../../shared/host-outage";
@@ -28,7 +27,10 @@ import {
   UNKNOWN_ASKER_LABEL,
   decisionProjectLabel,
 } from "../../shared/decision-project";
-import { taskWaitCardLabel } from "../../shared/task-detail-summary";
+import {
+  taskWaitCardLabel,
+  waitOwnerLabel,
+} from "../../shared/task-detail-summary";
 import {
   isDarkSurface,
   projectBadgeWebStyle,
@@ -55,11 +57,17 @@ import {
   PullRequestBadge,
   Badge,
   RecordChips,
-  StopBadge,
   BudgetBadge,
   InteractiveBadge,
 } from "./badges";
-import { cardRow, roles, space, radius, toneSurface, type as typeScale } from "../design";
+import {
+  cardRow,
+  roles,
+  space,
+  radius,
+  toneSurface,
+  type as typeScale,
+} from "../design";
 
 /**
  * Spec 026 row 12a: the single card component for the inbox board. Every card is
@@ -105,6 +113,8 @@ export type CardStatus = {
   tone: CardTone;
   state: string;
   detail?: string | null;
+  /** The status line's own accessible name, when it carries more than it shows (a wait's owner and next action). */
+  a11y?: string;
 };
 
 function toneColor(tone: CardTone, c: Colors): string {
@@ -182,6 +192,8 @@ export function StatusLine({ status, c }: { status: CardStatus; c: Colors }) {
   const color = toneColor(status.tone, c);
   return (
     <View
+      accessible={Boolean(status.a11y)}
+      accessibilityLabel={status.a11y ? plainCardText(status.a11y) : undefined}
       style={{
         flexDirection: "row",
         alignItems: "center",
@@ -223,6 +235,13 @@ export function StatusLine({ status, c }: { status: CardStatus; c: Colors }) {
   );
 }
 
+/** The status as a row's accessible label reads it: `Status: <state> · <detail>`, identifiers sanitized. */
+export function statusLabel(status: CardStatus): string {
+  return plainCardText(
+    `Status: ${status.state}${status.detail ? ` · ${status.detail}` : ""}`,
+  );
+}
+
 export const BoardCard = React.memo(function BoardCard({
   label,
   onPress,
@@ -238,6 +257,11 @@ export const BoardCard = React.memo(function BoardCard({
   flags,
   actions,
 }: {
+  /**
+   * The row's accessible name, used as given: the caller keeps the record's own title
+   * and sanitizes only operational wording (`plainCardText`), so a title is announced
+   * exactly as written.
+   */
   label: string;
   onPress: () => void;
   selected: boolean;
@@ -251,6 +275,7 @@ export const BoardCard = React.memo(function BoardCard({
   project?: React.ReactNode;
   /** Line 1's age, right-aligned, when the record carries a time. */
   age?: string | null;
+  /** The record's own title, drawn as written (the caller sanitizes operational titles). */
   title: string;
   status?: CardStatus | null;
   /** Exceptions only (holds, parked, interactive, budget, the PR); a normal task has none. */
@@ -321,7 +346,7 @@ export const BoardCard = React.memo(function BoardCard({
           lineHeight: typeScale.body.lineHeight,
         }}
       >
-        {plainCardText(title)}
+        {title}
       </Text>
       {status ? (
         <View pointerEvents="none">
@@ -372,7 +397,7 @@ export const BoardCard = React.memo(function BoardCard({
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={plainCardText(label)}
+          accessibilityLabel={label}
           accessibilityState={{ selected }}
           onPress={onPress}
           style={{
@@ -398,7 +423,7 @@ export const BoardCard = React.memo(function BoardCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={plainCardText(label)}
+      accessibilityLabel={label}
       onPress={onPress}
       style={{
         gap: space.xs,
@@ -480,7 +505,9 @@ const ROW_PHASE_WORDS: Record<Task["phase"], string> = {
   closing: "Closing",
   done: "Done",
 };
-export function rowPhaseWords(task: Pick<TaskSummary, "phase" | "disposition">) {
+export function rowPhaseWords(
+  task: Pick<TaskSummary, "phase" | "disposition">,
+) {
   if (task.disposition && task.disposition.status !== "complete")
     return "Cancelling";
   if (task.phase === "cancelled" && task.disposition?.kind === "supersede")
@@ -499,15 +526,21 @@ function phaseTone(task: Pick<TaskSummary, "phase">): CardTone {
  * A task's status when no wait, stop or run names it: the hold or wait it stands in,
  * else its phase, with the latest report (or the stored reason) as the detail.
  */
-function taskFallbackStatus(task: TaskSummary, cardAttention: boolean): CardStatus {
+function taskFallbackStatus(
+  task: TaskSummary,
+  cardAttention: boolean,
+): CardStatus {
+  // A declared wait (Spec 043 (a)) names its state, with its next action as the detail;
+  // its owner rides the accessible label.
+  if (task.waitState)
+    return {
+      tone: cardAttention ? "warning" : "muted",
+      state: waitStateLabels[task.waitState.state],
+      detail: task.waitState.nextAction || null,
+    };
   const words = rowPhaseWords(task);
   const full = taskStateLabel(task);
-  const named = Boolean(
-    blockingHold(task) ||
-      (task.waitState &&
-        !full.includes(" · ") &&
-        full !== phaseStateLabel(task)),
-  );
+  const named = Boolean(blockingHold(task));
   const state = named ? full : words;
   const detail = task.headline || task.reason || null;
   return {
@@ -529,10 +562,10 @@ export const TaskCard = React.memo(function TaskCard({
   c,
   board = false,
   parked = false,
-  decisions = false,
   decisionTitle,
   defaultHostId,
   projectBadge = null,
+  projectLabel,
 }: {
   task: TaskSummary;
   selected: boolean;
@@ -541,12 +574,14 @@ export const TaskCard = React.memo(function TaskCard({
   c: Colors;
   board?: boolean;
   parked?: boolean;
-  decisions?: boolean;
   decisionTitle?: string | null;
   defaultHostId?: string;
   /** The generated T3 project badge for this task's repository, when its host is T3 and matched. */
   projectBadge?: ProjectBadge | null;
+  /** The project's display name from the board's project lookup; the checkout name otherwise. */
+  projectLabel?: string;
 }) {
+  const project = projectLabel ?? projectName(task);
   const hostId = task.hostId ?? defaultHostId;
   const hostKind = hostKindOf(hostId);
   // The host kind rides the accessible label only; the row's badge already marks a T3 project.
@@ -561,12 +596,6 @@ export const TaskCard = React.memo(function TaskCard({
   const archiveRetry = task.resolution.archiveRetry;
   const blocking = blockingHold(task);
   const allHoldKinds = presentHoldKinds(task);
-  // A hold the status line already names is not repeated as a flag.
-  const flagHoldKinds = allHoldKinds.filter(
-    (kind) =>
-      !(blocking === "both" || blocking === kind) &&
-      !(task.waitState?.state === "merge_hold" && kind === "merge"),
-  );
   const a11yHoldKinds = allHoldKinds.filter(
     (kind) => !(task.waitState?.state === "merge_hold" && kind === "merge"),
   );
@@ -657,7 +686,11 @@ export const TaskCard = React.memo(function TaskCard({
                 detail: `Workspace archive failed: ${archiveRetry.error}`,
               }
             : prerequisite
-              ? { tone: "muted", state: "Waiting", detail: prerequisite }
+              ? {
+                  tone: "muted",
+                  state: waitStateLabels.waiting_prerequisite,
+                  detail: prerequisite,
+                }
               : longCommandStartedAt
                 ? {
                     tone: "accent",
@@ -697,23 +730,29 @@ export const TaskCard = React.memo(function TaskCard({
     null;
   // Ages and elapsed times read the clock; a row without one does not tick.
   useTick(since || longCommandStartedAt || task.heavyRun ? 30_000 : null);
-  // The stop badge is suppressed where the status already says it.
-  const showStopBadge =
-    Boolean(stopLabel) &&
-    !stopWait &&
-    !stopHeld &&
-    !(
-      task.stop === "attention" &&
-      (phaseNeedsAttention(task.phase) || Boolean(stopRecord))
-    );
+  // Spec 043 (a): a declared wait's status names its owner and next action accessibly.
+  const waitWording = task.waitState
+    ? (plainWait ??
+      `Wait state: ${waitStateLabels[task.waitState.state]}; owner ${waitOwnerLabel(task.waitState.owner)}; next ${task.waitState.nextAction}`)
+    : undefined;
+  const rowStatus: CardStatus = waitWording
+    ? { ...status, a11y: waitWording }
+    : status;
+  // A hold flag is dropped only when the chosen status line names that hold; any
+  // other status (a host wait, a question) leaves the hold visible as a flag.
+  const statusText = `${status.state} ${status.detail ?? ""}`;
+  const flagHoldKinds = allHoldKinds.filter(
+    (kind) =>
+      !statusText.includes(holdKindLabel(kind)) &&
+      !(kind === "merge" && status.state === waitStateLabels.merge_hold),
+  );
+  // The approved exception set (nucleus#1515): holds, parked, interactive, budget and
+  // the PR. Stop categories, a paused stop and linked decisions are in the task detail.
   const hasFlags = Boolean(
     parked ||
-      decisions ||
       task.parked ||
-      task.pausedStop ||
       interactiveLabel ||
       flagHoldKinds.length ||
-      showStopBadge ||
       budgetExhausted ||
       task.prUrl,
   );
@@ -766,7 +805,7 @@ export const TaskCard = React.memo(function TaskCard({
   const reference = taskNumberLabel(task, false) || null;
   return (
     <BoardCard
-      label={`${projectName(task)}${hostChip}, ${task.title}, ${phaseLabel(task)}, Status: ${status.state}${interactiveLabel ? `, ${interactiveLabel}` : ""}${accessibleHold}${holdOwnerA11y}${accessibleWait}${fullHoldReasonA11y}${stopLabel && !stopWait && !stopHeld ? `, ${stopLabel}` : ""}${!accessibleWait && stopA11y ? `, ${stopA11y}` : ""}, Action: open task details`}
+      label={`${project}${hostChip}, ${task.title}, ${plainCardText(`${phaseLabel(task)}${interactiveLabel ? `, ${interactiveLabel}` : ""}${accessibleHold}${holdOwnerA11y}${accessibleWait}${fullHoldReasonA11y}${stopLabel && !stopWait && !stopHeld ? `, ${stopLabel}` : ""}${!accessibleWait && stopA11y ? `, ${stopA11y}` : ""}, ${statusLabel(status)}`)}, Action: open task details`}
       onPress={onPress}
       selected={selected}
       c={c}
@@ -777,12 +816,10 @@ export const TaskCard = React.memo(function TaskCard({
           .filter(Boolean)
           .join(" · ") || "Task"
       }
-      project={
-        <CardProject name={projectName(task)} badge={projectBadge} c={c} />
-      }
+      project={<CardProject name={project} badge={projectBadge} c={c} />}
       age={since ? decisionAge(since) : null}
       title={task.title}
-      status={status}
+      status={rowStatus}
       flags={
         hasFlags ? (
           <>
@@ -798,25 +835,8 @@ export const TaskCard = React.memo(function TaskCard({
                 a11y="Parked (no slot held)"
               />
             )}
-            {task.pausedStop && (
-              <Badge
-                label="Stopped while paused"
-                tone="warning"
-                c={c}
-                a11y="Stopped while Nucleus was paused; Nucleus resumes it when the queue starts"
-              />
-            )}
             <InteractiveBadge task={task} c={c} />
-            {showStopBadge && <StopBadge task={task} c={c} />}
             {budgetExhausted && <BudgetBadge task={task} c={c} />}
-            {decisions && (
-              <Badge
-                label="Decision"
-                tone={recordBadgeTone("decision")}
-                c={c}
-                a11y="Open decisions linked"
-              />
-            )}
             {task.prUrl && (
               <PullRequestBadge task={task} state={prState} c={c} small flag />
             )}
@@ -853,12 +873,15 @@ export const DecisionCard = React.memo(function DecisionCard({
   onPress,
   c,
   board = true,
+  projectBadge = null,
 }: {
   decision: DecisionView;
   selected: boolean;
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  /** The asking repository's T3 project badge, when matched. */
+  projectBadge?: ProjectBadge | null;
 }) {
   useTick(30_000);
   const headline = decision.headline ?? decision.question;
@@ -867,22 +890,33 @@ export const DecisionCard = React.memo(function DecisionCard({
   const asker = decision.askerLabel ?? UNKNOWN_ASKER_LABEL;
   const overtaken = (decision.overtakenBy?.length ?? 0) > 0;
   const status: CardStatus = overtaken
-    ? { tone: "muted", state: "Probably overtaken", detail: `asked by ${asker}` }
+    ? {
+        tone: "muted",
+        state: "Probably overtaken",
+        detail: `asked by ${asker}`,
+      }
     : decision.stale
       ? { tone: "warning", state: "Stale", detail: `asked by ${asker}` }
       : { tone: "warning", state: "Your answer", detail: `asked by ${asker}` };
   return (
     <BoardCard
-      label={`Decision: ${headline}, asked by ${asker}, Status: ${status.state}`}
+      // An agent-written question is operational text: identifiers are sanitized in it.
+      label={plainCardText(`Decision: ${headline}, ${statusLabel(status)}`)}
       onPress={onPress}
       selected={selected}
       c={c}
       board={board}
       kind="decision"
       meta="Decision"
-      project={<CardProject name={decisionProjectLabel(decision)} c={c} />}
+      project={
+        <CardProject
+          name={decisionProjectLabel(decision)}
+          badge={projectBadge}
+          c={c}
+        />
+      }
       age={decisionAge(decision.createdAt)}
-      title={headline}
+      title={plainCardText(headline)}
       status={status}
     />
   );
@@ -902,6 +936,7 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
   onRelease,
   onKeep,
   projectBadge = null,
+  projectLabel,
 }: {
   task: TaskSummary;
   selected: boolean;
@@ -912,8 +947,11 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
   onRelease: () => void;
   onKeep: (reason: string) => void;
   projectBadge?: ProjectBadge | null;
+  /** The project's display name from the board's project lookup; the checkout name otherwise. */
+  projectLabel?: string;
 }) {
   useTick(30_000);
+  const project = projectLabel ?? projectName(task);
   const [keeping, setKeeping] = useState(false),
     [reason, setReason] = useState("");
   const blocking = blockingHold(task);
@@ -925,36 +963,26 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
   const ready = kind === "dispatch" ? "Ready to dispatch" : "Ready to merge";
   const reference = taskNumberLabel(task, false) || null;
   const since = hold?.blockingSince ?? hold?.since ?? null;
+  const kindWord = kind === "dispatch" ? "Dispatch hold" : "Merge hold";
+  const status: CardStatus = {
+    tone: "warning",
+    state: hold ? ready : rowPhaseWords(task),
+    detail: hold ? `held for ${hold.reason}` : task.reason || null,
+  };
   return (
-    <View
-      accessibilityLabel={plainCardText(
-        `Held ${kind}: ${task.title}`,
-      )}
-    >
+    <View accessibilityLabel={`Held ${kind}: ${task.title}`}>
       <BoardCard
-        label={
-          hold
-            ? `${ready}, held for ${hold.reason}: ${task.title}`
-            : `${kind === "dispatch" ? "Dispatch" : "Merge"} hold: ${task.title}, ${phaseLabel(task)}`
-        }
+        label={`${kindWord}: ${task.title}, ${project}, ${statusLabel(status)}`}
         onPress={onPress}
         selected={selected}
         c={c}
         board={board}
         kind="hold"
-        meta={[kind === "dispatch" ? "Dispatch hold" : "Merge hold", reference]
-          .filter(Boolean)
-          .join(" · ")}
-        project={
-          <CardProject name={projectName(task)} badge={projectBadge} c={c} />
-        }
+        meta={[kindWord, reference].filter(Boolean).join(" · ")}
+        project={<CardProject name={project} badge={projectBadge} c={c} />}
         age={since ? decisionAge(since) : null}
         title={task.title}
-        status={{
-          tone: "warning",
-          state: hold ? ready : rowPhaseWords(task),
-          detail: hold ? `held for ${hold.reason}` : task.reason || null,
-        }}
+        status={status}
         flags={
           task.prUrl ? (
             <PullRequestBadge task={task} c={c} small flag />
@@ -1020,6 +1048,7 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   busy,
   onClose,
   onKeep,
+  project,
 }: {
   lane: LaneView;
   selected: boolean;
@@ -1029,29 +1058,30 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   busy: boolean;
   onClose: () => void;
   onKeep: (reason: string) => void;
+  /** Line 1's project: the lane's projects with their badges; the lane key when it has none. */
+  project?: React.ReactNode;
 }) {
   useTick(lane.drain?.escalatedAt ? 30_000 : null);
+  const laneStatus: CardStatus = {
+    tone: "success",
+    state: "Drained",
+    detail: "plan owner has not answered",
+  };
   const [keeping, setKeeping] = useState(false),
     [reason, setReason] = useState("");
   return (
     <BoardCard
-      label={`Drained lane: ${lane.title}, Status: Drained, the plan owner has not answered`}
+      label={`Drained lane: ${lane.title}, ${statusLabel(laneStatus)}`}
       onPress={onPress}
       selected={selected}
       c={c}
       board={board}
       kind="lane"
       meta="Lane drained"
-      project={<CardProject name={lane.key} c={c} />}
-      age={
-        lane.drain?.escalatedAt ? decisionAge(lane.drain.escalatedAt) : null
-      }
+      project={project ?? <CardProject name={lane.key} c={c} />}
+      age={lane.drain?.escalatedAt ? decisionAge(lane.drain.escalatedAt) : null}
       title={`${lane.title} has drained`}
-      status={{
-        tone: "success",
-        state: "Drained",
-        detail: "plan owner has not answered",
-      }}
+      status={laneStatus}
       actions={
         <View style={{ gap: space.xs }}>
           <View style={{ ...row, gap: space.xs }}>

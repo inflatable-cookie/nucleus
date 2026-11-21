@@ -11,6 +11,7 @@ import {
   type UiQueueState,
 } from "../../shared/contracts";
 import {
+  decisionAge,
   pipelineBoard,
   triageKind,
   triagePage,
@@ -36,7 +37,7 @@ import {
   HoldPromptCard,
   LaneDrainCard,
 } from "./cards";
-import { TriageLeadCard } from "./triage-lead-card";
+import { LeadProjectEyebrow, TriageLeadCard } from "./triage-lead-card";
 import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 
@@ -291,15 +292,6 @@ export function InboxList({
     void act(() =>
       keepLaneRpc({ key: lane.key, reason, author: "operator (board)" }),
     );
-  // One lookup for the decision chip on task, lead and papercut rows: how many open decisions link each record (Spec 032).
-  const decisionLinkCounts = new Map<string, number>();
-  for (const decision of decisions ?? [])
-    for (const id of [
-      ...decision.links.tasks,
-      ...decision.links.leads,
-      ...decision.links.papercuts,
-    ])
-      decisionLinkCounts.set(id, (decisionLinkCounts.get(id) ?? 0) + 1);
   const decisionTitle = (task: TaskSummary) => {
     const id = task.waitState?.decisionId;
     if (!id) return null;
@@ -312,12 +304,21 @@ export function InboxList({
       task.hostId
         ? (state?.projectBadges?.[task.hostId]?.[task.repoPath] ?? null)
         : null;
+    // Line 1 names the project by its display name (nucleus#1515), not the checkout's.
+    const projectLabel = (repoPath: string, origin?: string | null) =>
+      projectForRepository(repoPath, origin)?.name;
     switch (card.kind) {
       case "decision":
         return (
           <DecisionCard
             key={key}
             decision={card.value}
+            projectBadge={
+              card.value.askedBy.project
+                ? (state?.repositoryBadges?.[card.value.askedBy.project.path] ??
+                  null)
+                : null
+            }
             c={c}
             selected={openDecisionId === card.id}
             onPress={() => onSelectDecision(card.id)}
@@ -332,6 +333,10 @@ export function InboxList({
             onKeep={(reason) => keepHold(card.value, reason)}
             task={card.value}
             projectBadge={badgeFor(card.value)}
+            projectLabel={projectLabel(
+              card.value.repoPath,
+              card.value.repository,
+            )}
             c={c}
             selected={selected === card.id}
             onPress={() => onSelectTask(card.id)}
@@ -346,6 +351,16 @@ export function InboxList({
             busy={busy}
             selected={false}
             onPress={() => onOpenLane(card.value.key)}
+            project={
+              card.value.repositories.length ? (
+                <LeadProjectEyebrow
+                  repositories={card.value.repositories}
+                  projectForRepository={projectForRepository}
+                  repositoryBadges={state?.repositoryBadges}
+                  c={c}
+                />
+              ) : undefined
+            }
             onClose={() => closeDrainedLane(card.value)}
             onKeep={(reason) => keepDrainedLane(card.value, reason)}
           />
@@ -357,6 +372,10 @@ export function InboxList({
             task={card.value}
             defaultHostId={state?.hostId}
             projectBadge={badgeFor(card.value)}
+            projectLabel={projectLabel(
+              card.value.repoPath,
+              card.value.repository,
+            )}
             board
             selected={selected === card.id}
             onPress={() => onSelectTask(card.id)}
@@ -366,7 +385,6 @@ export function InboxList({
               card.value.repoPath,
               card.value.repository,
             )}
-            decisions={decisionLinkCounts.has(card.id)}
             decisionTitle={decisionTitle(card.value)}
           />
         );
@@ -376,10 +394,19 @@ export function InboxList({
           <BoardCard
             key={key}
             c={c}
-            label={`Queued: ${card.value.title}, Status: Submitting`}
+            label={`Queued: ${card.value.title}, Status: Submitting · accepted; creating its task`}
             kind="task"
             meta="Submitting"
-            project={<CardProject name={projectName(card.value)} c={c} />}
+            project={
+              <CardProject
+                name={
+                  projectLabel(card.value.repoPath, card.value.repository) ??
+                  projectName(card.value)
+                }
+                c={c}
+              />
+            }
+            age={decisionAge(card.value.createdAt)}
             title={card.value.title}
             status={{
               tone: "muted",

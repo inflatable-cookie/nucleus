@@ -589,19 +589,22 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     not change with phase; the status dot and words carry the phase. Tile colours are
     the theme's tone roles at low alpha.
   - **Line 1:** for a task its reference (`#1072`), otherwise the kind in words
-    (Decision, Merge hold, Lane drained, Lead, Papercut); then the project (the T3
-    project badge where matched, otherwise the folder icon) and its name; the age,
+    (Decision, Merge hold, Lane drained, Lead, Papercut); then the project by its
+    display name (a lane's or lead's projects; a decision's asking repository), with
+    the T3 project badge where matched, otherwise the folder icon; the age,
     right-aligned, when the record carries a time (a stop, wait or hold's start, a
-    decision's ask, a lane's escalation).
+    decision's ask, a lane's escalation, a lead's or submission's creation).
   - **Line 2:** the title, up to two lines.
   - **Line 3:** a coloured dot, the state in plain words and the single most useful
     detail after a middle dot ("Working · running affected tests", "Needs attention ·
     reviewer launch unconfirmed", "Waiting · on the host", "Checked · awaiting
     approval"). The detail is the existing wait, stop or report wording, shortened,
-    never a raw ID.
-  - **Flags**, below, only for exceptions: a dispatch or merge hold the status does not
-    already name, parked, stopped while paused, interactive, an incident or recovery
-    stop, budget reached, linked open decisions, and the PR as a small flag. A normal
+    never a raw ID. A declared wait names its state and next action, its owner in the
+    accessible name (Spec 043). A lead's state follows its current check first:
+    unchecked, then checks failed (even with an earlier approval kept), then approved
+    or awaiting approval.
+  - **Flags**, below, only for exceptions: a dispatch or merge hold the status line does
+    not name, parked, interactive, budget reached and the PR as a small flag. A normal
     task shows none.
   - **Buttons** only where the row is the action: the hold prompt's Release and Keep
     (with its reason) and the drained lane's Close lane and Keep. They sit inside the
@@ -610,10 +613,14 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     in Planning.
   - **Detail only:** routing sentences, host identity and kind, profile names, host
     waits beyond "on the host", attempt counts, report headlines beyond the status
-    line, prerequisite counts and promotion, a decision's choices and links, a lane's
-    aim, the Nucleus-raised chip and the Lead and Papercut kind chips. The row's
-    accessible label keeps the full title, the status and the wording the row
-    shortens.
+    line, prerequisite counts and promotion, a decision's choices, a lane's aim, and the
+    Lead and Papercut kind chips. The task detail's header carries the stop category,
+    a stop while paused, linked open decisions and, for an escalated hold, the
+    Nucleus-raised badge; a decision's Links name each task by reference, title and
+    project; a drained lane's Planning screen names its Nucleus-raised escalation. The
+    row's accessible name keeps the record's own title as written, the status with its
+    detail, and the wording the row shortens, with identifiers sanitized only in
+    operational text.
 - **Pending submissions** (Tom, 2026-09-27): a submitted brief or handoff whose
   operation has not yet created its task shows as a Queued card marked
   "submitting", so an accepted submission is never invisible. Brief-bearing leads

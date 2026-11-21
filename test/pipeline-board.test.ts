@@ -962,10 +962,24 @@ test("Triage cards: one state line per lead or papercut, operator order, and pag
     return [status.state, status.detail].filter(Boolean).join(" · ");
   };
   assert.equal(line(approvable), "Checked · awaiting approval");
-  assert.equal(line(idle), "Unchecked · awaiting approval");
+  assert.equal(line(idle), "Unchecked · awaiting a check");
   assert.equal(line(approved), "Approved · awaiting promotion");
   assert.equal(line(promoted), "Promoted");
-  assert.equal(line(card("failed", { tags: ["idea"], check: { ok: false } })), "Checks failed · awaiting approval");
+  assert.equal(
+    line(card("failed", { tags: ["idea"], check: { ok: false } })),
+    "Checks failed · brief needs revising",
+  );
+  // A failed recheck can keep an earlier approval; the failed check still wins.
+  assert.equal(
+    line(
+      card("rechecked", {
+        tags: ["idea"],
+        check: { ok: false },
+        approved: true,
+      }),
+    ),
+    "Checks failed · brief needs revising",
+  );
   assert.equal(line(cut), "Open · board");
   assert.equal(line(card("no-area", { tags: ["papercut"] })), "Open");
   assert.equal(triageKind(cut as never), "papercut");

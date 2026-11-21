@@ -104,7 +104,10 @@ test("task detail uses a modal and keeps absent resolution-run recovery out of t
   assert.match(ui, /<RecordModal\s+label="Lead detail"/);
   assert.match(ui, /<RecordModal\s+label="Papercut detail"/);
   // A task row's status detail falls back to the stored reason (nucleus#1515).
-  assert.match(ui, /const detail = task\.headline \|\| task\.reason \|\| null;/);
+  assert.match(
+    ui,
+    /const detail = task\.headline \|\| task\.reason \|\| null;/,
+  );
   assert.doesNotMatch(ui, /LanesSwitch/);
   assert.doesNotMatch(ui, /text="Status"/);
   assert.doesNotMatch(ui, /statusColumn/);

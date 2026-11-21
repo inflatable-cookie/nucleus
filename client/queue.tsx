@@ -37,7 +37,7 @@ import {
 } from "../shared/inbox-board";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
-import { attention } from "./board/text";
+import { attention, projectName } from "./board/text";
 import { BoardHeader } from "./board/header";
 import { InboxList, useInboxBoard, usePipelineState } from "./board/inbox-list";
 import { InboxMenu } from "./board/inbox-menu";
@@ -393,6 +393,17 @@ export function MainSurface({
       recordNotice={recordNotice}
       setRecordNotice={setRecordNotice}
       onOpenDecision={setOpenDecisionId}
+      taskLinkLabel={(id) => {
+        const task = state?.tasks.find((item) => item.id === id);
+        if (!task) return null;
+        const reference =
+          task.reference ??
+          (task.number ? api.taskNumberLabel(task, true) : null);
+        const project =
+          projectForRepository(task.repoPath, task.repository)?.name ??
+          projectName(task);
+        return [reference, task.title, project].filter(Boolean).join(" · ");
+      }}
       onOpenTask={(id) => {
         setOpenDecisionId(null);
         setSelected(id);

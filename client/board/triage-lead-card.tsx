@@ -5,10 +5,14 @@ import {
   type BoardLead,
   type UiQueueState,
 } from "../../shared/contracts";
-import { triageKind, triageStatus } from "../../shared/pipeline-board";
+import {
+  decisionAge,
+  triageKind,
+  triageStatus,
+} from "../../shared/pipeline-board";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { Icon } from "../shell";
-import { BoardCard, ProjectBadgeMark } from "./cards";
+import { BoardCard, ProjectBadgeMark, statusLabel } from "./cards";
 import { muted, type Colors } from "../controls";
 import { type as typeScale } from "../design";
 
@@ -143,7 +147,7 @@ export function TriageLeadCard({
   const kindWord = kind === "papercut" ? RESERVED_LEAD_TAGS.papercut : "Lead";
   return (
     <BoardCard
-      label={`${kindWord}: ${lead.title}, Status: ${status.state}`}
+      label={`${kindWord}: ${lead.title}, ${statusLabel(status)}`}
       c={c}
       kind={kind}
       meta={kindWord}
@@ -155,6 +159,7 @@ export function TriageLeadCard({
           c={c}
         />
       }
+      age={lead.createdAt ? decisionAge(lead.createdAt) : null}
       title={lead.title}
       status={status}
       selected={selected}
