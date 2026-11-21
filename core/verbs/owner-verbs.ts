@@ -1,5 +1,6 @@
 import { exhaustedReviewer, exhaustedReviewerRefusal } from "./reviewer-report";
 import { unsettledControlRefusal } from "../recovery/recovery-effects";
+import { ownerStopPendingRefusal } from "./owner-stop";
 import {
   workerCreationWait,
   workerLookupWait,
@@ -274,6 +275,11 @@ const complete: OwnerVerb = {
       return { available: false, refusal: REMOVED_TASK_REFUSAL };
     const refusal = completeStateRefusal(task, runs);
     if (refusal) return { available: false, refusal };
+    if (task.resolution.ownerStop)
+      return {
+        available: false,
+        refusal: ownerStopPendingRefusal(task.resolution.ownerStop),
+      };
     if (
       task.agentActive ||
       runs.some((run) => !run.released && run.active === true)
@@ -387,6 +393,11 @@ const stop: OwnerVerb = {
     const { task, runs } = facts;
     const refusal = stopStateRefusal(task);
     if (refusal) return { available: false, refusal };
+    if (task.resolution.ownerStop)
+      return {
+        available: false,
+        refusal: ownerStopPendingRefusal(task.resolution.ownerStop),
+      };
     const fence = durableRunFence(facts);
     if (fence && !task.resolution.integrationTurn)
       return { available: false, refusal: fence };
