@@ -26,6 +26,23 @@ export interface LocalQueueClientOptions {
   onProgress?: (message: string) => void;
 }
 
+/** The CLI's options: the data home it connects in and its roll wait, under the CLI's own names. */
+export interface QueueClientOptions {
+  dataDir?: string;
+  rollWaitMs?: number;
+  onProgress?: (message: string) => void;
+}
+
+/**
+ * The default CLI transport: the authenticated service socket in this data
+ * home. It owns the connection and the roll/compatibility wait (`rollWaitMs` is
+ * the CLI's name for `compatibilityWaitMs`), and it never starts, upgrades,
+ * bridges or falls back to another transport.
+ */
+export function queueClient({ dataDir, rollWaitMs, onProgress }: QueueClientOptions = {}) {
+  return localQueueClient(dataDir, { compatibilityWaitMs: rollWaitMs, onProgress });
+}
+
 function methodMismatch(method: string, roll: ServiceRoll | null): Error {
   if (roll?.status === "failed") {
     return new LocalServiceContractMismatch(`Nucleus service roll failed: ${roll.detail}. The ${method} input/output contract still differs from this CLI.`);
