@@ -11,6 +11,7 @@ import {
   DropdownSelect,
   Field,
   FieldCaption,
+  HoverRow,
   StopSlider,
   controlText,
   muted,
@@ -304,7 +305,7 @@ export function ProfileRow({
         gap: space.xs,
       }}
     >
-      <View style={{ ...row, flexWrap: "nowrap" }}>
+      <HoverRow c={c} style={{ ...row, flexWrap: "nowrap" }}>
         <Text
           style={{
             flex: 1,
@@ -353,7 +354,7 @@ export function ProfileRow({
             onEdit();
           }}
         />
-      </View>
+      </HoverRow>
       {editing && (
         <ProfileEditor
           c={c}

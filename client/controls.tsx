@@ -37,6 +37,32 @@ export const muted = (c: Colors) => ({
   color: c.foregroundMuted,
   fontSize: type.body.fontSize,
 });
+
+/** A passive row surface that follows the pointer without becoming clickable. */
+export function HoverRow({
+  c,
+  style,
+  children,
+}: {
+  c: Colors;
+  style: ViewStyle;
+  children: React.ReactNode;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <View
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      style={{
+        ...style,
+        borderRadius: radius.control,
+        backgroundColor: hovered ? c.surface2 : "transparent",
+      }}
+    >
+      {children}
+    </View>
+  );
+}
 /** Popover and help-panel chrome: a raised bordered surface with a soft shadow. */
 export const popover = (c: Colors) => ({
   borderWidth: 1,

@@ -6,6 +6,7 @@ import {
   ActionButton,
   Button,
   Field,
+  HoverRow,
   Section,
   TabRow,
   muted,
@@ -520,7 +521,7 @@ function StalePoolEntry({
         gap: space.xs,
       }}
     >
-      <View style={{ ...row, flexWrap: "nowrap" }}>
+      <HoverRow c={c} style={{ ...row, flexWrap: "nowrap" }}>
         <Text
           style={{
             flex: 1,
@@ -539,7 +540,7 @@ function StalePoolEntry({
           disabled={busy}
           onPress={onRemove}
         />
-      </View>
+      </HoverRow>
       <Text
         style={{
           color: c.statusWarning,
@@ -581,7 +582,7 @@ function Availability({
         paddingVertical: space.xs,
       }}
     >
-      <View style={row}>
+      <HoverRow c={c} style={row}>
         <Text style={{ color: c.foreground, fontWeight: "600", flex: 1 }}>
           {group}
         </Text>
@@ -619,7 +620,7 @@ function Availability({
           label={`${editing ? "Close" : paused ? "Edit" : "Pause"} ${group}`}
           onPress={() => setEditing(!editing)}
         />
-      </View>
+      </HoverRow>
       {editing && (
         <View
           style={{
