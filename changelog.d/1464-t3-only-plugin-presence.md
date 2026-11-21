@@ -1,0 +1,1 @@
+- Base plugin-presence fault detection, planner reload guidance, and stale-fault clearing on connected hosts that actually own a Nucleus plugin (`paseo` or `bb`), so a T3-only service never reports a false missing-Paseo-plugin fault or reload command.
