@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, readlink, readdir, realpath, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readlink,
+  readdir,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
@@ -9,33 +16,100 @@ import { pathToFileURL } from "node:url";
 import { exec, installerFixture } from "./support/nucleus-install-fixture";
 
 test("installed commands, integration and private service stay inside a scratch home", async () => {
-  const { root, env, build, receipt, home, tarball, digest, command, installed, current, first } = await installerFixture();
-  await assert.rejects(exec(process.execPath, ["--input-type=module", "-e",
-    `Object.defineProperty(process.versions, 'electron', { value: 'fixture' });
+  const {
+    root,
+    env,
+    build,
+    receipt,
+    home,
+    tarball,
+    digest,
+    command,
+    installed,
+    current,
+    first,
+  } = await installerFixture();
+  await assert.rejects(
+    exec(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `Object.defineProperty(process.versions, 'electron', { value: 'fixture' });
      const { buildRuntime } = await import('./scripts/build-runtime.mjs');
-     await buildRuntime(${JSON.stringify(join(root, "electron-package"))});`], { env }), /Runtime builds require standalone Node/);
+     await buildRuntime(${JSON.stringify(join(root, "electron-package"))});`,
+      ],
+      { env },
+    ),
+    /Runtime builds require standalone Node/,
+  );
   // The running roller and retained callers still require these installed names.
-  for (const entry of ["server/backup-worker.mjs", "server/backup-cli.mjs", "server/checkout-mounts.mjs", "server/normalize-directory-helper.mjs"]) {
-    assert.ok(receipt.entries.includes(entry), `${entry} remains an installed entry`);
+  for (const entry of [
+    "server/backup-worker.mjs",
+    "server/backup-cli.mjs",
+    "server/checkout-mounts.mjs",
+    "server/normalize-directory-helper.mjs",
+  ]) {
+    assert.ok(
+      receipt.entries.includes(entry),
+      `${entry} remains an installed entry`,
+    );
     await readFile(join(build, entry));
   }
   const backupSource = join(root, "backup-source", "queue.db");
   await mkdir(dirname(backupSource));
-  await exec(process.execPath, ["--input-type=module", "-e",
-    `import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync(${JSON.stringify(backupSource)}); db.exec('CREATE TABLE fixture(value TEXT)'); db.close();`], { env });
-  const backup = await exec(process.execPath, [join(build, "server/backup-cli.mjs"), "manual", backupSource, join(root, "backups")], { env });
-  assert.ok(JSON.parse(backup.stdout).snapshots.length > 0, "installed backup CLI creates a verified snapshot");
-  const primary = join(root, "worktree-primary"), taskCheckout = join(root, "worktree-checkout");
+  await exec(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync(${JSON.stringify(backupSource)}); db.exec('CREATE TABLE fixture(value TEXT)'); db.close();`,
+    ],
+    { env },
+  );
+  const backup = await exec(
+    process.execPath,
+    [
+      join(build, "server/backup-cli.mjs"),
+      "manual",
+      backupSource,
+      join(root, "backups"),
+    ],
+    { env },
+  );
+  assert.ok(
+    JSON.parse(backup.stdout).snapshots.length > 0,
+    "installed backup CLI creates a verified snapshot",
+  );
+  const primary = join(root, "worktree-primary"),
+    taskCheckout = join(root, "worktree-checkout");
   await mkdir(primary);
   const git = (...args: string[]) => exec("git", args, { env, cwd: primary });
   await git("init", "-b", "main");
-  await git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "init");
+  await git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "init",
+  );
   await git("worktree", "add", "--detach", taskCheckout);
-  const setupOutput = await exec(command, ["worktree", "prepare"], { env, cwd: taskCheckout });
-  assert.match(setupOutput.stdout, /Paseo sibling preparation: OK/);
+  const setupOutput = await exec(command, ["worktree", "prepare"], {
+    env,
+    cwd: taskCheckout,
+  });
+  assert.match(setupOutput.stdout, /Sibling preparation: OK/);
   assert.ok(first.startsWith(join(home, ".local/share/nucleus/versions/")));
   // `nucleus` is the only skill name the package installs and links.
-  for (const folder of [join(home, ".agents/skills"), join(home, ".codex/skills"), join(home, ".claude/skills"), ...env.NUCLEUS_SKILL_DIRS.split(delimiter)]) {
+  for (const folder of [
+    join(home, ".agents/skills"),
+    join(home, ".codex/skills"),
+    join(home, ".claude/skills"),
+    ...env.NUCLEUS_SKILL_DIRS.split(delimiter),
+  ]) {
     const canonical = await readFile(join(folder, "nucleus/SKILL.md"), "utf8");
     assert.match(canonical, /name: nucleus/);
     await assert.rejects(readlink(join(folder, "northstar-queue")));
@@ -47,7 +121,10 @@ test("installed commands, integration and private service stay inside a scratch 
       if (entry.isDirectory()) await checkInstructions(path);
       else if (path.endsWith(".md")) {
         const text = await readFile(path, "utf8");
-        assert.doesNotMatch(text, /node (?:<queue-plugin>\/)?bin\/|from the plugin root|From the Queue plugin root|Resolve the real plugin root/);
+        assert.doesNotMatch(
+          text,
+          /node (?:<queue-plugin>\/)?bin\/|from the plugin root|From the Queue plugin root|Resolve the real plugin root/,
+        );
       }
     }
   }
@@ -63,7 +140,10 @@ test("installed commands, integration and private service stay inside a scratch 
   }
   await assert.rejects(installed("helper", "../queue-cli"), /Choose a helper/);
   const version = JSON.parse((await installed("version")).stdout);
-  assert.equal(version.version, JSON.parse(await readFile("package.json", "utf8")).version);
+  assert.equal(
+    version.version,
+    JSON.parse(await readFile("package.json", "utf8")).version,
+  );
   assert.equal(version.revision, receipt.revision);
   assert.equal(version.dataHome, join(home, ".nucleus"));
   assert.ok(version.version);
@@ -71,19 +151,32 @@ test("installed commands, integration and private service stay inside a scratch 
   await installed("channel", "main", root, root);
   assert.equal(JSON.parse((await installed("version")).stdout).channel, "main");
   await installed("channel", "release");
-  assert.equal(JSON.parse((await installed("version")).stdout).channel, "release");
+  assert.equal(
+    JSON.parse((await installed("version")).stdout).channel,
+    "release",
+  );
   // Host registration is an explicit integration step, and keeps other hosts/config.
-  const configBefore = JSON.parse(await readFile(join(env.PASEO_HOME, "config.json"), "utf8"));
+  const configBefore = JSON.parse(
+    await readFile(join(env.PASEO_HOME, "config.json"), "utf8"),
+  );
   assert.equal(configBefore.plugins["nucleus"], undefined);
   await installed("integrate", "paseo");
-  const config = JSON.parse(await readFile(join(env.PASEO_HOME, "config.json"), "utf8"));
+  const config = JSON.parse(
+    await readFile(join(env.PASEO_HOME, "config.json"), "utf8"),
+  );
   assert.equal(config.fixture, true);
   assert.deepEqual(config.plugins.other, { path: "/fixture/other" });
   assert.equal(await realpath(config.plugins["nucleus"].path), first);
   config.plugins.nucleus = { path: current };
   await writeFile(join(env.PASEO_HOME, "config.json"), JSON.stringify(config));
-  await assert.rejects(installed("integrate", "paseo"), /already registers nucleus/);
-  assert.deepEqual(JSON.parse(await readFile(join(env.PASEO_HOME, "config.json"), "utf8")), config);
+  await assert.rejects(
+    installed("integrate", "paseo"),
+    /already registers nucleus/,
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile(join(env.PASEO_HOME, "config.json"), "utf8")),
+    config,
+  );
   delete config.plugins.nucleus;
   await writeFile(join(env.PASEO_HOME, "config.json"), JSON.stringify(config));
   await installed("install", tarball, "--sha256", await digest());
@@ -91,43 +184,95 @@ test("installed commands, integration and private service stay inside a scratch 
 
   // A private compiled service proves the new command shares the existing RPC route.
   const proof = join(root, "service.mjs");
-  await writeFile(proof, `
+  await writeFile(
+    proof,
+    `
 import { QueueService } from ${JSON.stringify(pathToFileURL(join(first, "server/service/server.mjs")).href)};
 const service = new QueueService({ owner: { timers: false }, fixture: 'fake' });
 await service.start();
 console.log('READY');
 process.on('SIGTERM', () => { void service.stop().then(() => process.exit(0)); });
-`);
+`,
+  );
   // Synthetic caller ticket: identity resolution needs no native host resources.
-  const identitySocket = join(root, "identity.sock"), identityTicket = join(root, "caller.json");
+  const identitySocket = join(root, "identity.sock"),
+    identityTicket = join(root, "caller.json");
   const identityServer = createServer((request, response) => {
-    assert.equal(request.url, '/caller');
-    assert.equal(request.headers.authorization, 'Bearer fixture-caller-token');
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ caller: formatAgentId('fixture-host', 'fixture-helper-caller'), hostId: 'fixture-host', source: 'run-ticket' }));
+    assert.equal(request.url, "/caller");
+    assert.equal(request.headers.authorization, "Bearer fixture-caller-token");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        caller: formatAgentId("fixture-host", "fixture-helper-caller"),
+        hostId: "fixture-host",
+        source: "run-ticket",
+      }),
+    );
   });
-  await new Promise<void>(resolve => identityServer.listen(identitySocket, resolve));
-  await writeFile(identityTicket, JSON.stringify({ socketPath: identitySocket, taskId: 'fixture-task', runId: 'fixture-run', token: 'fixture-caller-token' }), { mode: 0o600 });
-  const service = spawn(join(first, "runtime/node"), [proof], { env, cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  await new Promise<void>((resolve) =>
+    identityServer.listen(identitySocket, resolve),
+  );
+  await writeFile(
+    identityTicket,
+    JSON.stringify({
+      socketPath: identitySocket,
+      taskId: "fixture-task",
+      runId: "fixture-run",
+      token: "fixture-caller-token",
+    }),
+    { mode: 0o600 },
+  );
+  const service = spawn(join(first, "runtime/node"), [proof], {
+    env,
+    cwd: root,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let diagnostics = "";
-  service.stderr.on("data", chunk => { diagnostics += chunk; });
-  const exited = new Promise<number | null>(resolve => service.once("exit", resolve));
+  service.stderr.on("data", (chunk) => {
+    diagnostics += chunk;
+  });
+  const exited = new Promise<number | null>((resolve) =>
+    service.once("exit", resolve),
+  );
   try {
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(Error(`Service startup: ${diagnostics}`)), 30_000);
-      service.once("exit", code => { clearTimeout(timer); reject(Error(`Service exited ${code}: ${diagnostics}`)); });
-      service.stdout.on("data", chunk => { if (String(chunk).includes("READY")) { clearTimeout(timer); resolve(); } });
+      const timer = setTimeout(
+        () => reject(Error(`Service startup: ${diagnostics}`)),
+        30_000,
+      );
+      service.once("exit", (code) => {
+        clearTimeout(timer);
+        reject(Error(`Service exited ${code}: ${diagnostics}`));
+      });
+      service.stdout.on("data", (chunk) => {
+        if (String(chunk).includes("READY")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
     });
     // The default UI command launches the link with the platform opener.
     const openerDir = join(root, "opener");
     await mkdir(openerDir);
     const capture = join(root, "opened-link");
     const opener = process.platform === "darwin" ? "open" : "xdg-open";
-    await writeFile(join(openerDir, opener), `#!/bin/sh\nprintf '%s' "$1" > ${JSON.stringify(capture)}\n`, { mode: 0o755 });
-    const ui = await exec(command, ["ui"], { env: { ...env, PATH: `${openerDir}:${env.PATH}` }, cwd: root, timeout: 30_000 });
+    await writeFile(
+      join(openerDir, opener),
+      `#!/bin/sh\nprintf '%s' "$1" > ${JSON.stringify(capture)}\n`,
+      { mode: 0o755 },
+    );
+    const ui = await exec(command, ["ui"], {
+      env: { ...env, PATH: `${openerDir}:${env.PATH}` },
+      cwd: root,
+      timeout: 30_000,
+    });
     for (let attempt = 0; attempt < 100; attempt++) {
-      try { if (await readFile(capture, "utf8")) break; } catch { /* opener still starting */ }
-      await new Promise(resolve => setTimeout(resolve, 10));
+      try {
+        if (await readFile(capture, "utf8")) break;
+      } catch {
+        /* opener still starting */
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
     const opened = await readFile(capture, "utf8");
     assert.equal(opened, ui.stdout.trim());
@@ -138,7 +283,15 @@ process.on('SIGTERM', () => { void service.stop().then(() => process.exit(0)); }
     assert.match(await page.text(), /app\.js/);
     assert.equal((await fetch(`${url.origin}/app.js`)).status, 200);
     const answer = JSON.parse((await installed("capacity-state")).stdout);
-    const legacy = JSON.parse((await exec(join(first, "runtime/node"), [join(first, "bin/queue-cli.mjs"), "capacity-state"], { env, cwd: root })).stdout);
+    const legacy = JSON.parse(
+      (
+        await exec(
+          join(first, "runtime/node"),
+          [join(first, "bin/queue-cli.mjs"), "capacity-state"],
+          { env, cwd: root },
+        )
+      ).stdout,
+    );
     assert.deepEqual(answer, legacy);
     // Exercise submit and reparent against the private service. These deliberately
     // missing inputs must return the same refusal and exit code as the helpers,
@@ -146,33 +299,67 @@ process.on('SIGTERM', () => { void service.stop().then(() => process.exit(0)); }
     const helperEnv = { ...env, NUCLEUS_TICKET: identityTicket };
     for (const [helper, args] of [
       ["submit", ["--dry-run", "--brief", join(root, "repo/tasks/missing.md")]],
-      ["reparent", ["fixture-owner", "--task", "missing-task", "--reason", "scratch proof"]],
+      [
+        "reparent",
+        [
+          "fixture-owner",
+          "--task",
+          "missing-task",
+          "--reason",
+          "scratch proof",
+        ],
+      ],
     ] as const) {
       const failure = async (run: Promise<unknown>) => {
-        try { await run; assert.fail("Missing fixture input must be refused"); }
-        catch (error: any) {
+        try {
+          await run;
+          assert.fail("Missing fixture input must be refused");
+        } catch (error: any) {
           assert.equal(error.code, 1);
-          assert.doesNotMatch(error.stderr, /Cannot find (?:module|package)|Supply at least one brief/);
-          return { stdout: error.stdout, stderr: error.stderr, code: error.code };
+          assert.doesNotMatch(
+            error.stderr,
+            /Cannot find (?:module|package)|Supply at least one brief/,
+          );
+          return {
+            stdout: error.stdout,
+            stderr: error.stderr,
+            code: error.code,
+          };
         }
       };
-      const direct = await failure(exec(join(first, "runtime/node"), [join(first, `bin/nucleus-${helper}.mjs`), ...args], { env: helperEnv, cwd: root }));
-      const wrapped = await failure(exec(command, ["helper", helper, ...args], { env: helperEnv, cwd: root }));
+      const direct = await failure(
+        exec(
+          join(first, "runtime/node"),
+          [join(first, `bin/nucleus-${helper}.mjs`), ...args],
+          { env: helperEnv, cwd: root },
+        ),
+      );
+      const wrapped = await failure(
+        exec(command, ["helper", helper, ...args], {
+          env: helperEnv,
+          cwd: root,
+        }),
+      );
       assert.deepEqual(wrapped, direct);
-      if (helper === "reparent") assert.match(wrapped.stderr, /Unknown task missing-task/);
+      if (helper === "reparent")
+        assert.match(wrapped.stderr, /Unknown task missing-task/);
     }
-    const cli = spawn(command, ["capacity-state", "-"], { env, cwd: root, stdio: ["pipe", "pipe", "pipe"] });
+    const cli = spawn(command, ["capacity-state", "-"], {
+      env,
+      cwd: root,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let output = "";
-    cli.stdout.on("data", chunk => { output += chunk; });
+    cli.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
     cli.stdin.end("{}");
-    assert.equal(await new Promise(resolve => cli.once("exit", resolve)), 0);
+    assert.equal(await new Promise((resolve) => cli.once("exit", resolve)), 0);
     assert.deepEqual(JSON.parse(output), answer);
   } finally {
     service.kill("SIGTERM");
     const exitCode = await exited;
-    await new Promise<void>(resolve => identityServer.close(() => resolve()));
+    await new Promise<void>((resolve) => identityServer.close(() => resolve()));
     assert.equal(exitCode, 0, diagnostics);
   }
-
-
 });

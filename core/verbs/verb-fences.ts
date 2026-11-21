@@ -24,6 +24,7 @@ import {
   runSettlementFence,
 } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { TaskChangedRefusal } from "../../shared/task-version";
 
 /** An unanswered control has no effect-specific retry. Its own observer owns it. */
@@ -456,10 +457,12 @@ export class VerbFences {
   ): Promise<void> {
     if (!runs.length) return;
     const cancel = this.adapter.stopAgentTurn;
-    if (!cancel)
+    if (!cancel) {
+      const host = HOST_KIND_LABELS[hostKindOf(this.store.task(taskId).hostId)];
       throw Error(
-        "Paseo active-turn cancellation is unavailable, so Nucleus cannot stop the live run; retry once Paseo offers it",
+        `${host} active-turn cancellation is unavailable, so Nucleus cannot stop the live run; retry once ${host} offers it`,
       );
+    }
     for (const run of runs) {
       const intent = {
         verb,

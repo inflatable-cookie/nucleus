@@ -2698,7 +2698,7 @@ test("a pre-dispatch review-entry park (#325): restart requeues it whatever the 
       phase: "needs_attention",
       entrypoint: "review",
       reason:
-        "Review entry admitted; waiting for Paseo readiness before validation",
+        "Review entry admitted; waiting for host readiness before validation",
       reviewEntry: reviewEntryRecordSchema.parse({
         operationId: (randomUUID() + randomUUID()).replace(/-/g, ""),
         prNumber: 12,
@@ -3831,10 +3831,7 @@ test("a continuation whose prior run has no cleanup record is told so, and a fin
       /no run-bound cleanup record names run worker-run/,
       "the missing record is named, not inferred",
     );
-    assert.match(
-      work.note ?? "",
-      /earlier build outputs may be gone/,
-    );
+    assert.match(work.note ?? "", /earlier build outputs may be gone/);
     // A skipped or uncertain record is quoted with its own state, never as a removal.
     f.store.update(f.taskId, {
       resolution: {

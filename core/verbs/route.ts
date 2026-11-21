@@ -5,6 +5,8 @@ import {
 import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { archiveReplacedReviewer } from "../workspaces/thread-archive-replacement";
 import { routeStateRefusal } from "./control-refusals";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
+
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { liveRun, liveRunForRole } from "../task-decision-rules";
 import { settleSupersededFences } from "../recovery/fence-settlement";
@@ -986,7 +988,7 @@ export class RouteControls {
     const cancelled = this.adapter.stopAgentTurn;
     if (!cancelled && !reviewerReplacement)
       throw Error(
-        "Paseo active-turn cancellation is unavailable; route without now and stop the run first",
+        `${HOST_KIND_LABELS[hostKindOf(task.hostId)]} active-turn cancellation is unavailable; route without now and stop the run first`,
       );
     const observed = await this.engine.host.observe(agentId);
     if (reviewerReplacement) {

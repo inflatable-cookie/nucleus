@@ -32,8 +32,8 @@ function records(root) {
 export function worktree(action, extras, root = process.cwd()) {
   if (!['prepare', 'link', 'unlink'].includes(action) || (action !== 'prepare' && extras.length)) fail('usage: nucleus worktree <prepare [SOURCE[=LINK] ...]|link|unlink>');
   const primaryRoot = primary(root);
-  const label = action === 'prepare' ? 'sibling preparation' : `Effigy dependency ${action}`;
-  if (!primaryRoot) { console.log(`Paseo ${label}: skipped (primary checkout)`); return; }
+  const label = action === 'prepare' ? 'Sibling preparation' : `Effigy dependency ${action}`;
+  if (!primaryRoot) { console.log(`${label}: skipped (primary checkout)`); return; }
   if (action === 'prepare') {
     const sources = new Map();
     for (const spec of [...records(primaryRoot).map(r => r.source), ...extras]) {
@@ -57,7 +57,7 @@ export function worktree(action, extras, root = process.cwd()) {
       else create.push([dest, source]);
     }
     for (const [dest, source] of create) { symlinkSync(source, dest); console.log(`[nucleus:worktree] create ${dest} -> ${source}`); }
-    console.log(`Paseo sibling preparation: OK (sources=${sources.size})`);
+    console.log(`Sibling preparation: OK (sources=${sources.size})`);
   } else {
     const links = records(action === 'link' ? primaryRoot : root);
     for (const record of links) {
@@ -67,6 +67,6 @@ export function worktree(action, extras, root = process.cwd()) {
       const payload = evidence.result ?? evidence;
       if (payload.schema !== `effigy.deps.${action}.v1`) fail(`effigy deps ${action} returned unexpected evidence for ${record.source}`);
     }
-    console.log(`Paseo Effigy dependency ${action}: OK (links=${links.length})`);
+    console.log(`Effigy dependency ${action}: OK (links=${links.length})`);
   }
 }

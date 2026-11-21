@@ -7,6 +7,8 @@ import {
 } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import type { AgentObservation } from "../host/adapter";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
+
 import { digest, now } from "../store/store";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { retainedCallbackSentence } from "../dispatch/retained-callback";
@@ -119,8 +121,9 @@ export class PausedStops {
           continue;
         const cancel = this.adapter.stopAgentTurn;
         if (!cancel) {
+          const host = HOST_KIND_LABELS[hostKindOf(task.hostId)];
           failures.push(
-            `Paseo active-turn cancellation is unavailable, so Nucleus cannot stop the live ${role} thread (${agentId}); retry once Paseo offers it`,
+            `${host} active-turn cancellation is unavailable, so Nucleus cannot stop the live ${role} thread (${agentId}); retry once ${host} offers it`,
           );
           continue;
         }
