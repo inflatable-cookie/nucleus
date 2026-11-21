@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Adapter } from "../core/host/adapter";
+import { Store } from "../core/store/store";
 import {
   buildProjectSettings,
   PROJECT_SETTINGS_PROBLEMS,
@@ -700,6 +701,83 @@ test("T3-only with a saved offline Paseo planner: the list answers from saved da
     );
     assert.equal(offline.projects[0].plannerLive, null);
     assert.equal(offline.projects[0].project.planner?.agentId, planner);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("T3 healthy with the saved Paseo host offline: the list renders, the Paseo planner is unknown, and an ordinary edit still saves", async () => {
+  const dir = mkdtempSync(
+    join(tmpdir(), "nsq-project-settings-paseo-offline-"),
+  );
+  const paseo = "paseo-synthetic";
+  const t3 = "t3code:synthetic";
+  const planner = formatAgentId(paseo, "planner-paseo");
+  // The configured daemon is Paseo: the saved primary, whose transport is down.
+  const seed = new Store(join(dir, "queue.sqlite"));
+  seed.setMeta("hostRegistry", [
+    { id: paseo, endpoint: "ws://127.0.0.1:6767/ws" },
+  ]);
+  seed.close();
+  const down = () =>
+    Promise.reject(new Error("Transport not connected (status: disconnected)"));
+  const runtime = new QueueRuntime({
+    dataDir: dir,
+    adapterFactory: () =>
+      ({
+        ...(muteAdapter(dir) as object),
+        hostId: paseo,
+        client: { isConnected: false },
+        isConnected: () => false,
+        connect: down,
+        listLiveAgents: down,
+      }) as unknown as Adapter,
+    timers: false,
+  });
+  try {
+    await runtime.started;
+    // T3 is a second, connected host: it is online while the saved Paseo daemon is offline.
+    runtime.hostRegistry.connect(t3, "ws://127.0.0.1:6768/ws", {} as never);
+    const hosts = runtime.hostList().hosts;
+    assert.equal(hosts.find((host) => host.id === t3)?.state, "online");
+    assert.equal(hosts.find((host) => host.id === paseo)?.state, "offline");
+    runtime.store.upsertProject({
+      key: "suite",
+      name: "Suite",
+      repositories: [alpha],
+    });
+    runtime.store.setProjectPlanner({
+      key: "suite",
+      agentId: planner,
+      setBy: "operator",
+    });
+
+    const list = projectSettings.output.parse(await runtime.projectSettings());
+    assert.equal(
+      list.projects[0].plannerLive,
+      null,
+      "the list does not read the offline Paseo host",
+    );
+    const focused = projectSettings.output.parse(
+      await runtime.projectSettings({ project: "suite" }),
+    );
+    assert.equal(
+      focused.projects[0].plannerLive,
+      null,
+      "an offline Paseo planner is unknown, never gone",
+    );
+
+    // An ordinary edit saves while Paseo is offline, and the saved planner is untouched.
+    await runtime.upsertProject({
+      key: "suite",
+      name: "Suite renamed",
+      repositories: [{ origin: alpha.origin, path: "" }],
+    });
+    const renamed = projectSettings.output.parse(
+      await runtime.projectSettings(),
+    );
+    assert.equal(renamed.projects[0].project.name, "Suite renamed");
+    assert.equal(renamed.projects[0].project.planner?.agentId, planner);
   } finally {
     await runtime.stop();
   }

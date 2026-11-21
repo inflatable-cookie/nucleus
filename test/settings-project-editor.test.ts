@@ -1917,6 +1917,7 @@ test("T3-only with a saved offline Paseo planner: Settings lists the project, th
     }),
   ]);
   const never = () => new Promise<never>(() => {});
+  const writes: Array<[string, unknown]> = [];
   const board = {
     revision: 1,
     connected: true,
@@ -1952,6 +1953,14 @@ test("T3-only with a saved offline Paseo planner: Settings lists the project, th
   const invoke = async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot") return board;
     if (method === "backup.list") return { snapshots: [], localError: null };
+    if (method === "project.upsert") {
+      writes.push([method, input]);
+      return {
+        ...data.projects[0]!.project,
+        name: (input as { name: string }).name,
+        version: 4,
+      };
+    }
     // The saved list answers at once, and so does the focused read of the open project.
     if (method === "project.settings") return data;
     // The Paseo host is offline from a T3-only installation: the picker's read fails.
@@ -1991,6 +2000,20 @@ test("T3-only with a saved offline Paseo planner: Settings lists the project, th
     assert.equal(ui.text().includes("Gone"), false);
     assert.ok(ui.query("Project name"));
     assert.equal(ui.text().includes("Live status is unavailable"), false);
+    // An ordinary edit saves in the same condition: the rename autosaves and the planner is not written.
+    ui.type("Project name", "Suite renamed");
+    await settle(
+      () => writes.length === 1,
+      "rename saved with the Paseo host offline",
+    );
+    assert.deepEqual(writes[0], [
+      "project.upsert",
+      {
+        key: "suite",
+        name: "Suite renamed",
+        repositories: [repo("acme/suite")],
+      },
+    ]);
   } finally {
     done(ui);
   }
