@@ -9,13 +9,15 @@ type Tree = {
 };
 
 const menuEntry = (name: string) => new RegExp(`^${name}(, \\d+)?$`);
-/** The list views, in menu order. Leads and Papercuts are menu entries of their own (Tom, 2026-11-21). */
+/** The list views, in menu order. Working, In review and Closing are top-level entries (Tom, 2026-11-21). */
 export const INBOX_LIST_VIEWS = [
   "Needs you",
   "Leads",
   "Papercuts",
   "Queue",
-  "Active",
+  "Working",
+  "In review",
+  "Closing",
 ] as const;
 
 /** Opens one menu view. */
