@@ -106,6 +106,13 @@ export const pendingBackgroundTask = z
   })
   .passthrough();
 export const shellThread = threadRecord.extend({
+  lineage: z
+    .object({
+      parentThreadId: id.nullable().optional(),
+    })
+    .passthrough()
+    .nullable()
+    .optional(),
   activeRunId: id.nullable(),
   status: z.enum([
     "idle",

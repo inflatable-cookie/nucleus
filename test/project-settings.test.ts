@@ -148,6 +148,9 @@ test("ownerCandidateKind classifies planners apart from task threads", () => {
     "executor",
   );
   assert.equal(ownerCandidateKind(wireLabels({ decider: "q1" })), "other");
+  assert.equal(ownerCandidateKind(wireLabels({ role: "subagent" })), "other");
+  assert.equal(ownerCandidateKind(wireLabels({ role: "inbox" })), "other");
+  assert.equal(ownerCandidateKind(wireLabels({ role: "parent" })), "other");
   assert.equal(
     ownerCandidateKind({
       "nucleus.role": "worker",

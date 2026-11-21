@@ -11,7 +11,7 @@
  * rather than spawn git on the executor.
  */
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { Task } from "../../shared/contracts";
 
@@ -69,6 +69,34 @@ export function linkedWorktreePath(directory: string): string | null {
     return gitDir !== resolveCommonDir(gitDir) ? root : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Real path of the Git common directory containing `directory` (a checkout,
+ * linked worktree or subdirectory of one), or `null` when outside any Git
+ * working tree. Reads `.git` directly instead of spawning `git`.
+ */
+export function gitCommonDir(directory: string): string | null {
+  if (!directory) return null;
+  let current: string;
+  try {
+    current = realpathSync(directory);
+  } catch {
+    return null;
+  }
+  while (true) {
+    try {
+      const gitDir = resolveGitDir(current);
+      return resolveCommonDir(gitDir);
+    } catch (error) {
+      if (!(error instanceof GitIdentityError) || error.code !== "no-git") {
+        return null;
+      }
+    }
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
   }
 }
 

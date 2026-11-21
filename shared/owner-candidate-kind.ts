@@ -32,7 +32,7 @@ export function ownerCandidateKind(
     if (role === "coordinator") return "coordinator";
     if (role === "executor") return "executor";
     if (role === "worker" || task) return "worker";
-    if (decider) return "other";
+    if (decider || (role && role !== "planner")) return "other";
     return "planner";
   } catch {
     return "other";

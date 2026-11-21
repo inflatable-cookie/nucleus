@@ -1,14 +1,11 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
 import { ownerCandidateKind } from '../../shared/owner-candidate-kind';
 import { isOperatorOrigin, taskOwner, type Project, type Run, type Task } from '../../shared/contracts';
 import type { HostLiveAgent } from '../../shared/host';
+import { gitCommonDir } from '../git/git-identity';
 import { observationTimeout } from '../recovery/observation-timeout';
 import { ResponsibleThreadCache, type ResponsibleThreadFact, type ResponsibleShortlist } from './responsible-thread-cache';
-
-const git = promisify(execFile);
 
 export interface ResponsibleThreadResolverPorts {
   hostIds(): readonly string[];
@@ -23,7 +20,7 @@ interface ResponsibleTaskIndex {
   tasks: Task[];
   runs: Run[];
   byProject: ReadonlyMap<string, Task[]>;
-  gitRoots: Map<string, Promise<string | null>>;
+  gitRoots: Map<string, string | null>;
 }
 
 function inDirectory(directory: string, root: string): boolean {
@@ -37,14 +34,6 @@ function identityHost(id: string | null | undefined): string | null {
   try { return parseAgentId(id)?.hostId ?? null; } catch { return null; }
 }
 
-/** A checkout and any of its linked worktrees share a Git common directory. */
-async function commonDirectory(directory: string): Promise<string | null> {
-  try {
-    const { stdout } = await git('git', ['-C', directory, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { timeout: 1000, maxBuffer: 4096 });
-    return resolve(stdout.trim());
-  } catch { return null; }
-}
-
 export class ResponsibleThreadResolver {
   readonly cache = new ResponsibleThreadCache();
   private readonly membership = new Map<string, string>();
@@ -53,7 +42,7 @@ export class ResponsibleThreadResolver {
   private inventory(hostId: string): Promise<HostLiveAgent[]> {
     const pending = this.inventories.get(hostId);
     if (pending) return pending;
-    const read = observationTimeout(this.ports.inventory(hostId), 'Responsible host inventory timed out', 1800)
+    const read = observationTimeout(this.ports.inventory(hostId), 'Responsible host inventory timed out', 4500)
       .finally(() => { if (this.inventories.get(hostId) === read) this.inventories.delete(hostId); });
     this.inventories.set(hostId, read);
     return read;
@@ -98,40 +87,39 @@ export class ResponsibleThreadResolver {
         const roots = project.repositories.map(repo => repo.path).filter(Boolean);
         const gitRoot = (path: string) => {
           let result = gitRoots.get(path);
-          if (!result) { result = commonDirectory(path); gitRoots.set(path, result); }
+          if (result === undefined) { result = gitCommonDir(path); gitRoots.set(path, result); }
           return result;
         };
-        const registeredIds = [project.planner?.agentId ?? null,
-          ...(project.agents ?? []).map(agent => agent.agentId)].filter((value): value is string => Boolean(value));
-        const namedIds = registeredIds.filter(value => value !== project.planner?.agentId);
-        return Promise.all(agents.map(async (agent): Promise<ResponsibleThreadFact> => {
+        const plannerId = project.planner?.agentId ?? null;
+        const namedAgents = (project.agents ?? []).filter(agent => Boolean(agent.agentId) && agent.agentId !== plannerId);
+        return agents.map((agent): ResponsibleThreadFact => {
           const matches = (value: string | null | undefined, host: string | null | undefined) =>
             sameCallerIdentity(value, agent.id, host, id);
           // A registered identity is matched by the host its own qualified id
           // proves, so a Paseo, T3 or BB registration is recognised as live on
           // that host and is never read through a stale recorded host id.
-          const registered = (value: string | null | undefined) =>
-            Boolean(value) && sameCallerIdentity(value, agent.id, identityHost(value), id);
+          const registered = (value: string | null | undefined, recordedHost?: string | null) =>
+            Boolean(value) && sameCallerIdentity(value, agent.id, identityHost(value) ?? recordedHost, id);
           const taskRole = ownerCandidateKind(agent.labels) !== 'planner'
             || tasks.some(task => matches(task.agentId, task.hostId))
             || runs.some(run => matches(run.agentId, run.hostId));
           const owned = projectTasks.filter(task =>
             matches(task.plannerAgentId, task.originHostId)
             || (!isOperatorOrigin(taskOwner(task)) && matches(taskOwner(task), task.originHostId)));
-          const registeredPlanner = registered(project.planner?.agentId);
-          const registeredAgent = !registeredPlanner && namedIds.some(value => registered(value));
+          const registeredPlanner = registered(plannerId);
+          const registeredAgent = !registeredPlanner && namedAgents.some(entry => registered(entry.agentId, entry.hostId));
           const direct = [agent.directory, agent.repositoryRoot].some(path => path && roots.some(root => inDirectory(path, root)));
           let linked = false;
-          if (!direct && agent.directory && roots.length) {
-            const [candidate, ...repositories] = await Promise.all([gitRoot(agent.directory), ...roots.map(gitRoot)]);
-            linked = !!candidate && repositories.includes(candidate);
+          if (!direct && (!taskRole || registeredPlanner || registeredAgent) && agent.directory && roots.length) {
+            const candidate = gitRoot(agent.directory);
+            linked = !!candidate && roots.some(root => gitRoot(root) === candidate);
           }
           const calls = [...this.activity].filter(([caller]) => matches(caller, null)).map(([, at]) => at);
           const lastInteraction = [agent.updatedAt, ...calls, ...owned.map(task => task.createdAt)].filter((date): date is string => !!date).sort().at(-1) ?? null;
           return { nativeId: agent.id, registeredPlanner, registeredAgent,
             dispatcher: owned.length > 0, repositoryWorker: Boolean(direct || linked),
             taskRole, closed: false, lastInteraction };
-        }));
+        });
       },
     }));
     return this.cache.resolve(project.key, hosts);

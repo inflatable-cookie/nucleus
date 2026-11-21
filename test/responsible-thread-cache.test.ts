@@ -69,3 +69,23 @@ test('an offline or slow host does not block another host', async () => {
   ]);
   assert.deepEqual(result?.threads.map(thread => thread.agentId), [formatAgentId('paseo:live', 'live')]);
 });
+
+test('a timed-out or failed host inventory is not cached for the TTL', async () => {
+  let now = 0, calls = 0;
+  const cache = new ResponsibleThreadCache(60_000, 20, () => now);
+  const host = {
+    id: 't3code:one',
+    inventory: async () => {
+      calls++;
+      if (calls === 1) throw new Error('Responsible host inventory timed out');
+      return [fact('mcp:planner', '2026-01-02', { registeredPlanner: true })];
+    },
+  };
+  const first = await cache.resolve('project', [host]);
+  assert.deepEqual(first?.threads, []);
+  // Still well inside the 60s TTL, the next lookup must refresh immediately.
+  now = 10;
+  const second = await cache.resolve('project', [host]);
+  assert.deepEqual(second?.threads.map(thread => thread.agentId), [formatAgentId('t3code:one', 'mcp:planner')]);
+  assert.equal(calls, 2);
+});

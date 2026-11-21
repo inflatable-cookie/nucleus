@@ -64,7 +64,7 @@ export interface ResponsibleCandidate extends ResponsibleThread {
 export const RESPONSIBLE_OBSERVATION_MS = 5_000;
 
 const DEFAULT_TTL_MS = 3 * 60_000;
-const DEFAULT_HOST_TIMEOUT_MS = 2_000;
+const DEFAULT_HOST_TIMEOUT_MS = 5_000;
 
 /**
  * Registration outranks dispatch, dispatch outranks a bare repository worker,
@@ -145,10 +145,11 @@ export class ResponsibleThreadCache {
     if (cached && !this.needsInventory.has(cached)) return cached;
     const current = this.pending.get(projectKey);
     if (current) return current;
-    const read = this.collect(hosts).then(result => {
+    const read = this.collect(hosts).then(({ shortlist, incomplete }) => {
       if (this.pending.get(projectKey) !== read) return null;
-      this.entries.set(projectKey, result);
-      return result;
+      if (incomplete) this.needsInventory.add(shortlist);
+      this.entries.set(projectKey, shortlist);
+      return shortlist;
     }).finally(() => {
       if (this.pending.get(projectKey) === read) this.pending.delete(projectKey);
     });
@@ -156,7 +157,8 @@ export class ResponsibleThreadCache {
     return read;
   }
 
-  private async collect(hosts: readonly ResponsibleHost[]): Promise<ResponsibleShortlist> {
+  private async collect(hosts: readonly ResponsibleHost[]): Promise<{ shortlist: ResponsibleShortlist; incomplete: boolean }> {
+    let incomplete = false;
     const inventories = await Promise.all(hosts.map(async host => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -168,6 +170,7 @@ export class ResponsibleThreadCache {
           .filter(({ fact, reasons }) => candidate(fact, reasons))
           .map(({ fact, reasons }) => ({ ...fact, reasons, hostId: host.id, agentId: formatAgentId(host.id, fact.nativeId) }));
       } catch {
+        incomplete = true;
         return [];
       } finally {
         if (timer) clearTimeout(timer);
@@ -178,6 +181,6 @@ export class ResponsibleThreadCache {
       || (b.lastInteraction ?? '').localeCompare(a.lastInteraction ?? '')
       || a.agentId.localeCompare(b.agentId))
       .map(({ agentId, hostId, lastInteraction, reasons }) => ({ agentId, hostId, lastInteraction, reasons }));
-    return { threads, observedAt: this.clock() };
+    return { shortlist: { threads, observedAt: this.clock() }, incomplete };
   }
 }
