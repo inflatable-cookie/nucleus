@@ -109,6 +109,7 @@ export const shellThread = threadRecord.extend({
   lineage: z
     .object({
       parentThreadId: id.nullable().optional(),
+      relationshipToParent: id.nullable().optional(),
     })
     .passthrough()
     .nullable()

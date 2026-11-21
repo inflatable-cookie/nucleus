@@ -65,10 +65,12 @@ async function t3Fixture(
 
   const adapter = createAdapter(Policy, host);
   const store = new Store(":memory:");
+  store.setMeta("paused", false);
   t.after(() => store.close());
   const engine = new Engine(store, adapter, 0);
   engine.hostIds = () => [host.hostId];
-  engine.resolveHostAdapter = (id) => (id === host.hostId ? adapter : undefined);
+  engine.resolveHostAdapter = (id) =>
+    id === host.hostId ? adapter : undefined;
   engine.identifyOriginHost = async () => host.hostId;
   store.upsertProject({
     key: "example",
@@ -119,7 +121,10 @@ async function t3Fixture(
     released: false,
   } as unknown as Run);
   store.update(senderTask.id, {
-    resolution: { ...store.task(senderTask.id).resolution, currentRunId: "sender-run" },
+    resolution: {
+      ...store.task(senderTask.id).resolution,
+      currentRunId: "sender-run",
+    },
   });
   store.setCredential("sender-run", "sender-token");
 
@@ -135,7 +140,18 @@ async function t3Fixture(
       "sender-token",
     );
 
-  return { dir, repoDir, deskDir, fake, host, adapter, store, engine, repositories, tellProject };
+  return {
+    dir,
+    repoDir,
+    deskDir,
+    fake,
+    host,
+    adapter,
+    store,
+    engine,
+    repositories,
+    tellProject,
+  };
 }
 
 test("real T3 adapter resolves MCP-launched registered planner outside any repo checkout and delivers tell", async (t) => {
@@ -162,8 +178,13 @@ test("real T3 adapter resolves MCP-launched registered planner outside any repo 
   const project = await f.repositories.getProject({ key: "example" });
   assert.equal(project?.responsibleThread?.thread?.agentId, qualified);
   assert.equal(project?.responsibleThread?.thread?.hostId, f.host.hostId);
-  assert.deepEqual(project?.responsibleThread?.thread?.reasons, ["registered-planner"]);
-  assert.equal(project?.responsibleThread?.shortlist[0]?.observation?.state, "routable");
+  assert.deepEqual(project?.responsibleThread?.thread?.reasons, [
+    "registered-planner",
+  ]);
+  assert.equal(
+    project?.responsibleThread?.shortlist[0]?.observation?.state,
+    "routable",
+  );
 
   const receipt = await f.tellProject(1);
   assert.equal(receipt.status, "delivered");
@@ -227,7 +248,9 @@ test("real T3 adapter resolves a registered named agent and a task dispatcher ou
   // Named agent resolves when no planner or dispatcher is present.
   const withNamed = await f.repositories.getProject({ key: "example" });
   assert.equal(withNamed?.responsibleThread?.thread?.agentId, namedQualified);
-  assert.deepEqual(withNamed?.responsibleThread?.thread?.reasons, ["registered-agent"]);
+  assert.deepEqual(withNamed?.responsibleThread?.thread?.reasons, [
+    "registered-agent",
+  ]);
 
   // A live T3 thread that dispatched a project task qualifies as dispatcher and outranks a named agent.
   f.store.insert(
@@ -244,8 +267,13 @@ test("real T3 adapter resolves a registered named agent and a task dispatcher ou
     BASE_SHA,
   );
   const withDispatcher = await f.repositories.getProject({ key: "example" });
-  assert.equal(withDispatcher?.responsibleThread?.thread?.agentId, dispatcherQualified);
-  assert.deepEqual(withDispatcher?.responsibleThread?.thread?.reasons, ["dispatcher"]);
+  assert.equal(
+    withDispatcher?.responsibleThread?.thread?.agentId,
+    dispatcherQualified,
+  );
+  assert.deepEqual(withDispatcher?.responsibleThread?.thread?.reasons, [
+    "dispatcher",
+  ]);
 });
 
 test("real T3 adapter excludes task parents, inbox, and subagent threads from the responsible shortlist", async (t) => {
@@ -307,7 +335,7 @@ test("real T3 adapter excludes task parents, inbox, and subagent threads from th
         worktreePath: null,
         lineage: {
           parentThreadId: parentId,
-          relationshipToParent: "delegated_task",
+          relationshipToParent: "subagent",
           rootThreadId: parentId,
         },
         updatedAt: "2026-11-21T21:00:00.000Z",
@@ -358,5 +386,121 @@ test("real T3 adapter keeps an unverifiable planner as unverified rather than go
 
   const project = await f.repositories.getProject({ key: "example" });
   assert.equal(project?.responsibleThread?.thread?.agentId, qualified);
-  assert.equal(project?.responsibleThread?.shortlist[0]?.observation?.state, "unverified");
+  assert.equal(
+    project?.responsibleThread?.shortlist[0]?.observation?.state,
+    "unverified",
+  );
+});
+
+test("real T3 adapter keeps an ordinary fork that dispatched an open task eligible for resolution and tell", async (t) => {
+  const rootId = "mcp:root-planner";
+  const forkId = "mcp:fork-dispatcher";
+  const f = await t3Fixture(t, (fake, { deskDir }) => {
+    fake.threads.set(
+      forkId,
+      makeProjection(forkId, deskDir, {
+        projectId: "proj-desk",
+        title: "Forked Planner",
+        worktreePath: null,
+        creationSource: "mcp",
+        lineage: {
+          parentThreadId: rootId,
+          relationshipToParent: "fork",
+          rootThreadId: rootId,
+        },
+        updatedAt: "2026-11-21T20:15:00.000Z",
+      }),
+    );
+  });
+  const forkQualified = formatAgentId(f.host.hostId, forkId);
+  f.store.insert(
+    submissionSchema.parse({
+      submissionId: "fork-dispatched-task",
+      title: "Fork Dispatched",
+      repoPath: f.repoDir,
+      planningCommit: BASE_SHA,
+      brief: { text: "Fork dispatched brief" },
+      originAgentId: forkQualified,
+    }),
+    f.host.hostId,
+    "brief",
+    BASE_SHA,
+  );
+
+  const project = await f.repositories.getProject({ key: "example" });
+  assert.equal(project?.responsibleThread?.thread?.agentId, forkQualified);
+  assert.deepEqual(project?.responsibleThread?.thread?.reasons, ["dispatcher"]);
+
+  const receipt = await f.tellProject(1);
+  assert.equal(receipt.status, "delivered");
+  assert.ok(
+    f.fake.commands.some(
+      (cmd) => cmd.type === "message.dispatch" && cmd.threadId === forkId,
+    ),
+    "expected message.dispatch to reach the forked T3 dispatcher thread",
+  );
+});
+
+test("transient T3 inventory failure keeps a project tell queued, recovers on sweep, and preserves the archived fence", async (t) => {
+  const mcpId = "mcp:b619ccc9-a078-49f6-b80f-6bececcfa6ca";
+  const f = await t3Fixture(t, (fake, { deskDir }) => {
+    fake.threads.set(
+      mcpId,
+      makeProjection(mcpId, deskDir, {
+        projectId: "proj-desk",
+        title: "Barge Planner",
+        worktreePath: null,
+        creationSource: "mcp",
+        updatedAt: "2026-11-21T20:00:00.000Z",
+      }),
+    );
+  });
+  const qualified = formatAgentId(f.host.hostId, mcpId);
+  f.store.setProjectPlanner({
+    key: "example",
+    agentId: qualified,
+    setBy: "operator",
+  });
+
+  // Simulate one transient inventory rejection on the T3 host.
+  const originalList = f.host.listLiveAgents.bind(f.host);
+  let failInventory = true;
+  f.host.listLiveAgents = async () => {
+    if (failInventory) throw new Error("transient T3 inventory read failure");
+    return originalList();
+  };
+
+  // The tell stays queued instead of expiring permanently.
+  const queued = await f.tellProject(1);
+  assert.equal(queued.status, "queued");
+  const messageId = "1".padStart(64, "0");
+  assert.equal(f.store.message(messageId)?.status, "queued");
+  assert.equal(
+    f.fake.commands.filter((cmd) => cmd.type === "message.dispatch").length,
+    0,
+  );
+
+  // Once inventory recovers, the sweep delivers that exact queued tell.
+  failInventory = false;
+  await f.engine.resolution.deliverQueuedMessages();
+  assert.equal(f.store.message(messageId)?.status, "delivered");
+  assert.ok(
+    f.fake.commands.some(
+      (cmd) => cmd.type === "message.dispatch" && cmd.threadId === mcpId,
+    ),
+  );
+
+  // If the planner is archived before recovery, the queued tell expires and never revives it.
+  failInventory = true;
+  f.engine.resolution.responsibleThreads.cache.invalidate("example");
+  const second = await f.tellProject(2);
+  assert.equal(second.status, "queued");
+  const secondId = "2".padStart(64, "0");
+  const commandsBefore = f.fake.commands.length;
+
+  f.fake.threads.get(mcpId)!.thread.archivedAt = "2026-11-21T21:00:00.000Z";
+  failInventory = false;
+  await f.engine.resolution.deliverQueuedMessages();
+  assert.equal(f.store.message(secondId)?.status, "expired");
+  assert.equal(f.fake.commands.length, commandsBefore);
 });

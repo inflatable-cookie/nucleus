@@ -486,6 +486,7 @@ export class Resolution {
         thread: pick ? Resolution.threadOf(pick) : null,
         observedAt: confirmed.shortlist.observedAt,
         senderIsCandidate,
+        incomplete: Boolean(confirmed.shortlist.incomplete),
         shortlist: confirmed.candidates,
       };
     }
@@ -495,6 +496,7 @@ export class Resolution {
       thread: null,
       observedAt: Date.now(),
       senderIsCandidate: false,
+      incomplete: true,
       shortlist: (cached?.threads ?? []).map((thread) => ({
         ...thread,
         observation: null,

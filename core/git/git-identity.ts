@@ -24,11 +24,22 @@ const SHA = /^[a-f0-9]{40,64}$/;
  * a checkout whose head, ref or origin could not be proved.
  */
 export type GitIdentityFault =
-  | "no-git" | "unreadable-git" | "malformed-git" | "reftable" | "malformed-head"
-  | "refused-ref" | "ref-loop" | "malformed-ref" | "missing-ref" | "unreadable";
+  | "no-git"
+  | "unreadable-git"
+  | "malformed-git"
+  | "reftable"
+  | "malformed-head"
+  | "refused-ref"
+  | "ref-loop"
+  | "malformed-ref"
+  | "missing-ref"
+  | "unreadable";
 
 export class GitIdentityError extends Error {
-  constructor(readonly code: GitIdentityFault, message: string) {
+  constructor(
+    readonly code: GitIdentityFault,
+    message: string,
+  ) {
     super(message);
     this.name = "GitIdentityError";
   }
@@ -57,7 +68,14 @@ export function readGitCheckout(directory: string): GitCheckoutIdentity {
   assertFilesBackend(gitDir, commonDir);
   const headText = readTrimmed(join(gitDir, "HEAD"));
   const { head, branch } = resolveHead(gitDir, commonDir, headText);
-  return { toplevel, gitDir, commonDir, head, branch, origin: originUrl(gitDir, commonDir) };
+  return {
+    toplevel,
+    gitDir,
+    commonDir,
+    head,
+    branch,
+    origin: originUrl(gitDir, commonDir),
+  };
 }
 
 /** A host-reported path is a workspace only if it names a linked Git checkout. */
@@ -101,7 +119,10 @@ export function gitCommonDir(directory: string): string | null {
 }
 
 /** Resolve a ref (`refs/heads/…`) from loose files then packed-refs. */
-export function readGitRef(identity: Pick<GitCheckoutIdentity, "gitDir" | "commonDir">, ref: string): string {
+export function readGitRef(
+  identity: Pick<GitCheckoutIdentity, "gitDir" | "commonDir">,
+  ref: string,
+): string {
   if (!ref.startsWith("refs/") || ref.includes("..") || ref.includes("\\"))
     throw new GitIdentityError("refused-ref", `Refused ref ${ref}`);
   return resolveRef(identity.gitDir, identity.commonDir, ref, 0);
@@ -110,13 +131,24 @@ export function readGitRef(identity: Pick<GitCheckoutIdentity, "gitDir" | "commo
 function resolveGitDir(toplevel: string): string {
   const gitPath = join(toplevel, ".git");
   let stat;
-  try { stat = lstatSync(gitPath); }
-  catch { throw new GitIdentityError("no-git", `No .git at ${toplevel}`); }
+  try {
+    stat = lstatSync(gitPath);
+  } catch {
+    throw new GitIdentityError("no-git", `No .git at ${toplevel}`);
+  }
   if (stat.isDirectory()) return realpathSync(gitPath);
-  if (!stat.isFile()) throw new GitIdentityError("unreadable-git", `Unreadable .git at ${toplevel}`);
+  if (!stat.isFile())
+    throw new GitIdentityError(
+      "unreadable-git",
+      `Unreadable .git at ${toplevel}`,
+    );
   const text = readFileSync(gitPath, "utf8");
   const match = text.match(/^gitdir:\s*(.+?)\s*$/m);
-  if (!match) throw new GitIdentityError("malformed-git", `Malformed .git file at ${toplevel}`);
+  if (!match)
+    throw new GitIdentityError(
+      "malformed-git",
+      `Malformed .git file at ${toplevel}`,
+    );
   const target = isAbsolute(match[1]) ? match[1] : resolve(toplevel, match[1]);
   return realpathSync(target);
 }
@@ -136,25 +168,45 @@ function assertFilesBackend(gitDir: string, commonDir: string) {
   }
 }
 
-function resolveHead(gitDir: string, commonDir: string, headText: string): { head: string; branch: string } {
+function resolveHead(
+  gitDir: string,
+  commonDir: string,
+  headText: string,
+): { head: string; branch: string } {
   if (SHA.test(headText)) return { head: headText, branch: "" };
   const match = headText.match(/^ref:\s+(refs\/heads\/.+)$/);
-  if (!match) throw new GitIdentityError("malformed-head", "HEAD is neither a commit nor a branch ref");
+  if (!match)
+    throw new GitIdentityError(
+      "malformed-head",
+      "HEAD is neither a commit nor a branch ref",
+    );
   const ref = match[1];
-  return { head: resolveRef(gitDir, commonDir, ref, 0), branch: ref.slice("refs/heads/".length) };
+  return {
+    head: resolveRef(gitDir, commonDir, ref, 0),
+    branch: ref.slice("refs/heads/".length),
+  };
 }
 
-function resolveRef(gitDir: string, commonDir: string, ref: string, depth: number): string {
-  if (depth > 5) throw new GitIdentityError("ref-loop", `Symbolic ref loop at ${ref}`);
+function resolveRef(
+  gitDir: string,
+  commonDir: string,
+  ref: string,
+  depth: number,
+): string {
+  if (depth > 5)
+    throw new GitIdentityError("ref-loop", `Symbolic ref loop at ${ref}`);
   for (const root of unique([gitDir, commonDir])) {
     const loose = join(root, ref);
     if (!existsSync(loose)) continue;
     const text = readTrimmed(loose);
-    if (text.startsWith("ref: ")) return resolveRef(gitDir, commonDir, text.slice(4).trim(), depth + 1);
+    if (text.startsWith("ref: "))
+      return resolveRef(gitDir, commonDir, text.slice(4).trim(), depth + 1);
     if (SHA.test(text)) return text;
     throw new GitIdentityError("malformed-ref", `Malformed loose ref ${ref}`);
   }
-  const packed = packedRef(commonDir, ref) ?? (commonDir !== gitDir ? packedRef(gitDir, ref) : null);
+  const packed =
+    packedRef(commonDir, ref) ??
+    (commonDir !== gitDir ? packedRef(gitDir, ref) : null);
   if (packed) return packed;
   throw new GitIdentityError("missing-ref", `Missing ref ${ref}`);
 }
@@ -166,7 +218,8 @@ function packedRef(root: string, ref: string): string | null {
     if (!line || line.startsWith("#") || line.startsWith("^")) continue;
     const space = line.indexOf(" ");
     if (space < 0) continue;
-    const sha = line.slice(0, space), name = line.slice(space + 1).trim();
+    const sha = line.slice(0, space),
+      name = line.slice(space + 1).trim();
     if (name === ref && SHA.test(sha)) return sha;
   }
   return null;
@@ -188,7 +241,9 @@ function configRemoteUrl(path: string): string | null {
     if (!line) continue;
     const section = line.match(/^\[(.+)\]$/);
     if (section) {
-      inOrigin = /^remote\s+"origin"$/i.test(section[1]) || /^remote\.origin$/i.test(section[1]);
+      inOrigin =
+        /^remote\s+"origin"$/i.test(section[1]) ||
+        /^remote\.origin$/i.test(section[1]);
       continue;
     }
     if (!inOrigin) continue;
@@ -199,12 +254,16 @@ function configRemoteUrl(path: string): string | null {
 }
 
 function readTrimmed(path: string): string {
-  try { return readFileSync(path, "utf8").trim(); }
-  catch { throw new GitIdentityError("unreadable", `Unreadable ${path}`); }
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    throw new GitIdentityError("unreadable", `Unreadable ${path}`);
+  }
 }
 
 function unique(paths: string[]): string[] {
-  const seen = new Set<string>(), out: string[] = [];
+  const seen = new Set<string>(),
+    out: string[] = [];
   for (const path of paths) {
     if (seen.has(path)) continue;
     seen.add(path);
@@ -214,8 +273,11 @@ function unique(paths: string[]): string[] {
 }
 
 export function safeRealpathSync(path: string): string {
-  try { return realpathSync(path); }
-  catch { return resolve(path); }
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
 /**
@@ -238,18 +300,24 @@ export function commonDirMatchesTask(
     ) {
       return false;
     }
-    if (safeRealpathSync(observedCommonDir) !== safeRealpathSync(allocation.gitCommonDir)) {
+    if (
+      safeRealpathSync(observedCommonDir) !==
+      safeRealpathSync(allocation.gitCommonDir)
+    ) {
       return false;
     }
     if (
       observedDirectory &&
-      safeRealpathSync(observedDirectory) !== safeRealpathSync(allocation.checkoutPath)
+      safeRealpathSync(observedDirectory) !==
+        safeRealpathSync(allocation.checkoutPath)
     ) {
       return false;
     }
     return true;
   }
-  return safeRealpathSync(observedCommonDir) === safeRealpathSync(repoCommonDir);
+  return (
+    safeRealpathSync(observedCommonDir) === safeRealpathSync(repoCommonDir)
+  );
 }
 
 /** Compare two repository origin URLs with hosted-slug and file:// equivalence. */
@@ -259,6 +327,10 @@ export function originsMatchForTask(a: string, b: string): boolean {
   const slugB = normalizeRepositoryOrigin(b);
   if (slugA && slugB) return slugA === slugB;
   const normLocal = (value: string) =>
-    value.trim().replace(/^file:\/\//i, "").replace(/\/+$/, "").replace(/\.git$/i, "");
+    value
+      .trim()
+      .replace(/^file:\/\//i, "")
+      .replace(/\/+$/, "")
+      .replace(/\.git$/i, "");
   return Boolean(a && b) && normLocal(a) === normLocal(b);
 }

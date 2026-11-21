@@ -11,7 +11,8 @@ export const PROJECT_OWNER_CANDIDATE_KINDS = [
   "executor",
   "other",
 ] as const;
-export type ProjectOwnerCandidateKind = (typeof PROJECT_OWNER_CANDIDATE_KINDS)[number];
+export type ProjectOwnerCandidateKind =
+  (typeof PROJECT_OWNER_CANDIDATE_KINDS)[number];
 
 /**
  * Classify a live host thread from its Nucleus/Northstar labels. A standing

@@ -84,12 +84,14 @@ Cross-project messages use a short-lived project shortlist from every active
 host. A candidate is live and is the project's registered planner, a thread
 `agent.register` names, a thread that has dispatched or owns project tasks, or a
 thread that works in a project checkout or worktree; a task-role thread
-(including a T3 task parent, the T3 inbox, or a T3 subagent thread) is left out
-unless it is explicitly registered. Linked-worktree matching reads `.git`
-directly rather than spawning `git`, and an incomplete host inventory (timeout
-or read failure) still serves surviving hosts for that call while marking the
-shortlist for fresh inventory on the next lookup so a transient host timeout
-never caches an empty shortlist for the TTL (nucleus#1518). Nucleus ranks a live registered planner first,
+(including a T3 task parent, the T3 inbox, or a T3 subagent thread identified by
+explicit `subagent` lineage or subagent/delegated-task ID — ordinary T3 forks
+stay eligible) is left out unless it is explicitly registered. Linked-worktree
+matching reads `.git` directly rather than spawning `git`, and an incomplete
+host inventory (timeout or read failure) still serves surviving hosts for that
+call, marks the shortlist for fresh inventory on the next lookup, and keeps a
+project-addressed `tell` queued rather than expiring it as absent until a
+complete inventory answers (nucleus#1518). Nucleus ranks a live registered planner first,
 then a thread that dispatched or owns project tasks, then a named agent, then a
 thread that only works in the checkout, breaking ties by the most recent host
 activity or Nucleus call (Tom, 2026-11-19; nucleus#1379). A design or support

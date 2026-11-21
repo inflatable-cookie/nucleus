@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
-import { formatAgentId, parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
+import {
+  formatAgentId,
+  parseAgentId,
+  sameCallerIdentity,
+} from "../../shared/agent-identity";
 import { observationTimeout } from "../recovery/observation-timeout";
 import { digest, now } from "../store/store";
 import {
@@ -328,7 +332,12 @@ export class AgentMessages {
       input.participantId !== undefined
         ? this.participantSender(input.participantId, token)
         : this.runSender(input.taskId!, input.runId!, token);
-    if (sender.agentId && sender.hostId) this.resolution.responsibleThreads.recordActivity(parseAgentId(sender.agentId) ? sender.agentId : formatAgentId(sender.hostId, sender.agentId));
+    if (sender.agentId && sender.hostId)
+      this.resolution.responsibleThreads.recordActivity(
+        parseAgentId(sender.agentId)
+          ? sender.agentId
+          : formatAgentId(sender.hostId, sender.agentId),
+      );
     const target = normalizeTellTarget(input.to, input.role);
     if (target.kind === "counterpart" && !sender.task)
       throw Error(
@@ -1282,10 +1291,12 @@ export class AgentMessages {
       };
     let candidates: ThreadCandidate[];
     let senderIsCandidate = false;
+    let incomplete = false;
     try {
       const resolved = await this.threadCandidates(current);
       candidates = resolved.candidates;
       senderIsCandidate = resolved.senderIsCandidate;
+      incomplete = resolved.incomplete;
     } catch (error) {
       if (
         error instanceof ProjectAgentTargetRefusal &&
@@ -1341,21 +1352,52 @@ export class AgentMessages {
         current.toRole !== "agent",
       );
       if (!hostId) {
-        if (current.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(current.toProjectKey);
+        if (current.toProjectKey)
+          this.resolution.responsibleThreads.cache.invalidate(
+            current.toProjectKey,
+          );
         continue;
       }
-      return this.notifyThread(current, candidate.agentId, hostId, label, candidate.kind);
+      return this.notifyThread(
+        current,
+        candidate.agentId,
+        hostId,
+        label,
+        candidate.kind,
+      );
     }
-    const detail = current.toRole === "agent"
-      ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
-      : senderIsCandidate
-        ? `The sender is the only live responsible thread for ${current.toProjectKey}; handle it yourself.`
-        : `No live responsible thread for ${current.toProjectKey}; handle it yourself.`;
+    if (current.toRole !== "agent" && incomplete) {
+      const detail = `Host inventory for ${current.toProjectKey} could not be read; the message stays queued until the host answers.`;
+      store.putMessage({ ...current, error: detail });
+      return {
+        status: "queued",
+        messageId: current.id,
+        to: label,
+        role,
+        recordedAt: current.createdAt,
+        replyTo: current.replyTo,
+        detail,
+      };
+    }
+    const detail =
+      current.toRole === "agent"
+        ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
+        : senderIsCandidate
+          ? `The sender is the only live responsible thread for ${current.toProjectKey}; handle it yourself.`
+          : `No live responsible thread for ${current.toProjectKey}; handle it yourself.`;
     if (current.toRole !== "agent") {
       store.transaction(() => {
         store.putMessage({ ...current, status: "expired", error: detail });
-        store.event(current.fromTaskId, "agent_message_expired", `${current.id}: ${detail}`);
-        store.event(current.toTaskId, "agent_message_expired", `${current.id}: ${detail}`);
+        store.event(
+          current.fromTaskId,
+          "agent_message_expired",
+          `${current.id}: ${detail}`,
+        );
+        store.event(
+          current.toTaskId,
+          "agent_message_expired",
+          `${current.id}: ${detail}`,
+        );
       });
     }
     return {
@@ -1370,12 +1412,12 @@ export class AgentMessages {
   }
 
   /** The threads a planner or agent message may reach, in order; each is re-read at delivery, never trusted from the record. */
-  private async threadCandidates(
-    record: AgentMessageRecord,
-  ): Promise<{
+  private async threadCandidates(record: AgentMessageRecord): Promise<{
     candidates: ThreadCandidate[];
     /** The sender was itself a live responsible candidate for the project. */
     senderIsCandidate: boolean;
+    /** At least one online host could not be inventoried, so absence is not proved. */
+    incomplete: boolean;
   }> {
     const key = record.toProjectKey!;
     if (record.toRole === "agent") {
@@ -1383,36 +1425,64 @@ export class AgentMessages {
         key,
         record.toAgentName ?? null,
       );
-      return { candidates: [{ agentId: target.agentId, hostId: target.hostId, kind: "agent" }], senderIsCandidate: false };
+      return {
+        candidates: [
+          { agentId: target.agentId, hostId: target.hostId, kind: "agent" },
+        ],
+        senderIsCandidate: false,
+        incomplete: false,
+      };
     }
     const candidates: ThreadCandidate[] = [];
     let senderIsCandidate = false;
+    let incomplete = false;
     // The sender is never a recipient of its own message, on any rung (Tom, 2026-11-19).
     const isSender = (agentId: string, hostId?: string | null) =>
       Boolean(record.fromAgentId) &&
-      sameCallerIdentity(agentId, record.fromAgentId, hostId, record.fromHostId);
+      sameCallerIdentity(
+        agentId,
+        record.fromAgentId,
+        hostId,
+        record.fromHostId,
+      );
     if (record.toLadderTaskId) {
       try {
         const task = this.store.task(record.toLadderTaskId);
         for (const rung of (await this.resolution.plannerRungsFor(task)).rungs)
-          if (!isSender(rung.agentId)) candidates.push({ agentId: rung.agentId, kind: "rung" });
+          if (!isSender(rung.agentId))
+            candidates.push({ agentId: rung.agentId, kind: "rung" });
       } catch {
         /* the ladder's task is gone; the project's planner still answers */
       }
     }
     const project = this.store.projectByKey(key);
     if (project) {
-      const resolved = await this.resolution.responsibleThread(project, record.fromAgentId ? { agentId: record.fromAgentId, hostId: record.fromHostId } : undefined);
-      if (resolved.thread) candidates.push({ agentId: resolved.thread.agentId, hostId: resolved.thread.hostId, kind: "project" });
-      else senderIsCandidate = resolved.senderIsCandidate;
+      const resolved = await this.resolution.responsibleThread(
+        project,
+        record.fromAgentId
+          ? { agentId: record.fromAgentId, hostId: record.fromHostId }
+          : undefined,
+      );
+      if (resolved.thread)
+        candidates.push({
+          agentId: resolved.thread.agentId,
+          hostId: resolved.thread.hostId,
+          kind: "project",
+        });
+      else {
+        senderIsCandidate = resolved.senderIsCandidate;
+        incomplete = Boolean(resolved.incomplete);
+      }
     }
     return {
       candidates: candidates.filter(
         (candidate, index) =>
-          candidates.findIndex((other) => other.agentId === candidate.agentId) ===
-          index,
+          candidates.findIndex(
+            (other) => other.agentId === candidate.agentId,
+          ) === index,
       ),
       senderIsCandidate,
+      incomplete,
     };
   }
 
@@ -1428,7 +1498,9 @@ export class AgentMessages {
     tolerateUnverified: boolean,
   ): Promise<string | null> {
     const hostId =
-      hintHostId ?? parseAgentId(agentId)?.hostId ?? (await this.resolution.identifyOriginHost(agentId));
+      hintHostId ??
+      parseAgentId(agentId)?.hostId ??
+      (await this.resolution.identifyOriginHost(agentId));
     if (!hostId) return null;
     if (
       !tolerateUnverified &&
@@ -1438,10 +1510,16 @@ export class AgentMessages {
     )
       return null;
     try {
-      const state = await observationTimeout(this.resolution.plannerPresence.threadRoute(agentId, hostId), 'Thread observation timed out', this.resolution.responsibleObservationMs);
+      const state = await observationTimeout(
+        this.resolution.plannerPresence.threadRoute(agentId, hostId),
+        "Thread observation timed out",
+        this.resolution.responsibleObservationMs,
+      );
       if (state.kind === "routable") return hostId;
       return state.kind === "unverified" && tolerateUnverified ? hostId : null;
-    } catch { return tolerateUnverified ? hostId : null; }
+    } catch {
+      return tolerateUnverified ? hostId : null;
+    }
   }
 
   /**
@@ -1584,9 +1662,17 @@ export class AgentMessages {
         deliveredAt: delivered.deliveredAt!,
       };
     } catch (error) {
-      if (record.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(record.toProjectKey);
+      if (record.toProjectKey)
+        this.resolution.responsibleThreads.cache.invalidate(
+          record.toProjectKey,
+        );
       this.settleLateMessage(intent, agentId, error);
-      return this.failedSend(intent, label, record.toRole, relabelRefusal(error, kind));
+      return this.failedSend(
+        intent,
+        label,
+        record.toRole,
+        relabelRefusal(error, kind),
+      );
     } finally {
       this.deliveringMessages.delete(record.id);
     }
