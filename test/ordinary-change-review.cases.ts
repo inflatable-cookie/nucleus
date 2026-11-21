@@ -39,7 +39,10 @@ import {
 } from "../core/verbs/owner-verbs";
 import { verifyPr as machineVerifyPr } from "../core/git/git-proof";
 import { verifyPrIdentity as machineVerifyPrIdentity } from "../core/forge/pr-identity";
-import { AgentPolicy, type AgentPolicyHost } from "../core/dispatch/agent-policy";
+import {
+  AgentPolicy,
+  type AgentPolicyHost,
+} from "../core/dispatch/agent-policy";
 import type { HostAgentSpec } from "../shared/host";
 
 function fixture() {
@@ -198,12 +201,24 @@ function fixture() {
         return make!(t, run, token);
       };
       const created = guard
-        ? await new AgentPolicy({ nativeAgentCreate: native } as unknown as AgentPolicyHost).guardedNativeAgentCreate({
-            guard: {
-              allowed: async () => { faults.createTrace.push("allowed"); return guard.allowed(); },
-              stillAllowed: () => { faults.createTrace.push("stillAllowed"); return guard.stillAllowed(); },
-            },
-          } as unknown as HostAgentSpec, false, false)
+        ? await new AgentPolicy({
+            nativeAgentCreate: native,
+          } as unknown as AgentPolicyHost).guardedNativeAgentCreate(
+            {
+              guard: {
+                allowed: async () => {
+                  faults.createTrace.push("allowed");
+                  return guard.allowed();
+                },
+                stillAllowed: () => {
+                  faults.createTrace.push("stillAllowed");
+                  return guard.stillAllowed();
+                },
+              },
+            } as unknown as HostAgentSpec,
+            false,
+            false,
+          )
         : await native();
       const actual = run.profile!;
       f.states.set(created.id, {
@@ -2882,7 +2897,10 @@ async function closeRetainedReviewer(f: ReturnType<typeof fixture>) {
   await f.engine.wake();
   const first = f.current();
   await f.report(first, "changes_required");
-  f.states.set(first.agentId!, { ...f.states.get(first.agentId!)!, status: "closed" });
+  f.states.set(first.agentId!, {
+    ...f.states.get(first.agentId!)!,
+    status: "closed",
+  });
   return first;
 }
 
@@ -2896,8 +2914,15 @@ test("an ordinary fresh reviewer is re-proved at its native creation and launche
     assert.equal(review.role, "reviewer");
     assert.equal(review.ordinaryDetached, true);
     assert.notEqual(review.agentId, first.agentId);
-    assert.deepEqual(f.faults.createTrace, ["allowed", "stillAllowed", "native"]);
-    assert.equal(f.store.task(f.task.id).resolution.reviewerAgentId, review.agentId);
+    assert.deepEqual(f.faults.createTrace, [
+      "allowed",
+      "stillAllowed",
+      "native",
+    ]);
+    assert.equal(
+      f.store.task(f.task.id).resolution.reviewerAgentId,
+      review.agentId,
+    );
   } finally {
     await f.close();
   }
@@ -2918,7 +2943,8 @@ const freshReviewerRefusals: Array<{
     name: "pause",
     plant: (f) => f.store.setMeta("paused", true),
     settles: "attention",
-    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Ordinary review task reservation changed during custody proof/,
+    reason:
+      /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Ordinary review task reservation changed during custody proof/,
   },
   {
     name: "dispatch hold",
@@ -2937,7 +2963,8 @@ const freshReviewerRefusals: Array<{
         },
       }),
     settles: "attention",
-    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
+    reason:
+      /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
   {
     name: "pending effect",
@@ -2972,7 +2999,8 @@ const freshReviewerRefusals: Array<{
         reason: "Concurrent canonical admission changed the source reservation",
       }),
     settles: "attention",
-    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
+    reason:
+      /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
   {
     name: "PR head drift",
@@ -2980,18 +3008,29 @@ const freshReviewerRefusals: Array<{
       f.state.prSha = f.oldHead;
     },
     settles: "attention",
-    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
+    reason:
+      /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
   {
     name: "a live run that owns the checkout",
     plant: (f, run) => {
       const other = f.store
         .runs(f.task.id)
-        .find((candidate) => candidate.role === "reviewer" && candidate.id !== run.id)!;
-      f.store.putRun({ ...other, id: randomUUID(), released: false, status: "running", active: true });
+        .find(
+          (candidate) =>
+            candidate.role === "reviewer" && candidate.id !== run.id,
+        )!;
+      f.store.putRun({
+        ...other,
+        id: randomUUID(),
+        released: false,
+        status: "running",
+        active: true,
+      });
     },
     settles: "attention",
-    reason: /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Another run owns the ordinary review checkout$/,
+    reason:
+      /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Another run owns the ordinary review checkout$/,
   },
 ];
 
@@ -3009,7 +3048,11 @@ for (const refusal of freshReviewerRefusals) {
       await reviseAndWake(f, 1);
       assert.equal(seen.length, 1, "the ordinary creation reached its guard");
       const run = seen[0]!;
-      assert.deepEqual(f.faults.createTrace, ["allowed"], "the guard refused before any native create");
+      assert.deepEqual(
+        f.faults.createTrace,
+        ["allowed"],
+        "the guard refused before any native create",
+      );
       const task = f.store.task(f.task.id);
       assert.equal(f.store.run(run.id)?.status, "superseded");
       assert.equal(f.store.run(run.id)?.released, true);
@@ -3018,8 +3061,16 @@ for (const refusal of freshReviewerRefusals) {
         assert.equal(task.phase, "needs_attention");
         assert.equal(task.resolution.attention, true);
       } else {
-        assert.equal(task.resolution.attention, false, "an effect fence waits; it is not a refusal");
-        assert.ok(f.store.eventsAll(f.task.id).some((event) => event.kind === "review_waiting_on_effects"));
+        assert.equal(
+          task.resolution.attention,
+          false,
+          "an effect fence waits; it is not a refusal",
+        );
+        assert.ok(
+          f.store
+            .eventsAll(f.task.id)
+            .some((event) => event.kind === "review_waiting_on_effects"),
+        );
       }
       assert.match(task.reason, refusal.reason);
     } finally {
