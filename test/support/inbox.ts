@@ -10,7 +10,13 @@ type Tree = {
 
 const menuEntry = (name: string) => new RegExp(`^${name}(, \\d+)?$`);
 /** The list views, in menu order. Leads and Papercuts are menu entries of their own (Tom, 2026-11-21). */
-export const INBOX_LIST_VIEWS = ["Needs you", "Leads", "Papercuts", "Queue", "Active"] as const;
+export const INBOX_LIST_VIEWS = [
+  "Needs you",
+  "Leads",
+  "Papercuts",
+  "Queue",
+  "Active",
+] as const;
 
 /** Opens one menu view. */
 export function openView(tree: Tree, name: string): void {
@@ -30,7 +36,10 @@ function eachView(tree: Tree, visit: () => boolean): boolean {
 /** Each list view's text, joined. Leaves the last view open. */
 export function inboxText(tree: Tree): string {
   const parts: string[] = [];
-  eachView(tree, () => { parts.push(tree.text()); return false; });
+  eachView(tree, () => {
+    parts.push(tree.text());
+    return false;
+  });
   return parts.join("\n");
 }
 
@@ -63,8 +72,11 @@ export function acrossViews<T extends Mounted>(tree: T): T & { raw: T } {
   let pinned = false;
   const isMenuEntry = (label: string | RegExp) =>
     typeof label === "string"
-      ? INBOX_LIST_VIEWS.some(name => menuEntry(name).test(label)) || label === "Planning"
-      : INBOX_LIST_VIEWS.some(name => label.source === menuEntry(name).source);
+      ? INBOX_LIST_VIEWS.some((name) => menuEntry(name).test(label)) ||
+        label === "Planning"
+      : INBOX_LIST_VIEWS.some(
+          (name) => label.source === menuEntry(name).source,
+        );
   const recordOpen = () => pinned || tree.all(DETAIL).length > 0;
   const reveal = (label: string | RegExp) => {
     if (tree.all(label).length || recordOpen()) return;
@@ -75,18 +87,26 @@ export function acrossViews<T extends Mounted>(tree: T): T & { raw: T } {
     /** The board as mounted, for assertions about the open view itself. */
     raw: tree,
     text: () => (recordOpen() ? tree.text() : inboxText(tree)),
-    query: (label: string | RegExp) => { reveal(label); return tree.query(label); },
+    query: (label: string | RegExp) => {
+      reveal(label);
+      return tree.query(label);
+    },
     all: (label: string | RegExp) => {
       if (recordOpen() || tree.all(label).length) return tree.all(label);
       const found: Node[] = [];
-      eachView(tree, () => { found.push(...(tree.all(label) as Node[])); return false; });
+      eachView(tree, () => {
+        found.push(...(tree.all(label) as Node[]));
+        return false;
+      });
       return found;
     },
     press: (label: string | RegExp, event?: unknown) => {
       reveal(label);
       tree.press(label, event);
       // Closing a record unpins too: nothing is left loading.
-      pinned = !isMenuEntry(label) && !(typeof label === "string" && /^Close /.test(label));
+      pinned =
+        !isMenuEntry(label) &&
+        !(typeof label === "string" && /^Close /.test(label));
     },
   };
 }

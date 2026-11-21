@@ -82,7 +82,8 @@ import { overlay, space, radius, type as typeScale } from "../design";
  * and actions are the card's own either way.
  */
 export type BoardCardVariant = "card" | "row";
-export const BoardCardVariantContext = React.createContext<BoardCardVariant>("card");
+export const BoardCardVariantContext =
+  React.createContext<BoardCardVariant>("card");
 
 export const BoardCard = React.memo(function BoardCard({
   label,
@@ -120,7 +121,8 @@ export const BoardCard = React.memo(function BoardCard({
   actions?: React.ReactNode;
 }) {
   const variant = React.useContext(BoardCardVariantContext);
-  const body = <>
+  const body = (
+    <>
       <View
         style={{
           ...row,
@@ -163,7 +165,8 @@ export const BoardCard = React.memo(function BoardCard({
         {plainCardNode(snippet)}
         {plainCardNode(footer)}
       </View>
-  </>;
+    </>
+  );
   // A row keeps its divider, padding and accent edge on the outer frame, so a
   // card's own controls land inside the row instead of under its divider.
   if (variant === "row")
@@ -182,12 +185,18 @@ export const BoardCard = React.memo(function BoardCard({
           accessibilityLabel={plainCardText(label)}
           accessibilityState={{ selected }}
           onPress={onPress}
-          style={{ gap: space.xs, paddingHorizontal: space.md, paddingVertical: space.sm }}
+          style={{
+            gap: space.xs,
+            paddingHorizontal: space.md,
+            paddingVertical: space.sm,
+          }}
         >
           {body}
         </Pressable>
         {actions !== undefined && (
-          <View style={{ paddingHorizontal: space.md, paddingBottom: space.sm }}>
+          <View
+            style={{ paddingHorizontal: space.md, paddingBottom: space.sm }}
+          >
             {actions}
           </View>
         )}
@@ -1479,112 +1488,112 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   return (
     <BoardCard
       label={`Drained lane: ${lane.title}`}
-        onPress={onPress}
-        selected={selected}
-        c={c}
-        board={board}
-        kind={kind}
-        eyebrow={
-          <>
-            <Icon name="Folder" size={12} color={c.foregroundMuted} />
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={{
-                ...muted(c),
-                fontSize: typeScale.metadata.fontSize,
-                flexShrink: 1,
-              }}
-            >
-              {lane.key}
-            </Text>
-          </>
-        }
-        title={
-          <Text
-            numberOfLines={2}
-            style={{
-              color: c.foreground,
-              fontWeight: "600",
-              fontSize: typeScale.body.fontSize,
-              lineHeight: typeScale.body.lineHeight,
-            }}
-          >
-            {lane.title} has drained
-          </Text>
-        }
-        chips={<RecordChips c={c} chips={["Nucleus-raised"]} />}
-        snippet={
-          <Text
-            numberOfLines={3}
-            ellipsizeMode="tail"
-            style={{
-              color: c.foregroundMuted,
-              fontSize: typeScale.metadata.fontSize,
-              lineHeight: typeScale.metadata.lineHeight,
-            }}
-          >
-            {lane.aim}
-            {lane.drain?.escalatedAt
-              ? ` · escalated ${decisionAge(lane.drain.escalatedAt)}`
-              : ""}
-          </Text>
-        }
-        footer={
+      onPress={onPress}
+      selected={selected}
+      c={c}
+      board={board}
+      kind={kind}
+      eyebrow={
+        <>
+          <Icon name="Folder" size={12} color={c.foregroundMuted} />
           <Text
             numberOfLines={1}
-            style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+            ellipsizeMode="tail"
+            style={{
+              ...muted(c),
+              fontSize: typeScale.metadata.fontSize,
+              flexShrink: 1,
+            }}
           >
-            The plan owner has not answered the close-out prompt
+            {lane.key}
           </Text>
-        }
-        actions={
-          <View style={{ gap: space.xs }}>
-            <View style={{ ...row, gap: space.xs }}>
-              <Button
-                small
+        </>
+      }
+      title={
+        <Text
+          numberOfLines={2}
+          style={{
+            color: c.foreground,
+            fontWeight: "600",
+            fontSize: typeScale.body.fontSize,
+            lineHeight: typeScale.body.lineHeight,
+          }}
+        >
+          {lane.title} has drained
+        </Text>
+      }
+      chips={<RecordChips c={c} chips={["Nucleus-raised"]} />}
+      snippet={
+        <Text
+          numberOfLines={3}
+          ellipsizeMode="tail"
+          style={{
+            color: c.foregroundMuted,
+            fontSize: typeScale.metadata.fontSize,
+            lineHeight: typeScale.metadata.lineHeight,
+          }}
+        >
+          {lane.aim}
+          {lane.drain?.escalatedAt
+            ? ` · escalated ${decisionAge(lane.drain.escalatedAt)}`
+            : ""}
+        </Text>
+      }
+      footer={
+        <Text
+          numberOfLines={1}
+          style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+        >
+          The plan owner has not answered the close-out prompt
+        </Text>
+      }
+      actions={
+        <View style={{ gap: space.xs }}>
+          <View style={{ ...row, gap: space.xs }}>
+            <Button
+              small
+              c={c}
+              disabled={busy}
+              text="Close"
+              label={plainCardText(`Close drained lane ${lane.key}`)}
+              onPress={onClose}
+            />
+            <Button
+              small
+              c={c}
+              disabled={busy}
+              text="Keep"
+              selected={keeping}
+              label={plainCardText(`Keep drained lane ${lane.key}`)}
+              onPress={() => setKeeping(!keeping)}
+            />
+          </View>
+          {keeping && (
+            <View style={{ gap: space.xs }}>
+              <Field
                 c={c}
-                disabled={busy}
-                text="Close"
-                label={plainCardText(`Close drained lane ${lane.key}`)}
-                onPress={onClose}
+                label={`Why keep ${lane.title} (required)`}
+                value={reason}
+                onChange={setReason}
               />
               <Button
                 small
                 c={c}
-                disabled={busy}
-                text="Keep"
-                selected={keeping}
-                label={plainCardText(`Keep drained lane ${lane.key}`)}
-                onPress={() => setKeeping(!keeping)}
+                disabled={busy || !reason.trim()}
+                text="Keep lane"
+                label={plainCardText(
+                  `Confirm keep for drained lane ${lane.key}`,
+                )}
+                onPress={() => {
+                  onKeep(reason.trim());
+                  setKeeping(false);
+                  setReason("");
+                }}
               />
             </View>
-            {keeping && (
-              <View style={{ gap: space.xs }}>
-                <Field
-                  c={c}
-                  label={`Why keep ${lane.title} (required)`}
-                  value={reason}
-                  onChange={setReason}
-                />
-                <Button
-                  small
-                  c={c}
-                  disabled={busy || !reason.trim()}
-                  text="Keep lane"
-                  label={plainCardText(
-                    `Confirm keep for drained lane ${lane.key}`,
-                  )}
-                  onPress={() => {
-                    onKeep(reason.trim());
-                    setKeeping(false);
-                    setReason("");
-                  }}
-                />
-              </View>
-            )}
-          </View>
-        }
-      />
+          )}
+        </View>
+      }
+    />
   );
 });

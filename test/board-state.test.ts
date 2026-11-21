@@ -208,13 +208,13 @@ test("026-14c both surfaces hydrate one board projection: a surface mounting aft
     "planning survives the unchanged refresh",
   );
   assert.ok(
-    first.text().includes("Parked (no slot held)") && second.text().includes("Parked (no slot held)"),
+    first.text().includes("Parked (no slot held)") &&
+      second.text().includes("Parked (no slot held)"),
     "both surfaces keep the projection through an unchanged refresh",
   );
   first.update(h("View", null));
   second.update(h("View", null));
 });
-
 
 test("026 rendered bundle in dark theme lists leads and papercuts as separate menu views and filters only leads by tag", async () => {
   await loadBundle();
@@ -274,8 +274,14 @@ test("026 rendered bundle in dark theme lists leads and papercuts as separate me
     openView(ui, "Leads");
     const leads = ui.raw;
     assert.ok(leads.query("Leads, 1") && leads.query("Papercuts, 1"));
-    assert.equal(leads.query(/^(Leads|Papercuts) tab, /), undefined, "no tab switch inside Leads");
-    assert.ok(leads.text().includes("Plain") && !leads.text().includes("Tagged"));
+    assert.equal(
+      leads.query(/^(Leads|Papercuts) tab, /),
+      undefined,
+      "no tab switch inside Leads",
+    );
+    assert.ok(
+      leads.text().includes("Plain") && !leads.text().includes("Tagged"),
+    );
     // The tag filter sits in the list header, after the item count (Tom, 2026-11-21).
     assert.ok(leads.text().includes("1 item"));
     // A dropdown of the tags the Leads view shows, with counts (Tom, 2026-10-15). Papercuts are
@@ -287,7 +293,10 @@ test("026 rendered bundle in dark theme lists leads and papercuts as separate me
         .map((node) => node.props.accessibilityLabel),
       ["Filter leads by tag: All tags (1)", "Filter leads by tag: idea (1)"],
     );
-    assert.ok(!leads.text().includes("Reserved"), "no reserved group: the papercut tag is not offered");
+    assert.ok(
+      !leads.text().includes("Reserved"),
+      "no reserved group: the papercut tag is not offered",
+    );
     assert.equal(
       leads.query(/^Filter leads by tag: briefed/),
       undefined,
@@ -297,11 +306,19 @@ test("026 rendered bundle in dark theme lists leads and papercuts as separate me
     assert.ok(leads.text().includes("Plain"));
     // Papercuts are their own list, unfiltered by the Leads tag (Tom, 2026-11-21).
     openView(ui, "Papercuts");
-    assert.ok(ui.raw.text().includes("Tagged") && !ui.raw.text().includes("Plain"));
-    assert.equal(ui.raw.query(/^Filter leads by tag/), undefined, "the papercut list has no tag filter");
+    assert.ok(
+      ui.raw.text().includes("Tagged") && !ui.raw.text().includes("Plain"),
+    );
+    assert.equal(
+      ui.raw.query(/^Filter leads by tag/),
+      undefined,
+      "the papercut list has no tag filter",
+    );
     // Back on Leads, the tag filter still narrows the list.
     openView(ui, "Leads");
-    assert.ok(ui.raw.text().includes("Plain") && !ui.raw.text().includes("Tagged"));
+    assert.ok(
+      ui.raw.text().includes("Plain") && !ui.raw.text().includes("Tagged"),
+    );
   } finally {
     ui.update(h("View", null));
     leadRows = [];

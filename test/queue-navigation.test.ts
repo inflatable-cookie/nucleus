@@ -29,7 +29,6 @@ test("the menu is Needs you, Planning, Leads, Papercuts, Queue and Active with i
   assert.doesNotMatch(ui, /<QaRunsTab|workspaceNavigationViews|<TabRow/);
 });
 
-
 test("the list views render the inbox list; Planning keeps its own panes; no Lanes view remains", () => {
   assert.doesNotMatch(ui, /LanesSwitch/);
   assert.match(ui, /view === "planning" \? \(\s*<PlanningTab\b/);
@@ -38,7 +37,6 @@ test("the list views render the inbox list; Planning keeps its own panes; no Lan
   assert.doesNotMatch(ui, /accessibilityLabel="Board mode"/);
   assert.doesNotMatch(ui, /text="Status"/);
 });
-
 
 test("header controls expose icon-only Settings, Refresh and Pause or Resume in order", () => {
   const running = headerControls(false, true, false);
@@ -135,7 +133,6 @@ test("706: an open header menu stacks above the panes and the outside-press laye
   assert.match(ui, /zIndex: 40 \}\}/);
 });
 
-
 test("Settings is the native settings screen holding Dispatch limits, Profiles, Projects, Hosts, Backups and Telemetry", () => {
   // Projects replaces Repositories (lane nucleus-ui, task 946); Subscriptions folded into Profiles (nucleus#963);
   // Hosts holds the host catalogue and the default host picker (nucleus#1325); Hosts sits after Projects (nucleus#1494).
@@ -205,9 +202,12 @@ test("the Queue count adds the queued tasks the board holds back, in the project
     /const queuedCounts = \(state\?\.queuedCounts \?\? \[\]\)\.filter\(\(item\) =>\s*attentionBelongs\(item\.repoPath\),?\s*\)/,
     "the left-out count follows the selection",
   );
-  assert.match(ui, /hiddenQueued,\s*triageTag: pipeline\.triageTag,/, "the inbox counts receive the left-out total");
+  assert.match(
+    ui,
+    /hiddenQueued,\s*triageTag: pipeline\.triageTag,/,
+    "the inbox counts receive the left-out total",
+  );
 });
-
 
 test("open-task predicate keeps terminal tasks with either origin error", async () => {
   const { isOpenTask } = await import("../shared/queue-navigation");

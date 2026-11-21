@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { recentProjectActivity } from './support/fakes';
+import { recentProjectActivity } from "./support/fakes";
 import assert from "node:assert/strict";
 import React from "react";
 import { createRequire } from "node:module";
@@ -321,7 +321,10 @@ const board = {
   recentAssignments: {},
   lanes,
   projects: [project],
-  projectActivity: [] as Array<{ key: string; items: Array<{ id: string; at: string; executing: boolean }> }>,
+  projectActivity: [] as Array<{
+    key: string;
+    items: Array<{ id: string; at: string; executing: boolean }>;
+  }>,
   prStates: {},
 };
 const service = {
@@ -565,11 +568,7 @@ for (const compact of [false, true])
       assert.equal(ui.get("Pause").props.accessibilityRole, "menuitem");
       assert.equal(ui.get("Dispatch hold").props.accessibilityRole, "menuitem");
       assert.equal(ui.get("Stop").props.accessibilityRole, "menuitem");
-      assertHeaderMenuInTopLayer(
-        ui,
-        "Queue controls",
-        "Close queue controls",
-      );
+      assertHeaderMenuInTopLayer(ui, "Queue controls", "Close queue controls");
       ui.press("Dispatch hold");
       await settleUntil(
         ui,
@@ -776,8 +775,16 @@ async function verifyViewport(compact: boolean) {
       "Closing",
     ]);
     assert.ok(ui.get("Needs you list"), "the inbox opens on Needs you");
-    assert.equal(ui.query(/^Tasks( \(|$|, )/), undefined, "no Tasks tab remains");
-    assert.equal(ui.query(/^QA runs/), undefined, "QA runs is retired as a board surface");
+    assert.equal(
+      ui.query(/^Tasks( \(|$|, )/),
+      undefined,
+      "no Tasks tab remains",
+    );
+    assert.equal(
+      ui.query(/^QA runs/),
+      undefined,
+      "QA runs is retired as a board surface",
+    );
     assert.equal(
       ui.query("Board mode"),
       undefined,
@@ -824,15 +831,35 @@ async function verifyViewport(compact: boolean) {
       );
     assert.equal(countText(ui, "Task closing"), 1, "closing work is in Active");
     openView(ui, "Closing");
-    assert.equal(countText(ui, "Task working"), 0, "a section shows only its own cards");
+    assert.equal(
+      countText(ui, "Task working"),
+      0,
+      "a section shows only its own cards",
+    );
     assert.equal(countText(ui, "Task closing"), 1);
     // This fixture has no decisions: Needs you is one list with one empty state and a real zero.
     openView(ui, "Needs you");
     assert.ok(ui.query("Needs you list"), "Needs you is one list");
-    assert.equal(ui.query(/ section, \d+$/), undefined, "Needs you has no section headers");
-    const needs = Number(String(ui.get(/^Needs you, \d+$/).props.accessibilityLabel).split(", ")[1]);
-    assert.equal(countText(ui, `${needs} items`), 1, "the list counts its real total");
-    assert.equal(ui.text().includes("Nothing here."), needs === 0, "an empty list says so, and a populated one does not");
+    assert.equal(
+      ui.query(/ section, \d+$/),
+      undefined,
+      "Needs you has no section headers",
+    );
+    const needs = Number(
+      String(ui.get(/^Needs you, \d+$/).props.accessibilityLabel).split(
+        ", ",
+      )[1],
+    );
+    assert.equal(
+      countText(ui, `${needs} items`),
+      1,
+      "the list counts its real total",
+    );
+    assert.equal(
+      ui.text().includes("Nothing here."),
+      needs === 0,
+      "an empty list says so, and a populated one does not",
+    );
     assert.equal(
       ui.query("Filter by project"),
       undefined,
@@ -852,10 +879,22 @@ async function verifyViewport(compact: boolean) {
       () => countText(ui, "Lead one") === 1,
       "the Leads list did not render",
     );
-    assert.equal(countText(ui, "Cut one"), 0, "papercuts sit in their own menu view");
-    assert.equal(ui.query(/^(Leads|Papercuts) tab, /), undefined, "no tab switch remains");
+    assert.equal(
+      countText(ui, "Cut one"),
+      0,
+      "papercuts sit in their own menu view",
+    );
+    assert.equal(
+      ui.query(/^(Leads|Papercuts) tab, /),
+      undefined,
+      "no tab switch remains",
+    );
     for (const label of ["Promote", "Approve", "Drop", "Check again"])
-      assert.equal(ui.query(label), undefined, `list rows render no ${label} button`);
+      assert.equal(
+        ui.query(label),
+        undefined,
+        `list rows render no ${label} button`,
+      );
     assert.equal(
       ui
         .ofType("Pressable")
@@ -869,7 +908,11 @@ async function verifyViewport(compact: boolean) {
     ui.press("Filter leads by tag: All tags (1)");
     openView(ui, "Papercuts");
     assert.equal(countText(ui, "Cut one"), 1);
-    assert.equal(ui.query(/^Filter leads by tag/), undefined, "papercuts have no tag filter");
+    assert.equal(
+      ui.query(/^Filter leads by tag/),
+      undefined,
+      "papercuts have no tag filter",
+    );
     openView(ui, "Leads");
     assert.equal(countText(ui, "Lead one"), 1);
     ui.press("Triage: Lead one");
@@ -1201,13 +1244,30 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
     await settle(ui);
     // Needs you is one list: four agent decisions and one Nucleus-raised merge hold, with the
     // attention tasks after them. Each card names its kind; there are no section headers (Tom, 2026-11-21).
-    assert.equal(countText(ui, "Hold"), 1, "the escalated merge hold names its kind");
-    assert.equal(ui.query(/ section, \d+$/), undefined, "Needs you has no section headers");
-    const needsTotal = Number(
-      String(ui.get(/^Needs you, \d+$/).props.accessibilityLabel).split(", ")[1],
+    assert.equal(
+      countText(ui, "Hold"),
+      1,
+      "the escalated merge hold names its kind",
     );
-    assert.ok(needsTotal >= 5, `the menu counts every Needs you card: ${navigationLabels(ui).join(" | ")}`);
-    assert.equal(countText(ui, `${needsTotal} items`), 1, "the list header counts the same total");
+    assert.equal(
+      ui.query(/ section, \d+$/),
+      undefined,
+      "Needs you has no section headers",
+    );
+    const needsTotal = Number(
+      String(ui.get(/^Needs you, \d+$/).props.accessibilityLabel).split(
+        ", ",
+      )[1],
+    );
+    assert.ok(
+      needsTotal >= 5,
+      `the menu counts every Needs you card: ${navigationLabels(ui).join(" | ")}`,
+    );
+    assert.equal(
+      countText(ui, `${needsTotal} items`),
+      1,
+      "the list header counts the same total",
+    );
     // A Triage lead card carries no decision chip any more (Tom, 2026-11-07): its card is title, kind, project and state.
     assert.equal(
       countAcross(ui, "Decision"),
@@ -1365,7 +1425,11 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       () => ui.query(/^Decision: Which branch do we cut\?/) === undefined,
       "the answered decision stayed on the board",
     );
-    assert.equal(countText(ui, `${needsTotal - 1} items`), 1, "the list count dropped");
+    assert.equal(
+      countText(ui, `${needsTotal - 1} items`),
+      1,
+      "the list count dropped",
+    );
     await settleUntil(
       ui,
       () => ui.text().includes("operator authority"),
@@ -1409,7 +1473,11 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
       () => ui.query(/^Decision: Rename the lane\?/) === undefined,
       "the withdrawn decision stayed on the board",
     );
-    assert.equal(countText(ui, `${needsTotal - 2} items`), 1, "the list count dropped again");
+    assert.equal(
+      countText(ui, `${needsTotal - 2} items`),
+      1,
+      "the list count dropped again",
+    );
     closeRecord(ui, "Close decision detail");
     // The stale decision stays open on the board until a human withdraws it.
     assert.ok(ui.query(/^Decision: Still worth splitting\?/));
@@ -2330,7 +2398,17 @@ for (const compact of [false, true]) {
       );
       assert.deepEqual(
         navigationLabels(ui),
-        ["Needs you", "Planning", "Leads", "Papercuts", "Queue", "Active", "Working", "In review", "Closing"],
+        [
+          "Needs you",
+          "Planning",
+          "Leads",
+          "Papercuts",
+          "Queue",
+          "Active",
+          "Working",
+          "In review",
+          "Closing",
+        ],
         "menu counts stay hidden until the board loads",
       );
       assertDarkTheme(ui);
@@ -2350,10 +2428,16 @@ for (const compact of [false, true]) {
     try {
       await settleUntil(
         ui,
-        () => ui.text().includes("The board could not be read; see the error above."),
+        () =>
+          ui
+            .text()
+            .includes("The board could not be read; see the error above."),
         "the failed list did not render",
       );
-      assert.ok(ui.text().includes("Not loaded"), "the list count says not loaded");
+      assert.ok(
+        ui.text().includes("Not loaded"),
+        "the list count says not loaded",
+      );
       assert.equal(
         ui.text().includes("Nothing here"),
         false,
@@ -2396,10 +2480,23 @@ for (const compact of [false, true]) {
       await settle(empty);
       assert.deepEqual(
         navigationLabels(empty),
-        ["Needs you, 0", "Planning", "Leads, 0", "Papercuts, 0", "Queue, 0", "Active, 0", "Working, 0", "In review, 0", "Closing, 0"],
+        [
+          "Needs you, 0",
+          "Planning",
+          "Leads, 0",
+          "Papercuts, 0",
+          "Queue, 0",
+          "Active, 0",
+          "Working, 0",
+          "In review, 0",
+          "Closing, 0",
+        ],
         "every menu entry reads its real zero total",
       );
-      assert.ok(empty.text().includes("Nothing here."), "an empty list says so");
+      assert.ok(
+        empty.text().includes("Nothing here."),
+        "an empty list says so",
+      );
       assert.ok(
         empty.query(/^Projects, /),
         "the project selector stays in the header",
@@ -2429,7 +2526,11 @@ for (const compact of [false, true]) {
     try {
       await settle(ui);
       openView(ui, "Queue");
-      assert.equal(countText(ui, "41 items"), 1, "the list counts each card once");
+      assert.equal(
+        countText(ui, "41 items"),
+        1,
+        "the list counts each card once",
+      );
       assert.ok(ui.query("Queue, 41"), "and so does the menu");
       for (let index = 0; index < 40; index++)
         assert.equal(
