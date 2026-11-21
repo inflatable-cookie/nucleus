@@ -134,7 +134,7 @@ export function localQueueClient(
         }
         if (method) {
           const expected = expectedContracts[method];
-          if (!expected) throw new Error(`Unknown Queue service method ${method}; bridge-only methods require explicit --via-paseo`);
+          if (!expected) throw new Error(`Unknown Queue service method ${method}`);
           let health: { protocolVersion?: unknown; rpcContracts?: Record<string, unknown> };
           try {
             health = await current.health() as { protocolVersion?: unknown; rpcContracts?: Record<string, unknown> };
@@ -187,7 +187,7 @@ export function localQueueClient(
       // (request ledger): what did that request's outcome record say?
       if (method === "service.request-outcome") return (await connectedClient(null)).request("service.request-outcome", input ?? {}, 30_000);
       const entry = RPC_CATALOGUE.find(candidate => candidate.name === method);
-      if (!entry) throw new Error(`Unknown Queue service method ${method}; bridge-only methods require explicit --via-paseo`);
+      if (!entry) throw new Error(`Unknown Queue service method ${method}`);
       const contract = entry.contract as { input: { parse(input: unknown): unknown }; output: { parse(input: unknown): unknown } };
       const parsedInput = parseContractValue(contract.input, input);
       return await callWithRollRecovery({

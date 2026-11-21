@@ -459,7 +459,7 @@ export async function bindReviewEntry(store:Store,adapter:ReviewEntryAdapter,ope
   store.validateDependencies(input.submission);
   // The selected adapter's origin read goes through the host facade.
   const host=new HostFacade({adapter:adapter as Adapter&ReviewEntryAdapter});
-  const {recipients:creatorCompletionRecipients}=await validateCompletionRecipients(input.submission,lookupOrigin ?? (id=>host.originAgent(id)));
+  const {recipients:creatorCompletionRecipients}=await validateCompletionRecipients(input.submission,lookupOrigin ?? (id=>host.originAgent(id)),()=>originHostId??adapter.hostId);
   // Acceptance, not execution: an active source writer is recorded as the
   // pending handover this task waits on, and admission re-proves the source.
   const proof=await verifyReviewEntry(input,adapter,{acceptAuthorHandover:true});

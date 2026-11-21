@@ -19,6 +19,8 @@ import { readServiceInfo } from "../service/transport/identity";
 import { WebTokens } from "../service/web/web-board";
 import { RPC_CATALOGUE } from "../shared/rpc-catalogue";
 import { SETTINGS_WRITE_METHODS } from "../shared/web-surface";
+import { serviceStateSchema } from "../shared/schema/service";
+import { localQueueClient } from "../shared/service/local-client";
 
 /**
  * The local web board (service-boundary contract, "Local web board"): a loopback
@@ -778,5 +780,46 @@ test("every Settings write named by the web surface is a mutating catalogue meth
       `${name} must be a catalogue method, or the marker guards nothing`,
     );
     assert.equal(entry.mutating, true, `${name} changes state`);
+  }
+});
+
+test("queue.service-state is served by the service itself over the socket and the web board", async () => {
+  const fixture = await startBoard();
+  const local = localQueueClient(fixture.dataDir);
+  try {
+    const socketState = serviceStateSchema.parse(
+      await local.request("queue.service-state", {}),
+    );
+    assert.equal(socketState.state, "running");
+    assert.equal(socketState.pluginBuildId, null);
+    assert.equal(typeof socketState.buildId, "string");
+    assert.equal(typeof socketState.pid, "number");
+
+    const cookie = await pairedToken(fixture);
+    const webResponse = await rpc(
+      fixture.port,
+      "queue.service-state",
+      {},
+      cookie,
+    );
+    assert.equal(webResponse.status, 200, webResponse.body);
+    const webState = serviceStateSchema.parse(
+      JSON.parse(webResponse.body).result,
+    );
+    assert.equal(webState.state, "running");
+    assert.equal(webState.pid, socketState.pid);
+    assert.equal(webState.buildId, socketState.buildId);
+    assert.equal(webState.pluginBuildId, null);
+
+    await assert.rejects(
+      local.request("queue.no-such-method", {}),
+      (error: Error) =>
+        /Unknown Queue service method queue\.no-such-method/.test(
+          error.message,
+        ) && !/--via-paseo|bridge-only/.test(error.message),
+    );
+  } finally {
+    local.close();
+    await stopBoard(fixture);
   }
 });

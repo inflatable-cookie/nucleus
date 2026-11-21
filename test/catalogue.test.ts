@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as contracts from "../shared/contracts";
-import { RPC_CATALOGUE, BRIDGE_CATALOGUE } from "../shared/rpc-catalogue";
+import * as catalogueModule from "../shared/rpc-catalogue";
+import { RPC_CATALOGUE } from "../shared/rpc-catalogue";
 import { QueueRuntime } from "../service/runtime-owner";
 
 /**
@@ -68,6 +69,7 @@ const READ_ONLY_METHODS = new Set([
   "project.management-preview",
   "project.qa.request-status",
   "project.qa.fence-status",
+  "queue.service-state",
   // Spec 062 decision 5b: the forked sidebar's one batched task-group read.
   "bb.sidebar-groups",
 ]);
@@ -88,9 +90,7 @@ test("the shared catalogue covers every plugin RPC contract exactly once", () =>
       !!(entry as { input?: unknown }).input &&
       !!(entry as { output?: unknown }).output,
   );
-  const catalogueNames = [...RPC_CATALOGUE, ...BRIDGE_CATALOGUE].map(
-    (entry) => entry.name,
-  );
+  const catalogueNames = RPC_CATALOGUE.map((entry) => entry.name);
   assert.equal(
     new Set(catalogueNames).size,
     catalogueNames.length,
@@ -138,9 +138,9 @@ test("every catalogue method is classified mutating or read-only, and the split 
     "the read-only list must stay exact",
   );
   assert.equal(
-    BRIDGE_CATALOGUE.every((entry) => entry.mutating === false),
-    true,
-    "bridge-only methods are reads on the service",
+    "BRIDGE_CATALOGUE" in catalogueModule,
+    false,
+    "the bridge-only catalogue class is retired",
   );
 });
 

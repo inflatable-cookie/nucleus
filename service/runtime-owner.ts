@@ -13,7 +13,8 @@ import { createStoreWorkspaceAllocationBridge } from "../core/workspaces/workspa
 
 import { compiledIdentity, stableInstalledPath } from "../shared/runtime.mjs";
 import { sourcePathFromModule } from "../shared/service/build";
-import { readBbPluginRoll } from "../shared/service/discovery";
+import { readBbPluginRoll, readServiceRoll } from "../shared/service/discovery";
+import type { QueueServiceState } from "../shared/schema/service";
 import { pluginRegistration } from "../shared/plugin-discovery.mjs";
 import { qaFenceStatus } from "../core/qa/qa-fence";
 import type { ProjectQaFenceInput } from "../shared/contracts";
@@ -429,6 +430,7 @@ export class QueueRuntime {
   private liveRunPresence: LiveRunPresence | null = null;
   private readonly backupDir: string;
   private readonly connectTimeoutMs: number;
+  private readonly runtimeStartedAt = new Date().toISOString();
   /** Fixture-only required-check capability transport; production reads the live forge. */
   private readonly requiredCheckTransport:
     | CheckRequirementTransport
@@ -1480,6 +1482,28 @@ export class QueueRuntime {
   /** This runtime's facts, presented by the single health projection owner. */
   health(): RuntimeHealth {
     return this.healthProjection.health();
+  }
+
+  /** Service-owned `queue.service-state` catalogue read for direct callers. */
+  serviceState(): QueueServiceState {
+    const h = this.health();
+    return {
+      state: "running",
+      detail: "",
+      buildId: currentServiceBuildId(),
+      pid: process.pid,
+      startedAt: this.runtimeStartedAt,
+      ready: h.ready,
+      paused: h.paused,
+      hostId: h.hostId,
+      error: h.startError ?? "",
+      bootstrap: {
+        pending: Boolean(h.bootstrap?.pending),
+        startedAt: h.bootstrap?.startedAt ?? null,
+      },
+      pluginBuildId: null,
+      roll: readServiceRoll(this.dataDir),
+    };
   }
 
   /**

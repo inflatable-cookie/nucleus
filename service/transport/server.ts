@@ -87,6 +87,8 @@ import {
   parseHostOperationRequest,
 } from "../../shared/service/host-channel";
 import { bbPluginBuildPin } from "../../shared/bb-plugin-build";
+import { readServiceRoll } from "../../shared/service/discovery";
+import type { QueueServiceState } from "../../shared/schema/service";
 import { compiledIdentity } from "../../shared/runtime.mjs";
 import { getWorkRoot } from "../../core/workspaces/work-root.mjs";
 import { probeDiagnostics } from "../bb-host";
@@ -534,7 +536,10 @@ export class QueueService {
         }
       ).parseAsync?.(input)) ?? input;
     if (method === "queue.ui-snapshot") return this.serveBoard(parsed);
-    const raw = await this.executor.rpc(method, parsed, WEB_SURFACE);
+    const raw =
+      method === "queue.service-state"
+        ? this.serveServiceState()
+        : await this.executor.rpc(method, parsed, WEB_SURFACE);
     return (
       (await (
         entry.contract.output as {
@@ -1558,6 +1563,35 @@ export class QueueService {
       }
       return;
     }
+    if (request.method === "queue.service-state") {
+      try {
+        const raw = this.serveServiceState();
+        const result =
+          (await (
+            entry.contract.output as {
+              parseAsync?: (value: unknown) => Promise<unknown>;
+            }
+          )?.parseAsync?.(raw)) ?? raw;
+        this.respond(
+          connection,
+          { v: PROTOCOL_VERSION, id: request.id, result },
+          false,
+          request.method,
+        );
+      } catch (error) {
+        this.respond(
+          connection,
+          {
+            v: PROTOCOL_VERSION,
+            id: request.id,
+            error: serviceError("internal", error),
+          },
+          false,
+          request.method,
+        );
+      }
+      return;
+    }
     if (connection.inFlight >= MAX_IN_FLIGHT) {
       this.respond(
         connection,
@@ -1612,6 +1646,63 @@ export class QueueService {
     } finally {
       connection.inFlight--;
     }
+  }
+
+  /** Serve the service's own state from executor-pushed health without waiting behind SQLite work. */
+  private serveServiceState(): QueueServiceState {
+    const reason = this.executor.unavailableReason();
+    const roll = readServiceRoll(this.dataDir);
+    const buildId = currentServiceBuildId();
+    if (reason) {
+      return {
+        state: "unhealthy",
+        detail: reason,
+        buildId,
+        pid: process.pid,
+        startedAt: this.startedAt,
+        ready: false,
+        paused: null,
+        hostId: null,
+        error: reason,
+        bootstrap: { pending: false, startedAt: null },
+        pluginBuildId: null,
+        roll,
+      };
+    }
+    if (this.executor.current().revision < 0) {
+      return {
+        state: "starting",
+        detail: "The persistence executor has not published health yet",
+        buildId,
+        pid: process.pid,
+        startedAt: this.startedAt,
+        ready: false,
+        paused: null,
+        hostId: null,
+        error: "",
+        bootstrap: { pending: false, startedAt: null },
+        pluginBuildId: null,
+        roll,
+      };
+    }
+    const runtime = this.executor.current().health;
+    return {
+      state: "running",
+      detail: "",
+      buildId,
+      pid: process.pid,
+      startedAt: this.startedAt,
+      ready: runtime.ready,
+      paused: runtime.paused,
+      hostId: runtime.hostId,
+      error: runtime.startError ?? "",
+      bootstrap: {
+        pending: Boolean(runtime.bootstrap?.pending),
+        startedAt: runtime.bootstrap?.startedAt ?? null,
+      },
+      pluginBuildId: null,
+      roll,
+    };
   }
 
   /** Serve the cached board projection and its unchanged-revision acknowledgement. */
