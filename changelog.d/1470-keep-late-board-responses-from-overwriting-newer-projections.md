@@ -1,0 +1,1 @@
+Fixed late `queue.ui-snapshot` responses and out-of-order live board frames from overwriting newer board projections at commit time, while preserving same-revision counter refreshes, live reconnects, server replacement, and bounded reads.
