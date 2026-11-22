@@ -525,7 +525,10 @@ The runtime build packages both bundles together.
     `counters` event carries the unchanged-board acknowledgement when only the
     counters move, as the plugin's poll reads it. An `unavailable` event carries
     the reason while the executor cannot publish. A keepalive comment goes out
-    every 15 seconds, and at most eight streams stay open. The web client suspends
+    every 15 seconds, and at most eight streams stay open. A stream whose socket
+    holds more than 256 KiB of unsent bytes gets no further frames until it
+    drains, then receives the latest board; one still backlogged after 30 seconds
+    is closed, which frees its slot, and its client reconnects. The web client suspends
     snapshot polling while this channel is connected and resumes it after a
     disconnect; an unavailable event still triggers a read to expose the failure.
 - **Surface.** Web calls carry `via: "web"`. The web board mounts Settings through
