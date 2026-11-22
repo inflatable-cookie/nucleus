@@ -60,6 +60,7 @@ async function fixture(
       directory: REPO,
     }),
     listAgents: async () => [],
+    createRun: async () => ({ id: "created-agent", workspaceId: "ws-1" }),
     agentTimelinePage: async () => ({
       entries: [],
       hasOlder: false,
@@ -360,23 +361,25 @@ test("oxide#361/#362: turn.release frees the turn in one step and refreshes wait
   );
 
   // merge_in_flight warning on turn.release: refused without accept, applied with accept.
-  store.update(t361.id, {
+  const t363 = insertTask("oxide#363", 363);
+  store.update(t363.id, {
     phase: "merging",
     resolution: {
-      ...store.task(t361.id).resolution,
+      ...store.task(t363.id).resolution,
+      integrationTurn: { sequence: 1, acceptedAt: new Date().toISOString() },
       mergeIntent: true,
       mergeHead: HEAD,
     },
   });
-  const warned = await callExplicit(t361.id, { action: "turn.release" });
+  const warned = await callExplicit(t363.id, { action: "turn.release" });
   assert.equal(warned.explicitResolution?.status, "warnings");
   assert.deepEqual(
     warned.explicitResolution?.warnings.map((w) => w.id),
     ["merge_in_flight"],
   );
-  assert.notEqual(store.task(t361.id).resolution.integrationTurn, null);
+  assert.notEqual(store.task(t363.id).resolution.integrationTurn, null);
 
-  const accepted = await callExplicit(t361.id, {
+  const accepted = await callExplicit(t363.id, {
     action: "turn.release",
     accept: ["merge_in_flight"],
   });
@@ -663,10 +666,8 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
     store.runs(parked.id).some((r) => !r.released),
     false,
   );
-  // Real sync step advances syncing -> closing using the handoff.
-  await runtime.engine.withHost(HOST, () =>
-    runtime.engine.resolution.closeout.advanceSyncing(store.task(parked.id)),
-  );
+  // Real task quantum advances syncing -> closing using the handoff.
+  await runtime.engine.scheduleTaskQuantum(parked.id);
   assert.equal(syncCalls, 1);
   assert.equal(store.task(parked.id).phase, "closing");
 
@@ -1139,7 +1140,8 @@ test("review round 2: serialize verifier vs explicit merge, honor operator_sourc
     resolution: { ...store.task(handoff.id).resolution, integrationTurn: null },
   });
 
-  // 4. merge-attention-scheduler: accepted merge.now from needs_attention is reconciled by the scheduler without a second owner action.
+  // 4. merge-attention-scheduler (Ruling 3): merge.now puts the task in merging from needs_attention
+  // and the real task quantum reconciles it without calling internal phases directly.
   const parkedMerge = insertTask("parked attention merge", 63);
   attachReadyReview(parkedMerge.id, HEAD);
   store.update(parkedMerge.id, {
@@ -1161,22 +1163,156 @@ test("review round 2: serialize verifier vs explicit merge, honor operator_sourc
     head: HEAD,
   });
   assert.equal(acceptedFromAttention.explicitResolution?.status, "applied");
+  assert.equal(acceptedFromAttention.phase, "merging");
+  assert.equal(acceptedFromAttention.resolution.attention, false);
+  assert.equal(acceptedFromAttention.resolution.stop, null);
   assert.equal(
     store.task(parkedMerge.id).resolution.mergeResponseOutcome,
     "accepted",
   );
 
   mergedFlag = true;
-  const restored = runtime.engine.resolution.restoreRecordedMergePhase(
-    store.task(parkedMerge.id),
-  );
-  assert.equal(restored.phase, "merging");
-  await runtime.engine.withHost(HOST, () =>
-    runtime.engine.resolution.advanceMerging(store.task(parkedMerge.id)),
-  );
+  await runtime.engine.scheduleTaskQuantum(parkedMerge.id);
   assert.equal(
     store.task(parkedMerge.id).resolution.mergedCommit,
     MERGED_COMMIT,
     store.task(parkedMerge.id).reason,
   );
+});
+
+test("planner rulings round 4: auto-retry stops when superseded by merge.now; closeout.now warns live_runs and cancels via run.release for another caller", async (t) => {
+  let mergeCalls = 0;
+  let mergeShouldFail = false;
+  let resolveRetryGateStarted!: () => void;
+  const retryGateStarted = new Promise<void>((resolve) => {
+    resolveRetryGateStarted = resolve;
+  });
+  let releaseRetryGate!: () => void;
+  const retryGate = new Promise<void>((resolve) => {
+    releaseRetryGate = resolve;
+  });
+  const stoppedAgents: string[] = [];
+
+  const {
+    runtime,
+    store,
+    insertTask,
+    attachCoordinator,
+    attachReadyReview,
+    callExplicit,
+  } = await fixture(t, {
+    merge: async () => {
+      mergeCalls += 1;
+      if (mergeShouldFail) throw new Error("explicit merge timeout");
+    },
+    merged: async () => ({
+      merged: false,
+      commit: null,
+      head: HEAD,
+      base: "main",
+      proof: { proven: true, detail: "unmerged" },
+    }),
+    mergeGate: async () => {
+      resolveRetryGateStarted();
+      await retryGate;
+      return { head: HEAD, base: "main", wait: "" };
+    },
+    stopAgentTurn: async (id: string) => {
+      stoppedAgents.push(id);
+    },
+  });
+
+  // Ruling 1: auto-retry observing an earlier uncertain request must stop without sending when merge.now supersedes it.
+  const retryTask = insertTask("auto-retry superseded", 70);
+  attachReadyReview(retryTask.id, HEAD);
+  const earlierAt = new Date(Date.now() - 600_000).toISOString();
+  const proofAt = new Date(Date.now() - 300_000).toISOString();
+  store.update(retryTask.id, {
+    phase: "merging",
+    resolution: {
+      ...store.task(retryTask.id).resolution,
+      integrationTurn: { sequence: 1, acceptedAt: earlierAt },
+      mergeIntent: true,
+      mergeHead: HEAD,
+      mergeBase: "main",
+      mergeRequestedAt: earlierAt,
+      mergeResponseOutcome: "uncertain",
+      mergeProofSince: proofAt,
+      mergeRetryAt: null,
+      mergeRetryOutcome: null,
+      mergeAutoRetryExhausted: false,
+    },
+  });
+  const retryPromise = runtime.engine.scheduleTaskQuantum(retryTask.id);
+  await retryGateStarted;
+
+  // While auto-retry awaits its gate, merge.now issues a newer request and records uncertain.
+  mergeShouldFail = true;
+  const explicit = await callExplicit(retryTask.id, {
+    action: "merge.now",
+    head: HEAD,
+  });
+  assert.equal(explicit.explicitResolution?.status, "applied");
+  assert.equal(mergeCalls, 1);
+  assert.notEqual(
+    store.task(retryTask.id).resolution.mergeRequestedAt,
+    earlierAt,
+  );
+  assert.equal(
+    store.task(retryTask.id).resolution.mergeResponseOutcome,
+    "uncertain",
+  );
+
+  // Release auto-retry gate: it must see the newer request id and NOT send a second PUT.
+  mergeShouldFail = false;
+  releaseRetryGate();
+  await retryPromise;
+  assert.equal(
+    mergeCalls,
+    1,
+    "superseded auto-retry must stop without sending a second PUT",
+  );
+  store.update(retryTask.id, {
+    phase: "done",
+    resolution: {
+      ...store.task(retryTask.id).resolution,
+      integrationTurn: null,
+      mergeIntent: false,
+    },
+  });
+
+  // Ruling 2: operator calling closeout.now while a live coordinator is bound gets live_runs warning;
+  // accepting live_runs releases and cancels the coordinator via run.release.
+  const liveCoordTask = insertTask("live coord closeout", 71);
+  attachReadyReview(liveCoordTask.id, HEAD);
+  store.update(liveCoordTask.id, {
+    phase: "needs_attention",
+    resolution: {
+      ...store.task(liveCoordTask.id).resolution,
+      mergedCommit: MERGED_COMMIT,
+      mergeHead: HEAD,
+    },
+  });
+  attachCoordinator(liveCoordTask.id, "coord-live");
+  const warned = await callExplicit(
+    liveCoordTask.id,
+    { action: "closeout.now" },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(warned.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    warned.explicitResolution?.warnings.map((w) => w.id),
+    ["live_runs"],
+  );
+  assert.equal(store.run(`coord-run-${liveCoordTask.id}`)?.released, false);
+  assert.equal(stoppedAgents.length, 0);
+
+  const accepted = await callExplicit(
+    liveCoordTask.id,
+    { action: "closeout.now", accept: ["live_runs"] },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(accepted.explicitResolution?.status, "applied");
+  assert.equal(store.run(`coord-run-${liveCoordTask.id}`)?.released, true);
+  assert.deepEqual(stoppedAgents, ["coord-live"]);
 });

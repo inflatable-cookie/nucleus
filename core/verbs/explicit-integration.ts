@@ -1,3 +1,4 @@
+import { sameCallerIdentity } from "../../shared/agent-identity";
 import {
   holdsOf,
   operatorSourceAcceptance,
@@ -11,8 +12,13 @@ import type {
 import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
+import { nextMergeRequestAt, sendGuardedMerge } from "../merge/merge-phase";
 import { now } from "../store/store";
-import type { ExplicitPlan, ExplicitWarning } from "./explicit-resolution";
+import {
+  releasePlan,
+  type ExplicitPlan,
+  type ExplicitWarning,
+} from "./explicit-resolution";
 
 export type ExplicitIntegrationAction = Extract<
   ExplicitResolution,
@@ -480,13 +486,7 @@ export function mergeNowPlan(
     }
   }
 
-  let requestedAt = now();
-  if (r.mergeRequestedAt && requestedAt <= r.mergeRequestedAt) {
-    const prevMs = Date.parse(r.mergeRequestedAt);
-    requestedAt = Number.isFinite(prevMs)
-      ? new Date(prevMs + 1).toISOString()
-      : `${requestedAt}-next`;
-  }
+  const requestedAt = nextMergeRequestAt(r.mergeRequestedAt);
 
   return {
     warnings,
@@ -500,15 +500,21 @@ export function mergeNowPlan(
         : r.integrationTurn;
       return {
         before: {
+          phase: task.phase,
           mergeIntent: r.mergeIntent,
           mergeHead: r.mergeHead,
           mergeResponseOutcome: r.mergeResponseOutcome,
           integrationTurn: r.integrationTurn,
         },
         patch: {
+          phase: "merging",
+          reason: `Explicit merge requested for ${input.head.slice(0, 12)}`,
+          reasonFact: null,
           resolution: {
             ...r,
             integrationTurn,
+            attention: false,
+            stop: null,
             mergeIntent: true,
             mergeHead: input.head,
             mergeRequestedAt: requestedAt,
@@ -522,19 +528,26 @@ export function mergeNowPlan(
       };
     },
     async finish() {
-      const current = store.task(task.id);
+      const issues: string[] = [];
       const matchesRequest = (candidate: Task) =>
         candidate.resolution.mergeIntent &&
         candidate.resolution.mergeHead === input.head &&
         candidate.resolution.mergeRequestedAt === requestedAt &&
         candidate.resolution.mergeResponseOutcome === "pending" &&
         !candidate.resolution.mergedCommit;
-      try {
-        await engine.resolution.adapter.merge!(current, () =>
-          matchesRequest(store.task(task.id)),
-        );
-        const after = store.task(task.id);
-        if (matchesRequest(after)) {
+      await sendGuardedMerge({
+        store,
+        taskId: task.id,
+        head: input.head,
+        send: (reservedTask, allowed) =>
+          engine.resolution.adapter.merge!(reservedTask, allowed),
+        reserve: () => {
+          const current = store.task(task.id);
+          return matchesRequest(current)
+            ? { task: current, matchesCurrent: matchesRequest }
+            : null;
+        },
+        onAccepted: (after) => {
           engine.resolution.update(
             after,
             { mergeResponseOutcome: "accepted" },
@@ -543,38 +556,37 @@ export function mergeNowPlan(
             `GitHub accepted the guarded merge for ${input.head}`,
           );
           engine.scheduleLifecycleFollowUp(task.id);
-        } else {
+        },
+        onLateAccepted: () => {
           store.event(
             task.id,
             "merge_response_late_accepted",
             `Late accepted reply for ${input.head} (${requestedAt}); preserved current merge outcome`,
           );
-        }
-        return { issues: [] };
-      } catch (error) {
-        const after = store.task(task.id);
-        const detail = String(error).slice(0, 2000);
-        if (matchesRequest(after)) {
-          engine.resolution.update(
-            after,
-            { mergeResponseOutcome: "uncertain" },
-            {},
-            "merge_response_uncertain",
-            detail,
-          );
-        } else {
-          store.event(
-            task.id,
-            "merge_response_late_uncertain",
-            `Late uncertain reply for ${input.head} (${requestedAt}): ${detail}`,
-          );
-        }
-        return {
-          issues: [
+        },
+        onError: (after, error, isCurrent) => {
+          const detail = String(error).slice(0, 2000);
+          if (isCurrent) {
+            engine.resolution.update(
+              after,
+              { mergeResponseOutcome: "uncertain" },
+              {},
+              "merge_response_uncertain",
+              detail,
+            );
+          } else {
+            store.event(
+              task.id,
+              "merge_response_late_uncertain",
+              `Late uncertain reply for ${input.head} (${requestedAt}): ${detail}`,
+            );
+          }
+          issues.push(
             `GitHub merge request did not confirm: ${String(error).slice(0, 500)}.`,
-          ],
-        };
-      }
+          );
+        },
+      });
+      return { issues };
     },
   };
 }
@@ -659,46 +671,83 @@ export function closeoutNowPlan(
     });
   }
 
+  // Ruling 2: closeout.now never silently releases or revokes another run.
+  // If a live coordinator/recovery run is bound and belongs to another caller,
+  // return `live_runs` and route accepted release through `run.release`.
+  const episodeRunId = r.recovery?.runId ?? null;
+  const episodeRun = episodeRunId ? store.run(episodeRunId) : null;
+  const liveEpisodeRun =
+    episodeRun &&
+    episodeRun.taskId === task.id &&
+    episodeRun.role === "recovery" &&
+    !episodeRun.released
+      ? episodeRun
+      : null;
+  const isSelfCoordinator = Boolean(
+    liveEpisodeRun &&
+      sameCallerIdentity(
+        liveEpisodeRun.agentId,
+        input.caller,
+        liveEpisodeRun.hostId ?? task.hostId,
+        engine.legacyPaseoHostId(),
+      ),
+  );
+  const boundRelease =
+    liveEpisodeRun && !isSelfCoordinator
+      ? releasePlan(engine, task, {
+          action: "run.release",
+          taskId: task.id,
+          version: task.version,
+          reason: input.reason,
+          accept: input.accept,
+          caller: input.caller,
+          run: liveEpisodeRun.id,
+        })
+      : null;
+  if (boundRelease) {
+    warnings.push({
+      id: "live_runs",
+      text: `Live recovery run ${liveEpisodeRun!.id} is bound to this task; accepting releases and cancels it via run.release.`,
+    });
+  }
+
   return {
     warnings,
     apply() {
-      // Handoff only the active recovery episode's own run so `advanceSyncing`
-      // and `advanceClosing` can proceed without silently releasing unrelated
-      // runs on the task.
-      const episodeRunId = r.recovery?.runId ?? null;
-      const episodeRun = episodeRunId ? store.run(episodeRunId) : null;
-      let clearedCurrentRunId = r.currentRunId;
-      if (
-        episodeRun &&
-        episodeRun.taskId === task.id &&
-        episodeRun.role === "recovery" &&
-        !episodeRun.released
-      ) {
+      let releasePatch: Partial<Task> = {};
+      if (boundRelease) {
+        releasePatch = boundRelease.apply().patch ?? {};
+      } else if (liveEpisodeRun && isSelfCoordinator) {
+        // The calling coordinator is handing off its own episode to closeout.
         store.putRun({
-          ...episodeRun,
+          ...liveEpisodeRun,
           active: false,
           released: true,
           explicitlyReleasedAt: now(),
-          status: episodeRun.completion ? "finished" : "superseded",
+          status: liveEpisodeRun.completion ? "finished" : "superseded",
         });
-        store.deleteCredential(episodeRun.id);
-        if (clearedCurrentRunId === episodeRun.id) clearedCurrentRunId = null;
+        store.deleteCredential(liveEpisodeRun.id);
       }
+      const baseResolution = releasePatch.resolution ?? r;
+      const clearedCurrentRunId =
+        liveEpisodeRun && baseResolution.currentRunId === liveEpisodeRun.id
+          ? null
+          : baseResolution.currentRunId;
       const settledRecovery =
-        r.recovery && r.recovery.status !== "resolved"
+        baseResolution.recovery && baseResolution.recovery.status !== "resolved"
           ? {
-              ...r.recovery,
+              ...baseResolution.recovery,
               runId: null,
               status: "resolved" as const,
               summary: `Closed by closeout.now: ${input.reason}`.slice(0, 2000),
             }
-          : r.recovery;
+          : baseResolution.recovery;
 
-      const integrationTurn = r.integrationTurn ?? {
+      const integrationTurn = baseResolution.integrationTurn ?? {
         sequence: store.nextIntegrationSequence(task.repoPath),
         acceptedAt: now(),
       };
-      const phase = r.syncedCommit ? "closing" : "syncing";
+      const phase = baseResolution.syncedCommit ? "closing" : "syncing";
       const reason =
         phase === "syncing"
           ? "Verified merge; synchronizing the integration checkout"
@@ -713,11 +762,12 @@ export function closeoutNowPlan(
           recoveryActive: r.recoveryActive,
         },
         patch: {
+          ...releasePatch,
           phase,
           reason,
           reasonFact: null,
           resolution: {
-            ...r,
+            ...baseResolution,
             mergedCommit,
             ...(mergeHead ? { mergeHead } : {}),
             ...(r.mergedCommit ? {} : { externalMerge: true }),
@@ -733,8 +783,11 @@ export function closeoutNowPlan(
       };
     },
     async finish() {
+      const releaseResult = boundRelease
+        ? await boundRelease.finish?.()
+        : undefined;
       engine.scheduleLifecycleFollowUp(task.id);
-      return { issues: [] };
+      return { issues: releaseResult?.issues ?? [] };
     },
   };
 }

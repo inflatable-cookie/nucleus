@@ -26,6 +26,7 @@ import {
   type ReviewEntryAdapter,
 } from "../review/review-entry";
 import { now } from "../store/store";
+import { nextMergeRequestAt, sendGuardedMerge } from "./merge-phase";
 import { mergeFenceReason } from "../recovery/task-reasons";
 import { recordedSlotWait } from "../recovery/wait-context";
 import {
@@ -837,121 +838,119 @@ export class MergeGates {
     // The last fence before the request: re-read after every await in the gate, so
     // a stop recorded while the gate was being read is seen before the intent that
     // authorises the merge (Queue #531, effigy#524).
-    let requestedAt = "";
-    const reserved = this.store.transaction(() => {
-      const current = this.store.task(t.id);
-      if (current.coordinatorGeneration !== t.coordinatorGeneration)
-        return null;
-      if (
-        current.resolution.mergedCommit ||
-        current.resolution.mergeIntent ||
-        current.resolution.mergeResponseOutcome === "uncertain" ||
-        current.resolution.mergeRetryOutcome === "uncertain"
-      )
-        return null;
-      if (mergeFenced(current)) {
-        this.resolution.waiting(current, mergeFenceReason(current), "held");
-        return null;
-      }
-      // The gate evidence is bound to the settings revision it read. Any write
-      // since (a policy flip, say) makes it stale, so it never authorises intent.
-      if (!this.resolution.gateSettingsCurrent(current, gate)) {
-        this.store.event(
-          t.id,
-          "merge_gate_settings_changed",
-          `Repository settings changed after the merge gate at ${gate.head}; the result cannot authorise merge intent and the gates are re-observed`,
-        );
-        this.resolution.waiting(
-          current,
-          "Repository settings changed after the merge gate; re-observing the exact-head gates before merge intent",
-          "classify",
-        );
-        return null;
-      }
-      requestedAt = now();
-      if (
-        current.resolution.mergeRequestedAt &&
-        requestedAt <= current.resolution.mergeRequestedAt
-      ) {
-        const prevMs = Date.parse(current.resolution.mergeRequestedAt);
-        requestedAt = Number.isFinite(prevMs)
-          ? new Date(prevMs + 1).toISOString()
-          : `${requestedAt}-next`;
-      }
-      return this.resolution.update(
-        current,
-        {
-          mergeIntent: true,
-          mergeHead: gate.head,
-          mergeBase: gate.base,
-          mergeRequestedAt: requestedAt,
-          mergeResponseOutcome: "pending",
-          mergeProofSince: null,
-          mergeRetryAt: null,
-          mergeRetryOutcome: null,
-          mergeAutoRetryExhausted: false,
-        },
-        { reason: "Merge requested for the reviewed head" },
-        "merge_intent",
-      );
-    });
-    if (!reserved) return;
-    t = reserved;
-    const matchesRequest = (candidate: Task) =>
-      candidate.resolution.mergeIntent &&
-      candidate.resolution.mergeHead === gate.head &&
-      candidate.resolution.mergeRequestedAt === requestedAt &&
-      candidate.resolution.mergeResponseOutcome === "pending" &&
-      !candidate.resolution.mergedCommit;
     const mergeStarted = Date.now();
     let withdrawn = false;
-    try {
-      await this.adapter.merge!(t, () => {
-        const latest = this.store.task(t.id);
+    let sendError: unknown = null;
+    let hasError = false;
+    await sendGuardedMerge({
+      store: this.store,
+      taskId: t.id,
+      head: gate.head,
+      send: (reservedTask, allowed) =>
+        this.adapter.merge!(reservedTask, allowed),
+      reserve: () => {
+        const current = this.store.task(t.id);
+        if (current.coordinatorGeneration !== t.coordinatorGeneration)
+          return null;
+        if (
+          current.resolution.mergedCommit ||
+          current.resolution.mergeIntent ||
+          current.resolution.mergeResponseOutcome === "uncertain" ||
+          current.resolution.mergeRetryOutcome === "uncertain"
+        )
+          return null;
+        if (mergeFenced(current)) {
+          this.resolution.waiting(current, mergeFenceReason(current), "held");
+          return null;
+        }
+        // The gate evidence is bound to the settings revision it read. Any write
+        // since (a policy flip, say) makes it stale, so it never authorises intent.
+        if (!this.resolution.gateSettingsCurrent(current, gate)) {
+          this.store.event(
+            t.id,
+            "merge_gate_settings_changed",
+            `Repository settings changed after the merge gate at ${gate.head}; the result cannot authorise merge intent and the gates are re-observed`,
+          );
+          this.resolution.waiting(
+            current,
+            "Repository settings changed after the merge gate; re-observing the exact-head gates before merge intent",
+            "classify",
+          );
+          return null;
+        }
+        const requestedAt = nextMergeRequestAt(
+          current.resolution.mergeRequestedAt,
+        );
+        const reserved = this.resolution.update(
+          current,
+          {
+            mergeIntent: true,
+            mergeHead: gate.head,
+            mergeBase: gate.base,
+            mergeRequestedAt: requestedAt,
+            mergeResponseOutcome: "pending",
+            mergeProofSince: null,
+            mergeRetryAt: null,
+            mergeRetryOutcome: null,
+            mergeAutoRetryExhausted: false,
+          },
+          { reason: "Merge requested for the reviewed head" },
+          "merge_intent",
+        );
+        return {
+          task: reserved,
+          matchesCurrent: (candidate) =>
+            candidate.resolution.mergeIntent &&
+            candidate.resolution.mergeHead === gate.head &&
+            candidate.resolution.mergeRequestedAt === requestedAt &&
+            candidate.resolution.mergeResponseOutcome === "pending" &&
+            !candidate.resolution.mergedCommit,
+        };
+      },
+      extraAllowed: (latest) => {
         if (
           this.resolution.paused() ||
-          latest.coordinatorGeneration !== t.coordinatorGeneration ||
-          !matchesRequest(latest)
+          latest.coordinatorGeneration !== t.coordinatorGeneration
         )
           return false;
-        // The final permission boundary: a settings write after the gate
-        // withdraws permission before the request is sent.
         if (!this.resolution.gateSettingsCurrent(latest, gate)) {
           withdrawn = true;
           return false;
         }
         return true;
-      });
-    } catch (error) {
-      if (withdrawn) {
-        const current = this.store.task(t.id);
+      },
+      onAccepted: (latest) => {
         this.store.event(
           t.id,
-          "merge_gate_settings_changed",
-          `Repository settings changed after the merge gate at ${gate.head}; the merge request was not sent and the recorded intent is reconciled under current policy`,
+          "merge_request_duration",
+          `${Date.now() - mergeStarted}ms`,
         );
-        this.resolution.waiting(
-          current,
-          "Repository settings changed after the merge gate; the merge was not sent and the exact-head gates are re-observed",
-          "classify",
+        this.resolution.update(
+          latest,
+          { mergeResponseOutcome: "accepted" },
+          {},
+          "merge_response_accepted",
+          `GitHub accepted the guarded merge for ${latest.resolution.mergeHead}`,
         );
-        return;
-      }
-      throw error;
-    }
-    this.store.event(
-      t.id,
-      "merge_request_duration",
-      `${Date.now() - mergeStarted}ms`,
-    );
-    t = this.store.task(t.id);
-    if (!matchesRequest(t)) return;
-    this.resolution.update(
-      t,
-      { mergeResponseOutcome: "accepted" },
-      {},
-      "merge_response_accepted",
-      `GitHub accepted the guarded merge for ${t.resolution.mergeHead}`,
-    );
+      },
+      onError: (latest, error) => {
+        if (withdrawn) {
+          this.store.event(
+            t.id,
+            "merge_gate_settings_changed",
+            `Repository settings changed after the merge gate at ${gate.head}; the merge request was not sent and the recorded intent is reconciled under current policy`,
+          );
+          this.resolution.waiting(
+            latest,
+            "Repository settings changed after the merge gate; the merge was not sent and the exact-head gates are re-observed",
+            "classify",
+          );
+          return;
+        }
+        hasError = true;
+        sendError = error;
+      },
+    });
+    if (hasError) throw sendError;
   }
 }
