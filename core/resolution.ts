@@ -2746,6 +2746,13 @@ export class Resolution {
       version,
     );
   }
+  dispatchDecisionExplicitCommand(
+    input: Parameters<
+      EscalationSettlement["dispatchDecisionExplicitCommand"]
+    >[0],
+  ) {
+    return this.escalationSettlement.dispatchDecisionExplicitCommand(input);
+  }
   continueWorkerAfterLadder(
     t: Task,
     input: {

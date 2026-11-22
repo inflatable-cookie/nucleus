@@ -21,6 +21,7 @@ import {
   decodeEscalationChoice,
   escalationAnswerControl,
   escalationContinuationInstruction,
+  escalationVerbChoices,
   extractDecisionIdCandidates,
   extractFirstIsoTimestamp,
   extractTaskReferenceCandidates,
@@ -30,6 +31,11 @@ import {
   type PlannerEscalation,
 } from "./ladder";
 import { closeEscalationFollowups } from "./ladder/continuation";
+import {
+  collectOwnerVerbFacts,
+  ownerPendingEffects,
+  ownerVerbViews,
+} from "../verbs/owner-verbs";
 import {
   HostReadRefusalError,
   ProvenPreSendRefusalError,
@@ -70,6 +76,23 @@ function retireEscalationSurfaces(
   options: { withdrawDecision?: boolean } = {},
 ): void {
   closeEscalationFollowups(store, taskId, escalationId);
+  for (const questionId of [
+    `ns-escalation-${escalationId}`,
+    `ns-escalation-${escalationId}-project`,
+    `ns-decider-${escalationId}`,
+  ]) {
+    const key = `delegation:${questionId}`;
+    const qEvents = store.eventsAll(key);
+    if (
+      qEvents.length &&
+      !qEvents.some((event) => event.kind === "delegated_closed")
+    )
+      store.event(
+        key,
+        "delegated_closed",
+        `Escalation ${escalationId} closed: ${detail}`.slice(0, 4000),
+      );
+  }
   const events = store.eventsAll(taskId);
   const activeWaits = events.filter(
     (event) =>
@@ -226,6 +249,26 @@ export function escalationExplicitCommandChoices(
   return options;
 }
 
+/** Combine ordinary offered owner verbs and explicit command options for an escalation. */
+export function escalationOfferedChoices(
+  store: Store,
+  task: Task,
+  escalationId: string,
+  events: LadderEvent[],
+): EscalationVerbChoice[] {
+  const facts = collectOwnerVerbFacts(store, task);
+  return [
+    ...escalationVerbChoices(ownerVerbViews(facts)),
+    ...escalationExplicitCommandChoices(
+      store,
+      task,
+      escalationId,
+      events,
+      ownerPendingEffects(facts).map((effect) => effect.effect),
+    ),
+  ];
+}
+
 /**
  * Spec 067 batch 4: an open escalation closes itself when its recorded cause
  * clears. Each typed cause uses its own clearance condition and never falls
@@ -284,6 +327,27 @@ export function escalationCauseClearedReason(
     )
       return `the raising ${raisingRun.role} run (${raisingRun.id}) was explicitly released`;
   }
+  if (
+    intentEvent &&
+    events.some((item) => {
+      if (item.id <= intentEvent.id || item.kind !== "owner_resolution")
+        return false;
+      try {
+        const detail = JSON.parse(item.detail) as {
+          command?: string;
+          arguments?: { kind?: string };
+        };
+        return (
+          detail.command === "record.clear" &&
+          detail.arguments?.kind === "effect"
+        );
+      } catch {
+        return false;
+      }
+    }) &&
+    ownerPendingEffects(collectOwnerVerbFacts(store, task)).length === 0
+  )
+    return "the escalated pending effect was cleared";
   if (
     intentEvent &&
     (payload?.source === "worker" || payload?.source === "revision") &&
@@ -492,6 +556,76 @@ export class EscalationSettlement {
       return { ...outcome, next, taskVersion: afterTask.version };
     }
     return { ...outcome, taskVersion: resolved.version };
+  }
+  /**
+   * Spec 067 batch 4: when a board or native-inbox decision answer chooses a
+   * listed explicit command option of a linked open escalation, dispatch the
+   * command through its ordinary RPC without persisting a decision answer.
+   */
+  dispatchDecisionExplicitCommand(input: {
+    id: string;
+    version: number;
+    answer: string;
+    answeredBy: string;
+    relayed: boolean;
+    note?: string;
+  }): Promise<EscalationExplicitOutcome> | null {
+    let decision;
+    try {
+      decision = this.store.decision(input.id);
+    } catch {
+      return null;
+    }
+    if (decision.status !== "open") return null;
+    const answerText = input.answer.trim();
+    if (!answerText) return null;
+    for (const taskId of decision.links.tasks) {
+      const events = this.store.eventsAll(taskId) as LadderEvent[];
+      const linked = events.filter(
+        (event) =>
+          event.kind === "planner_escalation_decision_linked" &&
+          event.detail.includes(decision.id),
+      );
+      for (const link of linked) {
+        const escalationId = link.detail.slice(0, link.detail.indexOf(":"));
+        const escalation = plannerEscalations(events).find(
+          (item) => item.id === escalationId && !item.answered,
+        );
+        if (!escalation) continue;
+        const offerEvent = events.find(
+          (event) =>
+            event.kind === "planner_escalation_offered" &&
+            event.detail.startsWith(`${escalationId}: `),
+        );
+        if (!offerEvent) continue;
+        let offered: EscalationVerbChoice[];
+        try {
+          offered = JSON.parse(
+            offerEvent.detail.slice(escalationId.length + 2),
+          ) as EscalationVerbChoice[];
+        } catch {
+          continue;
+        }
+        const selected = decodeEscalationChoice(answerText, offered);
+        if (selected.kind !== "owner" || !selected.choice.command) continue;
+        if (decision.version !== input.version)
+          throw Error(
+            `Decision ${decision.id} is at version ${decision.version}, not ${input.version}`,
+          );
+        const answerer: Answerer = input.relayed
+          ? { role: "planner", agentId: input.answeredBy }
+          : { role: "operator" };
+        return this.settleExplicitEscalationCommand(
+          this.store.task(taskId),
+          escalationId,
+          selected.choice.command,
+          input.note?.trim() || selected.reason,
+          input.answeredBy,
+          answerer,
+        );
+      }
+    }
+    return null;
   }
   /** Share a live route settlement with a duplicate receipt observer instead of declaring it uncertain. */
   async awaitDelegatedEscalationSettlement(

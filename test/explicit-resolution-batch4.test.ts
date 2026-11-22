@@ -9,6 +9,7 @@ import { stampInput } from "../bin/cli-stamping.mjs";
 import { Engine } from "../core/engine";
 import type { Adapter } from "../core/host";
 import { Decisions } from "../core/planning/decisions";
+import { RuntimeQuestions } from "../core/runtime/questions";
 import {
   closeClearedEscalations,
   escalationExplicitCommandChoices,
@@ -487,6 +488,17 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
       false,
       "decoupled command must write no delegated_answer marker",
     );
+    assert.equal(
+      fx.store
+        .eventsAll(`delegation:${questionId}`)
+        .some((e) => e.kind === "delegated_closed"),
+      true,
+      "auto-close must close the initial question window so it is no longer discoverable",
+    );
+    assert.throws(
+      () => fx.engine.resolution.delegatedQuestionForTask(fx.taskId, PLANNER),
+      /no open|not found|question/i,
+    );
   } finally {
     await fx.close();
   }
@@ -578,6 +590,26 @@ test("underlay#046 shape: real owner control runs through Engine.performTaskCont
       assert.doesNotMatch(message, /is no longer available/i);
       assert.doesNotMatch(message, /binding/i);
     }
+
+    // Clearing the sole uncertain run-delivery effect closes its matching escalation and clears the stop.
+    const deliveryId = `ns-review-${"c".repeat(64)}`;
+    const clearedEffect = await resolveExplicitly(
+      fx.engine,
+      {
+        taskId: fx.taskId,
+        version: fx.task().version,
+        action: "record.clear",
+        kind: "effect",
+        id: `review-delivery.${deliveryId}`,
+        accept: ["effect_may_land"],
+        reason: "Clear sole uncertain reviewer delivery effect",
+        caller: OPERATOR_BOARD_CALLER,
+      },
+      () => "next",
+    );
+    assert.equal(clearedEffect.explicitResolution?.status, "applied");
+    assert.deepEqual(closeClearedEscalations(fx.store, fx.task()), ["esc-046"]);
+    assert.equal(fx.task().resolution.stop, null);
   } finally {
     await fx.close();
   }
@@ -624,6 +656,40 @@ test("simulated roll between command commit and auto-close: maintenance closes e
       fx.taskId,
       "planner_escalation_wait",
       `esc-roll: ${JSON.stringify({ kind: "time", target: new Date(Date.now() + 3_600_000).toISOString() })}`,
+    );
+
+    // Board and native-inbox decision answers on a listed explicit command option
+    // dispatch the command without persisting a decision answer or escalation-answer marker.
+    const runtimeQuestions = new RuntimeQuestions({
+      store: fx.store,
+      engine: fx.engine,
+      decisions,
+      markStoreAccess: () => {},
+    });
+    const boardWarned = (await runtimeQuestions.answerDecision({
+      id: decision.id,
+      version: decision.version,
+      answer: `Explicit command: run.release run=${runId}`,
+      answeredBy: OPERATOR_BOARD_CALLER,
+      relayed: false,
+      note: "Board operator chose run.release",
+    })) as {
+      status: string;
+      explicitResolution?: { status: string; warnings: { id: string }[] };
+    };
+    assert.equal(boardWarned.status, "open");
+    assert.equal(boardWarned.explicitResolution?.status, "warnings");
+    assert.ok(
+      boardWarned.explicitResolution?.warnings.some(
+        (w) => w.id === "live_turn",
+      ),
+    );
+    assert.equal(fx.store.decision(decision.id).status, "open");
+    assert.equal(
+      fx.store
+        .eventsAll(fx.taskId)
+        .some((e) => e.kind === "planner_escalation_answered"),
+      false,
     );
 
     // Step 1: commit the explicit command directly via resolveExplicitly (simulating a roll
