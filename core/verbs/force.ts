@@ -1,5 +1,5 @@
 import {
-  FORCE_CALLER_REFUSAL,
+  forceCallerRefusal,
   FORCE_MOVE_REFUSAL,
   FORCE_MERGED_REFUSAL,
   FORCE_PAUSED_REFUSAL,
@@ -436,7 +436,10 @@ export class ForceVerbs {
       : input.caller === OPERATOR_BOARD_CALLER
         ? "operator_board"
         : input.caller && (await this.forcePlannerSource(task, input.caller));
-    if (!source) throw new DurableFenceRefusal(FORCE_CALLER_REFUSAL);
+    if (!source)
+      throw new DurableFenceRefusal(
+        forceCallerRefusal(input.caller, task.critical),
+      );
     this.engine.requireOwnerControlCurrent(
       task,
       input.version,

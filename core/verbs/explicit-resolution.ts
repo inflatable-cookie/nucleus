@@ -101,6 +101,12 @@ function settleOperation(
   });
 }
 
+/**
+ * Planner authority comes from the registered thread and the caller's
+ * authenticated identity. Host observation only decides where a message is
+ * delivered, so an `unverified` planner (its host not yet proven after a roll)
+ * still holds authority; the delivery route waits for the host on its own.
+ */
 export async function livePlannerMatches(
   engine: Engine,
   task: Task,
@@ -118,15 +124,13 @@ export async function livePlannerMatches(
     await engine.resolution.responsibleThread(project);
   return Boolean(
     thread &&
-      shortlist.some(
-        (candidate) =>
-          candidate.observation?.state === "routable" &&
-          sameCallerIdentity(
-            thread.agentId,
-            candidate.agentId,
-            thread.hostId,
-            candidate.hostId,
-          ),
+      shortlist.some((candidate) =>
+        sameCallerIdentity(
+          thread.agentId,
+          candidate.agentId,
+          thread.hostId,
+          candidate.hostId,
+        ),
       ) &&
       plannerIdMatches(
         thread.agentId,
@@ -135,6 +139,22 @@ export async function livePlannerMatches(
         engine.legacyPaseoHostId(),
       ),
   );
+}
+
+/** Names the real reason an explicit command's caller lacks authority. */
+function explicitAuthorityRefusal(
+  task: Task,
+  caller: string | undefined,
+): string {
+  const who = task.critical
+    ? "its live responsible planner or the operator board"
+    : "this task's coordinator, its live responsible planner or the operator board";
+  const why = caller
+    ? "this caller is not one of them"
+    : "no authenticated caller was given";
+  return task.critical
+    ? `A critical task requires ${who}; ${why}`
+    : `Explicit resolution requires ${who}; ${why}`;
 }
 
 async function authority(
@@ -162,11 +182,7 @@ async function authority(
     )
   )
     return "coordinator";
-  throw Error(
-    task.critical
-      ? "A critical task requires its live responsible planner or the operator board"
-      : "Explicit resolution requires this task's coordinator, its live responsible planner or the operator board",
-  );
+  throw Error(explicitAuthorityRefusal(task, caller));
 }
 
 /** Each command reads and applies its own records within the same transaction. */
