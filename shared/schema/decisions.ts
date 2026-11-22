@@ -3,7 +3,7 @@ import {
   papercutRepositorySchema,
   repositoryIdentityInputSchema,
 } from "./repository-identity";
-import { explicitCommandSchema } from "./task-control";
+import { explicitCommandSchema, resolutionResultSchema } from "./task-control";
 
 /**
  * Spec 032: a question an agent records because it needs the operator's ruling.
@@ -179,6 +179,7 @@ export const decisionViewSchema = decisionSchema
     stale: z.boolean(),
     projectKey: z.string().nullable().default(null),
     askerLabel: z.string().min(1).max(240),
+    explicitResolution: resolutionResultSchema.optional(),
   })
   .strict();
 

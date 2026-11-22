@@ -20,6 +20,7 @@ export interface QuestionsContext {
       Engine["resolution"],
       | "answerDelegatedQuestionFromHost"
       | "delegatedQuestionForTask"
+      | "escalationSettlement"
       | "operatorDecisionAnswered"
     >;
   };
@@ -207,13 +208,94 @@ export class RuntimeQuestions {
     );
   }
 
+  answerDecision(
+    input: Omit<Parameters<Decisions["answer"]>[0], "command"> & {
+      command?: undefined;
+    },
+  ): import("../../shared/contracts").DecisionView;
+  answerDecision(
+    input: Parameters<Decisions["answer"]>[0] & {
+      command: import("../../shared/contracts").ExplicitCommand;
+    },
+  ): Promise<import("../../shared/contracts").DecisionView>;
+  answerDecision(
+    input: Parameters<Decisions["answer"]>[0],
+  ):
+    | import("../../shared/contracts").DecisionView
+    | Promise<import("../../shared/contracts").DecisionView>;
   answerDecision(input: Parameters<Decisions["answer"]>[0]) {
-    return this.recordDecisionAnswer(input);
+    return input.command
+      ? this.recordDecisionCommandAnswer(input, false)
+      : this.recordDecisionAnswer(input);
   }
 
   /** Only the authenticated ACP session invokes this non-RPC path. */
+  answerT3Decision(
+    input: Omit<Parameters<Decisions["answer"]>[0], "command"> & {
+      command?: undefined;
+    },
+  ): import("../../shared/contracts").DecisionView;
+  answerT3Decision(
+    input: Parameters<Decisions["answer"]>[0] & {
+      command: import("../../shared/contracts").ExplicitCommand;
+    },
+  ): Promise<import("../../shared/contracts").DecisionView>;
+  answerT3Decision(
+    input: Parameters<Decisions["answer"]>[0],
+  ):
+    | import("../../shared/contracts").DecisionView
+    | Promise<import("../../shared/contracts").DecisionView>;
   answerT3Decision(input: Parameters<Decisions["answer"]>[0]) {
-    return this.recordDecisionAnswer(input, true);
+    return input.command
+      ? this.recordDecisionCommandAnswer(input, true)
+      : this.recordDecisionAnswer(input, true);
+  }
+
+  private async recordDecisionCommandAnswer(
+    input: Parameters<Decisions["answer"]>[0],
+    trustedT3: boolean,
+  ): Promise<import("../../shared/contracts").DecisionView> {
+    const authority = trustedT3 ? ({ trustedT3: true } as const) : undefined;
+    const open = this.context.decisions.validateAnswer(input, authority);
+    const command = input.command!;
+    const answerer = input.relayed
+      ? ({ role: "planner", agentId: input.answeredBy } as const)
+      : ({ role: "operator" } as const);
+    let outcome:
+      | import("../../shared/contracts").TaskControlTask["explicitResolution"]
+      | undefined;
+    for (const taskId of open.links.tasks) {
+      const events = this.context.store.eventsAll(taskId);
+      const linked = events.findLast(
+        (event) =>
+          event.kind === "planner_escalation_decision_linked" &&
+          event.detail.endsWith(`: decision ${open.id}`),
+      );
+      if (!linked) continue;
+      const escalationId = linked.detail.split(":", 1)[0]!;
+      const result =
+        await this.context.engine.resolution.escalationSettlement.settleExplicitEscalationCommand(
+          this.context.store.task(taskId),
+          escalationId,
+          command,
+          input.answer,
+          input.answeredBy,
+          answerer,
+          command.version,
+        );
+      const { taskVersion: _taskVersion, ...resolution } = result;
+      outcome = resolution;
+      if (result.status !== "applied") {
+        // Keep the decision open so the operator can repeat with `accept` or the current task version.
+        return {
+          ...this.context.decisions.get({ id: open.id }),
+          explicitResolution: resolution,
+        };
+      }
+      break;
+    }
+    const view = this.recordDecisionAnswer(input, trustedT3);
+    return outcome ? { ...view, explicitResolution: outcome } : view;
   }
 
   private recordDecisionAnswer(

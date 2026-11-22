@@ -354,7 +354,7 @@ export class Decisions {
       .map((decision) => this.view(decision));
   }
 
-  answer(
+  validateAnswer(
     input: {
       id: string;
       version: number;
@@ -366,7 +366,7 @@ export class Decisions {
       command?: import("../../shared/contracts").ExplicitCommand;
     },
     authority?: { trustedT3: true },
-  ): DecisionView {
+  ): Decision {
     if (isT3OperatorIdentity(input.answeredBy) && !authority?.trustedT3)
       throw new Error(
         "T3 operator identity requires an authenticated T3 session",
@@ -398,12 +398,32 @@ export class Decisions {
       throw new Error(
         "A decision command requires command.version (the task version)",
       );
+    const current = this.requireOpen(input.id, input.version);
+    const overtakes = [...new Set(input.overtakes ?? [])];
+    if (overtakes.includes(current.id))
+      throw new Error("A decision answer cannot overtake itself");
+    return current;
+  }
+
+  answer(
+    input: {
+      id: string;
+      version: number;
+      answer: string;
+      answeredBy: string;
+      relayed: boolean;
+      note: string;
+      overtakes?: string[];
+      command?: import("../../shared/contracts").ExplicitCommand;
+    },
+    authority?: { trustedT3: true },
+  ): DecisionView {
+    this.validateAnswer(input, authority);
+    const relayed = input.relayed;
     return this.store.transaction(() => {
       const current = this.requireOpen(input.id, input.version);
       const next = current.version + 1;
       const overtakes = [...new Set(input.overtakes ?? [])];
-      if (overtakes.includes(current.id))
-        throw new Error("A decision answer cannot overtake itself");
       const answer = {
         text: input.answer,
         answeredBy: input.answeredBy,

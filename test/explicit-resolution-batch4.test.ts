@@ -9,6 +9,7 @@ import { stampInput } from "../bin/cli-stamping.mjs";
 import { Engine } from "../core/engine";
 import type { Adapter } from "../core/host";
 import { Decisions } from "../core/planning/decisions";
+import { RuntimeQuestions } from "../core/runtime/questions";
 import {
   closeClearedEscalations,
   escalationVerbChoices,
@@ -442,7 +443,14 @@ test("escalation explicit command enforces version, warnings, accept, clears its
       false,
     );
 
-    // 3. Repeating with accept applies the command, clears the escalation's own stop, writes owner_resolution, and returns updated next.
+    // 3. Repeating with accept applies the command, clears the escalation's own stop, preserves host diagnostics in next, and writes owner_resolution.
+    (
+      f.engine.adapter as unknown as {
+        stopAgentTurn: () => Promise<void>;
+      }
+    ).stopAgentTurn = async () => {
+      throw new Error("host turn cancel refused");
+    };
     const applied = await f.engine.resolution.answerDelegatedQuestion(
       {
         questionId,
@@ -460,7 +468,10 @@ test("escalation explicit command enforces version, warnings, accept, clears its
     const nextText =
       (applied as { explicitResolution?: { next: string } }).explicitResolution
         ?.next ?? "";
-    assert.ok(nextText.length > 0);
+    assert.match(
+      nextText,
+      /Turn cancellation could not be confirmed:.*host turn cancel refused/,
+    );
     assert.doesNotMatch(nextText, /Waiting with the planner/i);
     assert.equal(f.store.run(run.id)?.released, true);
     assert.equal(f.task().resolution.stop, null);
@@ -685,23 +696,56 @@ test("run-ticket CLI transport and board decision.answer carry explicit commands
       status: "open",
     })[0]!;
     assert.ok(linkedDecision);
-    const parsedRpc = decisionAnswer.input.parse({
-      id: linkedDecision.id,
-      version: linkedDecision.version,
-      answer: "Operator releases the stuck run directly",
-      answeredBy: OPERATOR_BOARD_CALLER,
-      relayed: false,
-      command: {
-        action: "run.release",
-        run: run.id,
-        version: f.task().version,
-        accept: ["live_turn", "unreported_result"],
-      },
+    // Board decision route via RuntimeQuestions.answerDecision: warnings keep the decision open so retrying with accept succeeds.
+    const runtimeQuestions = new RuntimeQuestions({
+      store: f.store,
+      decisions: new Decisions(f.store),
+      engine: f.engine,
+      markStoreAccess: () => {},
     });
-    const answeredDecision = new Decisions(f.store).answer(parsedRpc);
+    const warnedDecision = await runtimeQuestions.answerDecision(
+      decisionAnswer.input.parse({
+        id: linkedDecision.id,
+        version: linkedDecision.version,
+        answer: "Operator releases the stuck run directly",
+        answeredBy: OPERATOR_BOARD_CALLER,
+        relayed: false,
+        command: {
+          action: "run.release",
+          run: run.id,
+          version: f.task().version,
+          accept: [],
+        },
+      }),
+    );
+    assert.equal(warnedDecision.status, "open");
+    assert.equal(warnedDecision.explicitResolution?.status, "warnings");
+    assert.deepEqual(
+      warnedDecision.explicitResolution?.warnings.map((w) => w.id).sort(),
+      ["live_turn", "unreported_result"],
+    );
+    assert.equal(f.store.run(run.id)?.released, false);
+
+    const answeredDecision = await runtimeQuestions.answerDecision(
+      decisionAnswer.input.parse({
+        id: linkedDecision.id,
+        version: linkedDecision.version,
+        answer: "Operator releases the stuck run directly",
+        answeredBy: OPERATOR_BOARD_CALLER,
+        relayed: false,
+        command: {
+          action: "run.release",
+          run: run.id,
+          version: f.task().version,
+          accept: ["live_turn", "unreported_result"],
+        },
+      }),
+    );
+    assert.equal(answeredDecision.status, "answered");
+    assert.equal(answeredDecision.explicitResolution?.status, "applied");
     assert.equal(answeredDecision.answer?.command?.action, "run.release");
-    await f.engine.resolution.ladder.resumeEscalationWaits(f.task());
     assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.task().resolution.stop, null);
     assert.equal(
       plannerEscalations(f.store.eventsAll(f.taskId)).find(
         (e) => e.id === boardEscId,
@@ -872,6 +916,40 @@ test("cause-cleared closure retires owned waits and open board decisions, never 
       resolution: { ...f.task().resolution, incident: null },
     });
     assert.deepEqual(closeClearedEscalations(f.store, f.task()), [incEscId]);
+
+    // 4. Interrupted closure: a stored planner_escalation_resolved marker without later writes still retires its stop, wait and open decision on maintenance.
+    const crashEscId = "interrupted-closure";
+    recordOpenEscalation(f.store, f.engine, f.taskId, crashEscId);
+    f.engine.resolution.classifyEscalationToOperator(
+      f.task(),
+      crashEscId,
+      "Needs decision",
+      `planner ${PLANNER}`,
+      {
+        authority: "operator_choices",
+        question: "Proceed?",
+        choices: [
+          { label: "Yes", consequence: "Continues." },
+          { label: "No", consequence: "Stops." },
+        ],
+        recommended: "Yes",
+      },
+    );
+    const crashDecision = new Decisions(f.store).list({
+      task: f.taskId,
+      status: "open",
+    })[0]!;
+    f.store.event(
+      f.taskId,
+      "planner_escalation_resolved",
+      `${crashEscId}: interrupted before retiring surfaces`,
+    );
+    await f.engine.resolution.ladder.resumeEscalationWaits(f.task());
+    assert.equal(f.task().resolution.stop, null);
+    assert.equal(
+      new Decisions(f.store).get({ id: crashDecision.id }).status,
+      "withdrawn",
+    );
   } finally {
     await f.close();
   }

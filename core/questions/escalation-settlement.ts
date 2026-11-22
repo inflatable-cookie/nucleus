@@ -99,12 +99,16 @@ function retireEscalationSurfaces(
       try {
         const stored = store.decision(decisionId);
         if (stored.status === "open") {
-          new Decisions(store).withdraw({
+          const decisions = new Decisions(store);
+          const withdrawInput = {
             id: stored.id,
             version: stored.version,
             reason: `Escalation ${escalationId} closed automatically: ${detail}`,
             withdrawnBy: "nucleus",
-          });
+          };
+          if (store.db.isTransaction)
+            decisions.withdrawInTransaction(withdrawInput);
+          else decisions.withdraw(withdrawInput);
         }
       } catch {
         /* A missing or concurrently closed decision needs no withdrawal. */
@@ -213,14 +217,32 @@ export function escalationCauseClearedReason(
   return null;
 }
 
-/** Close any open escalations on this task whose cause has already cleared. */
+/** Close any open escalations on this task whose cause has already cleared, and finish retiring interrupted resolutions. */
 export function closeClearedEscalations(store: Store, task: Task): string[] {
   const current = store.taskOrNull(task.id);
   if (!current) return [];
   const events = store.eventsAll(current.id) as LadderEvent[];
   const closed: string[] = [];
   for (const escalation of plannerEscalations(events)) {
-    if (escalation.answered) continue;
+    if (escalation.answered) {
+      // Durability: if a process crashed after writing `planner_escalation_resolved`
+      // but before retiring the escalation's stop, owned wait or open decision,
+      // finish retiring those surfaces on the next maintenance pass.
+      const resolvedEvent = events.findLast(
+        (event) =>
+          event.kind === "planner_escalation_resolved" &&
+          event.detail.startsWith(`${escalation.id}:`),
+      );
+      if (resolvedEvent) {
+        const detail = resolvedEvent.detail
+          .slice(escalation.id.length + 1)
+          .trim();
+        retireEscalationSurfaces(store, current.id, escalation.id, detail, {
+          withdrawDecision: true,
+        });
+      }
+      continue;
+    }
     const cleared = escalationCauseClearedReason(
       store,
       current,
@@ -228,14 +250,18 @@ export function closeClearedEscalations(store: Store, task: Task): string[] {
       events,
     );
     if (!cleared) continue;
-    store.event(
-      current.id,
-      "planner_escalation_resolved",
-      `${escalation.id}: closed automatically; ${cleared}`,
-    );
-    retireEscalationSurfaces(store, current.id, escalation.id, cleared, {
-      withdrawDecision: true,
-    });
+    const apply = () => {
+      store.event(
+        current.id,
+        "planner_escalation_resolved",
+        `${escalation.id}: closed automatically; ${cleared}`,
+      );
+      retireEscalationSurfaces(store, current.id, escalation.id, cleared, {
+        withdrawDecision: true,
+      });
+    };
+    if (store.db.isTransaction) apply();
+    else store.transaction(apply);
     closed.push(escalation.id);
   }
   return closed;
@@ -355,6 +381,11 @@ export class EscalationSettlement {
       if (!outcome)
         throw Error("Explicit resolution did not return a resolution outcome");
       if (outcome.status === "applied") {
+        const oldNext = this.resolution.describeExplicitNext?.(resolved) ?? "";
+        const diagnosticPrefix =
+          oldNext && outcome.next.endsWith(oldNext)
+            ? outcome.next.slice(0, -oldNext.length).trim()
+            : "";
         this.store.event(
           fresh.id,
           "planner_escalation_answered",
@@ -375,8 +406,9 @@ export class EscalationSettlement {
           `answered by ${who}: ${command.action}`,
         );
         const afterTask = this.store.task(fresh.id);
-        const next =
+        const updatedNext =
           this.resolution.describeExplicitNext?.(afterTask) ?? outcome.next;
+        const next = [diagnosticPrefix, updatedNext].filter(Boolean).join(" ");
         return { ...outcome, next, taskVersion: afterTask.version };
       }
       return { ...outcome, taskVersion: resolved.version };
