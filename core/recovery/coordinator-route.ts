@@ -56,7 +56,6 @@ import {
   cause,
   key,
   needsAttention,
-  recoveryMergeWitness,
   type RecoveryContext,
 } from "./coordinator-episode";
 import {
@@ -622,7 +621,6 @@ export class CoordinatorRoute {
             ? null
             : (t.resolution.incident?.id ?? null),
         progress: taskProgressDigest(t),
-        mergeWitness: recoveryMergeWitness(t, episodeId, fingerprint),
         ...(refusedAction ? { action: refusedAction } : {}),
       };
       t = this.resolution.update(
@@ -953,30 +951,6 @@ export class CoordinatorRoute {
           runId: run.id,
           agentId,
           status: "running",
-          ...(current.resolution.recovery?.mergeWitness
-            ? {
-                // A reservation made after work moved cannot inherit the opening's
-                // pre-merge evidence. Keep the opening witness unbound in that case.
-                mergeWitness:
-                  current.resolution.recovery.mergeWitness.mergedCommit ===
-                    null &&
-                  current.resolution.mergedCommit === null &&
-                  current.resolution.recovery.mergeWitness.generation ===
-                    run.generation &&
-                  current.resolution.recovery.mergeWitness.head ===
-                    current.prHead &&
-                  current.resolution.recovery.mergeWitness.prNumber ===
-                    (current.reviewEntry?.prNumber ??
-                      current.resumePrNumber ??
-                      current.completion?.prNumber ??
-                      null)
-                    ? {
-                        ...current.resolution.recovery.mergeWitness,
-                        runId: run.id,
-                      }
-                    : current.resolution.recovery.mergeWitness,
-              }
-            : {}),
           ...(current.resolution.recovery?.action ? { action: null } : {}),
         });
         this.resolution.update(t, {

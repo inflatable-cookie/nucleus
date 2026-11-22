@@ -125,29 +125,6 @@ export const key = (t: Task, runs: Run[]) =>
       );
 
 type RecoveryEpisode = NonNullable<Task["resolution"]["recovery"]>;
-export function recoveryMergeWitness(
-  t: Task,
-  episodeId: string,
-  stopKey: string,
-) {
-  return {
-    episodeId,
-    incidentId:
-      t.resolution.incident?.status === "resolved"
-        ? null
-        : (t.resolution.incident?.id ?? null),
-    stopKey,
-    runId: null,
-    generation: t.coordinatorGeneration,
-    prNumber:
-      t.reviewEntry?.prNumber ??
-      t.resumePrNumber ??
-      t.completion?.prNumber ??
-      null,
-    head: t.prHead,
-    mergedCommit: t.resolution.mergedCommit,
-  };
-}
 const agentlessCreation = (run: Run | null): run is Run =>
   Boolean(
     run &&

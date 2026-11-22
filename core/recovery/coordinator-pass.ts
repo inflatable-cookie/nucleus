@@ -19,7 +19,6 @@ import {
 } from "./coordinator-episode";
 import { plannerEscalations, type LadderEvent } from "../questions/ladder";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
-import { recoveryOvertakenByMerge } from "./merge-occurrence";
 import { releaseRunFromRecordedCompletion } from "./fence-settlement";
 import {
   reportNamesNoAction,
@@ -362,15 +361,6 @@ export class CoordinatorPass {
         }
       }
       if (!incident?.runId) {
-        // A verified merge overtakes an episode that never launched a run. Settle it
-        // through the shared closeout decision before its pending clock can escalate.
-        if (recoveryOvertakenByMerge(this.store, this.store.task(t.id))) {
-          this.resolution.closeout.continueRecordedMerge(
-            this.store.task(t.id),
-            { kind: "sweep" },
-          );
-          continue;
-        }
         // Papercut 0489ea25: a pending episode with no run is invisible unless it
         // reaches someone. The pending event is its clock; a legitimate capacity,
         // dispatch or route wait clears the episode (`wait`) instead of leaving it.
@@ -445,9 +435,6 @@ export class CoordinatorPass {
               continue;
           }
           const summary = recoveryPendingEscalation(t);
-          // Escalation attaches an incident, then opens this episode's question in the
-          // same synchronous step. The later verified-merge proof reads that order
-          // (`escalationDerivedIncident` in merge-occurrence), so keep them adjacent.
           this.episode.escalate(t, summary);
           this.resolution.openPlannerEscalation(this.store.task(t.id), {
             cause: digest(`recovery-pending:${t.id}:${incident.id}`),
@@ -474,13 +461,6 @@ export class CoordinatorPass {
       // Queue #691: a finished task's coordinator gets no further authority. Its silence never escalates
       // the done task, and its report is evidence (Resolution.complete); terminal cleanup releases the run.
       if (["done", "cancelled"].includes(t.phase)) continue;
-      const episodeRunId = incident.runId;
-      // A verified merge supersedes this exact recovery before any no-action or
-      // responsible-blocker path can apply its late report to the new stage.
-      if (recoveryOvertakenByMerge(this.store, t)) {
-        this.resolution.closeout.continueRecordedMerge(t, { kind: "sweep" });
-        if (this.store.run(episodeRunId)?.mergeRetirement) continue;
-      }
       if (reviewFenceHoldsCoordinators(t, this.store)) {
         // A finished accepted recovery still settles its bookkeeping while review
         // authorization holds (Spec 050: no verb is refused by a stale record);

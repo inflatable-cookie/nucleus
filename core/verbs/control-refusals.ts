@@ -148,14 +148,16 @@ export function recordedCloseoutRefusal(
     : null;
 }
 
-/** Stop may release an integration turn even after its work ended or was disposed. */
 export function stopStateRefusal(task: Task): string | null {
   if (task.removedAt) return REMOVED_TASK_REFUSAL;
-  if (task.resolution.integrationTurn) return null;
-  if (isDispositionActive(task)) return DISPOSITION_CONTROL_REFUSAL;
+  const turnHint = task.resolution.integrationTurn
+    ? "; use turn.release to release its integration turn"
+    : "";
+  if (isDispositionActive(task))
+    return `${DISPOSITION_CONTROL_REFUSAL}${turnHint}`;
   return ["done", "cancelled"].includes(task.phase) ||
     task.resolution.mergedCommit
-    ? `stop applies to unfinished work; this task is ${task.phase}`
+    ? `stop applies to unfinished work; this task is ${task.phase}${turnHint}`
     : null;
 }
 

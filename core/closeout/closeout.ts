@@ -31,13 +31,6 @@ import { CLOSEOUT_BASE_REFRESH_REASON } from "../recovery/task-reasons";
 import { EXTERNAL_MERGE_CHECK_REASON_PREFIX } from "../recovery/task-reasons";
 import { settlementHeld } from "./queue-drain";
 import {
-  legacyRecoveryEscalation,
-  legacyRecoveryOwnsStop,
-  noRunEscalationOwnsStop,
-  recoveryOvertakenByMerge,
-} from "../recovery/merge-occurrence";
-import { digest } from "../store/store";
-import {
   CLOSEOUT_BASE_RENEWED_KIND,
   CLOSEOUT_BASE_RENEWAL_TRANSITION,
   closeoutBaseRenewalAllowed,
@@ -95,51 +88,23 @@ export function mergeOccurrence(
   const hasEpisode = Boolean(
     r.recoveryActive || (r.recovery && r.recovery.status !== "resolved"),
   );
-  const recoveryRun = r.recovery?.runId ? store.run(r.recovery.runId) : null;
-  const oldEpisode = Boolean(
-    !recoveryRun?.mergeRetirement && recoveryOvertakenByMerge(store, current),
-  );
   const recoveredProbe = Boolean(
     options.automatic &&
       options.reobserved &&
       r.externalMergePreAttention &&
       !hasEpisode &&
       current.reasonFact?.code === "external_merge_check" &&
-      (!r.stop ||
-        r.stop.fact?.code === "external_merge_check") &&
+      (!r.stop || r.stop.fact?.code === "external_merge_check") &&
       (!r.incident ||
         r.incident.status === "resolved" ||
         r.incident.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)),
   );
-  const noRunEscalation = oldEpisode
-    ? noRunEscalationOwnsStop(store, current)
-    : null;
-  const ownsStop = Boolean(
-    r.stop &&
-      oldEpisode &&
-      (digest(`stop:${r.stop.reason}:${r.stop.since}`) === r.recovery?.key ||
-        legacyRecoveryOwnsStop(store, current) ||
-        noRunEscalation !== null),
-  );
-  const otherStop = Boolean(r.stop && !recoveredProbe && !ownsStop);
+  const otherStop = Boolean(r.stop && !recoveredProbe);
   const otherIncident = Boolean(
-    r.incident &&
-      r.incident.status !== "resolved" &&
-      !recoveredProbe &&
-      (!oldEpisode || r.incident.id !== r.recovery?.incidentId),
+    r.incident && r.incident.status !== "resolved" && !recoveredProbe,
   );
-  const staleBinding = Boolean(
-    r.currentRunId &&
-      bound?.role !== "closeout" &&
-      oldEpisode &&
-      r.currentRunId === r.recovery?.runId,
-  );
-  const otherBinding = Boolean(
-    r.currentRunId && bound?.role !== "closeout" && !staleBinding,
-  );
-  const liveRun = runs.find(
-    (run) => !run.released && !(oldEpisode && run.id === r.recovery?.runId),
-  );
+  const otherBinding = Boolean(r.currentRunId && bound?.role !== "closeout");
+  const liveRun = runs.find((run) => !run.released);
   const automaticHold = Boolean(
     options.automatic &&
       ((parked && !options.reobserved) ||
@@ -148,18 +113,18 @@ export function mergeOccurrence(
   );
   const held =
     mergeFenced(current) ||
+    hasEpisode ||
     otherStop ||
     otherIncident ||
     otherBinding ||
     Boolean(liveRun) ||
     automaticHold;
-  const unproved = hasEpisode && !oldEpisode;
   const episode = r.recovery
     ? `recovery episode ${r.recovery.id}${r.recovery.runId ? ` on run ${r.recovery.runId}` : " that started no run"}`
     : "the active recovery";
   let hold: string | null = null;
-  if (unproved)
-    hold = `${episode} is not proved overtaken by the verified merge; its exact pre-merge witness or its absent run is missing`;
+  if (hasEpisode)
+    hold = `${episode} is still active; use closeout.now to start closeout`;
   else if (mergeFenced(current)) hold = "a merge hold is active";
   else if (otherStop && r.stop)
     hold = `the ${r.stop.reason} stop still owns the task: ${r.stop.detail}`;
@@ -176,15 +141,10 @@ export function mergeOccurrence(
     bound,
     parked,
     hasEpisode,
-    oldEpisode,
     recoveredProbe,
-    noRunEscalation,
-    ownsStop,
     otherStop,
     otherIncident,
-    staleBinding,
     held,
-    unproved,
     hold,
   };
 }
@@ -273,51 +233,16 @@ export class Closeout {
         reobserved: continuation.kind === "sweep" && continuation.reobserved,
         effectsHold: () => this.closeoutEffects(current).length > 0,
       });
-      const {
-        parked,
-        oldEpisode,
-        recoveredProbe,
-        noRunEscalation,
-        otherStop,
-        otherIncident,
-        staleBinding,
-        held,
-      } = occurrence;
+      const { parked, recoveredProbe, held } = occurrence;
       // An owner move names the holder it cannot pass, never a silent no-op.
       if (occurrence.hold && continuation.kind === "owner")
         throw new Error(`Recorded merge waits: ${occurrence.hold}`);
-      // An unmatched episode, stop or incident may be a current sync or cleanup
-      // fault. A merge does not grant authority to clear that occurrence.
-      if (occurrence.unproved || (held && !oldEpisode)) return current;
+      if (held) return current;
       const reenter =
         parked ||
         current.phase === "merging" ||
-        oldEpisode ||
-        staleBinding ||
         Boolean(r.externalMergePreAttention);
       if (automatic && !reenter) return current;
-      const detail = `Verified merge ${r.mergedCommit} supersedes the earlier resolution step`;
-      const episode = oldEpisode
-        ? this.resolution.recovery.settledEpisodeChanges(current, detail, true)
-        : null;
-      if (episode && r.recovery?.runId) {
-        const run = this.store.run(r.recovery.runId);
-        const prNumber =
-          current.reviewEntry?.prNumber ??
-          current.resumePrNumber ??
-          current.completion?.prNumber;
-        if (!run || !prNumber || !r.mergeHead) return current;
-        this.store.putRun({
-          ...run,
-          mergeRetirement: {
-            episodeId: r.recovery.id,
-            prNumber,
-            head: r.mergeHead,
-            commit: r.mergedCommit,
-          },
-        });
-        if (run.completion) recordResultApplied(this.store, current.id, run.id);
-      }
       const ownerRefresh =
         continuation.kind !== "sweep" && continuation.refresh;
       const phase =
@@ -329,9 +254,7 @@ export class Closeout {
         : phase === "syncing"
           ? "Verified merge; synchronizing the integration checkout"
           : "Integration checkout synchronized; closeout pending";
-      const latest = held
-        ? current
-        : this.resolution.assignIntegrationTurn(current);
+      const latest = this.resolution.assignIntegrationTurn(current);
       const recoveredIncident =
         recoveredProbe && r.incident && r.incident.status !== "resolved"
           ? {
@@ -343,23 +266,14 @@ export class Closeout {
       const updated = this.resolution.update(
         latest,
         {
-          ...episode,
-          ...(otherStop ? { stop: r.stop } : {}),
-          ...(otherIncident ? { incident: r.incident } : {}),
-          ...(staleBinding ? { currentRunId: null } : {}),
-          ...((oldEpisode && !otherStop && !otherIncident) || recoveredProbe
-            ? { attention: false }
-            : {}),
-          ...(recoveredProbe ? { stop: null } : {}),
+          ...(recoveredProbe ? { attention: false, stop: null } : {}),
           ...(recoveredIncident ? { incident: recoveredIncident } : {}),
-          ...(!held ? { externalMergePreAttention: null } : {}),
+          externalMergePreAttention: null,
         },
         {
-          ...(!held ? { phase, reason } : {}),
-          ...(!held &&
-          automatic &&
-          current.phase === "merging" &&
-          phase === "syncing"
+          phase,
+          reason,
+          ...(automatic && current.phase === "merging" && phase === "syncing"
             ? { coordinatorGeneration: current.coordinatorGeneration + 1 }
             : {}),
         },
@@ -376,44 +290,8 @@ export class Closeout {
             : {}),
         }),
       );
-      if (!otherIncident && episode?.incident)
-        this.resolution.recordIncidentEvent(t.id, episode.incident);
       if (recoveredIncident)
         this.resolution.recordIncidentEvent(t.id, recoveredIncident);
-      const escalation =
-        oldEpisode &&
-        (legacyRecoveryEscalation(this.store, current) ?? noRunEscalation);
-      if (
-        escalation &&
-        plannerEscalations(this.store.eventsAll(t.id)).some(
-          (item) => item.id === escalation && !item.answered,
-        )
-      ) {
-        const events = this.store.eventsAll(t.id);
-        this.store.event(
-          t.id,
-          "planner_escalation_resolved",
-          `${escalation}: ${detail}`,
-        );
-        if (
-          events.some(
-            (event) =>
-              event.kind === "planner_escalation_wait" &&
-              event.detail.startsWith(`${escalation}:`),
-          ) &&
-          !events.some(
-            (event) =>
-              event.kind === "planner_escalation_wait_superseded" &&
-              event.detail.startsWith(`${escalation}:`),
-          )
-        )
-          this.store.event(
-            t.id,
-            "planner_escalation_wait_superseded",
-            `${escalation}: ${detail}`,
-          );
-        closeEscalationFollowups(this.store, t.id, escalation);
-      }
       return updated;
     };
     return this.store.db.isTransaction

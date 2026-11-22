@@ -8,6 +8,7 @@ import type {
 } from "../resolution";
 import { now } from "../store/store";
 import { mergedWithNonePatch } from "../recovery/task-reasons";
+import { sendGuardedMerge } from "./merge-phase";
 
 export type MergeIntentContext = Pick<
   Resolution,
@@ -208,13 +209,24 @@ export class MergeIntent {
   }
   /** Verify a durable merge intent, then allow at most one SHA-guarded re-issue after continuous proof. */
   async reconcileMergeIntent(t: Task) {
+    const expectedRequestAt = t.resolution.mergeRequestedAt;
+    const expectedHead = t.resolution.mergeHead;
+    const expectedRetryAt = t.resolution.mergeRetryAt;
+    const matchesObservedRequest = (candidate: Task) =>
+      candidate.resolution.mergeIntent &&
+      !candidate.resolution.mergedCommit &&
+      candidate.resolution.mergeRequestedAt === expectedRequestAt &&
+      candidate.resolution.mergeHead === expectedHead &&
+      candidate.resolution.mergeRetryAt === expectedRetryAt;
     let result: Awaited<ReturnType<NonNullable<ResolutionAdapter["merged"]>>>;
     try {
       result = await this.adapter.merged!(t);
     } catch (error) {
       if (this.paused()) return;
+      const current = this.store.task(t.id);
+      if (!matchesObservedRequest(current)) return;
       t = this.resetMergeProof(
-        t,
+        current,
         `GitHub merge observation unavailable: ${String(error)}`,
       );
       if (error instanceof ForgeOutageError) {
@@ -319,6 +331,9 @@ export class MergeIntent {
       });
       return;
     }
+    const latestBeforeReconcile = this.store.task(t.id);
+    if (!matchesObservedRequest(latestBeforeReconcile)) return;
+    t = latestBeforeReconcile;
     if (t.resolution.mergeResponseOutcome === "pending") {
       const detail =
         "Nucleus restarted before recording the guarded merge response; treating delivery as uncertain";
@@ -443,22 +458,34 @@ export class MergeIntent {
         fresh = await this.mergeGateEvidence(t);
       } catch (error) {
         if (this.paused()) return;
+        const currentAfterError = this.store.task(t.id);
+        if (!matchesObservedRequest(currentAfterError)) return;
         if (error instanceof ForgeOutageError) {
-          if (!this.gitTransientFailure?.(this.store.task(t.id), error))
+          if (!this.gitTransientFailure?.(currentAfterError, error))
             this.waiting(
-              this.store.task(t.id),
+              currentAfterError,
               error.message,
               "external_unavailable",
             );
         } else
           holdForGate(
-            this.store.task(t.id),
+            currentAfterError,
             `the gate observation failed: ${String(error).slice(0, 400)}`,
           );
         return;
       }
       if (this.paused()) return;
       const current = this.store.task(t.id);
+      if (
+        !current.resolution.mergeIntent ||
+        current.resolution.mergedCommit ||
+        current.resolution.mergeRequestedAt !== expectedRequestAt ||
+        current.resolution.mergeHead !== expectedHead ||
+        current.resolution.mergeResponseOutcome !== "uncertain" ||
+        current.resolution.mergeRetryAt ||
+        current.resolution.mergeAutoRetryExhausted
+      )
+        return;
       const gateDecision = reissueGateDecision(current, fresh, elapsed);
       if (gateDecision.kind === "escalate") {
         this.escalateUncertainMerge(current, gateDecision.reason);
@@ -468,87 +495,115 @@ export class MergeIntent {
         this.waiting(current, gateDecision.reason, "lifecycle");
         return;
       }
-      t = this.store.task(t.id);
-      const retryAt = now();
-      t = this.update(
-        t,
-        {
-          mergeRetryAt: retryAt,
-          mergeRetryOutcome: "pending",
-          mergeAutoRetryExhausted: true,
-        },
-        {
-          reason:
-            "Continuous exact non-merge proof held; issuing the one guarded merge re-try",
-        },
-        "merge_retry_intent",
-        JSON.stringify({
-          at: retryAt,
-          sha: t.resolution.mergeHead,
-          evidence: proofDetail,
-        }).slice(0, 2000),
-      );
       let retryWithdrawn = false;
-      try {
-        await this.adapter.merge!(t, () => {
+      await sendGuardedMerge({
+        store: this.store,
+        taskId: t.id,
+        head: expectedHead ?? "",
+        send: (reservedTask, allowed) =>
+          this.adapter.merge!(reservedTask, allowed),
+        reserve: () => {
+          const latest = this.store.task(t.id);
+          if (
+            !latest.resolution.mergeIntent ||
+            latest.resolution.mergedCommit ||
+            latest.resolution.mergeRequestedAt !== expectedRequestAt ||
+            latest.resolution.mergeHead !== expectedHead ||
+            latest.resolution.mergeResponseOutcome !== "uncertain" ||
+            latest.resolution.mergeRetryAt ||
+            latest.resolution.mergeAutoRetryExhausted
+          )
+            return null;
+          const retryAt = now();
+          const reserved = this.update(
+            latest,
+            {
+              mergeRetryAt: retryAt,
+              mergeRetryOutcome: "pending",
+              mergeAutoRetryExhausted: true,
+            },
+            {
+              reason:
+                "Continuous exact non-merge proof held; issuing the one guarded merge re-try",
+            },
+            "merge_retry_intent",
+            JSON.stringify({
+              at: retryAt,
+              sha: latest.resolution.mergeHead,
+              evidence: proofDetail,
+            }).slice(0, 2000),
+          );
+          return {
+            task: reserved,
+            matchesCurrent: (candidate) =>
+              candidate.resolution.mergeIntent &&
+              candidate.resolution.mergeRequestedAt === expectedRequestAt &&
+              candidate.resolution.mergeHead === expectedHead &&
+              candidate.resolution.mergeRetryAt === retryAt &&
+              candidate.resolution.mergeRetryOutcome === "pending" &&
+              !candidate.resolution.mergedCommit,
+          };
+        },
+        extraAllowed: (latest) => {
           if (this.paused()) return false;
-          if (!this.gateSettingsCurrent(this.store.task(t.id), fresh)) {
+          if (!this.gateSettingsCurrent(latest, fresh)) {
             retryWithdrawn = true;
             return false;
           }
           return true;
-        });
-        if (this.paused()) return;
-        t = this.store.task(t.id);
-        this.update(
-          t,
-          { mergeRetryOutcome: "accepted" },
-          {},
-          "merge_retry_accepted",
-          `GitHub accepted the one guarded re-issue for ${t.resolution.mergeHead}`,
-        );
-      } catch (error) {
-        if (this.paused()) return;
-        t = this.store.task(t.id);
-        if (retryWithdrawn) {
-          // Nothing was sent: the retry is not spent, and the settings change is
-          // observed before another attempt.
-          this.store.event(
-            t.id,
-            "merge_gate_settings_changed",
-            `Repository settings changed between the guarded re-issue intent and the merge request at ${t.resolution.mergeHead}; the request was not sent and the retry is not spent`,
-          );
+        },
+        onAccepted: (latest) => {
+          if (this.paused()) return;
           this.update(
-            t,
-            {
-              mergeRetryAt: null,
-              mergeRetryOutcome: null,
-              mergeAutoRetryExhausted: false,
-            },
+            latest,
+            { mergeRetryOutcome: "accepted" },
             {},
-            "merge_retry_withdrawn",
-            "Repository settings changed before the guarded re-issue; no request was sent",
+            "merge_retry_accepted",
+            `GitHub accepted the one guarded re-issue for ${latest.resolution.mergeHead}`,
           );
-          holdForGate(
+        },
+        onError: (latest, error, isCurrent) => {
+          if (this.paused() || !isCurrent) return;
+          if (retryWithdrawn) {
+            // Nothing was sent: the retry is not spent, and the settings change is
+            // observed before another attempt.
+            this.store.event(
+              t.id,
+              "merge_gate_settings_changed",
+              `Repository settings changed between the guarded re-issue intent and the merge request at ${latest.resolution.mergeHead}; the request was not sent and the retry is not spent`,
+            );
+            this.update(
+              latest,
+              {
+                mergeRetryAt: null,
+                mergeRetryOutcome: null,
+                mergeAutoRetryExhausted: false,
+              },
+              {},
+              "merge_retry_withdrawn",
+              "Repository settings changed before the guarded re-issue; no request was sent",
+            );
+            holdForGate(
+              this.store.task(t.id),
+              "repository settings changed before the guarded re-issue; the request was not sent",
+            );
+            return;
+          }
+          const detail = String(error).slice(0, 1500);
+          this.update(
+            latest,
+            { mergeRetryOutcome: "uncertain" },
+            {},
+            "merge_retry_uncertain",
+            detail,
+          );
+          this.waiting(
             this.store.task(t.id),
-            "repository settings changed before the guarded re-issue; the request was not sent",
+            "The one guarded merge re-issue had an uncertain response; checking GitHub before escalation",
+            "lifecycle",
           );
-          return;
-        }
-        const detail = String(error).slice(0, 1500);
-        this.update(
-          t,
-          { mergeRetryOutcome: "uncertain" },
-          {},
-          "merge_retry_uncertain",
-          detail,
-        );
-        this.waiting(
-          this.store.task(t.id),
-          "The one guarded merge re-issue had an uncertain response; checking GitHub before escalation",
-          "lifecycle",
-        );
-      }
+        },
+      });
       return;
     }
     if (decision === "escalate") {

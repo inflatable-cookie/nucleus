@@ -97,9 +97,9 @@ No command changes anything it does not name.
 | `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|effect\|host_wait\|owner_stop\|deferred_verb> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). | `hold_owner` (overrides another owner's hold; planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing) |
 | `phase.set to=<working\|changes_requested\|awaiting_review\|reviewing\|verifying\|needs_attention\|blocked>` | Writes the phase and reason only. | `live_runs` (unreleased runs see an unexpected phase) |
 | `message.send role=<worker\|reviewer\|coordinator\|planner> text` | Delivers to the role's bound thread now, steering into or queued after an active turn, and reports `delivered`, `queued` or `unknown`. Changes no task state. | `queued`, `no_thread` |
-| `merge.now head=<sha>` | Requests GitHub's guarded merge of exactly that head now, taking the integration turn if free. | `turn_held`, `checks` (non-required checks failed or pending), `holds` |
+| `merge.now head=<sha>` | Moves the task to `merging` (clearing attention and stop), requests GitHub's guarded merge of exactly that head now, and takes the integration turn if free. | `turn_held`, `checks` (non-required checks failed or pending), `holds`, `hold_owner` (planner or operator only) |
 | `turn.take` / `turn.release` | Takes or releases the repository integration turn for this task and wakes the tasks waiting on it. | `turn_held` (take displaces another task), `merge_in_flight` |
-| `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. | `unverified_merge` (operator only), `no_verdict` |
+| `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases and cancels it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs` |
 
 **Hard gates** (never accepted as warnings):
 
@@ -209,7 +209,7 @@ replacement.
 | --- | --- | --- |
 | 1 (delivered in nucleus#1519) | Typed fields for every prose-matched decision. The command contract (warnings, `accept`, `owner_resolution` event, version-only check) and authority by live responsible planner. `run.release` and `record.clear`, settling the underlying fact. | `retry_effect force` settle-only path; force's stored-planner match |
 | 2 (delivered in nucleus#1520) | `run.start`, `phase.set`, `message.send`. `next`, stop text and refusals name the explicit command. Coordinators launch for mechanical stalls. | `core/recovery/absent-creation/**`, creation gates in `route`/`restart`/`reviewer-report`, responsible-fault fallback |
-| 3 | `turn.take`/`turn.release`, `merge.now`, `closeout.now`. Prerequisite wait releases the turn. | `merge-occurrence`, restart-to-closeout path, turn-lever refusals (nucleus#1513 retired in favour of this batch) |
+| 3 (delivered in nucleus#1521) | `turn.take`/`turn.release`, `merge.now`, `closeout.now`. Prerequisite wait releases the turn. | `merge-occurrence`, restart-to-closeout path, turn-lever refusals (nucleus#1513 retired in favour of this batch) |
 | 4 | Escalations bound to version, carrying explicit commands, closing when the cause clears. | escalation binding-hash refusals in `escalation-settlement` |
 | 5 | Host availability from health readings, not one call. | host-wide timeout stamping |
 | 6 | Proof owners out of the gate path. | pre-send receipts, owned-tool proof, archive proof, per-effect settlement modules, `restart-episode`, `retry_effect` replay variants; shrink `verb-fences`, `recovery-effects`, `fence-settlement`, coordinator episode modules |

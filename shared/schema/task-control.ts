@@ -100,6 +100,12 @@ const resolutionWarningId = z.enum([
   "live_runs",
   "queued",
   "no_thread",
+  "turn_held",
+  "merge_in_flight",
+  "checks",
+  "holds",
+  "unverified_merge",
+  "no_verdict",
 ]);
 const resolutionFields = {
   taskId: resolutionId,
@@ -186,6 +192,39 @@ export const explicitResolutionSchema = z.preprocess(
         action: z.literal("message.send"),
         role: z.enum(["worker", "reviewer", "coordinator", "planner"]),
         text: z.string().trim().min(1).max(8000),
+      })
+      .strict(),
+    z
+      .object({
+        ...resolutionFields,
+        action: z.literal("turn.take"),
+      })
+      .strict(),
+    z
+      .object({
+        ...resolutionFields,
+        action: z.literal("turn.release"),
+      })
+      .strict(),
+    z
+      .object({
+        ...resolutionFields,
+        action: z.literal("merge.now"),
+        head: z
+          .string()
+          .trim()
+          .regex(/^[0-9a-f]{40}$/),
+      })
+      .strict(),
+    z
+      .object({
+        ...resolutionFields,
+        action: z.literal("closeout.now"),
+        mergedCommit: z
+          .string()
+          .trim()
+          .regex(/^[0-9a-f]{40}$/)
+          .optional(),
       })
       .strict(),
   ]),

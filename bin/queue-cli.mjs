@@ -67,7 +67,7 @@ async function main() {
   const uiCommand = requestedMethod === 'ui';
   const file = uiCommand ? undefined : rest.find(arg => !['--wait', '--dry-run'].includes(arg));
   // Spec 050: the CLI verb name for the task.next read RPC.
-  const explicit = ['run.start', 'run.release', 'record.clear', 'phase.set', 'message.send'].includes(requestedMethod);
+  const explicit = ['run.start', 'run.release', 'record.clear', 'phase.set', 'message.send', 'turn.take', 'turn.release', 'merge.now', 'closeout.now'].includes(requestedMethod);
   const method = uiCommand ? 'service.ui-link' : requestedMethod === 'next' ? 'task.next' : explicit ? 'task' : requestedMethod;
   const input = uiCommand ? { action: rest.includes('--revoke') ? 'revoke' : 'issue' } : readPayload(file);
   if (explicit) input.action = requestedMethod;

@@ -422,7 +422,8 @@ export class TaskWakes {
   resumeHostReadTransients(): void {
     if (this.engine.stopped) return;
     for (const task of this.store.liveTasks()) {
-      if (task.removedAt || ["done", "cancelled"].includes(task.phase)) continue;
+      if (task.removedAt || ["done", "cancelled"].includes(task.phase))
+        continue;
       const episode = readHostReadTransientEpisode(this.store, task.id, "task");
       if (episode && episode.exhaustedAt == null)
         this.armHostReadTransient(task.id, episode.retryAt, "task");
@@ -462,14 +463,17 @@ export class TaskWakes {
           return;
         }
         const task = this.store.taskOrNull(id);
-        if (!task || task.removedAt || ["done", "cancelled"].includes(task.phase))
+        if (
+          !task ||
+          task.removedAt ||
+          ["done", "cancelled"].includes(task.phase)
+        )
           return;
         if (task.phase === "queued" && !task.workspaceId)
           void this.engine.cleanContext(() =>
             this.engine.wakeRepository(task.repoPath),
           );
-        else
-          void this.engine.cleanContext(() => this.engine.wakeTask(id));
+        else void this.engine.cleanContext(() => this.engine.wakeTask(id));
       },
       Math.max(0, retryAt - Date.now()),
     );
@@ -488,14 +492,17 @@ export class TaskWakes {
     const old = readHostReadTransientEpisode(this.store, id, scope);
     const currentTask = !operation ? this.store.taskOrNull(id) : null;
     const currentOp = operation ? this.store.operation(id) : null;
-    const context: HostReadFailureContext = !operation && currentTask
-      ? taskHostReadContext(currentTask, step, old)
-      : {
-          step,
-          hostId: currentOp?.hostId ?? old?.hostId ?? null,
-          target: currentOp?.taskId ? `task ${currentOp.taskId}` : old?.target ?? null,
-          occurrenceKey: id,
-        };
+    const context: HostReadFailureContext =
+      !operation && currentTask
+        ? taskHostReadContext(currentTask, step, old)
+        : {
+            step,
+            hostId: currentOp?.hostId ?? old?.hostId ?? null,
+            target: currentOp?.taskId
+              ? `task ${currentOp.taskId}`
+              : (old?.target ?? null),
+            occurrenceKey: id,
+          };
     const occurrenceMismatch = Boolean(
       old?.occurrenceKey &&
         context.occurrenceKey &&
@@ -520,13 +527,7 @@ export class TaskWakes {
     );
     const next = legacyAlreadyExhausted
       ? null
-      : nextHostReadTransientAttempt(
-          activeOld,
-          detail,
-          nowMs,
-          limits,
-          context,
-        );
+      : nextHostReadTransientAttempt(activeOld, detail, nowMs, limits, context);
     if (!next) {
       const timerKey = `${scope}:${id}`;
       const timer = this.hostReadTransientTimers.get(timerKey);
@@ -551,14 +552,17 @@ export class TaskWakes {
           step: context.step ?? activeOld?.step ?? step,
           hostId: context.hostId ?? activeOld?.hostId ?? null,
           target: context.target ?? activeOld?.target ?? null,
-          occurrenceKey: context.occurrenceKey ?? activeOld?.occurrenceKey ?? null,
+          occurrenceKey:
+            context.occurrenceKey ?? activeOld?.occurrenceKey ?? null,
           exhaustedAt: activeOld?.exhaustedAt ?? nowMs,
         };
         this.store.setMeta(key, exhaustedEpisode);
         if (current && !["succeeded", "failed"].includes(current.state)) {
           this.store.putOperation({
             ...current,
-            state: current.preSendBoundaryStartedAt ? "needs_attention" : "failed",
+            state: current.preSendBoundaryStartedAt
+              ? "needs_attention"
+              : "failed",
             settledAt: now(),
             diagnostic: reason.slice(0, 4000),
             effect: current.effect
@@ -605,8 +609,7 @@ export class TaskWakes {
             occurrenceKey:
               context.occurrenceKey ?? activeOld?.occurrenceKey ?? null,
             exhaustedAt: activeOld?.exhaustedAt ?? nowMs,
-            resumePhase:
-              activeOld?.resumePhase ?? context.resumePhase ?? null,
+            resumePhase: activeOld?.resumePhase ?? context.resumePhase ?? null,
             movedToAttention:
               activeOld?.movedToAttention || moveTaskToAttention,
           } satisfies HostReadTransientEpisode);
@@ -689,8 +692,7 @@ export class TaskWakes {
         });
     } else {
       const task = this.store.taskOrNull(id);
-      if (task)
-        this.resolution.waiting(task, visible, "external_unavailable");
+      if (task) this.resolution.waiting(task, visible, "external_unavailable");
     }
     this.armHostReadTransient(id, next.retryAt, scope);
     return "wait";
@@ -844,6 +846,49 @@ export class TaskWakes {
    */
   wakeIntegrationSuccessor(repoPath: string): void {
     if (this.engine.stopped) return;
+    const holder =
+      this.store
+        .integrationTasks(repoPath)
+        .find((task) => this.resolution.holdsIntegrationTurn(task)) ?? null;
+    for (const candidate of this.store.tasks()) {
+      if (
+        candidate.repoPath !== repoPath ||
+        candidate.removedAt != null ||
+        ["done", "cancelled"].includes(candidate.phase)
+      )
+        continue;
+      const isTurnWait =
+        candidate.resolution.stop?.fact?.code === "integration_turn" ||
+        candidate.reasonFact?.code === "integration_turn";
+      if (!isTurnWait) continue;
+      if (!holder || holder.id === candidate.id) {
+        this.store.update(candidate.id, {
+          resolution: {
+            ...candidate.resolution,
+            ...(candidate.resolution.stop?.fact?.code === "integration_turn"
+              ? { stop: null }
+              : {}),
+          },
+          reason: "Task progressing",
+          reasonFact: null,
+        });
+      } else if (candidate.resolution.stop?.fact?.subject !== holder.id) {
+        const holderDetail =
+          holder.resolution.stop?.fact?.code === "integration_turn" ||
+          holder.reasonFact?.code === "integration_turn"
+            ? "integration work pending"
+            : holder.reason;
+        this.resolution.waiting(
+          candidate,
+          `Waiting for repository integration turn: ${holder.title} (${holder.id}) holds it — ${holderDetail}`.slice(
+            0,
+            2000,
+          ),
+          "lifecycle",
+          { fact: { code: "integration_turn", subject: holder.id } },
+        );
+      }
+    }
     const next = this.store
       .integrationTasks(repoPath)
       .filter((task) => this.resolution.holdsIntegrationTurn(task))

@@ -5,6 +5,7 @@ import {
 } from "../recovery/recovery-effects";
 import { mergeFenced, type Task } from "../../shared/contracts";
 import { now } from "../store/store";
+import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
 import { mergeFenceReason } from "../recovery/task-reasons";
 import { recordedSlotWait } from "../recovery/wait-context";
 import type { Resolution } from "../resolution";
@@ -57,12 +58,18 @@ export class IntegrationTurns {
       return t.reason;
     if (this.resolution.paused()) return "Nucleus is paused";
     if (mergeFenced(t)) return mergeFenceReason(t);
+    if (prerequisiteWaitBlocksPhase(t))
+      return t.prerequisiteWait?.reason || t.reason;
     if (
       t.resolution.attention ||
       t.resolution.recovery?.status === "escalated" ||
-      ["escalated", "responsible_question", "budget", "paused_stop"].includes(
-        t.resolution.stop?.reason ?? "",
-      )
+      [
+        "escalated",
+        "responsible_question",
+        "budget",
+        "paused_stop",
+        "prerequisite",
+      ].includes(t.resolution.stop?.reason ?? "")
     )
       return t.reason;
     // Use the same durable effects as executionLease. Active merge work is
@@ -201,7 +208,8 @@ export class IntegrationTurns {
     // A verification waiting for that slot cannot also fence its synchronization.
     return (
       this.idleOrdinaryVerification(t) &&
-      (t.resolution.stop?.fact?.code === "integration_turn" || t.reasonFact?.code === "integration_turn" ||
+      (t.resolution.stop?.fact?.code === "integration_turn" ||
+        t.reasonFact?.code === "integration_turn" ||
         (recordedSlotWait(t) &&
           Boolean(this.resolution.slotAdmissionReason(t))))
     );
@@ -329,7 +337,12 @@ export class IntegrationTurns {
           )
         : "Waiting for repository integration turn",
       "lifecycle",
-      { fact: { code: "integration_turn", ...(holder ? { subject: holder.id } : {}) } },
+      {
+        fact: {
+          code: "integration_turn",
+          ...(holder ? { subject: holder.id } : {}),
+        },
+      },
     );
     return false;
   }

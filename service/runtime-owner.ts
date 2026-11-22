@@ -2335,7 +2335,11 @@ export class QueueRuntime {
       request.action === "record.clear" ||
       request.action === "run.start" ||
       request.action === "phase.set" ||
-      request.action === "message.send"
+      request.action === "message.send" ||
+      request.action === "turn.take" ||
+      request.action === "turn.release" ||
+      request.action === "merge.now" ||
+      request.action === "closeout.now"
     )
       return resolveExplicitly(this.engine, request, (task) => {
         if (task.removedAt)

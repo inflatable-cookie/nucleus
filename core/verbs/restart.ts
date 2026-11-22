@@ -500,20 +500,6 @@ export class RestartControls {
       ["done", "cancelled"].includes(task.phase) ||
       task.resolution.mergedCommit
     ) {
-      if (
-        task.resolution.mergedCommit &&
-        !["done", "cancelled", "syncing", "closing", "closeout"].includes(
-          task.phase,
-        )
-      )
-        return this.engine.moveToCloseout({
-          taskId: task.id,
-          version: task.version,
-          reason,
-          caller: input.caller,
-          enclosing: () =>
-            verifyEnclosingOperation(this.store, input, operationId),
-        });
       // A finished or merged task restarts no run; a merged one still re-runs its
       // parked step (a closeout resynchronization), and either answers an escalation.
       const parked = parkedRestart(
