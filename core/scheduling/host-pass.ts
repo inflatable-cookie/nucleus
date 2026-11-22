@@ -15,7 +15,10 @@ import {
   hasRecordedOperationSettlement,
   historicalFenceRefusal,
   observedHostEffectEvidence,
+  releasedRunDeliveryEvidence,
 } from "../recovery/recovery-effects";
+import { SHELL_NOTICE_MS } from "../recovery/stall";
+import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { operationIdForKey, operationInputHash } from "../store/store";
 import {
   submissionHash,
@@ -63,7 +66,15 @@ export type HostPassContext = Pick<
   | "scheduleLane"
   | "stopped"
   | "store"
-> & { readonly resolution: Pick<Resolution, "observationTargets"> };
+> & {
+  readonly resolution: Pick<Resolution, "observationTargets"> &
+    Partial<
+      Pick<
+        Resolution,
+        "primePassProcesses" | "primePassTimeline" | "primePassTimelinePage"
+      >
+    >;
+};
 
 /** What one host's pass answers the audit pass that called it. */
 export type HostPassResult = {
@@ -221,6 +232,10 @@ export class HostPass {
       if (historical) this.lastRunProcessSweep.set(host, Date.now());
       // Process cleanup has its own durable intent and host lane. A slow
       // local probe says nothing about this host's transport or task visits.
+      // Its initial scan shares this host pass's bounded process snapshot so
+      // cleanup and task quanta read the process table at most once per pass.
+      let usedPassSnapshot = false;
+      const primePass = this.context.resolution.primePassProcesses;
       void this.context
         .scheduleLane(
           `cleanup:${host}`,
@@ -228,7 +243,14 @@ export class HostPass {
           () =>
             sweepSettledRunProcesses(this.store, host, {
               pendingOnly: !historical,
-              readProcesses: () => this.adapter.hostProcessListing!(),
+              readProcesses: async () => {
+                if (!usedPassSnapshot && primePass) {
+                  usedPassSnapshot = true;
+                  const read = await primePass(host);
+                  return read.state === "listed" ? read.processes : null;
+                }
+                return this.adapter.hostProcessListing!();
+              },
             }),
           {
             coalesce: historical
@@ -532,6 +554,94 @@ export class HostPass {
       await this.step(host, "observationInventory", async () => {
         observed = await this.context.host.observationInventory(inventoryIds);
       });
+    }
+    // Spec 068 §6 / Spec 066 R1: one shared process-table snapshot per host
+    // pass, bounded by its deadline. Task quanta on this host read the pass's
+    // snapshot instead of each spawning `ps`/`lsof`/env reads in the task lane.
+    if (
+      this.adapter.hostProcessListing &&
+      this.context.resolution.primePassProcesses &&
+      tasks.some(
+        (task) =>
+          !task.removedAt && !["done", "cancelled"].includes(task.phase),
+      )
+    ) {
+      await yieldToLoop();
+      if (!this.context.stopped) {
+        await this.step(host, "processSnapshot", () =>
+          this.context.resolution.primePassProcesses!(host),
+        );
+      }
+    }
+    // Spec 068 §6: pre-read timelines needed by this host's tasks into the
+    // pass's shared snapshot so task quanta share one bounded reading instead
+    // of queueing per-task timeline RPCs on their exclusive lanes.
+    if (
+      this.adapter.originAgent &&
+      this.adapter.agentTimelinePage &&
+      this.context.resolution.primePassTimelinePage
+    ) {
+      const deliveryAgents = new Set<string>();
+      for (const task of tasks) {
+        if (task.removedAt) continue;
+        for (const run of this.store.runs(task.id)) {
+          if (
+            run.released &&
+            run.status === "uncertain" &&
+            run.agentId &&
+            run.workspaceId &&
+            !releasedRunDeliveryEvidence(this.store, run)
+          )
+            deliveryAgents.add(run.agentId);
+        }
+      }
+      if (deliveryAgents.size) {
+        await this.step(host, "timelineDeliverySnapshot", async () => {
+          for (const agentId of deliveryAgents) {
+            await yieldToLoop();
+            if (this.context.stopped) return;
+            await this.context.resolution.primePassTimelinePage!(
+              agentId,
+              100,
+              host,
+            ).catch(() => {});
+          }
+        });
+      }
+    }
+    if (
+      observed &&
+      this.adapter.agentTimeline &&
+      this.context.resolution.primePassTimeline
+    ) {
+      const shellAgents: string[] = [];
+      const nowMs = Date.now();
+      for (const [agentId, state] of observed as ReadonlyMap<
+        string,
+        AgentObservation
+      >) {
+        if (!state.active && !state.permissions) continue;
+        const turnStartedAt = state.turnStartedAt
+          ? Date.parse(state.turnStartedAt)
+          : NaN;
+        if (
+          Number.isFinite(turnStartedAt) &&
+          nowMs - turnStartedAt >= SHELL_NOTICE_MS
+        )
+          shellAgents.push(agentId);
+      }
+      if (shellAgents.length) {
+        await this.step(host, "timelineShellSnapshot", async () => {
+          for (const agentId of shellAgents) {
+            await yieldToLoop();
+            if (this.context.stopped) return;
+            await this.context.resolution.primePassTimeline!(
+              agentId,
+              host,
+            ).catch(() => {});
+          }
+        });
+      }
     }
     const retired = await this.context.observeRetiredWorkers(
       retiredPlan,

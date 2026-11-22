@@ -7,6 +7,10 @@ import {
 } from "../review/review-continuation";
 import type { TimelinePage } from "./stall";
 import { now } from "../store/store";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+} from "../scheduling/pass-snapshot";
 
 /** Whether one timeline page holds this exact user message. Map bug 14: hasOlder is unknown without looking. */
 export function timelineMessage(
@@ -33,6 +37,8 @@ export type EffectReconcileContext = Pick<
   | "host"
   | "reconcileReviewDelivery"
   | "reconcileReviewDeliveryOperations"
+  | "quantumReadTimeoutMs"
+  | "readPassTimelinePage"
   | "settleReviewDelivery"
   | "store"
 >;
@@ -116,7 +122,10 @@ export class EffectReconcile {
           : status === "delivered"
             ? reviewContinuationWait(current, this.store).reason
             : `Reviewer delivery ${deliveryId} was refused before send: ${evidence.slice(0, 600)}`;
-      if (current.reasonFact?.code === "review_delivery" && current.reasonFact.subject === deliveryId)
+      if (
+        current.reasonFact?.code === "review_delivery" &&
+        current.reasonFact.subject === deliveryId
+      )
         this.store.update(
           current.id,
           { reason },
@@ -158,14 +167,34 @@ export class EffectReconcile {
       throw new Error(
         `Reviewer dispatch ${run.id} remains uncertain; archived timeline evidence is unavailable`,
       );
-    const identity = await this.resolution.host.originAgent(run.agentId);
+    const deadlineMs =
+      this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const identityRead = await boundedRead(
+      "origin agent observation",
+      () => this.resolution.host.originAgent(run.agentId!),
+      deadlineMs,
+    );
+    if (identityRead.state === "unknown")
+      throw new Error(
+        `Reviewer dispatch ${run.id} remains uncertain; ${identityRead.reason}`,
+      );
+    const identity = identityRead.value;
     if (identity?.workspaceId !== run.workspaceId)
       throw new Error(
         `Reviewer dispatch ${run.id} remains uncertain; agent workspace identity changed`,
       );
     const archived = identity.archived;
     if (!archived) {
-      const observed = await this.resolution.host.observe(run.agentId);
+      const observedRead = await boundedRead(
+        "participant observation",
+        () => this.resolution.host.observe(run.agentId!),
+        deadlineMs,
+      );
+      if (observedRead.state === "unknown")
+        throw new Error(
+          `Reviewer dispatch ${run.id} remains uncertain; ${observedRead.reason}`,
+        );
+      const observed = observedRead.value;
       if (
         observed.id !== run.agentId ||
         observed.workspaceId !== run.workspaceId ||
@@ -178,7 +207,23 @@ export class EffectReconcile {
           `Reviewer dispatch ${run.id} remains uncertain; its agent is not proven closed or archived`,
         );
     }
-    const page = await this.resolution.host.agentTimelinePage(run.agentId, 100);
+    const pageRead = this.resolution.readPassTimelinePage
+      ? await this.resolution.readPassTimelinePage(
+          run.agentId,
+          100,
+          run.hostId ?? task.hostId,
+          deadlineMs,
+        )
+      : await boundedRead(
+          "agent timeline page",
+          () => this.resolution.host.agentTimelinePage(run.agentId!, 100),
+          deadlineMs,
+        );
+    if (pageRead.state === "unknown")
+      throw new Error(
+        `Reviewer dispatch ${run.id} remains uncertain; ${pageRead.reason}`,
+      );
+    const page = pageRead.value;
     if (
       !page ||
       page.hasOlder !== false ||
@@ -247,14 +292,32 @@ export class EffectReconcile {
       throw new Error(
         `Run ${runId} remains uncertain; its exact creation timeline is unavailable`,
       );
-    const origin = await this.resolution.host.originAgent(run.agentId);
+    const deadlineMs =
+      this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const originRead = await boundedRead(
+      "origin agent observation",
+      () => this.resolution.host.originAgent(run.agentId!),
+      deadlineMs,
+    );
+    if (originRead.state === "unknown")
+      throw new Error(`Run ${runId} remains uncertain; ${originRead.reason}`);
+    const origin = originRead.value;
     if (!origin || origin.workspaceId !== run.workspaceId)
       throw new Error(
         `Run ${runId} remains uncertain; its agent workspace identity changed`,
       );
     const archived = origin.archived;
     if (!archived) {
-      const observed = await this.resolution.host.observe(run.agentId);
+      const observedRead = await boundedRead(
+        "participant observation",
+        () => this.resolution.host.observe(run.agentId!),
+        deadlineMs,
+      );
+      if (observedRead.state === "unknown")
+        throw new Error(
+          `Run ${runId} remains uncertain; ${observedRead.reason}`,
+        );
+      const observed = observedRead.value;
       if (
         observed.id !== run.agentId ||
         observed.workspaceId !== run.workspaceId ||
@@ -267,7 +330,21 @@ export class EffectReconcile {
           `Run ${runId} remains uncertain; its agent is not proven closed or archived`,
         );
     }
-    const page = await this.resolution.host.agentTimelinePage(run.agentId, 100);
+    const pageRead = this.resolution.readPassTimelinePage
+      ? await this.resolution.readPassTimelinePage(
+          run.agentId,
+          100,
+          run.hostId ?? task.hostId,
+          deadlineMs,
+        )
+      : await boundedRead(
+          "agent timeline page",
+          () => this.resolution.host.agentTimelinePage(run.agentId!, 100),
+          deadlineMs,
+        );
+    if (pageRead.state === "unknown")
+      throw new Error(`Run ${runId} remains uncertain; ${pageRead.reason}`);
+    const page = pageRead.value;
     if (
       !page ||
       page.hasOlder !== false ||
@@ -386,15 +463,26 @@ export class EffectReconcile {
     }
   }
 
-  /** Whether the reviewer's timeline holds this exact delivery message; a failed read is unknown, never absence. */
+  /** Whether the reviewer's timeline holds this exact delivery message; a failed or timed-out read is unknown, never absence. */
   async deliveryInTimeline(run: Run, deliveryId: string): Promise<boolean> {
     if (!run.agentId) return false;
     try {
-      const page = await this.resolution.host.agentTimelinePage(
-        run.agentId,
-        100,
-      );
-      return timelineMessage(page, deliveryId) === "present";
+      const deadlineMs =
+        this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+      const pageRead = this.resolution.readPassTimelinePage
+        ? await this.resolution.readPassTimelinePage(
+            run.agentId,
+            100,
+            run.hostId,
+            deadlineMs,
+          )
+        : await boundedRead(
+            "agent timeline page",
+            () => this.resolution.host.agentTimelinePage(run.agentId!, 100),
+            deadlineMs,
+          );
+      if (pageRead.state === "unknown") return false;
+      return timelineMessage(pageRead.value, deliveryId) === "present";
     } catch {
       return false;
     }
@@ -497,10 +585,25 @@ export class EffectReconcile {
       throw new Error(
         `Attention notice ${noticeId} remains uncertain; its recipient timeline is unavailable`,
       );
-    const page = await this.resolution.host.agentTimelinePage(
-      notice.agentId,
-      100,
-    );
+    const deadlineMs =
+      this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const pageRead = this.resolution.readPassTimelinePage
+      ? await this.resolution.readPassTimelinePage(
+          notice.agentId,
+          100,
+          undefined,
+          deadlineMs,
+        )
+      : await boundedRead(
+          "agent timeline page",
+          () => this.resolution.host.agentTimelinePage(notice.agentId!, 100),
+          deadlineMs,
+        );
+    if (pageRead.state === "unknown")
+      throw new Error(
+        `Attention notice ${noticeId} remains uncertain; ${pageRead.reason}`,
+      );
+    const page = pageRead.value;
     if (
       !page ||
       page.hasOlder !== false ||

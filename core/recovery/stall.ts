@@ -42,6 +42,10 @@ import {
   type ParticipantRuntime,
 } from "../machine/participant-runtime";
 import type { HostProcessFact } from "../host/types";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+} from "../scheduling/pass-snapshot";
 
 /**
  * Mid-turn stall detection (Queue reliability lane). Paseo keeps reporting a
@@ -201,6 +205,8 @@ export type StallsContext = Pick<
   | "onTaskHost"
   | "paused"
   | "profiles"
+  | "readPassProcesses"
+  | "readPassTimeline"
   | "recordStop"
   | "recovery"
   | "saveIncident"
@@ -330,11 +336,12 @@ export class Stalls {
     agentId: string,
   ): Promise<string | null> {
     if (!this.resolution.adapter.hostProcessListing) return null;
-    let processes: Awaited<
-      ReturnType<NonNullable<typeof this.resolution.adapter.hostProcessListing>>
-    >;
+    let processes: HostProcessFact[] | null = null;
     try {
-      processes = await this.resolution.adapter.hostProcessListing();
+      const read = await this.resolution.readPassProcesses(
+        run?.hostId ?? t.hostId,
+      );
+      processes = read.state === "listed" ? read.processes : null;
     } catch {
       return null;
     }
@@ -492,11 +499,13 @@ export class Stalls {
     let notice: string | null = null;
     let live = false;
     try {
-      const timeline = this.resolution.adapter.agentTimeline
-        ? await this.resolution.onTaskHost(t, () =>
-            this.resolution.host.agentTimeline(agentId),
-          )
-        : undefined;
+      let timeline: TimelineEntry[] | null | undefined;
+      if (this.resolution.adapter.agentTimeline) {
+        const read = await this.resolution.onTaskHost(t, () =>
+          this.resolution.readPassTimeline(agentId, t.hostId),
+        );
+        timeline = read.state === "ok" ? read.value : null;
+      }
       const shell = runningShellCommand(timeline ?? null);
       notice = this.shellNoticeText(role, shell);
       live = Boolean(shell || (timeline && runningOwnedTool(timeline)));
@@ -1088,9 +1097,16 @@ export function workspaceToolProcessIssue(
 export async function observedTurnState(
   host: { observe(id: string): Promise<AgentObservation> },
   agentId: string,
+  deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
 ): Promise<ObservedTurnState | null> {
   try {
-    const state = await host.observe(agentId);
+    const read = await boundedRead(
+      "participant observation",
+      () => host.observe(agentId),
+      deadlineMs,
+    );
+    if (read.state === "unknown") return null;
+    const state = read.value;
     return state && state.id === agentId ? state : null;
   } catch {
     return null;
@@ -1122,25 +1138,35 @@ export async function readToolTimeline(
     ): Promise<TimelinePage | null>;
   },
   agentId: string,
+  deadlineMs: number = TOOL_TIMELINE_READ_TIMEOUT_MS,
 ): Promise<ToolTimelineRead> {
   if (!host.agentTimelinePage)
     return { issue: "tool observations have no completeness evidence" };
   let previous: TimelinePage | undefined;
   let limit = TOOL_TIMELINE_LIMIT;
+  const deadlineAt = Date.now() + Math.max(0, deadlineMs);
   for (let read = 0; read < TOOL_TIMELINE_READ_BUDGET; read++) {
     // A projected anchor can extend past the next nominal doubled window.
     // Request beyond that entire suffix so genuine progress remains possible.
     if (previous) limit = Math.max(limit, previous.entries.length) * 2;
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0)
+      return {
+        issue: `tool observations read ${read + 1} failed: read timed out`,
+      };
     let page: TimelinePage | null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      const pending = host.agentTimelinePage(agentId, limit);
+      pending.catch(() => {});
       page = await Promise.race([
-        host.agentTimelinePage(agentId, limit),
+        pending,
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(Error("read timed out")),
-            TOOL_TIMELINE_READ_TIMEOUT_MS,
+            remainingMs,
           );
+          timer.unref?.();
         }),
       ]);
     } catch (error) {

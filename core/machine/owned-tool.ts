@@ -28,6 +28,11 @@ import {
   workspaceToolProcessIssue,
 } from "../recovery/stall";
 import type { HostProcessFact } from "../host/types";
+import {
+  PASS_PROCESS_READ_DEADLINE_MS,
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+} from "../scheduling/pass-snapshot";
 
 /** The owned-tool events this proof reads and writes. */
 const OWNED_TOOL_HOLD = "owned_tool_hold";
@@ -50,6 +55,49 @@ export class OwnedTools {
   get adapter() {
     return this.resolution.adapter;
   }
+  private get readDeadlineMs(): number {
+    return this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+  }
+  private get processDeadlineMs(): number {
+    return (
+      this.resolution.passProcessReadTimeoutMs ?? PASS_PROCESS_READ_DEADLINE_MS
+    );
+  }
+  private timelineHost(hostId?: string | null) {
+    if (!this.resolution.readPassTimelinePage) return this.resolution.host;
+    return {
+      agentTimelinePage: async (id: string, limit?: number) => {
+        const read = await this.resolution.readPassTimelinePage(
+          id,
+          limit,
+          hostId,
+          this.readDeadlineMs,
+        );
+        if (read.state === "unknown") throw new Error(read.reason);
+        return read.value;
+      },
+    };
+  }
+  private async readProcesses(
+    hostId?: string | null,
+  ): Promise<HostProcessFact[] | null> {
+    if (this.resolution.readPassProcesses) {
+      const read = await this.resolution.readPassProcesses(hostId);
+      return read.state === "listed" ? read.processes : null;
+    }
+    if (this.adapter.hostProcessListing) {
+      const read = await boundedRead(
+        "host process listing",
+        () => this.adapter.hostProcessListing!(),
+        this.processDeadlineMs,
+      ).catch(() => ({ state: "unknown" as const, reason: "failed" }));
+      return read.state === "ok" ? read.value : null;
+    }
+    const listing = await readHostUidProcesses({
+      deadlineMs: this.processDeadlineMs,
+    });
+    return listing.state === "listed" ? listing.processes : null;
+  }
 
   /**
    * The agent's own long-running job, as one readable reason, or null.
@@ -63,7 +111,11 @@ export class OwnedTools {
     if (!this.adapter.agentTimelinePage) return null;
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
     try {
-      read = await readToolTimeline(this.resolution.host, agentId);
+      read = await readToolTimeline(
+        this.timelineHost(),
+        agentId,
+        this.readDeadlineMs,
+      );
     } catch {
       return null;
     }
@@ -120,16 +172,25 @@ export class OwnedTools {
       const custody = await this.classifyRetiredCustody(agentId, workspaceId);
       if (custody.kind === "refuse") return custody.reason;
       if (custody.kind === "retired" || custody.kind === "gone") {
-        if (this.adapter.noLiveWorkspaceProcesses && this.adapter.hostProcessListing) {
-          const processIssue = await this.verifyOwnedWorkspaceAndScratchProcesses(
-            agentId,
-            task,
-            taskRuns,
-            runIds,
-            workspaceId,
-            options.runId,
-          );
-          if (processIssue && task && options.runId && this.acceptOwnedToolHold(task.id, options.runId, processIssue))
+        if (
+          this.adapter.noLiveWorkspaceProcesses &&
+          this.adapter.hostProcessListing
+        ) {
+          const processIssue =
+            await this.verifyOwnedWorkspaceAndScratchProcesses(
+              agentId,
+              task,
+              taskRuns,
+              runIds,
+              workspaceId,
+              options.runId,
+            );
+          if (
+            processIssue &&
+            task &&
+            options.runId &&
+            this.acceptOwnedToolHold(task.id, options.runId, processIssue)
+          )
             return null;
           if (!processIssue && task)
             for (const runId of runIds)
@@ -150,7 +211,11 @@ export class OwnedTools {
         : null;
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
     try {
-      read = await readToolTimeline(this.resolution.host, agentId);
+      read = await readToolTimeline(
+        this.timelineHost(boundRun?.hostId ?? task?.hostId),
+        agentId,
+        this.readDeadlineMs,
+      );
     } catch (error) {
       if (
         error instanceof HostReadRefusalError ||
@@ -180,8 +245,14 @@ export class OwnedTools {
             workspaceId,
             options.runId,
           ),
+        this.readDeadlineMs,
       );
-      if (hold && task && options.runId && this.acceptOwnedToolHold(task.id, options.runId, hold))
+      if (
+        hold &&
+        task &&
+        options.runId &&
+        this.acceptOwnedToolHold(task.id, options.runId, hold)
+      )
         return null;
       if (!hold && task)
         for (const runId of runIds)
@@ -204,7 +275,11 @@ export class OwnedTools {
     }
     // The turn proof is read AFTER the evidence it settles: an agent that became
     // active, permissioned or turn-bound since then is caught here and holds.
-    const turn = await observedTurnState(this.resolution.host, agentId);
+    const turn = await observedTurnState(
+      this.resolution.host,
+      agentId,
+      this.readDeadlineMs,
+    );
     const issue = liveToolIssueFact(read.entries, turn);
     let hold = issue ? formatLiveToolIssue(issue) : null;
     const processEntries = read.entries.filter(
@@ -229,19 +304,11 @@ export class OwnedTools {
       liveToolIssueFact(turnBoundOnly, turn) === null
     ) {
       const toolLabel = formatLiveToolIssue(processIssue);
-      let processes: HostProcessFact[] | null = null;
-      if (this.adapter.hostProcessListing) {
-        try {
-          processes = await this.adapter.hostProcessListing();
-        } catch {
-          processes = null;
-        }
-      } else {
-        const listing = await readHostUidProcesses();
-        processes = listing.state === "listed" ? listing.processes : null;
-      }
       const boundRun = options.runId ? this.store.run(options.runId) : null;
       const task = this.store.task(options.taskId);
+      const processes = await this.readProcesses(
+        boundRun?.hostId ?? task.hostId,
+      );
       const bbThread = bbThreadForAgent(
         agentId,
         boundRun?.hostId ?? task.hostId,
@@ -272,11 +339,20 @@ export class OwnedTools {
         options.workspaceId &&
         this.adapter.noLiveWorkspaceProcesses
       ) {
-        const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(
-          options.workspaceId,
-          runIds,
-          runtime,
+        const workspaceRead = await boundedRead(
+          "workspace process probe",
+          () =>
+            this.adapter.noLiveWorkspaceProcesses!(
+              options.workspaceId!,
+              runIds,
+              runtime,
+            ),
+          this.readDeadlineMs,
         );
+        const workspaceIssue =
+          workspaceRead.state === "ok"
+            ? workspaceRead.value
+            : workspaceRead.reason;
         if (!workspaceIssue) {
           this.recordOwnedToolSettlement(
             options.taskId,
@@ -289,7 +365,12 @@ export class OwnedTools {
       } else
         hold = `${toolLabel}; process tree is unreadable: ${verdict.reason}`;
     }
-    if (hold && options.runId && options.taskId && this.acceptOwnedToolHold(options.taskId, options.runId, hold))
+    if (
+      hold &&
+      options.runId &&
+      options.taskId &&
+      this.acceptOwnedToolHold(options.taskId, options.runId, hold)
+    )
       return null;
     if (!hold && options.taskId)
       for (const runId of runIds)
@@ -304,11 +385,24 @@ export class OwnedTools {
   private async classifyRetiredCustody(
     agentId: string,
     workspaceId: string | undefined,
-  ): Promise<{ kind: "live" | "retired" | "gone" } | { kind: "refuse"; reason: string }> {
+  ): Promise<
+    { kind: "live" | "retired" | "gone" } | { kind: "refuse"; reason: string }
+  > {
     let observeError: unknown;
     try {
-      const state = await this.resolution.host.observe(agentId);
-      const workspaceMatch = workspaceId === undefined || state.workspaceId === workspaceId;
+      const read = await boundedRead(
+        "participant observation",
+        () => this.resolution.host.observe(agentId),
+        this.readDeadlineMs,
+      );
+      if (read.state === "unknown")
+        return {
+          kind: "refuse",
+          reason: `owned tool custody observation is unknown: ${read.reason}`,
+        };
+      const state = read.value;
+      const workspaceMatch =
+        workspaceId === undefined || state.workspaceId === workspaceId;
       if (
         state.id !== agentId ||
         !workspaceMatch ||
@@ -316,11 +410,20 @@ export class OwnedTools {
         state.activeTurnId ||
         state.permissions
       )
-        return { kind: "refuse", reason: "participant is not idle and permission-free in the recorded workspace" };
+        return {
+          kind: "refuse",
+          reason:
+            "participant is not idle and permission-free in the recorded workspace",
+        };
       if (state.status === "gone") return { kind: "gone" };
-      if (state.status === "closed" || state.archived === true) return { kind: "retired" };
+      if (state.status === "closed" || state.archived === true)
+        return { kind: "retired" };
       if (agentSettled(state, ["idle", "closed"])) return { kind: "live" };
-      return { kind: "refuse", reason: "participant is not idle and permission-free in the recorded workspace" };
+      return {
+        kind: "refuse",
+        reason:
+          "participant is not idle and permission-free in the recorded workspace",
+      };
     } catch (error) {
       observeError = error;
     }
@@ -334,7 +437,17 @@ export class OwnedTools {
     if (this.adapter.originAgent) {
       let origin: Awaited<ReturnType<Resolution["host"]["originAgent"]>>;
       try {
-        origin = await this.resolution.host.originAgent(agentId);
+        const read = await boundedRead(
+          "origin agent observation",
+          () => this.resolution.host.originAgent(agentId),
+          this.readDeadlineMs,
+        );
+        if (read.state === "unknown")
+          return {
+            kind: "refuse",
+            reason: `owned tool custody observation is unknown: ${read.reason}`,
+          };
+        origin = read.value;
       } catch (originError) {
         if (
           originError instanceof HostReadRefusalError ||
@@ -343,18 +456,37 @@ export class OwnedTools {
           originError instanceof HostTransportFault
         )
           throw originError;
-        const message = originError instanceof Error ? originError.message : String(originError);
-        return { kind: "refuse", reason: `owned tool custody observation failed: ${message}` };
+        const message =
+          originError instanceof Error
+            ? originError.message
+            : String(originError);
+        return {
+          kind: "refuse",
+          reason: `owned tool custody observation failed: ${message}`,
+        };
       }
       if (origin === null) return { kind: "gone" };
-      if (origin.id !== agentId || (workspaceId !== undefined && origin.workspaceId !== workspaceId))
-        return { kind: "refuse", reason: "participant is not idle and permission-free in the recorded workspace" };
+      if (
+        origin.id !== agentId ||
+        (workspaceId !== undefined && origin.workspaceId !== workspaceId)
+      )
+        return {
+          kind: "refuse",
+          reason:
+            "participant is not idle and permission-free in the recorded workspace",
+        };
       if (origin.deleted === true) return { kind: "gone" };
     } else if (isAgentGoneRefusal(observeError)) {
       return { kind: "gone" };
     }
-    const message = observeError instanceof Error ? observeError.message : String(observeError);
-    return { kind: "refuse", reason: `owned tool custody observation failed: ${message}` };
+    const message =
+      observeError instanceof Error
+        ? observeError.message
+        : String(observeError);
+    return {
+      kind: "refuse",
+      reason: `owned tool custody observation failed: ${message}`,
+    };
   }
 
   private async verifyOwnedWorkspaceAndScratchProcesses(
@@ -388,16 +520,19 @@ export class OwnedTools {
       runs: taskRuns,
       bbThreads,
     });
-    const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(
-      workspaceId,
-      runIds,
-      runtime,
+    const workspaceRead = await boundedRead(
+      "workspace process probe",
+      () =>
+        this.adapter.noLiveWorkspaceProcesses!(workspaceId, runIds, runtime),
+      this.readDeadlineMs,
     );
+    if (workspaceRead.state === "unknown") return workspaceRead.reason;
+    const workspaceIssue = workspaceRead.value;
     if (workspaceIssue !== null)
       return (
         workspaceIssue || "the workspace process probe returned no verdict"
       );
-    const processes = await this.adapter.hostProcessListing();
+    const processes = await this.readProcesses(boundRun?.hostId ?? task.hostId);
     if (!processes) return "the host process listing is unreadable";
     for (const directory of new Set(temporaryDirectories)) {
       const issue = workspaceToolProcessIssue(

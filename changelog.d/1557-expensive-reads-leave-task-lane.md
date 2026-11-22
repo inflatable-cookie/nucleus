@@ -1,0 +1,1 @@
+- Move process-table and timeline reads into one shared snapshot per host pass (valid only for that pass) and enforce deadlines returning `unknown` on reads inside task quanta so slow host, forge, or process probes cannot hold a task lane past its quantum bound.

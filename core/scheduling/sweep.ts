@@ -91,6 +91,7 @@ export type SweepContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
+    | "beginPassSnapshot"
     | "checkpoints"
     | "delegation"
     | "delegateNativeQuestions"
@@ -100,9 +101,13 @@ export type SweepContext = Pick<
     | "deliverHostOutageNotices"
     | "deliverNotices"
     | "deliverQueuedMessages"
+    | "endPassSnapshot"
     | "observationTargets"
     | "observe"
     | "origins"
+    | "primePassProcesses"
+    | "primePassTimeline"
+    | "primePassTimelinePage"
     | "raiseOperatorQuestions"
     | "recovery"
     | "resumeAskQuestions"
@@ -131,7 +136,12 @@ export class Sweep {
           "stopped",
           "store",
         ],
-        ["observationTargets"],
+        [
+          "observationTargets",
+          "primePassProcesses",
+          "primePassTimeline",
+          "primePassTimelinePage",
+        ],
       ),
     ));
   }
@@ -421,6 +431,7 @@ export class Sweep {
     drain: boolean,
     visited: Set<string> = new Set(),
   ): Promise<{ fault: Error | null; covered: boolean; visited: Set<string> }> {
+    const passSnapshot = this.engine.resolution.beginPassSnapshot?.();
     try {
       this.engine.resetAuditHostAvailability();
       this.engine.store.setMeta("engineError", "");
@@ -870,6 +881,8 @@ export class Sweep {
         covered: false,
         visited,
       };
+    } finally {
+      this.engine.resolution.endPassSnapshot?.(passSnapshot);
     }
   }
 }

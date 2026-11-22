@@ -24,6 +24,12 @@ the current code. Tom approved the design on 2026-11-18; implementation follows 
    belongs to a different identity. Recheck every applicable wait on each visit.
    A retry deadline can govern an expensive probe, while the pass still checks
    whether the wait applies and whether new facts have arrived.
+   Process-table and timeline reads are collected into one pass-scoped snapshot
+   per host pass (`PassSnapshot`, Spec 068 §6 / nucleus#1557) and expired when
+   the pass ends so stale readings never cross passes; every read inside a task
+   quantum (process table, timeline, participant observation, forge probe) runs
+   under a deadline and returns `unknown` when missed instead of holding the
+   task lane past its quantum bound.
 2. **R2 · Settle each occurrence.** Match the fact to the task, occurrence, host,
    workspace, run or effect target, and source head where relevant. Persist
    `settled` when affirmative evidence answers the effect, `refused` when
