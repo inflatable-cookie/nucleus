@@ -1,0 +1,1 @@
+Live brief amendments now steer into a running worker or reviewer turn when the host supports it (`steerOrNotify`), instead of queueing a follow-up turn behind the active run and showing in T3 as a separate pending worker subagent. When no turn is active or the host has no steer path, delivery still queues for the next turn.

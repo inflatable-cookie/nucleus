@@ -1206,7 +1206,11 @@ export async function t3Fake(t: TestContext, directory: string) {
             p.thread.deletedAt !== null ||
             (controls.archivedThreadNotFound && p.thread.archivedAt)
           ) {
-            if (!p && controls.absentThreadError === "ProjectionStoreThreadNotFoundError")
+            if (
+              !p &&
+              controls.absentThreadError ===
+                "ProjectionStoreThreadNotFoundError"
+            )
               return failure({
                 _tag: "Fail",
                 error: {
@@ -1513,7 +1517,10 @@ export async function t3Fake(t: TestContext, directory: string) {
                     }),
                   );
               }
-              if (payload.threadId.startsWith("thread:delegated-task:"))
+              if (
+                payload.threadId.startsWith("thread:delegated-task:") &&
+                payload.dispatchMode?.type !== "steer_active"
+              )
                 recordFollowUp(payload);
               break;
             }

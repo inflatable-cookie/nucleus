@@ -106,7 +106,8 @@ with the replacement named, and the gate-change recording for them is deleted.) 
 started, and after merge. Earlier versions are kept for the task in their own
 table (schema 43, Tom 2026-10-21), so an ordinary task update never rewrites
 them, and each run records the version it was given. A live worker or reviewer is
-told of the amendment as a message queued behind its current step; an open
+told of the amendment (steered into its live turn when supported, otherwise
+queued behind its current step); an open
 `nucleus_ask` is answered with the new brief and any board decision linked by
 `agent_ask_decision` is withdrawn. The next run receives the new version, and its
 prompt says the brief was amended, with the reason. For brief-mode tasks,
@@ -160,7 +161,7 @@ dispatch.
 | 5 | Planning commit not on the pushed base | Refused |
 | 6 | Worker, revision and reviewer prompts | Carry the brief text; handoff-mode prompts match the reviewed canonical fixture byte for byte |
 | 7 | Continuation after a stopped worker | Passes on ancestry with dirty work kept |
-| 8 | `amend_brief` before merge; after merge | New version queued to a live worker or reviewer behind its current step, given to the next run with the reason, and used to answer an open `nucleus_ask`; refused after merge |
+| 8 | `amend_brief` before merge; after merge | New version steered into a live worker or reviewer turn when supported (otherwise queued behind its current step), given to the next run with the reason, and used to answer an open `nucleus_ask`; refused after merge |
 | 9 | Outcome row | Holds the final brief text, its digest and earlier digests |
 | 10 | Handoff-mode tasks and repositories | Behaviour unchanged |
 | 11 | Restart and migration | Brief tasks keep their pinned versions; old stores migrate unchanged |
