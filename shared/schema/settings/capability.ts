@@ -97,7 +97,7 @@ export const demandLevelSchema = profileCapabilitySchema;
  * Spec 052: the operator's overall usage level, a five-stop slider (Tom,
  * 2026-11-17). Each level says plainly where a task's worker starts on the
  * capability brackets, whether climbing back to the task's own requested tier is
- * allowed, and which runs need the operator's sign-off. `normal` is the default.
+ * allowed, and which profiles require a request. `normal` is the default.
  */
 export const usageLevels = ["low", "normal", "high", "extra_high", "maximum"] as const;
 

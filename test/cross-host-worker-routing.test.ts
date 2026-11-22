@@ -1,3 +1,4 @@
+import { reconcileUnavailablePreference } from "../core/dispatch/unavailable-preference";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -5,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../core/engine";
 import { Decisions } from "../core/planning/decisions";
-import { reconcileRoutingSignoffs } from "../core/dispatch/routing-signoff";
 import { Store } from "../core/store/store";
 import { git } from "../core/git/index";
 import {
@@ -243,30 +243,14 @@ test("required-profile availability counts online secondary hosts and clears onc
     const decisions = new Decisions(f.store);
 
     // t3code:one is online and can launch t3-only in high thinking mode -> no unavailable decision
-    reconcileRoutingSignoffs(
-      f.store,
-      decisions,
-      task.id,
-      f.engine.profilesFor(task.hostId),
-      {
-        workerProfiles: f.engine.workerRoutingProfiles(task),
-        workerCatalogPending: f.engine.workerHostCatalogPending(task),
-      },
-    );
+    reconcileUnavailablePreference(f.store, decisions, f.store.task(task.id),
+      f.engine.workerRoutingProfiles(task), f.engine.workerHostCatalogPending(task));
     assert.equal(decisions.list({ status: "open" }).length, 0);
 
     // If t3code:one goes offline, required t3-only IS unavailable -> asks once
     f.engine.hostAvailable = (id) => id !== "t3code:one";
-    reconcileRoutingSignoffs(
-      f.store,
-      decisions,
-      task.id,
-      f.engine.profilesFor(task.hostId),
-      {
-        workerProfiles: f.engine.workerRoutingProfiles(f.store.task(task.id)),
-        workerCatalogPending: f.engine.workerHostCatalogPending(task),
-      },
-    );
+    reconcileUnavailablePreference(f.store, decisions, f.store.task(task.id),
+      f.engine.workerRoutingProfiles(f.store.task(task.id)), f.engine.workerHostCatalogPending(task));
     const open = decisions.list({ status: "open" });
     assert.equal(open.length, 1);
     assert.match(
@@ -276,16 +260,8 @@ test("required-profile availability counts online secondary hosts and clears onc
 
     // Once t3code:one comes back online, the wait clears automatically
     f.engine.hostAvailable = () => true;
-    reconcileRoutingSignoffs(
-      f.store,
-      decisions,
-      task.id,
-      f.engine.profilesFor(task.hostId),
-      {
-        workerProfiles: f.engine.workerRoutingProfiles(f.store.task(task.id)),
-        workerCatalogPending: f.engine.workerHostCatalogPending(task),
-      },
-    );
+    reconcileUnavailablePreference(f.store, decisions, f.store.task(task.id),
+      f.engine.workerRoutingProfiles(f.store.task(task.id)), f.engine.workerHostCatalogPending(task));
     assert.equal(decisions.list({ status: "open" }).length, 0);
   } finally {
     await f.engine.stop();
@@ -388,7 +364,7 @@ test("next route view offers cross-host move only when target host is online and
   }
 });
 
-test("route without now, route now, and board-approved route move dispatched task across Paseo and T3 with cleanup", async () => {
+test("route without now, route now, and a Frontier request move dispatched task across Paseo and T3 with cleanup", async () => {
   const f = setupMultiHostFixture({ usageLevel: "normal" });
   try {
     // 1. Dispatched idle/needs_attention task on paseo:one moves on `route` (within level using same-model T3 profile)
@@ -466,9 +442,7 @@ test("route without now, route now, and board-approved route move dispatched tas
       false,
     );
 
-    // 2. Now task is on t3code:one; route to frontier paseo profile unsigned waits for board sign-off,
-    // then `TaskQuantum` applies the approved route when answered on board!
-    // Put a live active agent on t3code:one first
+    // 2. A planner can route a live T3 worker to the Paseo Frontier profile.
     await f.engine.withHost("t3code:one", () =>
       f.engine.taskQuantumOwner.taskQuantum(task.id),
     );
@@ -498,7 +472,7 @@ test("route without now, route now, and board-approved route move dispatched tas
     ];
     f.store.setMeta("pool", frontierPool);
     f.store.update(task.id, { phase: "working" });
-    const signedPending = await f.engine.applyTaskControlRoute(
+    const movedBack = await f.engine.applyTaskControlRoute(
       taskControlInputSchema.parse({
         taskId: task.id,
         version: f.store.task(task.id).version,
@@ -507,37 +481,13 @@ test("route without now, route now, and board-approved route move dispatched tas
         profileId: "paseo-only",
         reason: "Needs Paseo frontier profile",
         caller: "supervisor",
+        now: true,
       }),
       (v) => v,
     );
-    // Still on t3code:one waiting for operator board sign-off
-    assert.equal(signedPending.hostId, "t3code:one");
-    await f.engine.withHost("t3code:one", () =>
-      f.engine.taskQuantumOwner.quantumFinish(task.id),
-    );
-    const decisionId = f.store.task(task.id).profileRequests?.worker?.signoff
-      ?.decisionId;
-    assert.ok(decisionId);
-    const decision = f.engine.signoffDecisions.get({ id: decisionId! });
-    f.engine.signoffDecisions.answer({
-      id: decision.id,
-      version: decision.version,
-      answer: decision.options[0]!,
-      answeredBy: "operator (board)",
-      relayed: false,
-      note: "",
-    });
-    // Mark current T3 agent idle and let quantumFinish apply the approved route now!
-    f.agentStatuses.set(runningTask.agentId!, {
-      status: "idle",
-      active: false,
-    });
-    await f.engine.withHost("t3code:one", () =>
-      f.engine.taskQuantumOwner.quantumFinish(task.id),
-    );
-    const movedBack = f.store.task(task.id);
     assert.equal(movedBack.hostId, "paseo:one");
     assert.equal(movedBack.profile?.id, "paseo-only");
+    assert.equal(f.store.listDecisions({ task: task.id }).length, 0);
 
     // 3. `route now=true` from paseo:one to t3code:one on an active agent cancels old run and moves immediately
     const task3 = f.store.insert(

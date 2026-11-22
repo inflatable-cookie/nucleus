@@ -76,7 +76,7 @@ export function escalationVerbChoices(
     )
       return [];
     // The reason supplies the only required free text. Work has its own direction
-    // choice. Discard, qualification and profile sign-off never come from a reply.
+    // choice. Discard and qualification never come from a reply.
     if (
       (view.fill ?? []).some((field) => field !== "reason") ||
       (view.verb === "move" &&

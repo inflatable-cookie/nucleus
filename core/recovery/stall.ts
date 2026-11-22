@@ -27,7 +27,7 @@ import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { OPERATOR_WORKER_REMAP_REASON } from "./task-reasons";
 import {
   decideWorkerReplacement,
-  isWorkerRouteApproved,
+  isWorkerRouteAllowed,
 } from "./worker-replacement";
 import { resolve, sep } from "node:path";
 import {
@@ -727,7 +727,7 @@ export class Stalls {
                 latest.profile?.model ??
                 null,
               currentModel: latest.profile?.model ?? null,
-              approved: isWorkerRouteApproved(
+              approved: isWorkerRouteAllowed(
                 latest,
                 stalledRoute,
                 this.store.pool(),

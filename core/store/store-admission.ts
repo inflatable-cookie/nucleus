@@ -434,6 +434,7 @@ export class StoreAdmission {
       // samples and per-subscription read state on every open. IF EXISTS makes
       // the cleanup safe for fresh stores and repeat opens.
       this.hooks.migration.dropSubscriptionUsageStorage();
+      this.hooks.migration.retireRoutingApprovals();
       this.db.exec("COMMIT");
     } catch (error) {
       if (this.db.isTransaction) this.db.exec("ROLLBACK");

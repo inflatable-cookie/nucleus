@@ -793,7 +793,7 @@ test("#1498: run.start worker retained starts a revision run on the bound worker
   assert.match(calls[0]!, /^sendRun revision worker-1$/);
 });
 
-test("run.start enforces two_writers, budget, and route_policy warnings and coordinator authority", async (t) => {
+test("run.start enforces two_writers and budget warnings and coordinator authority", async (t) => {
   const { store, current, run, command, runtime } = await fixture(t);
   const coord = run("coord-run", "recovery", "coordinator");
   store.putRun(coord);
@@ -805,20 +805,6 @@ test("run.start enforces two_writers, budget, and route_policy warnings and coor
     runId: "initial-worker",
     agentActive: true,
     profile: profile("worker-prof"),
-    profileRequests: {
-      worker: {
-        profileId: "worker-prof",
-        reason: "Need frontier",
-        required: false,
-        signoff: {
-          status: "pending",
-          decisionId: "dec-1",
-          by: planner,
-          at: new Date().toISOString(),
-          note: "",
-        },
-      },
-    },
     resolution: {
       ...current().resolution,
       revisionRuns: REVISION_BUDGET,
@@ -855,22 +841,16 @@ test("run.start enforces two_writers, budget, and route_policy warnings and coor
   assert.ok(ids.includes("duplicate_thread"));
   assert.ok(ids.includes("two_writers"));
   assert.ok(ids.includes("budget"));
-  assert.ok(ids.includes("route_policy"));
 
   const coordCaller = formatAgentId(host, "coordinator");
   await assert.rejects(
     command({ ...args, caller: coordCaller, accept: ["two_writers"] }),
     /only the live responsible planner/i,
   );
-  await assert.rejects(
-    command({ ...args, caller: coordCaller, accept: ["route_policy"] }),
-    /only the live responsible planner/i,
-  );
-
   const applied = await command({
     ...args,
     caller: planner,
-    accept: ["duplicate_thread", "two_writers", "budget", "route_policy"],
+    accept: ["duplicate_thread", "two_writers", "budget"],
   });
   assert.equal(applied.explicitResolution?.status, "applied");
 });
@@ -1199,7 +1179,7 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
   assert.equal(store.run(firstRun.id)?.agentId, "late-first-agent");
 });
 
-test("review fixes: Spec 052 route_policy applies to selected frontier worker at normal usage level", async (t) => {
+test("run.start cannot select Frontier at Normal without a worker request", async (t) => {
   const { store, current, run, command, runtime } = await fixture(t);
   const coord = run("coord-run", "recovery", "coordinator");
   store.putRun(coord);
@@ -1236,24 +1216,15 @@ test("review fixes: Spec 052 route_policy applies to selected frontier worker at
     },
   ]);
 
-  const probe = await command({
-    action: "run.start",
-    role: "worker",
-    agent: "fresh",
-  });
-  assert.equal(probe.explicitResolution?.status, "warnings");
-  assert.ok(
-    probe.explicitResolution?.warnings.some((w) => w.id === "route_policy"),
-  );
   await assert.rejects(
     command({
       action: "run.start",
       role: "worker",
       agent: "fresh",
-      caller: formatAgentId(host, "coordinator"),
+      caller: planner,
       accept: ["route_policy"],
     }),
-    /only the live responsible planner/i,
+    /No eligible profile is available for worker/,
   );
 });
 

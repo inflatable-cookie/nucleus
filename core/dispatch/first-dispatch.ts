@@ -504,7 +504,6 @@ export class FirstDispatch {
               ? "reviewer"
               : undefined,
         );
-        this.store.noteGrantRun(current, "worker");
         // Recorded in the same transaction as the intent: an interruption can never leave the
         // durable dispatch intent without the priority override that admitted it.
         const gapMs = host ? workspaceAdmissionGapMs(host) : 0;

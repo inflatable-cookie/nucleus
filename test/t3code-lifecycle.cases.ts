@@ -1765,13 +1765,6 @@ test("a removed coordinator thread and a routed coordinator profile each open a 
             reason: "Route the coordinator to the review profile",
             required: true,
             ownerRoute: true,
-            signoff: {
-              status: "approved",
-              decisionId: null,
-              by: "operator (board)",
-              at: new Date().toISOString(),
-              note: "",
-            },
           },
         },
       },

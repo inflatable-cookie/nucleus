@@ -9,7 +9,6 @@ import {
   poolSchema,
   profileSchema,
   projectDispatchLimitOverridesSchema,
-  routingGrantViewSchema,
   usageViewSchema,
 } from "./settings";
 import { backupHealthSchema } from "./backup";
@@ -141,7 +140,6 @@ export const stateSchema = z.object({
     until: null,
     expired: false,
   }),
-  routingGrants: z.array(routingGrantViewSchema).default([]),
   // The dispatch and timing limits are zero-owner duplicates if this schema
   // re-bounds them: the group comes from the limits catalogue in
   // `shared/schema/settings/capacity.ts`, defaults included.

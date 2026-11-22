@@ -61,10 +61,10 @@ test('explicit preferred and required requests win independent of rating distanc
   assert.equal(chooseProfile(taskOf({complexity:'very_low',preferredProfileId:'agent-heavyweight',requirePreferred:true}),profiles,pool,usage,new Set()),null,'a preference never reaches a profile the level needs permission for (Spec 052)');
   assert.equal(ids(chooseProfile(taskOf({complexity:'very_low',preferredProfileId:'agent-worker'}),profiles,pool,usage,new Set())),'agent-mechanical','a preference above the climb bracket is not automatic');
   const signed={status:'approved' as const,decisionId:'d',by:'operator (board)',at:'2026-11-17T00:00:00.000Z',note:''};
-  const above={...taskOf({complexity:'medium'}),profileRequests:{worker:{profileId:'agent-heavyweight',reason:'Explicit route above the climb bracket',required:false,signoff:signed}}};
+  const above={...taskOf({complexity:'medium'}),profileRequests:{worker:{profileId:'agent-heavyweight',reason:'Explicit route above the climb bracket',required:false}}};
   assert.equal(ids(chooseProfile(above,profiles,pool,usage,new Set(),'worker',usage,'extra_high')),'agent-heavyweight','an explicit request reaches above the climb bracket');
   assert.equal(ids(chooseProfile({...above,profileRequests:{worker:{profileId:'agent-heavyweight',reason:'Explicit request',required:false}}},profiles,pool,usage,new Set(),'worker',usage,'extra_high')),'agent-heavyweight','an explicit request (no sign-off needed at Extra high) reaches above the climb bracket');
-  const lowerRequest={...taskOf({complexity:'very_high'}),profileRequests:{worker:{profileId:'agent-worker',reason:'Cheaper please',required:true,signoff:signed}}};
+  const lowerRequest={...taskOf({complexity:'very_high'}),profileRequests:{worker:{profileId:'agent-worker',reason:'Cheaper please',required:true}}};
   assert.equal(chooseProfile(lowerRequest,profiles,pool,usage,new Set(),'worker',usage,'maximum'),null,'a required Worker request cannot serve at Maximum');
   assert.equal(chooseProfile(taskOf({complexity:'very_high',preferredProfileId:far.profileId,requirePreferred:true}),profiles,pool.filter(e=>e.profileId!==far.profileId),usage,new Set()),null,'required preference never falls back to a perfect fit');
   const requested=taskOf({complexity:'very_high',profileRequests:{worker:{profileId:far.profileId,reason:'Operator asked for this profile',required:false}}});

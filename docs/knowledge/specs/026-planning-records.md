@@ -420,7 +420,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Routine dispatch under standing authority (Tom, 2026-11-20).** The planner
   decides whether to dispatch an ordinary in-scope brief without asking the
   operator for dispatch approval, and records the source of that authority.
-  Product or scope changes, held-profile requests, releases and other explicitly
+  Product or scope changes, releases and other explicitly
   reserved operator actions still need the operator. The check, digest,
   attribution and promotion gates are unchanged: a CLI approval under the
   standing ruling still carries `relayed: true` with a note naming the standing
@@ -1149,8 +1149,7 @@ decision.
 standing authority for routine, in-scope work only. Each promotion records the
 planner as approver and promoting agent, with its reason, and runs the same
 check and promotion gates as an operator-approved lead. Changes to product
-direction, release or outward actions, and held profiles are not triage
-decisions: the planner uses `operator` for them.
+direction, releases and outward actions go to the operator.
 
 **Limits.** Triage never prunes on age, never edits filing text, and never
 overrides a project's dispatch limit, pause or dispatch hold. Opting out or
