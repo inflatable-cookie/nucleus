@@ -165,6 +165,15 @@ export type ProjectSelectorRow = {
   version: number;
   dormant: boolean;
 };
+/** The selector's three row groups (nucleus#1529): active rows first, then
+ * Dormant, then one Parked group at the bottom. Dormancy only divides
+ * unparked rows, so parked projects order purely by the count, activity and
+ * name rule among themselves. */
+export function projectSelectorRowGroup(
+  row: Pick<ProjectSelectorRow, "visibility" | "dormant">,
+): number {
+  return row.visibility === "parked" ? 2 : row.dormant ? 1 : 0;
+}
 /** Selector popover rows: every project matching the filter box, with its primary repository and counts.
  * Active projects sort first, then the Dormant group, then Parked (nucleus#1529):
  * inside each group rows order by live-task total (highest first, including the
@@ -215,11 +224,6 @@ export function projectSelectorRows(
     projects.map((project) => [project.key, tasksOf(project)] as const),
   );
   const missingActivity = Number.NEGATIVE_INFINITY;
-  /** Active rows first, then Dormant, then one Parked group at the bottom:
-   * dormancy only divides unparked rows, so parked projects order purely by
-   * the count, activity and name rule among themselves. */
-  const groupOf = (row: ProjectSelectorRow): number =>
-    row.visibility === "parked" ? 2 : row.dormant ? 1 : 0;
   return projects
     .flatMap((project) => {
       const primary = project.primary.origin ?? project.primary.path;
@@ -245,7 +249,7 @@ export function projectSelectorRows(
     })
     .sort(
       (a, b) =>
-        groupOf(a) - groupOf(b) ||
+        projectSelectorRowGroup(a) - projectSelectorRowGroup(b) ||
         b.tasks - a.tasks ||
         (lastActivityByKey.get(b.key) ?? missingActivity) -
           (lastActivityByKey.get(a.key) ?? missingActivity) ||

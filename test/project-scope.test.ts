@@ -8,6 +8,7 @@ import {
   isAdditivePress,
   planningScopeLanes,
   projectHasRepository,
+  projectSelectorRowGroup,
   projectSelectorRows,
   readProjectScope,
   scopeContains,
@@ -681,5 +682,25 @@ test("1529 held-back queued tasks count toward the selector order", () => {
       ["qb", 2],
     ],
     "hidden queued work outranks rendered tasks in the order",
+  );
+});
+
+test("1529 parked rows share one group whatever their dormancy flag, so count decides among them", () => {
+  const row = (
+    visibility: "active" | "parked",
+    dormant: boolean,
+  ): Parameters<typeof projectSelectorRowGroup>[0] => ({
+    visibility,
+    dormant,
+  });
+  assert.equal(projectSelectorRowGroup(row("active", false)), 0);
+  assert.equal(projectSelectorRowGroup(row("active", true)), 1);
+  assert.equal(projectSelectorRowGroup(row("parked", false)), 2);
+  assert.equal(
+    projectSelectorRowGroup(row("parked", true)),
+    projectSelectorRowGroup(row("parked", false)),
+    "a dormant flag on a parked row must not split the parked group: " +
+      "dormancy-first ordering would rank it below every other parked row " +
+      "whatever its task count",
   );
 });
