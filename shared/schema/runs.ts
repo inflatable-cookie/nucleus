@@ -294,6 +294,7 @@ export const runSchema = z.object({
   active: z.boolean().nullable(),
   idleSince: z.string().nullable(),
   completion: completionSchema.nullable(),
+  completionReceivedAt: z.string().datetime({ offset: true }).optional(),
   released: z.boolean(),
   explicitlyReleasedAt: z.string().datetime({ offset: true }).optional(),
   /** Spec 058 slice 1: usage observed on this run's agent; absent until Queue observes a turn. */

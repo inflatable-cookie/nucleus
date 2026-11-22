@@ -362,7 +362,10 @@ export function releasePlan(
   if (!completion && !run?.released)
     warnings.push({
       id: "unreported_result",
-      text: "Any later report from this run will be refused.",
+      text:
+        run?.role === "reviewer" && run.agentId && !run.exhaustionReason
+          ? "Only this reviewer's first verdict at the current exact head can still be accepted."
+          : "Any later report from this run will be refused.",
     });
 
   return {
@@ -397,15 +400,14 @@ export function releasePlan(
           reviewContinuation: null,
         });
       }
-      store.deleteCredential(input.run);
+      if (!run) store.deleteCredential(input.run);
       if (task.runId === input.run)
         Object.assign(patch, {
-          runId: null,
-          agentId: null,
+          ...(!completion ? { runId: null, agentId: null } : {}),
           agentIntent: false,
           agentActive: false,
         });
-      if (resolution.currentRunId === input.run) {
+      if (resolution.currentRunId === input.run && !completion) {
         resolution.currentRunId = null;
         if (run?.role === "reviewer") {
           resolution.reviewerAgentId = null;
@@ -415,7 +417,7 @@ export function releasePlan(
       if (resolution.restartSlotHold?.fromRunId === input.run)
         resolution.restartSlotHold = null;
       const recovery = resolution.recovery;
-      if (recovery?.runId === input.run) {
+      if (recovery?.runId === input.run && !completion) {
         resolution.recoveryActive = false;
         resolution.recovery = {
           ...recovery,
@@ -467,14 +469,12 @@ export function releasePlan(
       }
       if (agentId && (live || input.archive)) {
         const current = store.task(task.id);
-        // A current revision can run on the retained worker's existing thread.
-        // Its turn can be stopped independently of that retained binding.
-        const releasedRetainedRevision =
-          run?.role === "revision" &&
-          task.resolution.currentRunId === run.id &&
-          current.runId === task.runId;
+        // Stop the released turn without dropping the retained worker binding.
+        const releasedRetainedTurn =
+          current.runId === task.runId &&
+          (initial || (run?.role === "revision" && task.resolution.currentRunId === run.id));
         if (
-          (current.agentId === agentId && !releasedRetainedRevision) ||
+          (current.agentId === agentId && !releasedRetainedTurn) ||
           threadServesAnotherTask(store, current, agentId)
         )
           return {

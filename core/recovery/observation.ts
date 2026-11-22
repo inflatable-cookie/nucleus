@@ -41,6 +41,11 @@ import {
 import { HostReadRefusalError } from "../host";
 import { readHostReadTransientEpisode } from "./host-read-transient";
 import { runsUnchangedSince } from "./observation-advance";
+import {
+  completedTurnCanRelease,
+  timestampCompletion,
+} from "./completed-run-observation";
+import { releaseRunFromRecordedCompletion } from "./fence-settlement";
 
 export type ObservationContext = Pick<
   Resolution,
@@ -85,6 +90,28 @@ export class Observation {
   }
   get graceMs() {
     return this.resolution.graceMs;
+  }
+
+  private settleUnobservableCompletion(run: Run, at: string, error?: unknown) {
+    if (
+      run.released ||
+      !run.completion ||
+      settlementHeld(this.store, this.resolution.stopped())
+    )
+      return false;
+    return this.store.transaction(() => {
+      const latest = this.store.run(run.id);
+      if (!latest || JSON.stringify(latest) !== JSON.stringify(run))
+        return true;
+      const task = this.store.task(run.taskId);
+      if (isDispositionActive(task) || isDispositionComplete(task)) return false;
+      const reported = timestampCompletion(this.store, run, at);
+      if (!reported.completionReceivedAt) return false;
+      if (reported !== run) this.store.putRun(reported);
+      if (completedTurnCanRelease(reported, { kind: "unobservable", error }, at, this.graceMs))
+        releaseRunFromRecordedCompletion(this.store, task.id, reported);
+      return true;
+    });
   }
 
   /**
@@ -187,9 +214,13 @@ export class Observation {
       if (this.resolution.stopped()) return;
       let run = this.store.run(original.id)!;
       const task = this.store.task(run.taskId);
+      const observationStartedAt = now();
       try {
-        if (!this.resolution.hostAvailable(task, run)) continue;
         if (isDispositionActive(task) || isDispositionComplete(task)) continue;
+        if (!this.resolution.hostAvailable(task, run)) {
+          this.settleUnobservableCompletion(run, observationStartedAt);
+          continue;
+        }
         if (
           !dispatchBlocked(task) &&
           !settlementHeld(this.store, this.resolution.stopped()) &&
@@ -199,6 +230,8 @@ export class Observation {
         // An operator stop preserves its lease and checkpoint.
         if (dispatchBlocked(task) && !run.completion) continue;
         if (!run.agentId) {
+          if (this.settleUnobservableCompletion(run, observationStartedAt))
+            continue;
           if (
             settlementHeld(this.store, this.resolution.stopped()) ||
             run.released
@@ -217,7 +250,6 @@ export class Observation {
           }
           continue;
         }
-        const observationStartedAt = now();
         // A superseded or replaced run whose thread its host reports archived or
         // gone can never report or take another turn. Releasing it here keeps the
         // archive the same proof the ordinary archive path accepts, so the run
@@ -232,11 +264,18 @@ export class Observation {
           continue;
         // Checkpoint delivery can occur after the pass's inventory was read.
         // Its new turn needs a narrow read started against the delivered state.
-        const state =
-          (reviewInProgress(run) ? null : inventory?.get(run.agentId!)) ??
-          (await this.resolution.onTaskHost(run, () =>
-            this.resolution.host.observe(run.agentId!),
-          ));
+        let state: AgentObservation;
+        try {
+          state =
+            (run.completion || reviewInProgress(run) ? null : inventory?.get(run.agentId)) ??
+            (await this.resolution.onTaskHost(run, () =>
+              this.resolution.host.observe(run.agentId!),
+            ));
+        } catch (error) {
+          if (this.settleUnobservableCompletion(run, observationStartedAt, error))
+            continue;
+          throw error;
+        }
         if (this.resolution.stopped()) return;
         const latest = this.store.run(run.id);
         if (!latest || JSON.stringify(latest) !== JSON.stringify(run)) continue;
@@ -280,7 +319,11 @@ export class Observation {
             "Observed agent or workspace differs from the recorded run lease",
           );
         const busy = active(state) || Boolean(state.activeTurnId);
-        if (!busy && !["idle", "error", "closed"].includes(state.status)) {
+        const reported = timestampCompletion(this.store, run, observationStartedAt);
+        const releaseReported =
+          completedTurnCanRelease(reported, { kind: "observed", state }, observationStartedAt, this.graceMs) &&
+          !(run.completion?.providerUnavailable && isQuotaExhaustion(state.error));
+        if (!releaseReported && !busy && !["idle", "error", "closed"].includes(state.status)) {
           if (state.status === "gone")
             this.store.putRun({ ...run, participantActivity: runActivityObservation(run, state, observationStartedAt) });
           throw new Error("Run state is unknown");
@@ -315,7 +358,7 @@ export class Observation {
             });
         }
         run = {
-          ...this.store.run(run.id)!,
+          ...reported,
           active: busy,
           lastObservedAt: observationStartedAt,
           lastActivityAt: state.updatedAt || null,
@@ -328,6 +371,12 @@ export class Observation {
           run.released
         )
           continue;
+        if (releaseReported) {
+          this.store.transaction(() =>
+            releaseRunFromRecordedCompletion(this.store, task.id, run),
+          );
+          continue;
+        }
         if (dispatchBlocked(this.store.task(task.id))) {
           if (
             run.completion &&

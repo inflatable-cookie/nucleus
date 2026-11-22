@@ -1,7 +1,6 @@
 import type { Completion, Run, Task } from "../../shared/contracts";
 import {
   isDispositionActive,
-  isDispositionComplete,
 } from "../../shared/contracts";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import { reviewPublicationBody } from "../forge/index";
@@ -42,7 +41,11 @@ import {
 import {
   threadReleasePendingReason,
 } from "./thread-waits";
-import { reportRunBinding } from "./report-run-binding";
+import {
+  reportRunBinding,
+  reviewerVerdictCanReadopt,
+  STALE_REVIEWER_VERDICT,
+} from "./report-run-binding";
 import { reportRunFor } from "../dispatch/acting-run";
 import { recordResultApplied } from "./applied-result";
 
@@ -77,68 +80,13 @@ export class RunCallbackIntake {
   get adapter() {
     return this.resolution.adapter;
   }
-  /**
-   * Re-adopt a replaced reviewer run whose verdict lands first at the exact current
-   * head. Replaced is not released (planner ruling, 2026-11-09): the replaced run
-   * stays unreleased with a live credential until the review settles. Returns true
-   * when the run is current again, so the ordinary path applies it.
-   */
+  /** Rebind the verdict to its original run without restoring a released lease. */
   readoptReplacedReviewer(task: Task, run: Run, input: Completion): boolean {
-    // Only a reviewer an owner control replaced: provider-refusal and quota replacements stay refused.
-    if (
-      run.role !== "reviewer" ||
-      !run.replacedAt ||
-      run.released ||
-      run.status !== "superseded" ||
-      run.completion ||
-      task.resolution.currentRunId === run.id
-    )
-      return false;
-    if (!["ready_to_merge", "changes_required"].includes(input.status))
-      return false;
-    if (
-      !["reviewing", "awaiting_review"].includes(task.phase) ||
-      !task.prHead ||
-      run.head !== task.prHead ||
-      (input.head ?? run.head) !== task.prHead
-    )
-      return false;
-    if (
-      task.resolution.review?.head === task.prHead ||
-      task.resolution.mergeIntent ||
-      task.resolution.mergedCommit
-    )
-      return false;
-    if (isDispositionActive(task) || isDispositionComplete(task)) return false;
-    // First verdict wins: a later reviewer's verdict ends this run's claim, even after a fresh-review move clears it.
-    const runs = this.store.runs(task.id);
-    if (
-      runs
-        .slice(runs.findIndex((other) => other.id === run.id) + 1)
-        .some(
-          (other) =>
-            other.role === "reviewer" &&
-            ["ready_to_merge", "changes_required"].includes(
-              other.completion?.status ?? "",
-            ),
-        )
-    )
-      return false;
+    if (!reviewerVerdictCanReadopt(this.store, task, run, input)) return false;
     const current = task.resolution.currentRunId
       ? this.store.run(task.resolution.currentRunId)
       : null;
-    // A replacement still being created or delivered would rebind itself on return.
-    if (
-      current &&
-      (current.role !== "reviewer" ||
-        current.completion ||
-        current.status !== "running" ||
-        !current.agentId)
-    )
-      return false;
-    if (current && !current.released) {
-      // Settling the replacement releases it, and the release revokes its
-      // credential and tickets unconditionally — after release nothing authenticates.
+    if (current && current.id !== run.id && !current.released) {
       this.store.putRun({
         ...current,
         status: "superseded",
@@ -146,12 +94,8 @@ export class RunCallbackIntake {
         active: false,
       });
     }
-    this.store.putRun({
-      ...run,
-      status: "running",
-      released: false,
-      replacedAt: undefined,
-    });
+    if (!run.released)
+      this.store.putRun({ ...run, status: "running", replacedAt: undefined });
     this.resolution.update(
       task,
       {
@@ -179,7 +123,11 @@ export class RunCallbackIntake {
         ? input
         : { ...input, runId: credentialRunId };
     const probe = this.store.run(presentedInput.runId);
+    const verdictOnly =
+      this.store.authenticateCompletion(credentialRunId, token, input) ===
+      "verdict_only";
     if (
+      !verdictOnly &&
       probe &&
       probe.taskId === presentedInput.taskId &&
       probe.role === "recovery" &&
@@ -222,7 +170,7 @@ export class RunCallbackIntake {
         };
         // Keep the original execution lease and delivery evidence: this records
         // the report without asserting that the participant is no longer live.
-        this.store.putRun({ ...latest, completion: reported });
+        this.store.putRun({ ...latest, completion: reported, completionReceivedAt: now() });
         recordResultApplied(this.store, latest.taskId, latest.id);
         this.store.event(
           latest.taskId,
@@ -246,6 +194,7 @@ export class RunCallbackIntake {
       });
     }
     if (
+      !verdictOnly &&
       probe &&
       probe.taskId === presentedInput.taskId &&
       isDispositionActive(this.store.task(probe.taskId))
@@ -253,6 +202,7 @@ export class RunCallbackIntake {
       return recordLateCallbackEvidence(this.store, presentedInput, token);
     // Queue #691: a report from a run that was under way when a task finished is history.
     if (
+      !verdictOnly &&
       probe &&
       probe.taskId === presentedInput.taskId &&
       probe.role !== "executor" &&
@@ -269,16 +219,15 @@ export class RunCallbackIntake {
       const presented = this.store.run(input.runId);
       if (presented && presented.taskId !== task.id)
         throw new Error("Unknown run");
-      // The credential that arrived is the presented run's own, before anything
-      // is substituted.
-      this.store.authenticate(credentialRunId, token);
       // A retained thread's stale ticket names an earlier run of this same
       // thread; the thread's current run acts for it, and the report is that
       // run's result (nucleus#1376). The receipt, the run's completion and every
       // downstream gate then speak of one run. The receipt still authenticates
       // the presented credential, which is the one that arrived.
       const presentedRunId = credentialRunId;
-      const acting = reportRunFor(this.store, task, presentedRunId);
+      const acting = verdictOnly
+        ? probe
+        : reportRunFor(this.store, task, presentedRunId);
       if (!acting) throw new Error("Unknown run");
       let run = acting;
       if (acting.id !== presentedRunId) {
@@ -300,16 +249,16 @@ export class RunCallbackIntake {
       }
       const duplicate = this.store.receipt(input, token, presentedRunId);
       if (duplicate) return duplicate;
-      // Replaced is not released (planner ruling, 2026-11-09, reconciling Tom's
-      // 2026-10-19 ruling with #1269): a working replaced reviewer's exact-head
-      // verdict is accepted while no verdict for that head exists — it becomes
-      // the current reviewer again and the replacement is settled. Only verdicts;
-      // a replaced run cannot be continued.
-      if (this.resolution.readoptReplacedReviewer(task, run, input)) {
+      // A displaced reviewer can finish its own head. A verdict-only ticket
+      // must use this path, even when the old run still occupies the binding.
+      const readopted = this.resolution.readoptReplacedReviewer(task, run, input);
+      if (readopted) {
         run = this.store.run(run.id)!;
         task = this.store.task(task.id);
+      } else if (verdictOnly) {
+        throw new Error(STALE_REVIEWER_VERDICT);
       }
-      const binding = reportRunBinding(task, run, input);
+      const binding = readopted ? "current" : reportRunBinding(task, run, input);
       const currentRunId =
         run.role === "recovery"
           ? task.resolution.recovery?.runId
@@ -432,7 +381,12 @@ export class RunCallbackIntake {
     const unfinished = proofRound
       ? null
       : unfinishedReturnFor(task, run, input, previousEvents);
-    this.store.putRun({ ...run, completion: input });
+    this.store.putRun({
+      ...run,
+      ...(run.released ? { status: "finished", active: false, replacedAt: undefined } : {}),
+      completion: input,
+      completionReceivedAt: now(),
+    });
     // report_ready is a terminal delivery for this revision turn. As with the
     // initial worker callback, release the author before planner acceptance.
     if (revisionReportOnly) {
@@ -721,7 +675,11 @@ export class RunCallbackIntake {
       if (duplicate) return duplicate;
       const response = { accepted: true as const, eventId: input.eventId };
       if (!run.released && !run.completion)
-        this.store.putRun({ ...run, completion: input });
+        this.store.putRun({
+          ...run,
+          completion: input,
+          completionReceivedAt: now(),
+        });
       releaseRunFromRecordedCompletion(
         this.store,
         task.id,
