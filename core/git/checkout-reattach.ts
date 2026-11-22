@@ -9,6 +9,7 @@
  * Callers: any launch into the task checkout, `run.start` and `run.release`,
  * and the verdict paths that restore an ordinary round's checkout.
  */
+import { existsSync } from "node:fs";
 import type { Run, Task } from "../../shared/contracts";
 import { queueCheckoutStatus, returnCheckoutToBranch } from "./git-checkout";
 import { GitIdentityError, readGitCheckout, readGitRef } from "./git-identity";
@@ -88,6 +89,11 @@ export async function reattachTaskCheckout(
 ): Promise<CheckoutReattach> {
   if (!task.directory)
     return { kind: "not-applicable", reason: "the task has no checkout" };
+  if (!existsSync(task.directory))
+    return {
+      kind: "not-applicable",
+      reason: `the task checkout path ${task.directory} is absent`,
+    };
   if (task.proofOnly || task.entrypoint === "proof")
     return {
       kind: "not-applicable",

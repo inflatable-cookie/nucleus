@@ -57,8 +57,14 @@ test('ordinary reviewer identity refuses each distinct missing or foreign fact b
 
     assert.throws(() => assertOrdinaryReviewIdentity(task, 'f'.repeat(40), false),
       /checkout identity mismatch: expected HEAD f{40}/);
-    assert.throws(() => assertOrdinaryReviewIdentity(task, f.oldHead, true),
-      /branch \(detached\)/);
+    // A follow-up round reads either shape: its own launch never detaches the
+    // checkout, and a checkout an earlier round left detached reads the same
+    // commit. A normal round requires the branch and names the detached state.
+    runGit(f.workspace, 'checkout', '--quiet', '--detach', f.oldHead);
+    assert.doesNotThrow(() => assertOrdinaryReviewIdentity(task, f.oldHead, true));
+    assert.throws(() => assertOrdinaryReviewIdentity(task, f.oldHead, false),
+      /observed .*branch \(detached\); the task checkout is detached and the reattach step refused or has not run/);
+    runGit(f.workspace, 'checkout', '--quiet', 'feature/external');
     assert.throws(() => assertOrdinaryReviewIdentity({ ...task, branch: 'feature/other' }, f.oldHead, false),
       /branch ref refs\/heads\/feature\/other could not be read: GitIdentityError: Missing ref/);
   } finally { f.close(); }
