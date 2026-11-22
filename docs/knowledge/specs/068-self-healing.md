@@ -1,0 +1,225 @@
+# Spec 068 — Self-healing
+
+Status: proposed (planner, 2026-11-22). Awaiting Tom's approval and the policy answers under [Decisions](#decisions).
+Builds on [Spec 066](066-one-reconciler.md) and [Spec 067](067-explicit-resolution.md).
+Audience: queue implementers, reviewers, planners and coordinators
+
+## Outcome
+
+Tom, 2026-11-22: "We need nucleus to be self healing - ideally I shouldn't need
+to have to ask you to scan the board and unstick tasks.. I want it to be able to
+recover autonomously; we'll need to identify the states that require recovery
+and work out how to consistently resolve them without intervention." And: "it's
+worth putting some more work into the ACP adapter so that it's clear when a
+thread is _actually_ working / reviewing and when it's in the in-between states,
+stuck etc, and make the output clearer too."
+
+Spec 067 made every mechanical state resolvable in one explicit command. This
+spec makes Nucleus run those commands itself. A person acts only on a question
+about the work. Everything Nucleus believes about a task is shown truthfully in
+the task's thread.
+
+## Evidence
+
+The planner read a copy of the 2026-11-22 14:14 backup covering 15–22 November.
+It also traced each of the ten stuck states the planner cleared by hand that day
+to the code that gave up on them.
+
+- Planners or the operator resolved 600 stuck episodes on 329 tasks, adding up to
+  500 stuck hours. Planner agents took 584 of them and the operator 3. The
+  reconciler resolved another 2,693 on its own.
+- Most of the stuck time was mechanical:
+
+  | Class | Episodes | Hours | How it was resolved |
+  |---|---|---|---|
+  | Uncertain worker, reviewer or revision creation | 22 | 56 | `retry_effect`, `restart`, `run.start fresh` |
+  | Host could not read the thread's state | 24 | 48 | `restart role=worker`, `complete` |
+  | Run stalled, or its process was gone | 6 | 17 | `run.release`, `restart role=reviewer` |
+  | Ordinary review refused before send | 38 | 17 | `move to=review` |
+  | Verdict reported but never applied | 3 (on 22 Nov) | 3 | `move to=work` with the findings |
+  | Detached task checkout blocks reviewer creation | 3 (on 22 Nov) | 1 | branch reattached by hand |
+
+- Judgement escalations were frequent but fast: 166 episodes of a worker reporting
+  blocked, with a median answer under a minute. These stay with planners.
+- Policy stops were answered the same way almost every time:
+  - Budget extended 34 times out of 35.
+  - "Continue the current approach" chosen 48 times out of 50 at the round-3
+    question.
+  - Revision cap re-armed with `move to=work` 15 times out of 18.
+
+The evidence and scripts are kept outside the repository.
+
+## Root causes
+
+1. **Absence is never proof.** A thread missing from a complete host read
+   neither settles an uncertain creation nor releases a finished run.
+2. **Display beats facts.** Liveness comes from the host's displayed status.
+   A dead process reported "running" blocks stall exits and coordinator launch.
+   A hung tool stops stall detection entirely.
+3. **Results wait on threads.** A verdict applies only after its run is
+   released. Release needs a live host read, and release deletes the run's
+   ticket, so a late report is refused.
+4. **The repairer is blocked by the fault.** A coordinator needs a recorded
+   stop, idle participants and no host-read hold. Its prompt forbids creating
+   agents and resending. The launch cap charges successful repairs.
+5. **Gaps between commands.** No command reattaches a detached checkout. A
+   non-terminal phase with no run and no stop has no owner and reads
+   "progressing".
+6. **Expensive reads run in the task's lane.** Process tables, timelines and
+   paired T3 inventories push task quanta past 120 s and cause churn errors.
+
+## Design
+
+### 1. Four states, never a fifth
+
+Every non-terminal task is always in exactly one of these:
+
+| State | Meaning | Shown as |
+|---|---|---|
+| **Active** | A participant is demonstrably working: a turn in progress with recent activity, or a tool running inside its limit. | "Reviewer · running `effigy test` · 3 min" |
+| **Nucleus's move** | Nucleus waits on a named fact (a slot, integration turn, checks or host) and has an observation deadline. | "Waiting for a review slot · 2 ahead" |
+| **Recovering** | An automatic repair is in flight, with its cause and attempt count. | "Reviewer thread vanished · starting a fresh reviewer (1 of 3)" |
+| **Needs a person** | A question about the work, raised through the planner ladder and the Inbox, with its explicit commands. | "Needs you · worker blocked on scope" |
+
+Any other state is a defect. Each sweep classifies such a task and moves it into
+one of the four. It is never left in place.
+
+### 2. One activity reading (the ACP work)
+
+`shared/` gets one derivation, `taskActivity(facts)`, which returns
+`{state, role, since, detail, lastActivityAt, tool?, attempt?}`. The reconciler,
+`next`, the board and the ACP task thread all read it, so what is shown is what
+Nucleus acts on. Its inputs are facts, not host display:
+
+- **Process facts.** The participant's recorded process and start identity are
+  alive or gone. A process older than the last boot is gone.
+- **The participant's activity stream** from the host timeline:
+  - the latest event and its time;
+  - the running tool, with its start and last output;
+  - a pending permission request;
+  - the turn's stop reason.
+- **Nucleus's own stops, waits and repair records.**
+
+The task's ACP thread shows that reading, using the native structures of ACP
+instead of a stream of text lines:
+
+- **Plan.** The lifecycle is a `plan` update (Queued, Working, Review round N,
+  Merge, Close), with each entry pending, in progress or completed.
+- **Tool calls.** Each participant run and each automatic repair is a
+  `tool_call` with a plain title, such as "Reviewer: reading the diff" or "Fresh
+  reviewer after the thread vanished". `tool_call_update` keeps its status and
+  elapsed time current.
+- **Messages.** These are only for things a person reads: a verdict summary, a
+  question, the finish.
+
+The planner verifies how T3 renders `plan` and `tool_call` before batch 2 is
+briefed. If either fails, the fallback is one replaced status line.
+
+### 3. Facts that settle things
+
+These close root causes 1–3:
+
+- **Creation lookup, for every role.** When a launch is uncertain, the sweep
+  looks the run up by its label (this generalises the coordinator's existing
+  `creationLookup`):
+  - one match binds it;
+  - no match on a complete read after the grace period releases the run, and
+    ordinary admission relaunches it;
+  - a partial read keeps waiting.
+
+  A single-thread lookup reads the live list and then the archived list, with no
+  sequence pairing.
+- **Process death releases a run.** Positive proof that the recorded process is
+  gone releases a stalled run. An unreadable process table proves nothing.
+- **A completion releases its run.** Once a run has an authenticated completion,
+  it is released when its thread is idle, archived, gone or unobservable past a
+  bound. The verdict is applied under its own checks. A released reviewer keeps a
+  ticket that is good for verdicts only, so an exact-head report still lands.
+
+### 4. Repairs are code
+
+The sweep applies the Spec 067 plans itself (`runStartPlan`, `releasePlan`, the
+verdict application, a reattach step) whenever a fact from §3 makes the step
+safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
+
+- **Reattach.** Before a launch, and in `run.start` and `run.release`: when no
+  unreleased detached run owns the checkout, the tree is clean and HEAD equals the
+  branch tip, check out the branch. Follow-up review rounds get their own
+  detached worktree instead of detaching the task's checkout.
+- **Orphan phase.** A non-terminal phase with no live run and no stop returns to
+  ordinary admission for its role, or records a typed stop.
+- **Hung tool.** Past the tool limit with no output, Nucleus terminates that
+  command's own process. It identifies the process by PID and start identity, and
+  never kills the turn. The agent sees a failed tool call and continues.
+- **Permission prompt.** A pending permission request in a task run follows the
+  policy under [Decisions](#decisions).
+- **Coordinator cap.** The cap charges only repairs that applied nothing. A
+  hard ceiling of six coordinator launches per head remains.
+
+### 5. Bounded and visible
+
+- Every automatic repair records an event, shows as **Recovering** and has a
+  per-cause attempt bound (default 3).
+- Past the bound, the task becomes **Needs a person**. The stop carries its
+  explicit command and reaches the Inbox.
+- A spent budget or cap is a typed stop worded as such, never "progressing".
+- The board header gains no counter. Instead, a weekly line in Settings shows how
+  many repairs Nucleus made and how many needed a person, by class.
+
+### 6. Reads leave the lane
+
+Process-table and timeline reads move into the host pass, with one snapshot per
+pass. Every read inside a task quantum gets a deadline and returns "unknown" when
+it misses (Spec 066 R1). This shares its approach with nucleus#1545 (async
+segregation) and Spec 067 batch 5 (host health).
+
+## Safety
+
+These rules stay:
+
+- **One writer.** A worker is released only on proof of death or an
+  authenticated completion. Absence on a partial read never counts.
+- **Exact-head review** and the merge gates.
+- **Unknown delivery is settled, never resent blindly.** It is settled by
+  lookup. The rule that kept it waiting for a person goes, not the rule against
+  resending.
+- **No narrow fixes.** Every repair is one general rule over facts. Nothing here
+  adds a guard for a single stuck state (AGENTS.md, Tom 2026-10-14).
+
+## What changes in earlier specs
+
+- **Spec 067:** the coordinator and the sweep both apply explicit commands. The
+  recovery prompt's "do not create agents" rule gives way to creation lookup.
+- **Spec 066 R3:** gains the four-state rule and orphan-phase readmission.
+- **Spec 065:** the task thread renders the activity reading through `plan` and
+  `tool_call`.
+
+## Batches
+
+Each batch is at most 3 modules and about 1.5k lines.
+
+| Batch | Scope | Depends on |
+|---|---|---|
+| 1 | `taskActivity` and its facts (process liveness, running tool, pending permission, last activity). The board and `next` read it. No behaviour change. | — |
+| 2 | ACP task thread: `plan` progress and `tool_call` runs and repairs, plus clearer messages. | 1 |
+| 3 | Creation lookup for every role, process-death release, single-thread T3 lookup. | 1, Spec 067 batch 5 |
+| 4 | Completion releases its run, the verdict-only ticket, reattach, and per-round reviewer worktrees. | 1 |
+| 5 | Orphan-phase readmission, hung-tool limit, permission policy, the coordinator cap counting failures, and typed budget and cap stops. | 1, 3 |
+| 6 | Reads leave the task lane. | nucleus#1545 |
+
+**Done when:** over one week, no task spends more than 30 minutes outside the four
+states, and no planner or operator action resolves a mechanical stall.
+
+## Decisions
+
+Policy questions for Tom:
+
+1. **Budgets.** Time while a host or the service is down never counts (today only
+   host outages pause the clock). Then: one automatic extension and ask on the
+   second, or always ask?
+2. **Round-3 question.** It was answered "Continue" 96% of the time. Continue
+   automatically up to the revision cap, with the planner told, or keep asking?
+3. **Hung tools.** Terminate a command after 30 minutes with no output (a
+   repository setting), or something else?
+4. **Permission prompts in task runs.** Deny automatically with a message so the
+   agent works around it, or raise it to the Inbox?

@@ -61,6 +61,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [065 — A host-agnostic ACP task session](065-acp-task-session.md) | implemented: the agent, its minted binding, the hold/release API and lifecycle text |
 | [066 — One reconciler](066-one-reconciler.md) | approved; merge and terminal-cleanup slice delivered |
 | [067 — Explicit resolution](067-explicit-resolution.md) | approved; batches briefed |
+| [068 — Self-healing](068-self-healing.md) | proposed: four task states, one activity reading in the ACP thread, repairs as code |
 
 ## Host adapters
 
