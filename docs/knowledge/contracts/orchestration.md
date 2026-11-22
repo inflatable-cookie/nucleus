@@ -4135,9 +4135,11 @@ A host prunes only when its adapter supplies the two optional reads beside
 created, under the current `nucleus.*` and the pre-Nucleus `northstar.*` labels,
 which answers `null` rather than a partial list) and `threadArchiveState` (one
 thread's fresh stamp, immediately before removal). On T3 that stamp comes from
-the live shell and the pass's own walk, and a successful removal drops the thread
-from the walk, so the read after it is absent; no per-thread inventory is read
-(Spec 069 batch 5). T3 has no paged archived read, so its walk is one
+the live shell and the pass's own walk; after a removal, T3's settled
+`thread.delete` receipt is the confirmation (it drops the thread from the walk),
+not a fresh read, and no per-thread inventory is read (Spec 069 batch 5). A walk
+that fails or is cut short is retried after an hour rather than a full
+interval. T3 has no paged archived read, so its walk is one
 `getArchivedShellSnapshot` per interval. A host that has the walk but
 no removal call (BB) is still read: its pass records `at`, `scanned` and
 `eligible`, leaves `supported` false, and names in `error` that nothing was

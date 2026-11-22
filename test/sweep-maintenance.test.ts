@@ -252,3 +252,42 @@ test("the archived-thread walk runs once per retention interval, 12 hours by def
   await tick(13);
   assert.equal(walks, 3, "a shorter Settings interval brings the next walk forward");
 });
+
+test("a failed archived walk is retried after an hour, not after the whole interval", async (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  let walks = 0;
+  const adapter = {
+    archivedThreads: async () => {
+      walks++;
+      if (walks === 1) throw new Error("T3Code timeout: getArchivedShellSnapshot");
+      return [];
+    },
+    threadArchiveState: async () => null,
+    deleteAgent: async () => {},
+  } as unknown as Adapter;
+  const maintenance = new SweepMaintenance({
+    adapter,
+    hostAvailable: () => true,
+    hostIds: () => ["paseo:fixture"],
+    migrateProjectOwnersToPlanners: async () => {},
+    removeSiblings: async () => {},
+    stopped: false,
+    store,
+    withHost: (_hostId: string, work: () => unknown) => work(),
+  } as unknown as ConstructorParameters<typeof SweepMaintenance>[0]);
+  const NOON = Date.parse("2026-11-22T12:00:00.000Z");
+  const tick = async (minutes: number) => {
+    await maintenance.run(NOON + minutes * 60_000);
+    await maintenance.threadRetentionRun;
+  };
+  await tick(0);
+  assert.equal(walks, 1, "the first walk fails");
+  await tick(30);
+  assert.equal(walks, 1, "not retried at once");
+  await tick(60);
+  assert.equal(walks, 2, "retried an hour later");
+  await tick(120);
+  assert.equal(walks, 2, "a good walk waits the full interval again");
+});

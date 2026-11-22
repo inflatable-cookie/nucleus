@@ -57,6 +57,17 @@ export class SweepMaintenance {
    * waits on it, so a long walk never holds the audit drain or a service start.
    */
   private startThreadRetention(at: number): void {
+    // A walk that could not read a host is retried after an hour, not after the
+    // whole interval: one failed read must not cost half a day of pruning.
+    const retrySoon = () => {
+      try {
+        const interval = threadRetentionIntervalMs(this.store);
+        if (interval > HOUR_MS)
+          this.store.setMeta("lastThreadRetentionAt", at - interval + HOUR_MS);
+      } catch {
+        /* the store is closed: the next service start reads the pass again */
+      }
+    };
     this.threadRetentionRun = runThreadRetention({
       store: this.store,
       hostIds: this.context.hostIds(),
@@ -66,8 +77,16 @@ export class SweepMaintenance {
       at,
       stopped: () => Boolean(this.context.stopped),
     })
-      .then(() => {
+      .then((health) => {
         this.store.setMeta("threadRetentionError", "");
+        if (
+          health.hosts.some(
+            (fact) =>
+              fact.checkedAt === new Date(at).toISOString() &&
+              (fact.truncated || fact.error.startsWith("The archived thread walk")),
+          )
+        )
+          retrySoon();
       })
       .catch((error) => {
         try {
@@ -75,6 +94,7 @@ export class SweepMaintenance {
         } catch {
           /* the store is closed: the next service start reads the pass again */
         }
+        retrySoon();
       })
       .finally(() => {
         this.threadRetentionRun = null;

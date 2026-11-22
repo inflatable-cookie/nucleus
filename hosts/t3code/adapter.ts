@@ -1711,6 +1711,7 @@ export class T3CodeHost implements Host {
         undefined,
         { retryRefusedBeforeSend: true },
       );
+      this.reads.noteDeleted(id);
       this.presentation.retireDeletedPresentationIntents();
     } catch (error) {
       // A local not-sent result leaves the terminal effect ready for the next

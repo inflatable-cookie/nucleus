@@ -795,11 +795,21 @@ The adapter holds one `orchestration.subscribeShell` subscription per connection
 `project.updated`, `project.removed`), and the adapter applies that tail to the
 copy it holds. Every reader — the host pass, the board's live lists, Settings,
 project observations, exact lookups — answers from that copy, in a pass or not.
-A dropped stream, a disconnect, `snapshot-required` or an item the adapter does
-not know drops the copy, and the next reader opens a new subscription that takes
-exactly one fresh snapshot. A remote failure to open it is a transient read
-refusal (`T3TransientReadError`), never a host fault. The live shell lists every
-active, non-archived thread, so a thread it does not list is not live.
+The live shell lists every active, non-archived thread, so a thread it does not
+list is not live.
+
+Freshness is bounded: the copy counts as live only while its subscription is
+open, its tail has delivered an item within five minutes
+(`LIVE_SHELL_QUIET_BOUND_MS`), and the subscription is younger than fifteen
+minutes (`LIVE_SHELL_MAX_AGE_MS`). Past either bound, or after a dropped stream, a
+disconnect, `snapshot-required` or an item the adapter does not know, the next
+reader that needs a current answer opens a new subscription and waits for its one
+fresh snapshot; rows that differ between the two copies count as changed. A remote
+failure to open it is a transient read refusal (`T3TransientReadError`), never a
+host fault. The previous copy is kept: the board's and Settings' live-agent list
+(`listLiveAgents`) answers from it at once while the new one opens in the
+background, with backoff (1 s doubling to 60 s) after failed opens. Decisions never
+read that dated copy.
 
 There is no archived or paired inventory in steady state (Tom, 2026-11-22: "We
 shouldn't need to be reading archived threads at all"). Where this spec says a T3
@@ -807,7 +817,10 @@ read uses the "complete" or "paired" inventory, the adapter now reads the live
 shell and, for a bound thread the shell does not list, one exact
 `subscribeThread` read by id. That exact read answers an archived or tombstoned
 thread with its own record, and `ThreadNotFoundError` (or the projection's proved
-missing-thread cause) means T3 has no such thread: removed, or never created. Its
+missing-thread cause) means T3 has no such thread: removed, or never created —
+unless the live shell lists it, because T3's projection store and its shell can
+disagree for a moment, and a creation lookup must never answer such a thread
+absent. Its
 answer is kept until T3's shell names the thread again, a command goes to it, or
 the connection drops, so a missing thread costs one read, not one per pass. A
 thread a command just went to (`forget`, including the child a
@@ -859,12 +872,13 @@ coordinator admission, durable owner controls/restarts, or `question.answer`:
   (`NativeQuestions`) likewise preserves recorded answers without recording
   `native_question_unknown`, and manual `host.question-answer` records
   `native_manual_answer_refused` on pre-send transient/refusal failures.
-`archivedThreads` reads `getArchivedShellSnapshot` once to enumerate candidates,
-and only the retention pass calls it. `threadArchiveState` then answers from the
-live shell (an unarchived thread reads live there at once) and from that same
-walk; a successful `thread.delete` drops the thread from the walk, so the read
-after a removal is absent. Without a walk on this connection it is one exact read
-by id. Do not enable omission of older settled threads or idle children.
+`archivedThreads` reads `getArchivedShellSnapshot` once to enumerate candidates
+(with a 60-second deadline), and only the retention pass calls it.
+`threadArchiveState` then answers from the live shell (an unarchived thread reads
+live there at once) and from that same walk. The read after a removal is not a
+fresh observation: T3's settled `thread.delete` receipt confirms the removal and
+drops the thread from the walk, so that read answers absent. Without a walk on
+this connection it is one exact read by id. Do not enable omission of older settled threads or idle children.
 Project-enrichment snapshots marked with `resolvedRepositoryIdentityRoots` can
 carry empty thread arrays; they never replace authoritative shell reads.
 
@@ -897,24 +911,28 @@ from memory.
 Every consumer shares the live shell and one held snapshot per thread: status, row
 step, the row's shown/snoozed decision and pending questions all read the same
 answer. A thread's snapshot is kept with its live-shell row as the change marker —
-the whole row, including `updatedAt`, `status`, `activeRunId`, `settledOverride`,
-`archivedAt`, `deletedAt`, the item counts and the pending request — and is read
-again only when that row moved, in a pass or out of one, so an idle unchanged
-thread is never re-read. Two reads cannot be answered by the row and are refreshed
-at most once per pass: a thread with a pending runtime request (the row summarizes
-one request; its questions are in the snapshot), and the window of a thread with a
-live run (tool output a stall check reads can move under an unchanged row). Out of
-a pass those two are read fresh. A command dispatched to a thread drops its held
+the whole decoded row, including `updatedAt`, `status`, `activeRunId`,
+`settledOverride`, `archivedAt`, `deletedAt`, T3's `itemCount` and
+`visibleItemCount`, `latestRunId`, `activityRunStatus` and the pending request —
+and is read again only when that row moved, in a pass or out of one, so an idle
+unchanged thread is never re-read. Two kinds of thread cannot be answered by the
+row and are refreshed at most once per pass: a thread with a pending runtime
+request (the row summarizes one request; its questions are in the snapshot), and a
+thread with a live run (its projection's `updatedAt`, which a stall check measures
+quiet time from, and its window's tool output can move under an unchanged row).
+Out of a pass those two are read fresh. A command dispatched to a thread drops its held
 snapshot, so a post-write read is never answered from before the write. A
 transcript read is never served from a bounded snapshot.
 
 Pending questions are read only for a thread the live shell marks as awaiting a
 runtime request. At most `T3_THREAD_READ_CONCURRENCY` (4) thread snapshots are in
-flight to one host; further reads wait their turn, and heartbeats (control frames)
-never queue behind them. The catalog is one `server.getConfig` read in flight at a
-time; when T3 takes longer than `CATALOG_PROMPT_MS` (2 s), a caller that already
-has a catalog from this connection gets it at once and the read finishes in the
-background.
+flight to one host; further reads wait their turn in arrival order (an owner or
+answer read outside a pass queues behind pass reads already waiting), and
+heartbeats (control frames) never queue behind them. The catalog is one
+`server.getConfig` read in flight at a time; when T3 takes longer than
+`CATALOG_PROMPT_MS` (2 s), a caller that already has a catalog from this
+connection gets it at once and the read finishes in the background. The first
+catalog read on a connection, and the first shell snapshot, are waited for.
 
 A follow-up child is recorded when its message is sent, before T3 creates (or
 declines to create) it, so it is only a candidate until the live shell lists it
@@ -1718,10 +1736,10 @@ of it. The step is now independent:
   local ACP call, so a thread that left observation is still released), then
   `thread.archive` goes through the durable intent with the deterministic
   parent-archive command id. T3's settled receipt for that exact thread marks the
-  binding `archivedAt`; no inventory is read to confirm it (Spec 069 batch 5, on
-  the operator's ruling that archive confirmation trusts the archive call's own
-  result). A thread T3 later shows live is a person's own unarchive and is never
-  undone.
+  binding `archivedAt`; no inventory is read to confirm it (the planner's Spec 069
+  batch 5 design, following Tom's 2026-11-22 ruling "We shouldn't need to be
+  reading archived threads at all"). A thread T3 later shows live is a person's own
+  unarchive and is never undone.
 - **Unknown delivery is read, never resent blind.** A recorded intent whose
   delivery is unknown is settled by a fresh positive read of that parent: archived
   settles it, and a live thread is the read that lets the same command replay under

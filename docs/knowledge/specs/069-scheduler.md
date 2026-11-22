@@ -134,12 +134,17 @@ ran about 6 times a minute, and Settings stayed on "loading".
   live tail (`thread.updated`, `thread.removed`, `project.updated`,
   `project.removed`) to it. Every reader, in a pass or not, answers thread
   existence, archive state, status, pending request and the change marker from
-  it. A dropped stream, `snapshot-required` or an unknown item drops the copy, and
-  the next reader takes exactly one fresh snapshot.
+  it. The copy is live only while its tail spoke within five minutes and the
+  subscription is under fifteen minutes old; past that, or after a dropped stream,
+  `snapshot-required` or an unknown item, the next reader that needs a current
+  answer takes exactly one fresh snapshot. The board's live-agent list is served
+  the previous copy while that happens; decisions are not.
 - **A thread snapshot only when its row moved.** A thread is read only when the
   live shell's row for it changed since the snapshot Nucleus holds, or a reader
   needs what the row cannot carry: a pending question's body, or a running
-  thread's timeline for a stall check. Either is read at most once per pass.
+  thread's projection (its `updatedAt` and timeline, which a stall check reads).
+  Either is read at most once per pass. The row keeps T3's item counts, so a new
+  item moves it.
 - **No read of a thread T3 does not list.** A thread the live shell does not list
   is not live. A follow-up child Nucleus recorded at send time is only a candidate
   until T3 lists it: it costs no read, and it is dropped, not retired, when its
@@ -151,20 +156,27 @@ ran about 6 times a minute, and Settings stayed on "loading".
 - **At most four thread snapshots at once** to one host
   (`T3_THREAD_READ_CONCURRENCY`). Heartbeats are control frames and never queue
   behind them.
-- **The UI never waits on T3.** Live lists and project observations come from the
-  live shell. The catalog is one read in flight at a time; when T3 takes longer
-  than two seconds the caller gets the last catalog read on this connection.
+- **The UI waits on T3 as little as it can.** Live lists and project
+  observations come from the live shell, and the live-agent list is served the
+  previous copy while a new one opens. The catalog is one read in flight at a time;
+  when T3 takes longer than two seconds the caller gets the last catalog read on
+  this connection. The first catalog read and the first shell snapshot on a
+  connection are still waited for, and an out-of-pass thread read queues behind
+  pass reads at the cap.
 - **No archived reads in steady state** (Tom, 2026-11-22: "We shouldn't need to
   be reading archived threads at all"). Archive confirmation trusts the archive
-  command's settled receipt; creation lookup, uncertain-delivery settlement and
-  workspace inventories use the live shell plus an exact read by id. The paired
+  command's settled receipt (the planner's design for this batch); creation
+  lookup, uncertain-delivery settlement and workspace inventories use the live
+  shell plus an exact read by id, and a thread the live shell lists is never
+  answered absent. The paired
   live and archived inventory and `T3InventoryChurnError` are gone.
 - **Retention reads the archived list on its own interval** (Tom, 2026-11-22:
   "Pruning can read archived threads - it needs to know what's there, but that
   shouldn't be running regularly? Once or twice a day?"). The pass runs every
   `threadRetentionIntervalHours` (Settings, 12 by default), detached from the
   sweep, and checks each candidate against the live shell and its own walk
-  instead of re-reading the inventory per thread. T3 has no paged archived read,
+  instead of re-reading the inventory per thread. A walk that fails or is cut
+  short is retried after an hour rather than a full interval. T3 has no paged archived read,
   so the walk is one `getArchivedShellSnapshot` per interval and removals stay
   capped at `THREAD_RETENTION_BATCH` per host per pass.
 

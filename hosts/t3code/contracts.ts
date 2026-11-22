@@ -134,6 +134,12 @@ export const shellThread = threadRecord.extend({
   pendingBackgroundTasks: z.array(pendingBackgroundTask).optional(),
   latestUserMessageAt: date.nullable(),
   lastError: z.string().nullable().optional(),
+  // T3's own item counts and latest-run facts: kept so the row, as a snapshot's
+  // change marker, moves when the thread gains an item (Spec 069 batch 5).
+  itemCount: z.number().int().nonnegative().optional(),
+  visibleItemCount: z.number().int().nonnegative().optional(),
+  latestRunId: id.nullable().optional(),
+  activityRunStatus: z.string().nullable().optional(),
 });
 export const project = z.object({
   id,

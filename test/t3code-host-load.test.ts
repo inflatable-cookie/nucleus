@@ -16,6 +16,8 @@ import { submissionSchema, type Task } from "../shared/contracts";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
 import {
   STAMP,
+  syntheticProviderThread,
+  syntheticRun,
   syntheticRuntimeRequest,
   syntheticTurnItem,
   t3Fake,
@@ -379,4 +381,91 @@ test("retention reads T3's archived threads only on its own interval, and delete
   }>("threadRetention");
   assert.equal(health?.hosts[0]?.error, "");
   assert.equal(health?.hosts[0]?.deleted, 0, "the second walk finds nothing left");
+});
+
+test("a running thread is re-read once per pass when its projection moves under an unchanged row", async (t) => {
+  const { server, host, tasks, liveIds } = await fixture(t);
+  const running = liveIds[2]!;
+  server.threads.get(running)!.runs = [
+    syntheticRun(running, 1, {
+      id: "run-busy",
+      status: "running",
+      rootNodeId: "node-busy",
+    }),
+  ];
+  await pass(host, tasks, liveIds);
+  // The provider reports new background work: the projection moves, the shell row
+  // of a running thread does not (T3 lists background tasks only on idle rows).
+  server.threads.get(running)!.providerThreads = [
+    syntheticProviderThread({
+      id: "provider-busy",
+      status: "active",
+      pendingBackgroundTasks: [{ kind: "command", taskId: "busy-command" }],
+    }),
+  ];
+  const rowBefore = JSON.stringify(host.reads.live.row(running));
+  await host.reads.shell();
+  assert.equal(
+    JSON.stringify(host.reads.live.row(running)),
+    rowBefore,
+    "the shell row did not move",
+  );
+  const before = server.snapshots.length;
+  await pass(host, tasks, liveIds);
+  assert.deepEqual(
+    server.snapshots.slice(before).map((read) => read.threadId),
+    [running],
+    "the running thread is read once, and no idle thread is read",
+  );
+  assert.deepEqual(
+    (await host.agentTimelinePage(running))?.pendingBackgroundTasks,
+    ["command busy-command"],
+    "the pass saw the moved projection",
+  );
+  const again = server.snapshots.length;
+  host.reads.beginPass(tasks);
+  await host.observe(running);
+  await host.observe(running);
+  host.reads.endPass();
+  assert.equal(server.snapshots.length - again, 1, "once per pass, not per read");
+});
+
+test("a live shell whose tail has gone quiet past its bound is re-snapshotted, and the live-agent list is served the last copy meanwhile", async (t) => {
+  const { server, host, liveIds } = await fixture(t);
+  await host.reads.shell();
+  const before = served(server, "orchestration.subscribeShell");
+  host.reads.live.quietBoundMs = 20;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(host.reads.live.live, false, "past the bound the copy is stale");
+  await host.reads.shell();
+  assert.equal(
+    served(server, "orchestration.subscribeShell") - before,
+    1,
+    "a decision read takes one fresh snapshot",
+  );
+  // T3 stops answering: the picker still lists from the last copy, at once.
+  server.controls.stalledMethods = ["orchestration.subscribeShell"];
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const started = Date.now();
+  const listed = await host.listLiveAgents();
+  assert.ok(Date.now() - started < 500);
+  assert.ok(listed.some((agent) => agent.id === liveIds[0]));
+  server.controls.stalledMethods = [];
+});
+
+test("a creation lookup never answers a thread the live shell lists as absent", async (t) => {
+  const { server, host, liveIds } = await fixture(t);
+  const target = liveIds[5]!;
+  await host.reads.shell();
+  // T3's projection store answers not-found while its shell lists the thread.
+  server.controls.projectionMissing = [target];
+  const found = await host.findRunAgents({
+    [WIRE_LABEL_KEYS.task]: taskId(5),
+    [WIRE_LABEL_KEYS.run]: "run-load-5",
+  });
+  assert.deepEqual(
+    found.map((agent) => [agent.id, agent.hostConfirmed]),
+    [[target, true]],
+  );
+  server.controls.projectionMissing = [];
 });

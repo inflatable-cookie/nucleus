@@ -350,9 +350,11 @@ export class T3Reads {
   constructor(private readonly core: T3ReadContext) {
     this.live = new T3LiveShell(core.rpc, core.rpc.defaultTimeoutMs);
     this.live.onChange((threadId) => {
+      // A discarded copy proves nothing about what a command just started, so the
+      // lag protection in `written` survives it; only a positive listing (or a
+      // reset of the whole observation) clears that.
       if (threadId === null) {
         this.absent.clear();
-        this.written.clear();
         return;
       }
       this.absent.delete(threadId);
@@ -596,7 +598,11 @@ export class T3Reads {
       if (isTransientT3ReadRpcError(error))
         throw new T3TransientReadError(error);
       if (!isThreadNotFoundRpcError(error)) throw error;
-      return null;
+      // T3's projection store and its shell can disagree for a moment; a thread
+      // the live shell lists is never answered absent (a creation lookup would
+      // otherwise launch a second one).
+      const listed = this.live.row(id);
+      return listed ? { row: listed, projection: null } : null;
     }
   }
 
@@ -685,12 +691,12 @@ export class T3Reads {
       held.marker === marker &&
       snapshotCovers(held.read, kind) &&
       // The list summarizes one pending request; while one is pending the read
-      // that carries its questions is never skipped. A running thread's window
-      // (tool output, a stall check's timeline) can move without its row moving,
-      // so a window read of one is refreshed once per pass too.
+      // that carries its questions is never skipped. A running thread's projection
+      // (its `updatedAt`, which a stall check measures quiet time from, and its
+      // window's tool output) can move without its row moving, so any read of a
+      // running thread is refreshed once per pass too.
       ((this.passing && held.pass === this.pass) ||
-        (!row?.pendingRuntimeRequest &&
-          !(kind !== "observation" && row && rowActive(row))))
+        (!row?.pendingRuntimeRequest && !(row && rowActive(row))))
     )
       return held.read;
     const pass = this.pass;
@@ -1096,13 +1102,23 @@ export class T3Reads {
   }
 
   /**
-   * One thread's fresh archive fact, read immediately before the retention pass
-   * removes it, and again after. The live shell is current to the second, so an
-   * unarchived thread reads live from it; otherwise the archived walk this same
-   * retention pass just took answers, and a successful removal drops the thread
-   * from that walk, so the read after it is absent (`null`). Without a walk (no
-   * retention pass has run on this connection) one exact read by id answers. No
-   * paired live and archived inventory is read.
+   * T3 settled a `thread.delete` for this thread: its receipt is the removal's
+   * confirmation, so the retention walk no longer lists it.
+   */
+  noteDeleted(threadId: string) {
+    this.retentionWalk?.delete(threadId);
+    this.absent.delete(threadId);
+  }
+
+  /**
+   * One thread's archive fact, read immediately before the retention pass removes
+   * it, and again after. The live shell answers a thread T3 lists (an operator's
+   * unarchive shows there at once); otherwise the archived walk this same
+   * retention pass just took answers. The read after a removal is not a fresh
+   * observation: T3's settled `thread.delete` receipt is what confirms it, and
+   * that receipt drops the thread from the walk (`noteDeleted`), so the read
+   * answers absent. Without a walk on this connection one exact read by id
+   * answers. No paired live and archived inventory is read.
    */
   async threadArchiveState(
     id: string,
@@ -1248,8 +1264,16 @@ export class T3Reads {
         : {}),
     };
   }
+  /**
+   * The live agents the board and Settings list. While the live shell reopens
+   * (past its freshness bound, or after a dropped stream) the last copy answers at
+   * once, so a picker never waits on a busy T3; a decision never reads this.
+   */
   async listLiveAgents() {
-    const { threads, projects } = await this.shell();
+    this.core.requireConnection();
+    const { threads, projects } = await this.live.currentOrLast();
+    // The first listed thread still proves an unproven thread shape.
+    await this.probePendingThreadShape(threads);
     const state = this.core.state.read();
     const projectById = new Map(projects.map((p) => [p.id, p]));
     const parentTaskByThread = new Map(
@@ -1450,7 +1474,6 @@ export class T3Reads {
     this.projectionHeld.delete(threadId);
     this.absent.delete(threadId);
     this.written.add(threadId);
-    this.retentionWalk?.delete(threadId);
     this.forgetEpochs.set(threadId, this.forgetEpoch(threadId) + 1);
   }
 

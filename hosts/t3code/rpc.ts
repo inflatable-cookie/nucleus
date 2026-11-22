@@ -73,6 +73,8 @@ const protocolTag = (value: unknown): string | null =>
 // Bounded thread projections can still be megabytes; small commands keep their deadline.
 const METHOD_TIMEOUT_MS: Readonly<Record<string, number>> = {
   "orchestration.subscribeThread": 60_000,
+  // The retention pass's one archived walk: thousands of rows on a busy host.
+  "orchestration.getArchivedShellSnapshot": 60_000,
 };
 // A long thread snapshot plus live updates outlives the default cap.
 const METHOD_STREAM_VALUES: Readonly<Record<string, number>> = {

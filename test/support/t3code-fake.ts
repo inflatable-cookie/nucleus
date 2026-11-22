@@ -700,6 +700,8 @@ export async function t3Fake(t: TestContext, directory: string) {
     shellFailures: 0,
     /** Methods this fake receives and never answers, as a wedged T3 does. */
     stalledMethods: [] as string[],
+    /** Threads whose projection read answers `ThreadNotFoundError` though the shell lists them. */
+    projectionMissing: [] as string[],
     /** The next N thread reads end with an Interrupt frame instead of a snapshot (a stream cut mid-turn). */
     interruptThreadReads: 0,
     /** The next N thread projection reads fail with `OrchestrationV2GetThreadProjectionError`. */
@@ -1432,6 +1434,11 @@ export async function t3Fake(t: TestContext, directory: string) {
               contract.subscribeThread.input.includes(field),
               `subscribeThread.${field} is not a recorded input field`,
             );
+          if (controls.projectionMissing.includes(payload.threadId))
+            return failure({
+              _tag: "Fail",
+              error: { _tag: "ThreadNotFoundError" },
+            });
           const p = threads.get(payload.threadId);
           // A thread T3 has not projected yet can fail its read transiently too, so
           // the injected fault applies to an absent thread as well (nucleus#1458).
