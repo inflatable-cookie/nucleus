@@ -73,7 +73,8 @@ test("a fresh install derives every class from the work root, outside any queue 
     projectQaRoot: join(mount, "queue", "project-qa"),
   });
   assert.deepEqual(placement.retainedRoots, [join(mount, "queue", "workspaces")]);
-  assert.deepEqual(placement.overrides, {});
+  // `overrides` is the settings file's own content, so only the work root is stored.
+  assert.deepEqual(placement.overrides, { workRoot: mount });
 });
 
 test("an existing queue/ install keeps its locations and adopts the new classes only as defaults", (t) => {
@@ -101,6 +102,7 @@ test("every class is a setting, with its own environment override", (t) => {
   assert.equal(placement.scratchRoot, join(mount, "custom", "runs"));
   assert.equal(placement.custodianRoot, join(mount, "custom", "custodians"));
   assert.deepEqual(placement.overrides, {
+    workRoot: mount,
     backupRoot: join(mount, "custom", "snapshots"),
     projectQaRoot: join(mount, "custom", "qa"),
     scratchRoot: join(mount, "custom", "runs"),
@@ -116,6 +118,15 @@ test("every class is a setting, with its own environment override", (t) => {
   assert.equal(overridden.projectQaRoot, join(mount, "env", "qa"));
   assert.equal(overridden.scratchRoot, join(mount, "env", "runs"));
   assert.equal(overridden.custodianRoot, join(mount, "env", "custodians"));
+  // The environment changes where Nucleus writes, never what the file holds: the
+  // Storage page's drafts come from `overrides`, so an override cannot be saved.
+  assert.deepEqual(overridden.overrides, {
+    workRoot: mount,
+    backupRoot: join(mount, "custom", "snapshots"),
+    projectQaRoot: join(mount, "custom", "qa"),
+    scratchRoot: join(mount, "custom", "runs"),
+    custodianRoot: join(mount, "custom", "custodians"),
+  });
   // A blank override is unset, so the saved settings still apply.
   assert.equal(getWorkPlacement(data, { NUCLEUS_BACKUP_ROOT: "" }).backupRoot, join(mount, "custom", "snapshots"));
 });
@@ -172,10 +183,11 @@ test("the Storage save writes the resolved paths on disk, keeps unrelated settin
   // Only a path that differs from its portable default reads as an override; the
   // settings file still keeps the explicit values that were saved.
   assert.deepEqual(saved.overrides, {
-    worktreesRoot: null,
+    workRoot: mount,
+    worktreesRoot: join(mount, "worktrees", "nucleus"),
     backupRoot: join(mount, "custom", "snapshots"),
     projectQaRoot: null,
-    scratchRoot: null,
+    scratchRoot: join(mount, "scratch", "nucleus"),
     custodianRoot: null,
   });
   const written = JSON.parse(readFileSync(join(data, "settings.json"), "utf8"));
@@ -292,4 +304,23 @@ test("a save validates the stored values themselves, so an environment override 
     /inside workRoot/,
   );
   assert.equal(JSON.parse(readFileSync(join(data, "settings.json"), "utf8")).backupRoot, undefined);
+});
+
+test("a save writes only the fields an operator changed, never an environment override", (t) => {
+  const { data, mount, writeSettings, volume } = fixture(t);
+  writeSettings();
+  // NUCLEUS_PROJECT_QA_ROOT is in force but nothing is stored for it.
+  const env = { NUCLEUS_PROJECT_QA_ROOT: join(mount, "env", "qa") };
+  assert.equal(getWorkPlacement(data, env).projectQaRoot, join(mount, "env", "qa"));
+  assert.equal(getWorkPlacement(data, env).overrides.projectQaRoot, undefined);
+  // Saving another class leaves the environment-sourced one out of the file.
+  const saved = saveWorkStorage({ scratchRoot: join(mount, "custom", "runs") },
+    { dataDir: data, env, observe: volume });
+  assert.equal(saved.scratchRoot, join(mount, "custom", "runs"));
+  assert.equal(saved.projectQaRoot, join(mount, "env", "qa"), "the override is still in force");
+  const written = JSON.parse(readFileSync(join(data, "settings.json"), "utf8"));
+  assert.equal(written.scratchRoot, join(mount, "custom", "runs"));
+  assert.equal(written.projectQaRoot, undefined, "the variable's value never became configuration");
+  // With the variable gone the stored settings resolve on their own.
+  assert.equal(getWorkPlacement(data, {}).projectQaRoot, join(mount, "archives", "nucleus-project-qa"));
 });

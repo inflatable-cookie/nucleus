@@ -612,7 +612,10 @@ proof lands with its task.
     stand on their own and again as they resolve under the saving process's
     environment overrides, so an override can never mask a value that would break
     the next start. It explains a refusal on the page and applies on the next
-    service start. An empty control restores that
+    service start. The page's fields are the stored values, never the resolved
+    placement: an environment override shows as the effective path in the field's
+    caption, and only a field the operator changed is sent, so a variable's value
+    can never become durable configuration. An empty control restores that
     class's portable default; an untouched work root is not written, so a portable
     install stays portable.
   - **Existing installs keep working.** An install whose data sits in the retired

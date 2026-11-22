@@ -73,17 +73,18 @@ export function StoragePanel({ c, state, loading, loadError, save, inset }: {
   const [saved, setSaved] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const anchor = useRef<View | null>(null);
-  // The loaded placement is the baseline a save compares against: an untouched
-  // work root is not written, so a portable install stays portable.
+  // The drafts are the values `settings.json` holds, never the resolved placement:
+  // an environment override is shown as the effective path, not carried into a
+  // field, so saving cannot make a variable's value durable.
   const loaded = useRef<WorkStorageState | undefined>(undefined);
   useEffect(() => {
     if (!state) return;
     loaded.current = state;
-    setWorkRoot(state.workRoot);
+    setWorkRoot(state.overrides.workRoot ?? "");
     setDrafts(draftOf(state));
   }, [state]);
   const savedAt = loaded.current;
-  const dirty = Boolean(savedAt) && (workRoot !== savedAt!.workRoot
+  const dirty = Boolean(savedAt) && (workRoot !== (savedAt!.overrides.workRoot ?? "")
     || CLASSES.some(item => (drafts[item.field] ?? "") !== (savedAt!.overrides[item.field] ?? "")));
   const invalid = CLASSES.find(item => failure.includes(item.setting));
   const problem = failure || (loadError ? `Couldn't load the storage paths: ${errorText(loadError)}` : null);
@@ -96,7 +97,7 @@ export function StoragePanel({ c, state, loading, loadError, save, inset }: {
     try {
       const next = await save(input);
       loaded.current = next;
-      setWorkRoot(next.workRoot);
+      setWorkRoot(next.overrides.workRoot ?? "");
       setDrafts(draftOf(next));
       setSaved(true);
     } catch (error) {
@@ -107,12 +108,18 @@ export function StoragePanel({ c, state, loading, loadError, save, inset }: {
     }
   }
   async function press() {
+    const baseline = loaded.current;
+    if (!baseline) return;
     const input: WorkStorageInput = {};
-    if (workRoot !== loaded.current?.workRoot) input.workRoot = workRoot;
+    // Only a field the operator changed is sent, so an untouched class keeps
+    // whatever `settings.json` holds (including nothing at all).
+    if (workRoot !== (baseline.overrides.workRoot ?? "")) input.workRoot = workRoot ? workRoot : null;
     for (const item of CLASSES) {
       const value = drafts[item.field] ?? "";
+      if (value === (baseline.overrides[item.field] ?? "")) continue;
       input[item.field] = value ? value : null;
     }
+    if (!Object.keys(input).length) return;
     await persist(input).catch(() => {});
   }
   async function reset() {
@@ -135,11 +142,15 @@ export function StoragePanel({ c, state, loading, loadError, save, inset }: {
       <Field c={c} label="Work root" value={workRoot} onChange={value => { setWorkRoot(value); setSaved(false); }}
         placeholder={state.workRoot} disabled={saving}
         invalid={failure.includes("workRoot")}
-        detail="The volume mount every other path sits inside." />
-      {CLASSES.map(item => <Field key={item.field} c={c} label={item.noun} value={drafts[item.field] ?? ""}
-        onChange={value => { setDrafts(current => ({ ...current, [item.field]: value })); setSaved(false); }}
-        placeholder={state.defaults[item.field]} disabled={saving} invalid={invalid === item}
-        detail={`Default: ${state.defaults[item.field]}`} />)}
+        detail={`The volume mount every other path sits inside · in force now: ${state.workRoot}`} />
+      {CLASSES.map(item => {
+        const stored = state.overrides[item.field];
+        const inForce = state[item.field] !== (stored ?? state.defaults[item.field]);
+        return <Field key={item.field} c={c} label={item.noun} value={drafts[item.field] ?? ""}
+          onChange={value => { setDrafts(current => ({ ...current, [item.field]: value })); setSaved(false); }}
+          placeholder={state[item.field]} disabled={saving} invalid={invalid === item}
+          detail={`Default: ${state.defaults[item.field]}${inForce ? ` · environment override in force: ${state[item.field]}` : ""}`} />;
+      })}
       <View style={{ ...row, flexWrap: "nowrap", marginTop: space.xxs }}>
         <Button c={c} text={saving ? "Saving…" : "Save paths"} disabled={saving || !dirty}
           hint={dirty ? "Validate and save these paths" : "No path has changed"} onPress={() => void press()} />

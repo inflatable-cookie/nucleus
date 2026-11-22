@@ -37,9 +37,14 @@ export const workStorageStateSchema = z
     scratchRoot: z.string().min(1),
     custodianRoot: z.string().min(1),
     defaults: workStoragePathsSchema,
-    /** The classes whose saved path differs from the portable default; null means the default applies. */
+    /**
+     * The values `settings.json` itself holds, by field; null means no stored
+     * value, so the portable default applies (and an environment override maybe).
+     * Environment values are never reported here.
+     */
     overrides: z
       .object({
+        workRoot: z.string().min(1).nullable(),
         worktreesRoot: z.string().min(1).nullable(),
         backupRoot: z.string().min(1).nullable(),
         projectQaRoot: z.string().min(1).nullable(),

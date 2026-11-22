@@ -24,12 +24,15 @@ export interface WorkStorageOptions {
 /** The resolved placement as the Storage page reads it. */
 export function workStorageState(placement: WorkPlacement): WorkStorageState {
   const defaults = placement.defaults;
-  const overrides = Object.fromEntries(
-    Object.keys(defaults).map(field => [
-      field,
-      placement.overrides[field as keyof typeof defaults] ?? null,
-    ]),
-  ) as WorkStorageState["overrides"];
+  const overrides = {
+    workRoot: placement.overrides.workRoot ?? null,
+    ...Object.fromEntries(
+      (Object.keys(defaults) as Array<keyof typeof defaults>).map(field => [
+        field,
+        placement.overrides[field] ?? null,
+      ]),
+    ),
+  } as WorkStorageState["overrides"];
   return {
     workRoot: placement.workRoot,
     workVolumeId: placement.volumeId ?? null,

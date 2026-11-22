@@ -31,8 +31,11 @@ export interface WorkPlacement {
   custodianRoot: string;
   defaults: WorkPlacementDefaults;
   retired: RetiredWorkPlacement;
-  /** The classes whose saved path differs from the portable default, by field. */
-  overrides: Partial<WorkPlacementDefaults>;
+  /**
+   * The values `settings.json` itself holds, by field, including `workRoot`;
+   * environment overrides are never reported here.
+   */
+  overrides: Partial<WorkPlacementDefaults> & { workRoot?: string };
   retainedRoots: string[];
 }
 /** One Storage save: `undefined` leaves a class alone; `null` or `''` restores its default. */

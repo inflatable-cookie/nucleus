@@ -136,11 +136,15 @@ export function getRetiredWorkClassPath(field, dataDir = dataHome(), env = proce
 function placementFrom(value, storage, env) {
   const defaults = defaultWorkPlacement(storage.root);
   const retired = retiredWorkPlacement(storage.root);
-  const resolved = {}, overrides = {};
+  const resolved = {};
+  // `overrides` is what `settings.json` itself holds, never an environment value:
+  // the Storage page edits stored settings, so an environment override must not
+  // become a draft the operator never typed and a save would then persist.
+  const overrides = {};
+  if (value.workRoot) overrides.workRoot = value.workRoot;
   for (const entry of CLASSES) {
-    const path = resolveClass(entry, value, storage, env);
-    resolved[entry.field] = path;
-    if (path !== defaults[entry.field]) overrides[entry.field] = path;
+    resolved[entry.field] = resolveClass(entry, value, storage, env);
+    if (value[entry.setting]) overrides[entry.field] = value[entry.setting];
   }
   const retained = new Set();
   // A task workspace allocated before this class moved is still supported for

@@ -27,7 +27,7 @@ const state = (overrides: Partial<WorkStorageState["overrides"]> = {}): WorkStor
   workVolumeId: "volume-id",
   ...DEFAULTS,
   defaults: DEFAULTS,
-  overrides: { worktreesRoot: null, backupRoot: null, projectQaRoot: null, scratchRoot: null, custodianRoot: null, ...overrides },
+  overrides: { workRoot: null, worktreesRoot: null, backupRoot: null, projectQaRoot: null, scratchRoot: null, custodianRoot: null, ...overrides },
   retired: RETIRED,
   retainedRoots: [RETIRED.worktreesRoot],
   appliesOnRestart: true,
@@ -54,8 +54,11 @@ test("Storage is its own page with one noun per path, its portable default, and 
   assert.match(ui.text(), /Storage/);
   assert.match(textOf(ui.get("Storage")), /Storage/);
   assert.match(ui.text(), /Changes apply when the Nucleus service next starts\./);
-  // The work root and each class are single controls, named by their noun.
-  assert.equal(ui.get("Work root").props.value, ROOT);
+  // The work root and each class are single controls, named by their noun, and
+  // each shows the value `settings.json` holds (nothing yet), not the resolved path.
+  assert.equal(ui.get("Work root").props.value, "");
+  assert.equal(ui.get("Work root").props.placeholder, ROOT);
+  assert.match(ui.text(), new RegExp(`in force now: ${ROOT}`));
   for (const [noun, path] of [
     ["Task worktrees", DEFAULTS.worktreesRoot],
     ["Database backups", DEFAULTS.backupRoot],
@@ -86,9 +89,31 @@ test("saving sends the edited paths, leaves an untouched work root alone, and sa
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.workRoot, undefined, "an untouched work root is not written, so a portable install stays portable");
   assert.equal(calls[0]!.backupRoot, `${ROOT}/custom/snapshots`);
-  assert.equal(calls[0]!.projectQaRoot, null, "an untouched class keeps its portable default");
+  assert.equal(calls[0]!.projectQaRoot, undefined, "an untouched class is not written at all");
   for (let i = 0; i < 10 && !ui.query("Save paths")?.props.disabled; i++) await tick();
   assert.match(ui.text(), /Saved\. Applies on the next service start\./);
+  ui.update(h("View"));
+});
+
+test("an environment-sourced path reads as in force and is never written by a save", async () => {
+  const calls: WorkStorageInput[] = [];
+  // The stored settings hold no QA path; an environment override puts one in force.
+  const envState = state();
+  const ui = await panel({
+    state: { ...envState, projectQaRoot: `${ROOT}/env/qa`, overrides: { ...envState.overrides, projectQaRoot: null } },
+    save: async (input: WorkStorageInput) => { calls.push(input); return state({ scratchRoot: input.scratchRoot ?? null }); },
+  });
+  assert.equal(ui.get("QA history").props.value, "", "the field holds the stored value, not the variable's");
+  assert.equal(ui.get("QA history").props.placeholder, `${ROOT}/env/qa`);
+  assert.match(ui.text(), /environment override in force: .*env\/qa/);
+  ui.type("Run scratch", `${ROOT}/custom/runs`);
+  await tick();
+  ui.press("Save paths");
+  for (let i = 0; i < 10 && !calls.length; i++) await tick();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.scratchRoot, `${ROOT}/custom/runs`);
+  assert.equal(Object.hasOwn(calls[0]!, "projectQaRoot"), false, "the environment value never becomes a saved path");
+  assert.equal(Object.hasOwn(calls[0]!, "backupRoot"), false, "untouched classes are not written");
   ui.update(h("View"));
 });
 
