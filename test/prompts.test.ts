@@ -1446,6 +1446,18 @@ test("author and reviewer validation points to repository authority", () => {
     assert.match(prompt, /AGENTS.md Validate section/);
 });
 
+test("workers and revisions must finish required checks before ending their turn", () => {
+  const prompts = [
+    workerPrompt(handoffTask, true),
+    runPrompt(handoffTask, runs[0], "/helper", "/ticket", true),
+  ];
+  for (const prompt of prompts) {
+    assert.match(prompt, /Run checks through Effigy in the foreground, one at a time, to completion/);
+    assert.match(prompt, /Do not end your turn while a required check is running/);
+    assert.match(prompt, /wait for it to finish, record its exit code, and read its output before reporting/);
+  }
+});
+
 test("worktree-facing prompts protect other worktrees and run scratch", () => {
   assert.match(
     WORKSPACE_RULE,

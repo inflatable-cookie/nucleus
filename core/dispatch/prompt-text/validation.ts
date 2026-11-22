@@ -48,5 +48,5 @@ export function operatorValidationBlock(
   affectedTestsCommand?: string,
   reviewer = false,
 ) {
-  return `${VALIDATION_RULE_HEADING}\n${VALIDATION_AUTHORITY_RULE}\nRun checks through Effigy once to completion; do not kill other processes or repeat a passing check.\n${affectedTestsCommand ? `${reviewer ? affectedRunReviewerNote(affectedTestsCommand) : affectedRunRule(affectedTestsCommand)}\n` : ""}`;
+  return `${VALIDATION_RULE_HEADING}\n${VALIDATION_AUTHORITY_RULE}\nRun checks through Effigy in the foreground, one at a time, to completion. Do not end your turn while a required check is running. If a command must run in the background, wait for it to finish, record its exit code, and read its output before reporting. Do not kill other processes or repeat a passing check.\n${affectedTestsCommand ? `${reviewer ? affectedRunReviewerNote(affectedTestsCommand) : affectedRunRule(affectedTestsCommand)}\n` : ""}`;
 }
