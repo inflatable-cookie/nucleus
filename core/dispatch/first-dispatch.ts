@@ -51,7 +51,6 @@ export type FirstDispatchContext = Pick<
   | "noteStepFailure"
   | "profileCatalogKnown"
   | "profilesFor"
-  | "hostWait"
   | "firstDispatchTarget"
   | "targetHostWait"
   | "hostIds"
@@ -70,7 +69,10 @@ export type FirstDispatchContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
-    "projectInFlightAdmissionReason" | "select" | "slotAdmissionReason"
+    | "clearHostWait"
+    | "projectInFlightAdmissionReason"
+    | "select"
+    | "slotAdmissionReason"
   >;
 };
 /** A review-entry task is admitted by its own owner, never by the worker launcher. */
@@ -107,9 +109,9 @@ export class FirstDispatch {
       // nucleus#1416 (extended 2026-11-20): the effective target host kind, the
       // repository's explicit kind else the operator default, must answer before
       // any profile is chosen elsewhere; an outage is not proof the profile cannot run there.
-      const targetWait = this.context.targetHostWait(task);
-      if (targetWait)
-        return this.waitForTargetHost(task, dispatchHeld, targetWait);
+      // Spec 069 §1: a never-started task stores no wait. The board and `next`
+      // read this one from the same target-host rule when they are read.
+      if (this.context.targetHostWait(task)) return;
       const target = this.context.firstDispatchTarget(task);
       // Hosts this dispatch could not read: offline, reconnecting or catalog unread.
       const observation: WorkerHostObservation = {
@@ -184,32 +186,6 @@ export class FirstDispatch {
       );
     return this.dispatchOnHost(taskId, dispatchHeld);
   }
-  /**
-   * The named wait for an unbound task whose target host kind (repository, then
-   * operator default) is not ready. It takes the same gates as the route stop, so
-   * a paused, held or capacity-stopped task keeps its own stop, and it never
-   * charges a profile or reserves a workspace.
-   */
-  private waitForTargetHost(
-    task: Task,
-    dispatchHeld: boolean,
-    wait: string,
-  ): void {
-    if (
-      dispatchGate({
-        transientWaiting: this.context.gitTransientWaiting(task.id),
-        task,
-        stopped: this.context.stopped,
-        paused: this.store.getMeta<boolean>("paused"),
-        dispatchHeld,
-      }) ||
-      usageGateBlocked(task, this.store.usageLevel()) ||
-      this.store.dependencyWait(task) ||
-      this.resolution.slotAdmissionReason(task)
-    )
-      return;
-    if (task.reason !== wait) this.store.update(task.id, { reason: wait });
-  }
   private async dispatchOnHost(
     taskId: string,
     dispatchHeld: boolean,
@@ -225,22 +201,25 @@ export class FirstDispatch {
     const transientBefore = this.store.getMeta<GitTransientEpisode | null>(
       this.context.transientKey(taskId),
     );
-    const recorded = this.store.task(taskId);
-    const task = firstSelection
-      ? { ...recorded, hostId: firstSelection.hostId }
-      : recorded;
-    if (!this.context.taskHostAvailable(task)) {
-      // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): new dispatch
-      // for a project on an unavailable host waits on that host too, with the
-      // same named stop as work already in flight. A task with no proven host
-      // identity keeps its own distinct wait.
-      if (this.context.hostWait(task)) return;
-      const reason = task.hostId
-        ? `Waiting for host ${task.hostId}`
-        : "Waiting for a proven host identity";
-      if (task.reason !== reason) this.store.update(task.id, { reason });
+    const onHost = (candidate: Task) =>
+      firstSelection ? { ...candidate, hostId: firstSelection.hostId } : candidate;
+    // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait), read at the
+    // boundary since Spec 069 §1: a queued task on an unavailable host, or with no
+    // proven host identity, waits without a write. The board and `next` name that
+    // wait from the host's own availability; work in flight keeps its recorded wait.
+    if (!this.context.taskHostAvailable(onHost(this.store.task(taskId))))
       return;
-    }
+    // A host wait an older pass stored on this queued row cannot hold once its
+    // host answers; settle it before the dispatch reads its own version.
+    const stale = this.store.task(taskId);
+    if (
+      stale.phase === "queued" &&
+      (stale.resolution.hostWait ||
+        stale.resolution.stop?.reason === "host_unavailable")
+    )
+      this.context.resolution.clearHostWait(stale);
+    const recorded = this.store.task(taskId);
+    const task = onHost(recorded);
     if (dispatchGate({ task })) return;
     if (
       dispatchGate({

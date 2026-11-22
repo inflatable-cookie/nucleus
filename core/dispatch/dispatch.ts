@@ -4,7 +4,13 @@ import {
   isDispositionActive,
 } from "../../shared/contracts";
 import { groupIsUnavailable } from "../../shared/pool";
-import { occupiesSlot, queuedVisits } from "./capacity";
+import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
+import {
+  capacityLimitFor,
+  dispatchBlocked,
+  occupiesSlot,
+  queuedVisits,
+} from "./capacity";
 import {
   PRE_DISPATCH_BASE_ADVANCE_LIMIT,
   queuedDispatchOrder,
@@ -138,7 +144,6 @@ export class Dispatch {
     await this.resolution.withDispatchPass(async () => {
       const attempted = new Set<string>();
       const failedHosts = new Set<string>();
-      const failedTasks = new Set<string>();
       const visit = (candidate: Task) =>
         this.engine
           .scheduleLane(`task:${candidate.id}`, LANE_PRIORITY_TASK, () =>
@@ -149,59 +154,23 @@ export class Dispatch {
             if (!hostId) throw error;
             failedHosts.add(hostId);
             recordHostFailure(this.adapter, hostId, error);
-          })
-          .then(() => {
-            // FirstDispatch can record the transport wait itself before returning.
-            // A wait left on the task is not evidence by itself: only a host that
-            // is down or failed this pass widens it (Tom, 2026-11-22).
-            const task = this.store.task(candidate.id);
-            if (
-              task.hostId &&
-              !this.engine.withHost(task.hostId, () =>
-                this.engine.taskHostAvailable(task),
-              ) &&
-              (task.resolution.hostWait ||
-                task.resolution.stop?.reason === "host_unavailable")
-            ) {
-              failedHosts.add(task.hostId);
-            }
-            if (task.phase === "needs_attention") failedTasks.add(task.id);
-            if (task.resolution.stop?.reason === "origin_busy")
-              failedTasks.add(task.id);
-            // nucleus#1416: an unbound task waiting on its target host kind
-            // (repository, then operator default) is a settled visit, not
-            // progress. Counting it lets the pass reach healthy projects behind
-            // it instead of stopping on "nothing moved".
-            if (
-              task.phase === "queued" &&
-              this.engine.firstWorkerUnbound(task) &&
-              this.engine.targetHostWait(task)
-            )
-              failedTasks.add(task.id);
           });
+      // Spec 069 §1: the admitter takes heads from the ordered ready index, with
+      // the fair order, and admits as many as the free slots allow. A head that
+      // cannot start now (its host is away, or it already had its visit) is
+      // skipped in the index walk, so it takes no visit and hides nothing behind it.
       for (;;) {
-        const skipped = failedHosts.size
-          ? this.store
-              .tasks()
-              .filter((task) => task.hostId && failedHosts.has(task.hostId))
-              .length
-          : 0;
         const occupied = this.store
           .activeCapacityTasks()
           .filter((task) => occupiesSlot(task));
         const candidates = queuedDispatchOrder(
           this.store.readyQueueHeads(
-            limit + 2 + skipped + failedTasks.size,
+            limit + 2,
             repoPath,
             dispatchHeld,
+            this.startableHead(attempted, failedHosts),
           ),
           occupied,
-        ).filter(
-          (task) =>
-            !attempted.has(task.id) &&
-            (this.engine.firstWorkerUnbound(task) ||
-              !task.hostId ||
-              !failedHosts.has(task.hostId)),
         );
         const { start } = queuedVisits(
           candidates,
@@ -213,18 +182,84 @@ export class Dispatch {
         );
         if (!start.length) break;
         for (const task of start) attempted.add(task.id);
-        const before = failedHosts.size + failedTasks.size;
+        const hostsBefore = failedHosts.size;
         const results = await Promise.allSettled(start.map(visit));
         const failed = results.find((result) => result.status === "rejected");
         if (failed) throw (failed as PromiseRejectedResult).reason;
-        if (failedHosts.size + failedTasks.size === before) {
-          const stillQueued = start.filter(
-            (task) => this.store.task(task.id).phase === "queued",
-          ).length;
-          if (stillQueued === 0 || stillQueued === start.length) break;
-        }
+        // Another round only follows a round that settled something: a start, a
+        // recorded refusal or a host fault. A round whose heads all waited on a
+        // gate leaves nothing for the next head to gain.
+        const settled =
+          failedHosts.size > hostsBefore ||
+          start.some(
+            (task) => this.store.taskOrNull(task.id)?.version !== task.version,
+          );
+        if (!settled) break;
       }
     });
+  }
+  /**
+   * Whether a ready head could start on a host now, read live from host
+   * availability and never from a wait stored on the task (Spec 069 §1). A bound
+   * task needs its own host; an unbound first worker needs its target host kind,
+   * else any host whose catalog is read. Readings are memoised for one index walk.
+   */
+  private startableHead(
+    attempted: ReadonlySet<string>,
+    failedHosts: ReadonlySet<string>,
+  ): (task: Task) => boolean {
+    const catalogs = new Map<string, boolean>();
+    const ownHost = (task: Task) =>
+      Boolean(
+        task.hostId &&
+          !failedHosts.has(task.hostId) &&
+          this.engine.withHost(task.hostId, () =>
+            this.engine.taskHostAvailable(task),
+          ),
+      );
+    return (task) => {
+      if (attempted.has(task.id)) return false;
+      if (!this.engine.firstWorkerUnbound(task)) return ownHost(task);
+      if (this.engine.targetHostWait(task)) return false;
+      const key = task.hostId ?? "";
+      let ready = catalogs.get(key);
+      if (ready === undefined) {
+        ready = this.engine
+          .workerHostCatalogs(task)
+          .some((host) => !failedHosts.has(host.hostId));
+        catalogs.set(key, ready);
+      }
+      return ready || ownHost(task);
+    };
+  }
+  /**
+   * Spec 069 §1: a submission adds its row to the ready index and nothing else.
+   * It signals the admitter only when its own pools have a free slot now; with no
+   * free capacity the next freed slot, released prerequisite, returning host or
+   * lifted hold admits it. The check reads active work only, never the queue.
+   */
+  admitSubmitted(task: Task): void {
+    if (this.engine.stopped || this.store.getMeta<boolean>("paused")) return;
+    if (dispatchBlocked(task) || isDispositionActive(task)) return;
+    if (
+      (this.store.getMeta<boolean>("dispatchHeld") ?? false) &&
+      boardDispatchHoldApplies(task)
+    )
+      return;
+    if (task.dependsOn.length && this.store.dependencyWait(task)) return;
+    if (
+      capacityLimitFor(
+        task,
+        this.store.activeCapacityTasks(),
+        this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
+        this.store.projectDispatchLimitResolver()(task),
+        this.store.papercutDispatchPolicy(),
+      )
+    )
+      return;
+    void this.engine.cleanContext(() =>
+      this.engine.wakeRepository(task.repoPath),
+    );
   }
   workspacePressureWait(task: Task, host = this.adapter.hostLoad?.()): string {
     return this.pressure.wait(task, host);
@@ -248,13 +283,6 @@ export class Dispatch {
         );
       return;
     }
-    const task = this.store.task(taskId);
-    if (
-      task.hostId &&
-      (task.resolution.hostWait ||
-        task.resolution.stop?.reason === "host_unavailable")
-    )
-      recordHostFailure(this.adapter, task.hostId, undefined);
   }
   /** Proof-only dispatch always enters its executor/release-GO route, never the worker launcher. */
   launchProofOnly(

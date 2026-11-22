@@ -445,18 +445,19 @@ function slotAdmissionExempt(task: Task, occupied = false): boolean {
   return prerequisiteWaitBlocksPhase(task) || occupied;
 }
 
-/** These queued tasks are still visited for observation, but own no place in slot order. */
+/**
+ * These queued tasks are still visited for observation, but own no place in slot
+ * order. A queued task's host is read live where it requests a slot (Spec 069
+ * §1), never from a host wait stored on the row, so a stale wait cannot keep a
+ * task out of the order after its host returns.
+ */
 export function queuedSlotObservationPending(task: Task): boolean {
   return (
     task.phase === "queued" &&
-    Boolean(
-      task.resolution.hostWait ||
-        task.resolution.stop?.reason === "host_unavailable" ||
-        (task.entrypoint === "review" &&
-          task.originHostId &&
-          task.originHostId !== task.hostId &&
-          task.resolution.stop?.reason === "origin_busy"),
-    )
+    task.entrypoint === "review" &&
+    Boolean(task.originHostId) &&
+    task.originHostId !== task.hostId &&
+    task.resolution.stop?.reason === "origin_busy"
   );
 }
 

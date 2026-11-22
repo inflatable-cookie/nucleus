@@ -79,8 +79,13 @@ export class PlanningSubmission {
       : this.store.insert(submission, hostId ?? "", validated.handoffText, validated.planningBase, initial, undefined, origin);
     if ("taskId" in inserted) return inserted;
     const task = this.store.update(inserted.id, { originWorkspaceId: resolved?.origin?.workspaceId ?? null });
-    void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
-    void this.engine.cleanContext(() => this.engine.wakeRepository(task.repoPath));
+    // Spec 069 §1: the row is in the ready index and the queue is inert. Only a
+    // question the operator must answer before any run (the Low usage level's
+    // approval, a required profile) opens from the task's own pass now; admission
+    // is signalled only while the task's pools have a free slot.
+    if (task.usageGate || task.requirePreferred || task.profileRequests?.worker?.required)
+      void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
+    this.engine.dispatchOwner.admitSubmitted(task);
     return { taskId: task.id, taskVersion: task.version, phase: task.phase, number: task.number, reference: task.reference };
   }
 }

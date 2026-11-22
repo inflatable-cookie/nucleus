@@ -40,6 +40,9 @@ the current code. Tom approved the design on 2026-11-18; implementation follows 
    participant and any unresolved effect that could still conflict with the
    step. Keep a durable wake obligation until ordinary lifecycle admission
    sees it, so clearing the last blocker survives a crash or a lost wake.
+   Since [Spec 069](069-scheduler.md) §1 a never-started queued task has no
+   stale wait to settle: it stores none, its queued wait is derived when read,
+   and a host wait an older pass left on it is settled at admission.
 4. **R4 · Decide actions once.** Sweep, `next` and owner verb execution use the
    same decision for the same facts and caller. Offer a verb only when it has
    an admissible step after the listed owner inputs. Put a refusal, missing
@@ -55,6 +58,8 @@ the current code. Tom approved the design on 2026-11-18; implementation follows 
    Continue a retained, already authorized step once. If an owner must
    authorize another revision, show `move to=work` with its inputs. Release
    alone creates no revision, policy waiver, approval, budget or route.
+   For queued work that admission is the Spec 069 §1 event-driven admitter:
+   each release signals it, and it takes the startable heads in fair order.
 6. **R6 · Read host capabilities as facts.** Distinguish a reachable host,
    an unavailable host, a definite pre-send refusal and an unsupported
    capability. A healthy host can still lack the required observation or
