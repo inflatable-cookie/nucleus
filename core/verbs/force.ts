@@ -1,3 +1,4 @@
+import { endsStopOnReason } from "../../shared/task-stop";
 import {
   forceCallerRefusal,
   FORCE_MOVE_REFUSAL,
@@ -909,7 +910,14 @@ export class ForceVerbs {
               task.id,
               {
                 reason: "Forced merge was stopped before sending; read next",
-                resolution: { ...current.resolution, mergeIntent: false },
+                resolution: {
+                  ...current.resolution,
+                  ...endsStopOnReason(
+                    current,
+                    "Forced merge was stopped before sending; read next",
+                  ),
+                  mergeIntent: false,
+                },
               },
               "merge_request_withdrawn",
               reason,
@@ -921,6 +929,10 @@ export class ForceVerbs {
                 reason: `Forced merge outcome is uncertain: ${String(error).slice(0, 1000)}`,
                 resolution: {
                   ...current.resolution,
+                  ...endsStopOnReason(
+                    current,
+                    `Forced merge outcome is uncertain: ${String(error).slice(0, 1000)}`,
+                  ),
                   mergeResponseOutcome: "uncertain",
                 },
               },

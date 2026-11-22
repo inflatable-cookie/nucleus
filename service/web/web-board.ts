@@ -71,6 +71,14 @@ const STREAM_BUFFER_LIMIT_BYTES = 256 * 1024;
 const STREAM_STALL_MS = 30_000;
 /** How often open streams refresh and re-check their paired session. */
 const STREAM_TOKEN_CHECK_MS = 30_000;
+/**
+ * Spec 069 §3: the live channel publishes at most one board per this window. A
+ * publication after a quiet window goes out at once; a burst of revisions inside it
+ * is coalesced into one trailing push of the latest board, so N task writes never
+ * fan out N full boards to every stream. Each stream still gets the whole board:
+ * per-stream deltas would need a client merge protocol, left for a later change.
+ */
+export const BOARD_PUBLISH_INTERVAL_MS = 500;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 /** The fields an unchanged-board acknowledgement carries, so the live channel matches the plugin's poll. */
 const COUNTER_FIELDS = [
@@ -234,6 +242,8 @@ export interface WebBoardOptions {
   streamBufferLimitBytes?: number;
   /** Fixture knob for the stall timeout; production uses the default. */
   streamStallMs?: number;
+  /** Fixture knob for the publication window; production uses `BOARD_PUBLISH_INTERVAL_MS`, 0 publishes every revision. */
+  publishIntervalMs?: number;
 }
 
 interface Stream {
@@ -267,6 +277,10 @@ export class WebBoard {
   private sessionWrites: Promise<void> = Promise.resolve();
   private readonly bufferLimit: number;
   private readonly stallMs: number;
+  private readonly publishIntervalMs: number;
+  /** The armed trailing publication of a coalesced burst, if any. */
+  private publishTimer: NodeJS.Timeout | null = null;
+  private lastPublishAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly options: WebBoardOptions) {
     this.tokens = new WebTokens(options.now);
@@ -274,6 +288,8 @@ export class WebBoard {
     this.bufferLimit =
       options.streamBufferLimitBytes ?? STREAM_BUFFER_LIMIT_BYTES;
     this.stallMs = options.streamStallMs ?? STREAM_STALL_MS;
+    this.publishIntervalMs =
+      options.publishIntervalMs ?? BOARD_PUBLISH_INTERVAL_MS;
   }
 
   /** The loopback address the server listens on, or null when it is not listening. */
@@ -358,6 +374,8 @@ export class WebBoard {
     this.unsubscribe = null;
     if (this.tokenTimer) clearInterval(this.tokenTimer);
     this.tokenTimer = null;
+    if (this.publishTimer) clearTimeout(this.publishTimer);
+    this.publishTimer = null;
     for (const stream of [...this.streams]) stream.response.end();
     const server = this.server;
     this.server = null;
@@ -861,7 +879,25 @@ export class WebBoard {
     }
   }
 
+  /**
+   * An executor publication. At most one push per window (`BOARD_PUBLISH_INTERVAL_MS`):
+   * the first after a quiet window goes out at once, the rest of a burst wait for one
+   * trailing push, which reads the latest board when it runs.
+   */
   private publish(): void {
+    if (this.publishIntervalMs <= 0) return this.flush();
+    if (this.publishTimer) return;
+    const wait = this.lastPublishAt + this.publishIntervalMs - Date.now();
+    if (wait <= 0) return this.flush();
+    this.publishTimer = setTimeout(() => {
+      this.publishTimer = null;
+      this.flush();
+    }, wait);
+    this.publishTimer.unref?.();
+  }
+
+  private flush(): void {
+    this.lastPublishAt = Date.now();
     for (const stream of [...this.streams]) this.pushTo(stream);
   }
 

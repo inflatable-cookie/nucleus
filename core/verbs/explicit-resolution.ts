@@ -569,6 +569,12 @@ function clearPlan(
             ? { reason: TASK_PROGRESSING_REASON }
             : {}),
         });
+      // Spec 069 §3: a host wait is worked out from the host's health when read;
+      // no record is stored to clear, and it ends when the host reconnects.
+      if (id === task.hostId && engine.inFlightHostWait(task))
+        throw Error(
+          `The host wait on ${id} is read from the host's health, not stored on the task; it clears when the host reconnects, and there is no record to clear`,
+        );
       break;
     case "owner_stop":
       if (

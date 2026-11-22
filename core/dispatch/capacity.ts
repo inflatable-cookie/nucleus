@@ -652,12 +652,13 @@ export class SlotAdmission {
     facts: Pick<SlotAdmissionView, "integrationReady" | "dependencyWait">;
   }>();
   /**
-   * The host sets each running dispatch pass skips (Spec 069 §2): hosts whose own
-   * call failed during that pass. Each pass registers its own set for its own
-   * duration. Lanes run outside the pass's async context, so the slot reading in a
-   * visit checks every running pass's set; a set ends with its pass.
+   * The hosts the current dispatch pass skips (Spec 069 §2): hosts whose own call
+   * failed during that pass. Only the current pass's set is read: the pass runs in
+   * it, and each of its visits re-enters it inside its own task lane
+   * (`withPassHostSkips`), because lanes run outside the pass's async context. Any
+   * other dispatch, including another pass running at the same time, sees none.
    */
-  private readonly passHostFaults = new Set<ReadonlySet<string>>();
+  private readonly passHostSkips = new AsyncLocalStorage<ReadonlySet<string>>();
 
   /**
    * Memoize ordering reads within one unchanged dispatch pass. `skippedHosts`, when
@@ -669,19 +670,19 @@ export class SlotAdmission {
     pass: () => Promise<T>,
     skippedHosts?: ReadonlySet<string>,
   ): Promise<T> {
-    if (skippedHosts) this.passHostFaults.add(skippedHosts);
-    try {
-      return await this.dispatchPass.run(
+    const run = () =>
+      this.dispatchPass.run(
         { revision: -1, facts: this.orderingFacts() },
         pass,
       );
-    } finally {
-      if (skippedHosts) this.passHostFaults.delete(skippedHosts);
-    }
+    return skippedHosts ? this.passHostSkips.run(skippedHosts, run) : run();
+  }
+  /** Run one visit of a dispatch pass with that pass's skipped hosts, and no other pass's. */
+  withPassHostSkips<T>(skippedHosts: ReadonlySet<string>, visit: () => T): T {
+    return this.passHostSkips.run(skippedHosts, visit);
   }
   private passSkipsHost(hostId: string): boolean {
-    for (const hosts of this.passHostFaults) if (hosts.has(hostId)) return true;
-    return false;
+    return this.passHostSkips.getStore()?.has(hostId) ?? false;
   }
 
   private orderingFacts() {

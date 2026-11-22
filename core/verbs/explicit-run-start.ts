@@ -1,3 +1,4 @@
+import { hostOutageIntervals } from "../scheduling/host-outage";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
@@ -724,6 +725,7 @@ export function runStartPlan(
     Date.now(),
     store.eventsAll(task.id),
     store.canonicalRepository(task.repoPath, task.repository),
+    hostOutageIntervals(store, task.hostId),
   );
   if (
     (input.role === "worker" &&

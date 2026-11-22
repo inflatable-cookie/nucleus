@@ -841,7 +841,7 @@ export class QueueRuntime {
           task,
           task.phase === "needs_attention",
         ),
-      externalWait: (task) => this.engine.queuedExternalWait(task),
+      externalWait: (task) => this.engine.currentExternalWait(task),
       profiles: (task) => this.engine.workerRoutingProfiles(task),
       hosts: (task) => this.engine.routingHostViews(task),
     });
@@ -851,7 +851,7 @@ export class QueueRuntime {
       (tasks, runs) =>
         this.engine.resolution.slotAdmissionReader(tasks, runs, true),
       () => this.hostRuns.liveRuns(),
-      (task) => this.engine.queuedExternalWait(task),
+      (task) => this.engine.currentExternalWait(task),
       () => this.engine.queuedWaitSignature(),
       () =>
         this.hostSession?.id ||

@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../../shared/task-stop";
 import { missingReportBindingCompletion } from '../../intake/reporting-failure';
 import type { Task } from '../../../shared/contracts';
 import { pausedStopWaitReason } from '../../../shared/contracts';
@@ -113,7 +114,7 @@ export class WorkerReconcile {
     // live-stop path found reviewing #641). No run, phase or stop record moves:
     // an unheld worker keeps the ordinary grace note and reminders, and a
     // release still retires the held stop with the last fence.
-    const current = this.engine.store.update(initial.id, dispatchBlocked(initial) ? { idleSince: now() } : { idleSince: now(), reason });
+    const current = this.engine.store.update(initial.id, dispatchBlocked(initial) ? { idleSince: now() } : { idleSince: now(), reason, ...stopClearedPatch(this.engine.store.task(initial.id), reason) });
     return { current, firstIdleObservation, graceElapsed };
   }
 

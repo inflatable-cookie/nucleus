@@ -718,13 +718,13 @@ export class Sweep {
           }
           // Spec 058 budgets (nucleus#1153): the wall clock pauses while the host, a
           // workspace or a dispatch hold keeps the task from progress — including a
-          // task whose quantum this sweep cannot start at all. The host wait is
-          // recorded first, so the pause is dated from the outage's own start.
+          // task whose quantum this sweep cannot start at all. A host outage is not
+          // one of them: the budget read discounts the host's own outage record.
           //
-          // The visit settles the task's host-scoped wait from its host's health
-          // (Spec 069 §2): the one settlement (`clearHostWait`) clears an outage wait
-          // and a transport deferral together once the host is connected. A host
-          // that is down keeps the wait, and one not yet read writes nothing.
+          // The visit reads the task's host health (Spec 069 §2, §3). A host that
+          // is down or not yet read writes nothing for the task; once the host is
+          // connected the one settlement (`clearHostWait`) clears a transport
+          // deferral or a wait an older version stored.
           let hostWait: string | null;
           try {
             hostWait = this.engine.hostWait(task);

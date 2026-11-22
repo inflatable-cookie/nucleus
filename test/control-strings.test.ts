@@ -1018,10 +1018,11 @@ test("don't normalise: store.events is the newest 100; eventsAll is everything, 
   assert.equal(recent.at(-1)!.detail, "20");
 });
 
-// The split map says only `Resolution.update` nulls the stop. Today both do on a
-// reason or phase change (store.ts `lifecycleChanged`). What differs, and must not
-// be normalised, is the merge and the event.
-test("don't normalise: both updates null the stop on a reason or phase change, and keep it otherwise", (t) => {
+// Spec 069 §3, one owner per field: only `Resolution.update`, the stop's owner,
+// nulls the stop on a reason change. The store funnel keeps it on a reason-only
+// write and ends it only on a phase change. What also differs, and must not be
+// normalised, is the merge and the event.
+test("don't normalise: Resolution.update nulls the stop on a reason change, the funnel only on a phase change", (t) => {
   const f = fixture(t);
   const stop = {
     reason: "lifecycle",
@@ -1037,7 +1038,23 @@ test("don't normalise: both updates null the stop on a reason or phase change, a
   };
   const viaStore = stopped();
   f.store.update(viaStore.id, { reason: "Changed" });
-  assert.equal(f.store.task(viaStore.id).resolution.stop, null);
+  assert.equal(
+    f.store.task(viaStore.id).resolution.stop?.reason,
+    "lifecycle",
+    "a reason-only funnel write keeps the stop's owner's record",
+  );
+  f.store.update(viaStore.id, {
+    resolution: { ...f.store.task(viaStore.id).resolution },
+    reason: "Changed again",
+  });
+  assert.equal(
+    f.store.task(viaStore.id).resolution.stop?.reason,
+    "lifecycle",
+    "repeating the current stop beside a reason change keeps it too",
+  );
+  const viaPhase = stopped();
+  f.store.update(viaPhase.id, { phase: "working" });
+  assert.equal(f.store.task(viaPhase.id).resolution.stop, null);
   const viaResolution = stopped();
   f.resolution.update(viaResolution, {}, { reason: "Changed" });
   assert.equal(f.store.task(viaResolution.id).resolution.stop, null);

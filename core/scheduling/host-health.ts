@@ -52,7 +52,9 @@ type Entry = {
  *
  * Readings are in memory. The durable host-outage record is written only when a
  * host moves into or out of `down`, so an outage costs one write however many
- * passes, calls or tasks observe it. A fresh service starts every host at
+ * passes, calls or tasks observe it. Only `read` (the runtime tick and the
+ * sweep's host reads) moves a state; every other query `peek`s, so a board or
+ * admission read never writes. A fresh service starts every host at
  * `unknown`: until the host has been seen connected (or the startup grace ends)
  * nothing is written for its tasks.
  */
@@ -74,31 +76,51 @@ export class HostHealth {
   /** Read one host's connection now and move its state, writing only on a `down` transition. */
   read(hostId: string, at = Date.now()): HostHealthReading {
     const entry = this.entry(hostId, at);
-    let next: HostHealthState;
-    if (this.connected(hostId)) {
-      // A new connection starts clean: an earlier session's failed passes say
-      // nothing about this one.
-      if (entry.state === "down" || entry.state === "unknown") {
-        entry.failedPasses = 0;
-        entry.detail = null;
-      }
-      next =
-        entry.failedPasses >= HOST_DEGRADED_AFTER_FAILED_PASSES
-          ? "degraded"
-          : "up";
-    } else
-      next =
-        entry.state === "unknown" && at - this.startedAt < this.startupGraceMs
-          ? "unknown"
-          : "down";
+    const next = this.nextState(hostId, entry, at);
+    // A new connection starts clean: an earlier session's failed passes say
+    // nothing about this one.
+    if (next !== "down" && next !== "unknown" && !connectedState(entry.state)) {
+      entry.failedPasses = 0;
+      entry.detail = null;
+    }
     this.move(hostId, entry, next, at);
     return this.reading(entry);
   }
 
+  /**
+   * The reading `read` would give now, without moving the state or writing
+   * anything (Spec 069 §3). Board, `next`, detail and launch-rule reads use it;
+   * only the runtime tick and the sweep's own host reads move a host's state, so
+   * a read never writes the outage record.
+   */
+  peek(hostId: string, at = Date.now()): HostHealthReading {
+    const entry = this.hosts.get(hostId) ?? freshEntry(at);
+    const state = this.nextState(hostId, entry, at);
+    if (state === entry.state) return this.reading(entry);
+    return this.reading({
+      state,
+      since: at,
+      detail: connectedState(entry.state) ? entry.detail : null,
+    });
+  }
+
+  private nextState(
+    hostId: string,
+    entry: Entry,
+    at: number,
+  ): HostHealthState {
+    if (this.connected(hostId)) {
+      const failed = connectedState(entry.state) ? entry.failedPasses : 0;
+      return failed >= HOST_DEGRADED_AFTER_FAILED_PASSES ? "degraded" : "up";
+    }
+    return entry.state === "unknown" && at - this.startedAt < this.startupGraceMs
+      ? "unknown"
+      : "down";
+  }
+
   /** Connected now, whether `up` or `degraded`: running and observed work goes on. */
   connectedNow(hostId: string): boolean {
-    const state = this.read(hostId).state;
-    return state === "up" || state === "degraded";
+    return connectedState(this.peek(hostId).state);
   }
 
   /**
@@ -146,18 +168,26 @@ export class HostHealth {
    * host admits one at a time, so a hung host cannot absorb many while a busy but
    * healthy one keeps flowing; a `down` or `unknown` host admits none. Returns the
    * wait a never-started task shows, or null when it may launch. `taskId` is the
-   * task asking, which never waits on its own launch.
+   * task asking, which never waits on its own launch. It reads (`peek`), never
+   * moves the state.
    */
   launchWait(hostId: string, taskId?: string, at = Date.now()): string | null {
-    const health = this.read(hostId, at);
+    const health = this.peek(hostId, at);
     if (health.state === "up") return null;
-    if (health.state === "degraded") {
-      const others = [...this.entry(hostId, at).launching].filter(
-        (id) => id !== taskId,
-      );
-      if (!others.length) return null;
-    }
+    if (
+      health.state === "degraded" &&
+      !this.launching(hostId).some((id) => id !== taskId)
+    )
+      return null;
     return healthWait(hostId, health);
+  }
+
+  /**
+   * The first dispatches in flight on this host now, by task id. The board's wait
+   * signature includes them, so a "one launch at a time" wait never stays stale.
+   */
+  launching(hostId: string): readonly string[] {
+    return [...(this.hosts.get(hostId)?.launching ?? [])].sort();
   }
 
   /** Record a first dispatch to this host as in flight; `launchSettled` ends it. */
@@ -173,13 +203,7 @@ export class HostHealth {
   private entry(hostId: string, at: number): Entry {
     let entry = this.hosts.get(hostId);
     if (!entry) {
-      entry = {
-        state: "unknown",
-        since: at,
-        failedPasses: 0,
-        detail: null,
-        launching: new Set(),
-      };
+      entry = freshEntry(at);
       this.hosts.set(hostId, entry);
     }
     return entry;
@@ -202,15 +226,27 @@ export class HostHealth {
       this.outages.observe(hostId, true, iso(at));
   }
 
-  private reading(entry: Entry): HostHealthReading {
-    const connected = entry.state === "up" || entry.state === "degraded";
+  private reading(
+    entry: Pick<Entry, "state" | "since" | "detail">,
+  ): HostHealthReading {
     return {
       state: entry.state,
       since: iso(entry.since),
-      detail: connected ? entry.detail : null,
+      detail: connectedState(entry.state) ? entry.detail : null,
     };
   }
 }
+
+const connectedState = (state: HostHealthState) =>
+  state === "up" || state === "degraded";
+
+const freshEntry = (at: number): Entry => ({
+  state: "unknown",
+  since: at,
+  failedPasses: 0,
+  detail: null,
+  launching: new Set(),
+});
 
 /**
  * The wait a never-started task shows for a host that does not admit it now. It

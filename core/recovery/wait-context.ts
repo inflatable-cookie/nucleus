@@ -18,6 +18,8 @@ import {
   slotRequestFenced,
 } from "../dispatch/capacity";
 import type { Store } from "../store/store";
+import { hostOutageIntervals } from "../scheduling/host-outage";
+import { HOST_WAIT_PRESERVED_STOPS } from "../../shared/host-outage";
 
 /** The typed stop identifies the recorded occurrence. Its detail is historical. */
 export function recordedSlotWait(task: Task): boolean {
@@ -55,6 +57,11 @@ export function taskWaitStateContext(
         !["verifying", "done", "cancelled"].includes(task.phase)));
   const slotWait = slotApplies ? slotAdmissionReason(task) : "";
   return {
+    // A finished task's budget is never read.
+    hostOutages:
+      task.phase === "done" || task.phase === "cancelled"
+        ? []
+        : hostOutageIntervals(store, task.hostId),
     decisionId,
     dependencyWait,
     prerequisiteOwner: unfinished.join(", ") || null,
@@ -91,6 +98,8 @@ function legacySlotText(task: Task): boolean {
 const QUEUED_HOST_STOP_TEXT = /^(?:Waiting on .+ since (\S+)|Waiting for host \S.*)$/;
 const QUEUED_HOST_WAIT_TEXT =
   /^(?:Waiting on .+ since \S+|Waiting for host \S.*|Waiting for a proven host identity|Waiting for consistent run host identity|Waiting for a proven origin host|Waiting for origin host \S.*|Waiting for (?:repository|operator default) host .+|(?:Repository|Operator default) host .+ is not registered; waiting for its configuration|Waiting for .+(?: to connect after the service start|: its calls are not answering, so it takes one launch at a time))$/;
+/** A started task's outage wait (`hostUnavailableDetail`), with the outage's start. */
+const STARTED_HOST_WAIT_TEXT = /^Waiting on .+ since (\S+)$/;
 export const isQueuedHostWait = (text: string): boolean =>
   QUEUED_HOST_WAIT_TEXT.test(text);
 /** Stops a queued task's dispatch waits record; a current host wait replaces them. */
@@ -191,9 +200,42 @@ export function taskWithCurrentWait(
   )
     stop = null;
   if (task.phase === "queued" && !queuedHost) hostWait = null;
+  let shown = reason;
+  // Spec 069 §3: a started task's host wait is worked out from its host's health
+  // when read (`Engine.currentExternalWait`), never stored per task. A read with
+  // no host reading keeps the row as stored.
+  if (task.phase !== "queued" && externalWait && task.hostId) {
+    const external = externalWait(task);
+    const outage = STARTED_HOST_WAIT_TEXT.exec(external);
+    if (outage) {
+      hostWait = { hostId: task.hostId, since: outage[1]! };
+      // An owner-facing stop keeps its answer and question; the wait shows beside it.
+      if (
+        !stop ||
+        !(HOST_WAIT_PRESERVED_STOPS as readonly string[]).includes(stop.reason)
+      ) {
+        if (stop?.reason !== "host_unavailable" || stop.detail !== external)
+          stop = taskStopRecord("host_unavailable", external, null, outage[1]!);
+        shown = external;
+      }
+    } else {
+      // The host is not down now: an outage wait an older version stored on the
+      // row is history, never the current wait. A transport deferral's own stop
+      // stays until the visit that sees its host answer settles it.
+      hostWait = null;
+      if (
+        stop?.reason === "host_unavailable" &&
+        STARTED_HOST_WAIT_TEXT.test(stop.detail)
+      ) {
+        if (shown === stop.detail || STARTED_HOST_WAIT_TEXT.test(shown))
+          shown = TASK_PROGRESSING_REASON;
+        stop = null;
+      }
+    }
+  }
   return {
     ...task,
-    reason,
+    reason: shown,
     resolution:
       stop === stored && hostWait === task.resolution.hostWait
         ? task.resolution

@@ -43,8 +43,9 @@ export {
 
 /**
  * `Engine.firstWorkerUnbound` read from the task's own fields alone, so the head
- * walk reads no runs. A queued row whose only trace of a dispatch is a released
- * run reads as unbound here; its visit makes the exact check.
+ * walk reads no runs for a head that is plainly bound. A queued row whose only
+ * trace of a dispatch is a released run still looks unbound here; the walk
+ * confirms such a head with its runs when that decides it (`startableHead`).
  */
 const firstWorkerShape = (task: Task) =>
   task.entrypoint !== "review" &&
@@ -166,8 +167,12 @@ export class Dispatch {
       const attempted = new Set<string>();
       const visit = (candidate: Task) =>
         this.engine
+          // The visit runs in its own task lane, outside this pass's async
+          // context: it re-enters this pass's skipped hosts, and no other pass's.
           .scheduleLane(`task:${candidate.id}`, LANE_PRIORITY_TASK, () =>
-            this.engine.dispatchTask(candidate.id, dispatchHeld),
+            this.resolution.withPassHostSkips(failedHosts, () =>
+              this.engine.dispatchTask(candidate.id, dispatchHeld),
+            ),
           )
           .catch((error) => {
             const hostId = hostFaultHost(error);
@@ -235,8 +240,9 @@ export class Dispatch {
    * first worker needs its target host kind, else any host whose catalog is read.
    *
    * Every host and target-host reading is taken once per host or repository and
-   * memoised, and the first-worker shape is read from the task's own fields, so a
-   * skipped head costs an in-memory check and never a store or host read.
+   * memoised, and the first-worker shape is read from the task's own fields. A
+   * head that looks unbound reads its runs only when reading it as bound would
+   * start it differently, so a head that cannot start costs no store read.
    */
   private startableHead(
     attempted: ReadonlySet<string>,
@@ -266,24 +272,29 @@ export class Dispatch {
     return (task) => {
       if (attempted.has(task.id)) return false;
       if (!queuedReviewOriginReady(task, hostReady)) return false;
-      if (!firstWorkerShape(task)) return hostLaunches(task.hostId);
+      const ownHost = hostLaunches(task.hostId);
+      if (!firstWorkerShape(task)) return ownHost;
       const hostKey = task.hostId ?? "";
-      if (
-        memo(targets, `${task.repoPath}\u0000${hostKey}`, () =>
+      const unbound =
+        !memo(targets, `${task.repoPath}\u0000${hostKey}`, () =>
           Boolean(this.engine.targetHostWait(task)),
-        )
-      )
-        return false;
-      return (
-        memo(catalogs, hostKey, () =>
+        ) &&
+        (memo(catalogs, hostKey, () =>
           this.engine
             .workerHostCatalogs(task)
             .some(
               (host) =>
                 !failedHosts.has(host.hostId) && hostLaunches(host.hostId),
             ),
-        ) || hostLaunches(task.hostId)
-      );
+        ) ||
+          ownHost);
+      // Read as bound or unbound, the head starts the same: no run is read.
+      if (unbound === ownHost) return ownHost;
+      // Otherwise its runs decide: a released run is a dispatch trace too, and
+      // such a task is bound to its own host, never to the target kind.
+      return taskNeverDispatched(task, this.store.runs(task.id))
+        ? unbound
+        : ownHost;
     };
   }
   /**

@@ -27,8 +27,10 @@ export interface DispatchAdmissionContext {
   targetHostWait(task: Task): string | null;
   /** Hosts online with a read catalog that could take a first worker. */
   workerHostIds(task: { hostId?: string | null }): string[];
-  /** Spec 069 §2: the host's health state, read from its connection. */
+  /** Spec 069 §2: the host's health state, read from its connection without moving it. */
   hostHealthState(id: string): string;
+  /** Spec 069 §2: the first dispatches in flight on the host, which a degraded host's launch wait reads. */
+  hostLaunching(id: string): readonly string[];
   /** Spec 069 §2: why the host admits no first dispatch for this task now, or null. */
   hostLaunchWait(id: string, taskId?: string): string | null;
 }
@@ -58,8 +60,8 @@ export class DispatchAdmission {
     const owned = active.filter(
       (task) => occupiesSlot(task) && task.workspaceId,
     ).length;
-    // Queued host waits are read, not stored (Spec 069 §1), so a host coming or
-    // going changes the board without a task write.
+    // Host waits are read, not stored, for queued and started tasks alike (Spec
+    // 069 §1, §3), so a host coming or going changes the board without a task write.
     const hosts = this.context
       .hostIds()
       .map((id) => [
@@ -67,6 +69,9 @@ export class DispatchAdmission {
         this.context.withHost(id, () => this.context.hostAvailable(id)),
         this.context.hostOutageSince(id),
         this.context.hostHealthState(id),
+        // A degraded host takes one launch at a time: the launch in flight is part
+        // of every queued wait on it, so its start or end changes the board.
+        this.context.hostLaunching(id),
       ]);
     return JSON.stringify([
       this.context.profileCatalogKnown(),

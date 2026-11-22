@@ -57,6 +57,25 @@ and labelled.
   write rolls back. A committed change whose board projection fails reports an
   uncertain outcome; the caller reads current state and Nucleus never replays it
   ([Spec 013](../specs/013-standalone-queue-service.md)).
+- One owner per field (Spec 069 §3). A task's stop belongs to its writer, which
+  records and clears it explicitly. `Resolution.update` is the stop owner's own
+  write: it clears the stop when its write changes the reason or phase without
+  naming one, and that is its rule, not the funnel's. The store funnel ends a
+  stop only on a lifecycle write, one that names `phase` and moves the phase or
+  the reason (an owner move to the phase the task is already in included),
+  unless the write names a new stop. A write that changes only `reason` keeps it,
+  so a progress note can never erase another writer's stop and set the two
+  writing in turn. A reason-only writer whose new reason ends the stop it
+  supersedes (workspace and worker creation progress, a checkpoint, a settled
+  check, review delivery, a dependency change, a stalled-turn stop step) says so
+  with `stopClearedPatch` or `endsStopOnReason`, which clear only when the reason
+  really changes, so re-asserting the same text never alternates with the
+  stop's owner. Annotation writers do not clear: a dispatch-held launch attempt
+  (the hold owns the `held` stop) and a queued task's usage-gate and target-host
+  notes (their dispatch waits are worked out on read).
+- Writes happen only on change (Spec 069 §3). A meta write of the value already
+  stored writes nothing (`Store.setMeta` compares first), so a pass that resets
+  `engineError` or `hostPassError` writes only when they change.
 - Owner verbs apply while Nucleus is paused (Tom, 2026-10-19). Task state changes
   at once; only dispatch of new agents waits for unpause. A continuation on an
   already-bound run is in-flight settlement and proceeds during pause.
@@ -90,7 +109,10 @@ Do not unify the two adapters.
 Event kinds, reason text, refusal text and typed refusal classes are control
 flow. They stay byte-identical. `test/control-strings.test.ts` pins the census.
 Do not normalise `store.update` against `Resolution.update` (the latter nulls
-`stop`), or `store.events` (newest 100) against `eventsAll` (all, oldest first).
+`stop` on a reason or phase change; the store funnel nulls it only on a write
+that names `phase` and moves the phase or the reason, never on a write that
+changes only `reason`, Spec 069 §3), or
+`store.events` (newest 100) against `eventsAll` (all, oldest first).
 Do not rewrap the typed refusal classes that settle an operation.
 
 ### Host-run scheduling
@@ -1235,6 +1257,13 @@ request identities and stored committed-handoff rows are not rewritten.
   count. `queue.queued-page` reads the rest on demand. A completed mutation that
   advances the board revision publishes before its reply. The one-second tick
   owns refreshes for read-only and unchanged replies and observes the publication budget.
+  The web board's live channel publishes at most one board per 500 ms window
+  (Spec 069 §3): the first publication after a quiet window goes out at once and
+  the rest of a burst is coalesced into one trailing push of the latest board, so
+  a burst of task writes never sends every stream one full board per revision.
+  Each push is still the whole board; per-stream deltas are not built yet. Board,
+  `next` and admission reads only `peek` host health, so a read never moves a
+  host's state or writes its outage record; the runtime tick and the sweep do.
 - The 20-second safety sweep handles active work and queued lifecycle obligations;
   it does not visit ordinary queued tasks. Its maintenance preflight still checks
   retained terminal and exceptional queued records, so its cost grows with those
@@ -1403,11 +1432,20 @@ request identities and stored committed-handoff rows are not rewritten.
 
 - A task's host is part of its identity (Tom, 2026-11-14; T3 lane document v18,
   host dropout option 1: wait). While its host is `down` in HostHealth (Spec 069
-  §2: the connection is lost) the task records its own durable wait
-  (`resolution.hostWait`: the host and the time HostHealth opened the outage). The
-  outage record is durable (`hostOutages` meta), so a service restart during the
-  outage keeps the same start, and HostHealth closes it on the host's first
-  connected reading.
+  §2: the connection is lost) the task waits on it. The wait is worked out when
+  read (Spec 069 §3), never stored per task: the board card, `next`, task detail
+  and the budget read it from the host's own outage record, dated from the time
+  HostHealth opened the outage (`Engine.inFlightHostWait` for a started task, the
+  admission read for a queued one). So a host going down or coming back writes
+  one record, not one per task. The outage record is durable (`hostOutages`
+  meta), so a service restart during the outage keeps the same start, and
+  HostHealth closes it on the host's first connected reading, appending it to the
+  host's closed history (`hostOutageHistory`, newest 50). A `resolution.hostWait`
+  or outage-text `host_unavailable` stop an older service stored is ignored by
+  the read while the host is not down and settled by the next connected visit.
+  `record.clear host_wait` clears only such a stored wait; for a read wait it
+  refuses, naming that the wait ends when the host reconnects. A published review
+  verdict is not applied while the task's host has an open outage record.
 - A service start never parks tasks. Until HostHealth has seen a host connected
   it is `unknown`: its tasks keep their state, nothing is written for them and
   nothing is sent to the host. A queued task's card reads `Waiting for <host> to
@@ -1422,9 +1460,10 @@ request identities and stored committed-handoff rows are not rewritten.
 - A transport deferral of a task's own host is the same wait (Spec 066 batch 2,
   nucleus#1332). `transportDeferred` records the cause durably (one
   `transport_deferred` event per reading) and the host-scoped wait: a
-  `host_unavailable` stop carrying its diagnostic, beside the independent
-  `resolution.hostWait` when an outage recorded one. The pass that observes the
-  host answer settles both through one settlement (`clearHostWait`), recording one
+  `host_unavailable` stop carrying its diagnostic (a call that failed for this
+  task is the task's own record; an outage is not). The pass that observes the
+  host answer settles it, and any wait an older service stored, through one
+  settlement (`clearHostWait`), recording one
   `host_wait_cleared` event, and the ready task is visited in that same pass.
   The settlement reads HostHealth: a connected (`up` or `degraded`) host settles
   the wait. Nothing is settled from the stop's text or a reason prefix (the #1321
@@ -1474,15 +1513,17 @@ request identities and stored committed-handoff rows are not rewritten.
 - A queued task waiting for an unavailable fixed host does not reserve an available
   slot ahead of another host; its reservation returns when its host wait clears.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
-  more specific already stops the task the stop reads `host_unavailable`, naming
-  the host and the outage start. A stop that belongs to an owner answer (budget,
+  more specific already stops the task every read shows the stop as
+  `host_unavailable`, naming the host and the outage start; nothing is written. A stop that belongs to an owner answer (budget,
   ladder escalation, responsible question, hold, proof wait, interactive turn,
   paused stop, operator attention) keeps its own record and question: the host
   wait still pauses the wall clock, shows on the card beside the stop, and joins
   the project's outage notice.
 - Nothing is sent to that host: no quantum, launch, continuation, notification,
   recovery or coordinator, and no stall, incident or escalation is raised from
-  the outage. The wall-time budget pauses for the wait (Spec 058 budgets). New
+  the outage. The wall-time budget pauses for the wait (Spec 058 budgets): every
+  budget read discounts the task host's open and closed outages
+  (`hostOutageIntervals`), so no clock opens or closes on any task. New
   dispatch that already owns a host waits the same way. A first worker instead
   considers the other online hosts.
 - When the host returns, the wait clears and observation re-proves each retained
@@ -2988,6 +3029,11 @@ movement invalidates source approval and preserves the normal readiness gates.
   reported as `wallMs.pausedMs` on the detail and named on the budget's time bar, and
   subtracted from the wall figure, so a defect never spends a task's budget. A budget
   pause, a merge hold, capacity queueing and the task's own validation keep charging.
+  A host outage opens no clock (Spec 069 §3): every budget reader passes the task
+  host's outages from the host's own record (`hostOutageIntervals`) to
+  `taskBudget`, which discounts them like a hold, so an outage writes nothing per task.
+  The read uses the task's current host, so a task moved to another host keeps no
+  discount for its old host's outages.
 - Any thread registers itself with `task.register` (Spec 058 slice 4): the worker
   is the calling thread, bound to its own live worktree, always responsible, with
   no planner, owner or coordinator. Identity comes from the authenticated thread,

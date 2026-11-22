@@ -95,6 +95,12 @@ The evidence is outside the repository.
 - Board publication coalesces to at most one per tick, and the stream sends
   what changed rather than the whole board.
 
+Batch 3 builds all of this except the deltas: the live channel publishes at most
+one whole board per 500 ms window. Sending only what changed needs a client
+merge protocol and is left for a later change. A host outage's budget pause is
+read from the host's own outage record and its closed history, so it needs no
+per-task clock.
+
 ### 4. Each pass covers only active work
 
 - **Indexed sets.** Passes read indexed sets instead of `store.tasks()`: live
