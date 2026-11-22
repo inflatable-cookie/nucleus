@@ -1,0 +1,557 @@
+import { test, type TestContext } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { Store } from "../core/store/store";
+import { Engine } from "../core/engine";
+import { enginePorts } from "../core/port-context";
+import {
+  FINISHED_CATCH_UP_PAGE,
+  HostPass,
+  finishedCatchUpCursorKey,
+} from "../core/scheduling/host-pass";
+import type { Adapter } from "../core/host";
+import type { Task } from "../shared/contracts";
+import { fakeAdapter, submission } from "./support/fakes";
+
+/**
+ * Spec 069 §4 (Tom, 2026-11-22): a pass's cost grows with active work, never with
+ * the retained history. Passes read indexed sets (live tasks per host, the active
+ * set, owner stops) instead of copying every row; finished history is caught up a
+ * page at a time on its own durable cursor.
+ *
+ * Everything here runs the real Store, Engine, sweep and host pass. Only the
+ * task quantum is recorded instead of run, so a pass's own reads are what is
+ * counted, and the adapter is a presentation host that counts every call.
+ */
+
+const HOST = "host-1";
+const OTHER = "host-2";
+type Loose = Record<string, any>;
+
+function scratch(t: TestContext): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "ns-active-passes-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+const insert = (store: Store, title: string, hostId = HOST) =>
+  store.insert(submission({ title }), hostId, "handoff", "a".repeat(40));
+
+/** A dispatched task: the workspace and worker a launch records. */
+const launch = (store: Store, task: Task, active = true) =>
+  store.update(
+    task.id,
+    {
+      phase: "working",
+      workspaceIntent: true,
+      agentIntent: true,
+      workspaceId: `ws-${task.id}`,
+      agentId: `worker-${task.id}`,
+      agentActive: active,
+      runId: "initial",
+    },
+    "dispatched",
+  );
+
+/**
+ * A merged closeout: done, its workspace archived, and the worker thread whose
+ * cleanup the finished-thread catch-up still owes.
+ */
+const finish = (store: Store, task: Task) => {
+  const current = store.task(task.id);
+  return store.update(current.id, {
+    phase: "done",
+    agentActive: false,
+    finishedAt: new Date().toISOString(),
+    resolution: {
+      ...current.resolution,
+      mergedCommit: "c".repeat(40),
+      archivedWorkspaceIds: current.workspaceId ? [current.workspaceId] : [],
+    },
+  });
+};
+
+function populate(store: Store, active: number, finished: number) {
+  store.transaction(() => {
+    for (let i = 0; i < finished; i++)
+      finish(store, launch(store, insert(store, `Finished ${i}`), false));
+    for (let i = 0; i < active; i++)
+      launch(store, insert(store, `Active ${i}`));
+  });
+}
+
+/**
+ * Retained history at the live database's scale, quickly: one merged closeout is
+ * written through the real funnels, and its stored row is copied under fresh
+ * identities (task, submission, workspace and worker). Every copy is the exact
+ * stored shape of a real closeout; the next open parses them into the projection.
+ */
+function retainHistory(store: Store, count: number) {
+  if (!count) return;
+  const template = finish(
+    store,
+    launch(store, insert(store, "Finished 0"), false),
+  );
+  const copy = store.db.prepare(
+    `INSERT INTO tasks(id, submission, input_hash, data)
+     SELECT ?, ?, input_hash, json_set(data, '$.id', ?, '$.submissionId', ?,
+       '$.title', ?, '$.workspaceId', ?, '$.agentId', ?,
+       '$.resolution.archivedWorkspaceIds', json_array(?))
+     FROM tasks WHERE id=?`,
+  );
+  store.db.exec("BEGIN");
+  for (let i = 1; i < count; i++) {
+    const id = randomUUID();
+    const submissionId = randomUUID();
+    copy.run(
+      id,
+      submissionId,
+      id,
+      submissionId,
+      `Finished ${i}`,
+      `ws-${id}`,
+      `worker-${id}`,
+      `ws-${id}`,
+      template.id,
+    );
+  }
+  store.db.exec("COMMIT");
+}
+
+/** A presentation host whose every call is counted, by method. */
+function countingAdapter(calls: Record<string, number>, seen?: Loose) {
+  const bump = (key: string, by = 1) => (calls[key] = (calls[key] ?? 0) + by);
+  const adapter = fakeAdapter({
+    hostId: HOST,
+    observe: async (id: string) => ({
+      id,
+      workspaceId: null,
+      status: "running" as const,
+      active: true,
+      permissions: false,
+      error: "",
+    }),
+    beginHostPass: (tasks: readonly Task[]) =>
+      void bump("beginHostPass.tasks", tasks.length),
+    endHostPass: () => {},
+    reconcileTaskRow: async () => {},
+    rowSnoozeVisibility: async () => ({ kind: "clear" as const }),
+    reconcileThreadTitles: async (tasks: readonly Task[]) =>
+      void bump("reconcileThreadTitles.tasks", tasks.length),
+    reconcileFinishedParents: async (tasks: readonly Task[]) => {
+      bump("reconcileFinishedParents.tasks", tasks.length);
+      seen?.parents?.push(tasks.map((task) => task.id));
+      return [];
+    },
+  }) as Loose;
+  for (const key of Object.keys(adapter)) {
+    const method = adapter[key];
+    if (typeof method !== "function" || key === "isConnected") continue;
+    adapter[key] = function (this: unknown, ...args: unknown[]) {
+      bump(`call:${key}`);
+      return method.apply(this, args);
+    };
+  }
+  return adapter as unknown as Adapter;
+}
+
+/** A real engine over the store; the quantum is recorded, never run. */
+function engineFor(
+  t: TestContext,
+  store: Store,
+  adapter: Adapter,
+  live = { up: true },
+) {
+  const engine = new Engine(store, adapter, 60_000);
+  engine.hostIds = () => [HOST];
+  engine.hostAvailable = (id) => id === HOST && live.up;
+  const visited: string[] = [];
+  engine.scheduleTaskQuantum = async (taskId) => {
+    visited.push(taskId);
+  };
+  t.after(() => engine.stop());
+  return { engine, visited };
+}
+
+function hostPassFor(engine: Engine) {
+  return new HostPass(
+    enginePorts(
+      engine,
+      [
+        "adapter",
+        "host",
+        "inventoryHostMatches",
+        "observeRetiredWorkers",
+        "retiredObservationKey",
+        "retiredObservationPlan",
+        "scheduleLane",
+        "stopped",
+        "store",
+      ],
+      ["observationTargets"],
+    ),
+  );
+}
+
+/** Count the store's whole-history read and its per-task runs read on this instance. */
+function countStoreReads(store: Store, calls: Record<string, number>) {
+  const tasks = store.tasks.bind(store);
+  store.tasks = () => {
+    calls["store.tasks"] = (calls["store.tasks"] ?? 0) + 1;
+    return tasks();
+  };
+  const runs = store.runs.bind(store);
+  store.runs = (taskId: string) => {
+    calls["store.runs"] = (calls["store.runs"] ?? 0) + 1;
+    return runs(taskId);
+  };
+}
+
+/**
+ * One audit pass's reads and host calls over a store with `active` running tasks
+ * and `finished` merged ones, after a service restart (the sets are rebuilt from
+ * the projection on open, and no finished task is a fresh hint).
+ */
+async function passCost(t: TestContext, active: number, finished: number) {
+  const path = join(scratch(t), "queue.sqlite");
+  const seed = new Store(path);
+  seed.setMeta("paused", false);
+  seed.setMeta("globalLimit", 0);
+  retainHistory(seed, finished);
+  populate(seed, active, 0);
+  seed.close();
+  const store = new Store(path);
+  t.after(() => store.close());
+  const calls: Record<string, number> = {};
+  const { engine } = engineFor(t, store, countingAdapter(calls));
+  // The first pass reads the host's health; the measured pass is a steady one.
+  await engine.auditPass(true);
+  countStoreReads(store, calls);
+  for (const key of Object.keys(calls)) delete calls[key];
+  await engine.auditPass(true);
+  assert.equal(store.getMeta("engineError"), "", "the pass ran clean");
+  return { ...calls };
+}
+
+test("a pass over 2,000 finished tasks costs what it costs over 200, and history adds at most one page over none", async (t) => {
+  const none = await passCost(t, 20, 0);
+  const some = await passCost(t, 20, 200);
+  const many = await passCost(t, 20, 2000);
+  assert.deepEqual(
+    many,
+    some,
+    "every read and host call is the same at 200 and 2,000 retained finished tasks",
+  );
+  assert.equal(many["store.tasks"], undefined, "no pass step copies every row");
+  assert.equal(
+    many["beginHostPass.tasks"],
+    20,
+    "observation reads the live set",
+  );
+  for (const key of new Set([...Object.keys(none), ...Object.keys(many)])) {
+    const extra = (many[key] ?? 0) - (none[key] ?? 0);
+    assert.ok(
+      extra >= 0 && extra <= FINISHED_CATCH_UP_PAGE,
+      `${key}: ${extra} more over 2,000 finished tasks than over none, within one catch-up page`,
+    );
+  }
+  assert.equal(
+    many["reconcileFinishedParents.tasks"],
+    FINISHED_CATCH_UP_PAGE,
+    "the parent archive reads one page of history",
+  );
+});
+
+test("the slow cursor visits all finished history a page at a time, persists across a restart, and a fresh finish is caught up at once", async (t) => {
+  const path = join(scratch(t), "queue.sqlite");
+  const total = 2 * FINISHED_CATCH_UP_PAGE + 10;
+  const seed = new Store(path);
+  seed.setMeta("paused", false);
+  populate(seed, 3, total);
+  const expected = seed
+    .tasks()
+    .filter((task) => task.phase === "done")
+    .map((task) => task.id)
+    .sort();
+  seed.close();
+
+  const open = () => {
+    const store = new Store(path);
+    t.after(() => {
+      try {
+        store.close();
+      } catch {
+        /* closed by the roll below */
+      }
+    });
+    const seen = { parents: [] as string[][] };
+    const { engine } = engineFor(t, store, countingAdapter({}, seen));
+    const pass = hostPassFor(engine);
+    const run = () => engine.withHost(HOST, () => pass.run(HOST));
+    return { store, engine, seen, run };
+  };
+
+  let service = open();
+  const first = await service.run();
+  assert.deepEqual(
+    service.seen.parents[0],
+    expected.slice(0, FINISHED_CATCH_UP_PAGE),
+    "the first page, in identity order",
+  );
+  assert.deepEqual(
+    [...first.finishedCatchUp.keys()].sort(),
+    expected.slice(0, FINISHED_CATCH_UP_PAGE),
+    "thread cleanup is selected from the same page only",
+  );
+  assert.equal(
+    service.store.getMeta(finishedCatchUpCursorKey(HOST)),
+    expected[FINISHED_CATCH_UP_PAGE - 1],
+    "the cursor's position is durable",
+  );
+
+  // A service roll resumes from the recorded position, not from the start.
+  await service.engine.stop();
+  service.store.close();
+  service = open();
+  const second = await service.run();
+  assert.deepEqual(
+    service.seen.parents[0],
+    expected.slice(FINISHED_CATCH_UP_PAGE, 2 * FINISHED_CATCH_UP_PAGE),
+  );
+  assert.deepEqual(
+    [...second.finishedCatchUp.keys()].sort(),
+    expected.slice(FINISHED_CATCH_UP_PAGE, 2 * FINISHED_CATCH_UP_PAGE),
+  );
+  const third = await service.run();
+  assert.deepEqual(
+    service.seen.parents[1],
+    expected.slice(2 * FINISHED_CATCH_UP_PAGE),
+  );
+  assert.equal(third.finishedCatchUp.size, 10);
+  assert.equal(
+    service.store.getMeta(finishedCatchUpCursorKey(HOST)),
+    "",
+    "the last page wraps the cursor",
+  );
+  await service.run();
+  assert.deepEqual(
+    service.seen.parents[2],
+    expected.slice(0, FINISHED_CATCH_UP_PAGE),
+    "and the next pass starts over",
+  );
+
+  // A task that finishes now is caught up on the very next pass, wherever the
+  // cursor is; the hint is taken once.
+  const running = service.store
+    .tasks()
+    .find((task) => task.phase === "working")!;
+  finish(service.store, running);
+  await service.run();
+  assert.ok(
+    service.seen.parents[3]!.includes(running.id),
+    "the fresh finish is in this pass",
+  );
+  assert.ok(
+    service.seen.parents[3]!.length <= 2 * FINISHED_CATCH_UP_PAGE,
+    "a pass reads at most the fresh finishes and one page",
+  );
+  const cursor = expected[FINISHED_CATCH_UP_PAGE - 1]!;
+  const page = [...expected, running.id]
+    .sort()
+    .filter((id) => id > cursor)
+    .slice(0, FINISHED_CATCH_UP_PAGE);
+  assert.deepEqual(
+    new Set(service.seen.parents[3]),
+    new Set([running.id, ...page]),
+    "the fresh finish, then the cursor's next page, which now includes it in order",
+  );
+});
+
+test("the live, finished and owner-stop sets follow every write and are rebuilt on open", async (t) => {
+  const path = join(scratch(t), "queue.sqlite");
+  let store = new Store(path);
+  const check = (label: string) => {
+    const rows = store.tasks();
+    for (const host of [HOST, OTHER]) {
+      assert.deepEqual(
+        store.liveHostTasks(host).map((task) => task.id),
+        rows
+          .filter(
+            (task) =>
+              task.hostId === host &&
+              !["done", "cancelled"].includes(task.phase),
+          )
+          .map((task) => task.id),
+        `${label}: live tasks on ${host}, newest first`,
+      );
+      const finished: string[] = [];
+      for (let after: string | null = null; ; ) {
+        const page = store.finishedHostTaskPage(host, after, 2);
+        finished.push(...page.tasks.map((task) => task.id));
+        if (!page.next) break;
+        after = page.next;
+      }
+      assert.deepEqual(
+        finished,
+        rows
+          .filter(
+            (task) =>
+              task.hostId === host &&
+              ["done", "cancelled"].includes(task.phase),
+          )
+          .map((task) => task.id)
+          .sort(),
+        `${label}: finished tasks on ${host}, in identity order`,
+      );
+    }
+    assert.deepEqual(
+      store.taskHostIds().sort(),
+      [...new Set(rows.map((task) => task.hostId!))].sort(),
+      `${label}: hosts`,
+    );
+    assert.deepEqual(
+      store.ownerStopTasks().map((task) => task.id),
+      rows.filter((task) => task.resolution.ownerStop).map((task) => task.id),
+      `${label}: owner stops`,
+    );
+  };
+
+  const a = insert(store, "A");
+  const b = insert(store, "B");
+  const c = insert(store, "C", OTHER);
+  const d = insert(store, "D");
+  check("insert");
+  launch(store, a);
+  launch(store, b);
+  check("phase change");
+  finish(store, a);
+  check("closeout");
+  assert.deepEqual(
+    store.takeRecentlyFinishedHostTasks(HOST, 10).map((task) => task.id),
+    [a.id],
+    "the closeout is a fresh hint for its host",
+  );
+  assert.deepEqual(
+    store.takeRecentlyFinishedHostTasks(HOST, 10),
+    [],
+    "taken once",
+  );
+  store.update(c.id, { phase: "cancelled" });
+  check("cancel");
+  // A never-started task moved to its worker profile's host (the one host change an
+  // update allows) moves between the hosts' sets.
+  const e = insert(store, "E");
+  check("insert again");
+  store.update(
+    e.id,
+    {
+      hostId: OTHER,
+      hostSelection: { hostId: OTHER, basis: "worker_profile" },
+    },
+    "worker_host_moved",
+  );
+  check("host change");
+  assert.equal(store.task(e.id).hostId, OTHER);
+  store.update(d.id, {
+    resolution: {
+      ...store.task(d.id).resolution,
+      ownerStop: {
+        operationId: null,
+        taskVersion: store.task(d.id).version,
+        role: null,
+        reason: "Owner stop",
+        caller: null,
+        targetRunIds: [],
+        hadIntegrationTurn: false,
+        mergeRequested: false,
+        mergeHead: null,
+        mergeRequestedAt: null,
+        executorContinues: [],
+        nonTransientIssue: null,
+        cancellations: [],
+        recordedAt: new Date().toISOString(),
+      },
+    },
+  });
+  check("owner stop");
+  store.update(d.id, {
+    resolution: { ...store.task(d.id).resolution, ownerStop: null },
+  });
+  check("owner stop cleared");
+  store.update(c.id, { removedAt: new Date().toISOString() });
+  check("removal");
+  // A write that rolls back leaves every set as it was.
+  assert.throws(() =>
+    store.transaction(() => {
+      finish(store, store.task(b.id));
+      throw new Error("rolled back");
+    }),
+  );
+  check("rollback");
+  assert.equal(store.task(b.id).phase, "working");
+
+  // A service restart rebuilds the sets from the projection; no hint survives.
+  const before = {
+    live: store.liveHostTasks(HOST).map((task) => task.id),
+    other: store.liveHostTasks(OTHER).map((task) => task.id),
+  };
+  store.close();
+  store = new Store(path);
+  t.after(() => store.close());
+  check("restart");
+  assert.deepEqual(
+    {
+      live: store.liveHostTasks(HOST).map((task) => task.id),
+      other: store.liveHostTasks(OTHER).map((task) => task.id),
+    },
+    before,
+  );
+  assert.deepEqual(store.takeRecentlyFinishedHostTasks(OTHER, 10), []);
+});
+
+test("every live task is visited within bounded window passes, and finished history never is", async (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  store.setMeta("globalLimit", 0);
+  populate(store, 60, 0);
+  retainHistory(store, 500);
+  const { engine, visited } = engineFor(t, store, countingAdapter({}));
+  const live = new Set(store.liveHostTasks(HOST).map((task) => task.id));
+  // Three windows of 25 cover 60 tasks; the fourth wraps to the start.
+  for (let pass = 0; pass < 3; pass++) await engine.auditPass(false);
+  assert.equal(visited.length, 60, "each live task once");
+  assert.deepEqual(
+    new Set(visited),
+    live,
+    "every live task, and only live ones",
+  );
+  visited.length = 0;
+  await engine.auditPass(false);
+  assert.equal(visited.length, 25, "the next window starts the fleet again");
+  assert.ok(visited.every((id) => live.has(id)));
+});
+
+test("a host that is down is not walked again: its passes read nothing from it", async (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  store.setMeta("globalLimit", 0);
+  populate(store, 5, 0);
+  retainHistory(store, 200);
+  const calls: Record<string, number> = {};
+  const live = { up: false };
+  const { engine } = engineFor(t, store, countingAdapter(calls), live);
+  await engine.auditPass(true);
+  assert.equal(engine.hostHealth.read(HOST).state, "down");
+  for (const key of Object.keys(calls)) delete calls[key];
+  for (let pass = 0; pass < 3; pass++) await engine.auditPass(true);
+  assert.deepEqual(
+    calls,
+    {},
+    "no host call, row, title or parent read while it is down",
+  );
+});

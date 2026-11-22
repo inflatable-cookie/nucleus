@@ -1681,7 +1681,11 @@ of it. The step is now independent:
   `parents` record whose task the same pass reports as this host's and terminal
   (removed, done, or cancelled with no active disposition). The record is on disk,
   so the obligation survives a task workspace archive and a service roll, and
-  Inbox, decision-card, row and title faults cannot hide it.
+  Inbox, decision-card, row and title faults cannot hide it. The pass reports the
+  tasks that finished since the last pass and one page of older finished history
+  from its slow cursor (Spec 069 §4), so a fresh finish is archived on the next
+  pass and an older entry that still owes its archive is reached again once the
+  cursor wraps; no pass reads every finished task.
 - **Bounded and rotating.** One pass visits at most `PARENT_ARCHIVE_BATCH` (four)
   entries, the one whose last attempt is oldest first, and records the attempt's
   timestamp on the binding, so a backlog drains over sweeps and no parent waits

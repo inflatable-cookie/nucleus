@@ -21,7 +21,10 @@ the current code. Tom approved the design on 2026-11-18; implementation follows 
    holds, accepted results, pending effects and applicable policy. Share bounded
    host, forge, process and capacity observations across the pass (host
    availability itself is the host's health, read from its connection; see
-   [Spec 069](069-scheduler.md) §2). Mark an
+   [Spec 069](069-scheduler.md) §2). A pass reads its tasks from indexed sets —
+   live tasks per host, the active set and owner stops — never by copying every
+   retained row, and finished history is caught up a page at a time on its own
+   durable cursor (Spec 069 §4). Mark an
    observation as unknown when it is unavailable, ambiguous, incomplete or
    belongs to a different identity. Recheck every applicable wait on each visit.
    A retry deadline can govern an expensive probe, while the pass still checks

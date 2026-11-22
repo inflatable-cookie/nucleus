@@ -35,6 +35,17 @@ import { HiddenRows } from "./hidden-row";
 
 const ROW_FAILURE_LABEL = "task row presentation";
 
+/**
+ * Finished tasks one host pass catches up on from its slow cursor (Spec 069 §4),
+ * and at most as many again that finished since the last pass. Finished history is
+ * visited a page at a time, never all at once.
+ */
+export const FINISHED_CATCH_UP_PAGE = 25;
+
+/** The durable position of one host's finished-history cursor. */
+export const finishedCatchUpCursorKey = (host: string) =>
+  `finishedCatchUpCursor:${host}`;
+
 function threadSettlementFailureReason(error: unknown): string {
   if (!(error instanceof Error)) return "unknown error";
   const record = error as Error & {
@@ -109,23 +120,59 @@ export class HostPass {
    * The pass's rows: one per task this host presents, from the one attention
    * projection (nucleus#1366). They are derived before any write so the row step and
    * the title step read the same facts and a row fault cannot leave a partial
-   * reading behind (nucleus#1443).
+   * reading behind (nucleus#1443). A finished task's row costs no runs read.
    */
-  private taskRows(hostId: string): TaskRowProjection[] {
+  private taskRows(tasks: readonly Task[]): TaskRowProjection[] {
+    return tasks.map((task) => ({
+      task,
+      attention: taskRowAttention(this.store, task),
+    }));
+  }
+
+  /**
+   * The live tasks of this host that have a thread (Spec 069 §4): the active set
+   * (holding a slot, workspace, run or retained role) on this host. A queued task
+   * that never started has no thread to present, and finished history is the slow
+   * cursor's, so neither costs a row, title or hidden-row read here.
+   */
+  private presentedTasks(host: string): Task[] {
     return this.store
-      .tasks()
-      .filter((task) => task.hostId === hostId && task.removedAt == null)
-      .map((task) => ({ task, attention: taskRowAttention(this.store, task) }));
+      .activeCapacityTasks()
+      .filter((task) => task.hostId === host);
+  }
+
+  /**
+   * The finished tasks this pass catches up on (Spec 069 §4): those that finished
+   * since the last pass, then one page from this host's durable slow cursor. Each
+   * pass visits at most two pages of history, and every finished task is reached
+   * again once the cursor wraps, so an owed archive or cleanup is retried in
+   * bounded time without any pass reading all of it.
+   */
+  private finishedCatchUp(host: string): Task[] {
+    const recent = this.store.takeRecentlyFinishedHostTasks(
+      host,
+      FINISHED_CATCH_UP_PAGE,
+    );
+    const key = finishedCatchUpCursorKey(host);
+    const after = this.store.getMeta<string>(key) || null;
+    const page = this.store.finishedHostTaskPage(
+      host,
+      after,
+      FINISHED_CATCH_UP_PAGE,
+    );
+    if ((page.next ?? "") !== (after ?? ""))
+      this.store.setMeta(key, page.next ?? "");
+    const byId = new Map(recent.map((task) => [task.id, task]));
+    for (const task of page.tasks) byId.set(task.id, task);
+    return [...byId.values()];
   }
 
   /** Refresh host thread titles and Inbox offers after a sweep opens a new decision. */
-  async reconcileInboxTitles(
-    host: string,
-    tasks: readonly Task[],
-  ): Promise<void> {
+  async reconcileInboxTitles(host: string): Promise<void> {
     if (!this.adapter.reconcileThreadTitles) return;
+    const tasks = this.presentedTasks(host);
     await this.step(host, "reconcileThreadTitles", () =>
-      this.adapter.reconcileThreadTitles?.(tasks, this.taskRows(host)),
+      this.adapter.reconcileThreadTitles?.(tasks, this.taskRows(tasks)),
     );
   }
 
@@ -182,7 +229,8 @@ export class HostPass {
     // The pass's own task list is what the host's thread observation is scoped to:
     // a thread whose task is over is not read again, and every read this pass makes
     // is shared by its consumers. A host that does not present threads ignores it.
-    const tasks = this.store.tasks().filter((task) => task.hostId === host);
+    // It is the host's live set (Spec 069 §4): finished history is never copied here.
+    const tasks = this.store.liveHostTasks(host);
     this.callFaults.delete(host);
     let passed: Omit<HostPassResult, "callFault"> = {
       inventory: null,
@@ -193,7 +241,7 @@ export class HostPass {
         this.adapter.beginHostPass?.(tasks),
       );
       try {
-        passed = await this.hostPass(host, tasks);
+        passed = await this.hostPass(host);
       } finally {
         await this.step(host, "endHostPass", () =>
           this.adapter.endHostPass?.(),
@@ -211,19 +259,30 @@ export class HostPass {
   /** The pass's steps, between a host's `beginHostPass` and its `endHostPass`. */
   private async hostPass(
     host: string,
-    tasks: readonly Task[],
   ): Promise<Omit<HostPassResult, "callFault">> {
     const result: Omit<HostPassResult, "callFault"> = {
       inventory: null,
       finishedCatchUp: new Map(),
     };
+    // Spec 069 §4: the pass presents this host's live tasks that have a thread, and
+    // catches up on a bounded page of finished ones. Neither grows with history.
+    // Each step reads the set afresh, so a write an earlier step made (an escalation
+    // the hidden-row step raised) is what the rows after it present.
+    const finished = this.finishedCatchUp(host);
+    const presented = (): Task[] => [
+      ...this.presentedTasks(host),
+      ...finished.flatMap((task) => {
+        const current = this.store.taskOrNull(task.id);
+        return current && current.removedAt == null ? [current] : [];
+      }),
+    ];
     // The terminal owner settles every finished parent's archive first, from the host's
     // durable parent bindings (nucleus#1459). It is its own step before any presentation
     // read, so an Inbox, decision-card, row or title fault — or this pass timing out
     // further along — can never leave a done task's parent in the operator's snoozed
     // list, and one parent's uncertain delivery stays that parent's wait.
     await this.step(host, "reconcileFinishedParents", async () => {
-      const waits = await this.adapter.reconcileFinishedParents?.(tasks);
+      const waits = await this.adapter.reconcileFinishedParents?.(finished);
       for (const wait of waits ?? []) this.recordParentArchiveWait(host, wait);
     });
     if (this.adapter.hostProcessListing) {
@@ -502,6 +561,7 @@ export class HostPass {
     await this.step(host, "reconcileHiddenRows", () =>
       new HiddenRows({ store: this.store, adapter: this.adapter }).observe(
         host,
+        presented(),
       ),
     );
     // The pass derives its rows once, before it writes anything, and both the row
@@ -513,13 +573,16 @@ export class HostPass {
     const rows = (): readonly TaskRowProjection[] =>
       (derived ??=
         this.adapter.reconcileTaskRow || this.adapter.reconcileThreadTitles
-          ? this.taskRows(host)
+          ? this.taskRows(presented())
           : []);
     await this.step(host, "reconcileTaskRows", () =>
       this.reconcileTaskRows(rows()),
     );
     await this.step(host, "reconcileThreadTitles", () =>
-      this.adapter.reconcileThreadTitles?.(tasks, rows()),
+      this.adapter.reconcileThreadTitles?.(
+        rows().map((row) => row.task),
+        rows(),
+      ),
     );
     // Audit A6: one bounded labelled inventory answers every identity this
     // pass observes, and retired workers are re-read on their own slow cadence.
@@ -553,13 +616,14 @@ export class HostPass {
         this.context.retiredObservationKey(host),
         retired.observations,
       );
-    // Select directly from finished history, but never await cleanup in the
-    // shared host pass. These tasks join the rotating, bounded task window.
+    // Select from this pass's page of finished history, but never await cleanup in
+    // the shared host pass. These tasks join the rotating, bounded task window.
     if (!this.store.getMeta("paused"))
       for (const task of finishedThreadCleanupCatchUp(
         this.store,
         host,
         removesThreads(this.adapter),
+        finished.map((task) => task.id),
       ))
         result.finishedCatchUp.set(task.id, task);
     if (this.context.inventoryHostMatches(host)) result.inventory = observed;

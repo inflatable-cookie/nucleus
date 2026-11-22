@@ -405,8 +405,9 @@ export class Sweep {
     );
     for (const task of this.engine.store.dueHoldTasks())
       byId.set(task.id, task);
-    for (const task of this.engine.store.tasks())
-      if (task.resolution.ownerStop && !task.removedAt) byId.set(task.id, task);
+    // Spec 069 §4: the owner-stop set is indexed on write, never a scan of history.
+    for (const task of this.engine.store.ownerStopTasks())
+      byId.set(task.id, task);
     const order = [...byId.values()].reverse();
     this.engine.sweepStats.tasks = order.length;
     return order;
@@ -452,15 +453,19 @@ export class Sweep {
       let inventory: ReadonlyMap<string, AgentObservation> | null = null;
       const finishedCatchUp = new Map<string, Task>();
       const unavailableHosts = new Set<string>();
+      // Hosts whose health says they are away (down, or not yet read since the
+      // service started): nothing in this pass walks their tasks again.
+      const awayHosts = new Set<string>();
       const openDecisionsBefore = new Set(
         this.engine.store
           .listDecisions({ status: "open" })
           .map((row) => `${row.id}:${row.version}`),
       );
-      const allTasks = this.engine.store.tasks();
+      // Spec 069 §4: the hosts any retained task names come from the host index,
+      // so the pass never copies every retained row to find them.
       const hosts = new Set([
         ...this.engine.hostIds(),
-        ...allTasks.flatMap((task) => (task.hostId ? [task.hostId] : [])),
+        ...this.engine.store.taskHostIds(),
       ]);
       for (const host of hosts) {
         let passed: Awaited<ReturnType<HostPass["run"]>> | null;
@@ -499,6 +504,7 @@ export class Sweep {
         // Nothing is read from a host that is away: its health is the whole wait.
         if (!passed) {
           unavailableHosts.add(host);
+          awayHosts.add(host);
           continue;
         }
         // A pass whose own step hung or failed at the transport counts towards
@@ -554,12 +560,14 @@ export class Sweep {
             .activeCapacityTasks()
             .flatMap((task) => (task.hostId ? [task.hostId] : [])),
         );
+        // A host this pass already found away is not walked again (Spec 069 §4).
         for (const host of archiveHosts)
-          await this.fleetStep("archiveRetiredErroredAgents", () =>
-            this.engine.withHost(host, () =>
-              archiveRetiredErroredAgents(this.engine, host),
-            ),
-          );
+          if (!awayHosts.has(host))
+            await this.fleetStep("archiveRetiredErroredAgents", () =>
+              this.engine.withHost(host, () =>
+                archiveRetiredErroredAgents(this.engine, host),
+              ),
+            );
       }
       // Round 4: owner verbs recorded while paused or held apply once that clears.
       await this.fleetStep("applyDeferredOwnerVerbs", () =>
@@ -816,14 +824,13 @@ export class Sweep {
           .listDecisions({ status: "open" })
           .some((row) => !openDecisionsBefore.has(`${row.id}:${row.version}`));
         if (!opened) return;
-        const freshTasks = this.engine.store.tasks();
         for (const host of hosts) {
           if (unavailableHosts.has(host)) continue;
           try {
             await this.engine.withHost(host, async () => {
               if (!this.engine.hostAvailable(host)) return;
               if (!this.engine.adapter.reconcileThreadTitles) return;
-              await this.hostPass.reconcileInboxTitles(host, freshTasks);
+              await this.hostPass.reconcileInboxTitles(host);
             });
           } catch {
             /* a host fault during follow-up title refresh retries on the next pass */
