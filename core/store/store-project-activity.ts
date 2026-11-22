@@ -13,17 +13,29 @@ import {
 import { type StoreCore } from "./store-core";
 
 /** The SQL form of `isSubstantiveEventKind`, over an events.kind column. */
-const SUBSTANTIVE_EVENT_SQL = `NOT (e.kind IN (${ROUTINE_EVENT_KINDS.map(kind => `'${kind}'`).join(",")})
-  OR ${ROUTINE_EVENT_SUFFIXES.map(suffix => `substr(e.kind, -${suffix.length}) = '${suffix}'`).join(" OR ")})`;
-const LINK_EVENT_SQL = LEAD_LINK_EVENT_KINDS.map(kind => `'${kind}'`).join(",");
+const SUBSTANTIVE_EVENT_SQL = `NOT (e.kind IN (${ROUTINE_EVENT_KINDS.map((kind) => `'${kind}'`).join(",")})
+  OR ${ROUTINE_EVENT_SUFFIXES.map((suffix) => `substr(e.kind, -${suffix.length}) = '${suffix}'`).join(" OR ")})`;
+const LINK_EVENT_SQL = LEAD_LINK_EVENT_KINDS.map((kind) => `'${kind}'`).join(
+  ",",
+);
 
 type TaskActivity = { repository: ActivityRepository | null; at: string };
 
 const repoOf = (origin: unknown, path: unknown): ActivityRepository | null =>
-  path == null && origin == null ? null : { origin: origin == null ? null : String(origin), path: String(path ?? "") };
-const newer = (a: string | null, b: string | null): string | null => (!a ? b : !b ? a : b > a ? b : a);
+  path == null && origin == null
+    ? null
+    : {
+        origin: origin == null ? null : String(origin),
+        path: String(path ?? ""),
+      };
+const newer = (a: string | null, b: string | null): string | null =>
+  !a ? b : !b ? a : b > a ? b : a;
 
-type ItemInfo = { repositories: ActivityRepository[]; at: string | null; executing: boolean };
+type ItemInfo = {
+  repositories: ActivityRepository[];
+  at: string | null;
+  executing: boolean;
+};
 
 /** Joins tasks and leads into items. Info lives on each root and merges as members join: repositories, newest activity and executing state. */
 class UnionFind {
@@ -33,14 +45,19 @@ class UnionFind {
   add(key: string, value: ItemInfo): void {
     if (!this.parent.has(key)) {
       this.parent.set(key, key);
-      this.info.set(key, { repositories: [...value.repositories], at: value.at, executing: value.executing });
+      this.info.set(key, {
+        repositories: [...value.repositories],
+        at: value.at,
+        executing: value.executing,
+      });
       return;
     }
     this.absorb(this.find(key), value);
   }
 
   join(a: string, b: string): void {
-    const left = this.find(a), right = this.find(b);
+    const left = this.find(a),
+      right = this.find(b);
     if (left === right) return;
     this.parent.set(right, left);
     this.absorb(left, this.info.get(right)!);
@@ -60,7 +77,7 @@ class UnionFind {
   private find(key: string): string {
     let root = key;
     while (this.parent.get(root) !== root) root = this.parent.get(root)!;
-    for (let walk = key; walk !== root;) {
+    for (let walk = key; walk !== root; ) {
       const next = this.parent.get(walk)!;
       this.parent.set(walk, root);
       walk = next;
@@ -71,7 +88,12 @@ class UnionFind {
   private absorb(root: string, value: ItemInfo): void {
     const target = this.info.get(root)!;
     for (const repo of value.repositories)
-      if (!target.repositories.some(known => known.origin === repo.origin && known.path === repo.path)) target.repositories.push(repo);
+      if (
+        !target.repositories.some(
+          (known) => known.origin === repo.origin && known.path === repo.path,
+        )
+      )
+        target.repositories.push(repo);
     target.at = newer(target.at, value.at);
     target.executing = target.executing || value.executing;
   }
@@ -86,11 +108,17 @@ class UnionFind {
  * one item, and only items recent or executing at the read time are returned.
  */
 export class StoreProjectActivity {
-  private tasks: Map<string, TaskActivity & { repository: ActivityRepository | null }> | null = null;
+  private tasks: Map<
+    string,
+    TaskActivity & { repository: ActivityRepository | null }
+  > | null = null;
   private links: Map<string, Set<string>> = new Map();
   private eventClock = -1;
   private eventMarker = "";
-  private outcomeCache: { key: string; rows: Map<string, TaskActivity> } | null = null;
+  private outcomeCache: {
+    key: string;
+    rows: Map<string, TaskActivity>;
+  } | null = null;
 
   constructor(private readonly core: StoreCore) {}
 
@@ -109,47 +137,92 @@ export class StoreProjectActivity {
     this.eventClock = clock;
     if (LEAD_LINK_EVENT_KINDS.includes(kind)) this.addLink(taskId, detail);
     if (!isSubstantiveEventKind(kind)) return;
-    const row = this.core.db.prepare("SELECT json_extract(data,'$.repository') AS origin, json_extract(data,'$.repoPath') AS path FROM tasks WHERE id=?").get(taskId);
+    const row = this.core.db
+      .prepare(
+        "SELECT json_extract(data,'$.repository') AS origin, json_extract(data,'$.repoPath') AS path FROM tasks WHERE id=?",
+      )
+      .get(taskId);
     // A task row that is not there yet has no repository to credit; the rebuild path sees it once it exists.
     if (!row) return;
     const current = this.tasks.get(taskId);
-    this.tasks.set(taskId, { repository: repoOf(row.origin, row.path), at: newer(current?.at ?? null, at)! });
+    this.tasks.set(taskId, {
+      repository: repoOf(row.origin, row.path),
+      at: newer(current?.at ?? null, at)!,
+    });
   }
 
   /**
    * The items recent or executing at the read time, plus the store-wide facts every project reads.
    * `activeTasks` is the live, non-queued board band: the compact projection executing work reads from.
    */
-  facts(activeTasks: readonly Task[], nowMs: number = Date.now()): ProjectActivityFacts {
+  facts(
+    activeTasks: readonly Task[],
+    nowMs: number = Date.now(),
+  ): ProjectActivityFacts {
     this.ensureEventFacts();
     const outcomes = this.outcomeFacts();
-    const executing = new Set(activeTasks.filter(task => EXECUTING_TASK_PHASES.includes(task.phase)).map(task => task.id));
+    const executing = new Set(
+      activeTasks
+        .filter((task) => EXECUTING_TASK_PHASES.includes(task.phase))
+        .map((task) => task.id),
+    );
     const union = new UnionFind();
     const taskKey = (id: string) => `t:${id}`;
     const leadKey = (id: string) => `l:${id}`;
-    const taskRepository = (id: string) => this.tasks!.get(id)?.repository ?? outcomes.get(id)?.repository ?? null;
-    const taskAt = (id: string) => newer(this.tasks!.get(id)?.at ?? null, outcomes.get(id)?.at ?? null);
+    const taskRepository = (id: string) =>
+      this.tasks!.get(id)?.repository ?? outcomes.get(id)?.repository ?? null;
+    const taskAt = (id: string) =>
+      newer(this.tasks!.get(id)?.at ?? null, outcomes.get(id)?.at ?? null);
     const addTask = (id: string, at: string | null, live: boolean) => {
       const repository = taskRepository(id);
-      union.add(taskKey(id), { repositories: repository ? [repository] : [], at, executing: live });
+      union.add(taskKey(id), {
+        repositories: repository ? [repository] : [],
+        at,
+        executing: live,
+      });
     };
-    for (const id of new Set([...this.tasks!.keys(), ...outcomes.keys()])) addTask(id, taskAt(id), executing.has(id));
-    for (const task of activeTasks) addTask(task.id, newer(taskAt(task.id), task.updatedAt), executing.has(task.id));
+    for (const id of new Set([...this.tasks!.keys(), ...outcomes.keys()]))
+      addTask(id, taskAt(id), executing.has(id));
+    for (const task of activeTasks)
+      addTask(
+        task.id,
+        newer(taskAt(task.id), task.updatedAt),
+        executing.has(task.id),
+      );
     for (const lead of this.leads()) {
-      union.add(leadKey(lead.id), { repositories: lead.repositories, at: lead.at, executing: false });
-      for (const reference of lead.taskReferences) union.join(leadKey(lead.id), taskKey(reference));
+      union.add(leadKey(lead.id), {
+        repositories: lead.repositories,
+        at: lead.at,
+        executing: false,
+      });
+      for (const reference of lead.taskReferences)
+        union.join(leadKey(lead.id), taskKey(reference));
     }
     for (const [taskId, leadIds] of this.links)
-      for (const leadId of leadIds) union.join(taskKey(taskId), leadKey(leadId));
+      for (const leadId of leadIds)
+        union.join(taskKey(taskId), leadKey(leadId));
     // Each component is one item: its members' newest activity and executing state, and their repositories.
     const cutoff = nowMs - PROJECT_ACTIVITY_WINDOW_MS;
     const items: ActivityItemFact[] = [];
+    // Each repository's newest item time, unwindowed: a project's last activity however long ago (nucleus#1531).
+    const latest = new Map<string, ActivityRepository & { at: string }>();
     for (const [id, info] of union.components()) {
       if (!info.repositories.length || !info.at) continue;
+      for (const repo of info.repositories) {
+        const key = `${repo.origin ?? ""}\n${repo.path}`;
+        const known = latest.get(key);
+        if (!known || info.at > known.at)
+          latest.set(key, { ...repo, at: info.at });
+      }
       if (!info.executing && Date.parse(info.at) <= cutoff) continue;
-      items.push({ id, repositories: info.repositories, at: info.at, executing: info.executing });
+      items.push({
+        id,
+        repositories: info.repositories,
+        at: info.at,
+        executing: info.executing,
+      });
     }
-    return { items };
+    return { items, latest: [...latest.values()] };
   }
 
   private addLink(taskId: string, leadId: string): void {
@@ -162,13 +235,26 @@ export class StoreProjectActivity {
   private ensureEventFacts(): void {
     const clock = this.core.readClock("eventRows");
     const marker = this.rekeyMarker();
-    if (this.tasks && this.eventClock === clock && this.eventMarker === marker) return;
-    const rows = this.core.db.prepare(`SELECT e.taskId AS taskId, json_extract(t.data,'$.repository') AS origin, json_extract(t.data,'$.repoPath') AS path, MAX(e.at) AS at
-      FROM events e JOIN tasks t ON t.id=e.taskId WHERE ${SUBSTANTIVE_EVENT_SQL} GROUP BY e.taskId`).all();
+    if (this.tasks && this.eventClock === clock && this.eventMarker === marker)
+      return;
+    const rows = this.core.db
+      .prepare(
+        `SELECT e.taskId AS taskId, json_extract(t.data,'$.repository') AS origin, json_extract(t.data,'$.repoPath') AS path, MAX(e.at) AS at
+      FROM events e JOIN tasks t ON t.id=e.taskId WHERE ${SUBSTANTIVE_EVENT_SQL} GROUP BY e.taskId`,
+      )
+      .all();
     this.tasks = new Map();
-    for (const row of rows) this.tasks.set(String(row.taskId), { repository: repoOf(row.origin, row.path), at: String(row.at) });
+    for (const row of rows)
+      this.tasks.set(String(row.taskId), {
+        repository: repoOf(row.origin, row.path),
+        at: String(row.at),
+      });
     this.links = new Map();
-    for (const row of this.core.db.prepare(`SELECT taskId, detail FROM events WHERE kind IN (${LINK_EVENT_SQL})`).all())
+    for (const row of this.core.db
+      .prepare(
+        `SELECT taskId, detail FROM events WHERE kind IN (${LINK_EVENT_SQL})`,
+      )
+      .all())
       this.addLink(String(row.taskId), String(row.detail));
     this.eventClock = clock;
     this.eventMarker = marker;
@@ -176,7 +262,9 @@ export class StoreProjectActivity {
 
   /** Repository rekeys rewrite task and outcome rows; their marker moves the key so every fact rereads. */
   private rekeyMarker(): string {
-    const row = this.core.db.prepare("SELECT COUNT(*) AS n, MAX(at) AS at FROM repository_rekeys").get();
+    const row = this.core.db
+      .prepare("SELECT COUNT(*) AS n, MAX(at) AS at FROM repository_rekeys")
+      .get();
     return `${String(row?.n ?? 0)}:${String(row?.at ?? "")}`;
   }
 
@@ -185,24 +273,56 @@ export class StoreProjectActivity {
     const key = `${this.core.readClock("outcomeRows")}|${this.rekeyMarker()}`;
     if (this.outcomeCache?.key !== key) {
       const rows = new Map<string, TaskActivity>();
-      for (const row of this.core.db.prepare(`SELECT taskId, json_extract(data,'$.repository.origin') AS origin, json_extract(data,'$.repository.path') AS path, finished_at AS at
-        FROM outcomes WHERE finished_at IS NOT NULL`).all())
-        rows.set(String(row.taskId), { repository: repoOf(row.origin, row.path), at: String(row.at) });
+      for (const row of this.core.db
+        .prepare(
+          `SELECT taskId, json_extract(data,'$.repository.origin') AS origin, json_extract(data,'$.repository.path') AS path, finished_at AS at
+        FROM outcomes WHERE finished_at IS NOT NULL`,
+        )
+        .all())
+        rows.set(String(row.taskId), {
+          repository: repoOf(row.origin, row.path),
+          at: String(row.at),
+        });
       this.outcomeCache = { key, rows };
     }
     return this.outcomeCache.rows;
   }
 
   /** Leads are read from their columns: the newest update, the repositories and the task references their targets name. */
-  private leads(): Array<{ id: string; repositories: ActivityRepository[]; at: string | null; taskReferences: string[] }> {
-    return this.core.db.prepare("SELECT id, json_extract(data,'$.updatedAt') AS at, json_extract(data,'$.repositories') AS repositories, json_extract(data,'$.targets') AS targets FROM leads").all()
-      .map(row => {
-        const repositories = (JSON.parse(String(row.repositories ?? "[]")) as Array<{ origin?: unknown; path?: unknown }>)
-          .map(repo => repoOf(repo.origin, repo.path)).filter((repo): repo is ActivityRepository => repo !== null);
-        const targets = JSON.parse(String(row.targets ?? "[]")) as Array<{ kind?: unknown; reference?: unknown }>;
+  private leads(): Array<{
+    id: string;
+    repositories: ActivityRepository[];
+    at: string | null;
+    taskReferences: string[];
+  }> {
+    return this.core.db
+      .prepare(
+        "SELECT id, json_extract(data,'$.updatedAt') AS at, json_extract(data,'$.repositories') AS repositories, json_extract(data,'$.targets') AS targets FROM leads",
+      )
+      .all()
+      .map((row) => {
+        const repositories = (
+          JSON.parse(String(row.repositories ?? "[]")) as Array<{
+            origin?: unknown;
+            path?: unknown;
+          }>
+        )
+          .map((repo) => repoOf(repo.origin, repo.path))
+          .filter((repo): repo is ActivityRepository => repo !== null);
+        const targets = JSON.parse(String(row.targets ?? "[]")) as Array<{
+          kind?: unknown;
+          reference?: unknown;
+        }>;
         return {
-          id: String(row.id), repositories, at: row.at == null ? null : String(row.at),
-          taskReferences: targets.filter(target => target.kind === "task" && typeof target.reference === "string").map(target => String(target.reference)),
+          id: String(row.id),
+          repositories,
+          at: row.at == null ? null : String(row.at),
+          taskReferences: targets
+            .filter(
+              (target) =>
+                target.kind === "task" && typeof target.reference === "string",
+            )
+            .map((target) => String(target.reference)),
         };
       });
   }

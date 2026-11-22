@@ -116,13 +116,30 @@ test("1531 wide: the list groups projects with a status line in words, and the f
         "Progress for Queue reliability: 1 need you, 1 working, 1 in review, 1 queued, 2 done",
       ),
     );
-    ui.press("Finished lanes, 1");
+    ui.press("Finished lanes, 2");
     assert.ok(ui.get("Open lane Board UI, finished"));
+    assert.ok(ui.get("Open lane Containers spike, finished"));
+    assert.doesNotMatch(
+      textOf(ui.get("Later column")),
+      /Containers spike/,
+      "the live plan has dropped the closed spike",
+    );
     ui.press("Show roadmap plan history");
+    await waitFor("Now in version 2");
     assert.match(
       textOf(ui.get("Plan history for roadmap")),
       /Version 2 · saved .* by the roadmap planner · the latest/,
       "History holds the version",
+    );
+    // The latest save as stored, not the live projection: the spike closed after it was saved.
+    assert.match(
+      textOf(ui.get("Later in version 2")),
+      /Containers spike · Done when The spike says go or no-go\. · Two days, then decide\./,
+      "each saved entry shows its finish line and note",
+    );
+    assert.match(
+      textOf(ui.get("Now in version 2")),
+      /BB as a host · Done when .* · The pilot finished\. Waiting for the next real opt-in task\./,
     );
     ui.press("Show the earlier version of the roadmap plan");
     await waitFor("Now in version 1");
@@ -132,12 +149,18 @@ test("1531 wide: the list groups projects with a status line in words, and the f
       "History pages back through plan.get",
     );
     assert.match(textOf(ui.get("Later in version 1")), /Native containers/);
+    assert.match(
+      textOf(ui.get("Now in version 1")),
+      /BB as a host · Done when .* · Waiting for the next real opt-in task\./,
+      "version 1 keeps the note it was saved with",
+    );
     assert.equal(
       ui.get("Show the earlier version of the roadmap plan").props.disabled,
       true,
       "version 1 is the first save",
     );
     ui.press("Show the later version of the roadmap plan");
+    await waitFor("Now in version 2");
     assert.match(
       textOf(ui.get("Plan history for roadmap")),
       /Version 2 · .* · the latest/,
@@ -162,7 +185,7 @@ test("1531 wide: the columns sit side by side, and See all pages through the lan
     ui.press("Open lane BB as a host");
     await waitFor("See all finished work in BB as a host");
     const before = textOf(ui.get("Recently finished"));
-    assert.match(before, /12 in total/);
+    assert.match(before, /13 in total/);
     assert.doesNotMatch(
       before,
       /Host follow-up 1 /,
@@ -183,6 +206,11 @@ test("1531 wide: the columns sit side by side, and See all pages through the lan
       "every finished task, past the lane view's ten",
     );
     assert.match(all, /Sibling and callback parity for BB/);
+    assert.match(
+      all,
+      /✕ Abandoned host probe Cancelled ·/,
+      "cancelled work counts in the total, so See all lists it too",
+    );
     assert.equal(
       ui.query("Show more finished work in BB as a host"),
       undefined,

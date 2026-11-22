@@ -45,10 +45,10 @@ export function projectGroup(
 }
 
 /**
- * A project row's last activity. The store-wide activity read only holds the last three
- * days, so older work comes from the all-time facts the board already has: each of the
- * project's lanes' last activity (its tasks, outcomes and records), the live tasks' own
- * times, and the plan's last save. The newest wins; null when the project has none.
+ * A project row's last activity: the store-wide activity read's `lastAt` (the newest
+ * task, outcome or lead in the project's repositories, in a lane or not, with no window),
+ * then its recent items, the project's lanes' last activity, its live tasks' own times and
+ * the plan's last save. The newest wins; null when the project has none.
  */
 export function projectLastActivity(input: {
   project: Project;
@@ -67,6 +67,7 @@ export function projectLastActivity(input: {
         : Boolean(path && repo.path === path),
     );
   const times = [
+    input.activity?.lastAt,
     ...(input.activity?.items ?? []).map((item) => item.at),
     ...projectLanes(input.project, [...input.lanes]).map(
       (lane) => lane.lastActivityAt,

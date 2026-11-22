@@ -81,11 +81,11 @@ test("866-1 a lane lists its projects and each project orders it separately", ()
   // There is no global order: only each project's own position is reported.
   assert.equal(
     lanePlaceLabel({ ...lanePlaces(shared, projects, plans)[0] }),
-    "Now · step 1 of 2",
+    "Now",
   );
   assert.equal(
     lanePlaceLabel({ ...lanePlaces(shared, projects, plans)[1] }),
-    "Later · step 1 of 1",
+    "Later",
   );
 });
 

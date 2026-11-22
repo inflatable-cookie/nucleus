@@ -72,6 +72,16 @@ test("1531 a project row's last activity reaches past the three-day activity rea
     "2026-10-01T00:00:00.000Z",
   );
   assert.equal(projectLastActivity({ project, lanes: [], tasks: [] }), null);
+  // The store's unwindowed lastAt covers work with no lane at all.
+  assert.equal(
+    projectLastActivity({
+      project,
+      activity: { key: "app", items: [], lastAt: "2026-07-01T00:00:00.000Z" },
+      lanes: [],
+      tasks: [],
+    }),
+    "2026-07-01T00:00:00.000Z",
+  );
 });
 
 test("1531 a project row counts a task in two lanes once, and adds the queued tasks the board holds back", () => {

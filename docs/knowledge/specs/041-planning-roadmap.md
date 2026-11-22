@@ -106,25 +106,24 @@ false-drain report, Tom's Nucleus ownership direction, 2026-10-09).
 
 Replaces the Plan column in Spec 026's Planning tab.
 
-- **Project chooser** (Tom, 2026-11-07, lane `nucleus-ui`; supersedes the
-  2026-10-03 rule that the tab has no selector of its own). The tab carries a
-  project chooser for the operator's Planning work. It is a view over the same
-  project scope the header selector writes, never a second scope: choosing a
-  project writes the selection, "All projects" clears it, and nothing new joins
-  the board header. With one project in scope, the tab shows its roadmap. With
-  several, or all, it shows one compact row per project (name, top `now` step,
-  counts) and expands one at a time.
+- **Projects** (nucleus#1531, superseding the 2026-11-07 Planning chooser and
+  its expandable rows). Planning has no chooser of its own: the board header's
+  project selector scopes it (Tom, 2026-11-21), and nothing new joins the header.
+  The list pane groups the projects in scope as Active, Idle on purpose and
+  Dormant, one inbox row each with its status in words. Selecting a row shows that
+  project's roadmap beside the list; below 1100 points the roadmap opens in place
+  of the list with a way back. Spec 026's "Planning tab" owns the row and roadmap
+  detail.
 - **Find lanes** (nucleus#866) is where a lane is found: the separate Lanes
-  destination is folded into this tab. The search reads the same lane records
-  the agent CLI uses and reaches project by project through the chooser, with a
-  clearly labelled all-projects scope for cross-project discovery. A result
-  shows the lane's title, aim, project and status. Opening one keeps the
-  originating plan context: the lane column stays beside the plan, a lane found
-  outside the chosen project stays open, and the lane lists every project that
-  lists its repositories with each project's own plan position (horizon and
-  place in that horizon). A shared lane has no single global order. Loading, a
-  failed read and a stale plan stay distinct from an empty result, and no first
-  page is presented as a total.
+  destination is folded into this tab. The search reads the same lane records the
+  agent CLI uses, scoped by the header selection, with a clearly labelled
+  all-projects scope for cross-project discovery. A result shows the lane's title,
+  aim and status, and each project that lists it with the lane's horizon there.
+  Opening one opens the lane page and keeps the originating plan context: the
+  search stays in the list pane, and a lane found outside the selected projects
+  stays open. A shared lane has no single global order, so no step counter is
+  shown. Loading, a failed read and a stale plan stay distinct from an empty
+  result, and no first page is presented as a total.
 - **Now**, **Next** and **Later** are columns of lane cards (nucleus#1531, Tom
   2026-11-22: "lanes as columns"). A card shows the title with a "N need you"
   pill and a Drained flag with its age, the aim clamped to three lines, live tasks
@@ -158,8 +157,8 @@ Replaces the Plan column in Spec 026's Planning tab.
   finished, the document and the plans it is in.
 - Dark theme only when checked by eye.
 - Built in part 1: `plan.get` returns `done` (lanes that sat in the plan and are now `done` or `abandoned`, read from plan history, newest close first) beside `entries`; saves send open lanes only. The Drained flag is in the view model and hidden until part 2. Add to plan puts a lane in Later.
-- Built in part 3 (nucleus#866): the project chooser and "Find lanes" share `shared/lane-finder.ts`; the lane panel shows each project's plan position; the separate Lanes destination and its table are retired (Spec 019, revision 2026-11-07).
-- Built in part 4 (nucleus#867): the lane panel is the shared `client/lane-screen.tsx`. It shows the aim, a preview of the latest document with Read full document (every version, Earlier and Later), and Edit. A save sends the version the text was written against; a newer version blocks the save until the operator uses it as the base or discards their text, and the draft survives leaving the tab. Work, Leads and Papercuts sit beside the document at wide sizes and below it at narrow ones. Papercuts are the open leads tagged `papercut`. A count shows only when its read is complete: lane task counts come from the lane's server totals, and a loading, failed or partial list says so. Lane key, repositories and status sit behind Details.
+- Built in part 3 (nucleus#866): "Find lanes" reads `shared/lane-finder.ts`; the separate Lanes destination and its table are retired (Spec 019, revision 2026-11-07). The Planning chooser and the lane panel's per-project positions it added were replaced by the header selector (2026-11-21) and the lane page's "Plans it's in" (nucleus#1531).
+- Built in part 4 (nucleus#867): the lane panel is the shared `client/lane-screen.tsx`. It shows the aim, the latest document with Read full document (every version, Earlier and Later), and Edit. nucleus#1531 lays it out as the lane page: the document sits in the side column with Open document, and work, leads and papercuts are sections rather than tabs. A save sends the version the text was written against; a newer version blocks the save until the operator uses it as the base or discards their text, and the draft survives leaving the tab. Work, Leads and Papercuts sit beside the document at wide sizes and below it at narrow ones. Papercuts are the open leads tagged `papercut`. A count shows only when its read is complete: lane task counts come from the lane's server totals, and a loading, failed or partial list says so. Lane key, repositories and status sit behind Details.
 - Built in part 5 (nucleus#868): selecting a lead from the lane's list opens the shared `client/lead-screen.tsx` (Spec 026, "the lead screen"). The lane's open lead and papercut lists show eight records and offer the next page from the lane's complete read, so "Showing 8 of N" carries the lane's total and no first page is presented as one.
 
 ## Rollout order
@@ -206,9 +205,9 @@ Times are first guesses and are settings, not constants (Tom, 2026-10-03).
 
 | # | Case | Expected |
 |---|---|---|
-| 1 | Planning tab with one, then three, projects in scope | One row per project grouped Active, Idle on purpose and Dormant, and one roadmap at a time beside the list; no header addition |
-| 12 | Find lanes from one project, then from the labelled all-projects scope | Results show title, aim, project and status; a lane outside the chosen project opens and keeps the plan context |
-| 13 | A lane two projects list | Each project's own position is shown; no global order is implied |
+| 1 | Planning tab with one, then three, projects in scope | One row per project grouped Active, Idle on purpose and Dormant, and one roadmap at a time beside the list; no Planning chooser and no header addition |
+| 12 | Find lanes from one project, then from the labelled all-projects scope | Results show title, aim, project and status; a lane outside the selected projects opens and keeps the plan context |
+| 13 | A lane two projects list | Each project's own horizon is shown; no step counter or global order is implied |
 | 14 | Lanes still loading, failed, or a stale plan, then a query with no match | Each says its own state; empty says no match; never a silent empty list |
 | 2 | Plan with now, next, later and a done lane | Now, Next and Later columns; Finished lanes collapsed |
 | 3 | Move a step from Next to Now and save | New plan version, `horizon: now`; a stale save is refused |

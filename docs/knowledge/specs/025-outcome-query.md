@@ -28,7 +28,7 @@ optional, and filters combine with AND.
 | `repository` | Normalised origin, or a path resolving to one (the identity used by outcomes, lanes and numbers) |
 | `text` | Full-text search over title, brief text, review summary and reason |
 | `lane` | Lane key |
-| `outcome` | `done`, `cancelled` or `superseded`; default `done` |
+| `outcome` | `done`, `cancelled`, `superseded`, or `any` for all three (nucleus#1531, the Planning lane page's See all); default `done` |
 | `since`, `until` | `finishedAt` bounds (ISO dates) |
 | `commit` | A hex prefix of at least 7 characters matching the merge commit, synced commit or reviewed PR head |
 | `pr` | PR number, within `repository` |

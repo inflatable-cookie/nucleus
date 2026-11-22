@@ -175,13 +175,11 @@ export function laneFinderCount(shown: number, scope: number): string {
   return `${shown} of ${scope} lanes`;
 }
 
-/** The plan position in the operator's words, for a lane's project list and for a search result. */
+/** A lane's horizon in one project's plan, in the operator's words, for a search result. */
 export function lanePlaceLabel(place: LanePlace): string {
   if (!place.horizon) return "Not in the plan";
-  const horizon = place.horizon[0].toUpperCase() + place.horizon.slice(1);
-  return place.position !== null && place.size !== null
-    ? `${horizon} · step ${place.position} of ${place.size}`
-    : horizon;
+  // The horizon alone (nucleus#1531): a step counter reads as noise; the plan's order shows in its columns.
+  return place.horizon[0].toUpperCase() + place.horizon.slice(1);
 }
 
 /** Projects in the order a chooser shows them: by name. */

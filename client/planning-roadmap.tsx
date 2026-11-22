@@ -602,13 +602,16 @@ function Banner({
 }
 
 /**
- * History: every saved version of the plan, read one at a time through `plan.get`. It opens
- * on the latest save and pages back with Earlier and Later; an earlier version lists its
- * lanes under Now, Next and Later as they were saved, with who saved it and when.
+ * History: every saved version of the plan as it was saved, read one at a time through
+ * `plan.get` (the latest included, so the live projection of lanes that joined since is
+ * never shown as a save). It opens on the latest save and pages back with Earlier and Later.
+ * Each version lists its lanes under Now, Next and Later with the note and finish line saved
+ * for each. Without the read, the latest save's own membership (`saved`) stands in.
  */
 function PlanHistory({
   project,
   latest,
+  saved,
   lanes,
   unplanned,
   readPlanVersion,
@@ -616,20 +619,21 @@ function PlanHistory({
 }: {
   project: Project;
   latest: ProjectPlan;
+  saved?: ProjectPlan;
   lanes: LaneView[];
   unplanned: LaneView[];
   readPlanVersion?: (project: string, version: number) => Promise<ProjectPlan>;
   c: Colors;
 }) {
   const r = roles(c);
-  const [viewing, setViewing] = useState<number | null>(null);
+  const [viewing, setViewing] = useState(latest.version);
   const [read, setRead] = useState<{
     version: number;
     plan?: ProjectPlan;
     error?: string;
   } | null>(null);
   useEffect(() => {
-    if (viewing === null || !readPlanVersion) {
+    if (!viewing || !readPlanVersion) {
       setRead(null);
       return;
     }
@@ -651,9 +655,14 @@ function PlanHistory({
       live = false;
     };
   }, [viewing, project.key]);
-  const shown = viewing === null ? latest : read?.plan;
-  const current = viewing ?? latest.version;
-  const saved = (plan: ProjectPlan) =>
+  const isLatest = viewing === latest.version;
+  const shown =
+    read?.version === viewing && read.plan
+      ? read.plan
+      : !readPlanVersion && isLatest
+        ? (saved ?? { ...latest, entries: [] })
+        : undefined;
+  const savedLine = (plan: ProjectPlan) =>
     `Version ${plan.version} · saved ${plan.createdAt ? formatLocalDateTime(plan.createdAt) : "at an unknown time"}${plan.author ? ` by ${plan.author}` : ""}`;
   const title = (key: string) =>
     lanes.find((lane) => lane.key === key)?.title ?? key;
@@ -672,8 +681,8 @@ function PlanHistory({
       ) : shown ? (
         <>
           <Text style={body(c)}>
-            {saved(shown)}
-            {viewing === null ? " · the latest" : " · not the latest"}
+            {savedLine(shown)}
+            {isLatest ? " · the latest" : " · not the latest"}
           </Text>
           {shown.idle && (
             <Text style={meta(c)}>
@@ -687,16 +696,26 @@ function PlanHistory({
               (entry) => entry.horizon === horizon,
             );
             return (
-              <Text
+              <View
                 key={horizon}
                 accessibilityLabel={`${horizonTitle(horizon)} in version ${shown.version}`}
-                style={meta(c)}
+                style={{ gap: space.xxs / 2 }}
               >
-                {horizonTitle(horizon)}:{" "}
-                {entries.length
-                  ? entries.map((entry) => title(entry.lane)).join(", ")
-                  : "nothing"}
-              </Text>
+                <Text style={{ ...meta(c), color: r.foreground }}>
+                  {horizonTitle(horizon)}
+                  {entries.length ? "" : ": nothing"}
+                </Text>
+                {entries.map((entry) => (
+                  <Text
+                    key={entry.lane}
+                    style={{ ...meta(c), paddingLeft: space.sm }}
+                  >
+                    {title(entry.lane)}
+                    {entry.doneWhen ? ` · Done when ${entry.doneWhen}` : ""}
+                    {entry.note ? ` · ${entry.note}` : ""}
+                  </Text>
+                ))}
+              </View>
             );
           })}
         </>
@@ -708,9 +727,9 @@ function PlanHistory({
           Couldn’t load version {read.version}: {read.error}
         </Text>
       ) : (
-        <Text style={meta(c)}>Loading version {current}…</Text>
+        <Text style={meta(c)}>Loading version {viewing}…</Text>
       )}
-      {viewing === null && (
+      {isLatest && (
         <Text style={meta(c)}>
           {unplanned.length
             ? `${unplanned.length} ${unplanned.length === 1 ? "lane is" : "lanes are"} not in the plan yet: ${unplanned.map((lane) => lane.title).join(", ")}. Edit plan to add ${unplanned.length === 1 ? "it" : "them"}.`
@@ -724,26 +743,24 @@ function PlanHistory({
             c={c}
             text="Earlier version"
             label={`Show the earlier version of the ${project.name} plan`}
-            disabled={current <= 1}
-            onPress={() => setViewing(current - 1)}
+            disabled={viewing <= 1}
+            onPress={() => setViewing(viewing - 1)}
           />
           <Button
             small
             c={c}
             text="Later version"
             label={`Show the later version of the ${project.name} plan`}
-            disabled={viewing === null}
-            onPress={() =>
-              setViewing(current + 1 >= latest.version ? null : current + 1)
-            }
+            disabled={isLatest}
+            onPress={() => setViewing(viewing + 1)}
           />
           <Button
             small
             c={c}
             text="Latest version"
             label={`Show the latest version of the ${project.name} plan`}
-            disabled={viewing === null}
-            onPress={() => setViewing(null)}
+            disabled={isLatest}
+            onPress={() => setViewing(latest.version)}
           />
         </View>
       )}
@@ -755,6 +772,8 @@ function PlanHistory({
 export type RoadmapSection = {
   project: Project;
   latest?: ProjectPlan;
+  /** The latest save's own membership, as stored; `latest` is the live projection. */
+  saved?: ProjectPlan;
   triage?: PlanningTriage;
   error?: string;
 };
@@ -1021,6 +1040,7 @@ export function ProjectRoadmapView({
         <PlanHistory
           project={project}
           latest={latest}
+          saved={section.saved}
           lanes={lanes}
           unplanned={unplanned}
           readPlanVersion={readPlanVersion}

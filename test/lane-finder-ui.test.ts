@@ -159,8 +159,8 @@ test("866 rendered wide: the finder replaces the plan column, names project and 
   const result = ui.get("Open lane Shared lane, alpha and beta, Active");
   assert.equal(result.props.accessibilityRole, "button");
   assert.match(ui.text(), /One aim across projects/);
-  assert.match(ui.text(), /alpha · Now · step 2 of 2/);
-  assert.match(ui.text(), /beta · Later · step 1 of 1/);
+  assert.match(ui.text(), /alpha · Now/);
+  assert.match(ui.text(), /beta · Later/);
   assert.equal(
     ui.get("Lane search scope").children.join(""),
     "Searching all projects. Results match the title, aim or project.",

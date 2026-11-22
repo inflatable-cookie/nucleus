@@ -640,6 +640,7 @@ export function MainSurface({
                       readFinished={(cursor) =>
                         searchOutcomes({
                           lane: planningLaneRecord.key,
+                          outcome: "any",
                           limit: 25,
                           ...(cursor ? { cursor } : {}),
                         })

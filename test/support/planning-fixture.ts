@@ -68,6 +68,7 @@ export async function planningFixture() {
     "A native containers backend beside Docker.",
   );
   lane("board-ui", "Board UI", "The board reads as an inbox.");
+  lane("spike", "Containers spike", "Decide go or no-go on native containers.");
   lane("benchmark", "Benchmark", "Benchmark the consumers.", idle);
 
   const task = (
@@ -112,6 +113,8 @@ export async function planningFixture() {
     task(`Host follow-up ${index}`, "host", "done", {
       resumePrNumber: 500 + index,
     });
+  // A cancelled task counts in the lane's finished total, so See all lists it too.
+  task("Abandoned host probe", "host", "cancelled");
 
   const leads = new Leads(store);
   leads.add({
@@ -168,6 +171,12 @@ export async function planningFixture() {
         note: "After the release. Spike first.",
       },
       { lane: "board-ui", horizon: "later" },
+      {
+        lane: "spike",
+        horizon: "later",
+        note: "Two days, then decide.",
+        doneWhen: "The spike says go or no-go.",
+      },
     ],
   });
   // A finished lane leaves the open plan and shows among its finished lanes.
@@ -187,6 +196,8 @@ export async function planningFixture() {
         : entry,
     ),
   });
+  // Closed after the last save: the live plan drops it, but version 2 as saved still lists it.
+  store.setLaneStatus("spike", "done");
   store.setPlan({
     project: keys.idle,
     version: 0,
