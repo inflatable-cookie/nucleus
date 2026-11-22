@@ -166,7 +166,12 @@ export type ProjectSelectorRow = {
   dormant: boolean;
 };
 /** Selector popover rows: every project matching the filter box, with its primary repository and counts.
- * Dormancy follows the one activity rule (Spec 026, nucleus#1446): `activity` is the store-wide read, and `nowMs` ages it. */
+ * Active projects sort first, then the Dormant group, then Parked (nucleus#1529):
+ * inside each group rows order by live-task total (highest first, including the
+ * hidden queued portion), then by last activity (most recent first; a project
+ * with no activity sorts after those with some), then by name, so the order is
+ * stable. Dormancy follows the one activity rule (Spec 026, nucleus#1446):
+ * `activity` is the store-wide read, and `nowMs` ages it. */
 export function projectSelectorRows(
   projects: Project[],
   selection: readonly string[],
@@ -182,13 +187,35 @@ export function projectSelectorRows(
   const activityByKey = new Map(activity.map((item) => [item.key, item]));
   const dormantOf = (project: Project) =>
     projectDormantByActivity(project, activityByKey.get(project.key), nowMs);
-  return [...projects]
-    .sort(
-      (a, b) =>
-        Number(a.visibility === "parked") - Number(b.visibility === "parked") ||
-        Number(dormantOf(a)) - Number(dormantOf(b)) ||
-        a.name.localeCompare(b.name),
-    )
+  /** The newest item time in the store-wide activity read; null when the project has none. */
+  const lastActivityOf = (project: Project): number | null => {
+    let latest: number | null = null;
+    for (const item of activityByKey.get(project.key)?.items ?? []) {
+      const at = Date.parse(item.at);
+      if (Number.isNaN(at)) continue;
+      if (latest === null || at > latest) latest = at;
+    }
+    return latest;
+  };
+  const tasksOf = (project: Project): number => {
+    const counts = projectPlanningCounts(project, tasks, leads);
+    const hidden = hiddenQueued.reduce(
+      (total, item) =>
+        project.repositories.some((repo) => repo.path === item.repoPath)
+          ? total + item.hidden
+          : total,
+      0,
+    );
+    return counts.tasks + hidden;
+  };
+  const lastActivityByKey = new Map(
+    projects.map((project) => [project.key, lastActivityOf(project)] as const),
+  );
+  const tasksByKey = new Map(
+    projects.map((project) => [project.key, tasksOf(project)] as const),
+  );
+  const missingActivity = Number.NEGATIVE_INFINITY;
+  return projects
     .flatMap((project) => {
       const primary = project.primary.origin ?? project.primary.path;
       if (
@@ -197,27 +224,30 @@ export function projectSelectorRows(
       )
         return [];
       const counts = projectPlanningCounts(project, tasks, leads);
-      const hidden = hiddenQueued.reduce(
-        (total, item) =>
-          project.repositories.some((repo) => repo.path === item.repoPath)
-            ? total + item.hidden
-            : total,
-        0,
-      );
       return [
         {
           key: project.key,
           name: project.name,
           primary,
           ...counts,
-          tasks: counts.tasks + hidden,
+          tasks: tasksByKey.get(project.key) ?? counts.tasks,
           checked: selection.includes(project.key),
           visibility: project.visibility,
           version: project.version,
           dormant: dormantOf(project),
         },
       ];
-    });
+    })
+    .sort(
+      (a, b) =>
+        Number(a.visibility === "parked") -
+          Number(b.visibility === "parked") ||
+        Number(a.dormant) - Number(b.dormant) ||
+        b.tasks - a.tasks ||
+        (lastActivityByKey.get(b.key) ?? missingActivity) -
+          (lastActivityByKey.get(a.key) ?? missingActivity) ||
+        a.name.localeCompare(b.name),
+    );
 }
 
 type ScopeStorage = KeyValueStorage;

@@ -6,7 +6,7 @@ import { boardSource } from "./support/board-source";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import { planningLaneLeads, type ProjectScope } from "../shared/project-scope";
-import type { Lead, Project } from "../shared/contracts";
+import type { Lead, Project, TaskSummary } from "../shared/contracts";
 
 useNativeStubs();
 const load = () => import("../client/project-scope-controls");
@@ -836,4 +836,50 @@ test("1476: the board's selector commits the selection it reports; the other sco
     source,
     /const showLanePlan = \(project: string\) => \{\s*setScope\(\{ projects: \[project\] \}\);/,
   );
+});
+
+test("1529 rendered: the picker lists each group by task count, then last activity, then name, in the popover and the modal", async () => {
+  const { ProjectSelector } = await load();
+  const now = Date.parse("2026-11-22T12:00:00.000Z");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const tasks = [
+    { repository: "owner/other", repoPath: "/other", phase: "working" },
+    { repository: "owner/other", repoPath: "/other", phase: "working" },
+    { repository: "owner/consumer", repoPath: "/consumer", phase: "working" },
+  ] as unknown as TaskSummary[];
+  const activity = ["other", "consumer-b-v2"].map((key) => ({
+    key,
+    items: [
+      { id: `${key}-a`, at: iso(now - 1000), executing: false },
+      { id: `${key}-b`, at: iso(now - 1000), executing: false },
+    ],
+  }));
+  const order = ["Project other, 2 tasks", "Project consumer-b-v2, 1 tasks", "Project project-a-accelerator, 0 tasks"];
+  // The wide and medium headers share the popover; the narrow header opens the modal.
+  for (const compact of [false, true]) {
+    const ui = mount(
+      h(ProjectSelector, {
+        projects,
+        tasks,
+        leads: [],
+        projectActivity: activity,
+        value: [],
+        onChange: () => {},
+        onOpenChange: () => {},
+        compact,
+        c,
+      }),
+    );
+    ui.press(/^Projects, /);
+    assert.ok(ui.get("Project selector"));
+    assert.equal(ui.ofType("Modal").length, compact ? 1 : 0, compact ? "a modal at the narrow size" : "a popover at the wide size");
+    assert.deepEqual(
+      ui
+        .all(/^Project /)
+        .filter((node) => node.props.accessibilityRole === "checkbox")
+        .map((node) => node.props.accessibilityLabel),
+      order,
+      compact ? "the modal keeps the row order" : "the popover keeps the row order",
+    );
+  }
 });

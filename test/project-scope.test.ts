@@ -278,12 +278,12 @@ test("1426 selector totals include every live phase and hidden queued tasks acro
       leadCount,
     ]),
     [
-      ["empty", 0, 0],
       ["multi", 8, 2],
+      ["empty", 0, 0],
     ],
     "four rendered live tasks plus four hidden queued tasks; terminal tasks and non-task cards do not affect the task total",
   );
-  assert.equal(rows[1].checked, false, "totals are independent of selection");
+  assert.equal(rows[0].checked, false, "totals are independent of selection");
 });
 
 test("1421 single-select by default: a plain press replaces, Shift toggles one project", () => {
@@ -571,4 +571,103 @@ test("repository matching prefers origin and falls back to path only when needed
   );
   assert.equal(projectHasRepository(consumer, "/consumer", null), true);
   assert.equal(projectHasRepository(consumer, "", null), false);
+});
+
+test("1529 the selector keeps active projects first, then Dormant, then Parked, ordering each group by task count, last activity and name", () => {
+  const NOW = Date.parse("2026-11-22T12:00:00.000Z");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const live = (id: string, path: string) => ({
+    id,
+    repository: `owner${path}`,
+    repoPath: path,
+    phase: "working",
+  });
+  const seen = (key: string, at: number) => ({
+    key,
+    items: [
+      { id: `${key}-a`, at: iso(at), executing: false },
+      { id: `${key}-b`, at: iso(at), executing: false },
+    ],
+  });
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+  const alpha = project("alpha", "Alpha", repo("alpha"));
+  const zeta = project("zeta", "Zeta", repo("zeta"));
+  const mid = project("mid", "Mid", repo("mid"));
+  const beta = project("beta", "Beta", repo("beta"));
+  const gamma = project("gamma", "Gamma", repo("gamma"));
+  const parkedHigh = {
+    ...project("parked-high", "Parked high", repo("parked-high")),
+    visibility: "parked" as const,
+  };
+  const parkedLow = {
+    ...project("parked-low", "Parked low", repo("parked-low")),
+    visibility: "parked" as const,
+  };
+  const tasks = [
+    live("a1", "/alpha"),
+    live("z1", "/zeta"),
+    live("m1", "/mid"),
+    live("m2", "/mid"),
+    live("m3", "/mid"),
+    ...["p1", "p2", "p3", "p4", "p5"].map((id) => live(id, "/parked-high")),
+  ] as Parameters<typeof projectSelectorRows>[3];
+  const activity = [
+    seen("alpha", NOW - HOUR),
+    seen("zeta", NOW - DAY),
+    seen("parked-high", NOW - HOUR),
+    seen("parked-low", NOW - HOUR),
+  ] as Parameters<typeof projectSelectorRows>[6];
+  const rows = projectSelectorRows(
+    [gamma, parkedLow, mid, zeta, beta, parkedHigh, alpha],
+    [],
+    "",
+    tasks,
+    [],
+    [],
+    activity,
+    NOW,
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.key, row.tasks, row.dormant]),
+    [
+      ["alpha", 1, false],
+      ["zeta", 1, false],
+      ["mid", 3, true],
+      ["beta", 0, true],
+      ["gamma", 0, true],
+      ["parked-high", 5, false],
+      ["parked-low", 0, false],
+    ],
+    "count decides inside a group, then newest activity, then name; " +
+      "a dormant project with more tasks still sorts below every active one, " +
+      "and parked projects stay last",
+  );
+});
+
+test("1529 held-back queued tasks count toward the selector order", () => {
+  const NOW = Date.parse("2026-11-22T12:00:00.000Z");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const qa = project("qa", "Qa", repo("qa"));
+  const qb = project("qb", "Qb", repo("qb"));
+  const tasks = [
+    { id: "b1", repository: "owner/qb", repoPath: "/qb", phase: "working" },
+    { id: "b2", repository: "owner/qb", repoPath: "/qb", phase: "working" },
+  ] as Parameters<typeof projectSelectorRows>[3];
+  const activity = [qa, qb].map((item) => ({
+    key: item.key,
+    items: [
+      { id: `${item.key}-a`, at: iso(NOW - 1000), executing: false },
+      { id: `${item.key}-b`, at: iso(NOW - 1000), executing: false },
+    ],
+  })) as Parameters<typeof projectSelectorRows>[6];
+  const rows = projectSelectorRows([qb, qa], [], "", tasks, [], [{ repoPath: "/qa", count: 3 }], activity, NOW);
+  assert.deepEqual(
+    rows.map((row) => [row.key, row.tasks]),
+    [
+      ["qa", 3],
+      ["qb", 2],
+    ],
+    "hidden queued work outranks rendered tasks in the order",
+  );
 });

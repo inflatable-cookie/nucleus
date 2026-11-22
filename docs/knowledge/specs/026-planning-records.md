@@ -646,7 +646,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   selector in the header replaces the single-project filter everywhere. It is a
   dropdown that opens a large popover (a modal at the compact viewport) listing
   every project with a filter box, its primary repository and counts of live tasks
-  and open leads, with a checkbox per project. The picker's one top row holds the
+  and open leads, with a checkbox per project. Rows sort active projects first,
+  then the Dormant group, then Parked (nucleus#1529); inside each group the most
+  tasks come first, then the most recent activity, then the name, so quiet
+  projects settle low without leaving their group. The picker's one top row holds the
   project search at its remaining width and, beside it, a Clear project selection
   icon button (a folder with an X, the same icon-only `Button` style and height as
   the Settings button next to it, its name as accessible label and tooltip, with a
