@@ -135,15 +135,23 @@ export class CheckSettlement {
    * exact-head verification path, which must reacquire its FIFO turn and repeat every gate. */
   async reobservePendingChecks(t: Task): Promise<boolean> {
     if (!["verifying", "merging"].includes(t.phase)) return false;
-    if (t.resolution.mergeIntent) return false;
+    if (t.resolution.mergeIntent || t.resolution.mergedCommit) return false;
     const state = this.ports.pollState(t);
     if (!state) return false;
     if (state.nextAt > Date.now()) return true;
     if (this.ports.paused()) return true;
     t = this.store.task(t.id);
+    if (!["verifying", "merging"].includes(t.phase)) return false;
+    if (t.resolution.mergeIntent || t.resolution.mergedCommit) return false;
     const gate = await this.ports.requiredChecks(t);
     if (this.ports.paused()) return true;
-    if (gate.head !== state.head || gate.head !== this.store.task(t.id).prHead)
+    const current = this.store.task(t.id);
+    if (!["verifying", "merging"].includes(current.phase)) return false;
+    if (current.resolution.mergeIntent || current.resolution.mergedCommit)
+      return false;
+    const currentState = this.ports.pollState(current);
+    if (!currentState || currentState.head !== state.head) return false;
+    if (gate.head !== state.head || gate.head !== current.prHead)
       throw new Error("PR head changed while required checks were pending");
     if (
       gate.checksFailed ||
@@ -151,11 +159,11 @@ export class CheckSettlement {
       gate.overdue ||
       gate.infrastructure
     ) {
-      await this.ports.applyMergeGateWait(this.store.task(t.id), gate);
+      await this.ports.applyMergeGateWait(current, gate);
       return true;
     }
     this.finishRequiredCheckWait(
-      this.store.task(t.id),
+      current,
       `Required checks settled at ${state.head}; reacquiring repository integration turn`,
     );
     return false;

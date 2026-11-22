@@ -66,12 +66,15 @@ takes `role` (`worker`, `reviewer`, `coordinator` or `planner`) and `text`,
 delivers immediately without changing task state, and reports `delivered`,
 `queued` or `unknown` (`queued`, `no_thread` warnings). `turn.take` and
 `turn.release` take or release the repository integration turn and wake waiting
-tasks (`turn_held`, `merge_in_flight` warnings). `merge.now` takes `head` and
-requests GitHub's guarded merge of that head now, taking the integration turn if
-free (`turn_held`, `checks`, `holds` warnings). `closeout.now` takes optional
-`mergedCommit`, records the merge from GitHub (or the operator-stated commit
-when GitHub cannot be read), and starts synchronization and closeout
-(`unverified_merge`, `no_verdict` warnings). Both `merge.now` and `closeout.now`
+tasks (`turn_held`, `merge_in_flight` warnings). `merge.now` takes `head`,
+moves the task to `merging` (clearing attention and stop), and requests
+GitHub's guarded merge of that head now, taking the integration turn if free
+(`turn_held`, `checks`, `holds`, `hold_owner` warnings). `closeout.now` takes
+optional `mergedCommit`, records the merge from GitHub (or the operator-stated
+commit when GitHub cannot be read), and starts synchronization and closeout
+(`unverified_merge`, `no_verdict`, `live_runs` warnings; accepting `live_runs`
+releases and cancels a bound live coordinator or recovery run via
+`run.release`). Both `merge.now` and `closeout.now`
 enforce the exact-head review or operator source acceptance hard gate;
 `merge.now` also refuses while an earlier merge outcome is unknown unless a
 GitHub read in the same call shows the PR unmerged.

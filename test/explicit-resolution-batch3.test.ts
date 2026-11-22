@@ -1643,4 +1643,94 @@ test("review round 5: forced move and stale merge lookup preserve newer explicit
     store.task(checkPollTask.id).reason,
   );
   assert.equal(store.task(checkPollTask.id).phase, "syncing");
+  store.update(checkPollTask.id, {
+    phase: "done",
+    resolution: {
+      ...store.task(checkPollTask.id).resolution,
+      integrationTurn: null,
+      mergeIntent: false,
+    },
+  });
+
+  // 5. An in-flight check poll that resolves with a failed check after merge.now succeeds
+  // must NOT request a revision or clear the integration turn, and must continue merge reconciliation.
+  let pollReadStarted!: () => void;
+  const pollStarted = new Promise<void>((resolve) => {
+    pollReadStarted = resolve;
+  });
+  let finishPollRead!: () => void;
+  const pollGate = new Promise<void>((resolve) => {
+    finishPollRead = resolve;
+  });
+  let inFlightMerged = false;
+  const inFlightFx = await fixture(t, {
+    merge: async () => {},
+    merged: async () => ({
+      merged: inFlightMerged,
+      commit: inFlightMerged ? MERGED_COMMIT : null,
+      head: HEAD,
+      base: "main",
+      proof: {
+        proven: !inFlightMerged,
+        detail: inFlightMerged ? "merged" : "open",
+      },
+    }),
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "Required check ci failed",
+      checksFailed: true,
+    }),
+    requiredChecks: async () => {
+      pollReadStarted();
+      await pollGate;
+      return {
+        head: HEAD,
+        wait: "Required check ci failed",
+        checksFailed: true,
+      };
+    },
+  });
+  const inFlightTask = inFlightFx.insertTask("in-flight-check-poll-merge", 84);
+  inFlightFx.attachReadyReview(inFlightTask.id, HEAD);
+  inFlightFx.store.update(inFlightTask.id, {
+    phase: "verifying",
+    resolution: {
+      ...inFlightFx.store.task(inFlightTask.id).resolution,
+      stop: {
+        reason: "lifecycle",
+        detail: "Required check ci is pending",
+        since: oldRequestedAt,
+        suggestedVerbs: [],
+      },
+    },
+  });
+  inFlightFx.store.setMeta(requiredCheckPollMetaKey(inFlightTask.id, HEAD), {
+    head: HEAD,
+    incidentId: null,
+    nextAt: Date.now() - 1_000,
+  });
+
+  const pollQuantum = inFlightFx.runtime.engine.scheduleTaskQuantum(
+    inFlightTask.id,
+  );
+  await pollStarted;
+
+  const mergedWhilePolling = await inFlightFx.callExplicit(
+    inFlightTask.id,
+    { action: "merge.now", head: HEAD, accept: ["checks"] },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(mergedWhilePolling.explicitResolution?.status, "applied");
+  assert.equal(mergedWhilePolling.phase, "merging");
+  assert.notEqual(mergedWhilePolling.resolution.integrationTurn, null);
+
+  inFlightMerged = true;
+  finishPollRead();
+  await pollQuantum;
+
+  const afterPoll = inFlightFx.store.task(inFlightTask.id);
+  assert.equal(afterPoll.phase, "syncing", afterPoll.reason);
+  assert.equal(afterPoll.resolution.mergedCommit, MERGED_COMMIT);
+  assert.notEqual(afterPoll.resolution.integrationTurn, null);
 });
