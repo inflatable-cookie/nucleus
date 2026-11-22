@@ -176,7 +176,9 @@ function RecordList({
           {retry}
         </View>
       )}
-      {!read.items.length && Boolean(empty) && <Text style={meta}>{empty}</Text>}
+      {!read.items.length && Boolean(empty) && (
+        <Text style={meta}>{empty}</Text>
+      )}
       {read.items.length > shown && (
         <Text style={meta}>
           Showing {shown} of {read.items.length} {label}.
@@ -243,6 +245,7 @@ export function LaneScreen({
   onRetryTasks,
   onSelectProject,
   onSetStatus,
+  readFinished,
   c,
 }: {
   lane: LaneView;
@@ -271,6 +274,16 @@ export function LaneScreen({
   onRetryTasks?: () => void;
   onSelectProject?: (key: string) => void;
   onSetStatus?: (status: LaneView["status"]) => void;
+  /** One page of the lane's finished work, newest first (`queue.outcome-search` by lane). */
+  readFinished?: (cursor: string | null) => Promise<{
+    results: Array<
+      Pick<
+        LaneView["recentOutcomes"][number],
+        "taskId" | "title" | "outcome" | "prNumber" | "prUrl" | "finishedAt"
+      >
+    >;
+    cursor: string | null;
+  }>;
   c: Colors;
 }) {
   const r = roles(c);
@@ -284,7 +297,18 @@ export function LaneScreen({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [details, setDetails] = useState(false);
-  const [allFinished, setAllFinished] = useState(false);
+  // See all's read of the lane's finished work: the rows so far and the next page's cursor.
+  const [allFinished, setAllFinished] = useState<{
+    rows: Array<
+      Pick<
+        LaneView["recentOutcomes"][number],
+        "taskId" | "title" | "outcome" | "prNumber" | "prUrl" | "finishedAt"
+      >
+    >;
+    cursor: string | null;
+    loading?: boolean;
+    error?: string;
+  } | null>(null);
   const [width, setWidth] = useState(0);
   // Lead and papercut lists page eight at a time from the lane's complete read.
   const [listShown, setListShown] = useState<{
@@ -593,8 +617,38 @@ export function LaneScreen({
     </View>
   );
 
-  const finishedShown = allFinished
-    ? lane.recentOutcomes
+  // See all reads the lane's whole outcome history through the outcome search, a page at a time;
+  // the lane view itself carries only its latest ten.
+  type FinishedRow = Pick<
+    LaneView["recentOutcomes"][number],
+    "taskId" | "title" | "outcome" | "prNumber" | "prUrl" | "finishedAt"
+  >;
+  const seeAll = async (cursor: string | null) => {
+    if (!readFinished) {
+      setAllFinished({ rows: lane.recentOutcomes, cursor: null });
+      return;
+    }
+    setAllFinished((current) => ({
+      rows: current?.rows ?? [],
+      cursor: current?.cursor ?? null,
+      loading: true,
+    }));
+    try {
+      const page = await readFinished(cursor);
+      setAllFinished((current) => ({
+        rows: [...(cursor ? (current?.rows ?? []) : []), ...page.results],
+        cursor: page.cursor,
+      }));
+    } catch (error) {
+      setAllFinished((current) => ({
+        rows: current?.rows ?? [],
+        cursor,
+        error: message(error),
+      }));
+    }
+  };
+  const finishedShown: FinishedRow[] = allFinished
+    ? allFinished.rows
     : lane.recentOutcomes.slice(0, LANE_FINISHED_PREVIEW);
   const moreFinished =
     !allFinished &&
@@ -612,7 +666,7 @@ export function LaneScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`See all finished work in ${name}`}
-              onPress={() => setAllFinished(true)}
+              onPress={() => void seeAll(null)}
             >
               <Text style={{ ...meta, color: r.accent }}>· See all</Text>
             </Pressable>
@@ -647,12 +701,47 @@ export function LaneScreen({
           </View>
         ))}
         {!lane.terminalCount && <Text style={meta}>Nothing finished yet.</Text>}
-        {allFinished && lane.recentOutcomes.length < lane.terminalCount && (
-          <Text style={meta}>
-            The last {lane.recentOutcomes.length} of {lane.terminalCount}{" "}
-            finished.
-          </Text>
+        {allFinished?.loading && (
+          <Text style={meta}>Loading finished work…</Text>
         )}
+        {allFinished?.error && (
+          <View accessibilityRole="alert" style={{ gap: space.xxs }}>
+            <Text style={{ ...meta, color: r.warning }}>
+              Couldn’t load finished work: {allFinished.error}
+            </Text>
+            <View style={row}>
+              <Button
+                small
+                c={c}
+                text="Retry"
+                label={`Retry loading finished work in ${name}`}
+                onPress={() => void seeAll(allFinished.cursor)}
+              />
+            </View>
+          </View>
+        )}
+        {allFinished &&
+          !allFinished.loading &&
+          !allFinished.error &&
+          allFinished.cursor && (
+            <View style={row}>
+              <Button
+                small
+                c={c}
+                text="Show more finished work"
+                label={`Show more finished work in ${name}`}
+                onPress={() => void seeAll(allFinished.cursor)}
+              />
+            </View>
+          )}
+        {allFinished &&
+          !readFinished &&
+          allFinished.rows.length < lane.terminalCount && (
+            <Text style={meta}>
+              The last {allFinished.rows.length} of {lane.terminalCount}{" "}
+              finished.
+            </Text>
+          )}
       </View>
     </View>
   );
@@ -1237,7 +1326,13 @@ export function LaneScreen({
               gap: space.lg,
             }}
           >
-            <View style={{ flex: side ? 1 : undefined, minWidth: 0, alignSelf: "stretch" }}>
+            <View
+              style={{
+                flex: side ? 1 : undefined,
+                minWidth: 0,
+                alignSelf: "stretch",
+              }}
+            >
               {main}
             </View>
             <View

@@ -347,7 +347,11 @@ test("Spec 027 #11 retired 2026-11-22: the rendered selector has no Parked heade
     }),
   );
   ui.press(/^Projects, /);
-  assert.equal(ui.query("Parked"), undefined, "parking is retired: no Parked group");
+  assert.equal(
+    ui.query("Parked"),
+    undefined,
+    "parking is retired: no Parked group",
+  );
   assert.equal(
     ui.query("Unpark project-a-accelerator"),
     undefined,

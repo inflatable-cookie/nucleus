@@ -64,7 +64,7 @@ const project = {
   key: "app",
   name: "App",
   version: 1,
-  
+
   repositories: [repo],
   primary: repo,
 };
@@ -73,7 +73,7 @@ const projectDProject = {
   key: "project-d",
   name: "Project-D",
   version: 1,
-  
+
   repositories: [projectDRepo],
   primary: projectDRepo,
 };
@@ -737,7 +737,11 @@ function assertDarkTheme(ui: ReturnType<typeof mount>) {
     ...Object.values(dark),
     ...Object.values(dark).map((value) => toneSurface(value, value)),
     // Planning's review segment and idle banner tint a role at their own token alphas (nucleus#1531).
-    ...[planningRead.reviewAlpha, planningRead.bannerAlpha, planningRead.bannerBorderAlpha].flatMap((alpha) =>
+    ...[
+      planningRead.reviewAlpha,
+      planningRead.bannerAlpha,
+      planningRead.bannerBorderAlpha,
+    ].flatMap((alpha) =>
       Object.values(dark).map((value) => toneSurface(value, value, alpha)),
     ),
   ]);
@@ -996,7 +1000,11 @@ test("026-14/A2 the bundled Planning tab renders its roadmap in the dark theme",
       `the bundled Planning tab did not render its roadmap: ${ui.text().slice(0, 600)}`,
     );
     assert.ok(ui.get("Focus"));
-    assert.doesNotMatch(ui.text(), /Version 1/, "the read view never shows the version number");
+    assert.doesNotMatch(
+      ui.text(),
+      /Version 1/,
+      "the read view never shows the version number",
+    );
     assert.doesNotMatch(
       ui.text(),
       /Loading plan/,

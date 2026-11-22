@@ -1,4 +1,4 @@
-import React, { useState, type ReactNode } from "react";
+import React, { useEffect, useState, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import type {
   LaneView,
@@ -439,7 +439,12 @@ export function ProjectRow({
   const { project, state } = model;
   const dim = model.group === "dormant";
   return (
-    <View style={{ marginHorizontal: space.xs, opacity: dim && !selected ? planningRead.dormantOpacity : 1 }}>
+    <View
+      style={{
+        marginHorizontal: space.xs,
+        opacity: dim && !selected ? planningRead.dormantOpacity : 1,
+      }}
+    >
       <HoverPress
         label={`Project row ${project.name}`}
         selected={selected}
@@ -572,8 +577,16 @@ function Banner({
         padding: space.md,
         borderRadius: radius.panel,
         borderWidth: 1,
-        borderColor: toneSurface(r.warning, r.border, planningRead.bannerBorderAlpha),
-        backgroundColor: toneSurface(r.warning, r.section, planningRead.bannerAlpha),
+        borderColor: toneSurface(
+          r.warning,
+          r.border,
+          planningRead.bannerBorderAlpha,
+        ),
+        backgroundColor: toneSurface(
+          r.warning,
+          r.section,
+          planningRead.bannerAlpha,
+        ),
       }}
     >
       <Text style={{ ...body(c), color: r.warning, fontWeight: "600" }}>
@@ -584,6 +597,156 @@ function Banner({
           ? banner.reason
           : "No recent activity and no lane in Now. New work makes it active again."}
       </Text>
+    </View>
+  );
+}
+
+/**
+ * History: every saved version of the plan, read one at a time through `plan.get`. It opens
+ * on the latest save and pages back with Earlier and Later; an earlier version lists its
+ * lanes under Now, Next and Later as they were saved, with who saved it and when.
+ */
+function PlanHistory({
+  project,
+  latest,
+  lanes,
+  unplanned,
+  readPlanVersion,
+  c,
+}: {
+  project: Project;
+  latest: ProjectPlan;
+  lanes: LaneView[];
+  unplanned: LaneView[];
+  readPlanVersion?: (project: string, version: number) => Promise<ProjectPlan>;
+  c: Colors;
+}) {
+  const r = roles(c);
+  const [viewing, setViewing] = useState<number | null>(null);
+  const [read, setRead] = useState<{
+    version: number;
+    plan?: ProjectPlan;
+    error?: string;
+  } | null>(null);
+  useEffect(() => {
+    if (viewing === null || !readPlanVersion) {
+      setRead(null);
+      return;
+    }
+    let live = true;
+    setRead({ version: viewing });
+    readPlanVersion(project.key, viewing).then(
+      (plan) => {
+        if (live) setRead({ version: viewing, plan });
+      },
+      (error) => {
+        if (live)
+          setRead({
+            version: viewing,
+            error: error instanceof Error ? error.message : String(error),
+          });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [viewing, project.key]);
+  const shown = viewing === null ? latest : read?.plan;
+  const current = viewing ?? latest.version;
+  const saved = (plan: ProjectPlan) =>
+    `Version ${plan.version} · saved ${plan.createdAt ? formatLocalDateTime(plan.createdAt) : "at an unknown time"}${plan.author ? ` by ${plan.author}` : ""}`;
+  const title = (key: string) =>
+    lanes.find((lane) => lane.key === key)?.title ?? key;
+  return (
+    <View
+      accessibilityLabel={`Plan history for ${project.name}`}
+      style={{
+        gap: space.xs,
+        padding: space.sm,
+        borderRadius: radius.panel,
+        backgroundColor: r.section,
+      }}
+    >
+      {!latest.version ? (
+        <Text style={body(c)}>No plan saved yet.</Text>
+      ) : shown ? (
+        <>
+          <Text style={body(c)}>
+            {saved(shown)}
+            {viewing === null ? " · the latest" : " · not the latest"}
+          </Text>
+          {shown.idle && (
+            <Text style={meta(c)}>
+              Idle on purpose since {formatLocalDateTime(shown.idle.at)}:{" "}
+              {shown.idle.reason}. Saving a changed plan or finishing new work
+              ends it.
+            </Text>
+          )}
+          {PLAN_HORIZONS.map((horizon) => {
+            const entries = shown.entries.filter(
+              (entry) => entry.horizon === horizon,
+            );
+            return (
+              <Text
+                key={horizon}
+                accessibilityLabel={`${horizonTitle(horizon)} in version ${shown.version}`}
+                style={meta(c)}
+              >
+                {horizonTitle(horizon)}:{" "}
+                {entries.length
+                  ? entries.map((entry) => title(entry.lane)).join(", ")
+                  : "nothing"}
+              </Text>
+            );
+          })}
+        </>
+      ) : read?.error ? (
+        <Text
+          accessibilityRole="alert"
+          style={{ ...body(c), color: r.warning }}
+        >
+          Couldn’t load version {read.version}: {read.error}
+        </Text>
+      ) : (
+        <Text style={meta(c)}>Loading version {current}…</Text>
+      )}
+      {viewing === null && (
+        <Text style={meta(c)}>
+          {unplanned.length
+            ? `${unplanned.length} ${unplanned.length === 1 ? "lane is" : "lanes are"} not in the plan yet: ${unplanned.map((lane) => lane.title).join(", ")}. Edit plan to add ${unplanned.length === 1 ? "it" : "them"}.`
+            : "Every lane of this project is in the plan."}
+        </Text>
+      )}
+      {latest.version > 1 && readPlanVersion && (
+        <View style={row}>
+          <Button
+            small
+            c={c}
+            text="Earlier version"
+            label={`Show the earlier version of the ${project.name} plan`}
+            disabled={current <= 1}
+            onPress={() => setViewing(current - 1)}
+          />
+          <Button
+            small
+            c={c}
+            text="Later version"
+            label={`Show the later version of the ${project.name} plan`}
+            disabled={viewing === null}
+            onPress={() =>
+              setViewing(current + 1 >= latest.version ? null : current + 1)
+            }
+          />
+          <Button
+            small
+            c={c}
+            text="Latest version"
+            label={`Show the latest version of the ${project.name} plan`}
+            disabled={viewing === null}
+            onPress={() => setViewing(null)}
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -612,6 +775,8 @@ export function ProjectRoadmapView({
   onEditPlan,
   onRetry,
   onOpenTask,
+  stacked: forceStacked = false,
+  readPlanVersion,
   c,
 }: {
   section: RoadmapSection;
@@ -621,6 +786,10 @@ export function ProjectRoadmapView({
   leads: readonly LeadListFacts[];
   /** The pane's measured width; columns stack into one below `planningRead.columnsMin`. 0 is unmeasured. */
   width: number;
+  /** Stack the columns whatever the width: the roadmap shares the list pane below 1100 points. */
+  stacked?: boolean;
+  /** Reads one saved version of the plan, so History can page back through every save. */
+  readPlanVersion?: (project: string, version: number) => Promise<ProjectPlan>;
   busy: boolean;
   onOpenLane: (lane: string) => void;
   onEditPlan?: () => void;
@@ -641,7 +810,9 @@ export function ProjectRoadmapView({
     leads,
   });
   const laneFor = (key: string) => lanes.find((lane) => lane.key === key);
-  const projectKeys = new Set(projectLanes(project, lanes).map((lane) => lane.key));
+  const projectKeys = new Set(
+    projectLanes(project, lanes).map((lane) => lane.key),
+  );
   const planned = new Set([
     ...(latest?.entries ?? []).map((entry) => entry.lane),
     ...(latest?.done ?? []).map((entry) => entry.lane),
@@ -649,7 +820,8 @@ export function ProjectRoadmapView({
   const unplanned = lanes.filter(
     (lane) => projectKeys.has(lane.key) && !planned.has(lane.key),
   );
-  const stacked = width > 0 && width < planningRead.columnsMin;
+  const stacked =
+    forceStacked || (width > 0 && width < planningRead.columnsMin);
   const column = (horizon: PlanHorizon) => {
     const steps = roadmap[horizon];
     return (
@@ -667,7 +839,11 @@ export function ProjectRoadmapView({
       >
         <View style={{ gap: space.xxs / 2 }}>
           <View
-            style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: space.xs,
+            }}
           >
             <View
               style={{
@@ -678,7 +854,11 @@ export function ProjectRoadmapView({
                   horizon === "now"
                     ? r.accent
                     : horizon === "next"
-                      ? toneSurface(r.accent, r.raised, planningRead.reviewAlpha)
+                      ? toneSurface(
+                          r.accent,
+                          r.raised,
+                          planningRead.reviewAlpha,
+                        )
                       : r.muted,
               }}
             />
@@ -731,7 +911,11 @@ export function ProjectRoadmapView({
       >
         <View style={{ gap: space.xxs, flexShrink: 1, minWidth: 0 }}>
           <View
-            style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: space.xs,
+            }}
           >
             <ProjectMark badge={badge} c={c} />
             <Text
@@ -834,32 +1018,14 @@ export function ProjectRoadmapView({
         </View>
       )}
       {latest && history && (
-        <View
-          accessibilityLabel={`Plan history for ${name}`}
-          style={{
-            gap: space.xxs,
-            padding: space.sm,
-            borderRadius: radius.panel,
-            backgroundColor: r.section,
-          }}
-        >
-          <Text style={body(c)}>
-            {latest.version
-              ? `Version ${latest.version} · saved ${latest.createdAt ? formatLocalDateTime(latest.createdAt) : "at an unknown time"}${latest.author ? ` by ${latest.author}` : ""}`
-              : "No plan saved yet."}
-          </Text>
-          {latest.idle && (
-            <Text style={meta(c)}>
-              Idle on purpose since {formatLocalDateTime(latest.idle.at)}.
-              Saving a changed plan or finishing new work ends it.
-            </Text>
-          )}
-          <Text style={meta(c)}>
-            {unplanned.length
-              ? `${unplanned.length} ${unplanned.length === 1 ? "lane is" : "lanes are"} not in the plan yet: ${unplanned.map((lane) => lane.title).join(", ")}. Edit plan to add ${unplanned.length === 1 ? "it" : "them"}.`
-              : "Every lane of this project is in the plan."}
-          </Text>
-        </View>
+        <PlanHistory
+          project={project}
+          latest={latest}
+          lanes={lanes}
+          unplanned={unplanned}
+          readPlanVersion={readPlanVersion}
+          c={c}
+        />
       )}
       {latest && <Banner plan={latest} lanes={lanes} group={group} c={c} />}
       {!latest && group === "dormant" && (
@@ -877,13 +1043,16 @@ export function ProjectRoadmapView({
           {PLAN_HORIZONS.map(column)}
         </View>
       )}
-      {latest && !latest.entries.length && !latest.idle && group !== "dormant" && (
-        <Text style={{ ...body(c), color: r.muted }}>
-          {unplanned.length
-            ? "No lanes in the plan yet. Edit plan to start one."
-            : "No lanes for this project yet."}
-        </Text>
-      )}
+      {latest &&
+        !latest.entries.length &&
+        !latest.idle &&
+        group !== "dormant" && (
+          <Text style={{ ...body(c), color: r.muted }}>
+            {unplanned.length
+              ? "No lanes in the plan yet. Edit plan to start one."
+              : "No lanes for this project yet."}
+          </Text>
+        )}
       {roadmap.done.length > 0 && (
         <View
           accessibilityLabel="Finished lanes"

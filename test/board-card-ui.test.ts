@@ -2473,19 +2473,50 @@ test("Planning lists its projects as inbox rows, grouped, with the selected surf
     await settle(() => Boolean(tree.raw.query("Project row Second")));
     // nucleus#1531: inbox rows with no divider or card frame; the open row takes the selected surface.
     const row = (name: string) => tree.raw.get(`Project row ${name}`);
-    const style = (name: string) => row(name).props.style as { borderWidth?: number; borderBottomWidth?: number; backgroundColor?: string };
-    assert.equal(style("App").borderWidth, undefined, "no card border inside the list pane");
-    assert.equal(style("App").borderBottomWidth, undefined, "no divider between rows");
-    assert.equal(row("App").props.accessibilityState.selected, true, "the first active project opens beside the list");
+    const style = (name: string) =>
+      row(name).props.style as {
+        borderWidth?: number;
+        borderBottomWidth?: number;
+        backgroundColor?: string;
+      };
+    assert.equal(
+      style("App").borderWidth,
+      undefined,
+      "no card border inside the list pane",
+    );
+    assert.equal(
+      style("App").borderBottomWidth,
+      undefined,
+      "no divider between rows",
+    );
+    assert.equal(
+      row("App").props.accessibilityState.selected,
+      true,
+      "the first active project opens beside the list",
+    );
     assert.equal(style("App").backgroundColor, dark.surface2);
-    assert.equal(style("Second").backgroundColor, "transparent", "a closed row has no background at rest");
+    assert.equal(
+      style("Second").backgroundColor,
+      "transparent",
+      "a closed row has no background at rest",
+    );
     tree.raw.press("Project row Second");
-    await settle(() => row("Second").props.accessibilityState.selected === true);
+    await settle(
+      () => row("Second").props.accessibilityState.selected === true,
+    );
     assert.equal(style("Second").backgroundColor, dark.surface2);
     assert.ok(tree.raw.query("Plan for Second"));
     // The project with no recent activity lists under Dormant.
-    assert.ok(tree.raw.query("Dormant projects"), "the dormant project is grouped");
-    assert.ok(nodeHas(tree.raw.get("Dormant projects"), (child) => child.props.accessibilityLabel === "Project row Sleepy"));
+    assert.ok(
+      tree.raw.query("Dormant projects"),
+      "the dormant project is grouped",
+    );
+    assert.ok(
+      nodeHas(
+        tree.raw.get("Dormant projects"),
+        (child) => child.props.accessibilityLabel === "Project row Sleepy",
+      ),
+    );
   } finally {
     mounted?.update(h("View", null));
     store.close();

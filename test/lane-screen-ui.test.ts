@@ -2,14 +2,25 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import React, { useState } from "react";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
-import type { BoardLead, LaneDocumentVersion, LaneView, Project, TaskSummary } from "../shared/contracts";
-import type { LaneDocumentRead, LaneDraft, LaneListRead } from "../client/lane-screen";
+import type {
+  BoardLead,
+  LaneDocumentVersion,
+  LaneView,
+  Project,
+  TaskSummary,
+} from "../shared/contracts";
+import type {
+  LaneDocumentRead,
+  LaneDraft,
+  LaneListRead,
+} from "../client/lane-screen";
 
 useNativeStubs();
 const h = React.createElement;
 const c = new Proxy({}, { get: () => "#000" }) as never;
-const textOf = (node: HostNode | string): string => typeof node === "string" ? node : node.children.map(textOf).join(" ");
-const settle = () => new Promise(resolve => setImmediate(resolve));
+const textOf = (node: HostNode | string): string =>
+  typeof node === "string" ? node : node.children.map(textOf).join(" ");
+const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 const lane = {
   key: "alpha-lane",
@@ -25,27 +36,77 @@ const lane = {
 } as unknown as LaneView;
 
 const version = (number: number, text: string): LaneDocumentVersion =>
-  ({ key: "alpha-lane", version: number, text, digest: `sha256:${"0".repeat(64)}`, author: "operator (board)", createdAt: "2026-11-06T09:00:00Z" }) as LaneDocumentVersion;
-const latest = version(3, "# Alpha\n\nThe aim, in brief.\n\n## Scope\n\nLine one.\nLine two.\nLine three.\nLine four.\nLine five.\nLine six.\nLine seven.\nLine eight.\nThe last line of the full text.");
+  ({
+    key: "alpha-lane",
+    version: number,
+    text,
+    digest: `sha256:${"0".repeat(64)}`,
+    author: "operator (board)",
+    createdAt: "2026-11-06T09:00:00Z",
+  }) as LaneDocumentVersion;
+const latest = version(
+  3,
+  "# Alpha\n\nThe aim, in brief.\n\n## Scope\n\nLine one.\nLine two.\nLine three.\nLine four.\nLine five.\nLine six.\nLine seven.\nLine eight.\nThe last line of the full text.",
+);
 const earlier = version(2, "# Alpha\n\nAn earlier wording.");
 
-const work = (id: string, title: string, phase: string = "working"): TaskSummary =>
-  ({ id, title, phase, held: false, lanes: ["alpha-lane"], reason: "", repoPath: "/alpha", version: 1 }) as unknown as TaskSummary;
-const lead = (id: string, title: string, tags: string[] = [], papercutArea: string | null = null): BoardLead =>
-  ({ id, title, preview: `${title} body`, lanes: ["alpha-lane"], tags, papercutArea, repositories: [], state: "open" }) as unknown as BoardLead;
+const work = (
+  id: string,
+  title: string,
+  phase: string = "working",
+): TaskSummary =>
+  ({
+    id,
+    title,
+    phase,
+    held: false,
+    lanes: ["alpha-lane"],
+    reason: "",
+    repoPath: "/alpha",
+    version: 1,
+  }) as unknown as TaskSummary;
+const lead = (
+  id: string,
+  title: string,
+  tags: string[] = [],
+  papercutArea: string | null = null,
+): BoardLead =>
+  ({
+    id,
+    title,
+    preview: `${title} body`,
+    lanes: ["alpha-lane"],
+    tags,
+    papercutArea,
+    repositories: [],
+    state: "open",
+  }) as unknown as BoardLead;
 
 type Over = {
-  lane?: LaneView; compact?: boolean; canEdit?: boolean; busy?: boolean; doc?: LaneDocumentRead; draft?: LaneDraft | null;
-  tasks?: LaneListRead<TaskSummary>; leads?: LaneListRead<BoardLead>;
+  lane?: LaneView;
+  compact?: boolean;
+  canEdit?: boolean;
+  busy?: boolean;
+  doc?: LaneDocumentRead;
+  draft?: LaneDraft | null;
+  tasks?: LaneListRead<TaskSummary>;
+  leads?: LaneListRead<BoardLead>;
   onLoadMoreTasks?: (offset: number) => void;
-  onLoadPreviousTasks?: () => void; onRetryTasks?: () => void;
+  onLoadPreviousTasks?: () => void;
+  onRetryTasks?: () => void;
   onSaveDocument?: (input: { version: number; text: string }) => Promise<void>;
   readVersion?: (version: number) => Promise<LaneDocumentVersion | null>;
 };
 
 async function mountLane(over: Over = {}) {
   const { LaneScreen } = await import("../client/lane-screen");
-  const log = { saves: [] as Array<{ version: number; text: string }>, opened: [] as string[], drafts: [] as unknown[], reads: [] as number[], status: [] as string[] };
+  const log = {
+    saves: [] as Array<{ version: number; text: string }>,
+    opened: [] as string[],
+    drafts: [] as unknown[],
+    reads: [] as number[],
+    status: [] as string[],
+  };
   const props: Over = { ...over };
   const projects: Project[] = [];
   function Harness() {
@@ -59,10 +120,22 @@ async function mountLane(over: Over = {}) {
       canEdit: props.canEdit ?? true,
       doc: props.doc ?? { data: latest },
       draft,
-      onDraft: (next: LaneDraft | null) => { log.drafts.push(next); setDraft(next); },
-      onSaveDocument: props.onSaveDocument ?? (async (input: { version: number; text: string }) => { log.saves.push(input); }),
+      onDraft: (next: LaneDraft | null) => {
+        log.drafts.push(next);
+        setDraft(next);
+      },
+      onSaveDocument:
+        props.onSaveDocument ??
+        (async (input: { version: number; text: string }) => {
+          log.saves.push(input);
+        }),
       onRetryDocument: () => {},
-      readVersion: props.readVersion ?? (async (number: number) => { log.reads.push(number); return number === 2 ? earlier : number === 3 ? latest : null; }),
+      readVersion:
+        props.readVersion ??
+        (async (number: number) => {
+          log.reads.push(number);
+          return number === 2 ? earlier : number === 3 ? latest : null;
+        }),
       tasks: props.tasks ?? { items: [] },
       onLoadMoreTasks: props.onLoadMoreTasks,
       onLoadPreviousTasks: props.onLoadPreviousTasks,
@@ -78,38 +151,65 @@ async function mountLane(over: Over = {}) {
   }
   const ui = mount(h(Harness));
   return {
-    ui, log,
+    ui,
+    log,
     /** Replaces the props the screen is given, as a fresh read would. */
-    set(next: Over) { Object.assign(props, next); ui.update(h(Harness)); },
+    set(next: Over) {
+      Object.assign(props, next);
+      ui.update(h(Harness));
+    },
   };
 }
 
 test("the document states are distinct: loading, failed, none yet, and the document's name and version", async () => {
   const loading = await mountLane({ doc: {} });
   assert.match(loading.ui.text(), /Loading document…/);
-  assert.equal(loading.ui.query("Read full document for Alpha lane"), undefined);
+  assert.equal(
+    loading.ui.query("Read full document for Alpha lane"),
+    undefined,
+  );
 
   const failed = await mountLane({ doc: { error: "socket closed" } });
-  assert.match(failed.ui.text(), /Couldn’t load the lane document: socket closed/);
-  assert.equal(failed.ui.get("Retry the Alpha lane document").props.accessibilityLabel, "Retry the Alpha lane document");
+  assert.match(
+    failed.ui.text(),
+    /Couldn’t load the lane document: socket closed/,
+  );
+  assert.equal(
+    failed.ui.get("Retry the Alpha lane document").props.accessibilityLabel,
+    "Retry the Alpha lane document",
+  );
   assert.doesNotMatch(failed.ui.text(), /No lane document yet/);
 
   const none = await mountLane({ doc: { data: null } });
   assert.match(none.ui.text(), /No lane document yet\./);
-  assert.equal(none.ui.get("Write document for Alpha lane").props.accessibilityLabel, "Write document for Alpha lane");
+  assert.equal(
+    none.ui.get("Write document for Alpha lane").props.accessibilityLabel,
+    "Write document for Alpha lane",
+  );
 
   const ready = await mountLane();
   const box = textOf(ready.ui.get("Lane document"));
-  assert.match(box, /Document\s+Alpha\s+Version\s+3\s+· edited/, "the side column names the document by its first heading, with its version and age");
+  assert.match(
+    box,
+    /Document\s+Alpha\s+Version\s+3\s+· edited/,
+    "the side column names the document by its first heading, with its version and age",
+  );
   assert.doesNotMatch(ready.ui.text(), /# Alpha/, "no raw Markdown markers");
-  assert.doesNotMatch(ready.ui.text(), /The last line of the full text/, "the full text waits for Open document");
+  assert.doesNotMatch(
+    ready.ui.text(),
+    /The last line of the full text/,
+    "the full text waits for Open document",
+  );
   assert.ok(ready.ui.get("Read full document for Alpha lane"));
   assert.ok(ready.ui.get("Edit the Alpha lane document"));
 });
 
 test("a stale document says which version it shows and that it may be out of date", async () => {
   const stale = await mountLane({ doc: { data: latest, error: "timeout" } });
-  assert.match(stale.ui.text(), /Showing version 3\. The latest could not be refreshed: timeout\. It may be out of date\./);
+  assert.match(
+    stale.ui.text(),
+    /Showing version 3\. The latest could not be refreshed: timeout\. It may be out of date\./,
+  );
   assert.ok(stale.ui.get("Retry refreshing the Alpha lane document"));
   assert.ok(stale.ui.get("Lane document"), "the last read stays on screen");
 });
@@ -119,12 +219,24 @@ test("reading the full document shows every line, and older versions are read on
   ui.press("Read full document for Alpha lane");
   assert.ok(ui.get("Lane document, full text"));
   assert.match(ui.text(), /The last line of the full text\./);
-  assert.ok(ui.ofType("Text").some(node => node.props.accessibilityRole === "header" && node.children.join("") === "Alpha"), "a Markdown heading is set as a heading");
+  assert.ok(
+    ui
+      .ofType("Text")
+      .some(
+        (node) =>
+          node.props.accessibilityRole === "header" &&
+          node.children.join("") === "Alpha",
+      ),
+    "a Markdown heading is set as a heading",
+  );
 
   ui.press("Show the earlier version of Alpha lane");
   await settle();
   assert.deepEqual(log.reads, [2]);
-  assert.match(ui.text(), /Version 2 · operator \(board\) · .* · not the latest/);
+  assert.match(
+    ui.text(),
+    /Version 2 · operator \(board\) · .* · not the latest/,
+  );
   assert.match(ui.text(), /An earlier wording\./);
 
   ui.press("Show the latest version of Alpha lane");
@@ -145,34 +257,64 @@ test("saving sends the version the text was written against and clears the draft
   ui.press("Save the Alpha lane document");
   await settle();
   assert.deepEqual(log.saves, [{ version: 3, text: "# Alpha\n\nRevised." }]);
-  assert.equal(ui.query("Lane document editor"), undefined, "the editor closes once the save lands");
+  assert.equal(
+    ui.query("Lane document editor"),
+    undefined,
+    "the editor closes once the save lands",
+  );
   assert.equal(log.drafts.at(-1), null);
 });
 
 test("a save with no change is refused, and a refused save keeps the operator's text", async () => {
-  const refused = await mountLane({ onSaveDocument: async () => { throw new Error("Lane document alpha-lane changed to version 4; reload before saving"); } });
+  const refused = await mountLane({
+    onSaveDocument: async () => {
+      throw new Error(
+        "Lane document alpha-lane changed to version 4; reload before saving",
+      );
+    },
+  });
   refused.ui.press("Edit the Alpha lane document");
-  assert.equal(refused.ui.get("Save the Alpha lane document").props.disabled, true, "no change, nothing to save");
+  assert.equal(
+    refused.ui.get("Save the Alpha lane document").props.disabled,
+    true,
+    "no change, nothing to save",
+  );
   assert.match(refused.ui.text(), /No changes to save\./);
 
   refused.ui.type("Lane document text", "Mine.");
   refused.ui.press("Save the Alpha lane document");
   await settle();
-  assert.match(refused.ui.text(), /Not saved: Lane document alpha-lane changed to version 4; reload before saving\. Your text is kept\./);
+  assert.match(
+    refused.ui.text(),
+    /Not saved: Lane document alpha-lane changed to version 4; reload before saving\. Your text is kept\./,
+  );
   assert.equal(refused.ui.get("Lane document text").props.value, "Mine.");
 });
 
 test("a document that changed under a draft blocks saving until the operator picks the new base", async () => {
-  const { ui, log, set } = await mountLane({ draft: { base: 3, text: "Mine.", start: latest.text } });
+  const { ui, log, set } = await mountLane({
+    draft: { base: 3, text: "Mine.", start: latest.text },
+  });
   assert.ok(ui.get("Lane document editor"), "a kept draft opens the editor");
   assert.equal(ui.query("Lane document changed"), undefined);
 
   set({ doc: { data: version(4, "Newer text from another operator.") } });
   const alert = ui.get("Lane document changed");
   assert.equal(alert.props.accessibilityRole, "alert");
-  assert.match(ui.text(), /The document changed to version 4 while you were editing/);
-  assert.equal(ui.get("Save the Alpha lane document").props.disabled, true, "saving over newer text is refused");
-  assert.equal(ui.get("Lane document text").props.value, "Mine.", "the text is kept");
+  assert.match(
+    ui.text(),
+    /The document changed to version 4 while you were editing/,
+  );
+  assert.equal(
+    ui.get("Save the Alpha lane document").props.disabled,
+    true,
+    "saving over newer text is refused",
+  );
+  assert.equal(
+    ui.get("Lane document text").props.value,
+    "Mine.",
+    "the text is kept",
+  );
 
   ui.press("Use version 4 of Alpha lane as the base for my text");
   assert.equal(ui.get("Save the Alpha lane document").props.disabled, false);
@@ -182,13 +324,18 @@ test("a document that changed under a draft blocks saving until the operator pic
 });
 
 test("discarding a conflicting draft drops the text and keeps the latest version", async () => {
-  const { ui, log, set } = await mountLane({ draft: { base: 3, text: "Mine.", start: latest.text } });
+  const { ui, log, set } = await mountLane({
+    draft: { base: 3, text: "Mine.", start: latest.text },
+  });
   set({ doc: { data: version(4, "Newer.") } });
   ui.press("Discard my text for Alpha lane and keep the latest");
   assert.equal(ui.query("Lane document editor"), undefined);
   assert.equal(log.drafts.at(-1), null);
   assert.doesNotMatch(ui.text(), /Mine\./);
-  assert.ok(ui.get("Lane document"), "the latest version is what the lane shows");
+  assert.ok(
+    ui.get("Lane document"),
+    "the latest version is what the lane shows",
+  );
 });
 
 test("the first version is written from version zero, with no latest text to compare", async () => {
@@ -202,20 +349,36 @@ test("the first version is written from version zero, with no latest text to com
 });
 
 test("a draft from before the tab was left opens in the editor, and Edit never replaces it", async () => {
-  const { ui, log } = await mountLane({ draft: { base: 3, text: "Kept.", start: latest.text } });
+  const { ui, log } = await mountLane({
+    draft: { base: 3, text: "Kept.", start: latest.text },
+  });
   assert.equal(ui.get("Lane document text").props.value, "Kept.");
   ui.press("Cancel changes to the Alpha lane document");
   assert.equal(log.drafts.at(-1), null);
   ui.press("Edit the Alpha lane document");
-  assert.equal(ui.get("Lane document text").props.value, latest.text, "a fresh edit starts from the latest text");
+  assert.equal(
+    ui.get("Lane document text").props.value,
+    latest.text,
+    "a fresh edit starts from the latest text",
+  );
 });
 
 test("work counts come from the lane, and a partial list says how many it shows", async () => {
-  const held = { ...work("t1", "Build it"), held: true, hold: { owner: "Tom", reason: "Awaiting the source decision" } } as unknown as TaskSummary;
-  const { ui, log } = await mountLane({ lane: { ...lane, liveByPhase: { working: 2 } } as LaneView, tasks: { items: [held] } });
+  const held = {
+    ...work("t1", "Build it"),
+    held: true,
+    hold: { owner: "Tom", reason: "Awaiting the source decision" },
+  } as unknown as TaskSummary;
+  const { ui, log } = await mountLane({
+    lane: { ...lane, liveByPhase: { working: 2 } } as LaneView,
+    tasks: { items: [held] },
+  });
   assert.match(ui.text(), /In flight\s*2\s*tasks/);
   assert.match(ui.text(), /Showing 1–1 of 2 live tasks/);
-  assert.match(ui.query(/^Open task Build it/).props.accessibilityLabel, /Held · Awaiting the source decision/);
+  assert.match(
+    ui.query(/^Open task Build it/).props.accessibilityLabel,
+    /Held · Awaiting the source decision/,
+  );
   assert.match(ui.text(), /Working\s*· Held · Awaiting the source decision/);
   ui.press(/^Open task Build it/);
   assert.deepEqual(log.opened, ["task:t1"]);
@@ -225,21 +388,45 @@ test("lane work pages through queued tasks beyond the board overflow with the se
   let requested = -1;
   const { ui } = await mountLane({
     lane: { ...lane, liveByPhase: { queued: 30 } } as LaneView,
-    tasks: { items: Array.from({ length: 25 }, (_, i) => work(`t${i}`, `Task ${i}`)), total: 30, offset: 0, nextOffset: 25 },
-    onLoadMoreTasks: offset => { requested = offset; },
+    tasks: {
+      items: Array.from({ length: 25 }, (_, i) => work(`t${i}`, `Task ${i}`)),
+      total: 30,
+      offset: 0,
+      nextOffset: 25,
+    },
+    onLoadMoreTasks: (offset) => {
+      requested = offset;
+    },
   });
   assert.match(ui.text(), /Showing 1–25 of 30 live tasks/);
-  assert.equal(ui.all("Load next page of lane tasks").length, 1, "next follows the list");
+  assert.equal(
+    ui.all("Load next page of lane tasks").length,
+    1,
+    "next follows the list",
+  );
   ui.all("Load next page of lane tasks")[0].props.onPress();
   assert.equal(requested, 25);
   let returned = false;
   const pageTwo = await mountLane({
     lane: { ...lane, liveByPhase: { queued: 30 } } as LaneView,
-    tasks: { items: Array.from({ length: 5 }, (_, i) => work(`t${i + 25}`, `Task ${i + 25}`)), total: 30, offset: 25, nextOffset: null },
-    onLoadPreviousTasks: () => { returned = true; },
+    tasks: {
+      items: Array.from({ length: 5 }, (_, i) =>
+        work(`t${i + 25}`, `Task ${i + 25}`),
+      ),
+      total: 30,
+      offset: 25,
+      nextOffset: null,
+    },
+    onLoadPreviousTasks: () => {
+      returned = true;
+    },
   });
   assert.match(pageTwo.ui.text(), /Showing 26–30 of 30 live tasks/);
-  assert.equal(pageTwo.ui.all("Load previous page of lane tasks").length, 1, "previous follows the list");
+  assert.equal(
+    pageTwo.ui.all("Load previous page of lane tasks").length,
+    1,
+    "previous follows the list",
+  );
   pageTwo.ui.all("Load previous page of lane tasks")[0].props.onPress();
   assert.equal(returned, true);
 });
@@ -249,47 +436,82 @@ test("work loading is not an empty list, and a failed work read says it may be o
   assert.match(loading.ui.text(), /Loading work…/);
   assert.doesNotMatch(loading.ui.text(), /No tasks running in this lane/);
 
-  const empty = await mountLane({ lane: { ...lane, liveByPhase: {}, terminalCount: 0 } as LaneView, tasks: { items: [] } });
+  const empty = await mountLane({
+    lane: { ...lane, liveByPhase: {}, terminalCount: 0 } as LaneView,
+    tasks: { items: [] },
+  });
   assert.match(empty.ui.text(), /No tasks running in this lane/);
   assert.match(empty.ui.text(), /0\s*in total/);
   assert.match(empty.ui.text(), /Nothing finished yet\./);
 
   let retried = false;
-  const failed = await mountLane({ tasks: { error: "timeout" }, onRetryTasks: () => { retried = true; } });
+  const failed = await mountLane({
+    tasks: { error: "timeout" },
+    onRetryTasks: () => {
+      retried = true;
+    },
+  });
   assert.match(failed.ui.text(), /Couldn’t load work: timeout/);
   failed.ui.press("Retry loading lane tasks");
   assert.equal(retried, true);
 });
 
 test("leads and papercuts split the lane's open records, and each opens its record", async () => {
-  const records = [lead("l1", "Triage the plan"), lead("p1", "Board overflow", ["papercut"], "board"), lead("l2", "Second lead")];
+  const records = [
+    lead("l1", "Triage the plan"),
+    lead("p1", "Board overflow", ["papercut"], "board"),
+    lead("l2", "Second lead"),
+  ];
   const { ui, log } = await mountLane({ leads: { items: records } });
   assert.ok(ui.get("Leads waiting: 2"));
   assert.ok(ui.get("Papercuts waiting: 1"));
   assert.ok(ui.get("Open lead Triage the plan"));
-  assert.equal(ui.query("Open lead Board overflow"), undefined, "a papercut is not listed as a lead");
+  assert.equal(
+    ui.query("Open lead Board overflow"),
+    undefined,
+    "a papercut is not listed as a lead",
+  );
   ui.press("Open lead Triage the plan");
   assert.deepEqual(log.opened, ["lead:l1"]);
 
   assert.ok(ui.get("Open papercut Board overflow"));
-  assert.match(textOf(ui.get("Waiting to start")), /Triage the plan[\s\S]*Board overflow/, "both wait to start, leads first");
+  assert.match(
+    textOf(ui.get("Waiting to start")),
+    /Triage the plan[\s\S]*Board overflow/,
+    "both wait to start, leads first",
+  );
   ui.press("Open papercut Board overflow");
   assert.deepEqual(log.opened, ["lead:l1", "lead:p1"]);
 });
 
 test("lead lists page eight at a time from the complete read, so a first page is never a total", async () => {
-  const records = Array.from({ length: 10 }, (_, index) => lead(`l${index}`, `Lead ${index}`));
+  const records = Array.from({ length: 10 }, (_, index) =>
+    lead(`l${index}`, `Lead ${index}`),
+  );
   const { ui } = await mountLane({ leads: { items: records } });
-  assert.ok(ui.get("Leads waiting: 10"), "the count is the lane's total, not the page");
+  assert.ok(
+    ui.get("Leads waiting: 10"),
+    "the count is the lane's total, not the page",
+  );
   assert.match(ui.text(), /Showing 8 of 10 leads\./);
   assert.ok(ui.get("Open lead Lead 7"));
-  assert.equal(ui.query("Open lead Lead 8"), undefined, "the rest wait for the next page");
+  assert.equal(
+    ui.query("Open lead Lead 8"),
+    undefined,
+    "the rest wait for the next page",
+  );
   ui.press("Show 2 more leads");
   assert.ok(ui.get("Open lead Lead 9"));
-  assert.doesNotMatch(ui.text(), /Showing 8 of 10 leads/, "every lead shown ends the paging line");
+  assert.doesNotMatch(
+    ui.text(),
+    /Showing 8 of 10 leads/,
+    "every lead shown ends the paging line",
+  );
   assert.equal(ui.query("Show 2 more leads"), undefined);
 
-  const cuts = Array.from({ length: 9 }, (_, index) => lead(`p${index}`, `Papercut ${index}`, ["papercut"], "board"));
+  const cuts = Array.from({ length: 9 }, (_, index) =>
+    lead(`p${index}`, `Papercut ${index}`, ["papercut"], "board"),
+  );
   const paged = await mountLane({ leads: { items: cuts } });
   assert.ok(paged.ui.get("Papercuts waiting: 9"));
   assert.match(paged.ui.text(), /Showing 8 of 9 papercuts\./);
@@ -308,8 +530,13 @@ test("a lead list still loading or failing shows no count, so a partial read is 
   assert.ok(failed.ui.get("Leads waiting: …"), "no count from a failed read");
   assert.ok(failed.ui.get("Retry loading leads"));
 
-  const stale = await mountLane({ leads: { items: [lead("l1", "Kept")], error: "timeout" } });
-  assert.match(stale.ui.text(), /Showing the last leads read\. It may be out of date: timeout/);
+  const stale = await mountLane({
+    leads: { items: [lead("l1", "Kept")], error: "timeout" },
+  });
+  assert.match(
+    stale.ui.text(),
+    /Showing the last leads read\. It may be out of date: timeout/,
+  );
   assert.ok(stale.ui.get("Leads waiting: 1"));
 });
 
@@ -321,22 +548,78 @@ test("nothing waiting says so once, with no empty tabs", async () => {
 
 test("the header names the horizon, open state and other plans; Close lane and Edit lane keep their actions", async () => {
   const projects = [
-    { key: "alpha", name: "Alpha project", repositories: [{ origin: "owner/alpha", path: "/alpha" }], primary: { origin: "owner/alpha", path: "/alpha" } },
-    { key: "beta", name: "Beta project", repositories: [{ origin: "owner/alpha", path: "/alpha" }], primary: { origin: "owner/alpha", path: "/alpha" } },
+    {
+      key: "alpha",
+      name: "Alpha project",
+      repositories: [{ origin: "owner/alpha", path: "/alpha" }],
+      primary: { origin: "owner/alpha", path: "/alpha" },
+    },
+    {
+      key: "beta",
+      name: "Beta project",
+      repositories: [{ origin: "owner/alpha", path: "/alpha" }],
+      primary: { origin: "owner/alpha", path: "/alpha" },
+    },
   ] as unknown as Project[];
-  const plan = (project: string, horizon: "now" | "later", note: string) => ({ project, version: 2, author: "the planner", createdAt: new Date().toISOString(), entries: [{ lane: "alpha-lane", horizon, note, doneWhen: "The plan reads plainly." }] });
+  const plan = (project: string, horizon: "now" | "later", note: string) => ({
+    project,
+    version: 2,
+    author: "the planner",
+    createdAt: new Date().toISOString(),
+    entries: [
+      {
+        lane: "alpha-lane",
+        horizon,
+        note,
+        doneWhen: "The plan reads plainly.",
+      },
+    ],
+  });
   const { LaneScreen } = await import("../client/lane-screen");
   const status: string[] = [];
-  const ui = mount(h(LaneScreen, {
-    lane: { ...lane, keep: { reason: "One more pass on the copy.", at: "2026-11-20T00:00:00Z", by: "operator" } } as LaneView,
-    project: "alpha", compact: false, projects, plans: [plan("alpha", "now", "Copy pass in review."), plan("beta", "later", "")] as never,
-    busy: false, canEdit: true, doc: { data: latest }, draft: null, onDraft: (next: unknown) => status.push(next ? "draft" : "no draft"), onSaveDocument: async () => {}, onRetryDocument: () => {},
-    readVersion: async () => null, tasks: { items: [] }, leads: { items: [] }, onOpenTask: () => {}, onOpenLead: () => {},
-    onSetStatus: (next: string) => status.push(next), onSelectProject: (key: string) => status.push(`show:${key}`), c,
-  }));
+  const ui = mount(
+    h(LaneScreen, {
+      lane: {
+        ...lane,
+        keep: {
+          reason: "One more pass on the copy.",
+          at: "2026-11-20T00:00:00Z",
+          by: "operator",
+        },
+      } as LaneView,
+      project: "alpha",
+      compact: false,
+      projects,
+      plans: [
+        plan("alpha", "now", "Copy pass in review."),
+        plan("beta", "later", ""),
+      ] as never,
+      busy: false,
+      canEdit: true,
+      doc: { data: latest },
+      draft: null,
+      onDraft: (next: unknown) => status.push(next ? "draft" : "no draft"),
+      onSaveDocument: async () => {},
+      onRetryDocument: () => {},
+      readVersion: async () => null,
+      tasks: { items: [] },
+      leads: { items: [] },
+      onOpenTask: () => {},
+      onOpenLead: () => {},
+      onSetStatus: (next: string) => status.push(next),
+      onSelectProject: (key: string) => status.push(`show:${key}`),
+      c,
+    }),
+  );
   assert.match(ui.text(), /Now\s*Open\s*Also on Beta project \(Later\)/);
-  assert.match(textOf(ui.get("Finish line")), /The plan reads plainly\.[\s\S]*Why it’s still open:[\s\S]*One more pass on the copy\./);
-  assert.match(textOf(ui.get("Latest status")), /Copy pass in review\.[\s\S]*the planner · just now/);
+  assert.match(
+    textOf(ui.get("Finish line")),
+    /The plan reads plainly\.[\s\S]*Why it’s still open:[\s\S]*One more pass on the copy\./,
+  );
+  assert.match(
+    textOf(ui.get("Latest status")),
+    /Copy pass in review\.[\s\S]*the planner · just now/,
+  );
   assert.ok(ui.get("Alpha project: Now"));
   ui.press("Show the Beta project plan, Later");
   assert.doesNotMatch(ui.text(), /step \d+ of|Shared by/);
@@ -344,13 +627,34 @@ test("the header names the horizon, open state and other plans; Close lane and E
   assert.deepEqual(status, ["show:beta", "done"]);
   ui.press("Edit the Alpha lane document");
   assert.equal(status.at(-1), "draft", "Edit lane starts a document draft");
-  const closed = mount(h(LaneScreen, {
-    lane: { ...lane, status: "done" } as LaneView, compact: false, projects: [], plans: [], busy: false, canEdit: true, doc: { data: latest }, draft: null,
-    onDraft: () => {}, onSaveDocument: async () => {}, onRetryDocument: () => {}, readVersion: async () => null, tasks: { items: [] }, leads: { items: [] },
-    onOpenTask: () => {}, onOpenLead: () => {}, onSetStatus: () => {}, c,
-  }));
+  const closed = mount(
+    h(LaneScreen, {
+      lane: { ...lane, status: "done" } as LaneView,
+      compact: false,
+      projects: [],
+      plans: [],
+      busy: false,
+      canEdit: true,
+      doc: { data: latest },
+      draft: null,
+      onDraft: () => {},
+      onSaveDocument: async () => {},
+      onRetryDocument: () => {},
+      readVersion: async () => null,
+      tasks: { items: [] },
+      leads: { items: [] },
+      onOpenTask: () => {},
+      onOpenLead: () => {},
+      onSetStatus: () => {},
+      c,
+    }),
+  );
   assert.ok(closed.get("Lane closed"));
-  assert.equal(closed.query("Close lane Alpha lane"), undefined, "a closed lane has nothing to close");
+  assert.equal(
+    closed.query("Close lane Alpha lane"),
+    undefined,
+    "a closed lane has nothing to close",
+  );
   assert.match(textOf(closed.get("Finish line")), /Not set/);
 });
 
@@ -358,7 +662,10 @@ test("the side column sits beside the sections at wide sizes and stacks below th
   const wide = await mountLane({ compact: false });
   assert.equal(wide.ui.get("Lane sections").props.style.flexDirection, "row");
   const narrow = await mountLane({ compact: true });
-  assert.equal(narrow.ui.get("Lane sections").props.style.flexDirection, "column");
+  assert.equal(
+    narrow.ui.get("Lane sections").props.style.flexDirection,
+    "column",
+  );
 });
 
 test("raw keys, repositories and lane status stay behind Details", async () => {

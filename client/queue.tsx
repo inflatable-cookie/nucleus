@@ -113,6 +113,8 @@ export function MainSurface({
   const savePlan = useRpc(api.planSet);
   const saveLaneDocument = useRpc(api.laneDocumentEdit);
   const changeLaneStatus = useRpc(api.laneStatus);
+  const readPlan = useRpc(api.planGet);
+  const searchOutcomes = useRpc(api.outcomeSearch);
   const queryClient = useQueryClient();
   const [view, setView] = useState<InboxView>("needs");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -558,6 +560,11 @@ export function MainSurface({
                 }
                 onCancel={dropPlanEdit}
                 repositoryBadges={state?.repositoryBadges}
+                tasks={state?.tasks ?? []}
+                queuedCounts={state?.queuedCounts ?? []}
+                readPlanVersion={(project, version) =>
+                  readPlan({ project, version })
+                }
                 lanePanel={(laneContext) =>
                   planningLaneRecord ? (
                     <LaneScreen
@@ -630,6 +637,13 @@ export function MainSurface({
                             title: planningLaneRecord.title,
                           });
                       }}
+                      readFinished={(cursor) =>
+                        searchOutcomes({
+                          lane: planningLaneRecord.key,
+                          limit: 25,
+                          ...(cursor ? { cursor } : {}),
+                        })
+                      }
                       onSelectProject={(project) => {
                         if (!laneContext.showProject(project))
                           showLanePlan(project);

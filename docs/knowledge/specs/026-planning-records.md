@@ -820,9 +820,13 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   mark is set; it wins over the activity rule) and **Dormant** (the activity rule above).
   Each row is the inbox row style: project badge and name, last activity on the right,
   and one status line in words, such as "2 need you · 3 lanes in progress · 19 tasks
-  live", "Idle · <reason>" or "No recent activity". "Need you" counts the live tasks in
-  the project's lanes that are blocked, in error or need attention. Selecting a row
-  shows that project's roadmap; there are no accordions in the list.
+  live", "Idle · <reason>" or "No recent activity". Live tasks follow the project
+  selector's rule: each live task in the project's repositories counts once however many
+  lanes it is in (Spec 019), plus the queued tasks the board holds back; "need you" is the
+  distinct ones that are blocked, in error or need attention. Last activity is the newest
+  of the recent activity read, the project's lanes' last activity, its live tasks and its
+  last plan save, so a project quiet for more than three days still shows a date.
+  Selecting a row shows that project's roadmap; there are no accordions in the list.
 - **Roadmap (detail pane):** the project's badge and name, "Plan updated <age> by
   <author>" (never the version number), History, and Edit plan (the edit icon, as every
   common action is). The banner is the
@@ -832,8 +836,10 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   column in a narrow pane. A lane card shows its title with a "N need you" pill, its aim
   clamped to three lines, a bar of live tasks by phase with the counts in words and the
   finished count, and "Done when". An empty column says "Nothing here". Finished lanes sit
-  in a collapsed row at the bottom. History holds the plan version, who saved it and
-  when, the idle mark's start, and the lanes the plan does not name yet. Edit plan opens
+  in a collapsed row at the bottom. History opens on the latest save (version, who saved
+  it and when, the idle mark, and the lanes the plan does not name yet) and pages back
+  through every earlier version with `plan.get`, listing each version's Now, Next and
+  Later lanes. Edit plan opens
   the plan editor unchanged ([Spec 041](041-planning-roadmap.md)).
 - **Lane page:** opens in the detail pane from a lane card, with the breadcrumb
   Planning › Project › Lane. The header has the title and chips for its horizon in the
@@ -843,7 +849,8 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   (the plan entry's `note`, with the plan's author and age); what is in flight (live
   tasks as inbox rows with phase and detail, paged from the server total); what is
   waiting to start (open leads, then papercuts, eight at a time); and recently finished
-  work with the total and See all. A side column holds the lane document (name from its
+  work with the total and See all, which pages through the lane's whole outcome history
+  with `queue.outcome-search` by lane, past the lane view's latest ten. A side column holds the lane document (name from its
   first heading, version, edited age, Open document), the counts at a glance and the
   plans it is in with their horizons. Opening the document gives the readable full text
   with earlier versions and the version-safe editor of `client/lane-screen.tsx`. Leads
@@ -853,7 +860,8 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
 
 The list fills the list pane and the roadmap or lane page the detail pane. Without a
 detail pane (below 1100 points) a picked project's roadmap takes the list pane with a
-way back, and the lane page opens in the existing modal with the same breadcrumb.
+way back and its columns stack, and the lane page opens in the existing modal with the
+same breadcrumb.
 
 Plan notes, `doneWhen` and idle reasons are written as plain sentences for the operator
 to read, without hashes or run IDs; a task is referenced as `#1234` when needed (the

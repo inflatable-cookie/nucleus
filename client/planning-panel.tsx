@@ -13,6 +13,7 @@ import type {
   PlanningTriage,
   Project,
   ProjectPlan,
+  TaskSummary,
 } from "../shared/contracts";
 import {
   laneFinderCount,
@@ -1062,6 +1063,9 @@ export function PlanningTab({
   onCloseLane,
   inbox: inboxLayout,
   repositoryBadges,
+  tasks = [],
+  queuedCounts = [],
+  readPlanVersion,
   c,
 }: {
   /** The pane layout; without it the plan fills the panel and the lane opens in a modal. */
@@ -1079,6 +1083,11 @@ export function PlanningTab({
   lanePanel: ReactNode | ((context: PlanningLaneContext) => ReactNode);
   /** Project badges by repository path, for the list rows and the roadmap header. */
   repositoryBadges?: Readonly<Record<string, ProjectBadge>>;
+  /** The board's live tasks and its held-back queued counts: a project row counts each task once (Spec 019). */
+  tasks?: TaskSummary[];
+  queuedCounts?: readonly { repoPath: string; count: number }[];
+  /** Reads one saved version of a project's plan (`plan.get`), for History. */
+  readPlanVersion?: (project: string, version: number) => Promise<ProjectPlan>;
   /** Every project and its plan, so the chooser and the lane search see past the tab's own scope. */
   projects?: Project[];
   selection?: readonly string[];
@@ -1142,11 +1151,7 @@ export function PlanningTab({
   // roadmap in place and the lane page opens in the modal (below 1100 points).
   const twoPane = !inbox.laneModal;
   const groupOf = (section: PlanSection) =>
-    projectGroup(
-      section.latest,
-      activityByKey.get(section.project.key),
-      nowMs,
-    );
+    projectGroup(section.latest, activityByKey.get(section.project.key), nowMs);
   const ordered = (["active", "idle", "dormant"] as const).flatMap((group) =>
     sections.filter((section) => groupOf(section) === group),
   );
@@ -1181,7 +1186,13 @@ export function PlanningTab({
       group,
       badge: badgeFor(section.project),
       age: (() => {
-        const at = projectLastActivity(activityByKey.get(section.project.key));
+        const at = projectLastActivity({
+          project: section.project,
+          activity: activityByKey.get(section.project.key),
+          lanes,
+          tasks,
+          plan: section.latest,
+        });
         return at ? decisionAge(at, nowMs).replace(/ ago$/, "") : null;
       })(),
     };
@@ -1201,7 +1212,12 @@ export function PlanningTab({
     const parts = projectStatusParts(
       group,
       section.latest,
-      projectStatus(section.project, section.latest, lanes),
+      projectStatus({
+        project: section.project,
+        plan: section.latest,
+        tasks,
+        queuedCounts,
+      }),
     );
     return { ...base, state: { kind: "ready", ...parts } };
   };
@@ -1252,7 +1268,10 @@ export function PlanningTab({
         badge={badgeFor(section.project)}
         lanes={lanes}
         leads={leads}
-        width={twoPane ? detailWidth : (inbox.listWidth ?? detailWidth)}
+        // Without a detail pane the roadmap shares the list pane, so its columns always stack.
+        width={twoPane ? detailWidth : 0}
+        stacked={!twoPane}
+        readPlanVersion={readPlanVersion}
         busy={busy}
         onOpenLane={onOpenLane}
         onEditPlan={section.latest ? () => startEdit(section) : undefined}
@@ -1328,9 +1347,7 @@ export function PlanningTab({
               <ProjectRow
                 key={section.project.key}
                 model={rowModel(section)}
-                selected={
-                  section.project.key === selectedSection?.project.key
-                }
+                selected={section.project.key === selectedSection?.project.key}
                 onPress={() => pickProject(section.project.key)}
                 onRetry={onRetryPlans}
                 c={c}
@@ -1363,7 +1380,11 @@ export function PlanningTab({
         <Breadcrumb
           c={c}
           items={[
-            { text: "Planning", label: "Back to Planning", onPress: backToList },
+            {
+              text: "Planning",
+              label: "Back to Planning",
+              onPress: backToList,
+            },
             { text: selectedSection.project.name },
           ]}
         />
@@ -1427,7 +1448,8 @@ export function PlanningTab({
                   lineHeight: type.metadata.lineHeight,
                 }}
               >
-                {sections.length} {sections.length === 1 ? "project" : "projects"}
+                {sections.length}{" "}
+                {sections.length === 1 ? "project" : "projects"}
               </Text>
             )}
           </View>

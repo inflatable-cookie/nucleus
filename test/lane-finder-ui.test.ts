@@ -135,7 +135,11 @@ test("866 rendered wide: the finder replaces the plan column, names project and 
   assert.ok(ui.get("Planning plan"));
   assert.ok(ui.get("Planning project"), "the roadmap is beside the list");
   assert.ok(ui.get("Plan for alpha"));
-  assert.doesNotMatch(ui.text(), /LANE PANEL SENTINEL/, "the lane page waits for a lane");
+  assert.doesNotMatch(
+    ui.text(),
+    /LANE PANEL SENTINEL/,
+    "the lane page waits for a lane",
+  );
   assert.equal(
     ui.query("Lane search results"),
     undefined,
@@ -197,16 +201,28 @@ test("a board without a detail pane keeps the plan and opens the open lane in a 
   const closed = (await mountTab({ compact: true })).ui;
   assert.ok(closed.get("Planning plan"));
   assert.ok(closed.get("Browse all lanes"));
-  assert.equal(closed.query("Planning lane"), undefined, "no lane pane beside the plan");
+  assert.equal(
+    closed.query("Planning lane"),
+    undefined,
+    "no lane pane beside the plan",
+  );
   assert.equal(closed.ofType("Modal").length, 0);
   // Narrow with a lane open: the plan stays and the lane is a modal.
-  const { ui, log } = await mountTab({ compact: true, step: "lane", selectedLane: "s1" });
+  const { ui, log } = await mountTab({
+    compact: true,
+    step: "lane",
+    selectedLane: "s1",
+  });
   assert.ok(ui.get("Planning plan"), "the plan stays under the modal");
   assert.equal(ui.ofType("Modal").length, 1, "the lane opens in a modal");
   assert.ok(ui.get("Lane detail"));
   assert.match(ui.text(), /LANE PANEL SENTINEL/);
   ui.press("Close lane");
-  assert.deepEqual(log.steps, ["plan"], "closing the modal returns to the plan");
+  assert.deepEqual(
+    log.steps,
+    ["plan"],
+    "closing the modal returns to the plan",
+  );
   // Wide: the lane is the pane beside the plan, never a modal.
   const wide = (await mountTab({ step: "lane", selectedLane: "s1" })).ui;
   assert.ok(wide.get("Planning lane"));
@@ -282,7 +298,10 @@ test("866 rendered: empty browse and empty search copy say what is actually abse
     })
   ).ui;
   scoped.press("Browse all lanes");
-  assert.match(scoped.text(), /No lanes in this scope\. Search all projects to look wider\./);
+  assert.match(
+    scoped.text(),
+    /No lanes in this scope\. Search all projects to look wider\./,
+  );
   scoped.press("Search lanes in all projects");
   assert.ok(
     scoped.get("Open lane Beta lane, beta, Active"),
@@ -308,7 +327,10 @@ test("866 rendered: loading, failed and stale reads stay distinct from empty", a
     await mountTab({ lanesLoading: true, lanesError: "queue.snapshot failed" })
   ).ui;
   firstReadFailed.press("Browse all lanes");
-  assert.match(firstReadFailed.text(), /Couldn't load lanes: queue.snapshot failed/);
+  assert.match(
+    firstReadFailed.text(),
+    /Couldn't load lanes: queue.snapshot failed/,
+  );
   assert.doesNotMatch(firstReadFailed.text(), /Loading lanes…/);
   const failed = (
     await mountTab({
