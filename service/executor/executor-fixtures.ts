@@ -7,6 +7,7 @@ import { ordinaryReviewSource } from "../../core/review/ordinary-review";
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 export interface FixtureState {
   stalled?: boolean;
+  observationDelayMs?: number;
   slowDbMs?: number;
   projectionFault?: boolean | "clone";
   projectionDelayMs?: number;
@@ -89,7 +90,7 @@ export const FIXTURES: Record<string, {
     adapter: (state, context) => {
       const adapter = richAdapter(context);
       return { ...adapter, observe: async (id: string): Promise<unknown> => {
-        if (state.stalled) await sleep(5_000);
+        if (state.stalled) await sleep(state.observationDelayMs ?? 5_000);
         return { id, workspaceId: "ws", status: "idle", active: false, permissions: false, error: "" };
       } } as unknown as Adapter;
     },

@@ -22,6 +22,7 @@ import {
 } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
+import { setImmediate as yieldToLoop } from "node:timers/promises";
 
 /**
  * Tasks reconciled per bounded safety-sweep window (Spec 013). The minute sweep
@@ -235,6 +236,10 @@ export class Sweep {
     name: string,
     work: () => Promise<unknown>,
   ): Promise<void> {
+    // A settled promise alone keeps a chain of local scans in microtasks.
+    // Let the executor take waiting requests between fleet steps.
+    await yieldToLoop();
+    if (this.engine.stopped) return;
     try {
       await work();
     } catch (error) {
@@ -693,6 +698,9 @@ export class Sweep {
         const window = sequence.slice(index, index + SWEEP_WINDOW);
         const pending: Promise<void>[] = [];
         for (const candidate of window) {
+          // Offline and held tasks still do synchronous store work, even when
+          // they never schedule a task quantum or await a host.
+          await yieldToLoop();
           if (this.engine.stopped)
             return { fault: null, covered: false, visited };
           visited.add(candidate.id);
@@ -723,7 +731,6 @@ export class Sweep {
                   task.id,
                 ),
               );
-              await new Promise<void>((resolve) => setImmediate(resolve));
             }
             continue;
           }
@@ -764,9 +771,6 @@ export class Sweep {
               task.id,
             ),
           );
-          // Independent lanes may await concurrently. Paseo and process
-          // admission still bound the actual resources; same-task lanes stay FIFO.
-          await new Promise<void>((resolve) => setImmediate(resolve));
         }
         await Promise.all(pending);
         index += window.length;

@@ -186,6 +186,9 @@ test('a completed mutation publishes despite a slow-board budget', async () => {
 test('task and capacity requests answer during a held process read and share periodic publication', async () => {
   const { service, client, dir } = await startService('slow-process');
   try {
+    await service.debug({ target: 'store', method: 'setProfiles', args: [[
+      { id: 'worker', name: 'Worker', provider: 'test', model: 'test', notes: '' },
+    ]] });
     const task = await service.debug(insert('held-process-read')) as { id: string };
     await service.debug({ target: 'store', method: 'update', args: [task.id, {
       phase: 'working', workspaceId: 'synthetic-workspace', agentId: 'worker', runId: 'initial',
@@ -198,6 +201,9 @@ test('task and capacity requests answer during a held process read and share per
         await sleep(10);
       }
       assert.equal((await audit as { fault: unknown }).fault, null, 'audit finished while the reader was held');
+      const entry = { profileId: 'worker', enabled: true, group: 'fixture', weight: 'more', scopes: ['general'], roles: ['worker'] };
+      assert.deepEqual(await client.request('queue.profile', entry, 1_000), { ok: true, entry });
+      assert.deepEqual((await client.request('queue.ui-snapshot', {}, 1_000) as { pool: unknown }).pool, [entry]);
       for (let i = 0; i < 4; i++) {
         const [next, capacity] = await Promise.all([
           client.request('task.next', { taskId: task.id }, 5_000),

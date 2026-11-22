@@ -79,16 +79,23 @@ export class RuntimeSettings {
       new Set(this.context.store.profiles().map((p) => p.id)),
       this.context.store.pool(),
     );
-    this.context.store.setMeta("pool", entries);
-    this.context.store.advanceRevision();
-    void this.context.wakeAndSettlePostBootstrapTimeout();
+    this.context.store.transaction(() => {
+      this.context.store.setMeta("pool", entries);
+      this.context.store.advanceRevision();
+    });
+    setImmediate(() => {
+      void this.context.wakeAndSettlePostBootstrapTimeout();
+    });
     return { ok: true as const };
   }
 
   configureProfile(settings: ProfileSettings) {
-    return this.configurePool({
+    this.configurePool({
       entries: saveProfileSettings(this.context.store.pool(), settings),
     });
+    const entry = this.context.store.pool().find((row) => row.profileId === settings.profileId);
+    if (!entry) throw new Error("The saved profile is missing from the pool");
+    return { ok: true as const, entry };
   }
 
   /**

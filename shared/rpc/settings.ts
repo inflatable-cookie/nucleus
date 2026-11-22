@@ -61,7 +61,12 @@ export type ProfileCompatibilityHost = z.infer<typeof profileCompatibilityHostSc
 export const readProfileCompatibility = defineRpc({ name: "profile.compatibility", input: z.object({}).strict(),
   output: z.object({ hosts: z.array(profileCompatibilityHostSchema), rows: z.array(profileCompatibilityRowSchema) }).strict() });
 
-export const configureProfile = defineRpc({name:"queue.profile",input:z.preprocess(raw=>poolRecordFromLegacy(raw),poolSchema),output:z.object({ok:z.literal(true)})});
+export const configureProfile = defineRpc({
+  name: "queue.profile",
+  input: z.preprocess((raw) => poolRecordFromLegacy(raw), poolSchema),
+  // An older service can still answer ok. Settings needs the stored entry to confirm a save.
+  output: z.object({ ok: z.literal(true), entry: poolSchema.optional() }),
+});
 
 export const queueControl = defineRpc({ name: "queue.control", input: z.object({ paused: z.boolean().optional(), dispatchHeld: z.boolean().optional() }).strict().refine(input => input.paused !== undefined || input.dispatchHeld !== undefined, "Provide paused or dispatchHeld"), output: z.object({ ok: z.literal(true) }) });
 

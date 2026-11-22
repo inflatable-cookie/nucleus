@@ -896,6 +896,17 @@ export function summarizeTask(
   });
 }
 
+export function isVisibleBoardTask(task: Task): boolean {
+  return (
+    !["done", "cancelled"].includes(task.phase) ||
+    Boolean(
+      task.originError ||
+        task.originLookupError ||
+        task.resolution.workspaceArchiveRetries.length,
+    )
+  );
+}
+
 /**
  * Compact board projection: one bounded summary per visible task. It includes
  * open work, routing faults and terminal archive retries, so a board snapshot
@@ -919,15 +930,7 @@ export function visibleTaskSummaries(
     Pick<RepositorySettings, "affectedTests"> | null
   > = new Map(),
 ): TaskSummary[] {
-  const visible = tasks.filter(
-    (task) =>
-      !["done", "cancelled"].includes(task.phase) ||
-      Boolean(
-        task.originError ||
-          task.originLookupError ||
-          task.resolution.workspaceArchiveRetries.length,
-      ),
-  );
+  const visible = tasks.filter(isVisibleBoardTask);
   const identities = new Map<string, Set<string>>();
   const projectForTask = (task: Task) =>
     projects.find((project) =>
