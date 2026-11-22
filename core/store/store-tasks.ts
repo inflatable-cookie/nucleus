@@ -4,7 +4,10 @@ import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { PREREQUISITE_WAIT_PREFIX } from "../../shared/wait-state";
-import { legacyStopHolderAgentId, taskDecisionFact } from "../../shared/task-stop";
+import {
+  legacyStopHolderAgentId,
+  taskDecisionFact,
+} from "../../shared/task-stop";
 import {
   taskSchema,
   externalWorkspaceArchivesSettled,
@@ -33,15 +36,25 @@ import type { FinishedDrainTask } from "../planning/lane-drains";
 
 /** Normalize pre-Spec 067 records at the same boundary for cold and projected reads. */
 export function hydrateTaskDecisionFacts(task: Task): Task {
-  if (task.reasonFact === undefined) task.reasonFact = taskDecisionFact(task.reason);
+  if (task.reasonFact === undefined)
+    task.reasonFact = taskDecisionFact(task.reason);
   const { stop, incident, recovery } = task.resolution;
   if (stop && stop.fact === undefined) {
-    const holderAgentId = stop.holderAgentId ?? legacyStopHolderAgentId(stop.detail);
-    task.resolution.stop = { ...stop,
-      fact: task.originError && stop.detail === task.originError ? { code: "origin_error" } : taskDecisionFact(stop.detail),
+    const holderAgentId =
+      stop.holderAgentId ?? legacyStopHolderAgentId(stop.detail);
+    task.resolution.stop = {
+      ...stop,
+      fact:
+        task.originError && stop.detail === task.originError
+          ? { code: "origin_error" }
+          : taskDecisionFact(stop.detail),
       ...(holderAgentId ? { holderAgentId } : {}),
-      ...(incident && (incident.detail === stop.detail || (incident.id === recovery?.incidentId && recovery.summary === stop.detail))
-        ? { incidentId: incident.id } : {}),
+      ...(incident &&
+      (incident.detail === stop.detail ||
+        (incident.id === recovery?.incidentId &&
+          recovery.summary === stop.detail))
+        ? { incidentId: incident.id }
+        : {}),
     };
   }
   return task;
@@ -527,7 +540,11 @@ export class StoreTasks {
     // A warmed projection must be representation-identical to one rebuilt from the
     // row: JSON storage drops undefined-valued keys, so the cached parse drops them
     // too. Otherwise a deepEqual across a projection rebuild sees phantom keys.
-    return frozenTask(hydrateTaskDecisionFacts(taskSchema.parse(JSON.parse(JSON.stringify(task)))));
+    return frozenTask(
+      hydrateTaskDecisionFacts(
+        taskSchema.parse(JSON.parse(JSON.stringify(task))),
+      ),
+    );
   }
   private projectedTasksWhere(predicate: (task: Task) => boolean): Task[] {
     this.ensureTaskProjection();

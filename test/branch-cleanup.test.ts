@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { Engine } from "../core/engine";
 import { Lifecycle } from "../core/closeout/workspace-lifecycle";
 import { terminalBranchCandidates } from "../core/closeout/branch-cleanup";
+import { collectOwnerVerbFacts } from "../core/verbs/owner-verbs";
+import { ownerPendingEffects } from "../core/verbs/owner-effects";
+import { OPERATOR_BOARD_CALLER } from "../shared/contracts";
 import type { Adapter } from "../core/host/adapter";
 import { HOOK_TEST_TIMEOUT_MS } from "./support/budgets";
 import {
@@ -54,7 +57,9 @@ function engineFor(
 const branchRecord = (f: Fixture) =>
   f.store
     .task(f.task.id)
-    .resolution.branchCleanups.find((record) => record.branch === f.task.branch);
+    .resolution.branchCleanups.find(
+      (record) => record.branch === f.task.branch,
+    );
 
 test(
   "a verified merge deletes the task branch locally and on the forge once the worktree is removed",
@@ -64,20 +69,40 @@ test(
     const { engine } = engineFor(f);
     t.after(() => engine.stop());
     try {
-      assert.match(forgeHead(f, f.task.branch), /refs\/heads\//, "the fixture published the branch first");
+      assert.match(
+        forgeHead(f, f.task.branch),
+        /refs\/heads\//,
+        "the fixture published the branch first",
+      );
       assert.match(localHead(f, f.task.branch), new RegExp(f.task.branch));
 
       await new Lifecycle(engine).archive(f.store.task(f.task.id));
 
-      assert.equal(existsSync(f.directory), false, "the task worktree is removed first");
-      assert.equal(forgeHead(f, f.task.branch), "", "the forge branch is deleted");
-      assert.equal(localHead(f, f.task.branch), "", "the local branch is deleted");
+      assert.equal(
+        existsSync(f.directory),
+        false,
+        "the task worktree is removed first",
+      );
+      assert.equal(
+        forgeHead(f, f.task.branch),
+        "",
+        "the forge branch is deleted",
+      );
+      assert.equal(
+        localHead(f, f.task.branch),
+        "",
+        "the local branch is deleted",
+      );
       const record = branchRecord(f);
       assert.equal(record?.state, "deleted");
       assert.equal(record?.head, f.head);
       const task = f.store.task(f.task.id);
       assert.equal(task.phase, "done");
-      assert.ok(f.store.events(f.task.id).some((event) => event.kind === "task_branch_deleted"));
+      assert.ok(
+        f.store
+          .events(f.task.id)
+          .some((event) => event.kind === "task_branch_deleted"),
+      );
     } finally {
       f.store.close();
     }
@@ -89,7 +114,9 @@ test(
   { timeout: HOOK_TEST_TIMEOUT_MS },
   async (t) => {
     const f = await setup(t, true);
-    const { engine } = engineFor(f, { openPrs: [{ number: 77, url: "https://example.invalid/77" }] });
+    const { engine } = engineFor(f, {
+      openPrs: [{ number: 77, url: "https://example.invalid/77" }],
+    });
     t.after(() => engine.stop());
     try {
       await new Lifecycle(engine).archive(f.store.task(f.task.id));
@@ -177,34 +204,41 @@ test(
     try {
       await new Lifecycle(engine).archive(f.store.task(f.task.id));
       const failed = f.store.task(f.task.id);
-      assert.equal(failed.phase, "done", "a branch cleanup never blocks closeout");
+      assert.equal(
+        failed.phase,
+        "done",
+        "a branch cleanup never blocks closeout",
+      );
       assert.equal(failed.resolution.attention, false);
       assert.equal(failed.resolution.stop, null);
       const record = branchRecord(f);
       assert.equal(record?.state, "wait");
       assert.match(record?.detail ?? "", /deletion refused by the remote/);
       assert.ok(record?.nextAttemptAt, "the retry names its deadline");
-      assert.match(forgeHead(f, f.task.branch), /refs\/heads\//, "the forge still holds it");
-
-      // The cause clears; the recorded deadline passes and the same cleanup retries.
-      await rm(rejectingHook);
-      const current = f.store.task(f.task.id);
-      f.store.update(
-        current.id,
-        {
-          resolution: {
-            ...current.resolution,
-            branchCleanups: current.resolution.branchCleanups.map((item) =>
-              item.branch === f.task.branch
-                ? { ...item, nextAttemptAt: new Date(Date.now() - 1000).toISOString() }
-                : item,
-            ),
-          },
-        },
-        "test_branch_cleanup_due",
-        "the recorded deadline passed",
+      assert.match(
+        forgeHead(f, f.task.branch),
+        /refs\/heads\//,
+        "the forge still holds it",
       );
-      await new Lifecycle(engine).archive(f.store.task(f.task.id));
+
+      // The cause clears. The owner exit named by the contract is
+      // `retry_effect branch_cleanup.<branch>`: it must be offered, then retry
+      // now instead of waiting for the recorded deadline.
+      await rm(rejectingHook);
+      const facts = collectOwnerVerbFacts(f.store, f.store.task(f.task.id));
+      const offered = ownerPendingEffects(facts).find(
+        (item) => item.effect === `branch_cleanup.${f.task.branch}`,
+      );
+      assert.equal(offered?.kind, "branch_cleanup");
+      const settled = await engine.performTaskControl({
+        taskId: f.task.id,
+        version: f.store.task(f.task.id).version,
+        action: "retry_effect",
+        effect: `branch_cleanup.${f.task.branch}`,
+        reason: "The remote accepts deletions again",
+        caller: OPERATOR_BOARD_CALLER,
+      });
+      assert.equal(settled.phase, "done");
 
       assert.equal(forgeHead(f, f.task.branch), "");
       assert.equal(localHead(f, f.task.branch), "");

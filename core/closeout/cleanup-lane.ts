@@ -148,7 +148,9 @@ export class CleanupLane {
             ),
             // nucleus#1548: an owed branch deletion wakes on its own deadline too.
             ...task.resolution.branchCleanups.map((record) =>
-              record.nextAttemptAt ? Date.parse(record.nextAttemptAt) : Number.NaN,
+              record.nextAttemptAt
+                ? Date.parse(record.nextAttemptAt)
+                : Number.NaN,
             ),
           ].filter(Number.isFinite)
         : [];
