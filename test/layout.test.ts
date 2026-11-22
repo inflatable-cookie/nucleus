@@ -103,9 +103,10 @@ test("task detail uses a modal and keeps absent resolution-run recovery out of t
   // PR #518's TypeScript formatting split JSX props onto their own lines.
   assert.match(ui, /<RecordModal\s+label="Lead detail"/);
   assert.match(ui, /<RecordModal\s+label="Papercut detail"/);
+  // A task row's status detail falls back to the stored reason (nucleus#1515).
   assert.match(
     ui,
-    /<Text\s+numberOfLines=\{2\}\s+ellipsizeMode="tail"[^>]*>\s*\{task\.reason\}\s*<\/Text>/,
+    /const detail = task\.headline \|\| task\.reason \|\| null;/,
   );
   assert.doesNotMatch(ui, /LanesSwitch/);
   assert.doesNotMatch(ui, /text="Status"/);

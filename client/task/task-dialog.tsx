@@ -3,10 +3,17 @@ import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { ActionButton, muted, row, type Colors } from "../controls";
 import * as api from "../../shared/contracts";
-import { isParkedTask, taskNumberLabel, type DecisionView, type Task, type TaskNext, type UiQueueState } from "../../shared/contracts";
+import {
+  isParkedTask,
+  taskNumberLabel,
+  type DecisionView,
+  type Task,
+  type TaskNext,
+  type UiQueueState,
+} from "../../shared/contracts";
 import { formatSpan, taskElapsed } from "../../shared/task-detail-summary";
 import { projectName, phaseLabel, attention } from "../board/text";
-import { HoldChips, PullRequestBadge, Badge } from "../board/badges";
+import { HoldChips, PullRequestBadge, Badge, StopBadge } from "../board/badges";
 import { PendingQuestions } from "./summary";
 import { TaskDetailTabs, type BoardAct, type TaskDetailTab } from "./parts";
 import type { output as ZodOutput } from "zod";
@@ -26,10 +33,37 @@ export type TaskDetailRead = ZodOutput<typeof api.detail.output>;
  * so typing in one re-renders that tab, not the board. The board keeps the detail and
  * next reads, keyed on the selected task.
  */
-export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, spansRepositories: taskSpansRepositories, compact, busy, act, drafts, navigation, onClose, onSelectTask, c, inline = false }: {
-  task: TaskDetailRead["task"]; detailQuery: UseQueryResult<TaskDetailRead>; nextQuery: UseQueryResult<TaskNext>; state: UiQueueState | undefined;
-  decisions: readonly DecisionView[] | undefined; spansRepositories: boolean; compact: boolean; busy: boolean; act: BoardAct; drafts: TaskDrafts;
-  navigation?: BoardNavigation; onClose: () => void; onSelectTask: (id: string) => void; c: Colors;
+export function TaskDialog({
+  task,
+  detailQuery,
+  nextQuery,
+  state,
+  decisions,
+  spansRepositories: taskSpansRepositories,
+  compact,
+  busy,
+  act,
+  drafts,
+  navigation,
+  onClose,
+  onSelectTask,
+  c,
+  inline = false,
+}: {
+  task: TaskDetailRead["task"];
+  detailQuery: UseQueryResult<TaskDetailRead>;
+  nextQuery: UseQueryResult<TaskNext>;
+  state: UiQueueState | undefined;
+  decisions: readonly DecisionView[] | undefined;
+  spansRepositories: boolean;
+  compact: boolean;
+  busy: boolean;
+  act: BoardAct;
+  drafts: TaskDrafts;
+  navigation?: BoardNavigation;
+  onClose: () => void;
+  onSelectTask: (id: string) => void;
+  c: Colors;
   /** Render the detail in place, filling its container, for a host panel tab (Spec 062, decision 5d); no modal, scrim or close. */
   inline?: boolean;
 }) {
@@ -37,31 +71,47 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, spa
   // Keep the selected task-detail tab local to the open dialog. Board refreshes
   // update its contents without resetting the operator's place.
   const [detailTab, setDetailTab] = useState<TaskDetailTab>("overview");
-  useEffect(() => { setDetailTab("overview"); }, [task.id]);
-  const taskParked = isParkedTask(task, detailQuery.data?.runs.some(run => !run.released) ?? false);
+  useEffect(() => {
+    setDetailTab("overview");
+  }, [task.id]);
+  const boardSummary = state?.tasks.find((item) => item.id === task.id);
+  const linkedDecisions = (decisions ?? []).filter((decision) =>
+    decision.links.tasks.includes(task.id),
+  ).length;
+  const taskParked = isParkedTask(
+    task,
+    detailQuery.data?.runs.some((run) => !run.released) ?? false,
+  );
   // Task 538: the summary's elapsed clock runs from the first dispatch.
   const taskElapsedMs = taskElapsed(detailQuery.data?.runs ?? []);
-  const pendingOperation = (detailQuery.data?.operations ?? []).some(operation => operation.state === "pending" || operation.state === "running");
+  const pendingOperation = (detailQuery.data?.operations ?? []).some(
+    (operation) =>
+      operation.state === "pending" || operation.state === "running",
+  );
   const card = (
     <View
       accessibilityViewIsModal={!inline}
       accessibilityLabel="Task detail"
-      style={inline ? { flex: 1, minHeight: 0, backgroundColor: c.surface0 } : {
-        width: "100%",
-        maxWidth: 980,
-        maxHeight: "92%",
-        alignSelf: "center",
-        backgroundColor: c.surface0,
-        borderColor: c.border,
-        borderWidth: 1,
-        borderRadius: radius.panel,
-        overflow: "hidden",
-        shadowColor: overlay.shadow,
-        shadowOffset: { width: 0, height: 14 },
-        shadowOpacity: 0.45,
-        shadowRadius: 24,
-        elevation: 20,
-      }}
+      style={
+        inline
+          ? { flex: 1, minHeight: 0, backgroundColor: c.surface0 }
+          : {
+              width: "100%",
+              maxWidth: 980,
+              maxHeight: "92%",
+              alignSelf: "center",
+              backgroundColor: c.surface0,
+              borderColor: c.border,
+              borderWidth: 1,
+              borderRadius: radius.panel,
+              overflow: "hidden",
+              shadowColor: overlay.shadow,
+              shadowOffset: { width: 0, height: 14 },
+              shadowOpacity: 0.45,
+              shadowRadius: 24,
+              elevation: 20,
+            }
+      }
     >
       <View
         style={{
@@ -94,16 +144,12 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, spa
                 paddingHorizontal: space.xs,
                 paddingVertical: space.xxs,
                 borderRadius: radius.panel,
-                backgroundColor: attention(task)
-                  ? c.surface2
-                  : c.accent,
+                backgroundColor: attention(task) ? c.surface2 : c.accent,
               }}
             >
               <Text
                 style={{
-                  color: attention(task)
-                    ? c.statusWarning
-                    : c.accentForeground,
+                  color: attention(task) ? c.statusWarning : c.accentForeground,
                   fontSize: typeScale.metadata.fontSize,
                   fontWeight: "600",
                 }}
@@ -111,13 +157,55 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, spa
                 {phaseLabel(task)}
               </Text>
             </View>
-            <HoldChips task={task} c={c} decisionTitle={task.waitState?.decisionId
-              ? (decisions ?? []).find(decision => decision.id === task.waitState?.decisionId)?.headline
-                ?? (decisions ?? []).find(decision => decision.id === task.waitState?.decisionId)?.question
-              : null} />
-            <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+            <HoldChips
+              task={task}
+              c={c}
+              decisionTitle={
+                task.waitState?.decisionId
+                  ? ((decisions ?? []).find(
+                      (decision) => decision.id === task.waitState?.decisionId,
+                    )?.headline ??
+                    (decisions ?? []).find(
+                      (decision) => decision.id === task.waitState?.decisionId,
+                    )?.question)
+                  : null
+              }
+            />
+            <Text
+              style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+            >
               {projectName(task)}
             </Text>
+            {/* Indicators the board row leaves to the detail (nucleus#1515). */}
+            {boardSummary?.holdEscalated && (
+              <Badge
+                label="Nucleus-raised"
+                tone="warning"
+                c={c}
+                a11y="Nucleus-raised: the hold is escalated to you"
+              />
+            )}
+            {boardSummary && <StopBadge task={boardSummary} c={c} />}
+            {boardSummary?.pausedStop && (
+              <Badge
+                label="Stopped while paused"
+                tone="warning"
+                c={c}
+                a11y="Stopped while Nucleus was paused; Nucleus resumes it when the queue starts"
+              />
+            )}
+            {linkedDecisions > 0 && (
+              <Badge
+                label={
+                  linkedDecisions === 1
+                    ? "Decision"
+                    : `${linkedDecisions} decisions`
+                }
+                tone="accent"
+                c={c}
+                a11y={`${linkedDecisions} open decision${linkedDecisions === 1 ? "" : "s"} linked`}
+              />
+            )}
             {taskParked && (
               <Badge
                 label="Parked (no slot held)"
@@ -134,15 +222,31 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, spa
               />
             )}
             {taskElapsedMs !== null && (
-              <Text accessibilityLabel={`Elapsed ${formatSpan(taskElapsedMs)}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+              <Text
+                accessibilityLabel={`Elapsed ${formatSpan(taskElapsedMs)}`}
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+              >
                 Elapsed {formatSpan(taskElapsedMs)}
               </Text>
             )}
           </View>
         </View>
-        {!inline && <ActionButton c={c} action="close" label="Close detail" onPress={() => onClose()} />}
+        {!inline && (
+          <ActionButton
+            c={c}
+            action="close"
+            label="Close detail"
+            onPress={() => onClose()}
+          />
+        )}
       </View>
-      <TaskDetailTabs tab={detailTab} onSelect={setDetailTab} needsAttention={attention(task)} compact={compact} c={c} />
+      <TaskDetailTabs
+        tab={detailTab}
+        onSelect={setDetailTab}
+        needsAttention={attention(task)}
+        compact={compact}
+        c={c}
+      />
       <ScrollView
         style={inline ? { flex: 1, minHeight: 0 } : { flexGrow: 0 }}
         contentContainerStyle={{
@@ -150,35 +254,90 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, spa
           padding: compact ? space.sm : space.md,
         }}
       >
-      <OverviewSummary task={task} detailTab={detailTab} nextQuery={nextQuery} detailQuery={detailQuery} c={c} />
-      {task && (
-        <PendingQuestions
-          key={`questions-${task.id}`}
-          agentId={task.agentId}
-          hostId={task.hostId}
-          runs={detailQuery.data?.runs ?? []}
+        <OverviewSummary
+          task={task}
+          detailTab={detailTab}
+          nextQuery={nextQuery}
+          detailQuery={detailQuery}
           c={c}
-          onAnswered={async () => {
-            await queryClient.refetchQueries({
-              queryKey: ["nucleus", "state"],
-              exact: true,
-            });
-            await queryClient.invalidateQueries({
-              queryKey: ["nucleus", "detail", task.id],
-              exact: true,
-            });
-            await queryClient.invalidateQueries({
-              queryKey: ["nucleus", "next", task.id],
-              exact: true,
-            });
-          }}
         />
-      )}
-      <OverviewNext task={task} detailTab={detailTab} nextQuery={nextQuery} state={state} busy={busy} pendingOperation={pendingOperation} c={c} />
-      {detailTab === "technical" && <TechnicalTab key={task.id} task={task} detailQuery={detailQuery} nextQuery={nextQuery} state={state} pendingOperation={pendingOperation} compact={compact} busy={busy} act={act} drafts={drafts} navigation={navigation} onClose={onClose} c={c} />}
-      {detailTab === "runs" && <RunsTab key={task.id} task={task} detailQuery={detailQuery} pendingOperation={pendingOperation} busy={busy} act={act} drafts={drafts} navigation={navigation} onSelectTask={onSelectTask} c={c} />}
-      {detailTab === "messages" && <MessagesTab task={task} detailQuery={detailQuery} c={c} />}
-      {detailTab === "activity" && <ActivityTab key={task.id} task={task} detailQuery={detailQuery} busy={busy} act={act} drafts={drafts} c={c} />}
+        {task && (
+          <PendingQuestions
+            key={`questions-${task.id}`}
+            agentId={task.agentId}
+            hostId={task.hostId}
+            runs={detailQuery.data?.runs ?? []}
+            c={c}
+            onAnswered={async () => {
+              await queryClient.refetchQueries({
+                queryKey: ["nucleus", "state"],
+                exact: true,
+              });
+              await queryClient.invalidateQueries({
+                queryKey: ["nucleus", "detail", task.id],
+                exact: true,
+              });
+              await queryClient.invalidateQueries({
+                queryKey: ["nucleus", "next", task.id],
+                exact: true,
+              });
+            }}
+          />
+        )}
+        <OverviewNext
+          task={task}
+          detailTab={detailTab}
+          nextQuery={nextQuery}
+          state={state}
+          busy={busy}
+          pendingOperation={pendingOperation}
+          c={c}
+        />
+        {detailTab === "technical" && (
+          <TechnicalTab
+            key={task.id}
+            task={task}
+            detailQuery={detailQuery}
+            nextQuery={nextQuery}
+            state={state}
+            pendingOperation={pendingOperation}
+            compact={compact}
+            busy={busy}
+            act={act}
+            drafts={drafts}
+            navigation={navigation}
+            onClose={onClose}
+            c={c}
+          />
+        )}
+        {detailTab === "runs" && (
+          <RunsTab
+            key={task.id}
+            task={task}
+            detailQuery={detailQuery}
+            pendingOperation={pendingOperation}
+            busy={busy}
+            act={act}
+            drafts={drafts}
+            navigation={navigation}
+            onSelectTask={onSelectTask}
+            c={c}
+          />
+        )}
+        {detailTab === "messages" && (
+          <MessagesTab task={task} detailQuery={detailQuery} c={c} />
+        )}
+        {detailTab === "activity" && (
+          <ActivityTab
+            key={task.id}
+            task={task}
+            detailQuery={detailQuery}
+            busy={busy}
+            act={act}
+            drafts={drafts}
+            c={c}
+          />
+        )}
       </ScrollView>
     </View>
   );

@@ -70,8 +70,10 @@ export function completionMembership(
 ): CompletionMembership[] {
   // Older membership rows are native IDs from the task origin host. Without
   // that recorded host they cannot be joined to a qualified recipient.
-  const legacyHost = policy.originHostId && legacyIdentityObservedOn(policy.originHostId)
-    ? policy.originHostId : undefined;
+  const legacyHost =
+    policy.originHostId && legacyIdentityObservedOn(policy.originHostId)
+      ? policy.originHostId
+      : undefined;
   const matches = (a: string, b: string) =>
     sameCallerIdentity(a, b, legacyHost, legacyHost);
   const members = new Map<
@@ -90,8 +92,7 @@ export function completionMembership(
     originEntry = false,
   ) => {
     const key =
-      [...members.keys()].find((id) => matches(id, agentId)) ??
-      agentId;
+      [...members.keys()].find((id) => matches(id, agentId)) ?? agentId;
     const member = members.get(key) ?? {
       agentId: key,
       workspaceId,
@@ -135,8 +136,7 @@ export function completionMembership(
         key === origin,
       );
     else
-      for (const id of members.keys())
-        if (matches(id, key)) members.delete(id);
+      for (const id of members.keys()) if (matches(id, key)) members.delete(id);
   }
   return [...members.values()]
     .sort((a, b) => a.agentId.localeCompare(b.agentId))
@@ -339,11 +339,22 @@ export interface UnreviewedMergeRoute {
  * holds only while the task still names the recorded PR and source head and no
  * merge is recorded, so a reconciled or re-headed task never routes again.
  */
-export function unreviewedMergeRoute(task: AcceptanceTask): UnreviewedMergeRoute | null {
+export function unreviewedMergeRoute(
+  task: AcceptanceTask,
+): UnreviewedMergeRoute | null {
   const record = task.resolution.unreviewedMerge;
   if (!record || !task.prHead || record.head !== task.prHead) return null;
-  if (task.resolution.mergedCommit || task.resolution.mergeIntent || task.resolution.externalMerge) return null;
-  const prNumber = task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber ?? null;
+  if (
+    task.resolution.mergedCommit ||
+    task.resolution.mergeIntent ||
+    task.resolution.externalMerge
+  )
+    return null;
+  const prNumber =
+    task.reviewEntry?.prNumber ??
+    task.resumePrNumber ??
+    task.completion?.prNumber ??
+    null;
   return prNumber === record.prNumber ? record : null;
 }
 
@@ -351,9 +362,17 @@ export function unreviewedMergeRoute(task: AcceptanceTask): UnreviewedMergeRoute
  * The refusal for a recorded unreviewed merge whose source no longer matches the
  * task, or null. Once a merge is recorded the state refusals own the answer.
  */
-export function unreviewedMergeRouteRefusal(task: AcceptanceTask): string | null {
+export function unreviewedMergeRouteRefusal(
+  task: AcceptanceTask,
+): string | null {
   const record = task.resolution.unreviewedMerge;
-  if (!record || unreviewedMergeRoute(task) || task.resolution.mergedCommit || task.resolution.externalMerge) return null;
+  if (
+    !record ||
+    unreviewedMergeRoute(task) ||
+    task.resolution.mergedCommit ||
+    task.resolution.externalMerge
+  )
+    return null;
   return `The PR merged outside Queue at ${record.head} (merge commit ${record.commit}), but the task's recorded source head is ${task.prHead ?? "none"} or its PR number changed; the fresh review route needs the recorded merged source`;
 }
 
@@ -368,9 +387,16 @@ export async function verifyUnreviewedMergeSource(
   observe: () => Promise<{ head: string; commit: string } | null>,
 ): Promise<{ url: string; head: string }> {
   const observed = await observe();
-  if (!observed || observed.head !== route.head || observed.commit !== route.commit)
-    throw new Error(`PR #${route.prNumber} is no longer observed merged at source ${route.head} with merge commit ${route.commit}; the fresh review route was refused`);
-  if (!task.prUrl) throw new Error("The unreviewed merge route requires the recorded PR URL");
+  if (
+    !observed ||
+    observed.head !== route.head ||
+    observed.commit !== route.commit
+  )
+    throw new Error(
+      `PR #${route.prNumber} is no longer observed merged at source ${route.head} with merge commit ${route.commit}; the fresh review route was refused`,
+    );
+  if (!task.prUrl)
+    throw new Error("The unreviewed merge route requires the recorded PR URL");
   return { url: task.prUrl, head: observed.head };
 }
 
@@ -727,6 +753,8 @@ export function summarizeTask(
       ? { repository: task.repository || task.repoPath }
       : {}),
     version: task.version,
+    // The row's age when no stop, wait or hold carries a time (nucleus#1515).
+    updatedAt: task.updatedAt,
     number: task.number,
     reference: task.reference,
     entrypoint: task.entrypoint,
