@@ -792,6 +792,85 @@ test("a released authenticated review with a lost application is reapplied once 
   }
 });
 
+test("a lost follow-up verdict returns a detached checkout before it is reapplied", async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    await f.report(f.current(), "changes_required");
+    const run = await authorRevision(f, 1);
+    assert.equal(run.ordinaryDetached, true);
+    await f.report(run, "ready_to_merge");
+    assert.equal(f.store.task(f.task.id).resolution.review?.runId, run.id);
+
+    // Recreate the persisted shape of a lost application: the accepted result,
+    // the released run and its authentic receipt remain; the task records do not.
+    const task = f.store.task(f.task.id);
+    const storedRun = f.store.run(run.id)!;
+    const {
+      reviewId: _publishedReviewId,
+      reviewCommentId: _publishedCommentId,
+      ...unpublishedCompletion
+    } = storedRun.completion!;
+    f.store.putRun({ ...storedRun, completion: unpublishedCompletion });
+    f.store.deleteMeta(`reviewPublication:${run.id}`);
+    f.store.update(
+      task.id,
+      {
+        phase: "reviewing",
+        reason: "Review application was interrupted",
+        resolution: {
+          ...task.resolution,
+          currentRunId: null,
+          review: null,
+          reviews: task.resolution.reviews.filter(
+            (review) => review.runId !== run.id,
+          ),
+        },
+      },
+      "test_review_application_lost",
+    );
+    f.store.db
+      .prepare(
+        "DELETE FROM events WHERE taskId=? AND kind IN ('review_result_applied','review_reapplied','run_result_applied') AND detail=?",
+      )
+      .run(task.id, run.id);
+
+    // A checkout an earlier round left detached at this exact head. The pass
+    // returns it to the branch before it proves the source it advances, so the
+    // exact released verdict still lands and the commit does not move.
+    runGit(f.workspace, "checkout", "--quiet", "--detach", run.head);
+    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    await f.engine.wake();
+    assert.equal(
+      f.store
+        .eventsAll(task.id)
+        .filter(
+          (event) =>
+            event.kind === "review_reapplied" && event.detail === run.id,
+        ).length,
+      1,
+      "the exact released reviewer result is applied once",
+    );
+    const reattach = f.store
+      .eventsAll(task.id)
+      .filter((event) => event.kind.startsWith("task_checkout_reattach"))
+      .map((event) => `${event.kind}: ${event.detail}`);
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+      JSON.stringify(reattach),
+    );
+    assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), run.head);
+    assert.ok(
+      reattach.some((event) => event.startsWith("task_checkout_reattached")),
+      `the reattach step is what the pass ran first: ${JSON.stringify(reattach)}`,
+    );
+
+  } finally {
+    await f.close();
+  }
+});
+
 test("a published verdict survives transient application failures and settles its incident on retry", async () => {
   const f = fixture();
   try {

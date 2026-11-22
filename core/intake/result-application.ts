@@ -674,13 +674,14 @@ export class ResultApplication {
         );
     }
     if (run.ordinaryDetached) {
+      // One reattach step returns a checkout an earlier round left detached to
+      // its task branch before this pass proves the source and commits the
+      // verdict: it moves no commit either way, and the proofs below require the
+      // attached branch.
+      await reattachStoredTaskCheckout(this.store, t.id, run.id);
       await ordinaryReviewSource(t, run.head);
       const custody = recheck();
       if ("refusal" in custody) return blocked(custody.refusal);
-      // One reattach step returns a checkout an earlier round left detached to
-      // its task branch, and never blocks a verdict about the head that round
-      // read: the commit does not move either way.
-      await reattachStoredTaskCheckout(this.store, t.id, run.id);
       assertOrdinaryReviewIdentity(this.store.task(t.id), run.head);
     }
     return this.commitReviewerVerdict(t, run, completion, true, () => {
@@ -900,9 +901,12 @@ export class ResultApplication {
     let c = run.completion;
     if (run.ordinaryDetached) {
       await this.resolution.ordinaryRoundCustody(t, run, true);
-      await ordinaryReviewSource(t, run.head);
+      // The reattach step returns a checkout an earlier round left detached to
+      // its task branch before this pass proves the source it advances: it moves
+      // no commit, and the ordinary source proof requires the attached branch.
       await reattachStoredTaskCheckout(this.store, t.id, run.id);
-      assertOrdinaryReviewIdentity(t, run.head);
+      await ordinaryReviewSource(t, run.head);
+      assertOrdinaryReviewIdentity(this.store.task(t.id), run.head);
     }
     // A pass that read this reviewer as current before another pass settled it
     // has nothing left to do, and must not clear whichever run is current now.
@@ -1573,6 +1577,12 @@ export class ResultApplication {
       this.store.transaction(() => this.closeProofOnlyQualification(t, run, c));
       return this.verdictApplied(t.id, run.id);
     }
+    // The verdict applies on the task branch at the head the round read. The one
+    // reattach step returns a checkout an earlier round left detached before this
+    // body publishes, verifies or commits it — for this run's own round, and
+    // moving no commit — so a restored or replayed verdict never leaves the
+    // checkout detached (Spec 068 §4).
+    await reattachStoredTaskCheckout(this.store, t.id, run.id);
     const reviewer = this.resolution.reviewerSetting(t);
     // Spec 033: a formal review id is its own evidence, never a comment id.
     const publicationId = (completion: Completion) =>
