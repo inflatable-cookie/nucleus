@@ -18,6 +18,7 @@ import {
   type LeadListFacts,
   type Project,
   type ProjectPlan,
+  type TaskSummary,
 } from "../shared/contracts";
 import { Leads } from "../core/planning/leads";
 import { TriageService, type TriageDecision } from "../core/planning/triage";
@@ -99,6 +100,15 @@ const lanes = [
   "d-new",
 ].map(lane);
 
+const liveTask = (id: string, phase: string, laneKeys: string[]) =>
+  ({
+    id,
+    phase,
+    lanes: laneKeys,
+    repoPath: "/alpha",
+    repository: "owner/alpha",
+  }) as unknown as TaskSummary;
+
 type MountOver = {
   sections?: PlanSection[];
   compact?: boolean;
@@ -110,6 +120,7 @@ type MountOver = {
   lanes?: LaneView[];
   leads?: LeadListFacts[];
   projectActivity?: ProjectActivity[];
+  tasks?: TaskSummary[];
 };
 
 async function mountTab(over: MountOver = {}) {
@@ -159,6 +170,12 @@ test("041-1 / 1531 rendered: one project shows its roadmap; several list as rows
       lanes: lanes.map((item) =>
         item.key === "n1" ? { ...item, liveByPhase: { blocked: 2 } } : item,
       ),
+      // Two blocked tasks and one working task that sits in two lanes: each counts once.
+      tasks: [
+        liveTask("t1", "blocked", ["n1"]),
+        liveTask("t2", "blocked", ["n1"]),
+        liveTask("t3", "working", ["n2", "x1"]),
+      ],
       sections: [
         { project: projects[0], latest, saved },
         { project: projects[1] },
@@ -174,7 +191,7 @@ test("041-1 / 1531 rendered: one project shows its roadmap; several list as rows
   );
   assert.ok(
     many.get(
-      "Status for alpha: 2 need you · 3 lanes in progress · 9 tasks live",
+      "Status for alpha: 2 need you · 3 lanes in progress · 3 tasks live",
     ),
     "the row says where the project stands in words",
   );
