@@ -1,3 +1,4 @@
+import { activityStatus, StatusLine } from "../board/cards";
 import {
   NativeQuestionAnswer,
   useTaskQuestionRequests,
@@ -190,6 +191,7 @@ export function TaskSummaryBlock({
   c: Colors;
 }) {
   const wait = taskOverviewWait(task.waitState, next, task.reason);
+  const activity = next?.activity ?? task.activity;
   const holds = taskHoldRows(next);
   const progress = taskReviewProgress(next?.outcome);
   const report = latestTaskReport(task, runs);
@@ -220,18 +222,28 @@ export function TaskSummaryBlock({
         </Text>
       )}
       <View style={{ gap: space.xxs }}>
-        <Text
-          accessibilityLabel={`Wait: ${wait.state}; owner ${wait.owner || "none"}; next ${wait.nextAction || "none"}`}
-          style={{
-            color: c.foreground,
-            fontSize: typeScale.body.fontSize,
-            fontWeight: "600",
-            lineHeight: typeScale.body.lineHeight,
-          }}
-        >
-          {wait.state}
-        </Text>
-        {Boolean(wait.actor) && (
+        {activity ? (
+          <StatusLine
+            c={c}
+            status={{
+              ...activityStatus(activity),
+              a11y: `Wait: ${activity.detail}; owner ${wait.owner || "none"}; next ${wait.nextAction || "none"}`,
+            }}
+          />
+        ) : (
+          <Text
+            accessibilityLabel={`Wait: ${wait.state}; owner ${wait.owner || "none"}; next ${wait.nextAction || "none"}`}
+            style={{
+              color: c.foreground,
+              fontSize: typeScale.body.fontSize,
+              fontWeight: "600",
+              lineHeight: typeScale.body.lineHeight,
+            }}
+          >
+            {wait.state}
+          </Text>
+        )}
+        {!activity && Boolean(wait.actor) && (
           <Text
             accessibilityLabel={`Working: ${wait.actor}`}
             style={{

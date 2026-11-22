@@ -485,13 +485,11 @@ test("a verb with fill fields requires them before submit and reports refusals i
       "the row draws no stop badge",
     );
     tree.press(/Revise me/);
-    await settle(() =>
-      tree.text().includes("No stop or wait; the task is progressing."),
-    );
-    assert.match(
+    await settle(() => tree.text().includes("Changes · no recent activity"));
+    assert.doesNotMatch(
       tree.text(),
       /Revision Worker is working\./,
-      "the summary names the active run role and profile",
+      "a running display without a recent activity stamp does not prove work",
     );
     tree.press("move to work");
     await settle(() => Boolean(tree.query("Instruction (required)")));

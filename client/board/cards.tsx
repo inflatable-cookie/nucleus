@@ -1,3 +1,4 @@
+import type { TaskActivity } from "../../shared/schema/task-activity";
 import { useTaskQuestions } from "../native-questions";
 import { formatAgentId } from "../../shared/agent-identity";
 import {
@@ -190,6 +191,19 @@ export function CardProject({
       </Text>
     </>
   );
+}
+
+const activityTone: Record<TaskActivity["state"], CardTone> = {
+  active: "accent",
+  nucleus: "muted",
+  recovering: "accent",
+  needs_person: "warning",
+  finished: "success",
+  unclassified: "warning",
+};
+
+export function activityStatus(activity: TaskActivity): CardStatus {
+  return { tone: activityTone[activity.state], state: activity.detail };
 }
 
 /** The row's status line, one line: dot, state, then ` · detail`. */
@@ -707,7 +721,9 @@ export const TaskCard = React.memo(function TaskCard({
   // The one status line (nucleus#1515): the wait or stop that moves the task next,
   // else its phase and latest report. The host's name and the routing sentence behind
   // the host choice stay in the task detail.
-  const status: CardStatus = hostWait
+  const status: CardStatus = task.activity
+    ? { ...activityStatus(task.activity), holds: blockingHoldKinds(task) }
+    : hostWait
     ? ownStop && !stopWait && !stopHeld
       ? {
           tone: "warning",
@@ -788,6 +804,7 @@ export const TaskCard = React.memo(function TaskCard({
                           }
                     : taskFallbackStatus(task, cardAttention);
   const since =
+    task.activity?.since ??
     stopRecord?.since ??
     hostWait?.since ??
     dispatchWait?.since ??
@@ -803,7 +820,7 @@ export const TaskCard = React.memo(function TaskCard({
       `Wait state: ${waitStateLabels[task.waitState.state]}; owner ${waitOwnerLabel(task.waitState.owner)}; next ${task.waitState.nextAction}`)
     : undefined;
   const rowStatus: CardStatus = waitWording
-    ? { ...status, a11y: waitWording }
+    ? { ...status, a11y: task.activity ? `${task.activity.detail}. ${waitWording}` : waitWording }
     : status;
   // A hold flag is dropped only when the branch that chose the status stands for that
   // hold; any other status (a host wait, a question, a report) keeps it as a flag.

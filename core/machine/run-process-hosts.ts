@@ -1,3 +1,4 @@
+import type { ParticipantProcess } from "../../shared/schema/task-activity";
 import type { Store } from "../store/store";
 import type { HostProcessFact } from "../host/types";
 import { bbThreadForAgent, RunProcessTable } from "./owned-tool-process-proof";
@@ -20,6 +21,14 @@ interface RunProcessHost {
   infrastructure: Array<{ pid: number; startIdentity: string }>;
 }
 const key = (runId: string) => `runProcessHost:${runId}`;
+
+/** An existing cleanup observation also names the provider behind this run. */
+export function recordedRunProvider(
+  store: Store, binding: { taskId: string; runId: string },
+): ParticipantProcess | null {
+  const record = store.getMeta<RunProcessHost>(key(binding.runId));
+  return record?.taskId === binding.taskId ? { ...record.provider, seenAt: null } : null;
+}
 
 /** Remember positively observed infrastructure before its helper can exit. Retained turns share their agent's host. */
 export function rememberRunProcessHosts(

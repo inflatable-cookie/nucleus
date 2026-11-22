@@ -1,3 +1,4 @@
+import { taskActivity, type ActivityReadContext } from "./task-activity";
 import { taskAttention } from "./task-attention";
 import { legacyIdentityObservedOn, sameCallerIdentity } from "./agent-identity";
 import type {
@@ -585,6 +586,7 @@ export function taskDetailView(
   events: BudgetEvent[] = [],
   repository?: Pick<RepositorySettings, "affectedTests"> | null,
   now = Date.now(),
+  activityRead?: ActivityReadContext,
 ): TaskDetail {
   const { holds, budget, reason, holdKind, waitState } = taskDisplayFacts(
     task,
@@ -595,8 +597,10 @@ export function taskDetailView(
     now,
   );
   const stop = currentTaskStop(task, budget);
+  const { participantActivity: _participantActivity, ...stored } = task;
   return {
-    ...task,
+    ...stored,
+    ...(activityRead ? { activity: taskActivity({ task, runs, events, stop, wait: waitState, budget, read: activityRead, now }) } : {}),
     reason,
     resolution:
       stop === task.resolution.stop
@@ -708,6 +712,7 @@ export function summarizeTask(
   events: BudgetEvent[] = [],
   repository?: Pick<RepositorySettings, "affectedTests"> | null,
   now = Date.now(),
+  activityRead?: ActivityReadContext,
 ): TaskSummary {
   // The board reads the same derived facts, budget figure and wait the detail and
   // the gates read (nucleus#1187).
@@ -744,6 +749,7 @@ export function summarizeTask(
     : null;
   const fences = holdFencesView(task);
   return taskSummarySchema.parse({
+    ...(activityRead ? { activity: taskActivity({ task, runs: taskRuns, events, stop: stopRecord, wait: waitState, budget, read: activityRead, now }) } : {}),
     ...(boardWaitState ? { waitState: boardWaitState } : {}),
     ...(waitingOn ? { waitingOn } : {}),
     id: task.id,
@@ -929,6 +935,8 @@ export function visibleTaskSummaries(
     string,
     Pick<RepositorySettings, "affectedTests"> | null
   > = new Map(),
+  activityRead?: ActivityReadContext,
+  now = Date.now(),
 ): TaskSummary[] {
   const visible = tasks.filter(isVisibleBoardTask);
   const identities = new Map<string, Set<string>>();
@@ -993,6 +1001,8 @@ export function visibleTaskSummaries(
       defaultHostId,
       eventsByTask.get(task.id) ?? [],
       repositorySettingsByTask.get(task.id),
+      now,
+      activityRead,
     );
     const owner =
       summary.waitState?.state === "merge_hold"

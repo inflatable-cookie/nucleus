@@ -1,3 +1,4 @@
+import { runActivityObservation } from "../telemetry/task-activity-observation";
 import { missingReportBindingCompletion } from "../intake/reporting-failure";
 import {
   observeReviewerReplacement,
@@ -279,8 +280,11 @@ export class Observation {
             "Observed agent or workspace differs from the recorded run lease",
           );
         const busy = active(state) || Boolean(state.activeTurnId);
-        if (!busy && !["idle", "error", "closed"].includes(state.status))
+        if (!busy && !["idle", "error", "closed"].includes(state.status)) {
+          if (state.status === "gone")
+            this.store.putRun({ ...run, participantActivity: runActivityObservation(run, state, observationStartedAt) });
           throw new Error("Run state is unknown");
+        }
         if (
           !busy &&
           !run.released &&
@@ -315,6 +319,7 @@ export class Observation {
           active: busy,
           lastObservedAt: observationStartedAt,
           lastActivityAt: state.updatedAt || null,
+          participantActivity: runActivityObservation(run, state, observationStartedAt),
           idleSince: busy ? null : (run.idleSince ?? observationStartedAt),
         };
         this.store.putRun(run);

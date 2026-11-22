@@ -2433,8 +2433,8 @@ export class Resolution {
     return this.ownedTools.ownedToolHold(agentId, options);
   }
   /** Positive evidence that the agent's own detached job is still running, or null. */
-  ownedJobWait(agentId: string): Promise<string | null> {
-    return this.ownedTools.ownedJobWait(agentId);
+  ownedJobWait(agentId: string, binding?: { taskId: string; runId: string }): Promise<string | null> {
+    return this.ownedTools.ownedJobWait(agentId, binding);
   }
 
   assertIdleReviewerObservation(

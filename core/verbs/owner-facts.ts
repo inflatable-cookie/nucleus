@@ -1,3 +1,4 @@
+import type { WaitStateContext } from "../../shared/wait-state";
 import { taskWaitStateContext } from "../recovery/wait-context";
 import { taskDetailView } from "../../shared/task-view";
 import { taskNeverDispatched, liveRun } from "../task-decision-rules";
@@ -51,6 +52,7 @@ import {
 export interface OwnerVerbFacts {
   /** Live wait wording for next. Verb guards still read the authoritative task. */
   waitTask?: Task;
+  activityWaitContext?: WaitStateContext;
   store: Store;
   task: Task;
   runs: Run[];
