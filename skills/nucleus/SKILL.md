@@ -1,6 +1,6 @@
 ---
 name: nucleus
-description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, hand over planner ownership, and read milestone QA history. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.get, project.qa.list, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment. Milestone QA itself is a report-only task, not a Nucleus launch.
+description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, hand over planner ownership, and read milestone QA history. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof) and the Spec 067 explicit commands for stuck tasks (run.start, record.clear, closeout.now and the rest), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.get, project.qa.list, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment. Milestone QA itself is a report-only task, not a Nucleus launch.
 ---
 
 The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
@@ -776,6 +776,14 @@ Planned briefs run the responsible lifecycle. Explicit `queue.responsible: false
 
 `next` is the read-before-steer call. Run it first, then call what it lists.
 
+**When the task is stuck, reach for `explicitCommands` first.** When `next`
+returns `explicitCommands`, those are the commands that resolve the current
+state, each with prefilled `args`. Copy one, add `reason` (and `accept` with
+the warning IDs when a warnings response asks for them), and call the command
+named in `action` (`nucleus closeout.now -` and so on). Prefer them to
+`restart`, `move` and `retry_effect` for anything stuck; the normal-flow verbs
+stay for ordinary progress.
+
 **When a run or record is stuck:** the task's coordinator, responsible planner
 or operator can use `nucleus run.start -`, `nucleus run.release -`,
 `nucleus record.clear -`, `nucleus phase.set -`, `nucleus message.send -`,
@@ -785,6 +793,42 @@ Repeat a warning response with the warning IDs you accept. Only a planner or
 operator may accept `hold_owner`, `route_policy` or `two_writers`, or resolve a
 critical task; only the operator board may accept `unverified_merge`. Workers
 and reviewers ask one of those roles to act.
+
+Where an old lever used to do the job indirectly, the explicit command does it
+directly (Spec 067):
+
+| Lever used today | Explicit command |
+| --- | --- |
+| `restart role=reviewer fresh` to get a new reviewer | `run.start reviewer fresh replacing=<run>` |
+| `restart role=reviewer` to make the reviewer report | `message.send reviewer` or `run.start reviewer retained` |
+| `move to=review` after a silent worker pushed | `run.start reviewer head=<sha>` |
+| `move to=review` / `stop` to drop the integration turn | `turn.release` |
+| `move to=merge` to re-claim the turn | `turn.take` or `merge.now head=<sha>` |
+| forced `retry_effect` on a run or operation | `run.release` or `record.clear effect` |
+| `route role=X now` on an uncertain creation | `run.start X fresh replacing=<run>` |
+| restart to start a missing revision run | `run.start worker retained` |
+| restart on a merged task | `closeout.now` |
+| restart or a "Retry …" choice to answer an escalation | the explicit command, then `record.clear escalation` |
+| forced `move` as a universal reset | the named `run.release`, `record.clear`, `phase.set` steps |
+| Nucleus's own responsible-fault fresh-then-retained fallback | `run.start reviewer` with an explicit agent choice |
+
+Worked example: a merged task held by a leftover stop. `next` lists
+`closeout.now` under `explicitCommands`; copy its `args`, add the reason, and
+call it:
+
+```sh
+nucleus closeout.now - <<'JSON'
+{"taskId":"<task id>","action":"closeout.now","version":7,"reason":"PR already merged; start sync and closeout"}
+JSON
+```
+
+If the stop survives, clear that exact record with the `id` from `next`:
+
+```sh
+nucleus record.clear - <<'JSON'
+{"taskId":"<task id>","action":"record.clear","version":8,"reason":"Leftover stop on a merged task; nothing left to hold","kind":"stop","id":"<stop id from next>"}
+JSON
+```
 
 An authenticated task worker, reviewer or recovery run can still use `move`
 with `force: true` on its own task. Critical tasks, owner holds and active
@@ -1134,7 +1178,7 @@ written; a lost reply replays the same recorded step, and a restart resumes the
 same recorded step without launching any worker, reviewer or coordinator.
 
 
-The last four narrow controls (`continue_review`, `retry_resolution`, `resolve_escalation` and `repin_instruction`) were retired on 2026-10-19; use `restart` and `amend_brief`. `restart role=reviewer` continues a checkpointed reviewer on its same run: Nucleus derives the run, head and checkpoint, and you give the `reason` and an optional `instruction`. With nothing stopped, `restart` re-runs a parked step: a never-dispatched park, a blocked task behind its retained PR, or a parked resolution check. On a blocked, reviewed task, `restart role=reviewer` with an `instruction` returns it to a fresh review with that instruction, after checking GitHub's PR head. Choose a replacement worker profile with `route role=worker`. Your next verb answers an escalation. When nothing else applies, an owner `restart` with the answer as its `reason` closes it, even on a finished task; a coordinator's restart never answers one. The old focused verbs fold into the owner verbs: return a retained pre-PR worker or re-create a proven-absent creation with `restart role=worker`, replay pre-dispatch validation with `restart`, return the task to its author with `move to=work` (no `instruction` keeps the pending one or the review findings), and ask for a fresh review with `move to=review`.
+The last four narrow controls (`continue_review`, `retry_resolution`, `resolve_escalation` and `repin_instruction`) were retired on 2026-10-19; use `restart` and `amend_brief`. `restart role=reviewer` continues a checkpointed reviewer on its same run: Nucleus derives the run, head and checkpoint, and you give the `reason` and an optional `instruction`. With nothing stopped, `restart` re-runs a parked step: a never-dispatched park, a blocked task behind its retained PR, or a parked resolution check. For a stuck reviewer, revision run or merged task, use the explicit command in the table above instead of `restart` or `move`. Choose a replacement worker profile with `route role=worker`. Your next verb answers an escalation. When nothing else applies, an owner `restart` with the answer as its `reason` closes it, even on a finished task; a coordinator's restart never answers one.
 
 A continuation whose send is uncertain stays uncertain until evidence settles
 it: the reviewer's own callback, or the exact message in its timeline, settles the
@@ -1437,7 +1481,7 @@ For an obvious stuck thread or bookkeeping stop, request explicit resolution fro
 
 ## Recovery rules
 
-Own the recovery judgment and choose one available owner verb from current evidence. When a live participant is doing the work, report coordinatorAction {verb: 'none', reason: 'no action: <who> is live and progressing'} and nothing is applied or escalated. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing: it settles the episode as observed and opens the planner-ladder question that says someone else must act. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
+Own the recovery judgment and choose one available command from current evidence: an explicit command from `next` first, an owner verb only when no explicit command applies. When a live participant is doing the work, report coordinatorAction {verb: 'none', reason: 'no action: <who> is live and progressing'} and nothing is applied or escalated. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing: it settles the episode as observed and opens the planner-ladder question that says someone else must act. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
 
 For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command, observed provider message or missing authority. Classify admission, guard or budget refusals and proof or native-step failures as external.
 
