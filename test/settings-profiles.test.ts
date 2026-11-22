@@ -837,7 +837,7 @@ test("when registered projects disagree on feature values, Profiles names the pr
                   key: "app",
                   name: "App",
                   version: 1,
-                  visibility: "active",
+                  
                   repositories: [{ origin: "acme/app", path: "/app" }],
                   primary: { origin: "acme/app", path: "/app" },
                 },
@@ -845,7 +845,7 @@ test("when registered projects disagree on feature values, Profiles names the pr
                   key: "other",
                   name: "Other",
                   version: 1,
-                  visibility: "active",
+                  
                   repositories: [{ origin: "acme/other", path: "/other" }],
                   primary: { origin: "acme/other", path: "/other" },
                 },

@@ -583,7 +583,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     a ready merge hold reads `Merge held by <holder>`. Active work keeps its
     phase label, and worker blocks without a holder keep `Blocked`. Separate dispatch and merge hold badges retain their
     existing tones.
-  - Everything else (areas, lanes, repository, parked, queued) stays neutral.
+  - Everything else (areas, lanes, repository, queued) stays neutral.
   - The tone colours text and outline over the usual badge surface.
 - **Cards and long lists** (Tom, 2026-09-27): every card uses the standard card
   component, drawn as a flat row in the inbox list. The list fills its pane and
@@ -614,7 +614,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     accessible name (Spec 043). A lead's state follows its current check first:
     unchecked, then checks failed (even with an earlier approval kept), then approved
     or awaiting approval.
-  - **Flags**, below, only for exceptions: a dispatch or merge hold, parked,
+  - **Flags**, below, only for exceptions: a dispatch or merge hold, a parked task (no slot held),
     interactive, budget reached and the PR as a small flag. A hold flag is dropped only
     when the status line was chosen from that fence (a dispatch hold, a held stop, a
     declared merge-hold wait), never because other text mentions it. The PR flag is a
@@ -651,7 +651,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   dropdown that opens a large popover (a modal at the compact viewport) listing
   every project with a filter box, its primary repository and counts of live tasks
   and open leads, with a checkbox per project. Rows sort active projects first,
-  then the Dormant group, then Parked (nucleus#1529); inside each group the most
+  then the Dormant group (nucleus#1529; parking is retired, 2026-11-22); inside each group the most
   tasks come first, then the most recent activity, then the name, so quiet
   projects settle low without leaving their group. The picker's one top row holds the
   project search at its remaining width and, beside it, a Clear project selection
@@ -678,8 +678,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Project actions in the selector** (nucleus#1430, refined by nucleus#1432). Each
   project row has a disclosure chevron, separate from the row's selection, that opens
   a compact panel attached to the row inside the picker, so no nested popover takes an
-  outside press. One row's panel is open at a time. Park asks first with Settings' "No
-  new work starts" confirmation; a parked project shows Unpark instead. Rename edits
+  outside press. One row's panel is open at a time. Rename edits
   the name in its own slot: the row's label becomes a focused input seeded with the
   name, with compact Save and Cancel and the count kept in place. Enter saves and
   Escape cancels, neither selecting the row nor closing the picker; a validation
@@ -710,11 +709,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   nucleus#963). The project selector's settings icon
   opens it at Projects: `openSettings` carries a section hint the screen takes. The
   retired `subscriptions` hint opens Profiles scrolled to Subscriptions.
-- **Parked projects** (Spec 027): the selector and the All-projects view hide
-  parked projects by default. A "Parked" section in the selector lists them for
-  scoping, and selecting one still shows its views. Unpark sits in the row's
-  row panel (nucleus#1430) and in Settings → Projects. The Planning tab groups parked
-  projects under Parked. Attention from a parked project is never hidden.
+- **No parked projects** (Tom, 2026-11-22). Parking is retired: there is no project visibility, no
+  Park or Unpark action and no Parked section or group anywhere. Every project shows in the
+  All-projects view and the selector, active or Dormant by the activity rule below. Leaving a project
+  alone makes it Dormant; work on it makes it active again.
 - **Active and dormant projects** (Tom, 2026-11-20, nucleus#1446; brief v3 shortened the window to three days). The selector and
   the Planning tab share one rule. A project is active when at least two distinct
   substantive work items have activity less than three days old. An item is one of:
@@ -731,7 +729,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   through the normal board rules. Plan versions are not items: they are not records. Routine
   observation, bookkeeping, background sweep and reminder events, planner registration and project
   management never add an item. A project with fewer than two recent items, or with no items, appears
-  under Dormant whether or not a planner is registered. Parked projects stay under Parked. The store
+  under Dormant whether or not a planner is registered. The store
   reads these facts store-wide and ships each project's recent items (`projectActivity`) on the board
   snapshot, so the selection, task paging and visible rows never change a project's group. Planner
   routing and drain rules are unchanged.
@@ -859,7 +857,7 @@ to the plan. Editing uses the existing dark-theme styling.
 | 14 | Planning tab edits: reorder, move between Now and Later, add a listed lane, save a lane document | Plan and document saved as operator versions with the horizon kept; stale save refused |
 | 14a | Planning tab navigation at both viewport sizes | Plan and lane columns at the wide size; plan, lane drill-down with back at the compact size; the pipeline board has no side pane |
 | 14c | Open the Nucleus board in a workspace of a project's repository, and in a workspace outside every project | Scoped to that project's Pipeline and Planning; outside every project, a plain message |
-| 14d | Open a project row's chevron: Park asks first, Unpark, Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection and counts are unchanged by disclosure or a re-sorting rename |
+| 14d | Open a project row's chevron: Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection and counts are unchanged by disclosure or a re-sorting rename |
 | 14b | Click one project, Shift-click a second, Shift-click the first off, then Clear or Shift-clear the last one | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; an empty selection means all projects, and Clear (beside Settings, or alone on a host without it) or Shift-clearing the last project restores them while the picker stays open |
 | 15 | Board dark theme at both viewport sizes, with a busy board | Legible; checked after merge by the Nucleus Chatterbox |
 | 15a | Click a lead card and a papercut card on the Pipeline view; run each modal action | The modal opens with the record's full detail; the cards show no buttons; each action works from the modal and reports its result there; inapplicable actions are disabled with the reason |

@@ -49,8 +49,7 @@ const laneInput = (key: string, repos: Array<{ origin: string; path: string }> =
 const laneContext = (key: string) => ({ key, title: key.replaceAll('-', ' '), aim: `Done looks like ${key} shipped.` });
 const boardRepoA = { origin: 'acme/alpha', path: '/repo-a' };
 const boardRepoB = { origin: 'acme/beta', path: '/repo-b' };
-const boardProject = (key: string, ...repositories: Array<{ origin: string; path: string }>) => ({ key, name: key, version: 1, visibility: 'active' as const, repositories, primary: repositories[0], drain: null });
-const boardParkedProject = (key: string, ...repositories: Array<{ origin: string; path: string }>) => ({ ...boardProject(key, ...repositories), visibility: 'parked' as const });
+const boardProject = (key: string, ...repositories: Array<{ origin: string; path: string }>) => ({ key, name: key, version: 1,  repositories, primary: repositories[0], drain: null });
 test('1. Task submitted with a known lane key is attached, shown on the board and counted in the lane view', () => {
   const f = fixture();
   try {

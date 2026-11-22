@@ -187,7 +187,6 @@ export type InboxListProps = {
   decisions: DecisionView[] | undefined;
   /** Per project, the queued tasks the board holds back for its "…and N more" row. */
   queuedHidden: Array<{ repoPath: string; hidden: number }>;
-  parkedRepository: (repoPath: string, origin?: string | null) => boolean;
   projectForRepository: (
     repoPath: string,
     origin?: string | null,
@@ -231,7 +230,6 @@ export function InboxList({
   leadsLoading,
   decisions,
   queuedHidden,
-  parkedRepository,
   projectForRepository,
   selected,
   selectedLeadId,
@@ -421,10 +419,6 @@ export function InboxList({
             onPress={() => onSelectTask(card.id)}
             prState={state?.prStates[card.id]}
             c={c}
-            parked={parkedRepository(
-              card.value.repoPath,
-              card.value.repository,
-            )}
             decisionTitle={decisionTitle(card.value)}
           />
         );

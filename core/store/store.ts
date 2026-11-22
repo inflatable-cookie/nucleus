@@ -2235,12 +2235,6 @@ export class Store {
   queueProject(): Project | null {
     return this.projectRegistry.queueProject();
   }
-  setProjectVisibility(
-    input: { key: string; version: number },
-    visibility: Project["visibility"],
-  ): Project {
-    return this.projectRegistry.setProjectVisibility(input, visibility);
-  }
   /**
    * Spec 058 (task 540): names the planner thread that answers delegated questions for a project.
    * It is a plain project field, not ownership: it grants no verb, hold or notice.

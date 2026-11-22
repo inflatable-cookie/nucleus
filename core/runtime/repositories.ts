@@ -454,16 +454,6 @@ export class RuntimeRepositories {
     return this.context.store.projects();
   }
 
-  parkProject(input: { key: string; version: number }) {
-    this.context.markStoreAccess();
-    return this.context.store.setProjectVisibility(input, "parked");
-  }
-
-  unparkProject(input: { key: string; version: number }) {
-    this.context.markStoreAccess();
-    return this.context.store.setProjectVisibility(input, "active");
-  }
-
   async setProjectPlanner(input: {
     key: string;
     agentId: string | null;

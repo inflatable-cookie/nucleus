@@ -64,7 +64,7 @@ const project = {
   key: "app",
   name: "App",
   version: 1,
-  visibility: "active",
+  
   repositories: [repo],
   primary: repo,
 };
@@ -73,7 +73,7 @@ const projectDProject = {
   key: "project-d",
   name: "Project-D",
   version: 1,
-  visibility: "active",
+  
   repositories: [projectDRepo],
   primary: projectDRepo,
 };

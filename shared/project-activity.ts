@@ -6,9 +6,10 @@ import type { Project } from "./contracts";
  * Planning. A project is active when at least two distinct substantive work items have activity
  * less than three days old. An item is a task, or a task together with every lead linked to it,
  * so edits, checkpoints, review, completion, promotion and linked source records count once.
- * One recent item, such as a single sweep task while it runs, leaves the project Dormant. Parked
- * projects are never dormant: they keep their own Parked group. Planner registration plays no
- * part, and background bookkeeping never adds an item.
+ * One recent item, such as a single sweep task while it runs, leaves the project Dormant. A
+ * project nobody works on is Dormant until work returns, with no action to reactivate it (Tom,
+ * 2026-11-22: parking is retired). Planner registration plays no part, and background bookkeeping
+ * never adds an item.
  */
 export const PROJECT_ACTIVITY_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -86,7 +87,7 @@ export function projectActive(activity: ProjectActivity | undefined, nowMs: numb
   return projectActiveItemCount(activity, nowMs) >= PROJECT_ACTIVE_ITEM_COUNT;
 }
 
-/** The Dormant group: a project that is neither parked nor active. Parked projects are never dormant. */
-export function projectDormantByActivity(project: Pick<Project, "key" | "visibility">, activity: ProjectActivity | undefined, nowMs: number): boolean {
-  return project.visibility !== "parked" && !projectActive(activity, nowMs);
+/** The Dormant group: a project that is not active by the activity rule. */
+export function projectDormantByActivity(activity: ProjectActivity | undefined, nowMs: number): boolean {
+  return !projectActive(activity, nowMs);
 }

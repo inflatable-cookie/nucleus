@@ -8,7 +8,6 @@ import {
   DropdownSelect,
   Field,
   FieldCaption,
-  InlineConfirm,
   NumberStepper,
   muted,
   row,
@@ -47,11 +46,11 @@ export type {
 /*
  * Settings → Projects → an opened project (lane `nucleus-ui`, "Projects in
  * Settings", build task 3, as amended by Tom's rulings of 2026-11-08): name,
- * planner, Slots only (in flight is always twice the slots), park/unpark, Remove
+ * planner, Slots only (in flight is always twice the slots), Remove
  * (build task 4: the scoped removal sheet behind the trash icon) and the
  * repositories with their settings. Every field autosaves through one ordered
  * queue per project; writes stay on `project.upsert`, `project.set-planner`,
- * `queue.project-dispatch-limit`, `project.park`/`unpark`, `repository.set`,
+ * `queue.project-dispatch-limit`, `repository.set`,
  * `project.remove-repository` (nucleus#967) and `project.merge` (nucleus#969:
  * Move into, and Add repository taking a repository out of another project).
  */
@@ -255,7 +254,6 @@ function OpenedProject({
     project.planner?.agentId ?? null,
   );
   const [slots, setSlots] = useState<number | null>(entry.slots.override);
-  const [parking, setParking] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [moving, setMoving] = useState(false);
   const [adding, setAdding] = useState<{
@@ -411,18 +409,6 @@ function OpenedProject({
       next === null ? 0 : 600,
     );
   };
-  const toggleParked = () => {
-    const parked = project.visibility === "parked";
-    setParking(false);
-    saves.queue("visibility", {
-      run: () =>
-        (parked ? actions.unpark : actions.park)({
-          key: project.key,
-          version: version.current,
-        }).then(took),
-    });
-  };
-  const parked = project.visibility === "parked";
   const candidates = actions.candidates;
   const single = members.length === 1;
   const others = data.projects
@@ -448,13 +434,6 @@ function OpenedProject({
       <View style={{ ...row, flexWrap: "nowrap" }}>
         {back}
         <View style={{ flex: 1 }} />
-        <ActionButton
-          c={c}
-          action={parked ? "resume" : "pause"}
-          label={`${parked ? "Unpark" : "Park"} ${project.name}`}
-          disabled={disabled || parking}
-          onPress={() => (parked ? toggleParked() : setParking(true))}
-        />
         <ActionButton
           c={c}
           action="moveInto"
@@ -502,17 +481,6 @@ function OpenedProject({
         >
           {project.name}
         </Text>
-        {parked && (
-          <Text
-            style={{
-              color: r.muted,
-              fontSize: type.metadata.fontSize,
-              lineHeight: type.metadata.lineHeight,
-            }}
-          >
-            Parked
-          </Text>
-        )}
         <SaveWord c={c} status={saves.status} name={project.name} />
       </View>
       {moving && (
@@ -523,16 +491,6 @@ function OpenedProject({
           check={() => actions.mergeCheck({ source: project.key })}
           onMove={moveInto}
           onCancel={() => setMoving(false)}
-        />
-      )}
-      {parking && (
-        <InlineConfirm
-          c={c}
-          question={`Park ${project.name}? No new work starts.`}
-          confirmLabel="Park"
-          label={`project ${project.name}`}
-          onConfirm={toggleParked}
-          onCancel={() => setParking(false)}
         />
       )}
       {disabled && (

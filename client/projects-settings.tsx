@@ -50,18 +50,15 @@ export {
   withoutHostPaths,
 } from "./project-helpers";
 
-/** Parked sorts last; names compare without case. */
+/** Names compare without case, then by key. */
 export function sortProjectRows(
   rows: readonly ProjectSettingsRow[],
 ): ProjectSettingsRow[] {
   return [...rows].sort(
     (a, b) =>
-      Number(a.project.visibility === "parked") -
-        Number(b.project.visibility === "parked") ||
       a.project.name.localeCompare(b.project.name, undefined, {
         sensitivity: "base",
-      }) ||
-      a.project.key.localeCompare(b.project.key),
+      }) || a.project.key.localeCompare(b.project.key),
   );
 }
 
@@ -138,9 +135,6 @@ function ProblemIcon({
   );
 }
 
-const statusWord = (entry: ProjectSettingsRow) =>
-  entry.project.visibility === "parked" ? "Parked" : "Active";
-
 function ProjectRow({
   c,
   entry,
@@ -152,7 +146,7 @@ function ProjectRow({
 }) {
   const r = roles(c);
   const name = entry.project.name;
-  const label = `${name}, ${statusWord(entry)}${entry.problems.length ? `, ${entry.problems.join(", ")}` : ""}`;
+  const label = `${name}${entry.problems.length ? `, ${entry.problems.join(", ")}` : ""}`;
   const face = (
     <>
       <Text
@@ -166,15 +160,6 @@ function ProjectRow({
         }}
       >
         {name}
-      </Text>
-      <Text
-        style={{
-          color: entry.project.visibility === "parked" ? r.muted : r.foreground,
-          fontSize: type.metadata.fontSize,
-          lineHeight: type.metadata.lineHeight,
-        }}
-      >
-        {statusWord(entry)}
       </Text>
     </>
   );

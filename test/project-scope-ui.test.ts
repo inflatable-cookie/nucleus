@@ -330,10 +330,9 @@ test("026-14b rendered: the compact selector is a modal", async () => {
   assert.equal(ui.ofType("Modal").length, 0);
 });
 
-test("Spec 027 #11 rendered selector lists parked projects under Parked for scoping, with no Unpark; Planning groups parked projects", async () => {
+test("Spec 027 #11 retired 2026-11-22: the rendered selector has no Parked header or Unpark, and every project scopes", async () => {
   const { ProjectSelector } = await load();
-  const parked = { ...projects[1], visibility: "parked" as const, version: 3 };
-  const all = [projects[0], parked, projects[2]];
+  const all = [projects[0], projects[1], projects[2]];
   const chosen: string[][] = [];
   const ui = mount(
     h(ProjectSelector, {
@@ -348,17 +347,17 @@ test("Spec 027 #11 rendered selector lists parked projects under Parked for scop
     }),
   );
   ui.press(/^Projects, /);
-  assert.ok(ui.get("Parked"));
+  assert.equal(ui.query("Parked"), undefined, "parking is retired: no Parked group");
   assert.equal(
     ui.query("Unpark project-a-accelerator"),
     undefined,
-    "unpark lives in Settings → Projects",
+    "no Unpark action anywhere",
   );
   ui.press(/^Project project-a-accelerator/);
   assert.deepEqual(
     chosen,
     [["project-a-accelerator"]],
-    "a parked project can still be scoped",
+    "every project can be scoped",
   );
   assert.doesNotMatch(
     ui.text(),
@@ -663,7 +662,7 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
 test("Planning header carries no Park, Unpark, Delete or planner-missing suffix: they live in Settings → Projects", async () => {
   const { PlanningTab } = await import("../client/planning-panel");
   for (const project of [
-    { ...projects[1], visibility: "parked" as const, version: 3 },
+    projects[1],
     { ...projects[0], owner: null, planner: null },
   ]) {
     const ui = mount(

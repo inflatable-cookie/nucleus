@@ -598,7 +598,6 @@ export const TaskCard = React.memo(function TaskCard({
   prState,
   c,
   board = false,
-  parked = false,
   decisionTitle,
   defaultHostId,
   projectBadge = null,
@@ -610,7 +609,6 @@ export const TaskCard = React.memo(function TaskCard({
   prState?: "OPEN" | "CLOSED" | "MERGED";
   c: Colors;
   board?: boolean;
-  parked?: boolean;
   decisionTitle?: string | null;
   defaultHostId?: string;
   /** The generated T3 project badge for this task's repository, when its host is T3 and matched. */
@@ -799,8 +797,7 @@ export const TaskCard = React.memo(function TaskCard({
   // The approved exception set (nucleus#1515): holds, parked, interactive, budget and
   // the PR. Stop categories, a paused stop and linked decisions are in the task detail.
   const hasFlags = Boolean(
-    parked ||
-      task.parked ||
+    task.parked ||
       interactiveLabel ||
       flagHoldKinds.length ||
       budgetExhausted ||
@@ -878,7 +875,6 @@ export const TaskCard = React.memo(function TaskCard({
             {flagHoldKinds.map((kind) => (
               <HoldBadge key={kind} kind={kind} c={c} />
             ))}
-            {parked && <RecordChips c={c} chips={["parked"]} />}
             {task.parked && (
               <Badge
                 label="Parked (no slot held)"

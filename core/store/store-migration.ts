@@ -155,6 +155,17 @@ export class StoreMigration {
   }
 
   /**
+   * Parking is retired (Tom, 2026-11-22): the project `visibility` field goes from stored rows on
+   * every open, so a row an older build wrote with `visibility: "parked"` parses the current strict
+   * schema. Nothing reads the field afterwards; a clean store is scanned and left as it was.
+   */
+  stripRetiredProjectVisibility(): void {
+    this.db.exec(
+      "UPDATE projects SET data=json_remove(data,'$.visibility') WHERE json_type(data,'$.visibility') IS NOT NULL",
+    );
+  }
+
+  /**
    * Task 985: the per-repository validation policy is retired (Tom, 2026-11-09); the values are
    * archived outside the store. Strip stored copies on every open so rows written by an older
    * build parse the current schema, and drop the retired Nucleus-wide default.

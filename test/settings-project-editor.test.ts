@@ -92,7 +92,7 @@ function row(
       key,
       name,
       version: 3,
-      visibility: "active",
+      
       repositories: repos,
       primary: repos[0]!,
       drain: null,
@@ -221,18 +221,6 @@ function harness(
     setSlots: (input: any) =>
       reply("queue.project-dispatch-limit", input, { ok: true }),
     setRepository: (input: any) => reply("repository.set", input, {}),
-    park: (input: any) =>
-      reply("project.park", input, {
-        ...projectOf(input.key),
-        visibility: "parked",
-        version: input.version + 1,
-      }),
-    unpark: (input: any) =>
-      reply("project.unpark", input, {
-        ...projectOf(input.key),
-        visibility: "active",
-        version: input.version + 1,
-      }),
     repositoryBlockers: (input: any) => {
       calls.push(["project.removal-blockers", input]);
       return options.blockers ? options.blockers(input) : Promise.resolve([]);
@@ -344,7 +332,7 @@ test("a failed project settings refresh is visible in the save status", async ()
   );
   const ui = await app.mount(false);
   try {
-    ui.press("Nucleus, Active");
+    ui.press("Nucleus");
     ui.type("Project name", "Renamed");
     ui.get("Project name").props.onBlur();
     await settle(
@@ -449,14 +437,10 @@ test("wide and narrow: a row opens the project; name, planner and Slots autosave
     const app = harness(data);
     const ui = await app.mount(compact);
     try {
-      ui.press("Nucleus, Active");
+      ui.press("Nucleus");
       assert.ok(ui.get("Nucleus project"), `${compact}: opened`);
       assert.ok(ui.get("Back to Projects"));
-      assert.equal(
-        iconOf(ui.get("Park Nucleus")),
-        "Pause",
-        "park is a top-right icon",
-      );
+      assert.equal(ui.query("Park Nucleus"), undefined, "no park action");
       assert.equal(
         iconOf(ui.get("Move Nucleus into another project")),
         "FolderInput",
@@ -565,7 +549,7 @@ test("wide and narrow: a row opens the project; name, planner and Slots autosave
       );
 
       ui.press("Back to Projects");
-      assert.ok(ui.get("book, Active"), "back to the list");
+      assert.ok(ui.get("book"), "back to the list");
     } finally {
       done(ui);
     }
@@ -581,7 +565,7 @@ test("the empty name is held back with its reason and never sent; a repository c
   );
   const ui = await app.mount(false);
   try {
-    ui.press("Nucleus, Active");
+    ui.press("Nucleus");
     ui.type("Project name", "  ");
     assert.equal(ui.get("Nucleus save status").children.join(""), "Not saved");
     ui.press("Not saved help");
@@ -652,7 +636,7 @@ test("one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
   );
   const ui = await app.mount(true);
   try {
-    ui.press("Nucleus, Active");
+    ui.press("Nucleus");
     assert.ok(
       ui.get("acme/nucleus, primary"),
       "the one repository shows inline, with its star",
@@ -747,7 +731,7 @@ test("one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
     );
     const legacyUi = await legacyApp.mount(true);
     try {
-      legacyUi.press("Legacy, Active");
+      legacyUi.press("Legacy");
       assert.equal(legacyUi.query("QA schedule for acme/nucleus"), undefined);
       assert.equal(
         legacyUi.query("Merges between QA runs for acme/nucleus"),
@@ -858,7 +842,7 @@ test("several repositories: collapsed rows, one open at a time, star moves the p
   );
   const ui = await app.mount(false);
   try {
-    ui.press("Project-C, Active");
+    ui.press("Project-C");
     assert.equal(
       ui.get("acme/project-c, primary").props.accessibilityState.expanded,
       false,
@@ -962,7 +946,7 @@ test("nucleus#967 Remove from Nucleus: one server step with the newest version; 
     const app = harness(settingsOf([row("consumer", "Consumer-B", [a, b])]));
     const ui = await app.mount(compact);
     try {
-      ui.press("Consumer-B, Active");
+      ui.press("Consumer-B");
       ui.press("acme/market");
       ui.press("Remove acme/market");
       assert.ok(
@@ -1022,7 +1006,7 @@ test("nucleus#967 Remove from Nucleus: disabled with the blocker while loading, 
   });
   const ui = await app.mount(true);
   try {
-    ui.press("Consumer-B, Active");
+    ui.press("Consumer-B");
     ui.press(label);
     ui.press(`Remove ${label}`);
     const danger = () => ui.get(`Remove ${label} from Nucleus`);
@@ -1100,7 +1084,7 @@ test("nucleus#967 Remove from Nucleus: a refusal that races the check shows as N
   });
   const ui = await app.mount(false);
   try {
-    ui.press("Consumer-B, Active");
+    ui.press("Consumer-B");
     ui.press("acme/market");
     ui.press("Remove acme/market");
     await settle(
@@ -1129,7 +1113,7 @@ test("nucleus#969 Move into: an icon with the card actions, a target dropdown, a
     );
     const ui = await app.mount(compact);
     try {
-      ui.press("Book, Active");
+      ui.press("Book");
       const open = ui.get("Move Book into another project");
       assert.equal(open.props.accessibilityRole, "button");
       assert.equal(
@@ -1227,7 +1211,7 @@ test("nucleus#969 Move into: disabled with the blocker while loading, blocked or
   );
   const ui = await app.mount(true);
   try {
-    ui.press(`${long}, Active`);
+    ui.press(`${long}`);
     ui.press(`Move ${long} into another project`);
     ui.press("Move into, Project");
     ui.press("Move into: Site");
@@ -1314,7 +1298,7 @@ test("nucleus#969 Move into: disabled with the blocker while loading, blocked or
   const lone = harness(settingsOf([row("book", "Book", [repo("acme/book")])]));
   const ui2 = await lone.mount(false);
   try {
-    ui2.press("Book, Active");
+    ui2.press("Book");
     ui2.press("Move Book into another project");
     ui2.press("Move into, Project");
     assert.match(ui2.text(), /No other project/, "empty");
@@ -1337,7 +1321,7 @@ test("nucleus#969 Add repository: a repository of another project is offered wit
     );
     const ui = await app.mount(compact);
     try {
-      ui.press("Site, Active");
+      ui.press("Site");
       ui.press("Add repository, +");
       assert.deepEqual(
         ui
@@ -1479,7 +1463,7 @@ test("nucleus#969 Add repository: Other… naming a repository of another projec
   );
   const ui = await app.mount(false);
   try {
-    ui.press("Site, Active");
+    ui.press("Site");
     ui.press("Add repository, +");
     ui.press("Add repository: Other…");
     ui.type("Other repository (owner/name)", "ACME/kit");
@@ -1522,7 +1506,7 @@ test("nucleus#969 Remove from Nucleus names a separate project that also holds t
   );
   const ui = await app.mount(true);
   try {
-    ui.press("Site, Active");
+    ui.press("Site");
     ui.press("acme/book");
     ui.press("Remove acme/book");
     assert.match(ui.text(), /Remove from Nucleus also deletes project Book\./);
@@ -1534,45 +1518,24 @@ test("nucleus#969 Remove from Nucleus names a separate project that also holds t
   }
 });
 
-test("park asks first and unpark acts; both carry the newest version", async () => {
+test("parking is retired: Settings → Projects has no Park or Unpark, and every project offers Remove", async () => {
   const app = harness(
-    settingsOf([row("nucleus", "Nucleus", [repo("acme/nucleus")])]),
+    settingsOf([
+      row("nucleus", "Nucleus", [repo("acme/nucleus")]),
+      row("dormant", "Dormant", [repo("acme/dormant")]),
+    ]),
   );
   const ui = await app.mount(true);
   try {
-    ui.press("Nucleus, Active");
-    ui.press("Park Nucleus");
-    assert.match(ui.text(), /Park Nucleus\? No new work starts\./);
-    assert.equal(app.calls.length, 0);
-    ui.press("Keep project Nucleus");
-    assert.doesNotMatch(ui.text(), /No new work starts/);
-    ui.press("Park Nucleus");
-    ui.press("Park project Nucleus");
-    await settle(() => app.calls.length === 1, "park");
-    assert.deepEqual(app.calls[0], [
-      "project.park",
-      { key: "nucleus", version: 3 },
-    ]);
-    app.set({
-      data: settingsOf([
-        {
-          ...row("nucleus", "Nucleus", [repo("acme/nucleus")]),
-          project: {
-            ...row("nucleus", "Nucleus", [repo("acme/nucleus")]).project,
-            visibility: "parked",
-            version: 4,
-          },
-        },
-      ]),
-    });
-    assert.match(ui.text(), /Parked/);
-    ui.press("Unpark Nucleus");
-    await settle(() => app.calls.length === 2, "unpark");
-    assert.deepEqual(
-      app.calls[1],
-      ["project.unpark", { key: "nucleus", version: 4 }],
-      "no confirm to unpark",
-    );
+    for (const name of ["Nucleus", "Dormant"]) {
+      ui.press(name);
+      assert.equal(ui.query(`Park ${name}`), undefined, `${name}: no Park`);
+      assert.equal(ui.query(`Unpark ${name}`), undefined, `${name}: no Unpark`);
+      assert.ok(ui.get(`Remove ${name}`), `${name}: Remove is offered`);
+      assert.doesNotMatch(ui.text(), /Parked/);
+      ui.press(`Back to Projects`);
+    }
+    assert.deepEqual(app.calls.filter(([method]) => method === "project.park" || method === "project.unpark"), []);
   } finally {
     done(ui);
   }
@@ -1610,7 +1573,7 @@ test("loading, a failed re-read keeps fields disabled and never blank, a staged 
   });
   const ui = await app.mount(true);
   try {
-    ui.press(new RegExp(`^${long}, Active`));
+    ui.press(new RegExp(`^${long}`));
     const title = ui
       .ofType("Text")
       .find(
@@ -1647,7 +1610,7 @@ test("loading, a failed re-read keeps fields disabled and never blank, a staged 
     assert.equal(ui.get("Project name").props.value, long, "never blank");
     assert.equal(ui.get("Project name").props.editable, false, "disabled");
     assert.equal(
-      ui.get(`Park ${long}`).props.accessibilityState.disabled,
+      ui.get(`Move ${long} into another project`).props.accessibilityState.disabled,
       true,
     );
     assert.ok(ui.get(`Retry ${long}`));
@@ -1755,8 +1718,8 @@ test("the full screen wires the writes: set-planner as the operator, then a re-r
       });
       await settle(() => ui.text().includes("Usage level"), "limits");
       ui.press("Projects");
-      await settle(() => Boolean(ui.query("Nucleus, Active")), "projects");
-      ui.press("Nucleus, Active");
+      await settle(() => Boolean(ui.query("Nucleus")), "projects");
+      ui.press("Nucleus");
       await settle(
         () => Boolean(ui.query("Preferred thread, None")),
         "candidates",
@@ -1813,7 +1776,7 @@ test("the project shows its named agents with live state and the fallback marker
   const app = harness(data);
   const ui = await app.mount(false);
   try {
-    ui.press("Nucleus, Active");
+    ui.press("Nucleus");
     const section = ui.get("Agents for Nucleus");
     assert.ok(section, "the agents list is part of the project");
     const text = ui.text();
@@ -1931,7 +1894,7 @@ test("Settings lists projects before any host read settles; the thread picker an
     await settle(() => ui.text().includes("Usage level"), "limits");
     ui.press("Projects");
     await settle(
-      () => Boolean(ui.query("Nucleus, Active")),
+      () => Boolean(ui.query("Nucleus")),
       "list renders while the picker read hangs",
     );
     assert.deepEqual(
@@ -1939,7 +1902,7 @@ test("Settings lists projects before any host read settles; the thread picker an
       [],
       "no host read before a project opens",
     );
-    ui.press("Nucleus, Active");
+    ui.press("Nucleus");
     await settle(
       () => Boolean(ui.query("Preferred thread, None")),
       "editor opens",
@@ -2035,10 +1998,10 @@ test("T3-only with a saved offline Paseo planner: Settings lists the project, th
     await settle(() => ui.text().includes("Usage level"), "limits");
     ui.press("Projects");
     await settle(
-      () => Boolean(ui.query("Suite, Active")),
+      () => Boolean(ui.query("Suite")),
       "list renders with the Paseo host offline",
     );
-    ui.press("Suite, Active");
+    ui.press("Suite");
     await settle(
       () => ui.text().includes("Couldn't load threads"),
       "picker failure is local",

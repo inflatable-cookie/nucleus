@@ -11,22 +11,20 @@ const c = new Proxy({}, { get: () => "#000" }) as never;
 const repo = (name: string) => ({ origin: `owner/${name}`, path: `/${name}` });
 const project = (
   key: string,
-  visibility: "active" | "parked",
   ...repos: Array<{ origin: string; path: string }>
 ): Project =>
   ({
     key,
     name: key,
     version: 1,
-    visibility,
     repositories: repos,
     primary: repos[0],
     planner: { agentId: "thread" },
     drain: null,
   }) as unknown as Project;
-const alpha = project("alpha", "active", repo("a"), repo("shared"));
-const beta = project("beta", "active", repo("b"), repo("shared"));
-const gamma = project("gamma", "parked", repo("g"));
+const alpha = project("alpha", repo("a"), repo("shared"));
+const beta = project("beta", repo("b"), repo("shared"));
+const gamma = project("gamma", repo("g"));
 const projects = [alpha, beta, gamma];
 const entry = (
   lane: string,
@@ -248,10 +246,9 @@ test("866 rendered: browsing lists every lane in scope with an honest count; an 
     "the count is the whole lane record, not a page",
   );
   assert.ok(ui.all(/^Open lane /).length >= 3);
-  assert.equal(
+  assert.ok(
     ui.query(/^Open lane Gamma lane/),
-    undefined,
-    "All projects hides a parked-only lane",
+    "All projects lists every project's lanes (parking is retired, 2026-11-22)",
   );
   ui.type("Find lanes", "nothing at all");
   assert.equal(ui.query(/^Open lane /), undefined);

@@ -2679,12 +2679,6 @@ export class QueueRuntime {
   listProjects() {
     return this.repositories.listProjects();
   }
-  parkProject(input: { key: string; version: number }) {
-    return this.repositories.parkProject(input);
-  }
-  unparkProject(input: { key: string; version: number }) {
-    return this.repositories.unparkProject(input);
-  }
   async setProjectPlanner(input: {
     key: string;
     agentId: string | null;

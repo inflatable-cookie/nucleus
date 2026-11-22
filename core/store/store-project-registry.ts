@@ -44,7 +44,7 @@ export class StoreProjectRegistry {
 
   defaultProject(repo: Project["repositories"][number]): Project {
     const identity = repo.origin ?? repo.path;
-    return projectSchema.parse({ key: `repo-${digest(identity).slice(0, 20)}`, name: basename(identity), repositories: [repo], primary: repo, version: 1, visibility: "active" });
+    return projectSchema.parse({ key: `repo-${digest(identity).slice(0, 20)}`, name: basename(identity), repositories: [repo], primary: repo, version: 1 });
   }
 
   isDefaultProject(project: Project): boolean {
@@ -80,19 +80,6 @@ export class StoreProjectRegistry {
   projectTombstones(): ProjectTombstone[] {
     return this.db.prepare("SELECT data FROM project_tombstones ORDER BY key").all()
       .map(row => projectTombstoneSchema.parse(JSON.parse(String(row.data))));
-  }
-
-  setProjectVisibility(input: { key: string; version: number }, visibility: Project["visibility"]): Project {
-    return this.core.transaction(() => {
-      const project = this.projectByKey(input.key);
-      if (!project) throw new Error(`Unknown project ${input.key}`);
-      if (project.version !== input.version) throw new Error(`Stale project version: expected ${project.version}`);
-      if (project.visibility === visibility) return project;
-      const updated = projectSchema.parse({ ...project, visibility, version: project.version + 1 });
-      this.persist(updated);
-      this.core.advanceRevision();
-      return updated;
-    });
   }
 
   /** The member of a project for one repository identity, by origin or path. */
@@ -144,7 +131,7 @@ export class StoreProjectRegistry {
           primary: !existing.primary.origin && existing.primary.path === repoPath ? { ...existing.primary, origin } : existing.primary });
         if (this.isDefaultProject(existing)) {
           const replacement = this.defaultProject({ origin, path: repoPath });
-          replacement.visibility = existing.visibility; replacement.planner = existing.planner; replacement.owner = existing.owner; replacement.ownerMissingAt = existing.ownerMissingAt; replacement.ownerCheckedAt = existing.ownerCheckedAt;
+          replacement.planner = existing.planner; replacement.owner = existing.owner; replacement.ownerMissingAt = existing.ownerMissingAt; replacement.ownerCheckedAt = existing.ownerCheckedAt;
           this.db.prepare("DELETE FROM projects WHERE key=?").run(existing.key);
           this.db.prepare("DELETE FROM project_tombstones WHERE key=?").run(replacement.key);
           this.db.prepare("INSERT OR REPLACE INTO projects(key,data) VALUES(?,?)").run(replacement.key, JSON.stringify(replacement));
@@ -171,13 +158,13 @@ export class StoreProjectRegistry {
     if (primaryIndex < 0) throw new Error("Primary repository must belong to the project");
     const repositories = [...parsed.repositories];
     repositories.unshift(...repositories.splice(primaryIndex, 1));
-    const project = projectSchema.parse({ ...parsed, repositories, primary: repositories[0], version: 1, visibility: "active" });
+    const project = projectSchema.parse({ ...parsed, repositories, primary: repositories[0], version: 1 });
     const identities = project.repositories.map(repo => repo.origin ?? repo.path);
     if (new Set(identities).size !== identities.length) throw new Error("A repository may appear only once in a project");
     const write = () => {
       const previous = this.projectByKey(project.key);
       if (create && previous) throw new Error(`Project ${project.key} already exists. Nothing changed; choose another name.`);
-      if (previous) { project.version = previous.version + 1; project.visibility = previous.visibility; }
+      if (previous) project.version = previous.version + 1;
       // Spec 041: the next-aim episode is operational state; an operator edit never resets it.
       if (previous) { project.drain = previous.drain; project.planner = previous.planner; project.owner = previous.owner; project.ownerMissingAt = previous.ownerMissingAt; project.ownerCheckedAt = previous.ownerCheckedAt; }
       if (previous && !project.repositories.some(repo => repositoryMemberMatches(repo, previous.primary.path, previous.primary.origin)) &&
