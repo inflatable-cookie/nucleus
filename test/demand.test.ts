@@ -186,21 +186,21 @@ test('053 rotation weight: equal weights rotate equally whatever the legacy rati
 });
 
 test('053 rotation weight: each notch moves the share one fixed step from Default, and the diagnostic names the same pick', () => {
-  assert.deepEqual(profileWeightLevels.map(weightShare), [0.8, 0.9, 1, 1.1, 1.2]);
+  assert.deepEqual(profileWeightLevels.map(weightShare), [0.5, 0.75, 1, 1.5, 2], 'steeper stops: 50, 75, 100, 150 and 200% of Default (nucleus#1558)');
   const stops = ['fewest', 'fewer', 'default', 'more', 'most'] as const;
   const stepProfiles: Profile[] = stops.map(id => ({ id, name: id, provider: 'test', model: `vendor/${id}-model`, available: true, problem: '', notes: '', supportedThinking: [] }));
   const stepPool = stops.map(id => entry(id, 'worker', id));
   const shares = simulate({ complexity: 'medium' } as Task, stepProfiles, stepPool, 1000);
   const total = Object.values(shares).reduce((sum, n) => sum + n, 0);
   assert.equal(total, 1000);
-  // 0.8 : 0.9 : 1.0 : 1.1 : 1.2 of 5.0 → 160, 180, 200, 220, 240.
-  for (const [id, expected] of Object.entries({ fewest: 160, fewer: 180, default: 200, more: 220, most: 240 }))
+  // 0.5 : 0.75 : 1.0 : 1.5 : 2.0 of 5.75 → 87, 130, 174, 261, 348.
+  for (const [id, expected] of Object.entries({ fewest: 87, fewer: 130, default: 174, more: 261, most: 348 }))
     assert.ok(Math.abs((shares[id] ?? 0) - expected) <= 2, `${id} took ${shares[id]} of 1000, expected about ${expected}`);
   // Diagnostics read the same rotation: the set lists shares, never a cost, and its leader is the dispatched pick.
   const task = { ...submissionSchema.parse({ submissionId: 's-diag', title: 'T', repoPath: '/r', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'o', complexity: 'medium' }) } as Task;
   const recent: Record<string, number> = { 'profile:fewest': 1, 'profile:fewer': 1, 'profile:default': 1, 'profile:more': 1, 'profile:most': 1 };
   const explained = workerSelectionExplanation(task, stepPool, stepProfiles, 'normal', new Set(), { counts: recent, recent });
-  assert.deepEqual(explained.met.map(row => [row.profileId, row.weight, row.share]), [['most', 'most', 1.2], ['more', 'more', 1.1], ['default', 'default', 1], ['fewer', 'fewer', 0.9], ['fewest', 'fewest', 0.8]]);
+  assert.deepEqual(explained.met.map(row => [row.profileId, row.weight, row.share]), [['most', 'most', 2], ['more', 'more', 1.5], ['default', 'default', 1], ['fewer', 'fewer', 0.75], ['fewest', 'fewest', 0.5]]);
   assert.equal(explained.met.some(row => 'cost' in row || 'effectiveWeight' in row), false);
   assert.equal(explained.choice?.profileId, chooseProfile(task, stepProfiles, stepPool, {}, new Set(), 'worker', recent, 'normal')?.profile.id);
 });

@@ -322,10 +322,10 @@ function planWorkerFailover(
     replacementTask,
     profiles,
     selectionPool,
-    store.counts(),
+    store.rotationCounts("worker").counts,
     unavailable,
     "worker",
-    store.recentCounts(),
+    store.rotationCounts("worker").recent,
     store.usageLevel(),
   );
   if (!selected) {
@@ -369,10 +369,10 @@ function planWorkerFailover(
         replacementTask,
         restoredProfiles,
         selectionPool,
-        store.counts(),
+        store.rotationCounts("worker").counts,
         new Set(),
         "worker",
-        store.recentCounts(),
+        store.rotationCounts("worker").recent,
         store.usageLevel(),
       )
     ) {

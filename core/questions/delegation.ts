@@ -1609,10 +1609,10 @@ export class Delegation {
         },
         profiles,
         pool,
-        this.store.counts(),
+        this.store.rotationCounts("coordinator").counts,
         unavailable,
         "coordinator",
-        this.store.recentCounts(),
+        this.store.rotationCounts("coordinator").recent,
         this.store.usageLevel(),
       )?.profile ?? null
     );

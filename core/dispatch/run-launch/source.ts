@@ -145,10 +145,10 @@ export class RunLaunchSource {
         },
         profiles,
         this.store.pool(),
-        this.store.counts(),
+        this.store.rotationCounts("worker").counts,
         unavailable,
         "worker",
-        this.store.recentCounts(),
+        this.store.rotationCounts("worker").recent,
         this.store.usageLevel(),
         true,
       );
@@ -166,7 +166,7 @@ export class RunLaunchSource {
       ) {
         this.resolution.waiting(
           t,
-          `No eligible first revision worker independent of the retained reviewer${this.resolution.usageCeilingNote(t, "worker", [], new Set(), () => chooseProfile({ ...t, preferredProfileId: "", requirePreferred: false, thinkingOptionId: "" }, profiles, this.store.pool(), this.store.counts(), unavailable, "worker", this.store.recentCounts(), "maximum", true))}`,
+          `No eligible first revision worker independent of the retained reviewer${this.resolution.usageCeilingNote(t, "worker", [], new Set(), () => chooseProfile({ ...t, preferredProfileId: "", requirePreferred: false, thinkingOptionId: "" }, profiles, this.store.pool(), this.store.rotationCounts("worker").counts, unavailable, "worker", this.store.rotationCounts("worker").recent, "maximum", true))}`,
           "route_unavailable",
         );
         return;
@@ -300,10 +300,10 @@ export class RunLaunchSource {
           t,
           workerProfiles,
           this.store.pool(),
-          this.store.counts(),
+          this.store.rotationCounts("worker").counts,
           unavailable,
           "worker",
-          this.store.recentCounts(),
+          this.store.rotationCounts("worker").recent,
           this.store.usageLevel(),
           false,
         );

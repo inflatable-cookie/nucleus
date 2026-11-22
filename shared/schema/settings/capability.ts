@@ -29,12 +29,12 @@ export const capabilityLevelSchema = z.enum(capabilityLevels);
 export type CapabilityLevel = z.infer<typeof capabilityLevelSchema>;
 
 /**
- * A pool entry's rotation weight (Spec 053, Tom 2026-11-21): five named stops
- * with Default at the centre. Each stop moves the profile's relative rotation
- * share by one fixed additive step from Default (80%, 90%, 100%, 110%, 120%).
- * A share only orders rotation among profiles already eligible; it never
- * admits or excludes one, and it is not a percentage of all work. The retired
- * integer weight and the retired Cost rating read through `poolRecordFromLegacy`.
+ * A pool entry's rotation weight (Spec 053, Tom 2026-11-21, steeper stops Tom
+ * 2026-11-22): five named stops with Default at the centre. Each stop sets the
+ * profile's relative rotation share (50%, 75%, 100%, 150%, 200% of Default). A
+ * share only orders rotation among profiles already eligible; it never admits
+ * or excludes one, and it is not a percentage of all work. The retired integer
+ * weight and the retired Cost rating read through `poolRecordFromLegacy`.
  */
 export const profileWeightLevels = ["fewest", "fewer", "default", "more", "most"] as const;
 
@@ -44,15 +44,17 @@ export type ProfileWeight = z.infer<typeof profileWeightSchema>;
 
 export const DEFAULT_PROFILE_WEIGHT: ProfileWeight = "default";
 
-/** One notch moves the relative share by this much of Default's share. */
-export const WEIGHT_SHARE_STEP = 0.1;
-
-/** The relative rotation share of a weight stop: 0.8, 0.9, 1, 1.1, 1.2. */
-export const weightShare = (weight: ProfileWeight): number => {
-  const centre = Math.floor(profileWeightLevels.length / 2);
-  // Round away float noise so equal stops compare equal and diagnostics read cleanly.
-  return Math.round((1 + (profileWeightLevels.indexOf(weight) - centre) * WEIGHT_SHARE_STEP) * 100) / 100;
+/** The relative rotation share of each weight stop: 50%, 75%, 100%, 150% and 200% of Default's share. */
+export const WEIGHT_SHARES: Readonly<Record<ProfileWeight, number>> = {
+  fewest: 0.5,
+  fewer: 0.75,
+  default: 1,
+  more: 1.5,
+  most: 2,
 };
+
+/** The relative rotation share of a weight stop (`WEIGHT_SHARES`). */
+export const weightShare = (weight: ProfileWeight): number => WEIGHT_SHARES[weight];
 
 /**
  * The retired integer weight read as a stop (Tom, 2026-11-21): the old default 1

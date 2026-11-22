@@ -756,7 +756,7 @@ export function workerSelectionExplanation(
     : picked.profile.id === named
       ? "named by the task's request or preference"
       : row
-        ? `fewest recent assignments per rotation share in the set: ${row.recent} of the last 50 over a ${row.weight} weight share of ${row.share}${
+        ? `fewest recent assignments per rotation share in the set: ${row.recent} of the last 50 worker runs over a ${row.weight} weight share of ${row.share}${
             met.length > 1
               ? `; next ${met
                   .filter((item) => item.profileId !== row.profileId)
@@ -1043,10 +1043,10 @@ export class RoleSelection {
       },
       profiles,
       pool,
-      this.store.counts(),
+      this.store.rotationCounts(role === "executor" ? "worker" : role).counts,
       unavailable,
       role === "executor" ? "worker" : role,
-      this.store.recentCounts(),
+      this.store.rotationCounts(role === "executor" ? "worker" : role).recent,
       usage,
     );
   }

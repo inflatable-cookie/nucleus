@@ -622,7 +622,7 @@ repository-qualified `repo#N` form; same-repository occupants keep the shorter
 admitted, so `next` explains that wait without offering a manual `proof` action.
 
 **RoleSelection** (`core/dispatch/routing.ts`). Eligibility gates, every profile that
-meets demand, then rotation by the weight stop's share (80% to 120% of Default), balanced by group.
+meets demand, then rotation by the weight stop's share (50% to 200% of Default), each role on its own use, balanced by group.
 Decides who may take a reviewer, coordinator or executor role. Enforces
 [Profile selection](#profile-selection). Pures: `reviewerIndependence`,
 `chooseProfile`, `taskRoutingPolicy`, `eligibilityReasons`,
@@ -1285,9 +1285,10 @@ request identities and stored committed-handoff rows are not rewritten.
   usage level and the coordinator runs on Mechanical when one is available
   ([Spec 052](../specs/052-usage-level.md), Tom 2026-11-19). Selection keeps every
   eligible profile at the demand's bracket, else the nearest above or the most capable
-  eligible profiles, then rotates over the last 50 assignments by recent use
-  over the profile's weight share: one of five stops from 80% to 120% of
-  Default, with no cost input (Spec 053, Tom, 2026-11-21).
+  eligible profiles, then rotates each role over its own last 50 assignments by
+  recent use over the profile's weight share: one of five stops from 50% to 200%
+  of Default, with no cost input (Spec 053, Tom, 2026-11-21; steeper stops and
+  per-role rotation, Tom, 2026-11-22).
 - At Low, Normal and High, Frontier runs only on an explicit request for
   that role with a reason. Heavyweight profiles outside automatic selection
   at Low or Normal follow the same rule. A planner records the request in the

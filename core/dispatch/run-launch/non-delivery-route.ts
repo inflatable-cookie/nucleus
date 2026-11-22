@@ -36,9 +36,9 @@ export async function resolveNonDeliveryRoute(ctx: LaunchThreadContext, t: Task,
       && !requestOnly(entry, ctx.store.usageLevel(), requestedTier(t.complexity), climbedTier(t))));
   const routeTask = { ...t, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '',
     profileRequests: { ...t.profileRequests, worker: undefined } };
-  const selected = chooseProfile(routeTask, profiles, pool, ctx.store.counts(),
+  const selected = chooseProfile(routeTask, profiles, pool, ctx.store.rotationCounts('worker').counts,
     unavailableGroupNames(ctx.store.availability()),
-    'worker', ctx.store.recentCounts(), ctx.store.usageLevel(), false);
+    'worker', ctx.store.rotationCounts('worker').recent, ctx.store.usageLevel(), false);
   if (!selected) {
     const reason = `No eligible alternate provider at the retained ${oldEntry?.capability ?? 'known'} capability for a non-delivery replacement`;
     const cause = digest(`non_delivery_provider_unavailable:${t.id}`);

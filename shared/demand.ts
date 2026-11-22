@@ -187,9 +187,9 @@ export function workerStepLabel(usage: UsageLevel, reviewed: boolean): string {
 }
 
 /**
- * Spec 053 rotation share (Tom, 2026-11-21): a profile's weight stop sets its
- * relative share within the eligible set, 80% to 120% of Default in fixed
- * 10-point steps (`weightShare`). It orders rotation only and never admits or
+ * Spec 053 rotation share (Tom, 2026-11-21; steeper stops Tom, 2026-11-22): a
+ * profile's weight stop sets its relative share within the eligible set, 50% to
+ * 200% of Default (`weightShare`). It orders rotation only and never admits or
  * excludes a profile; no cost rating enters it.
  */
 /** A profile's rank on the bracket scale; unrated counts as Worker. */

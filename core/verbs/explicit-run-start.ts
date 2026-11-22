@@ -377,10 +377,10 @@ function selectProfileForStart(
       task,
       allProfiles,
       pool,
-      store.counts(),
+      store.rotationCounts(role).counts,
       unavailable,
       role,
-      store.recentCounts(),
+      store.rotationCounts(role).recent,
       usage,
       false,
     );

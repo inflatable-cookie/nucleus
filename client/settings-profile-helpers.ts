@@ -306,7 +306,7 @@ export function modelWords(
   return model?.label || profile.model || "no model";
 }
 
-/** The rolling window recent-assignment counts cover (nucleus#1497): up to the last 50 recorded assignments, the same sample rotation reads (`recentCounts`, `ASSIGNMENT_HISTORY_KEEP`). */
+/** The rolling window recent-assignment counts cover (nucleus#1497): up to the last 50 recorded assignments, the sample the All view reads (`recentCounts`, `ASSIGNMENT_HISTORY_KEEP`). Rotation reads each role's own window instead (`recentRoleUsage`, nucleus#1558). */
 export const RECENT_ASSIGNMENT_WINDOW = 50;
 
 /**

@@ -1442,6 +1442,13 @@ export class Store {
   recentCounts(limit = 50): Record<string, number> {
     return this.configStore.recentCounts(limit);
   }
+  /** The counts one role's selection rotates on (nucleus#1558): role-scoped profile rotation, group pacing across roles. */
+  rotationCounts(role: AssignmentRole): {
+    counts: Record<string, number>;
+    recent: Record<string, number>;
+  } {
+    return this.configStore.rotationCounts(role);
+  }
   /** The All window's size behind `recentCounts` (nucleus#1502). */
   recentSample(limit = 50): number {
     return this.configStore.recentSample(limit);
