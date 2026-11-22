@@ -52,7 +52,6 @@ import {
   matchesOwner,
   proposedOwner,
   type DecisionScope,
-  type ParentLookup,
 } from "./decisions";
 
 /** How long one long-poll may wait; the agent asks again after this. */
@@ -62,16 +61,8 @@ export const ACP_TURN_POLL_MS = 1_000;
 /** Sessions whose last shown signature is remembered; the oldest is dropped first. */
 export const ACP_SIGNATURE_MEMORY = 512;
 
-/** The key one host scope's cards are recorded under. */
-const scopeKey = (scope: AcpCardScope): string =>
-  "hostId" in scope ? `inbox:${scope.hostId}` : `task:${scope.taskId}`;
-/** The scope a caller offers decisions in, when it names one. */
-const callerScope = (caller: AcpCaller): string | null =>
-  caller.kind === "inbox"
-    ? `inbox:${caller.hostId}`
-    : caller.taskId
-      ? `task:${caller.taskId}`
-      : null;
+/** The key one host Inbox's cards are recorded under. */
+const inboxScopeKey = (hostId: string): string => `inbox:${hostId}`;
 
 export interface AcpMessageReply {
   receipt: AgentMessageReceipt;
@@ -83,8 +74,6 @@ export interface AcpSessionsOptions {
   /** The callback socket the binding points the agent at. */
   socketPath: string;
   pollMs?: number;
-  /** Recorded parent identity, or unknown when its host cannot be read. */
-  parentStatus?: ParentLookup;
   answerDecision?: (input: {
     id: string;
     version: number;
@@ -136,7 +125,6 @@ export class AcpSessions implements AcpSessionSurface {
    * absence is the host's read, never this process's assumption (nucleus#1395).
    */
   private readonly presentCards = new Map<string, Set<string>>();
-  private readonly observedParentSessions = new Map<string, string>();
   private readonly releases = new Map<string, string>();
   /** Turns waiting on this session: a release, or a new signature, wakes them. */
   private readonly waiting = new Map<string, Set<() => void>>();
@@ -194,43 +182,49 @@ export class AcpSessions implements AcpSessionSurface {
       .digest("hex")}`;
   }
   /**
-   * The decisions this session may still ask about: open here, and not dismissed as many
-   * times as the operator's one re-offer allows. The operator's dismissal is the only
-   * thing recorded as a cancellation receipt, so a settlement the host made from its own
-   * read of T3 never spends that allowance (nucleus#1395).
+   * The decisions this Inbox may still ask about: open, owned by this host's Inbox, and
+   * not dismissed as many times as the operator's one re-offer allows. The operator's
+   * dismissal is the only thing recorded as a cancellation receipt, so a settlement the
+   * host made from its own read of T3 never spends that allowance (nucleus#1395).
    */
-  private parentStatus: ParentLookup = (hostId, taskId) =>
-    this.options.parentStatus?.(hostId, taskId) ?? { state: "unknown" };
-
-  private owner(
-    row: import("../../shared/contracts").Decision,
-    caller: AcpCaller,
-  ): DecisionScope | null {
-    const bound = boundOwner(this.engine.store, row);
-    if (bound) return bound;
-    const hostId =
-      caller.kind === "inbox"
-        ? caller.hostId
-        : this.engine.store.taskOrNull(caller.taskId)?.hostId;
-    return hostId
-      ? proposedOwner(this.engine.store, row, hostId, this.parentStatus)
-      : null;
-  }
-
-  private offerable(caller: AcpCaller) {
+  private offerable(hostId: string) {
+    const caller: AcpCaller = { kind: "inbox", hostId, sessionId: "" };
     return this.engine.store.listDecisions({ status: "open" }).filter((row) => {
-      const owner = this.owner(row, caller);
-      if (!owner || !matchesOwner(owner, caller)) return false;
-      const receipt = this.engine.store.getMeta<{ requests: string[] }>(
-        this.cancelKey(row.id, row.version),
-      );
-      return (receipt?.requests.length ?? 0) < 2;
+      if (!matchesOwner(this.owner(row, hostId), caller)) return false;
+      return (this.cancelReceipt(row)?.requests.length ?? 0) < 2;
     });
   }
 
-  /** The host uses this only for the task parent it already owns. */
-  pendingDecisionKey(taskId: string): string | null {
-    const rows = this.offerable({ taskId, sessionId: "" });
+  /** The Inbox that owns one open version (Spec 032): its binding, else its links. */
+  private owner(
+    row: import("../../shared/contracts").Decision,
+    connectedHost: string,
+  ): DecisionScope {
+    return (
+      boundOwner(this.engine.store, row) ??
+      proposedOwner(this.engine.store, row, connectedHost)
+    );
+  }
+
+  private cancelReceipt(row: {
+    id: string;
+    version: number;
+  }): { requests: string[] } | undefined {
+    return this.engine.store.getMeta<{ requests: string[] }>(
+      this.cancelKey(row.id, row.version),
+    );
+  }
+
+  /**
+   * Whether this task still has an open decision the operator must answer, wherever its
+   * card lives, by the same one re-offer rule the offer uses. The host shows the task's
+   * row as attention and leaves it out of the Inbox's running count; a decision never
+   * holds the task's own thread (nucleus#1538).
+   */
+  openDecisionKey(taskId: string): string | null {
+    const rows = this.engine.store
+      .listDecisions({ status: "open", task: taskId })
+      .filter((row) => (this.cancelReceipt(row)?.requests.length ?? 0) < 2);
     return rows.length
       ? JSON.stringify(rows.map((row) => [row.id, row.version]))
       : null;
@@ -242,115 +236,75 @@ export class AcpSessions implements AcpSessionSurface {
    * version whose card the host still shows pending counts: the turn exists to hold it.
    */
   pendingInboxDecisionKey(hostId: string): string | null {
-    const rows = this.offerable({ kind: "inbox", hostId, sessionId: "" });
+    const rows = this.offerable(hostId);
     return rows.length
       ? JSON.stringify(rows.map((row) => [row.id, row.version]))
       : null;
   }
 
   /**
-   * What the next offer raises: the offerable versions whose card the host's own read of
-   * T3 does not already show pending. An unread thread (`null`) clears the observation
-   * so a previous absence cannot authorize an offer after a failed read.
+   * Record the cards the host's own read of T3 shows still pending. An unread thread
+   * (`null`) clears the observation, so a previous absence cannot authorize an offer
+   * after a failed read. A task thread's read only settles a card an earlier owner left
+   * there; a decision's card is offered in the Inbox alone (nucleus#1538).
    */
   observedCards(scope: AcpCardScope, cards: AcpPendingCard[] | null): void {
-    const key = scopeKey(scope);
-    if (!("hostId" in scope) && scope.sessionId) {
-      const task = this.engine.store.taskOrNull(scope.taskId);
-      const parent = task?.hostId
-        ? this.parentStatus(task.hostId, task.id)
-        : { state: "unknown" as const };
-      if (parent.state !== "parent" || parent.sessionId !== scope.sessionId)
-        cards = null;
-    }
+    if (!("hostId" in scope)) return;
+    const key = inboxScopeKey(scope.hostId);
     if (cards === null) {
-      this.observedParentSessions.delete(key);
       this.presentCards.delete(key);
       return;
-    }
-    if (!("hostId" in scope)) {
-      const task = this.engine.store.taskOrNull(scope.taskId);
-      const parent = task?.hostId
-        ? this.parentStatus(task.hostId, task.id)
-        : { state: "unknown" as const };
-      if (parent.state !== "parent") return;
-      this.observedParentSessions.set(key, parent.sessionId);
     }
     this.presentCards.set(
       key,
       new Set(cards.map((card) => `${card.id}:${card.version}`)),
     );
-    // Positive host evidence adopts legacy cards before another scope may offer them.
+    // Positive host evidence adopts a legacy card this Inbox shows before anything else
+    // can offer the version. A card about another host's task stays that host's.
     for (const card of cards) {
       const row = this.engine.store
         .listDecisions({ status: "open" })
         .find((d) => d.id === card.id && d.version === card.version);
       if (!row || boundOwner(this.engine.store, row)) continue;
-      if ("hostId" in scope) {
-        const linkedHost = row.links.tasks
-          .map((id) => this.engine.store.taskOrNull(id))
-          .find(
-            (task) =>
-              task && !task.removedAt && task.hostId?.startsWith("t3code:"),
-          )?.hostId;
-        if (!linkedHost || linkedHost === scope.hostId)
-          bindOwner(this.engine.store, row, {
-            kind: "inbox",
-            hostId: scope.hostId,
-          });
-      } else {
-        const task = this.engine.store.taskOrNull(scope.taskId);
-        if (!task?.hostId || !row.links.tasks.includes(task.id)) continue;
-        const parent = this.parentStatus(task.hostId, task.id);
-        if (parent.state === "parent")
-          bindOwner(this.engine.store, row, {
-            kind: "task",
-            taskId: task.id,
-            hostId: task.hostId,
-            sessionId: parent.sessionId,
-          });
-      }
+      const linkedHost = row.links.tasks
+        .map((id) => this.engine.store.taskOrNull(id))
+        .find(
+          (task) =>
+            task && !task.removedAt && task.hostId?.startsWith("t3code:"),
+        )?.hostId;
+      if (!linkedHost || linkedHost === scope.hostId)
+        bindOwner(this.engine.store, row, {
+          kind: "inbox",
+          hostId: scope.hostId,
+        });
     }
   }
 
-  /** A first offer waits until all potential legacy card scopes were read. */
-  private raises(caller: AcpCaller) {
-    const present = this.presentCards.get(callerScope(caller) ?? "");
+  /** The task a decision is about, for the name its Inbox card carries. */
+  private linkedTask(row: import("../../shared/contracts").Decision): {
+    reference: string | null;
+    title: string;
+  } | null {
+    for (const id of row.links.tasks) {
+      const task = this.engine.store.taskOrNull(id);
+      if (task && !task.removedAt)
+        return { reference: task.reference ?? null, title: task.title };
+    }
+    return null;
+  }
+
+  /**
+   * What this Inbox's next offer raises: the offerable versions whose card the host's own
+   * read of T3 does not already show pending. A first offer waits for that read.
+   */
+  private raises(hostId: string) {
+    const present = this.presentCards.get(inboxScopeKey(hostId));
     if (!present) return [];
     const offered = [];
-    for (const row of this.offerable(caller)) {
+    for (const row of this.offerable(hostId)) {
       if (present.has(`${row.id}:${row.version}`)) continue;
-      const owner = this.owner(row, caller);
-      if (!owner) continue;
-      if (
-        owner.kind === "task" &&
-        this.observedParentSessions.get(`task:${owner.taskId}`) !==
-          owner.sessionId
-      )
-        continue;
-      if (!boundOwner(this.engine.store, row)) {
-        if (!this.presentCards.has(`inbox:${owner.hostId}`)) continue;
-        let complete = true;
-        for (const taskId of row.links.tasks) {
-          const task = this.engine.store.taskOrNull(taskId);
-          if (!task || task.removedAt || !task.hostId?.startsWith("t3code:"))
-            continue;
-          const parent = this.parentStatus(task.hostId, task.id);
-          if (parent.state === "unknown") continue;
-          if (
-            !this.presentCards.has(`inbox:${task.hostId}`) ||
-            (parent.state === "parent" &&
-              this.observedParentSessions.get(`task:${task.id}`) !==
-                parent.sessionId)
-          ) {
-            complete = false;
-            break;
-          }
-        }
-        if (!complete) continue;
-      }
-      if (matchesOwner(bindOwner(this.engine.store, row, owner), caller))
-        offered.push(acpElicitation(row));
+      bindOwner(this.engine.store, row, this.owner(row, hostId));
+      offered.push(acpElicitation(row, this.linkedTask(row)));
     }
     return offered;
   }
@@ -364,16 +318,11 @@ export class AcpSessions implements AcpSessionSurface {
     try {
       const decision = this.engine.store.decision(id);
       if (decision.version === version && decision.status === "open") {
+        // No decision is owned by a task thread (Spec 032), so any card left there is
+        // settled; only the owning Inbox keeps its card open.
+        if (scope && !("hostId" in scope)) return { state: "cancelled" };
         const owner = boundOwner(this.engine.store, decision);
-        if (
-          scope &&
-          owner &&
-          ("hostId" in scope
-            ? owner.kind !== "inbox" || owner.hostId !== scope.hostId
-            : owner.kind !== "task" ||
-              owner.taskId !== scope.taskId ||
-              (!!scope.sessionId && owner.sessionId !== scope.sessionId))
-        )
+        if (scope && (!owner || owner.hostId !== scope.hostId))
           return { state: "cancelled" };
         return { state: "open" };
       }
@@ -426,7 +375,8 @@ export class AcpSessions implements AcpSessionSurface {
       );
       const deadline = Date.now() + waitMs;
       for (;;) {
-        const elicitations = input.attach === true ? [] : this.raises(input);
+        const elicitations =
+          input.attach === true ? [] : this.raises(record.hostId);
         const signature = JSON.stringify(elicitations);
         // A decision this inbox must ask about holds the turn, even while its card is
         // already live on T3: an offer that arrives first cancels that release directive.
@@ -484,11 +434,6 @@ export class AcpSessions implements AcpSessionSurface {
       const task = this.engine.store.task(record.taskId);
       const signature = acpLifecycleSignature(task);
       const messages: string[] = [];
-      const elicitations = input.attach === true ? [] : this.raises(input);
-      const decisionSignature = JSON.stringify(elicitations);
-      const changedDecisions =
-        this.shownDecisions.get(record.sessionId) !== decisionSignature;
-      this.shownDecisions.set(record.sessionId, decisionSignature);
       const previous = this.shown.get(record.sessionId);
       if (first || input.attach === true || previous?.signature !== signature) {
         // A reattached session has nothing on screen to build on, so its line is whole.
@@ -507,10 +452,7 @@ export class AcpSessions implements AcpSessionSurface {
         });
       }
       const release = this.releases.get(record.sessionId);
-      if (
-        (release !== undefined || acpTaskFinished(task)) &&
-        !this.pendingDecisionKey(task.id)
-      ) {
+      if (release !== undefined || acpTaskFinished(task)) {
         this.releases.delete(record.sessionId);
         return this.reply(
           task,
@@ -519,16 +461,8 @@ export class AcpSessions implements AcpSessionSurface {
           messages,
         );
       }
-      if (
-        messages.length ||
-        changedDecisions ||
-        input.attach ||
-        Date.now() >= deadline
-      )
-        return {
-          ...this.reply(task, "hold", `the task is ${task.phase}`, messages),
-          elicitations,
-        };
+      if (messages.length || input.attach || Date.now() >= deadline)
+        return this.reply(task, "hold", `the task is ${task.phase}`, messages);
       await this.wait(
         record.sessionId,
         Math.min(this.pollMs, deadline - Date.now()),

@@ -39,7 +39,6 @@ interface NativeConnection {
   /** Provider model option descriptors from the last config read (nucleus#1375). */
   readonly modelShapes?: string;
   connect(probeThreadId?: string): Promise<void>;
-  decisionParent?(taskId: string): import("../core/acp/decisions").ParentStatus;
   /** The projects the last shell read saw, for the board's generated badges (nucleus#1450). */
   projectObservation?(): readonly ObservedT3Project[] | null;
   openInboxUi?(): Promise<{
@@ -292,12 +291,6 @@ export class T3HostConnection {
     if (!this.session || !this.host?.connected) return [];
     const projects = this.host.projectObservation?.();
     return projects ? [{ hostId: this.host.hostId, projects }] : [];
-  }
-
-  decisionParent(hostId: string, taskId: string): import("../core/acp/decisions").ParentStatus {
-    if (!this.session || this.session.id !== hostId || !this.host?.connected)
-      return { state: "unknown" };
-    return this.host.decisionParent?.(taskId) ?? { state: "unknown" };
   }
 
   async openInboxUi(

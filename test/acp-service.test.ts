@@ -4,7 +4,12 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "../core/engine";
 import { Decisions } from "../core/planning/decisions";
-import { proposedOwner } from "../core/acp/decisions";
+import {
+  bindOwner,
+  boundOwner,
+  proposedOwner,
+  type DecisionScope,
+} from "../core/acp/decisions";
 import {
   reconcileRoutingSignoffs,
   signoffApprove,
@@ -136,15 +141,7 @@ async function acpFixture(hostId = "host") {
     resolution: { ...store.task(task.id).resolution, currentRunId: "run-1" },
   });
   mkdirSync(worktree, { recursive: true });
-  let parentSessionId = "";
-  let parentUnknown = false;
   const acp = new AcpSessions(engine, {
-    parentStatus: () =>
-      parentUnknown
-        ? { state: "unknown" }
-        : parentSessionId
-          ? { state: "parent", sessionId: parentSessionId }
-          : { state: "absent" },
     dataHome: dir,
     socketPath,
     pollMs: 50,
@@ -165,7 +162,6 @@ async function acpFixture(hostId = "host") {
     engine,
   );
   const minted = acp.bind({ taskId: task.id });
-  parentSessionId = minted.sessionId;
   const binding = readAcpBinding(minted.bindingPath);
   return {
     dir,
@@ -176,13 +172,6 @@ async function acpFixture(hostId = "host") {
     worktree,
     notified,
     minted,
-    setParent: (present: boolean) => {
-      parentSessionId = present ? minted.sessionId : "";
-      parentUnknown = false;
-    },
-    setParentUnknown: () => {
-      parentUnknown = true;
-    },
     binding,
     token: binding.token,
     get turns(): number {
@@ -1125,7 +1114,9 @@ test("an inbox turn is released only when nothing is offered and the adapter has
   }
 });
 
-test("task and inbox cards have distinct scopes and a versioned operator answer", async () => {
+test("a task-linked decision and a decision with no task link are both offered in the Inbox, and the task thread raises none", async () => {
+  // nucleus#1538 / Spec 032: the Inbox is a decision's only owner, so a planner
+  // sign-off about a task reaches the operator where he looks for it.
   const fixture = await acpFixture("t3code:synthetic");
   try {
     const stamp = new Date().toISOString();
@@ -1148,12 +1139,16 @@ test("task and inbox cards have distinct scopes and a versioned operator answer"
     fixture.store.addDecision(decision("inbox-question", []));
     fixture.acp.observedCards({ hostId: "t3code:synthetic" }, []);
     fixture.acp.observedCards({ taskId: fixture.taskId }, []);
-    // An attach shows the line only; the held turn offers the card.
-    assert.deepEqual((await fixture.turn({ attach: true })).elicitations, []);
-    const task = await fixture.turn({ waitMs: 0 });
-    assert.deepEqual(
-      task.elicitations?.map((row) => row.id),
-      ["task-question"],
+    // The task's own thread shows its lifecycle line only: no card, and no hold for one.
+    const attach = await fixture.turn({ attach: true });
+    assert.equal("elicitations" in attach, false);
+    const taskThread = await fixture.turn({ waitMs: 0 });
+    assert.equal(taskThread.state, "hold");
+    assert.equal("elicitations" in taskThread, false);
+    // The task's row still names the decision that needs the operator, wherever its card is.
+    assert.equal(
+      fixture.acp.openDecisionKey(fixture.taskId),
+      JSON.stringify([["task-question", 1]]),
     );
     const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
     const binding = readAcpBinding(inbox.bindingPath);
@@ -1179,24 +1174,55 @@ test("task and inbox cards have distinct scopes and a versioned operator answer"
       { ...caller, waitMs: 0 },
       binding.token,
     );
-    assert.deepEqual(
-      offered.elicitations?.map((row) => row.id),
-      ["inbox-question"],
+    assert.deepEqual(offered.elicitations?.map((row) => row.id).sort(), [
+      "inbox-question",
+      "task-question",
+    ]);
+    // A task-linked card names the task it is about, as the board's task link does.
+    const task = fixture.store.task(fixture.taskId);
+    assert.equal(
+      offered.elicitations?.find((row) => row.id === "task-question")?.headline,
+      [task.reference, task.title].filter(Boolean).join(" · "),
     );
+    assert.equal(
+      offered.elicitations?.find((row) => row.id === "inbox-question")
+        ?.headline,
+      "Question inbox-question?",
+    );
+    // A task session cannot answer a card the Inbox owns.
     await assert.rejects(
       () =>
         fixture.acp.answer(
           {
-            ...caller,
+            taskId: fixture.taskId,
+            sessionId: fixture.minted.sessionId,
             id: "task-question",
             version: 1,
             action: "accept",
             answer: "Yes",
           },
-          binding.token,
+          fixture.token,
         ),
       /not offered/,
     );
+    // An answer from the Inbox settles a task-linked decision as the T3 operator.
+    await fixture.acp.answer(
+      {
+        ...caller,
+        id: "task-question",
+        version: 1,
+        action: "accept",
+        answer: "Yes",
+      },
+      binding.token,
+    );
+    const taskAnswered = fixture.store.decision("task-question");
+    assert.equal(taskAnswered.status, "answered");
+    assert.equal(
+      taskAnswered.answer?.answeredBy,
+      "operator (t3code:synthetic)",
+    );
+    assert.equal(taskAnswered.answer?.relayed, null);
     await fixture.acp.answer(
       {
         ...caller,
@@ -1259,10 +1285,9 @@ test("task and inbox cards have distinct scopes and a versioned operator answer"
   }
 });
 
-test("a queued held task keeps its first Inbox owner after its parent appears and the service restarts", async () => {
+test("an Inbox-owned decision keeps its owner, and raises no duplicate, across a service restart", async () => {
   const fixture = await acpFixture("t3code:synthetic");
   try {
-    fixture.setParent(false);
     fixture.store.update(fixture.taskId, { phase: "queued", held: true });
     const stamp = new Date().toISOString();
     const id = "11111111-1111-4111-8111-111111111114";
@@ -1301,28 +1326,22 @@ test("a queued held task keeps its first Inbox owner after its parent appears an
       [id],
     );
     fixture.acp.observedCards({ hostId: inbox.hostId }, [{ id, version: 1 }]);
-    fixture.setParent(true);
-    fixture.acp.observedCards(
-      { taskId: fixture.taskId, sessionId: fixture.sessionId },
-      [],
-    );
-    assert.deepEqual((await fixture.turn()).elicitations, []);
-    assert.equal(fixture.acp.pendingDecisionKey(fixture.taskId), null);
     const restarted = new AcpSessions(fixture.engine, {
       dataHome: fixture.dir,
       socketPath: "unused",
-      parentStatus: () => ({ state: "parent", sessionId: fixture.sessionId }),
       answerDecision: (input) =>
         new Decisions(fixture.store).answer(input, { trustedT3: true }),
     });
     assert.deepEqual(
       (await restarted.turn({ ...caller, waitMs: 0 }, token)).elicitations,
       [],
+      "an unobserved Inbox offers nothing",
     );
     restarted.observedCards({ hostId: inbox.hostId }, [{ id, version: 1 }]);
     assert.deepEqual(
       (await restarted.turn({ ...caller, waitMs: 0 }, token)).elicitations,
       [],
+      "the version keeps its Inbox owner and its live card across the restart",
     );
     await restarted.answer(
       { ...caller, id, version: 1, action: "accept", answer: "Yes" },
@@ -1338,7 +1357,6 @@ test("a queued held task keeps its first Inbox owner after its parent appears an
 test("an Inbox routing sign-off authorizes the requested role without releasing an independent hold", async () => {
   const fixture = await acpFixture("t3code:synthetic");
   try {
-    fixture.setParent(false);
     const requested = profile("frontier", "synthetic-frontier", "pi");
     fixture.store.setMeta("pool", [
       poolSchema.parse({
@@ -1404,7 +1422,7 @@ test("an Inbox routing sign-off authorizes the requested role without releasing 
   }
 });
 
-test("a later linked task with a parent is preferred over an earlier task without one", async () => {
+test("proposedOwner names the linked T3 task's host, else the host whose Inbox is offering", async () => {
   const fixture = await acpFixture("t3code:synthetic");
   try {
     const other = fixture.store.insert(
@@ -1416,44 +1434,57 @@ test("a later linked task with a parent is preferred over an earlier task withou
         brief: { text: "Synthetic brief" },
         originAgentId: "origin",
       }),
-      "t3code:synthetic",
+      "t3code:other-registered-host",
       "brief",
       base,
     );
     const stamp = new Date().toISOString();
-    const row = decisionSchema.parse({
-      id: "11111111-1111-4111-8111-111111111117",
-      version: 1,
-      question: "Approve?",
-      askedBy: { agentId: "synthetic" },
-      choices: [
-        { label: "Yes", consequence: "Proceed" },
-        { label: "No", consequence: "Hold" },
-      ],
-      links: { tasks: [other.id, fixture.taskId] },
-      status: "open",
-      createdAt: stamp,
-      updatedAt: stamp,
-    });
+    const row = (tasks: string[]) =>
+      decisionSchema.parse({
+        id: "11111111-1111-4111-8111-111111111117",
+        version: 1,
+        question: "Approve?",
+        askedBy: { agentId: "synthetic" },
+        choices: [
+          { label: "Yes", consequence: "Proceed" },
+          { label: "No", consequence: "Hold" },
+        ],
+        links: { tasks },
+        status: "open",
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+    // The linked task's own host owns the decision, so its Inbox shows the card.
     assert.deepEqual(
-      proposedOwner(fixture.store, row, "t3code:synthetic", (_host, taskId) =>
-        taskId === fixture.taskId
-          ? { state: "parent", sessionId: fixture.sessionId }
-          : { state: "absent" },
+      proposedOwner(
+        fixture.store,
+        row([other.id, fixture.taskId]),
+        "t3code:synthetic",
       ),
-      {
-        kind: "task",
-        hostId: "t3code:synthetic",
-        taskId: fixture.taskId,
-        sessionId: fixture.sessionId,
-      },
+      { kind: "inbox", hostId: "t3code:other-registered-host" },
+    );
+    assert.deepEqual(
+      proposedOwner(
+        fixture.store,
+        row([fixture.taskId]),
+        "t3code:other-registered-host",
+      ),
+      { kind: "inbox", hostId: "t3code:synthetic" },
+    );
+    // A decision that links no T3 task belongs to the Inbox that offers it.
+    assert.deepEqual(
+      proposedOwner(fixture.store, row([]), "t3code:synthetic"),
+      { kind: "inbox", hostId: "t3code:synthetic" },
     );
   } finally {
     await fixture.close();
   }
 });
 
-test("an unknown parent status falls back to the Inbox without dropping the decision, and binding keeps one owner per version", async () => {
+test("an open decision bound to a task thread moves to the Inbox once, and its old card is cancelled", async () => {
+  // A version bound before nucleus#1538 belonged to the task's parent thread. The
+  // board ruling moved every decision to the Inbox: the next offer re-binds it, and
+  // the host's own read settles the card still shown on the task thread.
   const fixture = await acpFixture("t3code:synthetic");
   try {
     const stamp = new Date().toISOString();
@@ -1474,6 +1505,12 @@ test("an unknown parent status falls back to the Inbox without dropping the deci
         updatedAt: stamp,
       }),
     );
+    bindOwner(fixture.store, { id, version: 1 }, {
+      kind: "task",
+      taskId: fixture.taskId,
+      hostId: "t3code:synthetic",
+      sessionId: fixture.minted.sessionId,
+    } as unknown as DecisionScope);
     const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
     const token = readAcpBinding(inbox.bindingPath).token;
     const caller = {
@@ -1481,32 +1518,39 @@ test("an unknown parent status falls back to the Inbox without dropping the deci
       hostId: inbox.hostId,
       sessionId: inbox.sessionId,
     };
-    fixture.setParentUnknown();
     fixture.acp.observedCards({ hostId: inbox.hostId }, []);
-    assert.equal(
-      fixture.acp.pendingInboxDecisionKey(inbox.hostId),
-      JSON.stringify([[id, 1]]),
-    );
     assert.deepEqual(
       (
         await fixture.acp.turn({ ...caller, waitMs: 0 }, token)
       ).elicitations?.map((row) => row.id),
       [id],
     );
-    // Once bound to the Inbox, a parent later becoming known does not offer a duplicate card.
-    fixture.setParent(true);
-    fixture.acp.observedCards(
-      { taskId: fixture.taskId, sessionId: fixture.sessionId },
-      [],
+    assert.deepEqual(boundOwner(fixture.store, { id, version: 1 }), {
+      kind: "inbox",
+      hostId: "t3code:synthetic",
+    });
+    // The card left on the task thread is settled, and the Inbox card stays open.
+    assert.deepEqual(
+      fixture.acp.decisionSettlement(id, 1, {
+        taskId: fixture.taskId,
+        sessionId: fixture.minted.sessionId,
+      }),
+      { state: "cancelled" },
     );
-    assert.equal(fixture.acp.pendingDecisionKey(fixture.taskId), null);
-    assert.deepEqual((await fixture.turn()).elicitations, []);
+    assert.deepEqual(
+      fixture.acp.decisionSettlement(id, 1, { hostId: inbox.hostId }),
+      {
+        state: "open",
+      },
+    );
+    // The moved owner is used once: the same version is not re-bound by the task thread.
+    assert.equal(fixture.store.decision(id).version, 1);
   } finally {
     await fixture.close();
   }
 });
 
-test("a legacy Inbox card is adopted before a healthy parent can offer it", async () => {
+test("a legacy Inbox card is adopted from the host's own read before the version is offered anywhere", async () => {
   const fixture = await acpFixture("t3code:synthetic");
   try {
     const stamp = new Date().toISOString();
@@ -1528,15 +1572,16 @@ test("a legacy Inbox card is adopted before a healthy parent can offer it", asyn
       }),
     );
     fixture.acp.observedCards({ hostId: "t3code:synthetic" }, null);
-    fixture.acp.observedCards(
-      { taskId: fixture.taskId, sessionId: fixture.sessionId },
-      [],
-    );
-    assert.deepEqual((await fixture.turn()).elicitations, []);
+    fixture.acp.observedCards({ taskId: fixture.taskId }, []);
+    // A live card on a task thread claims no ownership: the version is still the Inbox's.
+    assert.equal(boundOwner(fixture.store, { id, version: 1 }), undefined);
     fixture.acp.observedCards({ hostId: "t3code:synthetic" }, [
       { id, version: 1 },
     ]);
-    assert.deepEqual((await fixture.turn()).elicitations, []);
+    assert.deepEqual(boundOwner(fixture.store, { id, version: 1 }), {
+      kind: "inbox",
+      hostId: "t3code:synthetic",
+    });
     assert.equal(
       fixture.acp.pendingInboxDecisionKey("t3code:synthetic"),
       JSON.stringify([[id, 1]]),
@@ -1627,9 +1672,10 @@ test("a decision card the host's own read shows pending is not offered again, an
   }
 });
 
-test("a task parent's turn releases once the operator's re-offer is spent instead of holding with no card", async () => {
-  // nucleus#1395: the task parent's hold key and the inbox's key disagreed about the
-  // operator-cancel cap, so a spent version held a parent whose card could never return.
+test("the operator's spent re-offer stops the Inbox offer and the task row's decision signal", async () => {
+  // nucleus#1395: the cap is the same rule everywhere. An Inbox that no longer offers
+  // the version releases its turn, and the task's row stops naming a decision the
+  // operator dismissed twice.
   const fixture = await acpFixture("t3code:synthetic");
   try {
     const stamp = new Date().toISOString();
@@ -1649,40 +1695,57 @@ test("a task parent's turn releases once the operator's re-offer is spent instea
         updatedAt: stamp,
       }),
     );
-    fixture.acp.observedCards({ hostId: "t3code:synthetic" }, []);
-    fixture.acp.observedCards({ taskId: fixture.taskId }, []);
+    const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
+    const token = readAcpBinding(inbox.bindingPath).token || fixture.token;
+    const caller = {
+      kind: "inbox" as const,
+      hostId: inbox.hostId,
+      sessionId: inbox.sessionId,
+    };
+    fixture.acp.observedCards({ hostId: inbox.hostId }, []);
     assert.deepEqual(
-      (await fixture.turn({ waitMs: 0 })).elicitations?.map((row) => [
-        row.id,
-        row.version,
-      ]),
+      (
+        await fixture.acp.turn({ ...caller, waitMs: 0 }, token)
+      ).elicitations?.map((row) => [row.id, row.version]),
       [["task-question", 1]],
     );
-    const caller = {
-      taskId: fixture.taskId,
-      sessionId: fixture.sessionId,
+    const cancel = {
+      ...caller,
       id: "task-question",
       version: 1,
       action: "cancel" as const,
     };
-    await fixture.acp.answer({ ...caller, requestId: "card-1" }, fixture.token);
+    await fixture.acp.answer({ ...cancel, requestId: "card-1" }, token);
     // One dismissal still permits the one re-offer.
     assert.deepEqual(
-      (await fixture.turn({ waitMs: 0 })).elicitations?.map((row) => row.id),
+      (
+        await fixture.acp.turn({ ...caller, waitMs: 0 }, token)
+      ).elicitations?.map((row) => row.id),
       ["task-question"],
     );
-    await fixture.acp.answer({ ...caller, requestId: "card-2" }, fixture.token);
-    assert.deepEqual((await fixture.turn({ waitMs: 0 })).elicitations, []);
+    await fixture.acp.answer({ ...cancel, requestId: "card-2" }, token);
+    assert.deepEqual(
+      (await fixture.acp.turn({ ...caller, waitMs: 0 }, token)).elicitations,
+      [],
+    );
     assert.equal(
-      fixture.acp.pendingDecisionKey(fixture.taskId),
+      fixture.acp.pendingInboxDecisionKey(inbox.hostId),
       null,
-      "a spent re-offer no longer needs the parent held",
+      "a spent re-offer no longer needs the inbox",
+    );
+    assert.equal(
+      fixture.acp.openDecisionKey(fixture.taskId),
+      null,
+      "and no longer names the task's row as waiting on a decision",
     );
     fixture.acp.release(
-      fixture.sessionId,
-      "no operator decision is open for this task",
+      inbox.sessionId,
+      "no operator decision is open for the inbox",
     );
-    assert.equal((await fixture.turn({ attach: true })).state, "release");
+    assert.equal(
+      (await fixture.acp.turn({ ...caller, waitMs: 0 }, token)).state,
+      "release",
+    );
   } finally {
     await fixture.close();
   }
@@ -1903,6 +1966,59 @@ test("inbox ui authenticates through the inbox binding and holds only while a de
     } finally {
       agent.child.kill();
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("an Inbox answer settles the decision and notifies the asker", async () => {
+  const fixture = await acpFixture("t3code:synthetic");
+  try {
+    const stamp = new Date().toISOString();
+    const id = "11111111-1111-4111-8111-111111111121";
+    fixture.store.addDecision(
+      decisionSchema.parse({
+        id,
+        version: 1,
+        question: "Approve the retained reviewer?",
+        askedBy: { agentId: WORKER },
+        choices: [
+          { label: "Approve", consequence: "Review proceeds" },
+          { label: "Decline", consequence: "Keep waiting" },
+        ],
+        links: { tasks: [fixture.taskId] },
+        status: "open",
+        createdAt: stamp,
+        updatedAt: stamp,
+      }),
+    );
+    const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
+    const token = readAcpBinding(inbox.bindingPath).token;
+    const caller = {
+      kind: "inbox" as const,
+      hostId: inbox.hostId,
+      sessionId: inbox.sessionId,
+    };
+    fixture.acp.observedCards({ hostId: inbox.hostId }, []);
+    assert.deepEqual(
+      (
+        await fixture.acp.turn({ ...caller, waitMs: 0 }, token)
+      ).elicitations?.map((row) => row.id),
+      [id],
+    );
+    await fixture.acp.answer(
+      { ...caller, id, version: 1, action: "accept", answer: "Approve" },
+      token,
+    );
+    const settled = fixture.store.decision(id);
+    assert.equal(settled.status, "answered");
+    assert.equal(settled.answer?.answeredBy, "operator (t3code:synthetic)");
+    assert.equal(settled.delivery?.agentId, WORKER);
+    assert.equal(settled.delivery?.status, "pending");
+    await fixture.engine.resolution.deliverDecisionNotices();
+    assert.equal(fixture.notified.length, 1);
+    assert.equal(fixture.notified[0]!.agentId, WORKER);
+    assert.match(fixture.notified[0]!.text, /Approve/);
   } finally {
     await fixture.close();
   }

@@ -790,7 +790,6 @@ export class T3Nesting {
       if (projection.thread.archivedAt) continue;
       if (!projection.runs.some((run) => activeStatuses.has(run.status)))
         continue;
-      if (this.core.acp()?.pendingDecisionKey?.(task.id)) continue;
       if (this.holding(parent)) continue;
       if (await this.anyChildLive(task.id)) continue;
       await this.release(parent);
