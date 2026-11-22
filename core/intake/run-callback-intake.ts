@@ -14,7 +14,10 @@ import {
 import { proofWaitApplies } from "../qa/proof-wait";
 import { releaseRunFromRecordedCompletion } from "../recovery/fence-settlement";
 import type { Resolution } from "../resolution";
-import { assertOrdinaryReviewIdentity } from "../review/ordinary-review";
+import {
+  assertDetachedReviewViewIdentity,
+  assertOrdinaryReviewIdentity,
+} from "../review/ordinary-review";
 import { assertReviewResponsibility } from "../review/review-verdicts";
 import { digest, now } from "../store/store";
 import {
@@ -39,9 +42,7 @@ import {
   settleProofExecution,
   type ProofOutcome,
 } from "./proof-settlement";
-import {
-  threadReleasePendingReason,
-} from "./thread-waits";
+import { threadReleasePendingReason } from "./thread-waits";
 import { reportRunBinding } from "./report-run-binding";
 import { reportRunFor } from "../dispatch/acting-run";
 import { recordResultApplied } from "./applied-result";
@@ -404,7 +405,13 @@ export class RunCallbackIntake {
     // carries structured judgments without a merge verdict.
     const sourceRefusal = sourceApprovalRefusal(input, run);
     if (sourceRefusal) throw Error(sourceRefusal);
-    if (run.ordinaryDetached)
+    if (run.reviewCheckoutDirectory)
+      assertDetachedReviewViewIdentity(
+        task,
+        run.reviewCheckoutDirectory,
+        run.head,
+      );
+    else if (run.ordinaryDetached)
       assertOrdinaryReviewIdentity(task, run.head, true);
     else if (input.sourceApproved)
       assertOrdinaryReviewIdentity(task, run.head, false);
@@ -610,7 +617,9 @@ export class RunCallbackIntake {
             ) ?? null)
           : null;
       const releasePendingReason =
-        !run.released && task.reasonFact?.code === "thread_running" && task.reasonFact.subject === run.role
+        !run.released &&
+        task.reasonFact?.code === "thread_running" &&
+        task.reasonFact.subject === run.role
           ? threadReleasePendingReason(run.role)
           : undefined;
       const blockedCauseReason = ["blocked", "error"].includes(input.status)

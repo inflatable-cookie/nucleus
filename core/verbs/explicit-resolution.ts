@@ -17,6 +17,7 @@ import {
   isWaitingTaskStop,
 } from "../../shared/task-stop";
 import type { Engine } from "../engine";
+import { git } from "../git/index";
 import { signalProcessGroupByLeader } from "../machine/process-group";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { plannerEscalations } from "../questions/ladder/records";
@@ -440,6 +441,17 @@ export function releasePlan(
         };
         await attempt("Host contact", () =>
           hostId ? engine.withHost(hostId, onHost) : onHost(),
+        );
+      }
+      if (run?.reviewCheckoutDirectory) {
+        await attempt("Detached review worktree cleanup", () =>
+          git(
+            task.repoPath,
+            "worktree",
+            "remove",
+            "--force",
+            run.reviewCheckoutDirectory!,
+          ),
         );
       }
       return { issues };

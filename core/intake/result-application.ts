@@ -614,7 +614,15 @@ export class ResultApplication {
 
     // Retained ordinary rounds can leave the worktree detached. The prior
     // receipt and the existing source and owned-tool proofs still govern restoration.
-    if (run.ordinaryDetached) {
+    if (run.reviewCheckoutDirectory) {
+      await git(
+        t.repoPath,
+        "worktree",
+        "remove",
+        "--force",
+        run.reviewCheckoutDirectory,
+      ).catch(() => {});
+    } else if (run.ordinaryDetached) {
       const prior = runs.find((item) => item.id === run.priorRunId);
       if (
         !prior?.released ||
@@ -672,7 +680,15 @@ export class ResultApplication {
           `The retained participant ${agentId} must be observed idle and permission-free in its workspace`,
         );
     }
-    if (run.ordinaryDetached) {
+    if (run.reviewCheckoutDirectory) {
+      await git(
+        t.repoPath,
+        "worktree",
+        "remove",
+        "--force",
+        run.reviewCheckoutDirectory,
+      ).catch(() => {});
+    } else if (run.ordinaryDetached) {
       const branch = readGitCheckout(t.directory!).branch;
       await ordinaryReviewSource(t, run.head, branch === "");
       const custody = recheck();
@@ -895,7 +911,15 @@ export class ResultApplication {
       return;
     }
     let c = run.completion;
-    if (run.ordinaryDetached) {
+    if (run.reviewCheckoutDirectory) {
+      await git(
+        t.repoPath,
+        "worktree",
+        "remove",
+        "--force",
+        run.reviewCheckoutDirectory,
+      ).catch(() => {});
+    } else if (run.ordinaryDetached) {
       await this.resolution.ordinaryRoundCustody(t, run, true);
       const branch = readGitCheckout(t.directory!).branch;
       await ordinaryReviewSource(t, run.head, branch === "");

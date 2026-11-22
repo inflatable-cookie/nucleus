@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -42,6 +42,40 @@ const head = "a".repeat(40);
 const host = "paseo-fixture";
 const repo = "/example";
 const planner = formatAgentId(host, "live-planner");
+
+async function attachGitCheckout(
+  root: string,
+  store: QueueRuntime["store"],
+  taskId: string,
+  suffix = "git",
+) {
+  const baseDir = join(root, suffix);
+  const remote = join(baseDir, "remote.git");
+  const repoDir = join(baseDir, "repo");
+  const worktree = join(baseDir, "worktree");
+  await git(root, "init", "--bare", remote);
+  await git(root, "init", repoDir);
+  await git(repoDir, "config", "user.email", "test@example.com");
+  await git(repoDir, "config", "user.name", "Test");
+  await git(repoDir, "checkout", "-b", "main");
+  writeFileSync(join(repoDir, "a.txt"), "v1\n");
+  await git(repoDir, "add", "a.txt");
+  await git(repoDir, "commit", "-m", "v1");
+  await git(repoDir, "remote", "add", "origin", remote);
+  await git(repoDir, "push", "-u", "origin", "main");
+  const task = store.task(taskId);
+  await git(repoDir, "worktree", "add", "-b", task.branch, worktree, "main");
+  const initialSha = await git(worktree, "rev-parse", "HEAD");
+  await git(worktree, "push", "-u", "origin", task.branch);
+  store.update(taskId, {
+    repoPath: repoDir,
+    directory: worktree,
+    workspaceId: "workspace",
+    workspaceIntent: true,
+    prHead: initialSha,
+  });
+  return { remote, repoDir, worktree, initialSha };
+}
 
 async function fixture(
   t: TestContext,
@@ -608,15 +642,15 @@ test("a new task reason keeps its own fact when a resolution update carries an o
 });
 
 test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolves uncertain reviewer in one step", async (t) => {
-  const { store, current, run, command, audit, calls, runtime } =
+  const { root, store, current, run, command, audit, calls, runtime } =
     await fixture(t);
+  const { initialSha } = await attachGitCheckout(root, store, current().id);
   const stuck = run("stuck-reviewer", "reviewer", null);
-  store.putRun(stuck);
+  store.putRun({ ...stuck, head: initialSha });
   store.setCredential(stuck.id, "old-secret");
   store.update(current().id, {
     phase: "reviewing",
-    prHead: head,
-    workspaceId: "workspace",
+    prHead: initialSha,
     profile: profile("worker-author"),
     resolution: { ...current().resolution, currentRunId: stuck.id },
   });
@@ -663,17 +697,25 @@ test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolv
     current().resolution.reviewerAgentId?.startsWith("reviewer-agent-"),
   );
   assert.equal(calls.length, 1);
-  assert.match(calls[0]!, /^create reviewer aaaaaaaa$/);
+  assert.equal(calls[0], `create reviewer ${initialSha.slice(0, 8)}`);
   assert.equal(audit().length, 1);
 });
 
 test("#1508: run.start reviewer head=<pushed> warns on head_mismatch and starts at the pushed head", async (t) => {
-  const { store, current, command, runtime } = await fixture(t);
-  const pushed = "b".repeat(40);
+  const { root, store, current, command, runtime } = await fixture(t);
+  const { worktree, initialSha } = await attachGitCheckout(
+    root,
+    store,
+    current().id,
+  );
+  writeFileSync(join(worktree, "a.txt"), "v2\n");
+  await git(worktree, "add", "a.txt");
+  await git(worktree, "commit", "-m", "v2");
+  const pushed = await git(worktree, "rev-parse", "HEAD");
+  await git(worktree, "push", "origin", current().branch);
   store.update(current().id, {
     phase: "working",
-    prHead: head,
-    workspaceId: "workspace",
+    prHead: initialSha,
     profile: profile("worker-author"),
   });
   runtime.engine.profiles = [profile("rev-1")];
@@ -900,13 +942,13 @@ test("message.send warns on queued and no_thread, delivers without changing task
 });
 
 test("an uncertain-creation stall launches a coordinator that can resolve it with run.start", async (t) => {
-  const { store, current, run, command, runtime } = await fixture(t);
+  const { root, store, current, run, command, runtime } = await fixture(t);
+  const { initialSha } = await attachGitCheckout(root, store, current().id);
   const stuck = run("uncertain-rev", "reviewer", null);
-  store.putRun(stuck);
+  store.putRun({ ...stuck, head: initialSha });
   store.update(current().id, {
     phase: "reviewing",
-    prHead: head,
-    workspaceId: "workspace",
+    prHead: initialSha,
     profile: profile("worker-author"),
     resolution: { ...current().resolution, currentRunId: stuck.id },
   });
@@ -1041,10 +1083,17 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
     accept: ["head_mismatch"],
   });
   assert.equal(started.explicitResolution?.status, "applied");
-  // Unconfirmed caller head does not overwrite task.prHead; reviewer detaches at requested head.
+  const reviewRun = store.run(started.explicitResolution!.runId!)!;
+  assert.ok(reviewRun.reviewCheckoutDirectory);
+  assert.notEqual(reviewRun.reviewCheckoutDirectory, worktree);
+  // Unconfirmed caller head does not overwrite task.prHead; reviewer gets its own detached view at pushedSha while worker worktree stays at firstSha.
   assert.equal(current().prHead, firstSha);
-  assert.equal(readGitCheckout(worktree).head, pushedSha);
-  assert.equal(readGitCheckout(worktree).branch, "");
+  assert.equal(
+    readGitCheckout(reviewRun.reviewCheckoutDirectory!).head,
+    pushedSha,
+  );
+  assert.equal(readGitCheckout(reviewRun.reviewCheckoutDirectory!).branch, "");
+  assert.equal(readGitCheckout(worktree).head, firstSha);
 
   // Retained worker uses sendRun with a newly minted credential after prior credential was revoked.
   store.setCredential("old-rev", "revoked-secret");
@@ -1068,11 +1117,11 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
 });
 
 test("review fixes: late createRun acknowledgement does not overwrite replaced reviewer binding", async (t) => {
-  const { adapter, store, current, command, runtime } = await fixture(t);
+  const { root, adapter, store, current, command, runtime } = await fixture(t);
+  const { initialSha } = await attachGitCheckout(root, store, current().id);
   store.update(current().id, {
     phase: "reviewing",
-    prHead: head,
-    workspaceId: "workspace",
+    prHead: initialSha,
     profile: profile("worker-author"),
   });
   runtime.engine.profiles = [profile("rev-1")];
@@ -1088,10 +1137,15 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
   ]);
 
   let resolveFirst!: (value: { id: string; workspaceId: string }) => void;
+  let notifyFirstEntered!: () => void;
+  const firstEntered = new Promise<void>((resolve) => {
+    notifyFirstEntered = resolve;
+  });
   let createCalls = 0;
   adapter.createRun = async (_task, r) => {
     createCalls++;
     if (createCalls === 1) {
+      notifyFirstEntered();
       return new Promise((resolve) => {
         resolveFirst = resolve;
       });
@@ -1104,8 +1158,7 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
     role: "reviewer",
     agent: "fresh",
   });
-  // Wait a tick for the first run to be recorded in intent state.
-  await new Promise((r) => setTimeout(r, 20));
+  await firstEntered;
   const firstRun = store.runs(current().id)[0]!;
   assert.equal(firstRun.status, "intent");
 
@@ -1363,23 +1416,9 @@ test("review round 2: reviewer source custody refuses dirty checkout, warns two_
     },
   ]);
 
-  // Dirty checkout refuses before apply() without mutating prHead or detaching.
-  writeFileSync(join(worktree, "a.txt"), "dirty-edit\n");
-  await assert.rejects(
-    command({
-      action: "run.start",
-      role: "reviewer",
-      agent: "fresh",
-      head: remoteSha,
-      accept: ["head_mismatch"],
-    }),
-    /checkout is dirty/i,
-  );
-  assert.equal(current().prHead, firstSha);
-  assert.equal(readGitCheckout(worktree).branch, branch);
-  await git(worktree, "checkout", "--", "a.txt");
-
-  // Live worker surfaces two_writers warning (never a hard refusal).
+  // Live worker with dirty uncommitted edit surfaces two_writers warning (never a hard refusal),
+  // and accepting two_writers launches the reviewer in its own detached view without touching the worker's files, HEAD or branch.
+  writeFileSync(join(worktree, "a.txt"), "worker-dirty-edit\n");
   store.update(current().id, { runId: "live-w", agentActive: true });
   const liveProbe = await command({
     action: "run.start",
@@ -1391,22 +1430,39 @@ test("review round 2: reviewer source custody refuses dirty checkout, warns two_
   assert.ok(
     liveProbe.explicitResolution?.warnings.some((w) => w.id === "two_writers"),
   );
-  store.update(current().id, { runId: null, agentActive: false });
 
-  // Clean #1508 launch fetches remoteSha, detaches at remoteSha without moving task branch, updates forge-confirmed prHead, and accepts callback intake.
+  // Clean #1508 launch fetches remoteSha, creates a separate detached review worktree at remoteSha,
+  // updates forge-confirmed prHead, leaves worker worktree/branch/dirty file intact, and accepts sourceApproved callback + settlement.
   const started = await command({
     action: "run.start",
     role: "reviewer",
     agent: "fresh",
     head: remoteSha,
+    accept: ["two_writers"],
   });
   assert.equal(started.explicitResolution?.status, "applied");
   const revRunId = started.explicitResolution!.runId!;
+  const revRun = store.run(revRunId)!;
   assert.equal(current().prHead, remoteSha);
-  const afterCheckout = readGitCheckout(worktree);
-  assert.equal(afterCheckout.head, remoteSha);
-  assert.equal(afterCheckout.branch, "");
-  assert.equal(readGitRef(afterCheckout, `refs/heads/${branch}`), firstSha);
+  assert.ok(revRun.reviewCheckoutDirectory);
+  assert.notEqual(revRun.reviewCheckoutDirectory, worktree);
+  assert.equal(
+    readGitCheckout(revRun.reviewCheckoutDirectory!).head,
+    remoteSha,
+  );
+  assert.equal(readGitCheckout(revRun.reviewCheckoutDirectory!).branch, "");
+  assert.equal(
+    readFileSync(join(revRun.reviewCheckoutDirectory!, "a.txt"), "utf8"),
+    "v2-remote\n",
+  );
+  // Worker's HEAD, branch and dirty working file survive launch untouched.
+  const workerAfterLaunch = readGitCheckout(worktree);
+  assert.equal(workerAfterLaunch.head, firstSha);
+  assert.equal(workerAfterLaunch.branch, branch);
+  assert.equal(
+    readFileSync(join(worktree, "a.txt"), "utf8"),
+    "worker-dirty-edit\n",
+  );
 
   assert.ok(createdToken.length > 0);
   const accepted = await runtime.engine.complete(
@@ -1414,31 +1470,47 @@ test("review round 2: reviewer source custody refuses dirty checkout, warns two_
       taskId: current().id,
       runId: revRunId,
       eventId: "evt-rev-1508",
-      status: "ready_to_merge",
+      status: "blocked",
       head: remoteSha,
-      summary: "Approved at remote head",
+      sourceApproved: true,
+      reviewResponsibility: "environment",
+      awaitingProofs: [{ proof: "e2e", route: "external" }],
+      summary: "Source approved at remote head; awaiting external proof",
       reviewText: "Looks good",
-      reviewId: 101,
     },
     createdToken,
   );
   assert.equal(accepted.accepted, true);
   assert.equal(store.run(revRunId)?.completion?.head, remoteSha);
+  // Settle completed run: detached review worktree cleans up while worker checkout stays untouched.
+  store.putRun({ ...store.run(revRunId)!, released: true, status: "finished" });
+  await runtime.engine.resolution.resultApplication.advanceCompletedRun(
+    current(),
+    store.run(revRunId)!,
+  );
+  const workerAfterSettle = readGitCheckout(worktree);
+  assert.equal(workerAfterSettle.head, firstSha);
+  assert.equal(workerAfterSettle.branch, branch);
+  assert.equal(
+    readFileSync(join(worktree, "a.txt"), "utf8"),
+    "worker-dirty-edit\n",
+  );
 });
 
 test("review round 2: replacing checks role and preserves live_turn/unreported_result; reviewer enforces model independence", async (t) => {
-  const { store, current, run, command, runtime } = await fixture(t);
+  const { root, store, current, run, command, runtime } = await fixture(t);
+  const { initialSha } = await attachGitCheckout(root, store, current().id);
   const liveWorker = run("live-worker-run", "revision", "worker-1");
   store.putRun({
     ...liveWorker,
+    head: initialSha,
     active: true,
     status: "running",
     profile: profile("author-p", "model-alpha"),
   });
   store.update(current().id, {
     phase: "reviewing",
-    prHead: head,
-    workspaceId: "workspace",
+    prHead: initialSha,
     profile: profile("author-p", "model-alpha"),
   });
   runtime.engine.profiles = [
@@ -1833,8 +1905,8 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
     },
   ]);
 
-  // 1. Live coordinator replaces uncertain reviewer in one step on real Git checkout,
-  // detaching at publishedSha while leaving refs/heads/<branch> at unpushedSha.
+  // 1. Live coordinator replaces uncertain reviewer in one step on real Git checkout:
+  // reviewer gets its own detached view at publishedSha while worker's worktree stays attached at unpushedSha.
   const replaced = await command({
     action: "run.start",
     role: "reviewer",
@@ -1844,12 +1916,24 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
     accept: ["duplicate_thread"],
   });
   assert.equal(replaced.explicitResolution?.status, "applied");
-  const after = readGitCheckout(worktree);
-  assert.equal(after.head, publishedSha);
-  assert.equal(after.branch, "");
-  assert.equal(readGitRef(after, `refs/heads/${branch}`), unpushedSha);
+  const replacedRun = store.run(replaced.explicitResolution!.runId!)!;
+  assert.ok(replacedRun.reviewCheckoutDirectory);
+  assert.notEqual(replacedRun.reviewCheckoutDirectory, worktree);
+  assert.equal(
+    readGitCheckout(replacedRun.reviewCheckoutDirectory!).head,
+    publishedSha,
+  );
+  assert.equal(
+    readGitCheckout(replacedRun.reviewCheckoutDirectory!).branch,
+    "",
+  );
+  const workerAfter = readGitCheckout(worktree);
+  assert.equal(workerAfter.head, unpushedSha);
+  assert.equal(workerAfter.branch, branch);
+  assert.equal(readGitRef(workerAfter, `refs/heads/${branch}`), unpushedSha);
 
-  // 2. Caller-supplied head differing from forge warns head_mismatch and never writes it to prHead.
+  // 2. Caller-supplied head differing from forge warns head_mismatch, never writes it to prHead,
+  // and even after accepting head_mismatch still launches the reviewer on the forge-confirmed publishedSha.
   const mismatchProbe = await command({
     action: "run.start",
     role: "reviewer",
@@ -1871,9 +1955,48 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
   });
   assert.equal(mismatchApplied.explicitResolution?.status, "applied");
   assert.equal(current().prHead, publishedSha);
+  const mismatchRun = store.run(mismatchApplied.explicitResolution!.runId!)!;
+  assert.equal(mismatchRun.head, publishedSha);
+  assert.equal(
+    readGitCheckout(mismatchRun.reviewCheckoutDirectory!).head,
+    publishedSha,
+  );
 
-  // 3. Missing checkout is refused as unavailable rather than skipped.
+  // 3. Unavailable forge head refuses instead of falling through to an unconfirmed commit.
+  forgeHead = "";
+  await assert.rejects(
+    command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+      accept: ["duplicate_thread"],
+    }),
+    /forge pr head is unavailable/i,
+  );
+  forgeHead = publishedSha;
+
+  // 4. Missing, unbound (null) and repo-aliasing checkouts all refuse as unavailable.
   store.update(current().id, { directory: join(root, "missing-worktree") });
+  await assert.rejects(
+    command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+      accept: ["duplicate_thread"],
+    }),
+    /checkout is unavailable/i,
+  );
+  store.update(current().id, { directory: null });
+  await assert.rejects(
+    command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+      accept: ["duplicate_thread"],
+    }),
+    /checkout is unavailable/i,
+  );
+  store.update(current().id, { directory: repoDir });
   await assert.rejects(
     command({
       action: "run.start",
@@ -1921,11 +2044,24 @@ test("review round 4: reviewer profile selection scopes to task host catalog; BB
   });
 
   // Register secondary host with its own catalog distinct from primary.
+  let deliveredSecondaryProfileId: string | null = null;
+  let deliveredSecondaryDir: string | null = null;
   const secondaryAdapter = {
     ...adapter,
     hostId: secondaryHost,
     catalog: async () =>
       makeCatalog([{ key: "codex", models: ["model-gamma"] }]),
+    createRun: async (
+      tObj: { directory: string | null },
+      r: { id: string; profile: { id: string } | null; workspaceId: string },
+    ) => {
+      deliveredSecondaryProfileId = r.profile?.id ?? null;
+      deliveredSecondaryDir = tObj.directory;
+      return {
+        id: `secondary-rev-${r.id.slice(0, 8)}`,
+        workspaceId: r.workspaceId || "workspace",
+      };
+    },
   } as unknown as Adapter;
   store.setProfiles(
     [workerA, primaryOnly, secondaryOnly].map((p) => ({
@@ -1975,10 +2111,11 @@ test("review round 4: reviewer profile selection scopes to task host catalog; BB
     "Handoff",
     head,
   );
+  const { worktree: secondaryWorktree, initialSha: secondarySha } =
+    await attachGitCheckout(root, store, secondaryTask.id, "secondary-git");
   store.update(secondaryTask.id, {
     phase: "awaiting_review",
-    prHead: head,
-    workspaceId: "workspace",
+    prHead: secondarySha,
     profile: profile("worker-a", "model-alpha"),
   });
 
@@ -1996,6 +2133,10 @@ test("review round 4: reviewer profile selection scopes to task host catalog; BB
   assert.equal(started.explicitResolution?.status, "applied");
   const created = store.run(started.explicitResolution!.runId!);
   assert.equal(created?.profile?.id, secondaryOnly.id);
+  assert.equal(deliveredSecondaryProfileId, secondaryOnly.id);
+  assert.ok(
+    deliveredSecondaryDir && deliveredSecondaryDir !== secondaryWorktree,
+  );
 
   // BB service adapter forwards allowQueuedFallback=false and refuses instead of queueing.
   const bbState = emptyBbThreadState();

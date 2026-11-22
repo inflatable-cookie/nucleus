@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   authorModelKey,
   queueAuthorModelKey,
@@ -30,14 +30,17 @@ import {
 import { usageGateBlocked } from "../dispatch/usage-gate";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
-import { git, queueCheckoutStatus } from "../git/index";
+import { git } from "../git/index";
 import {
   commonDirMatchesTask,
   originsMatchForTask,
   readGitCheckout,
-  readGitRef,
 } from "../git/git-identity";
 import type { Adapter } from "../host/adapter";
+import {
+  assertDetachedReviewViewIdentity,
+  detachedReviewViewSource,
+} from "../review/ordinary-review";
 import { digest, now } from "../store/store";
 import type {
   ExplicitFinishResult,
@@ -424,23 +427,27 @@ function selectProfileForStart(
   };
 }
 
-function expectsReviewWorktree(task: Task): boolean {
-  return Boolean(
-    task.directory &&
-      task.directory !== task.repoPath &&
-      task.entrypoint !== "proof",
-  );
-}
-
-function assertReviewWorktreeIdentity(task: Task): void {
-  if (!task.directory || !task.branch || task.branch === task.baseBranch) {
+/**
+ * Every non-proof reviewer start requires a real, distinct, valid Git checkout
+ * for the task. A missing, unbound or repo-aliasing checkout is always reported
+ * as unavailable and never skipped.
+ */
+function assertReviewSourceAvailable(task: Task): void {
+  if (task.entrypoint === "proof") return;
+  if (!task.directory) {
     throw Error(
-      `Reviewer source identity is incomplete: expected checkout directory and a task branch distinct from ${task.baseBranch}`,
+      "Reviewer checkout is unavailable (no task checkout directory is bound); restore or recreate the worktree before starting review",
+    );
+  }
+  if (!task.branch || task.branch === task.baseBranch) {
+    throw Error(
+      `Reviewer source identity is incomplete: expected a task branch distinct from ${task.baseBranch}`,
     );
   }
   if (
     !existsSync(task.directory) ||
-    !existsSync(join(task.directory, ".git"))
+    !existsSync(join(task.directory, ".git")) ||
+    !existsSync(task.repoPath)
   ) {
     throw Error(
       `Reviewer checkout is unavailable at ${task.directory}; restore or recreate the worktree before starting review`,
@@ -452,7 +459,9 @@ function assertReviewWorktreeIdentity(task: Task): void {
     realpathSync(task.directory) === realpathSync(task.repoPath) ||
     checkout.toplevel !== realpathSync(task.directory)
   ) {
-    throw Error("Reviewer requires its recorded Queue-owned checkout root");
+    throw Error(
+      "Reviewer checkout is unavailable: task checkout aliases the repository root or is not a valid worktree",
+    );
   }
   if (
     !commonDirMatchesTask(
@@ -469,36 +478,12 @@ function assertReviewWorktreeIdentity(task: Task): void {
   }
 }
 
-async function assertCleanReviewCheckout(task: Task): Promise<void> {
-  if (!expectsReviewWorktree(task)) return;
-  assertReviewWorktreeIdentity(task);
-  const dirty = await queueCheckoutStatus(
-    task.directory!,
-    "status",
-    "--porcelain",
-  );
-  if (dirty) {
-    throw Error(
-      `Reviewer checkout is dirty; clean or commit changes before starting review: ${dirty.slice(0, 500)}`,
-    );
-  }
-}
-
-function assertDetachedReviewHead(task: Task, head: string): void {
-  assertReviewWorktreeIdentity(task);
-  const checkout = readGitCheckout(task.directory!);
-  if (checkout.head !== head || checkout.branch !== "") {
-    throw Error(
-      `Reviewer checkout is not detached at ${head} (observed HEAD ${checkout.head}, branch ${checkout.branch || "(detached)"})`,
-    );
-  }
-}
-
 /**
- * Preflight reviewer source availability, cleanliness, forge PR head and live
+ * Preflight reviewer source availability, forge-confirmed PR head and live
  * writer observation before the transaction creates a run. Never refuses on
  * control-actor recovery runs or live workers (live workers surface as the
- * `two_writers` warning).
+ * `two_writers` warning). A PR whose forge head cannot be confirmed refuses
+ * instead of falling through to an unconfirmed commit.
  */
 export async function preflightExplicitRunStart(
   engine: Engine,
@@ -508,6 +493,7 @@ export async function preflightExplicitRunStart(
   if (input.role !== "reviewer") {
     return { forgeHead: null, workerTurnActive: false };
   }
+  assertReviewSourceAvailable(task);
   let forgeHead: string | null = null;
   let workerTurnActive = false;
   const probe = async () => {
@@ -520,15 +506,21 @@ export async function preflightExplicitRunStart(
     }
     if (prNumber) {
       if (typeof engine.adapter.verifyPrIdentity === "function") {
-        const pr = await engine.adapter
-          .verifyPrIdentity(task, prNumber)
-          .catch(() => null);
-        if (pr?.head) forgeHead = pr.head;
+        const pr = await engine.adapter.verifyPrIdentity(task, prNumber);
+        if (!pr?.head) {
+          throw Error(
+            "Forge PR head is unavailable; cannot start review on an unconfirmed commit",
+          );
+        }
+        forgeHead = pr.head;
       } else if (typeof engine.adapter.verifyPr === "function") {
-        const pr = await engine.adapter
-          .verifyPr(task, prNumber)
-          .catch(() => null);
-        if (pr?.head) forgeHead = pr.head;
+        const pr = await engine.adapter.verifyPr(task, prNumber);
+        if (!pr?.head) {
+          throw Error(
+            "Forge PR head is unavailable; cannot start review on an unconfirmed commit",
+          );
+        }
+        forgeHead = pr.head;
       }
     }
     if (task.agentId && typeof engine.host?.observe === "function") {
@@ -539,39 +531,27 @@ export async function preflightExplicitRunStart(
     }
   };
   await (task.hostId ? engine.withHost(task.hostId, probe) : probe());
-  await assertCleanReviewCheckout(task);
   return { forgeHead, workerTurnActive };
 }
 
 /**
- * Prepare the reviewer's detached view at `run.head` without ever moving,
- * resetting or force-updating `refs/heads/<task.branch>`.
+ * Create a separate, run-owned detached Git worktree at `run.head` so the
+ * worker's `task.directory`, `HEAD`, `refs/heads/<task.branch>` and working
+ * files remain completely untouched through launch and settlement.
  */
-async function prepareReviewerCheckout(
-  engine: Engine,
-  task: Task,
-  run: Run,
-): Promise<void> {
-  if (!expectsReviewWorktree(task)) return;
-  if (run.ordinaryDetached) {
-    await engine.resolution.ordinaryRoundCustody(task, run);
-  }
-  await assertCleanReviewCheckout(task);
+async function prepareReviewerCheckout(task: Task, run: Run): Promise<void> {
+  if (task.entrypoint === "proof" || !run.reviewCheckoutDirectory) return;
+  assertReviewSourceAvailable(task);
   let fetchError: unknown = null;
   if (task.branch) {
     try {
-      await git(
-        task.directory!,
-        "fetch",
-        "origin",
-        `refs/heads/${task.branch}`,
-      );
+      await git(task.repoPath, "fetch", "origin", `refs/heads/${task.branch}`);
     } catch (error) {
       fetchError = error;
     }
   }
   try {
-    await git(task.directory!, "rev-parse", "--verify", `${run.head}^{commit}`);
+    await git(task.repoPath, "rev-parse", "--verify", `${run.head}^{commit}`);
   } catch (error) {
     if (fetchError) {
       throw Error(
@@ -580,58 +560,25 @@ async function prepareReviewerCheckout(
     }
     throw error;
   }
-  await git(task.directory!, "checkout", "--quiet", "--detach", run.head);
-  assertDetachedReviewHead(task, run.head);
-  const dirty = await queueCheckoutStatus(
-    task.directory!,
-    "status",
-    "--porcelain",
+  if (existsSync(run.reviewCheckoutDirectory)) {
+    await git(
+      task.repoPath,
+      "worktree",
+      "remove",
+      "--force",
+      run.reviewCheckoutDirectory,
+    ).catch(() => {});
+  }
+  await git(
+    task.repoPath,
+    "worktree",
+    "add",
+    "--quiet",
+    "--detach",
+    run.reviewCheckoutDirectory,
+    run.head,
   );
-  if (dirty) {
-    throw Error(
-      `Reviewer checkout became dirty after detach: ${dirty.slice(0, 500)}`,
-    );
-  }
-}
-
-function priorFinishedReviewForDetached(
-  engine: Engine,
-  task: Task,
-  runs: Run[],
-  head: string,
-): Run | null {
-  if (task.entrypoint === "proof" || !expectsReviewWorktree(task)) return null;
-  const prior = runs.findLast(
-    (r) =>
-      r.role === "reviewer" &&
-      r.released &&
-      r.status === "finished" &&
-      Boolean(r.completion) &&
-      r.workspaceId === task.workspaceId,
-  );
-  if (!prior?.completion) return null;
-  if (prior.head === head && !prior.completion.sourceApproved) return null;
-  // ordinaryDetached custody requires refs/heads/<branch> to equal run.head;
-  // if the worker branch is ahead (e.g. unpushed commit), keep ordinaryDetached unset
-  // so we never rewrite the worker branch or trip ordinaryRoundCustody.
-  try {
-    const checkout = readGitCheckout(task.directory!);
-    if (readGitRef(checkout, `refs/heads/${task.branch}`) !== head) return null;
-  } catch {
-    return null;
-  }
-  const receipt = engine.store.db
-    .prepare("SELECT response FROM receipts WHERE id=? AND task=? AND run=?")
-    .get(prior.completion.eventId, task.id, prior.id) as
-    | { response: string }
-    | undefined;
-  if (!receipt) return null;
-  try {
-    if (JSON.parse(String(receipt.response)).accepted !== true) return null;
-  } catch {
-    return null;
-  }
-  return prior;
+  await detachedReviewViewSource(task, run.reviewCheckoutDirectory, run.head);
 }
 
 export function runStartPlan(
@@ -815,11 +762,12 @@ export function runStartPlan(
       const basePatch = releaseChange?.patch ?? {};
       const resolution = { ...(basePatch.resolution ?? task.resolution) };
       const runId = randomUUID();
+      // For reviewers, the forge-confirmed PR head always governs placement,
+      // delivery and intake even after head_mismatch is accepted.
       const head =
-        input.head ??
-        preflight?.forgeHead ??
-        task.prHead ??
-        task.planningCommit;
+        runRole === "reviewer" && preflight?.forgeHead
+          ? preflight.forgeHead
+          : (input.head ?? task.prHead ?? task.planningCommit);
       const base = task.planningCommit;
       const generation =
         runRole === "recovery" ? task.coordinatorGeneration + 1 : 1;
@@ -827,10 +775,10 @@ export function runStartPlan(
         runId,
         task,
       );
-      const priorDetached =
-        runRole === "reviewer"
-          ? priorFinishedReviewForDetached(engine, task, runs, head)
-          : null;
+      const reviewCheckoutDirectory =
+        runRole === "reviewer" && task.entrypoint !== "proof" && task.directory
+          ? join(dirname(task.directory), `.ns-review-${runId.slice(0, 12)}`)
+          : undefined;
 
       createdRun = runSchema.parse({
         id: runId,
@@ -852,13 +800,7 @@ export function runStartPlan(
         active: null,
         completion: null,
         released: false,
-        ...(priorDetached
-          ? {
-              ordinaryDetached: true as const,
-              priorRunId: priorDetached.id,
-              priorHead: priorDetached.head,
-            }
-          : {}),
+        ...(reviewCheckoutDirectory ? { reviewCheckoutDirectory } : {}),
         ...(temporaryDirectory ? { temporaryDirectory } : {}),
       });
       token = randomBytes(24).toString("hex");
@@ -871,7 +813,6 @@ export function runStartPlan(
       if (
         runRole === "reviewer" &&
         preflight?.forgeHead &&
-        (!input.head || input.head === preflight.forgeHead) &&
         task.prHead !== preflight.forgeHead
       ) {
         patch.prHead = preflight.forgeHead;
@@ -937,29 +878,30 @@ export function runStartPlan(
       }
 
       const latestTask = store.task(task.id);
+      const deliveryTask =
+        runRole === "reviewer" && run.reviewCheckoutDirectory
+          ? { ...latestTask, directory: run.reviewCheckoutDirectory }
+          : latestTask;
       const sendGuard = {
         allowed: async () => {
           if (!isRunStillOwned()) return false;
-          if (runRole === "reviewer" && expectsReviewWorktree(latestTask)) {
-            const current = store.task(task.id);
-            if (run.ordinaryDetached) {
-              await engine.resolution.ordinaryRoundCustody(current, run);
-            }
-            assertDetachedReviewHead(current, run.head);
-            const dirty = await queueCheckoutStatus(
-              current.directory!,
-              "status",
-              "--porcelain",
+          if (runRole === "reviewer" && run.reviewCheckoutDirectory) {
+            await detachedReviewViewSource(
+              store.task(task.id),
+              run.reviewCheckoutDirectory,
+              run.head,
             );
-            if (dirty)
-              throw Error(`Reviewer checkout is dirty: ${dirty.slice(0, 500)}`);
           }
           return isRunStillOwned();
         },
         stillAllowed: () => {
           if (!isRunStillOwned()) return false;
-          if (runRole === "reviewer" && expectsReviewWorktree(latestTask)) {
-            assertDetachedReviewHead(store.task(task.id), run.head);
+          if (runRole === "reviewer" && run.reviewCheckoutDirectory) {
+            assertDetachedReviewViewIdentity(
+              store.task(task.id),
+              run.reviewCheckoutDirectory,
+              run.head,
+            );
           }
           return true;
         },
@@ -967,7 +909,7 @@ export function runStartPlan(
 
       const deliver = async () => {
         if (runRole === "reviewer") {
-          await prepareReviewerCheckout(engine, latestTask, run);
+          await prepareReviewerCheckout(latestTask, run);
         }
         if (!isRunStillOwned()) {
           issues.push(
@@ -998,7 +940,7 @@ export function runStartPlan(
           }
           await sendRun.call(
             engine.adapter,
-            latestTask,
+            deliveryTask,
             run,
             token,
             null,
@@ -1021,12 +963,12 @@ export function runStartPlan(
           throw Error("Host adapter supports no fresh run creation method");
         }
         const created = await engine.adapter.createRun(
-          latestTask,
+          deliveryTask,
           run,
           token,
           null,
           null,
-          runRole === "reviewer" && expectsReviewWorktree(latestTask)
+          runRole === "reviewer" && run.reviewCheckoutDirectory
             ? sendGuard
             : undefined,
         );
