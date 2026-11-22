@@ -5,7 +5,6 @@ import {
   projectSchema,
   projectSetPlannerInputSchema,
   projectUpsertInputSchema,
-  projectVisibilityInputSchema,
   repositoryQuerySchema,
   repositorySetInputSchema,
   repositorySettingsSchema,
@@ -66,18 +65,6 @@ export const repositoryRekeyReceiptRead = defineRpc({
 export const projectUpsert = defineRpc({
   name: "project.upsert",
   input: projectUpsertInputSchema,
-  output: projectSchema,
-});
-
-export const projectPark = defineRpc({
-  name: "project.park",
-  input: projectVisibilityInputSchema,
-  output: projectSchema,
-});
-
-export const projectUnpark = defineRpc({
-  name: "project.unpark",
-  input: projectVisibilityInputSchema,
   output: projectSchema,
 });
 

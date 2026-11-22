@@ -32,6 +32,8 @@ export const taskSummarySchema = z
     repoPath: z.string(),
     repository: z.string().optional(),
     version: z.number(),
+    /** When the task last changed: the board row's age when nothing more specific has a time. */
+    updatedAt: z.string().optional(),
     hostId: z.string().optional(),
     hostReason: z.string().optional(),
     hostPending: z.literal(true).optional(),

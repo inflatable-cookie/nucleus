@@ -10,7 +10,7 @@ import {
   triageKind,
   triagePage,
   triagePageSize,
-  triageState,
+  triageStatus,
 } from "../shared/pipeline-board";
 import { taskSchema } from "../shared/contracts";
 
@@ -20,7 +20,7 @@ const project = {
   key: "app",
   name: "App",
   version: 1,
-  visibility: "active" as const,
+  
   repositories: [repo],
   primary: repo,
   drain: null,
@@ -206,8 +206,7 @@ test("the board is one set of columns: each card once whatever its lane count, l
   assert.deepEqual(Object.keys(view.counts), [...pipelineColumns]);
 });
 
-test("Spec 027 #11 All projects hides parked work but keeps attention visible", () => {
-  const parked = { ...project, visibility: "parked" as const };
+test("Spec 027 #11 retired 2026-11-22: All projects shows every project's work, with no parked exclusion", () => {
   const tasks = [
     task("running", ["first"], "working"),
     {
@@ -221,10 +220,10 @@ test("Spec 027 #11 All projects hides parked work but keeps attention visible", 
       resolution: { attention: false },
     },
   ] as Input["tasks"];
-  const everyone = board({ projects: [parked], selection: [], tasks });
+  const everyone = board({ projects: [project], selection: [], tasks });
   assert.deepEqual(
     everyone.cards.Working.map((card) => card.id),
-    [],
+    ["running"],
   );
   assert.deepEqual(
     everyone.cards.Attention.map((card) => card.id),
@@ -234,7 +233,7 @@ test("Spec 027 #11 All projects hides parked work but keeps attention visible", 
     everyone.cards.Queued.map((card) => card.id),
     ["held"],
   );
-  const selected = board({ projects: [parked], selection: ["app"], tasks });
+  const selected = board({ projects: [project], selection: ["app"], tasks });
   assert.deepEqual(
     selected.cards.Working.map((card) => card.id),
     ["running"],
@@ -264,7 +263,7 @@ test("026-14b two selected projects share one pipeline; none means all", () => {
     key: "other",
     name: "Other",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [otherRepo],
     primary: otherRepo,
     drain: null,
@@ -273,7 +272,7 @@ test("026-14b two selected projects share one pipeline; none means all", () => {
     key: "third-project",
     name: "Third",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [thirdRepo],
     primary: thirdRepo,
     drain: null,
@@ -455,7 +454,7 @@ test("papercut decision links scope through tagged lead facts", () => {
     key: "other",
     name: "Other",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [other],
     primary: other,
     drain: null,
@@ -493,7 +492,7 @@ test("032 decisions scope by their links, then by the asker's project, and answe
     key: "other",
     name: "Other",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [other],
     primary: other,
     drain: null,
@@ -547,7 +546,7 @@ test("032 General decisions stay visible under a project filter when linked task
     key: "project-d",
     name: "Project-D",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [other],
     primary: other,
     drain: null,
@@ -652,8 +651,15 @@ test("026-12a every inbox card renders through the shared board card, and the li
     1,
     "the list is one scroll",
   );
-  // Leads page their own window (Tom, 2026-11-07).
-  assert.match(list, /const visible = page \? page\.visible : section\.cards;/);
+  // Leads and Papercuts load their next page from real list layout and scroll events.
+  assert.match(list, /onLayout=\{\(event\) =>/);
+  assert.match(list, /onContentSizeChange=\{\(_width, height\) =>/);
+  assert.match(list, /onScroll=\{\(event\) =>/);
+  assert.doesNotMatch(
+    list,
+    /const visible = page \? page\.visible : section\.cards;/,
+  );
+  assert.doesNotMatch(list, /…and \$\{page\.hidden\} more/);
   // Swim-lane rows, kanban columns and their stubs are gone (Tom, 2026-11-08; 2026-11-21).
   assert.doesNotMatch(
     ui,
@@ -904,7 +910,7 @@ test("377 planning lists read the narrow lead.board projection, never every full
   );
   assert.match(
     ui,
-    /triageState\(lead\)/,
+    /triageStatus\(lead\)/,
     "the state line reads the presence facts through the shared helper",
   );
   assert.match(
@@ -956,26 +962,44 @@ test("Triage cards: one state line per lead or papercut, operator order, and pag
     ["checked-lead", "idle-lead", "approved-lead", "old-cut"],
     "checked leads first, approved leads next, papercuts last; ties keep the board order",
   );
-  assert.equal(triageState(approvable as never), "Checks passed · unapproved");
-  assert.equal(triageState(idle as never), "Unchecked · unapproved");
-  assert.equal(triageState(approved as never), "Checks passed · approved");
+  // The row's status line (nucleus#1515): the state in words, then one detail.
+  const line = (lead: unknown) => {
+    const status = triageStatus(lead as never);
+    return [status.state, status.detail].filter(Boolean).join(" · ");
+  };
+  assert.equal(line(approvable), "Checked · awaiting approval");
+  assert.equal(line(idle), "Unchecked · awaiting a check");
+  assert.equal(line(approved), "Approved · awaiting promotion");
+  assert.equal(line(promoted), "Promoted");
   assert.equal(
-    triageState(promoted as never),
-    "Promoted · Checks failed · approved",
+    line(card("failed", { tags: ["idea"], check: { ok: false } })),
+    "Checks failed · brief needs revising",
   );
-  assert.equal(triageState(cut as never), "Open · board");
+  // A failed recheck can keep an earlier approval; the failed check still wins.
   assert.equal(
-    triageState(card("no-area", { tags: ["papercut"] }) as never),
-    "Open",
+    line(
+      card("rechecked", {
+        tags: ["idea"],
+        check: { ok: false },
+        approved: true,
+      }),
+    ),
+    "Checks failed · brief needs revising",
   );
+  assert.equal(line(cut), "Open · board");
+  assert.equal(line(card("no-area", { tags: ["papercut"] })), "Open");
   assert.equal(triageKind(cut as never), "papercut");
   assert.equal(triageKind(idle as never), "lead");
-  const many = Array.from({ length: 10 }, (_, index) =>
+  const many = Array.from({ length: 30 }, (_, index) =>
     card(`cut-${index}`, { tags: ["papercut"] }),
   );
   const page = triagePage(many, triagePageSize);
-  assert.equal(page.visible.length, 8, "the first page holds eight cards");
-  assert.equal(page.hidden, 2, 'the rest wait behind the "…and N more" card');
+  assert.equal(
+    page.visible.length,
+    25,
+    "the first page holds twenty-five cards",
+  );
+  assert.equal(page.hidden, 5, 'the rest wait behind the "…and N more" card');
   assert.equal(
     triagePage(many, triagePageSize * 2).hidden,
     0,

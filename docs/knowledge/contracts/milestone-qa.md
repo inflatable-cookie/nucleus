@@ -104,6 +104,10 @@ reviewer and no blocker escalation.
 `project.qa.request-status` reads stored request identities. These reads use
 durable history, so an offline checkout does not prevent an exact-ID read.
 Result records, step logs and failure logs keep their established retention.
+The live store's evidence lives on its configured `projectQaRoot` (default
+`<workRoot>/archives/nucleus-project-qa/`), and custody and retention also read the
+retired `<workRoot>/queue/project-qa/` location while an existing install's files
+are still there (nucleus#1526).
 Lane document versions remain the qualification record for report-only tasks.
 
 `project.qa.run` also refuses the old `--wait` form and points callers to this
@@ -113,9 +117,11 @@ the repository's validation evidence commands. Enabling a schedule is refused.
 
 The roll checks stored QA custody before warm standby takes the live socket and
 again before the replacement opens the writable store. The cold start does the
-same check. The latest-run index cannot hide an older unresolved run. An
-unsettled run, request, host reservation, active fence, unproved process exit or
-retained checkout defers takeover. The check reads store and filesystem
+same check. The latest-run index cannot hide an older unresolved run. Custody
+is live evidence: an unfinished run, an unresolved request, an unsettled host
+reservation, an active fence, a live QA process or a checkout still on disk
+defers takeover. A finished run's dead pid, cleanup flag or checkout path on a
+root that no longer exists holds nothing. The check reads store and filesystem
 evidence and leaves records, processes and checkouts in their current custody.
 
 Settle an older occurrence on the compatibility build, the build that refused

@@ -158,9 +158,11 @@ papercuts by name. Migrate every existing papercut without losing data.
   (`Checks passed · unapproved`, or a papercut's area). The body, tags, lanes and
   decision links stay in the record. Triage orders checked leads awaiting approval
   first, then other leads awaiting approval, then approved leads awaiting promotion,
-  then papercuts, newest first within each (2026-11-07). A row shows eight cards;
-  an in-column "…and N more" card loads the next eight, and the column header shows
-  the total. The tag filter narrows the cards, the paging and the total. The
+  then papercuts, newest first within each (2026-11-07). The list starts with
+  twenty-five cards and loads another page automatically when scrolling within
+  one viewport of the end. If the pane has room, it keeps loading until the list can scroll or all
+  cards are visible. The header shows the real total. The tag filter narrows the
+  Leads cards and their total. The
   filter is a dropdown listing only the tags on leads Triage shows in the current
   scope, each with its count (Tom, 2026-10-15: cycling through every tag was
   tedious, and tags from other projects or briefed leads matched nothing).
@@ -511,9 +513,12 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   **Needs you** (decisions, Nucleus-raised holds, drained-lane prompts and tasks
   needing attention, in one list, newest needing action first), **Planning** (the
   plan in the list pane, the open lane in the detail pane, or a modal without one),
-  **Leads** (open leads, with the tag filter and pages of eight), **Papercuts** (open
-  papercuts, with pages of eight and no tag filter; Tom, 2026-11-21), **Queue**
-  (queued tasks, pending submissions and the per-project "…and N more" rows),
+  **Leads** (open leads, with the tag filter and automatic pages of twenty-five),
+  **Papercuts** (open papercuts, with automatic pages of twenty-five and no tag
+  filter;
+  Tom, 2026-11-21), **Queue**
+  (every queued task and pending submission as one card, its held-back pages read
+  as the list nears its end; nucleus#1532),
   **Working** (working tasks), **In review** (tasks awaiting or under review) and
   **Closing** (verifying, merging and closing tasks). The menu reads Needs you, a
   divider, Planning, Leads, Papercuts, Queue, a divider, Working, In review and
@@ -521,15 +526,14 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   background. Each entry shows its real total; only Needs you is highlighted.
   An entry whose count is 0 renders dimmed but stays selectable; the selected
   entry keeps its selected styling, and Planning (which carries no count) never dims.
-  Opening a view clears the open record. The card-once projection below decides where
-  a card goes; the menu groups its columns. Milestone QA is not a board surface: QA
+  Opening a view clears the open record and resets Leads and Papercuts to their
+  first page. The card-once projection below decides where a card goes; the menu
+  groups its columns. Milestone QA is not a board surface: QA
   runs as an ordinary task, and the QA runs tab is gone.
 - **Needs you is one list** (Tom, 2026-11-21: "one list of cards, and make the cards
   obvious what they are"). Its header names the count and there are no section
-  headers. Each card draws its kind first, in its eyebrow: **Decision** (an agent
-  decision), **Hold** (a Nucleus-raised merge hold), **Lane** (a drained-lane prompt)
-  or **Task** (a task needing attention). Lists other than Needs you draw no kind label.
-  The list has one empty state, "Nothing here.", shown only when the total is zero.
+  headers. Each row's kind tile and line 1 say what it is (card anatomy, below). The
+  list has one empty state, "Nothing here.", shown only when the total is zero.
 - **The Leads filter** sits in the list's header row, after the item count. It offers
   only the tags on leads in the current scope, each with its count, and never the
   reserved `papercut` tag: a papercut-tagged lead is a papercut and sits in Papercuts,
@@ -550,7 +554,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   There is no Done column (Tom, 2026-09-27): finished and cancelled
   work leaves the board, and outcome search answers what landed.
   Counts are every record in scope once, whatever its lane count, with Queue
-  including the cards held back behind its "…and N more" rows. While the board
+  including the queued cards the board holds back from its snapshot. While the board
   loads, a list reads "Loading…"; a failed read reads "Not loaded" and names the
   failure in the error banner. Neither reads as empty.
   Queued is `queued`; Working is `dispatching`, `working` and `changes_requested`
@@ -581,26 +585,77 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     a ready merge hold reads `Merge held by <holder>`. Active work keeps its
     phase label, and worker blocks without a holder keep `Blocked`. Separate dispatch and merge hold badges retain their
     existing tones.
-  - Everything else (areas, lanes, repository, parked, queued) stays neutral.
+  - Everything else (areas, lanes, repository, queued) stays neutral.
   - The tone colours text and outline over the usual badge surface.
 - **Cards and long lists** (Tom, 2026-09-27): every card uses the standard card
   component, drawn as a flat row in the inbox list. The list fills its pane and
   scrolls on its own, so the page never grows into one long scroll (Tom,
-  2026-09-28). Leads and Papercuts page their cards, and Queue ends with its "…and N
-  more" rows.
-- **Rows stay short, and a card's controls sit in its row** (nucleus#1511). A task row
-  keeps its project, its title, one status line and its chips: the line is the wait or
-  stop that moves the task next, else its progress, so the host wait reads once
-  ("Waiting on the host · 1m ago") without the host identity; an owner-facing stop
-  keeps its detail ahead of that wait on the same line. The routing sentence behind
-  a host choice belongs to the task detail, which names the host selection and its
-  reason; the row's accessible label keeps the full wording. A card with operator
-  controls (the drained lane's Close and Keep, the escalated merge hold's Release and
-  Keep) draws them inside its row's frame, below its content and outside the row's press
-  target, so a press on a control never opens the record too. Pressing a drained lane's
-  row opens that lane in Planning. The Leads and Papercuts lists hide the Lead and
-  Papercut kind chip, which would otherwise repeat the list on every row. Needs you
-  names each card's kind instead (above).
+  2026-09-28). Leads, Papercuts and Queue load their cards automatically as the
+  list nears its end. The board's snapshot carries five queued heads per project, so
+  the Queue list reads the rest a page at a time with `queue.queued-page` and shows
+  each project's held-back tasks as ordinary cards right after its shipped ones, in
+  queue order; a short queue keeps loading until it scrolls or every queued task
+  shows, and a failed page read ends the list with a retry row (nucleus#1532).
+- **Card anatomy: every card is a three-line row** (Tom, 2026-11-21: the cards were
+  "way too noisy right now and need redesigning"; nucleus#1515, which replaces the
+  nucleus#1511 row rules):
+  - A **kind tile** on the left: one fixed icon and colour per kind — task, decision,
+    hold prompt (merge or dispatch), drained lane, lead, papercut. The task tile does
+    not change with phase; the status dot and words carry the phase. Tile colours are
+    the theme's tone roles at low alpha.
+  - **Line 1:** for a task its reference (`#1072`), otherwise the kind in words
+    (Decision, Merge hold, Lane drained, Lead, Papercut) — except the single-kind
+    Leads and Papercuts views, which drop the kind word so the line starts with
+    the project; lists that mix kinds keep it, and task references stay everywhere.
+    Then the project by its display name (a lane's or lead's projects; a decision's
+    asking repository), with the T3 project badge where matched, otherwise the
+    folder icon; the age, right-aligned (a stop, wait or hold's start, else the
+    task's last change; a decision's ask, a lane's escalation, a lead's or
+    submission's creation). The project group shrinks and clips as one unit so the
+    age keeps its place: at most two project marks, the rest as one "+N" count.
+    The label reads at normal weight in the muted foreground, like the project.
+  - **Line 2:** the title, up to two lines — the row's only bold line.
+  - **Line 3:** a coloured dot, the state in plain words and the single most useful
+    detail after a middle dot ("Working · running affected tests", "Needs attention ·
+    reviewer launch unconfirmed", "Waiting · on the host", "Checked · awaiting
+    approval"). The state word reads at normal weight in its dot's tone (muted
+    for a neutral tone); the detail stays muted. The detail is the existing wait,
+    stop or report wording, shortened, never a raw ID. A declared wait names its state and next action, its owner in the
+    accessible name (Spec 043). A lead's state follows its current check first:
+    unchecked, then checks failed (even with an earlier approval kept), then approved
+    or awaiting approval.
+  - **Flags**, below, only for exceptions: a dispatch or merge hold, a parked task (no slot held),
+    interactive, budget reached and the PR as a small flag. A hold flag is dropped only
+    when the status line was chosen from that fence (a dispatch hold, a held stop, a
+    declared merge-hold wait), never because other text mentions it. The PR flag is a
+    link that opens the pull request without opening the task; on the web board it is a
+    real anchor, so the keyboard opens it too. A normal task shows none.
+  - **Buttons** only where the row is the action: the hold prompt's Release and Keep
+    (with its reason) and the drained lane's Close lane and Keep. They and the flags
+    sit inside the row's frame, below its content and outside its press target, so a
+    press on a control or the PR link never opens the record too, and no control is
+    nested inside the row's button. Pressing a drained lane's row opens that lane
+    in Planning.
+  - **A sidebar surface, not a ruled table** (Tom, 2026-11-22): at rest a row has no
+    divider, border or background — spacing alone separates rows, and the list
+    carries no top rule either. Hover and keyboard focus dim the row (the selected
+    surface at low alpha) with rounded corners, inset from the list edges by a
+    small gutter so the highlight reads with padding around the content. The open
+    record's row keeps the selected surface, stronger than hover; hovering it
+    keeps it. The menu's entries hover the same way, while the selected entry
+    keeps its surface.
+  - **Detail only:** routing sentences, host identity and kind, profile names, host
+    waits beyond "on the host", attempt counts, report headlines beyond the status
+    line, prerequisite counts and promotion, a decision's choices, a lane's aim, and the
+    Lead and Papercut kind chips. The task detail's header carries the stop category,
+    a stop while paused, linked open decisions and, for an escalated hold, the
+    Nucleus-raised badge; its summary names a host outage recorded beside a stop (the
+    host and since when); a decision's Links name each task by reference, title and
+    project; a drained lane's Planning screen names its Nucleus-raised escalation. The
+    row's accessible name keeps the record's own title as written, the status with its
+    detail, and the wording the row shortens, with identifiers sanitized only in
+    operational text; like the row, it names a host wait and its age, never the host
+    or the exact time.
 - **Pending submissions** (Tom, 2026-09-27): a submitted brief or handoff whose
   operation has not yet created its task shows as a Queued card marked
   "submitting", so an accepted submission is never invisible. Brief-bearing leads
@@ -613,7 +668,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   selector in the header replaces the single-project filter everywhere. It is a
   dropdown that opens a large popover (a modal at the compact viewport) listing
   every project with a filter box, its primary repository and counts of live tasks
-  and open leads, with a checkbox per project. The picker's one top row holds the
+  and open leads, with a checkbox per project. Rows sort active projects first,
+  then the Dormant group (nucleus#1529; parking is retired, 2026-11-22); inside each group the most
+  tasks come first, then the most recent activity, then the name, so quiet
+  projects settle low without leaving their group. The picker's one top row holds the
   project search at its remaining width and, beside it, a Clear project selection
   icon button (a folder with an X, the same icon-only `Button` style and height as
   the Settings button next to it, its name as accessible label and tooltip, with a
@@ -638,8 +696,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Project actions in the selector** (nucleus#1430, refined by nucleus#1432). Each
   project row has a disclosure chevron, separate from the row's selection, that opens
   a compact panel attached to the row inside the picker, so no nested popover takes an
-  outside press. One row's panel is open at a time. Park asks first with Settings' "No
-  new work starts" confirmation; a parked project shows Unpark instead. Rename edits
+  outside press. One row's panel is open at a time. Rename edits
   the name in its own slot: the row's label becomes a focused input seeded with the
   name, with compact Save and Cancel and the count kept in place. Enter saves and
   Escape cancels, neither selecting the row nor closing the picker; a validation
@@ -670,11 +727,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   nucleus#963). The project selector's settings icon
   opens it at Projects: `openSettings` carries a section hint the screen takes. The
   retired `subscriptions` hint opens Profiles scrolled to Subscriptions.
-- **Parked projects** (Spec 027): the selector and the All-projects view hide
-  parked projects by default. A "Parked" section in the selector lists them for
-  scoping, and selecting one still shows its views. Unpark sits in the row's
-  row panel (nucleus#1430) and in Settings → Projects. The Planning tab groups parked
-  projects under Parked. Attention from a parked project is never hidden.
+- **No parked projects** (Tom, 2026-11-22). Parking is retired: there is no project visibility, no
+  Park or Unpark action and no Parked section or group anywhere. Every project shows in the
+  All-projects view and the selector, active or Dormant by the activity rule below. Leaving a project
+  alone makes it Dormant; work on it makes it active again.
 - **Active and dormant projects** (Tom, 2026-11-20, nucleus#1446; brief v3 shortened the window to three days). The selector and
   the Planning tab share one rule. A project is active when at least two distinct
   substantive work items have activity less than three days old. An item is one of:
@@ -691,7 +747,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   through the normal board rules. Plan versions are not items: they are not records. Routine
   observation, bookkeeping, background sweep and reminder events, planner registration and project
   management never add an item. A project with fewer than two recent items, or with no items, appears
-  under Dormant whether or not a planner is registered. Parked projects stay under Parked. The store
+  under Dormant whether or not a planner is registered. The store
   reads these facts store-wide and ships each project's recent items (`projectActivity`) on the board
   snapshot, so the selection, task paging and visible rows never change a project's group. Planner
   routing and drain rules are unchanged.
@@ -819,7 +875,7 @@ to the plan. Editing uses the existing dark-theme styling.
 | 14 | Planning tab edits: reorder, move between Now and Later, add a listed lane, save a lane document | Plan and document saved as operator versions with the horizon kept; stale save refused |
 | 14a | Planning tab navigation at both viewport sizes | Plan and lane columns at the wide size; plan, lane drill-down with back at the compact size; the pipeline board has no side pane |
 | 14c | Open the Nucleus board in a workspace of a project's repository, and in a workspace outside every project | Scoped to that project's Pipeline and Planning; outside every project, a plain message |
-| 14d | Open a project row's chevron: Park asks first, Unpark, Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection and counts are unchanged by disclosure or a re-sorting rename |
+| 14d | Open a project row's chevron: Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection and counts are unchanged by disclosure or a re-sorting rename |
 | 14b | Click one project, Shift-click a second, Shift-click the first off, then Clear or Shift-clear the last one | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; an empty selection means all projects, and Clear (beside Settings, or alone on a host without it) or Shift-clearing the last project restores them while the picker stays open |
 | 15 | Board dark theme at both viewport sizes, with a busy board | Legible; checked after merge by the Nucleus Chatterbox |
 | 15a | Click a lead card and a papercut card on the Pipeline view; run each modal action | The modal opens with the record's full detail; the cards show no buttons; each action works from the modal and reports its result there; inapplicable actions are disabled with the reason |

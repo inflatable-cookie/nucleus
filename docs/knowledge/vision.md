@@ -236,7 +236,7 @@ are deleted and its backups kept outside Git.
 - This repository is the one system. It grows from a Paseo plugin and service into a general-purpose
   orchestrator by incremental replacement, never by a parallel rewrite.
 - Paseo becomes one host among others rather than a built-in assumption.
-- The parked Nucleus project `nucleus` keeps its open design leads (core decisions, control and execution
+- The dormant Nucleus project `nucleus` keeps its open design leads (core decisions, control and execution
   plane topology, conversation endpoints, broader operation) and the "Queue convergence" lane as
   input to that work. They grant nothing by themselves.
 - Contract 010 now lives here ([host-run-scheduling-010](contracts/host-run-scheduling-010.md)).

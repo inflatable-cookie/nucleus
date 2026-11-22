@@ -1,0 +1,1 @@
+- Leads and Papercuts now load more cards automatically as you scroll, and fill a tall list pane until it can scroll or all cards are visible.

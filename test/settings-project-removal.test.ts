@@ -24,7 +24,7 @@ const textOf = (node: HostNode | string): string => typeof node === 'string' ? n
 const done = (ui: { update(next: React.ReactElement): void }) => ui.update(h('View'));
 
 const repo = (origin: string) => ({ origin, path: `/workspace/user/Dev/${origin.split('/')[1]}` });
-const project = (key: string, name = key, version = 3): Project => ({ key, name, version, visibility: 'active', repositories: [repo(`acme/${key}`)], primary: repo(`acme/${key}`), drain: null }) as Project;
+const project = (key: string, name = key, version = 3): Project => ({ key, name, version,  repositories: [repo(`acme/${key}`)], primary: repo(`acme/${key}`), drain: null }) as Project;
 const settingsRowOf = (p: Project): ProjectSettingsRow => ({
   project: p, repositories: p.repositories.map((repository, index) => ({ repository, primary: index === 0, settings: null })),
   slots: { value: 4, override: null }, plannerLive: null, plannerTicket: null, problems: [],
@@ -109,9 +109,9 @@ test('full screen, wide and narrow: the hint opens Settings at Projects; the tra
     const ui = mount(h(QueryClientProvider, { client, children: h(PluginRpcProvider, { invoke: invoke as never, children: h(QueueSettingsScreen as never, { theme: { colors: dark }, layout: { compact: false, platform: 'ios' }, host: { id: 'host', label: 'Host' } }) }) }));
     try {
       ui.get('Nucleus settings').props.onLayout({ nativeEvent: { layout: { width } } });
-      await settle(() => Boolean(ui.query('Book, Active')), `${width}: opens at Projects without choosing it`);
+      await settle(() => Boolean(ui.query('Book')), `${width}: opens at Projects without choosing it`);
       assert.equal(ui.query('Repositories'), undefined, 'no Repositories section');
-      ui.press('Book, Active');
+      ui.press('Book');
       ui.press('Remove Book');
       await settle(() => calls.length === 1, `${width}: preview`);
       assert.deepEqual(calls[0], ['project.management-preview', { key }], 'scoped: the project is already chosen');
@@ -128,7 +128,7 @@ test('full screen, wide and narrow: the hint opens Settings at Projects; the tra
       assert.match(ui.text(), /Delete Book\? Repository files and task history stay\./);
       assert.equal(calls.length, 1, 'nothing written before the second press');
       ui.press('Delete project Book');
-      await settle(() => Boolean(ui.query('Nucleus, Active')) && !ui.query('Book, Active'), `${width}: back to the list`);
+      await settle(() => Boolean(ui.query('Nucleus')) && !ui.query('Book'), `${width}: back to the list`);
       assert.deepEqual(calls[1], ['project.manage-remove', { key, version: 3, digest: 'pinned', reason: 'merged elsewhere' }]);
       assert.equal(ui.ofType('Modal').length, 0, 'the sheet closed');
     } finally { done(ui); client.clear(); }

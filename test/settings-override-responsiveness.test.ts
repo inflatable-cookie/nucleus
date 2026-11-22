@@ -530,7 +530,7 @@ test("Settings override removal stays locked across tab switches, distinguishes 
           key: "demo",
           name: "Demo",
           version: 1,
-          visibility: "active",
+          
           repositories: [{ origin: "owner/demo", path: "/demo" }],
           primary: { origin: "owner/demo", path: "/demo" },
           drain: null,

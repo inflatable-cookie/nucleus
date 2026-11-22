@@ -41,11 +41,7 @@ export function scopedProjects(
 ): Project[] {
   const keys = effectiveSelection(projects, selection);
   return projects
-    .filter((project) =>
-      keys.length
-        ? keys.includes(project.key)
-        : project.visibility !== "parked",
-    )
+    .filter((project) => !keys.length || keys.includes(project.key))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -68,13 +64,7 @@ export function scopeContains(
   selection: readonly string[],
 ): (repoPath: string, origin?: string | null) => boolean {
   const keys = effectiveSelection(projects, selection);
-  if (!keys.length)
-    return (repoPath, origin) =>
-      projects.every(
-        (project) =>
-          project.visibility !== "parked" ||
-          !projectHasRepository(project, repoPath, origin),
-      );
+  if (!keys.length) return () => true;
   const selected = projects.filter((project) => keys.includes(project.key));
   return (repoPath, origin) =>
     selected.some((project) => projectHasRepository(project, repoPath, origin));
@@ -143,13 +133,7 @@ export function selectionLabel(
   if (!keys.length) return "All projects";
   if (keys.length === 1)
     return projects.find((project) => project.key === keys[0])?.name ?? keys[0];
-  return keys.length ===
-    projects.filter((project) => project.visibility !== "parked").length &&
-    keys.every(
-      (key) =>
-        projects.find((project) => project.key === key)?.visibility !==
-        "parked",
-    )
+  return keys.length === projects.length
     ? `All ${keys.length} projects`
     : `${keys.length} projects`;
 }
@@ -161,12 +145,20 @@ export type ProjectSelectorRow = {
   tasks: number;
   leads: number;
   checked: boolean;
-  visibility: Project["visibility"];
   version: number;
   dormant: boolean;
 };
+/** The selector's two row groups: active rows first, then Dormant (nucleus#1529; parking is retired). */
+export function projectSelectorRowGroup(row: Pick<ProjectSelectorRow, "dormant">): number {
+  return row.dormant ? 1 : 0;
+}
 /** Selector popover rows: every project matching the filter box, with its primary repository and counts.
- * Dormancy follows the one activity rule (Spec 026, nucleus#1446): `activity` is the store-wide read, and `nowMs` ages it. */
+ * Active projects sort first, then the Dormant group (nucleus#1529):
+ * inside each group rows order by live-task total (highest first, including the
+ * hidden queued portion), then by last activity (most recent first; a project
+ * with no activity sorts after those with some), then by name, so the order is
+ * stable. Dormancy follows the one activity rule (Spec 026, nucleus#1446):
+ * `activity` is the store-wide read, and `nowMs` ages it. */
 export function projectSelectorRows(
   projects: Project[],
   selection: readonly string[],
@@ -181,14 +173,36 @@ export function projectSelectorRows(
   const hiddenQueued = hiddenQueuedByProject(queuedCounts, tasks);
   const activityByKey = new Map(activity.map((item) => [item.key, item]));
   const dormantOf = (project: Project) =>
-    projectDormantByActivity(project, activityByKey.get(project.key), nowMs);
-  return [...projects]
-    .sort(
-      (a, b) =>
-        Number(a.visibility === "parked") - Number(b.visibility === "parked") ||
-        Number(dormantOf(a)) - Number(dormantOf(b)) ||
-        a.name.localeCompare(b.name),
-    )
+    projectDormantByActivity(activityByKey.get(project.key), nowMs);
+  /** The newest item time in the store-wide activity read; null when the project has none. */
+  const lastActivityOf = (project: Project): number | null => {
+    let latest: number | null = null;
+    for (const item of activityByKey.get(project.key)?.items ?? []) {
+      const at = Date.parse(item.at);
+      if (Number.isNaN(at)) continue;
+      if (latest === null || at > latest) latest = at;
+    }
+    return latest;
+  };
+  const tasksOf = (project: Project): number => {
+    const counts = projectPlanningCounts(project, tasks, leads);
+    const hidden = hiddenQueued.reduce(
+      (total, item) =>
+        project.repositories.some((repo) => repo.path === item.repoPath)
+          ? total + item.hidden
+          : total,
+      0,
+    );
+    return counts.tasks + hidden;
+  };
+  const lastActivityByKey = new Map(
+    projects.map((project) => [project.key, lastActivityOf(project)] as const),
+  );
+  const tasksByKey = new Map(
+    projects.map((project) => [project.key, tasksOf(project)] as const),
+  );
+  const missingActivity = Number.NEGATIVE_INFINITY;
+  return projects
     .flatMap((project) => {
       const primary = project.primary.origin ?? project.primary.path;
       if (
@@ -197,27 +211,27 @@ export function projectSelectorRows(
       )
         return [];
       const counts = projectPlanningCounts(project, tasks, leads);
-      const hidden = hiddenQueued.reduce(
-        (total, item) =>
-          project.repositories.some((repo) => repo.path === item.repoPath)
-            ? total + item.hidden
-            : total,
-        0,
-      );
       return [
         {
           key: project.key,
           name: project.name,
           primary,
           ...counts,
-          tasks: counts.tasks + hidden,
+          tasks: tasksByKey.get(project.key) ?? counts.tasks,
           checked: selection.includes(project.key),
-          visibility: project.visibility,
           version: project.version,
           dormant: dormantOf(project),
         },
       ];
-    });
+    })
+    .sort(
+      (a, b) =>
+        projectSelectorRowGroup(a) - projectSelectorRowGroup(b) ||
+        b.tasks - a.tasks ||
+        (lastActivityByKey.get(b.key) ?? missingActivity) -
+          (lastActivityByKey.get(a.key) ?? missingActivity) ||
+        a.name.localeCompare(b.name),
+    );
 }
 
 type ScopeStorage = KeyValueStorage;

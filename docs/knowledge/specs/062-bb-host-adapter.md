@@ -278,8 +278,9 @@ observation-first, never on the planner itself; a planner change to a thread on 
 presentation" — and each host renders that as standalone, so a planner thread can be archived or
 replaced without taking its tasks' threads with it; a reparent that names a planner clears the record
 and re-nests the group (Tom, 2026-11-17: "We will also need the ability to detach a worker thread from
-a planner in case the planner needs replacing"). At closeout Nucleus archives the task's role threads
-and leaves them archived; it does not delete threads, so the planner's history stays readable.
+a planner in case the planner needs replacing"). At closeout Nucleus archives the task's worker thread
+and deletes its support threads through the same cascade-proven path (below), keeping the planner's
+own thread untouched.
 
 An operator drag in BB is a separate, authoritative **presentation-only** parent choice. BB's
 `experimental_thread.parentChanged` event carries the moved thread's new `parentThreadId`; Nucleus
@@ -302,9 +303,11 @@ names any thread outside the set this task's own records hold, the archive is re
 left unarchived, and closeout records the cleanup as incomplete instead of guessing. A role thread's
 dependents can include a thread its own agent spawned, which Nucleus did not create; that is exactly
 the case the read catches, and the promise that Nucleus archives only what it created survives it.
-Threads are archived children first, so a recorded child is already archived when its parent's read
-runs, and the read then names only already-archived rows or nothing. Nucleus never deletes a thread:
-`threads.delete` is destructive, cascades, and needs `childThreadsConfirmed` (fact 3).
+Threads are archived or deleted children first, so a recorded child is already settled when its
+parent's cascade read runs. Thread deletion (`thread.delete` / `threads.delete`) enforces the same
+fail-closed cascade proof (`experimental_listCascade` with `action: "delete"` and
+`expectedCascadeThreadIds`), passes `childThreadsConfirmed` only for proven owned children, and
+confirms absence across both live and archived `threads.list` partitions.
 
 No other read substitutes for that proof, so there is no exception to fail closed. The parent link
 is display and notification only (fact 3): a thread's lifecycle dependents are a separate relation
@@ -838,6 +841,7 @@ no task is ever read as idle because its host is unreachable.
 | Set a title | `threads.update` | Title read back before any retry |
 | Reparent | `threads.update` with `parentThreadId` | Read back before any retry |
 | Archive a thread | `experimental_listCascade` for `archive`, then `threads.archive` | A cascade that names only this task's recorded threads; `archivedAt` on the thread; refusal when it names anything else |
+| Delete a thread | `experimental_listCascade` for `delete`, then `threads.delete` | A cascade that names only this task's recorded threads; children deleted first; absence confirmed across both live and archived `threads.list` partitions |
 | Archive a workspace | Mark the task's worktree handle archived in adapter state | The handle's own marker; BB keeps the unmanaged environment |
 
 ## Composition and unsupported capabilities
@@ -852,7 +856,7 @@ its roles) and `repositorySharedWorkspaces` false (the shared BB project is neve
 task).
 
 Explicit refusals, never empty successes: a Nucleus-raised decision through MCP, MCP reporting,
-per-thread environment, thread deletion, and a settle or unsettle call. Core routes ordinary tasks
+per-thread environment, and a settle or unsettle call. Core routes ordinary tasks
 around them: reports ride the helper, decisions ride the board and native interactions, and
 presentation is the group plus the title.
 
@@ -2019,6 +2023,15 @@ try again. `shared/host-operation.ts` owns the two-code list, `service/host-exec
 it, the plugin's own list is pinned to it, and `test/bb-host-executor.test.ts`,
 `test/bb-host-channel.test.ts`, `test/bb-plugin-operations.test.ts` and `test/bb-plugin-protocol.test.ts`
 pin both ends.
+
+### Capability parity with Paseo and T3Code
+
+Every optional host capability Nucleus relies on is either implemented on BB or surfaces a visible fallback:
+
+- **Queue message (`enqueueMessage`) and interrupt-and-continue (`interruptAndContinue`).** `enqueueMessage` sends `thread.send` in `queue` mode (`queue-if-active`) under a durable write key on a recorded task thread. `interruptAndContinue` sends `thread.send` in `steer` mode under its own durable write key (`interrupt:<threadId>:<messageId>`) and refuses before send when no live turn is running.
+- **Thread deletion (`deleteAgent`).** Uses `thread.cascade` (`action: "delete"`) and `thread.delete` (`threads.delete` with `childThreadsConfirmed`), deleting owned children first and refusing before send if the cascade names any thread the task does not own. Deletion is verified by reading back absence from `threads.list`.
+- **Closeout workspace recovery (`createCloseoutWorkspace`, `findCloseoutWorkspaces`, `verifyCloseoutWorkspace`).** Creates a Nucleus-owned Git worktree (`ns-closeout-<taskId>`) under the same workspaces root tasks use, registers it through `workspace.create`, and records `worktreeSlug` and `repositoryRoot` so `workspaceInventory()` and `workspaceRef()` verify closeout identity and cleanliness.
+- **Explicit visible fallbacks.** When BB does not expose a live run usage stream, `RunUsageTracker` records a one-time `run_usage_unavailable` task event per run. When native in-thread decisions fall back to the planner ladder or board, `QuestionRaiseRoutes` records a one-time `operator_question_route_fallback` task event. When no connected host exposes a native terminal/label live-run presence surface, `service.health` reports `liveRunPresence: { active: false, reason }`.
 
 ## Verification
 

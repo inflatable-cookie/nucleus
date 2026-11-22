@@ -60,10 +60,9 @@ export function needsActionAt(card: PipelineCard): number {
 
 /** Needs you: decisions, Nucleus-raised holds, drained-lane prompts and attention tasks in one list, newest needing action first. */
 export function needsCards(board: PipelineBoard): PipelineCard[] {
-  return [
-    ...board.cards.Decisions,
-    ...board.cards.Attention,
-  ].sort((a, b) => needsActionAt(b) - needsActionAt(a));
+  return [...board.cards.Decisions, ...board.cards.Attention].sort(
+    (a, b) => needsActionAt(b) - needsActionAt(a),
+  );
 }
 
 /** The sections a menu view lists, in order. Planning has its own panes and lists none. */
@@ -99,8 +98,8 @@ export function inboxSections(
 }
 
 /**
- * The menu counts. Queue adds the queued tasks the board holds back behind its
- * "…and N more" rows, so the count is the real total, never the loaded page.
+ * The menu counts. Queue adds the queued tasks the board holds back, so the count is
+ * the real total, never the pages the list has read.
  */
 export function inboxCounts(board: PipelineBoard, hiddenQueued = 0) {
   const n = (name: PipelineColumn) => board.cards[name].length;

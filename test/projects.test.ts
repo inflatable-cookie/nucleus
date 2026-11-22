@@ -9,8 +9,9 @@ import { QueueRuntime } from '../service/runtime-owner';
 import { Decisions } from '../core/planning/decisions';
 import { briefDigest } from '../core/planning/brief';
 import { scopeContains } from '../shared/project-scope';
+import { RPC_METHOD_NAMES } from '../shared/rpc-catalogue';
 import { projectCarriedText } from '../shared/project-removal';
-import { outcomeSchema, projectGet, projectPark, projectRemove, projectRemovalBlockers, projectRemoveRepository, projectMerge, projectSchema, projectQaRunSchema, projectUnpark, projectUpsert, repositoryGet, repositorySet, submissionSchema, summarizeTask, taskNumberLabel, visibleTaskSummaries } from '../shared/contracts';
+import { outcomeSchema, projectGet, projectRemove, projectRemovalBlockers, projectRemoveRepository, projectMerge, projectSchema, projectQaRunSchema, projectUpsert, repositoryGet, repositorySet, submissionSchema, summarizeTask, taskNumberLabel, visibleTaskSummaries } from '../shared/contracts';
 
 function fixture(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), 'nsq-project-membership-'));
@@ -26,48 +27,49 @@ const projectRepositoryHas = (project: { repositories: Array<{ origin: string | 
   project.repositories.some(member => member.origin === repo.origin || member.path === repo.path);
 const beta = { origin: 'acme/beta', path: '/repos/beta' };
 
-test('Spec 027 #11 park and unpark keep running and blocked tasks and project settings intact; repeat is idempotent and stale version fails', t => {
+test('Spec 027 #11 retired 2026-11-22: a row an older build parked opens as an ordinary project, and its tasks stay live', t => {
   const store = fixture(t);
+  const path = String(store.db.prepare('PRAGMA database_list').all()[0].file);
+  const project = store.upsertProject({ key: 'suite', name: 'Suite', repositories: [alpha, beta], primary: alpha });
+  const running = store.update(submit(store, alpha.path, alpha.origin, 'running').id, { phase: 'working' });
+  const blocked = store.update(submit(store, beta.path, beta.origin, 'blocked').id, { phase: 'blocked' });
+  // The row exactly as the retired schema wrote it: the same record carrying `visibility: "parked"`.
+  store.db.prepare('UPDATE projects SET data=json_set(data,\'$.visibility\',\'parked\') WHERE key=?').run('suite');
+  store.close();
+  const reopened = new Store(path);
   try {
-    const project = store.upsertProject({ key: 'suite', name: 'Suite', repositories: [alpha, beta], primary: alpha });
-    const running = store.update(submit(store, alpha.path, alpha.origin, 'running').id, { phase: 'working' });
-    const blocked = store.update(submit(store, beta.path, beta.origin, 'blocked').id, { phase: 'blocked' });
-
-    assert.ok(projectPark.input.safeParse({ key: 'suite', version: project.version }).success);
-    assert.equal(projectPark.input.safeParse({ key: 'suite' }).success, false);
-    const parked = store.setProjectVisibility({ key: 'suite', version: project.version }, 'parked');
-    assert.equal(parked.visibility, 'parked');
-    assert.equal(store.setProjectVisibility({ key: 'suite', version: parked.version }, 'parked').version, parked.version);
-    assert.throws(() => store.setProjectVisibility({ key: 'suite', version: project.version }, 'active'), /Stale project version/);
-    assert.deepEqual(store.task(running.id), running);
-    assert.deepEqual(store.task(blocked.id), blocked);
-    assert.equal(store.projectFor(alpha.path, alpha.origin)?.visibility, 'parked');
-    assert.ok(projectUnpark.input.safeParse({ key: 'suite', version: parked.version }).success);
-    const unparked = store.setProjectVisibility({ key: 'suite', version: parked.version }, 'active');
-    assert.equal(unparked.visibility, 'active');
-    assert.deepEqual(unparked.repositories, project.repositories);
-    assert.deepEqual(store.task(running.id), running);
-    assert.deepEqual(store.task(blocked.id), blocked);
-  } finally { store.close(); }
+    const stored = reopened.projectByKey('suite');
+    assert.ok(stored);
+    assert.equal('visibility' in stored, false);
+    assert.deepEqual(stored.repositories, project.repositories);
+    assert.equal(String(reopened.db.prepare('SELECT data FROM projects WHERE key=?').get('suite')!.data).includes('visibility'), false);
+    assert.deepEqual(reopened.task(running.id), running);
+    assert.deepEqual(reopened.task(blocked.id), blocked);
+  } finally { reopened.close(); }
 });
 
-test('Spec 027 #11 schema 50 retains project visibility and later edits', t => {
+test('Spec 027 #11 retired 2026-11-22: project.park and project.unpark are not verbs', () => {
+  assert.equal(RPC_METHOD_NAMES.includes('project.park'), false);
+  assert.equal(RPC_METHOD_NAMES.includes('project.unpark'), false);
+});
+
+test('Spec 027 schema 50 drops a stored visibility, and later edits keep the project', t => {
   const store = fixture(t);
   try {
-    const project = store.upsertProject({ key: 'suite', name: 'Suite', repositories: [alpha] });
+    store.upsertProject({ key: 'suite', name: 'Suite', repositories: [alpha] });
     const path = String(store.db.prepare('PRAGMA database_list').all()[0].file);
+    store.db.prepare('UPDATE projects SET data=json_set(data,\'$.visibility\',\'parked\') WHERE key=?').run('suite');
     store.db.exec('CREATE TABLE papercuts(id TEXT PRIMARY KEY,repository TEXT NOT NULL,state TEXT NOT NULL,content_key TEXT UNIQUE,data TEXT NOT NULL)');
     store.setMeta('schema', 50);
     store.close();
     const migrated = new Store(path);
     try {
       assert.equal(migrated.getMeta('schema'), CURRENT_SCHEMA);
-      assert.equal(migrated.projectByKey('suite')?.visibility, 'active');
+      assert.equal('visibility' in (migrated.projectByKey('suite') ?? {}), false);
       assert.equal(migrated.projectByKey('suite')?.version, 1);
-      const parked = migrated.setProjectVisibility({ key: 'suite', version: 1 }, 'parked');
       const edited = migrated.upsertProject({ key: 'suite', name: 'Renamed', repositories: [alpha] });
-      assert.equal(edited.visibility, 'parked');
-      assert.equal(edited.version, parked.version + 1);
+      assert.equal(edited.name, 'Renamed');
+      assert.equal(edited.version, 2);
     } finally { migrated.close(); }
   } catch (error) { try { store.close(); } catch {} throw error; }
 });
@@ -188,7 +190,7 @@ test('Spec 027 #4 project queries and board scope include both repositories with
     assert.equal(taskNumberLabel(summarizeTask(one), true), 'alpha#001');
     assert.equal(taskNumberLabel(summarizeTask(two), true), 'beta#001');
     assert.equal(visibleTaskSummaries([one], runtime.store.projects())[0].repository, undefined, 'matching path hints stay compact');
-    assert.equal(visibleTaskSummaries([one], [{ key: 'suite', name: 'Suite', version: 1, visibility: 'active', repositories: [{ ...alpha, path: '/other' }], primary: { ...alpha, path: '/other' }, drain: null }])[0].repository, alpha.origin);
+    assert.equal(visibleTaskSummaries([one], [{ key: 'suite', name: 'Suite', version: 1,  repositories: [{ ...alpha, path: '/other' }], primary: { ...alpha, path: '/other' }, drain: null }])[0].repository, alpha.origin);
     assert.ok(visibleTaskSummaries([one, { ...two, repoPath: alpha.path }], runtime.store.projects()).every(task => task.repository));
     // Scoped work counts both repositories, and a contradicting origin is out of scope (#866
     // retired the Lanes table; the scope predicate is what these facts belong to).
@@ -295,7 +297,7 @@ test('Spec 027 removal: a repository settings row another project still uses is 
     const project = store.upsertProject({ key: 'stale', name: 'Stale', repositories: [alpha], primary: alpha });
     store.putRepository(alpha, 'agent', 'shared settings', null);
     store.db.prepare('INSERT INTO projects(key,data) VALUES(?,?)').run('other',
-      JSON.stringify(projectSchema.parse({ key: 'other', name: 'Other', repositories: [alpha], primary: alpha, version: 1, visibility: 'active' })));
+      JSON.stringify(projectSchema.parse({ key: 'other', name: 'Other', repositories: [alpha], primary: alpha, version: 1,  })));
     store.removeProject({ key: 'stale', version: project.version, reason: 'duplicate' });
     assert.equal(store.projectByKey('stale'), null);
     assert.equal(store.repositoryByKey(alpha.origin)?.note, 'shared settings');

@@ -161,9 +161,13 @@ test("Spec 040 row 7: an escalated hold appears in Pipeline; Release and Keep ac
     }),
   );
   await settle(() =>
-    tree.text().includes("Ready to merge, held for External receipt pending"),
+    tree.text().includes("Ready to merge · held for External receipt pending"),
   );
-  assert.match(tree.text(), /owner agent-1/);
+  // The row's one detail is why it is held; its owner rides the accessible name (nucleus#1515).
+  assert.ok(
+    tree.query(/^Merge hold: .*, owner agent-1$/),
+    "the hold names its owner",
+  );
   // Keep needs a reason: the confirm button stays disabled until one is typed.
   tree.press("Keep");
   assert.equal(tree.get("Keep hold").props.disabled, true);

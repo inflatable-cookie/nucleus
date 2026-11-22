@@ -857,6 +857,7 @@ export class QueueRuntime {
       markStoreAccess: () => this.markStoreAccess(),
     });
     this.settingsOperations = new RuntimeSettings({
+      dataDir: this.dataDir,
       store: this.store,
       engine: this.engine,
       decisions: this.decisions,
@@ -1005,6 +1006,7 @@ export class QueueRuntime {
       hostRunEndpointError: () => runtime.hostRunEndpointError,
       admissionRpcMetrics: () =>
         runtime.admissionEndpoint?.rpcMetrics() ?? null,
+      liveRunPresenceStatus: () => runtime.liveRunPresenceStatus(),
     });
     this.hostSettings = new HostCatalogueSettings({
       store: this.store,
@@ -1137,6 +1139,18 @@ export class QueueRuntime {
   }
   backupList(_input: Record<string, never> = {}) {
     return this.maintenance.backupList(_input);
+  }
+
+  /** Settings → Storage: every work-volume path is a setting (nucleus#1526). */
+  workStorage(_input: Record<string, never> = {}) {
+    return this.settingsOperations.workStorage();
+  }
+  saveWorkStorage(
+    input: import("../shared/schema/work-storage").WorkStorageInput,
+    _accepted?: unknown,
+    context?: { via?: string | null },
+  ) {
+    return this.settingsOperations.saveWorkStorage(input, _accepted, context);
   }
 
   /**
@@ -2548,8 +2562,57 @@ export class QueueRuntime {
   }
   /**
    * The live-run presence projection, or null when this runtime's adapter has no
-   * Paseo daemon to project into (a fixture adapter, or a unit-test adapter).
+   * native terminal/label presence daemon. Presence status inspects the actual
+   * connected hosts — a constructed but disconnected Paseo adapter never reads as
+   * active on a T3-only or BB-only deployment, and mixed deployments explicitly
+   * name connected hosts that lack a native presence surface.
    */
+  private liveRunPresenceStatus(): {
+    active: boolean;
+    reason: string;
+    unsupportedHosts?: string[];
+  } {
+    const onlineIds = this.hostRegistry.onlineIds();
+    const unsupportedHosts = onlineIds.filter((id) => {
+      const entry = this.hostRegistry.get(id);
+      return (
+        entry &&
+        !(entry.adapter as Adapter & { liveRunPresence?: RunPresenceDaemon })
+          .liveRunPresence
+      );
+    });
+    const hasConnectedPresenceHost =
+      Boolean(this.liveRunPresence) &&
+      (this.paseoAdapter
+        ? this.connected() ||
+          onlineIds.some((id) =>
+            Boolean(
+              (
+                this.hostRegistry.get(id)?.adapter as
+                  | (Adapter & { liveRunPresence?: RunPresenceDaemon })
+                  | undefined
+              )?.liveRunPresence,
+            ),
+          )
+        : true);
+    if (!hasConnectedPresenceHost) {
+      return {
+        active: false,
+        reason: unsupportedHosts.length
+          ? `Live-run terminal and workspace-label presence is unavailable: connected host(s) (${unsupportedHosts.join(", ")}) do not expose a native presence surface`
+          : "Live-run terminal and workspace-label presence is unavailable because no connected host exposes a native presence surface",
+        ...(unsupportedHosts.length ? { unsupportedHosts } : {}),
+      };
+    }
+    if (unsupportedHosts.length) {
+      return {
+        active: true,
+        reason: `Live-run terminal and workspace-label presence is active only for hosts with a native presence surface; unavailable on connected host(s): ${unsupportedHosts.join(", ")}`,
+        unsupportedHosts,
+      };
+    }
+    return { active: true, reason: "" };
+  }
   private createLiveRunPresence(): LiveRunPresence | null {
     const daemon = () =>
       (this.adapter as Adapter & { liveRunPresence?: RunPresenceDaemon })
@@ -2621,12 +2684,6 @@ export class QueueRuntime {
   }
   listProjects() {
     return this.repositories.listProjects();
-  }
-  parkProject(input: { key: string; version: number }) {
-    return this.repositories.parkProject(input);
-  }
-  unparkProject(input: { key: string; version: number }) {
-    return this.repositories.unparkProject(input);
   }
   async setProjectPlanner(input: {
     key: string;

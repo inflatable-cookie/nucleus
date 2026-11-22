@@ -881,7 +881,10 @@ export class T3CodeHost implements Host {
       })),
     };
   }
-  async createWorkspace(spec: HostWorkspaceSpec) {
+  async createWorkspace(
+    spec: HostWorkspaceSpec,
+    metadata?: { worktreeSlug?: string; projectRootPath?: string },
+  ) {
     this.requireConnection();
     const directory = await realpath(spec.directory);
     const repositoryRoot = spec.project.workspaceRoot
@@ -969,6 +972,12 @@ export class T3CodeHost implements Host {
         directory,
         projectId: selected.id,
         title: spec.title,
+        ...(metadata?.projectRootPath
+          ? { projectRootPath: metadata.projectRootPath }
+          : {}),
+        ...(metadata?.worktreeSlug
+          ? { worktreeSlug: metadata.worktreeSlug }
+          : {}),
       };
     });
     return { id, directory };
@@ -1026,15 +1035,19 @@ export class T3CodeHost implements Host {
         linkedWorktreePath(external.worktreePath ?? project.workspaceRoot));
     if (!directory) return null;
     const projectRootPath =
-      project.workspaceRoot === directory && linkedWorktreePath(directory)
+      recorded?.projectRootPath ??
+      (project.workspaceRoot === directory && linkedWorktreePath(directory)
         ? ((await mainCheckoutOf(directory)) ?? project.workspaceRoot)
-        : project.workspaceRoot;
+        : project.workspaceRoot);
     return {
       id,
       directory,
       title: recorded?.title ?? (external ? external.title : ""),
       projectId: project.id,
       projectRootPath,
+      ...(recorded?.worktreeSlug
+        ? { worktreeSlug: recorded.worktreeSlug }
+        : {}),
     };
   }
 
@@ -1065,6 +1078,9 @@ export class T3CodeHost implements Host {
               projectRootPath: resolved.projectRootPath,
               workspaceDirectory: resolved.directory,
               projectId: resolved.projectId,
+              ...(resolved.worktreeSlug
+                ? { worktreeSlug: resolved.worktreeSlug }
+                : {}),
               placement: {
                 kind: "external",
                 provenance: "t3code",
@@ -1209,6 +1225,9 @@ export class T3CodeHost implements Host {
         id: spec.workspaceId,
         projectId: workspace.projectId,
         directory: workspace.directory,
+        ...(workspace.worktreeSlug
+          ? { worktreeSlug: workspace.worktreeSlug }
+          : {}),
       },
       title,
     });

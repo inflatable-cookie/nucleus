@@ -105,7 +105,12 @@ export interface AcpSessionsOptions {
  */
 export function bindAcpSession(
   acp: AcpSessionSurface | null,
-  input: { taskId: string; ignorePattern?: string; holdPattern?: string },
+  input: {
+    taskId: string;
+    directory?: string;
+    ignorePattern?: string;
+    holdPattern?: string;
+  },
 ): AcpSessionBinding {
   if (!acp)
     throw new Error(
@@ -151,6 +156,7 @@ export class AcpSessions implements AcpSessionSurface {
   /** Mint this task's session and the pointer in its checkout. One session per task. */
   bind(input: {
     taskId: string;
+    directory?: string;
     ignorePattern?: string;
     holdPattern?: string;
   }): AcpSessionBinding {
@@ -159,15 +165,24 @@ export class AcpSessions implements AcpSessionSurface {
       throw new Error(
         `Task ${acpTaskName(task)} was removed; no ACP session can be bound to it`,
       );
-    if (!task.directory)
+    const allowedDirectories = [
+      task.directory,
+      task.resolution.closeoutDirectory,
+    ].filter((value): value is string => Boolean(value));
+    if (!allowedDirectories.length)
       throw new Error(
         `Task ${acpTaskName(task)} has no workspace checkout yet; bind the ACP session once its worktree exists`,
+      );
+    const targetDirectory = input.directory ?? task.directory;
+    if (!targetDirectory || !allowedDirectories.includes(targetDirectory))
+      throw new Error(
+        `Task ${acpTaskName(task)} cannot bind ACP session to unrecorded checkout ${input.directory ?? "(none)"}`,
       );
     return mintAcpSession({
       dataHome: this.dataHome,
       socketPath: this.options.socketPath,
       taskId: task.id,
-      directory: task.directory,
+      directory: targetDirectory,
       ...(input.ignorePattern ? { ignorePattern: input.ignorePattern } : {}),
       ...(input.holdPattern ? { holdPattern: input.holdPattern } : {}),
     });

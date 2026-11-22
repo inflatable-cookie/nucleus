@@ -20,7 +20,6 @@ export type LaneHorizon = "now" | "next" | "later";
 export type LanePlace = {
   key: string;
   name: string;
-  parked: boolean;
   horizon: LaneHorizon | null;
   /** 1-based position within the horizon group, and that group's size; null when the lane is not in the plan. */
   position: number | null;
@@ -100,7 +99,6 @@ export function lanePlaces(
     .map(({ project, position }) => ({
       key: project.key,
       name: project.name,
-      parked: project.visibility === "parked",
       horizon: position?.horizon ?? null,
       position: position?.position ?? null,
       size: position?.size ?? null,
@@ -123,9 +121,7 @@ export function laneFinderScopeLabel(
 
 /**
  * The lane list behind "Find lanes". The scope is the chosen projects, or every
- * non-parked project when nothing is chosen (the board's long-standing All
- * projects rule, Spec 027), so a parked project's lanes are found by choosing
- * that project. A query matches the title, aim, key and project names; an empty
+ * project when nothing is chosen (the board's All projects rule). A query matches the title, aim, key and project names; an empty
  * query lists every lane in scope. Open lanes come first, then paused, then the
  * closed ones, each by title.
  */
@@ -142,7 +138,7 @@ export function laneFinderRows(input: {
   );
   const needle = (input.query ?? "").trim().toLowerCase();
   const inScope = (place: LanePlace) =>
-    selection.length ? selection.includes(place.key) : !place.parked;
+    !selection.length || selection.includes(place.key);
   return input.lanes
     .map((lane) => {
       const places = lanePlaces(lane, input.projects, input.plans);
@@ -188,11 +184,7 @@ export function lanePlaceLabel(place: LanePlace): string {
     : horizon;
 }
 
-/** Projects in the order a chooser shows them: active by name, then parked by name. */
+/** Projects in the order a chooser shows them: by name. */
 export function chooserProjects(projects: readonly Project[]): Project[] {
-  return [...projects].sort(
-    (a, b) =>
-      Number(a.visibility === "parked") - Number(b.visibility === "parked") ||
-      a.name.localeCompare(b.name),
-  );
+  return [...projects].sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -15,17 +15,12 @@ const project = (key: string, ...repos: ReturnType<typeof repo>[]) =>
     key,
     name: key,
     version: 4,
-    visibility: "active",
     repositories: repos,
     primary: repos[0],
     owner: null,
   }) as unknown as Project;
 const consumer = project("consumer-b-v2", repo("consumer"));
 const accelerator = project("project-a-accelerator", repo("project-a"));
-const parked = {
-  ...project("other", repo("other")),
-  visibility: "parked",
-} as Project;
 const projects = [consumer, accelerator];
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -41,8 +36,6 @@ function rowActions(
       return Promise.resolve({});
     };
   const value: Record<string, (...args: unknown[]) => unknown> = {
-    park: record("park"),
-    unpark: record("unpark"),
     rename: record("rename"),
     remove: record("remove"),
     ...overrides,
@@ -124,7 +117,7 @@ test("1430 rendered: the row ellipsis is labelled with the project and leaves th
       .expanded,
     true,
   );
-  assert.ok(ui.get("Park consumer-b-v2"));
+  assert.equal(ui.query("Park consumer-b-v2"), undefined, "no Park: parking is retired");
   assert.ok(ui.get("Rename consumer-b-v2"));
   assert.ok(ui.get("Remove consumer-b-v2 from Nucleus"));
 
@@ -178,62 +171,6 @@ test("1430 rendered: the ellipsis reveals on hover or focus with a hover pointer
   const compact = mount(h(ProjectSelector, { ...base, compact: true }));
   compact.press(/^Projects, /);
   assert.equal(opacity(compact), 1);
-});
-
-test("1430 rendered: Park asks first, saves through the action on confirm, and the menu closes", async () => {
-  const menu = rowActions();
-  const picker = pickerProps({ projectActions: menu.value });
-  const { ProjectSelector } = await load();
-  const ui = mount(h(ProjectSelector, picker.props));
-  ui.press(/^Projects, /);
-  ui.press("Project actions for consumer-b-v2");
-  ui.press("Park consumer-b-v2");
-  assert.match(ui.text(), /Park consumer-b-v2\? No new work starts\./);
-  assert.equal(menu.calls.length, 0, "nothing saved before confirming");
-  ui.press("Keep project consumer-b-v2");
-  assert.equal(
-    ui.query("Park project consumer-b-v2"),
-    undefined,
-    "Keep backs out",
-  );
-  ui.press("Park consumer-b-v2");
-  ui.press("Park project consumer-b-v2");
-  assert.deepEqual(menu.calls, [["park", consumer]]);
-  await settle();
-  assert.equal(
-    ui.query("Project actions for consumer-b-v2")?.props.accessibilityState
-      .expanded,
-    false,
-    "the menu closes on success",
-  );
-  assert.ok(ui.get("Project selector"), "the picker stays open");
-});
-
-test("1430 rendered: Unpark is a direct action for a parked project, and a refusal stays on the row", async () => {
-  const menu = rowActions({
-    unpark: () =>
-      Promise.reject(new Error("Project changed since it was read")),
-  });
-  const picker = pickerProps({ projectActions: menu.value }, [
-    parked,
-    ...projects,
-  ]);
-  const { ProjectSelector } = await load();
-  const ui = mount(h(ProjectSelector, picker.props));
-  ui.press(/^Projects, /);
-  ui.press("Project actions for other");
-  assert.equal(
-    ui.query("Park other"),
-    undefined,
-    "no Park for a parked project",
-  );
-  ui.press("Unpark other");
-  await settle();
-  assert.match(ui.text(), /Project changed since it was read/);
-  assert.ok(
-    ui.get("Project actions for other"),
-    "the menu stays open for a retry",
-  );
 });
 
 test("1430 rendered: Rename validates the trimmed name, saves through the action and keeps the key", async () => {
@@ -302,7 +239,7 @@ test("1430 rendered: Remove is absent when the host has no removal dialog", asyn
   ui.press(/^Projects, /);
   ui.press("Project actions for consumer-b-v2");
   assert.equal(ui.query("Remove consumer-b-v2 from Nucleus"), undefined);
-  assert.ok(ui.get("Park consumer-b-v2"));
+  assert.ok(ui.get("Rename consumer-b-v2"));
 });
 
 test("1430 rendered: Escape closes an open row action first, and the picker on the next press", async () => {

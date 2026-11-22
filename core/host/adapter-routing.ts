@@ -88,6 +88,7 @@ const AGENT_ARGS: Record<string, number[]> = {
   originAgent: [0],
   observe: [0],
   archiveAgent: [0],
+  deleteAgent: [0],
   stopAgentTurn: [0],
   agentTimeline: [0],
   agentTimelinePage: [0],

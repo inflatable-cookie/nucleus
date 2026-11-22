@@ -209,7 +209,6 @@ export class TriageService {
   evaluate(input: { at?: number; hasRoom?: (project: Project) => boolean; planner?: (project: Project) => string | null } = {}): void {
     const at = input.at ?? Date.now();
     for (const project of this.store.projects()) {
-      if (project.visibility !== "active") continue;
       const state = this.state(project.key);
       if (!state.enabled) continue;
       this.store.transaction(() => {
@@ -484,7 +483,7 @@ export function triageNoticeProject(store: Store, notice: Pick<Notice, "id" | "t
   const batch = triageNoticeBatch(notice);
   if (!batch || !notice.taskId.startsWith("triage:")) return null;
   const project = store.projectByKey(notice.taskId.slice("triage:".length));
-  if (!project || project.visibility !== "active") return null;
+  if (!project) return null;
   const state = new TriageService(store).state(project.key);
   return state.enabled && state.batch?.id === batch ? project : null;
 }

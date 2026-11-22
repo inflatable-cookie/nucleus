@@ -25,16 +25,15 @@ const contains = (node: HostNode | string, label: string): boolean => typeof nod
 const textOf = (node: HostNode | string): string => typeof node === 'string' ? node : node.children.map(textOf).join('');
 
 const repo = (origin: string, path = `/workspace/user/Dev/${origin.split('/')[1]}`) => ({ origin, path });
-function row(key: string, name: string, repos: Array<{ origin: string | null; path: string }>, extra: Partial<ProjectSettingsRow> & { parked?: boolean } = {}): ProjectSettingsRow {
-  const { parked, ...rest } = extra;
+function row(key: string, name: string, repos: Array<{ origin: string | null; path: string }>, extra: Partial<ProjectSettingsRow> = {}): ProjectSettingsRow {
   return {
-    project: { key, name, version: 1, visibility: parked ? 'parked' : 'active', repositories: repos, primary: repos[0]!, drain: null },
+    project: { key, name, version: 1, repositories: repos, primary: repos[0]!, drain: null },
     repositories: repos.map((repository, index) => ({ repository, primary: index === 0, settings: null })),
     slots: { value: 4, override: null }, plannerLive: null, plannerTicket: null, problems: [],
-    ...rest,
+    ...extra,
   } as ProjectSettingsRow;
 }
-const implicit = (origin: string, extra: Partial<ProjectSettingsRow> & { parked?: boolean } = {}) =>
+const implicit = (origin: string, extra: Partial<ProjectSettingsRow> = {}) =>
   row(`repo-${Buffer.from(origin).toString('hex').padEnd(20, '0').slice(0, 20)}`, origin.split('/')[1]!, [repo(origin)], extra);
 const settingsOf = (projects: ProjectSettingsRow[]): ProjectSettings => ({ defaultSlots: 4, projects });
 
@@ -53,10 +52,10 @@ function openProjects(ui: Awaited<ReturnType<typeof screen>>, width: number) {
 }
 const done = (ui: { update(next: React.ReactElement): void }) => ui.update(h('View'));
 
-test('helpers: parked last, filter by name or repository, implicit repositories, derived keys and host paths', async () => {
+test('helpers: sorted by name, filter by name or repository, implicit repositories, derived keys and host paths', async () => {
   const { sortProjectRows, filterProjectRows, implicitRepositories, projectKeyFor, withoutHostPaths } = await import('../client/projects-settings');
-  const rows = [implicit('acme/zeta'), row('consumer-app', 'Consumer-App', [repo('acme/sound')], { parked: true }), implicit('acme/alpha'), row('project-c', 'Project-C', [repo('acme/project-c'), repo('acme/project-f')])];
-  assert.deepEqual(sortProjectRows(rows).map(entry => entry.project.name), ['alpha', 'Project-C', 'zeta', 'Consumer-App']);
+  const rows = [implicit('acme/zeta'), row('consumer-app', 'Consumer-App', [repo('acme/sound')]), implicit('acme/alpha'), row('project-c', 'Project-C', [repo('acme/project-c'), repo('acme/project-f')])];
+  assert.deepEqual(sortProjectRows(rows).map(entry => entry.project.name), ['alpha', 'Consumer-App', 'Project-C', 'zeta']);
   assert.deepEqual(filterProjectRows(rows, 'PROJECT-F').map(entry => entry.project.name), ['Project-C'], 'a repository name matches too');
   assert.deepEqual(filterProjectRows(rows, '  ').length, 4);
   const renamed = implicit('acme/renamed'); renamed.project.name = 'Renamed by operator';
@@ -72,12 +71,12 @@ test('helpers: parked last, filter by name or repository, implicit repositories,
   assert.equal(withoutHostPaths('acme/app already belongs to project project-c'), 'acme/app already belongs to project project-c', 'an owner/name is not a path');
 });
 
-test('wide and narrow: one-line rows, parked last, one problem icon with its tooltip in the overlay layer', async () => {
+test('wide and narrow: one-line rows sorted by name, one problem icon with its tooltip in the overlay layer', async () => {
   const long = 'A project name long enough to run past the settings column on a phone and keep going';
   const data = settingsOf([
     implicit('acme/book'),
     row('nucleus', 'Nucleus', [repo('acme/nucleus')], { problems: ['Planner thread is gone', 'Planner ticket pending'] }),
-    row('consumer-app', 'Consumer-App', [repo('acme/sound')], { parked: true, problems: ['No planner'] }),
+    row('consumer-app', 'Consumer-App', [repo('acme/sound')], { problems: ['No planner'] }),
     row('long', long, [repo('acme/long')]),
   ]);
   for (const width of [1024, 390]) {
@@ -85,8 +84,8 @@ test('wide and narrow: one-line rows, parked last, one problem icon with its too
     await settle(() => ui.text().includes('Usage level'), 'limits');
     openProjects(ui, width);
     await settle(() => ui.text().includes('Consumer-App'), 'projects');
-    const labels = ui.all(/^(book|Nucleus|Consumer-App|A project name[^,]*), /).map(node => node.props.accessibilityLabel);
-    assert.deepEqual(labels, [`${long}, Active`, 'book, Active', 'Nucleus, Active, Planner thread is gone, Planner ticket pending', 'Consumer-App, Parked, No planner'], `${width}: sorted, parked last, problems in the row label`);
+    const labels = ui.all(/^(book|Nucleus|Consumer-App|A project name[^,]*)(,|$)/).map(node => node.props.accessibilityLabel);
+    assert.deepEqual(labels, [`${long}`, 'book', 'Consumer-App, No planner', 'Nucleus, Planner thread is gone, Planner ticket pending'], `${width}: sorted by name, problems in the row label`);
     const longName = ui.ofType('Text').find(node => textOf(node) === long)!;
     assert.equal(longName.props.numberOfLines, 1, `${width}: a long name stays on one line`);
     assert.doesNotMatch(ui.text(), /repo-|\/workspace\/user|acme\//, `${width}: no keys, paths or origins on the rows`);
@@ -117,7 +116,7 @@ test('the filter appears above 12 rows and matches names', async () => {
   const ui = mount(render(many));
   assert.equal(ui.get('Filter projects').props.placeholder, 'Filter');
   ui.type('Filter projects', 'repo07');
-  assert.deepEqual(ui.all(/, Active$/).map(node => node.props.accessibilityLabel), ['repo07, Active']);
+  assert.deepEqual(ui.all(/^repo07$/).map(node => node.props.accessibilityLabel), ['repo07']);
   ui.type('Filter projects', 'nothing like it');
   assert.match(ui.text(), /No projects match/);
   done(ui);
@@ -140,7 +139,7 @@ test('loading, empty, failure with Retry, and a stale list that keeps its rows',
   ui.press('Retry projects');
   assert.equal(retried, 1);
   ui.update(render({ data: settingsOf([implicit('acme/book')]), error: new Error('offline'), isPending: false }));
-  assert.ok(ui.get('book, Active'), 'a stale list keeps its rows');
+  assert.ok(ui.get('book'), 'a stale list keeps its rows');
   assert.ok(ui.get('Projects problems'), 'with a warning icon on the header');
   assert.doesNotMatch(ui.text(), /Couldn't load projects/);
   done(ui);
@@ -160,14 +159,14 @@ test('Add project: chooser of implicit repositories and Other…, primary star, 
         writes.push(input);
         if (refuse) { refuse = false; throw new Error(`Repository ${syntheticHome}/Dev/zeta already belongs to project zeta`); }
         const { create: _create, primary: _primary, ...made } = input as { key: string; name: string; repositories: Array<{ origin: string | null; path: string }>; primary?: unknown; create?: true };
-        return { ...made, version: 1, visibility: 'active', primary: made.repositories[0], drain: null };
+        return { ...made, version: 1,  primary: made.repositories[0], drain: null };
       }
       return {};
     });
     try {
       await settle(() => ui.text().includes('Usage level'), 'limits');
       openProjects(ui, width);
-      await settle(() => Boolean(ui.query('book, Active')), 'projects');
+      await settle(() => Boolean(ui.query('book')), 'projects');
       assert.equal(iconOf(ui.get('Add project')), 'Plus', `${width}: the same add button as Profiles`);
       ui.press('Add project');
       const sheet = ui.get('Add project dialog');
@@ -222,14 +221,14 @@ test('Add project: a key taken since the list loaded is refused, the list refres
       writes.push(made);
       // Another client made "club" after this list loaded: the store refuses create on an existing key.
       if (made.key === 'club') { projects = [...projects, row('club', 'Club', [repo('acme/other')])]; throw new Error('Project club already exists. Nothing changed; choose another name.'); }
-      return { key: made.key, name: made.name, repositories: made.repositories, version: 1, visibility: 'active', primary: made.repositories[0], drain: null };
+      return { key: made.key, name: made.name, repositories: made.repositories, version: 1,  primary: made.repositories[0], drain: null };
     }
     return {};
   });
   try {
     await settle(() => ui.text().includes('Usage level'), 'limits');
     ui.press('Projects');
-    await settle(() => Boolean(ui.query('book, Active')), 'projects');
+    await settle(() => Boolean(ui.query('book')), 'projects');
     ui.press('Add project');
     ui.type('Name', 'Club');
     ui.press('Repositories, Choose');
@@ -237,7 +236,7 @@ test('Add project: a key taken since the list loaded is refused, the list refres
     ui.press('Create project');
     await settle(() => ui.text().includes('already exists'), 'refusal');
     assert.equal(writes[0]!.key, 'club');
-    await settle(() => Boolean(ui.query('Club, Active')), 'refreshed list');
+    await settle(() => Boolean(ui.query('Club')), 'refreshed list');
     ui.press('Create project');
     await settle(() => writes.length === 2, 'second create');
     assert.equal(writes[1]!.key, 'club-2', 'the refreshed list gives a free key');

@@ -137,6 +137,7 @@ function createFixture(
   return {
     dir,
     dbPath,
+    dataDir: dir,
     get store() {
       return store;
     },
@@ -585,6 +586,7 @@ test("pause holds delivery and unpause via queueControl resumes through the same
   assert.equal(f.decisions.get({ id: d.id }).delivery?.status, "pending");
 
   const settings = new RuntimeSettings({
+    dataDir: f.dataDir,
     store: f.store,
     engine: f.engine,
     decisions: f.decisions,

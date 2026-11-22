@@ -44,6 +44,7 @@ import { settingsViews } from "../shared/queue-navigation";
 import { useSettingsSection } from "./settings-hint";
 import { SettingsTelemetry } from "./settings-telemetry";
 import { BackupsPanel } from "./backups-panel";
+import { StoragePanel } from "./storage-settings";
 import { DispatchLimits, type PendingOverrideRemovalPhase } from "./limits";
 import { HostsPanel } from "./hosts-settings";
 import { ProjectsSection } from "./projects-settings";
@@ -69,9 +70,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const fetchProjectSettings = useRpc(api.projectSettings),
     upsertProject = useRpc(api.projectUpsert);
   const fetchOwnerCandidates = useRpc(api.projectOwnerCandidates),
-    setProjectPlanner = useRpc(api.projectSetPlanner),
-    parkProject = useRpc(api.projectPark),
-    unparkProject = useRpc(api.projectUnpark);
+    setProjectPlanner = useRpc(api.projectSetPlanner);
   const registerProjectAgent = useRpc(api.agentRegister),
     unregisterProjectAgent = useRpc(api.agentUnregister);
   const setProfile = useRpc(api.configureProfile),
@@ -83,6 +82,8 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     setProjectLimit = useRpc(api.configureProjectDispatchLimit);
   const fetchBackups = useRpc(api.backupList),
     makeBackup = useRpc(api.backupNow);
+  const fetchWorkStorage = useRpc(api.workStorage),
+    saveWorkStorage = useRpc(api.saveWorkStorage);
   const repositoryBlockers = useRpc(api.projectRemovalBlockers),
     removeProjectRepository = useRpc(api.projectRemoveRepository),
     mergeProject = useRpc(api.projectMerge),
@@ -131,6 +132,13 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     queryFn: () => fetchBackups({}),
     enabled: settingsTab === "backups",
     refetchInterval: 60_000,
+  });
+  // Settings → Storage (nucleus#1526): the resolved work-volume placement, read
+  // only while its page is open. A save answers with the placement it wrote.
+  const storageQuery = useQuery({
+    queryKey: ["nucleus", "work-storage"],
+    queryFn: () => fetchWorkStorage({}),
+    enabled: settingsTab === "storage",
   });
   // Settings-only capacity writes need the values in force and the record of
   // applied changes. It is a separate read because the board projection keeps its
@@ -466,8 +474,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 unregisterAgent: (input) => unregisterProjectAgent(input),
                 setSlots: (input) => setProjectLimit(input),
                 setRepository: (input) => setRepository(input),
-                park: (input) => parkProject(input),
-                unpark: (input) => unparkProject(input),
                 repositoryBlockers: (input) => repositoryBlockers(input),
                 removeRepository: (input) => removeProjectRepository(input),
                 mergeCheck: (input) => mergeCheck(input),
@@ -514,6 +520,24 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 act(async () => {
                   await makeBackup({});
                   await backupsQuery.refetch();
+                })
+              }
+            />
+          )}
+          {settingsTab === "storage" && (
+            <StoragePanel
+              c={c}
+              inset={inset}
+              state={storageQuery.data}
+              loading={storageQuery.isPending}
+              loadError={storageQuery.error}
+              save={(input) =>
+                saveWorkStorage(input).then(async (next) => {
+                  queryClient.setQueryData(["nucleus", "work-storage"], next);
+                  await queryClient.invalidateQueries({
+                    queryKey: ["nucleus", "backups"],
+                  });
+                  return next;
                 })
               }
             />

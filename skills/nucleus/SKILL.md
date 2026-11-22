@@ -666,8 +666,9 @@ read's `digest` as an optional extra stale-edit fence alongside the required
 `version`; send the old digest with the new text. A mismatch writes nothing.
 `plan.get` returns a version but no digest, so `plan.set` uses its version fence.
 Projects are permanent
-records: `project.upsert`, `project.get`, `project.park`, `project.unpark`,
-`project.remove`, `projects`, `agent.register`, `agent.unregister`, `project.agents`.
+records: `project.upsert`, `project.get`, `project.remove`, `projects`, `agent.register`,
+`agent.unregister`, `project.agents`. There is no park or unpark: a project nobody works on
+shows as Dormant by the activity rule, and work on it makes it active again.
 Projects have no singleton planner. `project.set-planner` is a live-thread
 preference, while the responsible-thread resolver selects among active project
 threads. It grants no authority, and there is no project owner to claim or assign.

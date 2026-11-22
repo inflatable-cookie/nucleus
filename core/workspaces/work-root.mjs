@@ -5,13 +5,46 @@ import { execFileSync } from 'node:child_process';
 import { dataHome } from '../../shared/data-home.mjs';
 import { writeOwnedJson } from '../machine/owned-file.mjs';
 
+/**
+ * The work-volume placement owner (service-boundary contract, "Work placement").
+ *
+ * Every class Nucleus writes on the work volume is one setting: the work root,
+ * local task worktrees, database backups, legacy milestone QA history, run
+ * scratch and Barge custodian records. Each class has a portable default derived
+ * from `workRoot` and its own environment override, and every one resolves through
+ * the same guard (`validSubpathInsideMount`): canonical, absolute, strictly inside
+ * `workRoot`, never `/`. Nothing here names a machine or a drive.
+ *
+ * An install that still has data in the retired `<workRoot>/queue/...` locations
+ * keeps working: `retiredWorkPlacement` names those paths so readers can find
+ * existing data, and nothing here writes to them.
+ *
+ * `test/work-root-settings.test.ts` proves the defaults, overrides and refusals;
+ * `test/storage-placement.test.ts` proves the Storage page's write path.
+ */
+const CLASSES = [
+  // Projects the class default, its settings key and environment override, and
+  // the retired `queue/...` location an existing install may still hold.
+  { field: 'worktreesRoot', setting: 'localWorkspaceRoot', env: 'NUCLEUS_LOCAL_WORKSPACE_ROOT', defaultParts: ['worktrees', 'nucleus'], retiredParts: ['queue', 'workspaces'] },
+  { field: 'backupRoot', setting: 'backupRoot', env: 'NUCLEUS_BACKUP_ROOT', defaultParts: ['archives', 'nucleus-backups'], retiredParts: ['queue', 'backups'] },
+  { field: 'projectQaRoot', setting: 'projectQaRoot', env: 'NUCLEUS_PROJECT_QA_ROOT', defaultParts: ['archives', 'nucleus-project-qa'], retiredParts: ['queue', 'project-qa'] },
+  { field: 'scratchRoot', setting: 'scratchRoot', env: 'NUCLEUS_SCRATCH_ROOT', defaultParts: ['scratch', 'nucleus'] },
+  // Custodian control files carry one lease's live start/stop handshake, so they
+  // belong to the scratch class rather than the archive one. A retired
+  // `queue/barge-custodians` directory has no reader: an in-flight lease keeps the
+  // ready and stop paths recorded before its custodian started.
+  { field: 'custodianRoot', setting: 'custodianRoot', env: 'NUCLEUS_CUSTODIAN_ROOT', defaultParts: ['scratch', 'nucleus', 'barge-custodians'] },
+];
+/** Every placement setting that holds one path. */
+export const WORK_PLACEMENT_SETTINGS = [...new Set(CLASSES.map(entry => entry.setting))];
+
 const portableRoots = new Set();
 const refusal = message => Object.assign(Error(message), { code: 'WORK_PLACEMENT_REFUSAL' });
 const settingsFor = dataDir => {
   const path = join(dataDir, 'settings.json');
   const value = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw refusal('Work storage settings must be an object');
-  for (const key of ['workRoot', 'workVolumeId', 'localWorkspaceRoot']) {
+  for (const key of ['workRoot', 'workVolumeId', ...WORK_PLACEMENT_SETTINGS]) {
     if (value[key] !== undefined && typeof value[key] !== 'string') throw refusal(`${key} must be a string`);
   }
   if (value.retainedWorkspaceRoots !== undefined &&
@@ -34,54 +67,171 @@ export function validSubpathInsideMount(mount, value, label) {
   return value;
 }
 
+const storageFrom = (value, dataDir, env) => {
+  const root = env.NUCLEUS_WORK_ROOT?.trim() || value.workRoot;
+  const volumeId = env.NUCLEUS_WORK_VOLUME_ID?.trim() || value.workVolumeId;
+  return { root: root ? validMount(root) : join(resolve(dataDir), 'work'),
+    ...(volumeId ? { volumeId: String(volumeId) } : {}) };
+};
+
 /** Read only. Startup completes adoption before any allocation or migration backup. */
 export function getWorkStorage(dataDir = dataHome(), env = process.env) {
   const { value } = settingsFor(dataDir);
-  const override = env.NUCLEUS_WORK_ROOT?.trim();
-  const root = override || value.workRoot;
-  const volumeId = env.NUCLEUS_WORK_VOLUME_ID?.trim() || value.workVolumeId;
+  const storage = storageFrom(value, dataDir, env);
   const portable = join(resolve(dataDir), 'work');
+  const root = env.NUCLEUS_WORK_ROOT?.trim() || value.workRoot;
+  const volumeId = env.NUCLEUS_WORK_VOLUME_ID?.trim() || value.workVolumeId;
   if (!root && !volumeId && !portableRoots.has(resolve(dataDir))) {
     const roots = recordedWorkRoots(existingAllocations(dataDir));
     if (roots.some(recorded => recorded !== portable))
       throw Error('Existing work records require startup adoption before storage can be selected');
     portableRoots.add(resolve(dataDir));
   }
-  return { root: root ? validMount(root) : portable,
-    ...(volumeId ? { volumeId: String(volumeId) } : {}) };
+  return storage;
 }
 export const getWorkRoot = (dataDir, env) => getWorkStorage(dataDir, env).root;
 
+/** The portable class defaults a fresh install uses, each derived from the work root. */
+export function defaultWorkPlacement(root) {
+  return Object.fromEntries(CLASSES.map(entry => [entry.field, join(root, ...entry.defaultParts)]));
+}
+
+/** The retired `<workRoot>/queue/...` locations existing data may still live in. */
+export function retiredWorkPlacement(root) {
+  return Object.fromEntries(CLASSES.filter(entry => entry.retiredParts)
+    .map(entry => [entry.field, join(root, ...entry.retiredParts)]));
+}
+
+const classEntry = field => {
+  const entry = CLASSES.find(candidate => candidate.field === field);
+  if (!entry) throw refusal(`Unknown work placement class ${field}`);
+  return entry;
+};
+
+/** One class's path: its environment override, else its setting, else its portable default. */
+const resolveClass = (entry, value, storage, env) => {
+  const fromEnv = env[entry.env]?.trim();
+  const configured = fromEnv || value[entry.setting];
+  if (!configured) return join(storage.root, ...entry.defaultParts);
+  return validSubpathInsideMount(storage.root, configured, fromEnv ? entry.env : entry.setting);
+};
+
 /**
- * Resolve active and retained local task-workspace roots inside the verified work volume.
- * Installs that have not opted in keep `<workRoot>/queue/workspaces` as the sole root.
+ * One class's resolved path without validating the classes a caller does not use.
+ * The backup worker reads the live store's own location this way, so a fixture
+ * that names a different work root for its own writes cannot make that read
+ * refuse over an unrelated class path.
  */
-export function getLocalWorkspacePlacement(dataDir = dataHome(), env = process.env) {
-  const storage = getWorkStorage(dataDir, env);
-  const { value } = settingsFor(dataDir);
-  const defaultRoot = join(storage.root, 'queue', 'workspaces');
-  const activeOverride = env.NUCLEUS_LOCAL_WORKSPACE_ROOT?.trim();
-  const activeRoot = activeOverride
-    ? validSubpathInsideMount(storage.root, activeOverride, 'NUCLEUS_LOCAL_WORKSPACE_ROOT')
-    : value.localWorkspaceRoot !== undefined
-      ? validSubpathInsideMount(storage.root, value.localWorkspaceRoot, 'localWorkspaceRoot')
-      : defaultRoot;
+export function getWorkClassPath(field, dataDir = dataHome(), env = process.env) {
+  const entry = classEntry(field);
+  return resolveClass(entry, settingsFor(dataDir).value, getWorkStorage(dataDir, env), env);
+}
+
+/** One class's retired `queue/...` location, or null when the class never lived there. */
+export function getRetiredWorkClassPath(field, dataDir = dataHome(), env = process.env) {
+  const entry = classEntry(field);
+  return entry.retiredParts ? join(getWorkStorage(dataDir, env).root, ...entry.retiredParts) : null;
+}
+
+function placementFrom(value, storage, env) {
+  const defaults = defaultWorkPlacement(storage.root);
+  const retired = retiredWorkPlacement(storage.root);
+  const resolved = {};
+  // `overrides` is what `settings.json` itself holds, never an environment value:
+  // the Storage page edits stored settings, so an environment override must not
+  // become a draft the operator never typed and a save would then persist.
+  const overrides = {};
+  if (value.workRoot) overrides.workRoot = value.workRoot;
+  for (const entry of CLASSES) {
+    resolved[entry.field] = resolveClass(entry, value, storage, env);
+    if (value[entry.setting]) overrides[entry.field] = value[entry.setting];
+  }
+  const retained = new Set();
+  // A task workspace allocated before this class moved is still supported for
+  // continuation and cleanup, so the retired root is always retained while it is
+  // not the active one.
+  if (retired.worktreesRoot && resolved.worktreesRoot !== retired.worktreesRoot) retained.add(retired.worktreesRoot);
   const retainedOverride = env.NUCLEUS_RETAINED_WORKSPACE_ROOTS?.trim();
   const configuredRetained = retainedOverride
     ? retainedOverride.split(delimiter).map(entry => validSubpathInsideMount(storage.root, entry, 'NUCLEUS_RETAINED_WORKSPACE_ROOTS'))
     : (value.retainedWorkspaceRoots ?? []).map(entry => validSubpathInsideMount(storage.root, entry, 'retainedWorkspaceRoots'));
-  const retainedSet = new Set();
-  if (activeRoot !== defaultRoot) retainedSet.add(defaultRoot);
   for (const entry of configuredRetained) {
-    if (entry !== activeRoot) retainedSet.add(entry);
+    if (entry !== resolved.worktreesRoot) retained.add(entry);
   }
   return {
     workRoot: storage.root,
     ...(storage.volumeId ? { volumeId: storage.volumeId } : {}),
-    activeRoot,
-    defaultRoot,
-    retainedRoots: [...retainedSet],
+    ...resolved,
+    defaults,
+    retired,
+    overrides,
+    retainedRoots: [...retained],
   };
+}
+
+/**
+ * Every work-volume location Nucleus writes, resolved from `settings.json` and the
+ * environment. A configured path is refused here, at startup and at every read,
+ * when it is not canonical, not absolute or not strictly inside `workRoot`.
+ */
+export function getWorkPlacement(dataDir = dataHome(), env = process.env) {
+  return placementFrom(settingsFor(dataDir).value, getWorkStorage(dataDir, env), env);
+}
+
+/** The local task-workspace roots, as the allocation, resume and cleanup paths read them. */
+export function getLocalWorkspacePlacement(dataDir = dataHome(), env = process.env) {
+  const placement = getWorkPlacement(dataDir, env);
+  return {
+    workRoot: placement.workRoot,
+    ...(placement.volumeId ? { volumeId: placement.volumeId } : {}),
+    activeRoot: placement.worktreesRoot,
+    defaultRoot: placement.defaults.worktreesRoot,
+    retainedRoots: placement.retainedRoots,
+  };
+}
+
+/**
+ * The settings one Storage save would persist. `undefined` leaves a class alone,
+ * and `null` or `''` clears its override so the portable default applies again.
+ */
+export function mergedWorkSettings(dataDir, update = {}) {
+  const { value } = settingsFor(dataDir);
+  const next = { ...value };
+  const assign = (setting, candidate) => {
+    if (candidate === undefined) return;
+    if (candidate === null || candidate === '') { delete next[setting]; return; }
+    if (typeof candidate !== 'string') throw refusal(`${setting} must be a string`);
+    next[setting] = candidate;
+  };
+  assign('workRoot', update.workRoot);
+  assign('workVolumeId', update.workVolumeId);
+  for (const entry of CLASSES) assign(entry.setting, update[entry.field]);
+  return next;
+}
+
+/** Resolve an unsaved candidate placement, so a refusal names the field before anything is written. */
+export function previewWorkPlacement(update = {}, dataDir = dataHome(), env = process.env) {
+  const value = mergedWorkSettings(dataDir, update);
+  return placementFrom(value, storageFrom(value, dataDir, env), env);
+}
+
+/**
+ * The placement the settings would mean with no environment override at all. A
+ * save validates this before anything is written: an override that happens to be
+ * set in the saving process must never mask a stored path that would break the
+ * next start once the override is gone.
+ */
+export function previewSavedWorkPlacement(update = {}, dataDir = dataHome()) {
+  const value = mergedWorkSettings(dataDir, update);
+  return placementFrom(value, storageFrom(value, dataDir, {}), {});
+}
+
+/** Persist a validated candidate; the caller proves the volume and paths first. */
+export function writeWorkSettings(dataDir, update = {}) {
+  const { path } = settingsFor(dataDir);
+  const next = mergedWorkSettings(dataDir, update);
+  writeOwnedJson(path, next);
+  return next;
 }
 
 /** Observe the volume mounted at a root without creating that root. */
@@ -99,7 +249,9 @@ export function recordedWorkRoots(records) {
     if (!value || typeof value !== 'object') return;
     for (const [key, child] of Object.entries(value)) {
       if (allocationFields.has(key) && typeof child === 'string' && isAbsolute(child)) {
-        const match = child.match(/^(.+)(?:\/queue\/(?:workspaces|project-qa|backups)(?:\/|$)|\/worktrees\/nucleus(?:\/|$)|\/scratch\/[^/]+(?:\/|$))/);
+        // Every class's current and retired shape, so an install whose settings
+        // were lost still adopts the volume its records name.
+        const match = child.match(/^(.+)(?:\/(?:queue|archives)\/(?:workspaces|project-qa|backups|barge-custodians|nucleus-backups|nucleus-project-qa)(?:\/|$)|\/worktrees\/nucleus(?:\/|$)|\/scratch\/[^/]+(?:\/|$))/);
         if (match) roots.add(validMount(match[1]));
       } else if (typeof child === 'object') visit(child);
     }
@@ -144,6 +296,7 @@ export function initializeWorkRoot(dataDir, env = process.env, options = {}) {
   const settings = settingsFor(dataDir);
   if (env.NUCLEUS_WORK_ROOT?.trim() || env.NUCLEUS_WORK_VOLUME_ID?.trim() || settings.value.workRoot || settings.value.workVolumeId) {
     const storage = getWorkStorage(dataDir, env);
+    // Every class's path is validated once at startup, before any write.
     getLocalWorkspacePlacement(dataDir, env);
     return storage;
   }

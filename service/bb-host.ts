@@ -215,7 +215,11 @@ export function createBbWorkspaceAdapter(
   async function liveEnvironments() {
     const read = await operation("environment.list", {});
     const { environments } = read.value as {
-      environments: Array<{ environmentId: string; path: string; status: string }>;
+      environments: Array<{
+        environmentId: string;
+        path: string;
+        status: string;
+      }>;
     };
     return environments.filter((row) => row.status !== "destroyed");
   }
@@ -223,8 +227,8 @@ export function createBbWorkspaceAdapter(
     if (!workspaceIdAccepted(id)) return null;
     // A BB thread's observed path and the current native environment must agree.
     // Git proves the path is a linked checkout even for an unmanaged BB environment.
-    const environment = (await liveEnvironments()).find((row) =>
-      row.path && workspaceHandleForPath(row.path) === id,
+    const environment = (await liveEnvironments()).find(
+      (row) => row.path && workspaceHandleForPath(row.path) === id,
     );
     const directory = environment && linkedWorktreePath(environment.path);
     if (!directory) return null;
@@ -234,8 +238,7 @@ export function createBbWorkspaceAdapter(
   async function workspaceAvailable(id: string): Promise<boolean> {
     let record = getWorkspace(id);
     if (!record) return Boolean(await resolveExternalWorkspace(id));
-    if (record.archivedAt || !existsSync(record.directory))
-      return false;
+    if (record.archivedAt || !existsSync(record.directory)) return false;
     const result = await operation("workspace.inspect", {
       repositoryRoot: record.repositoryRoot,
       ...(record.projectId ? { projectId: record.projectId } : {}),
@@ -292,7 +295,9 @@ export function createBbWorkspaceAdapter(
         workspaceRoot: repositoryRoot,
       };
     },
-    async createWorkspace(task: Pick<Task, "directory" | "repoPath" | "title">) {
+    async createWorkspace(
+      task: Pick<Task, "directory" | "repoPath" | "title">,
+    ) {
       if (!task.directory)
         throw new ProvenPreSendRefusalError(
           "BB workspace creation requires the task's recorded worktree directory",
@@ -389,14 +394,21 @@ export function createBbWorkspaceAdapter(
     },
     workspaceAvailable,
     workspaceRef(id: string): HostWorkspaceRef {
-      let resolved: { directory: string; repositoryRoot: string; projectId?: string } | null = null;
+      let resolved: {
+        directory: string;
+        repositoryRoot: string;
+        projectId?: string;
+        worktreeSlug?: string;
+      } | null = null;
       return {
         get directory() {
           return resolved?.directory ?? getWorkspace(id)?.directory ?? null;
         },
         async refresh() {
           resolved = getWorkspace(id)
-            ? (await workspaceAvailable(id) ? getWorkspace(id) ?? null : null)
+            ? (await workspaceAvailable(id))
+              ? (getWorkspace(id) ?? null)
+              : null
             : await resolveExternalWorkspace(id);
           return Boolean(resolved);
         },
@@ -406,6 +418,9 @@ export function createBbWorkspaceAdapter(
                 projectRootPath: resolved.repositoryRoot,
                 workspaceDirectory: resolved.directory,
                 projectId: resolved.projectId,
+                ...(resolved.worktreeSlug
+                  ? { worktreeSlug: resolved.worktreeSlug }
+                  : {}),
                 placement: {
                   kind: "external",
                   provenance: "bb",
@@ -442,14 +457,20 @@ export function createBbHostAdapter(
   connected: () => boolean,
   dataDir: string,
   store: Store,
-  requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
+  requestOperation?: (
+    op: HostOperationName,
+    input: unknown,
+  ) => Promise<HostOperationOutcome>,
 ): ReturnType<typeof composeBbAdapter>;
 export function createBbHostAdapter(
   hostId: string,
   connected: () => boolean,
   dataDir?: string,
   store?: Store,
-  requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
+  requestOperation?: (
+    op: HostOperationName,
+    input: unknown,
+  ) => Promise<HostOperationOutcome>,
 ): Adapter;
 export function createBbHostAdapter(
   hostId: string,
@@ -483,7 +504,11 @@ export function createBbHostAdapter(
       (error instanceof ServiceRequestError &&
         (error.code === "invalid_input" ||
           error.code === "refused" ||
-          error.code === "busy")),
+          error.code === "busy")) ||
+      (error instanceof Error &&
+        error.name === "HostOperationError" &&
+        ((error as { code?: string }).code === "invalid_input" ||
+          (error as { code?: string }).code === "refused")),
   });
 }
 

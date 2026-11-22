@@ -490,7 +490,6 @@ function ProjectRoadmap({
           }}
         >
           Plan · {name}
-          {project.visibility === "parked" ? " · parked" : ""}
         </Text>
         <View style={row}>
           {ready && !editing && (
@@ -950,7 +949,6 @@ export function LaneProjects({
               }}
             >
               {place.name}
-              {place.parked ? " · parked" : ""}
             </Text>
             <Text
               style={{
@@ -1288,11 +1286,7 @@ export function PlanningTab({
   const nowMs = Date.now();
   const dormant = allSections
     .filter((section) =>
-      projectDormantByActivity(
-        section.project,
-        activityByKey.get(section.project.key),
-        nowMs,
-      ),
+      projectDormantByActivity(activityByKey.get(section.project.key), nowMs),
     )
     .map((section) => section.project);
   const sections = allSections.filter(
@@ -1457,9 +1451,6 @@ export function PlanningTab({
                   >
                     <Text style={{ color: c.foreground, fontWeight: "600" }}>
                       {open ? "▾" : "▸"} {section.project.name}
-                      {section.project.visibility === "parked"
-                        ? " · parked"
-                        : ""}
                     </Text>
                     {info.state === "ready" ? (
                       <>

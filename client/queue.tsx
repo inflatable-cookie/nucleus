@@ -36,7 +36,7 @@ import {
 } from "../shared/inbox-board";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
-import { attention } from "./board/text";
+import { projectName } from "./board/text";
 import { BoardHeader } from "./board/header";
 import { InboxList, useInboxBoard, usePipelineState } from "./board/inbox-list";
 import { InboxMenu } from "./board/inbox-menu";
@@ -197,7 +197,7 @@ export function MainSurface({
     records,
     onLeaveLane: () => setLaneDraft(null),
   });
-  // The list's tag filter, pages and queued-more read outlive a visit to another view.
+  // The list's tag filter, pages and held-back queue reads outlive a visit to another view.
   const pipeline = usePipelineState();
   const { act, leadAct, busy, error, setError } = useBoardAct({
     selected,
@@ -227,20 +227,8 @@ export function MainSurface({
     state?.projects.find((project) =>
       projectHasRepository(project, repoPath, origin),
     );
-  const parkedRepository = (repoPath: string, origin?: string | null) =>
-    projectForRepository(repoPath, origin)?.visibility === "parked";
-  const taskNeedsAttention = (task: TaskSummary) =>
-    task.held || task.phase === "changes_requested" || attention(task);
-  const attentionPaths = new Set(
-    liveTasks
-      .filter((task) => taskNeedsAttention(task))
-      .map((task) => task.repoPath),
-  );
-  const attentionBelongs = (repoPath: string, origin?: string | null) =>
-    belongs(repoPath, origin) ||
-    (parkedRepository(repoPath, origin) && attentionPaths.has(repoPath));
   const queuedCounts = (state?.queuedCounts ?? []).filter((item) =>
-    attentionBelongs(item.repoPath),
+    belongs(item.repoPath),
   );
   const queuedHidden = hiddenQueuedByProject(queuedCounts, state?.tasks ?? []);
   const hiddenQueued = queuedHidden.reduce((sum, item) => sum + item.hidden, 0);
@@ -385,6 +373,17 @@ export function MainSurface({
       recordNotice={recordNotice}
       setRecordNotice={setRecordNotice}
       onOpenDecision={setOpenDecisionId}
+      taskLinkLabel={(id) => {
+        const task = state?.tasks.find((item) => item.id === id);
+        if (!task) return null;
+        const reference =
+          task.reference ??
+          (task.number ? api.taskNumberLabel(task, true) : null);
+        const project =
+          projectForRepository(task.repoPath, task.repository)?.name ??
+          projectName(task);
+        return [reference, task.title, project].filter(Boolean).join(" · ");
+      }}
       onOpenTask={(id) => {
         setOpenDecisionId(null);
         setSelected(id);
@@ -677,7 +676,6 @@ export function MainSurface({
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}
                     queuedHidden={queuedHidden}
-                    parkedRepository={parkedRepository}
                     projectForRepository={projectForRepository}
                     selected={selected}
                     selectedLeadId={selectedLeadId}

@@ -80,13 +80,13 @@ nothing.
   row. In-flight is always twice Slots and has no separate field.
   Opening a project edits its name, planner (`project.set-planner` as the
   operator), Slots (the same per-project override the Dispatch limits list
-  shows; empty inherits) and park state, and each repository's operator
+  shows; empty inherits), and each repository's operator
   settings through `repository.set`: validation policy, worktree validation evidence commands,
   timeout and schedule, checks policy, reviewer login and merge check. QA
   stages, output caps, termination grace, the schedule's interval ceiling,
   closeout, scratch namespace and note stay CLI-only and are kept as they are.
   The opened project's trash icon opens Remove (see "Project management"
-  below). Park, Unpark and Delete are no longer in Planning's plan header, and
+  below). Park and Unpark are retired (2026-11-22), and Delete is no longer in Planning's plan header, and
   the board's project selector only scopes: its settings icon opens Settings at
   Projects through a section hint on `openSettings`.
 - **Naming.** Spec 022's per-repository rows are repository settings (closeout
@@ -97,36 +97,34 @@ nothing.
   `repository.set` or `repository.get`, so no caller silently writes the wrong
   record.
 
-## Parking (Tom, 2026-09-27)
+## Parking (retired, Tom, 2026-11-22)
 
-Source: nucleus contract 002 "Projects and repositories" (Parking) and contract 006
-"Direction" (nucleus be70741). "Parked", not "shelved".
+**Retired (Tom, 2026-11-22):** "we can get rid of the concept of parked projects -
+just leaving projects alone will mark them as dormant and not require any ceremony
+to reactivate them.. parking is too fiddly and unnecessary." Dormancy (Spec 026,
+"Active and dormant projects") replaces it, and the Dormant group stays. nucleus#1530
+removes parking.
 
-- **Visibility.** A project record has `visibility`: `active` (default) or
-  `parked`. It's separate from archive and retention, versioned and host-neutral.
-  `project.park` and `project.unpark` are operator commands, idempotent and
-  version-checked.
-- **Parking only hides.** Tasks keep running and dispatching; threads are never
-  archived; workspaces, lanes, plans, leads, papercuts and drafts are untouched.
-  Unparking restores the project exactly.
-- **Attention always shows.** Holds, blocked tasks, drafts awaiting approval and
-  findings from a parked project still reach every attention surface (Nucleus's
-  attention notices and the board's attention states), marked "parked".
-- **Paseo's sidebar is out of reach.** The Paseo daemon API offers no project
-  visibility; `removeProject` would also remove workspaces. Parking lives in
-  the retired system's views; Nucleus relies on its own sidebar for the full experience.
+- **No visibility.** A project record has no `visibility` field and there are no
+  `project.park` or `project.unpark` commands. A stored `visibility` is dropped on the
+  store's open, so an old row reads as an ordinary project. A call to either verb gets the
+  ordinary unknown-method answer.
+- **Dormancy hides nothing.** A project nobody works on shows under Dormant by the activity
+  rule (Spec 026); work on it makes it active again with no action. Its tasks, threads,
+  workspaces, lanes, plans, leads, papercuts and drafts were never affected by parking, and
+  the All-projects view shows them as before.
 
 ## Removal (Tom, 2026-09-30)
 
 - **Delete, not hide.** `project.remove {key, version, reason}` is operator-only
   and version-checked. It deletes a project record for good, so a stale or
   duplicate project — for example one left behind by a repository moving to
-  another org — stops appearing anywhere. Parking stays the way to hide a
-  project that is still wanted.
+  another org — stops appearing anywhere. Dormancy, not deletion, is how an unused
+  project stays out of the way (Spec 026).
 - **Anything still in use blocks it.** The refusal names every blocker: a task
   that is not done or cancelled, an open lead, papercut or decision, an active
-  lane, and a pending submission. The board's Delete action, offered on parked
-  projects only, reads the same blockers from Nucleus's own scan
+  lane, and a pending submission. The board's Delete action, offered on every project
+  (Settings → Projects and the selector's row panel), reads the same blockers from Nucleus's own scan
   (`project.removal-blockers`) for its confirmation, never a recomputed board
   view.
 - **One repository out of a project (nucleus#967, Tom 2026-11-09).** Settings →
@@ -223,7 +221,7 @@ Source: nucleus contract 002 "Projects and repositories" (Parking) and contract 
 | 7 | `queue.siblings: false` | No sibling worktree; prompts unchanged |
 | 8 | Worker edits, commits in, or moves a sibling | Sibling-change finding in detail and for the reviewer; nothing merged or pushed from the sibling |
 | 9 | Task cleanup, cancellation and purge | Sibling worktrees removed; operator checkouts untouched |
-| 11 | Park and unpark a project with a running task, a blocked task and a draft awaiting approval | Hidden from the selector and All projects; the task keeps running; the blocked task and draft still show as attention marked parked; unpark restores everything; park twice is idempotent; a stale version is refused |
+| 11 | Retired (2026-11-22): a project with a running task, a blocked task and a draft awaiting approval is left alone | No park or unpark verb exists; a stored `visibility` is dropped on open; the project shows under Dormant or active by activity, and the All-projects view includes its tasks and attention |
 | 12 | Remove an unused project, then export and import | `project.remove` deletes it and writes a tombstone; outcomes, closed leads and events still resolve; an unused `repositorySettings` row goes, one another project shares stays; the export omits the project and import never restores it; Paseo state untouched |
 | 13 | Remove a project with each blocker present | Refused, naming the non-terminal task, the open lead, papercut and decision, the active lane and the pending submission; the project and its tombstone are unchanged |
 | 10 | Restart during sibling creation | No duplicate worktree; an uncertain creation is reconciled by path and commit, never recreated blindly |

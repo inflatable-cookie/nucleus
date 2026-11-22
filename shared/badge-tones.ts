@@ -16,7 +16,6 @@ const RECORD_TONES: Record<string, BadgeTone> = {
   approved: "accent",
   unapproved: "warning",
   submitting: "accent",
-  parked: "neutral",
   // Spec 032: decisions ask amber (the operator's hand is needed); Queue-raised
   // keeps the accent the board uses for records of its own; stale stays muted.
   decision: "warning",

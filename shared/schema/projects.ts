@@ -121,7 +121,6 @@ export const projectSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/),
   name: z.string().trim().min(1).max(200),
   version: z.number().int().positive().default(1),
-  visibility: z.enum(["active", "parked"]).default("active"),
   repositories: z.array(projectRepositorySchema.refine(repo => Boolean(repo.origin || repo.path), "Repository needs an origin or path")).min(1),
   primary: projectRepositorySchema,
   // Spec 041: the open next-aim episode while the project's board is drained; operational, re-forms from activity.
@@ -204,8 +203,6 @@ export const projectUpsertInputSchema = z.object({
     "Primary repository is required for a project with several repositories");
 
 export type ProjectUpsertInput = z.infer<typeof projectUpsertInputSchema>;
-
-export const projectVisibilityInputSchema = z.object({ key: projectSchema.shape.key, version: z.number().int().positive() }).strict();
 
 export const projectQuerySchema = z.union([
   z.object({ key: z.string().min(1) }).strict(),

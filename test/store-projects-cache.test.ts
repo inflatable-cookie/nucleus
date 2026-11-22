@@ -27,8 +27,8 @@ test('project reads parse once, return detached values and ignore unrelated writ
   assert.equal(store.projects()[0].name, 'Suite');
   assert.equal(store.projects()[0].repositories[0].path, '/fixture/suite');
   assert.equal(parses, 1);
-  store.setProjectVisibility({ key: 'suite', version: 1 }, 'parked');
-  assert.equal(store.projects()[0].visibility, 'parked');
+  store.upsertProject({ key: 'suite', name: 'Suite', repositories: [{ origin: 'acme/suite', path: '/fixture/suite' }] });
+  assert.equal(store.projects()[0].version, 2);
   assert.equal(parses, 2);
 });
 

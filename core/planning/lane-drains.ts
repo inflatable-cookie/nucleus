@@ -40,9 +40,8 @@ export interface LaneDrainStore {
 }
 
 /**
- * Spec 041: one drain pass over the active projects' saved plans. Parked projects
- * and plans nobody saved start no episode; a stored episode still escalates by its
- * timer. Episodes and notices land in one transaction, so a pass never leaves a
+ * Spec 041: one drain pass over every project's saved plans. A plan nobody saved starts
+ * no episode; a stored episode still escalates by its timer. Episodes and notices land in one transaction, so a pass never leaves a
  * started episode without its prompt. The evaluation itself is `evaluateDrains`;
  * this pass only gathers its inputs from the store and applies its decisions.
  */
@@ -53,11 +52,10 @@ export class LaneDrainPass {
     const registered = this.store.projects();
     const projectKey = this.store.projectKeyResolver(registered);
     const byProject = new Map(registered.map(project => [project.key, project]));
-    const all = registered.filter(project => project.visibility === "active");
-    const recipients = new Map(all.map(project => [project.key, this.store.projectPlannerRecipient(project)]));
+    const recipients = new Map(registered.map(project => [project.key, this.store.projectPlannerRecipient(project)]));
     // A live responsible thread can receive prompts for a saved plan without a registration.
-    const projects = all.filter(project => recipients.get(project.key) || projectOwnerRoutable(project));
-    if (!all.length) return;
+    const projects = registered.filter(project => recipients.get(project.key) || projectOwnerRoutable(project));
+    if (!registered.length) return;
     this.store.transaction(() => {
       const tasks = this.store.uiTasks();
       const views = this.store.laneViews();
@@ -83,7 +81,7 @@ export class LaneDrainPass {
           if (!idleSubmittedFinished.has(key) || idleSubmittedFinished.get(key)! < finishedAt) idleSubmittedFinished.set(key, finishedAt);
         }
       }
-      for (const project of all.filter(project => !projects.includes(project) && project.drain)) this.store.setProjectDrain(project.key, null);
+      for (const project of registered.filter(project => !projects.includes(project) && project.drain)) this.store.setProjectDrain(project.key, null);
       for (const project of projects) {
         const read = this.store.plan({ project: project.key });
         // Only the saved order counts as “in a plan”; joined lanes wait behind “unplanned”.

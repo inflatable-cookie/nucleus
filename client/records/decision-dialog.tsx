@@ -2,12 +2,28 @@ import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc } from "../shell";
-import { Button, ConfirmReplaceAnswer, DetailSection, controlFrame, controlText, muted, type Colors } from "../controls";
+import {
+  Button,
+  ConfirmReplaceAnswer,
+  DetailSection,
+  controlFrame,
+  controlText,
+  muted,
+  type Colors,
+} from "../controls";
 import * as api from "../../shared/contracts";
 import { decisionAge } from "../../shared/pipeline-board";
-import { UNKNOWN_ASKER_LABEL, decisionProjectLabel } from "../../shared/decision-project";
+import {
+  UNKNOWN_ASKER_LABEL,
+  decisionProjectLabel,
+} from "../../shared/decision-project";
 import { decisionChoicePresentation } from "../board/cards";
-import { CollapsibleSection, RecordNotice, type BoardAct, type RecordNoticeValue } from "../task/parts";
+import {
+  CollapsibleSection,
+  RecordNotice,
+  type BoardAct,
+  type RecordNoticeValue,
+} from "../task/parts";
 import { RecordModal } from "./record-modal";
 import { type as typeScale, space, radius } from "../design";
 
@@ -15,22 +31,74 @@ import { type as typeScale, space, radius } from "../design";
  * The decision dialog (Spec 032). It owns its answer, withdraw reason, pending option and
  * details toggle; the board remounts it per decision, so they clear when it moves to another.
  */
-export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordNotice, setRecordNotice, onOpenDecision, onOpenTask, onClose, c, inline = false }: { inline?: boolean; id: string; compact: boolean; busy: boolean; act: BoardAct; recordNotice: RecordNoticeValue | null; setRecordNotice: (notice: RecordNoticeValue | null) => void; onOpenDecision: (id: string) => void; onOpenTask: (id: string) => void; onClose: () => void; c: Colors }) {
-  const fetchDecision = useRpc(api.decisionGet), answerDecision = useRpc(api.decisionAnswer), withdrawDecision = useRpc(api.decisionWithdraw);
-  const [decisionDetailsOpen,setDecisionDetailsOpen] = useState(false);
+export function DecisionDialog({
+  id: openDecisionId,
+  compact,
+  busy,
+  act,
+  recordNotice,
+  setRecordNotice,
+  onOpenDecision,
+  onOpenTask,
+  taskLinkLabel = () => null,
+  onClose,
+  c,
+  inline = false,
+}: {
+  inline?: boolean;
+  id: string;
+  /** A linked task's reference, title and project, resolved from the board (nucleus#1515). */ taskLinkLabel?: (
+    id: string,
+  ) => string | null;
+  compact: boolean;
+  busy: boolean;
+  act: BoardAct;
+  recordNotice: RecordNoticeValue | null;
+  setRecordNotice: (notice: RecordNoticeValue | null) => void;
+  onOpenDecision: (id: string) => void;
+  onOpenTask: (id: string) => void;
+  onClose: () => void;
+  c: Colors;
+}) {
+  const fetchDecision = useRpc(api.decisionGet),
+    answerDecision = useRpc(api.decisionAnswer),
+    withdrawDecision = useRpc(api.decisionWithdraw);
+  const [decisionDetailsOpen, setDecisionDetailsOpen] = useState(false);
   const [decisionAnswerText, setDecisionAnswerText] = useState(""),
     [decisionWithdrawReason, setDecisionWithdrawReason] = useState("");
-  const [pendingDecisionOption,setPendingDecisionOption] = useState<string|null>(null);
-  const decisionDetailQuery = useQuery({queryKey:["nucleus","decision",openDecisionId],queryFn:()=>fetchDecision({id:openDecisionId!}),enabled:Boolean(openDecisionId),refetchInterval:4000});
+  const [pendingDecisionOption, setPendingDecisionOption] = useState<
+    string | null
+  >(null);
+  const decisionDetailQuery = useQuery({
+    queryKey: ["nucleus", "decision", openDecisionId],
+    queryFn: () => fetchDecision({ id: openDecisionId! }),
+    enabled: Boolean(openDecisionId),
+    refetchInterval: 4000,
+  });
   const decisionDetail = decisionDetailQuery.data;
-  const decisionDetailPresentation = decisionDetail ? decisionChoicePresentation(decisionDetail) : null;
-  const decisionDetailsContent = decisionDetail ? [...new Set([
-    decisionDetail.question.length > 140 && decisionDetail.question !== (decisionDetail.headline ?? decisionDetail.question)
-      ? `Full question: ${decisionDetail.question}` : null,
-    decisionDetail.details, decisionDetail.context, decisionDetail.recommendation,
-    // A fallback asker names no thread: keep the full identity selectable here for forensics.
-    decisionDetail.askerLabel === UNKNOWN_ASKER_LABEL ? `Asking thread: ${decisionDetail.askedBy.agentId}` : null,
-  ].filter((part): part is string => Boolean(part)))].join("\n\n") : "";
+  const decisionDetailPresentation = decisionDetail
+    ? decisionChoicePresentation(decisionDetail)
+    : null;
+  const decisionDetailsContent = decisionDetail
+    ? [
+        ...new Set(
+          [
+            decisionDetail.question.length > 140 &&
+            decisionDetail.question !==
+              (decisionDetail.headline ?? decisionDetail.question)
+              ? `Full question: ${decisionDetail.question}`
+              : null,
+            decisionDetail.details,
+            decisionDetail.context,
+            decisionDetail.recommendation,
+            // A fallback asker names no thread: keep the full identity selectable here for forensics.
+            decisionDetail.askerLabel === UNKNOWN_ASKER_LABEL
+              ? `Asking thread: ${decisionDetail.askedBy.agentId}`
+              : null,
+          ].filter((part): part is string => Boolean(part)),
+        ),
+      ].join("\n\n")
+    : "";
   return (
     <RecordModal
       label="Decision detail"
@@ -44,7 +112,8 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
           <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             {decisionDetail.status}
             {decisionDetail.stale ? " · stale" : ""} ·{" "}
-            {decisionProjectLabel(decisionDetail)} · {decisionDetail.askerLabel ?? UNKNOWN_ASKER_LABEL} ·{" "}
+            {decisionProjectLabel(decisionDetail)} ·{" "}
+            {decisionDetail.askerLabel ?? UNKNOWN_ASKER_LABEL} ·{" "}
             {decisionAge(decisionDetail.createdAt)}
           </Text>
         ) : undefined
@@ -56,7 +125,10 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
       {decisionDetailQuery.error && (
         <Text
           accessibilityRole="alert"
-          style={{ color: c.statusDanger, fontSize: typeScale.metadata.fontSize }}
+          style={{
+            color: c.statusDanger,
+            fontSize: typeScale.metadata.fontSize,
+          }}
         >
           {String(decisionDetailQuery.error)}
         </Text>
@@ -67,11 +139,14 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
           {decisionDetail.stale && decisionDetail.status === "open" && (
             <Text
               accessibilityRole="alert"
-              style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}
+              style={{
+                color: c.statusWarning,
+                fontSize: typeScale.metadata.fontSize,
+              }}
             >
-              Stale: every linked task, lead and papercut has finished.
-              The decision is never closed automatically; the asker or
-              the operator withdraws it.
+              Stale: every linked task, lead and papercut has finished. The
+              decision is never closed automatically; the asker or the operator
+              withdraws it.
             </Text>
           )}
           <DetailSection title="Question" c={c}>
@@ -87,7 +162,12 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
             </Text>
           </DetailSection>
           {decisionDetailsContent && (
-            <CollapsibleSection title="Details" open={decisionDetailsOpen} onToggle={() => setDecisionDetailsOpen(value => !value)} c={c}>
+            <CollapsibleSection
+              title="Details"
+              open={decisionDetailsOpen}
+              onToggle={() => setDecisionDetailsOpen((value) => !value)}
+              c={c}
+            >
               <Text
                 selectable
                 style={{
@@ -103,18 +183,43 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
           {(decisionDetailPresentation?.choices.length ?? 0) > 0 && (
             <DetailSection title="Choices" c={c}>
               <View style={{ gap: space.xs }}>
-                {decisionDetailPresentation!.choices.map(choice => (
-                  <Pressable key={choice.label} accessibilityRole="button"
+                {decisionDetailPresentation!.choices.map((choice) => (
+                  <Pressable
+                    key={choice.label}
+                    accessibilityRole="button"
                     accessibilityLabel={`Use option: ${choice.label}${choice.label === decisionDetailPresentation!.recommended ? ", recommended" : ""}`}
                     onPress={() => {
-                      if (decisionAnswerText.trim() && decisionAnswerText !== choice.label) setPendingDecisionOption(choice.label);
+                      if (
+                        decisionAnswerText.trim() &&
+                        decisionAnswerText !== choice.label
+                      )
+                        setPendingDecisionOption(choice.label);
                       else setDecisionAnswerText(choice.label);
                     }}
-                    style={{ paddingHorizontal: space.xs, paddingVertical: space.xs, borderRadius: radius.card, borderWidth: 1,
-                      borderColor: choice.label === decisionDetailPresentation!.recommended ? c.accent : c.border,
-                      backgroundColor: c.surface2 }}>
-                    <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>
-                      {choice.label === decisionDetailPresentation!.recommended ? "★ Recommended · " : ""}{choice.label}{choice.consequence ? ` — ${choice.consequence}` : ""}
+                    style={{
+                      paddingHorizontal: space.xs,
+                      paddingVertical: space.xs,
+                      borderRadius: radius.card,
+                      borderWidth: 1,
+                      borderColor:
+                        choice.label === decisionDetailPresentation!.recommended
+                          ? c.accent
+                          : c.border,
+                      backgroundColor: c.surface2,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: c.foreground,
+                        fontSize: typeScale.metadata.fontSize,
+                        lineHeight: typeScale.metadata.lineHeight,
+                      }}
+                    >
+                      {choice.label === decisionDetailPresentation!.recommended
+                        ? "★ Recommended · "
+                        : ""}
+                      {choice.label}
+                      {choice.consequence ? ` — ${choice.consequence}` : ""}
                     </Text>
                   </Pressable>
                 ))}
@@ -131,18 +236,65 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
             </DetailSection>
           )}
           {(decisionDetail.overtakenBy?.length ?? 0) > 0 && (
-            <View style={{ gap: space.xs, padding: space.sm, borderRadius: radius.card, borderWidth: 1, borderColor: c.statusWarning, backgroundColor: c.surface1 }}>
-              <Text style={{ color: c.statusWarning, fontWeight: "600", fontSize: typeScale.body.fontSize }}>Probably overtaken</Text>
-              {decisionDetail.overtakenBy!.map(ref => <Pressable key={`${ref.kind}:${ref.id}:${ref.sourceId ?? ""}`}
-                accessibilityRole="link"
-                accessibilityLabel={`View citing ${ref.kind === "brief_amendment" ? "brief amendment" : ref.kind === "planner_answer" ? "planner answer" : "answer"}: ${ref.label}`}
-                onPress={() => { if (ref.kind === "decision_answer") onOpenDecision(ref.id); else onOpenTask(ref.id); }}>
-                <Text style={{ color: c.accent, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{ref.label}{ref.sourceId ? ` · ${ref.sourceId}` : ` · ${ref.id}`}</Text>
-              </Pressable>)}
-              <Button small c={c} text="Withdraw as overtaken" disabled={busy} onPress={() => { const ref = decisionDetail.overtakenBy!.at(-1)!; void act(async () => {
-                await withdrawDecision({ id: decisionDetail.id, version: decisionDetail.version, reason: `Withdrawn after ${ref.label}`, withdrawnBy: "operator (board)" });
-                setRecordNotice({ kind: "ok", text: "Withdrawn" });
-              }, "record"); }} />
+            <View
+              style={{
+                gap: space.xs,
+                padding: space.sm,
+                borderRadius: radius.card,
+                borderWidth: 1,
+                borderColor: c.statusWarning,
+                backgroundColor: c.surface1,
+              }}
+            >
+              <Text
+                style={{
+                  color: c.statusWarning,
+                  fontWeight: "600",
+                  fontSize: typeScale.body.fontSize,
+                }}
+              >
+                Probably overtaken
+              </Text>
+              {decisionDetail.overtakenBy!.map((ref) => (
+                <Pressable
+                  key={`${ref.kind}:${ref.id}:${ref.sourceId ?? ""}`}
+                  accessibilityRole="link"
+                  accessibilityLabel={`View citing ${ref.kind === "brief_amendment" ? "brief amendment" : ref.kind === "planner_answer" ? "planner answer" : "answer"}: ${ref.label}`}
+                  onPress={() => {
+                    if (ref.kind === "decision_answer") onOpenDecision(ref.id);
+                    else onOpenTask(ref.id);
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: c.accent,
+                      fontSize: typeScale.metadata.fontSize,
+                      lineHeight: typeScale.metadata.lineHeight,
+                    }}
+                  >
+                    {ref.label}
+                    {ref.sourceId ? ` · ${ref.sourceId}` : ` · ${ref.id}`}
+                  </Text>
+                </Pressable>
+              ))}
+              <Button
+                small
+                c={c}
+                text="Withdraw as overtaken"
+                disabled={busy}
+                onPress={() => {
+                  const ref = decisionDetail.overtakenBy!.at(-1)!;
+                  void act(async () => {
+                    await withdrawDecision({
+                      id: decisionDetail.id,
+                      version: decisionDetail.version,
+                      reason: `Withdrawn after ${ref.label}`,
+                      withdrawnBy: "operator (board)",
+                    });
+                    setRecordNotice({ kind: "ok", text: "Withdrawn" });
+                  }, "record");
+                }}
+              />
             </View>
           )}
           <DetailSection title="Links" c={c}>
@@ -151,15 +303,35 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
               !decisionDetail.links.papercuts.length && (
                 <Text style={muted(c)}>None</Text>
               )}
-            {decisionDetail.links.tasks.map((id) => (
-              <Text
-                key={`task-${id}`}
-                selectable
-                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-              >
-                Task · {id}
-              </Text>
-            ))}
+            {decisionDetail.links.tasks.map((id) => {
+              const label = taskLinkLabel(id);
+              return label ? (
+                <Pressable
+                  key={`task-${id}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open linked task ${label}`}
+                  onPress={() => onOpenTask(id)}
+                >
+                  <Text
+                    style={{
+                      color: c.accent,
+                      fontSize: typeScale.metadata.fontSize,
+                      lineHeight: typeScale.metadata.lineHeight,
+                    }}
+                  >
+                    Task · {label}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text
+                  key={`task-${id}`}
+                  selectable
+                  style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+                >
+                  Task · {id}
+                </Text>
+              );
+            })}
             {decisionDetail.links.leads.map((id) => (
               <Text
                 key={`lead-${id}`}
@@ -202,7 +374,12 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                   >
                     {decisionDetail.answer.text}
                   </Text>
-                  <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+                  <Text
+                    style={{
+                      ...muted(c),
+                      fontSize: typeScale.metadata.fontSize,
+                    }}
+                  >
                     {decisionDetail.answer.answeredBy} ·{" "}
                     {new Date(
                       decisionDetail.answer.answeredAt,
@@ -225,7 +402,12 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                   >
                     {decisionDetail.withdrawal.reason}
                   </Text>
-                  <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+                  <Text
+                    style={{
+                      ...muted(c),
+                      fontSize: typeScale.metadata.fontSize,
+                    }}
+                  >
                     {decisionDetail.withdrawal.withdrawnBy} ·{" "}
                     {new Date(
                       decisionDetail.withdrawal.withdrawnAt,
@@ -234,7 +416,9 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                 </>
               )}
               {decisionDetail.supersededBy && (
-                <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+                <Text
+                  style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+                >
                   Replaced by {decisionDetail.supersededBy}
                 </Text>
               )}
@@ -281,11 +465,15 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                   }, "record")
                 }
               />
-              <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-                Answering carries operator authority and notifies the
-                asking agent's thread once per answer.
+              <Text
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+              >
+                Answering carries operator authority and notifies the asking
+                agent's thread once per answer.
               </Text>
-              <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+              <Text
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+              >
                 Withdraw reason
               </Text>
               <TextInput

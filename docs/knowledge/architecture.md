@@ -39,8 +39,8 @@ owner to the rules it enforces.
   `BoardCardVariantContext`), the header with its queue menu and slot table
   (`header.tsx`), the menu (`inbox-menu.tsx`), the list (`inbox-list.tsx`: the
   projection memoised per input in `useInboxBoard`; its Leads tag filter and pages
-  and the queued-more page sit in `usePipelineState`, which the shell holds so they
-  survive view switches), and the
+  and the Queue list's held-back pages sit in `usePipelineState`, which the shell
+  holds so they survive view switches), and the
   board reads (`use-board-data.ts`: task detail and next, the planning lists on
   their per-domain revisions, planning, QA, and the shared `act`/`leadAct`);
   `client/task/` holds the task
