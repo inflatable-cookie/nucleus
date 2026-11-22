@@ -300,6 +300,7 @@ export class Engine {
         "reconcile",
         "reconcileBlockedEffects",
         "reconcileClosedRetainedReviewer",
+        "recoverExistingWorkspace",
         "routeTask",
         "scheduleLane",
         "settleFinishedRuns",
@@ -1905,7 +1906,10 @@ export class Engine {
       operationId,
     );
   }
-  forceCallerAuthorized(task: Task, caller: string | undefined): Promise<boolean> {
+  forceCallerAuthorized(
+    task: Task,
+    caller: string | undefined,
+  ): Promise<boolean> {
     return this.forceVerbs.forceCallerAuthorized(task, caller);
   }
   selfForceRole(task: Task): "worker" | "reviewer" | "recovery" | null {
@@ -2043,7 +2047,11 @@ export class Engine {
     operated: <T>(result: T) => T,
     planner = false,
   ): Task {
-    return this.settingsControls.applyTaskControlSetRouting(input, operated, planner);
+    return this.settingsControls.applyTaskControlSetRouting(
+      input,
+      operated,
+      planner,
+    );
   }
   applyTaskControlExcludeWorker(
     input: TaskControlInput,
@@ -3255,6 +3263,9 @@ export class Engine {
   }
   recoverExhaustedWorkers(): Promise<void> {
     return this.workerFailover.recoverExhaustedWorkers();
+  }
+  recoverExistingWorkspace(task: Task): Promise<boolean> {
+    return this.workspaceProvisioning.recoverExistingWorkspace(task);
   }
   ensureSiblings(task: Task): Promise<Task> {
     return this.workspaceProvisioning.ensureSiblings(task);

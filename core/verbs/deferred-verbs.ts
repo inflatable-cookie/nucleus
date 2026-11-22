@@ -173,9 +173,12 @@ export class DeferredOwnerVerbs {
         );
       }
       const oldStop = current.resolution.stop;
-      const ownsStop = oldStop?.fact?.code === "deferred_verb" && oldStop.fact.subject === deferred.input.action;
+      const ownsStop =
+        oldStop?.fact?.code === "deferred_verb" &&
+        oldStop.fact.subject === deferred.input.action;
       const reason =
-        current.reasonFact?.code === "deferred_verb" && current.reasonFact.subject === deferred.input.action
+        current.reasonFact?.code === "deferred_verb" &&
+        current.reasonFact.subject === deferred.input.action
           ? (!ownsStop && oldStop?.detail) ||
             (kind === "deferred_verb_refused"
               ? `Recorded owner action is no longer applicable: ${detail.slice(0, 1200)}`

@@ -77,42 +77,106 @@ export class WorkerRestarts {
   }
 
   /** After the ordinary restart proofs, restore the same host parent if needed. */
-  async restoreParent(c: Pick<RestartRequest, "task" | "input" | "operationId">): Promise<boolean> {
+  async restoreParent(
+    c: Pick<RestartRequest, "task" | "input" | "operationId">,
+  ): Promise<boolean> {
     const restore = this.adapter.restoreTaskParent;
     if (!restore || !c.task.workspaceId) return false;
     const runs = this.store.runs(c.task.id);
     const allowed = () => {
       const current = this.store.taskOrNull(c.task.id);
-      return Boolean(current && current.version === c.task.version &&
-        current.workspaceId === c.task.workspaceId && current.hostId === c.task.hostId &&
-        !current.removedAt && !["done", "cancelled"].includes(current.phase) &&
-        !current.resolution.mergedCommit && runsUnchangedSince(runs, this.store.runs(current.id)) &&
-        (!c.operationId || verifyEnclosingOperation(this.store, c.input, c.operationId)));
+      return Boolean(
+        current &&
+          current.version === c.task.version &&
+          current.workspaceId === c.task.workspaceId &&
+          current.hostId === c.task.hostId &&
+          !current.removedAt &&
+          !["done", "cancelled"].includes(current.phase) &&
+          !current.resolution.mergedCommit &&
+          runsUnchangedSince(runs, this.store.runs(current.id)) &&
+          (!c.operationId ||
+            verifyEnclosingOperation(this.store, c.input, c.operationId)),
+      );
     };
-    if (this.adapter.workspaceAvailable && !(await this.adapter.workspaceAvailable(c.task.workspaceId)))
-      throw new RestartRefusal("The retained workspace is unavailable; restore it before restarting");
-    if (!allowed()) throw new RestartRefusal("Restart changed before parent restore");
-    await restore.call(this.adapter, c.task, c.operationId ?? "", allowed, () => {
-      if (!allowed() || !c.operationId) throw new RestartRefusal("Restart changed before parent restore");
-      const operation = this.store.operation(c.operationId)!;
-      if (!operation.effect || operation.effect.kind !== "task_control" || operation.effect.target !== "restart" || operation.effect.status !== "intent")
-        throw new RestartRefusal("The restart operation no longer owns its effect");
-      this.store.putOperation({ ...operation, preSendBoundaryStartedAt: operation.preSendBoundaryStartedAt ?? now(),
-        effect: { ...operation.effect, result: `parent-unarchive:${operation.id}` } });
-    });
-    if (!allowed()) throw new Error("Restart changed during parent restore; no child was created");
+    if (
+      this.adapter.workspaceAvailable &&
+      !(await this.adapter.workspaceAvailable(c.task.workspaceId))
+    )
+      throw new RestartRefusal(
+        "The retained workspace is unavailable; restore it before restarting",
+      );
+    if (!allowed())
+      throw new RestartRefusal("Restart changed before parent restore");
+    await restore.call(
+      this.adapter,
+      c.task,
+      c.operationId ?? "",
+      allowed,
+      () => {
+        if (!allowed() || !c.operationId)
+          throw new RestartRefusal("Restart changed before parent restore");
+        const operation = this.store.operation(c.operationId)!;
+        if (
+          !operation.effect ||
+          operation.effect.kind !== "task_control" ||
+          operation.effect.target !== "restart" ||
+          operation.effect.status !== "intent"
+        )
+          throw new RestartRefusal(
+            "The restart operation no longer owns its effect",
+          );
+        this.store.putOperation({
+          ...operation,
+          preSendBoundaryStartedAt: operation.preSendBoundaryStartedAt ?? now(),
+          effect: {
+            ...operation.effect,
+            result: `parent-unarchive:${operation.id}`,
+          },
+        });
+      },
+    );
+    if (!allowed())
+      throw new Error(
+        "Restart changed during parent restore; no child was created",
+      );
     const observe = this.adapter.observeTaskParentRestore;
-    return Boolean(c.operationId && observe && await observe.call(this.adapter, c.task, c.operationId) === "live");
+    return Boolean(
+      c.operationId &&
+        observe &&
+        (await observe.call(this.adapter, c.task, c.operationId)) === "live",
+    );
   }
 
   /** Record the admitted local result atomically with the transition after a restore. */
-  recordRestoredRestart(task: Task, operationId?: string, restored = false): Task {
+  recordRestoredRestart(
+    task: Task,
+    operationId?: string,
+    restored = false,
+  ): Task {
     if (!operationId || !restored) return task;
     const operation = this.store.operation(operationId);
-    if (!operation?.preSendBoundaryStartedAt || operation.state !== "running" || operation.taskId !== task.id || !operation.effect) return task;
-    this.store.putOperation({ ...operation,
-      result: { taskId: task.id, taskVersion: task.version, phase: task.phase, number: task.number ?? null, reference: task.reference ?? null },
-      effect: { ...operation.effect, status: "reconciled", result: `parent-unarchive:${operation.id}`, resultAt: now() },
+    if (
+      !operation?.preSendBoundaryStartedAt ||
+      operation.state !== "running" ||
+      operation.taskId !== task.id ||
+      !operation.effect
+    )
+      return task;
+    this.store.putOperation({
+      ...operation,
+      result: {
+        taskId: task.id,
+        taskVersion: task.version,
+        phase: task.phase,
+        number: task.number ?? null,
+        reference: task.reference ?? null,
+      },
+      effect: {
+        ...operation.effect,
+        status: "reconciled",
+        result: `parent-unarchive:${operation.id}`,
+        resultAt: now(),
+      },
     });
     return task;
   }
@@ -499,7 +563,8 @@ export class WorkerRestarts {
     const { task, input, role, reason } = c;
     const parentRestart = {
       before: () => this.restoreParent(c),
-      commit: (result: Task, restored: boolean) => this.recordRestoredRestart(result, c.operationId, restored),
+      commit: (result: Task, restored: boolean) =>
+        this.recordRestoredRestart(result, c.operationId, restored),
     };
     // An owner move can leave a pre-PR task in changes_requested without
     // an author thread. Resume it through the ordinary move-to-work
@@ -584,7 +649,8 @@ export class WorkerRestarts {
               taskId: task.id,
               version,
               instruction,
-              record: (result) => this.recordRestoredRestart(result, c.operationId, restored),
+              record: (result) =>
+                this.recordRestoredRestart(result, c.operationId, restored),
               settleFences: {
                 detail: `restart ${role}: ${reason}`,
                 runIds: finished.settleable.map((item) => item.id),
@@ -774,8 +840,14 @@ export class WorkerRestarts {
                 afterCancel,
               );
               if (afterRefusal) throw new RestartRefusal(afterRefusal);
-              const restored = input.fresh ? await this.restoreParent(c) : false;
-              this.engine.assertUnchangedBeforeCancel(task.id, version, runsBefore);
+              const restored = input.fresh
+                ? await this.restoreParent(c)
+                : false;
+              this.engine.assertUnchangedBeforeCancel(
+                task.id,
+                version,
+                runsBefore,
+              );
               const settle = () =>
                 this.engine.settleVerbFences(task.id, settleFences);
               const continueWorker = () => {
@@ -963,22 +1035,33 @@ export class WorkerRestarts {
                 // The stopped-revision settlement and the operation receipt share
                 // this transaction, so interruption cannot replay the restart.
                 return restored
-                  ? this.store.transaction(() => this.recordRestoredRestart(continueWorker(), c.operationId, true))
+                  ? this.store.transaction(() =>
+                      this.recordRestoredRestart(
+                        continueWorker(),
+                        c.operationId,
+                        true,
+                      ),
+                    )
                   : continueWorker();
               }
               return this.store.transaction(() => {
                 const restartSlot = this.workerRestartSlot(task, runsBefore);
                 settle();
                 const continued = continueWorker();
-                const result = restartSlot && !continued.resolution.restartSlotHold
-                  ? this.resolution.update(
-                      continued,
-                      { restartSlotHold: restartSlot },
-                      {},
-                      "restart_worker_slot_hold",
-                    )
-                  : continued;
-                return this.recordRestoredRestart(result, c.operationId, restored);
+                const result =
+                  restartSlot && !continued.resolution.restartSlotHold
+                    ? this.resolution.update(
+                        continued,
+                        { restartSlotHold: restartSlot },
+                        {},
+                        "restart_worker_slot_hold",
+                      )
+                    : continued;
+                return this.recordRestoredRestart(
+                  result,
+                  c.operationId,
+                  restored,
+                );
               });
             };
           },

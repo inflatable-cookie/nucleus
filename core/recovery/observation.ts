@@ -205,7 +205,8 @@ export class Observation {
             continue;
           const current = this.store.task(task.id);
           if (!current.resolution.stop) {
-            const roleLabel = run.role === "recovery" ? "coordinator" : run.role;
+            const roleLabel =
+              run.role === "recovery" ? "coordinator" : run.role;
             this.resolution.waiting(
               current,
               `Uncertain ${run.role} creation ${run.id}; use run.start ${roleLabel} fresh replacing=${run.id} or run.release run=${run.id}`,
@@ -254,7 +255,10 @@ export class Observation {
           this.resolution.update(
             taskStop,
             { stop: null },
-            { phase: transientBeforeClear.resumePhase, reason: "Fresh host observation recovered; resuming task" },
+            {
+              phase: transientBeforeClear.resumePhase,
+              reason: "Fresh host observation recovered; resuming task",
+            },
             "host_read_transient_phase_restored",
             transientBeforeClear.resumePhase,
           );

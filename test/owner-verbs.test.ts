@@ -2252,7 +2252,6 @@ test("a checkpointed review: restart role=reviewer continues it; Queue derives t
   }
 });
 
-
 test("an aged queue checkpoint wait suggests available exits while holds and unknown effects keep their fences", async () => {
   const f = fixture();
   try {
@@ -2855,7 +2854,6 @@ test("a changed workerless review-entry head refuses; a same-head review move re
     await f.close();
   }
 });
-
 
 test("a legacy author-escalation row: move to work continues the author", async () => {
   const f = fixture();
@@ -3748,7 +3746,10 @@ test("qualified owner verb callers keep planner force authority scoped to the sa
   const f = fixture();
   try {
     f.store.setMeta("hostRegistry", [{ id: "host", endpoint: "synthetic" }]);
-    Object.assign(f.engine.adapter, { hostId: "host", isConnected: () => true });
+    Object.assign(f.engine.adapter, {
+      hostId: "host",
+      isConnected: () => true,
+    });
     f.store.upsertProject({
       key: "caller-project",
       name: "Caller project",
@@ -3759,8 +3760,20 @@ test("qualified owner verb callers keep planner force authority scoped to the sa
       agentId: "planner",
       setBy: "operator (board)",
     });
-    f.engine.adapter.listLiveAgents = async () => [{ id: "planner", title: "Planner", workspaceId: null, directory: "/repo" }];
-    f.engine.adapter.originAgent = async id => ({ id, title: id, workspaceId: null, archived: false });
+    f.engine.adapter.listLiveAgents = async () => [
+      {
+        id: "planner",
+        title: "Planner",
+        workspaceId: null,
+        directory: "/repo",
+      },
+    ];
+    f.engine.adapter.originAgent = async (id) => ({
+      id,
+      title: id,
+      workspaceId: null,
+      archived: false,
+    });
     assert.equal(
       await f.engine.forceCallerAuthorized(
         f.task(),

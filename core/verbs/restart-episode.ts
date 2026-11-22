@@ -388,7 +388,8 @@ export class EpisodeRestarts {
           !candidate.completion &&
           ["intent", "uncertain"].includes(candidate.status),
       );
-    const roleLabel = run?.role === "recovery" ? "coordinator" : (run?.role ?? "reviewer");
+    const roleLabel =
+      run?.role === "recovery" ? "coordinator" : (run?.role ?? "reviewer");
     throw Error(
       run
         ? `Resolution creation ${run.id} is uncertain; use run.start ${roleLabel} fresh replacing=${run.id} or run.release run=${run.id}`

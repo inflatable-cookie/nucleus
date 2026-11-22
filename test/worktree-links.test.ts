@@ -1643,7 +1643,6 @@ test(
   },
 );
 
-
 test(
   "an intent recorded before this code gets no links when it binds after the upgrade, by creation or recovery",
   { timeout: HOOK_TEST_TIMEOUT_MS },

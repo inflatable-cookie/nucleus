@@ -305,7 +305,6 @@ async function reviewerCreationFixture(t: TestContext) {
   };
 }
 
-
 test("connect accepts an unseen nightly on structural probes, records its version and preserves capabilities", async (t) => {
   const { host, server } = await fixture(t);
   assert.equal(host.hostId, "t3code:synthetic-environment");

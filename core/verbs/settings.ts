@@ -103,10 +103,7 @@ export class SettingsControls {
         "Task changed; refresh before retrying",
       );
       if (input.critical !== undefined) {
-        if (
-          !planner &&
-          input.caller !== OPERATOR_BOARD_CALLER
-        )
+        if (!planner && input.caller !== OPERATOR_BOARD_CALLER)
           throw Error("Only the planner or operator may change critical");
         const other = [
           "scope",

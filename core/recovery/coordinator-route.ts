@@ -13,9 +13,7 @@ import {
 import { randomBytes, randomUUID } from "node:crypto";
 import { digest, now } from "../store/store";
 import type { Completion, Run, Task } from "../../shared/contracts";
-import {
-  incidentBindsCurrentWork,
-} from "../../shared/contracts";
+import { incidentBindsCurrentWork } from "../../shared/contracts";
 import {
   isDispositionActive,
   isDispositionComplete,
@@ -75,7 +73,8 @@ import {
 /** Open-PR identity or leftover proof wait after a verified merge: Resolution closes out; a coordinator cannot. */
 const mergedCloseoutNeedsNoCoordinator = (t: Task) => {
   return (
-    (t.reasonFact?.code === "pr_identity" || t.resolution.stop?.fact?.code === "pr_identity") ||
+    t.reasonFact?.code === "pr_identity" ||
+    t.resolution.stop?.fact?.code === "pr_identity" ||
     t.resolution.stop?.reason === "awaiting_proof"
   );
 };
@@ -294,81 +293,82 @@ export class CoordinatorRoute {
       // Spec 067: a mechanical stall that no fact cleared within its window launches
       // the task's coordinator with the explicit commands available (loop breaker stays).
       if (!mechanicalStallDue) {
-      // A wait on progressing work belongs to the loop that recorded it (dispatch,
-      // resolution, the quantum), and exhaustion failover re-evaluates its own wait
-      // every sweep. Rechecking those with another predicate cleared live waits.
-      if (!needsAttention(t, this.store) || t.failoverReason) return null;
-      let waiting = true;
-      if (stop.reason === "capacity")
-        waiting = Boolean(this.resolution.slotAdmissionReason(t, true));
-      else if (stop.reason === "provider_unavailable") {
-        const group =
-          t.profileGroup ??
-          this.store
-            .runs(t.id)
-            .findLast((run) => run.agentId === t.agentId && run.profile)
-            ?.profileGroup;
-        const row = group
-          ? (this.store.availability().find((entry) => entry.group === group) ??
-            null)
-          : null;
-        waiting = Boolean(row && groupIsUnavailable(row));
-      } else if (stop.reason === "external_unavailable") {
-        const hostReadHold = isHostReadRecoveryHeld(this.store, t);
-        if (hostReadHold === "exhausted") return undefined;
-        const hostReadEpisode =
-          hostReadHold === "waiting"
-            ? readHostReadTransientEpisode(this.store, t.id, "task")
+        // A wait on progressing work belongs to the loop that recorded it (dispatch,
+        // resolution, the quantum), and exhaustion failover re-evaluates its own wait
+        // every sweep. Rechecking those with another predicate cleared live waits.
+        if (!needsAttention(t, this.store) || t.failoverReason) return null;
+        let waiting = true;
+        if (stop.reason === "capacity")
+          waiting = Boolean(this.resolution.slotAdmissionReason(t, true));
+        else if (stop.reason === "provider_unavailable") {
+          const group =
+            t.profileGroup ??
+            this.store
+              .runs(t.id)
+              .findLast((run) => run.agentId === t.agentId && run.profile)
+              ?.profileGroup;
+          const row = group
+            ? (this.store
+                .availability()
+                .find((entry) => entry.group === group) ?? null)
             : null;
-        waiting =
-          !this.resolution.hostAvailable(t) ||
-          (hostReadHold === "waiting" &&
-            hostReadEpisode?.step !== "Coordinator admission");
-      } else if (stop.reason === "route_unavailable") {
-        if (isHostReadRecoveryHeld(this.store, t) === "exhausted")
-          return undefined;
-        // A coordinator can route the waiting role elsewhere (Tom, 2026-10-19), so
-        // the wait holds only while no coordinator is routable either.
-        const selection = this.resolution.select(
-          t,
-          "coordinator",
-          [],
-          refusedLaunchProfiles(this.store, t.id),
-        );
-        waiting = !selection;
-      } else if (stop.reason === "workspace_unavailable") {
-        waiting =
-          !t.workspaceId ||
-          Boolean(
-            this.resolution.adapter.workspaceAvailable &&
-              !(await this.resolution.adapter.workspaceAvailable(
-                t.workspaceId,
-              )),
+          waiting = Boolean(row && groupIsUnavailable(row));
+        } else if (stop.reason === "external_unavailable") {
+          const hostReadHold = isHostReadRecoveryHeld(this.store, t);
+          if (hostReadHold === "exhausted") return undefined;
+          const hostReadEpisode =
+            hostReadHold === "waiting"
+              ? readHostReadTransientEpisode(this.store, t.id, "task")
+              : null;
+          waiting =
+            !this.resolution.hostAvailable(t) ||
+            (hostReadHold === "waiting" &&
+              hostReadEpisode?.step !== "Coordinator admission");
+        } else if (stop.reason === "route_unavailable") {
+          if (isHostReadRecoveryHeld(this.store, t) === "exhausted")
+            return undefined;
+          // A coordinator can route the waiting role elsewhere (Tom, 2026-10-19), so
+          // the wait holds only while no coordinator is routable either.
+          const selection = this.resolution.select(
+            t,
+            "coordinator",
+            [],
+            refusedLaunchProfiles(this.store, t.id),
           );
-      } else if (stop.reason === "prerequisite") {
-        const prerequisite = t.prerequisiteWait
-          ? this.store.reconcilePrerequisiteWait(t.id)
-          : "none";
-        t = this.store.task(t.id);
-        // Both kinds: a post-dispatch prerequisite wait, and a queued task's pre-dispatch dependsOn.
-        waiting =
-          prerequisite !== "none" ||
-          Boolean(t.prerequisiteWait && !t.prerequisiteWait.releasedAt) ||
-          Boolean(this.store.dependencyWait(t));
-      }
-      // Origin activity, PR-head lag and the rest of the ordinary lifecycle waits
-      // are rechecked by the task quantum before recovery routing reaches here.
-      if (waiting) return null;
-      t = this.resolution.update(
-        t,
-        { stop: null },
-        {},
-        "task_wait_cleared",
-        stop.reason,
-      );
-      // A wait that no longer holds leaves nothing for a coordinator unless the
-      // task still needs attention; ordinary progress resumes on its own.
-      if (!needsAttention(t, this.store)) return null;
+          waiting = !selection;
+        } else if (stop.reason === "workspace_unavailable") {
+          waiting =
+            !t.workspaceId ||
+            Boolean(
+              this.resolution.adapter.workspaceAvailable &&
+                !(await this.resolution.adapter.workspaceAvailable(
+                  t.workspaceId,
+                )),
+            );
+        } else if (stop.reason === "prerequisite") {
+          const prerequisite = t.prerequisiteWait
+            ? this.store.reconcilePrerequisiteWait(t.id)
+            : "none";
+          t = this.store.task(t.id);
+          // Both kinds: a post-dispatch prerequisite wait, and a queued task's pre-dispatch dependsOn.
+          waiting =
+            prerequisite !== "none" ||
+            Boolean(t.prerequisiteWait && !t.prerequisiteWait.releasedAt) ||
+            Boolean(this.store.dependencyWait(t));
+        }
+        // Origin activity, PR-head lag and the rest of the ordinary lifecycle waits
+        // are rechecked by the task quantum before recovery routing reaches here.
+        if (waiting) return null;
+        t = this.resolution.update(
+          t,
+          { stop: null },
+          {},
+          "task_wait_cleared",
+          stop.reason,
+        );
+        // A wait that no longer holds leaves nothing for a coordinator unless the
+        // task still needs attention; ordinary progress resumes on its own.
+        if (!needsAttention(t, this.store)) return null;
       }
     }
     // An open linked decision owns the next move; an unchanged reason must not
@@ -468,7 +468,8 @@ export class CoordinatorRoute {
     // reads inside one pass are shared by `validationEvidence`.
     const reminderHeld =
       t.resolution.incident?.action === "callback_reminder" ||
-      (t.reasonFact?.code === "callback_expired" || t.reasonFact?.code === "callback_attention");
+      t.reasonFact?.code === "callback_expired" ||
+      t.reasonFact?.code === "callback_attention";
     if (
       reminderHeld &&
       this.resolution.validationEvidence(t, { fresh: true }).state !== "absent"
@@ -686,7 +687,10 @@ export class CoordinatorRoute {
         this.episode.wait(t, capacityWait, "capacity");
         return null;
       }
-      if ((!mechanicalStallDue && !(await this.resolution.lease(t))) || this.resolution.startsNoRuns())
+      if (
+        (!mechanicalStallDue && !(await this.resolution.lease(t))) ||
+        this.resolution.startsNoRuns()
+      )
         return null;
       let agentId = t.coordinatorAgentId || null,
         workspaceId = t.resolution.coordinatorWorkspaceId ?? t.workspaceId,

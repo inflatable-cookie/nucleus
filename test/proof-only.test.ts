@@ -458,7 +458,6 @@ test("owner restart re-detaches a retained checkout left at the base tip and adm
   }
 });
 
-
 test("every task checkout-target call site resolves through taskCheckoutTarget", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const sources = new Map<string, string>();
@@ -574,7 +573,6 @@ test("every task checkout-target call site resolves through taskCheckoutTarget",
     "the proof-only resolution must precede the planning-base handling",
   );
 });
-
 
 test("a proof-only qualification runs once at a detached merged commit and closes on retained reviewer pass", async () => {
   const f = fixture();

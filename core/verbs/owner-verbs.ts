@@ -39,7 +39,11 @@ import { buildOutputDisclosure } from "../../shared/build-output-disclosure";
 import { routeRoles, verbInput, applyMapped } from "./owner-shared";
 import type { RouteRole, OwnerVerb } from "./owner-shared";
 import { replacementAllowanceNote, durableRunFence } from "./owner-facts";
-import { effectiveDefaultHostKind, hostKindOf, type HostKind } from "../../shared/host-kind";
+import {
+  effectiveDefaultHostKind,
+  hostKindOf,
+  type HostKind,
+} from "../../shared/host-kind";
 import type { OwnerVerbFacts } from "./owner-facts";
 import { assembleOwnerTaskNext } from "./task-next";
 import { restart } from "./owner-restart";
@@ -115,7 +119,9 @@ function workerHostRouteView(
   if (eligibleOtherHosts.length > 0) {
     const preferredKinds = [
       facts.store.repositoryFor(task.repoPath)?.hostKind,
-      effectiveDefaultHostKind(facts.store.getMeta<HostKind | null>("operatorDefaultHostKind")),
+      effectiveDefaultHostKind(
+        facts.store.getMeta<HostKind | null>("operatorDefaultHostKind"),
+      ),
     ];
     const targetHost =
       preferredKinds.flatMap((kind) =>

@@ -457,7 +457,8 @@ export class RouteControls {
             )
           : null;
       if (agentless && !recoveryObservation) {
-        const roleLabel = agentless.role === "recovery" ? "coordinator" : agentless.role;
+        const roleLabel =
+          agentless.role === "recovery" ? "coordinator" : agentless.role;
         throw Error(
           `The ${role} creation ${agentless.id} is uncertain; use run.start ${roleLabel} fresh replacing=${agentless.id} or run.release run=${agentless.id}`,
         );

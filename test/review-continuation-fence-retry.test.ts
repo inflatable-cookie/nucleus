@@ -121,7 +121,6 @@ test("an idle reviewer with a delivered checkpoint can redeliver its report on t
   }
 });
 
-
 test("an owner restarts an exhausted checkpoint through the retained reviewer", async () => {
   const f = fixture();
   try {
@@ -189,7 +188,6 @@ test("a prior result fence does not force a fresh reviewer when the retained rea
     await f.close();
   }
 });
-
 
 test("observation settles an orphan run fencing a checkpoint and Queue continues without a turn-end event", async () => {
   const f = fixture();
@@ -544,7 +542,6 @@ function undeliveredReportCase(f: ReturnType<typeof fixture>) {
     `${f.runId}: exact lookup bound agent review-agent in workspace; its dispatch delivery is not yet observed`,
   );
 }
-
 
 test("the already-asked refusal names the delivered continuation it waits on", async () => {
   const f = fixture();

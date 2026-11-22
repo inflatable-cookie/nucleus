@@ -5391,7 +5391,6 @@ test("an observation disconnect preserves an existing task blocker", async () =>
   }
 });
 
-
 test("papercuts have two separate slots per project while sharing the global cap", async () => {
   const f = fixture();
   try {

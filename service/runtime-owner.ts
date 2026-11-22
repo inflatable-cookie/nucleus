@@ -2323,14 +2323,20 @@ export class QueueRuntime {
       request.action === "phase.set" ||
       request.action === "message.send"
     )
-      return resolveExplicitly(this.engine, request, task => {
-        if (task.removedAt) return "The scheduler leaves this removed task alone.";
+      return resolveExplicitly(this.engine, request, (task) => {
+        if (task.removedAt)
+          return "The scheduler leaves this removed task alone.";
         const next = this.taskNext({ taskId: task.id });
         if (next.paused) return "The scheduler waits for Nucleus to resume.";
-        if (next.stop) return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
-        if (["awaiting_review", "reviewing"].includes(task.phase) && !next.activeRun)
+        if (next.stop)
+          return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
+        if (
+          ["awaiting_review", "reviewing"].includes(task.phase) &&
+          !next.activeRun
+        )
           return "The scheduler rechecks reviewer admission at the recorded PR head.";
-        if (next.activeRun) return `The scheduler checks the ${next.activeRun.role} run for progress.`;
+        if (next.activeRun)
+          return `The scheduler checks the ${next.activeRun.role} run for progress.`;
         return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
       });
     const input = this.engine.resolveTaskControl(request);
@@ -2576,7 +2582,11 @@ export class QueueRuntime {
       | { requestId: string }
       | { repository: string; since: string; expectedHead: string },
   ) {
-    return { ownerInstance: this.owner, ownerPid: process.pid, ...this.repositories.projectQaRequestStatus(input) };
+    return {
+      ownerInstance: this.owner,
+      ownerPid: process.pid,
+      ...this.repositories.projectQaRequestStatus(input),
+    };
   }
   async listProjectQa() {
     return this.repositories.listProjectQa();

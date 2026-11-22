@@ -56,7 +56,9 @@ import {
 } from "./reviewer-report";
 
 const agentlessCreation = (run: Run): boolean =>
-  !run.agentId && !run.completion && ["intent", "uncertain"].includes(run.status);
+  !run.agentId &&
+  !run.completion &&
+  ["intent", "uncertain"].includes(run.status);
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -848,7 +850,7 @@ export const restart: OwnerVerb = {
         available: true,
         fill: ["reason"],
         args: { taskId: task.id, version: task.version, role: "reviewer" },
-        note: `${reviewer.reviewBudgetExhaustedAt ? "The checkpoint allowance is spent. " : ""}Asks retained reviewer ${reviewer.agentId} to resend the report or finish the review on run ${reviewer.id} after observing it idle.${rejectedReadingNote(reviewer)}`,
+        note: `${reviewer.reviewBudgetExhaustedAt ? "The checkpoint allowance is spent. " : ""}Asks retained reviewer ${reviewer.agentId} to resend the report or finish the review on run ${reviewer.id} after observing it idle (or use message.send reviewer / run.start reviewer retained explicitly).${rejectedReadingNote(reviewer)}`,
       };
     }
     if (shape === "absent_worker") {
@@ -862,7 +864,8 @@ export const restart: OwnerVerb = {
           !candidate.released &&
           !candidate.agentId,
       );
-      const roleLabel = run?.role === "recovery" ? "coordinator" : (run?.role ?? "reviewer");
+      const roleLabel =
+        run?.role === "recovery" ? "coordinator" : (run?.role ?? "reviewer");
       return {
         available: false,
         refusal: run

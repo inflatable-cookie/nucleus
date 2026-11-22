@@ -61,6 +61,7 @@ export type TaskQuantumContext = Pick<
   | "reconcile"
   | "reconcileBlockedEffects"
   | "reconcileClosedRetainedReviewer"
+  | "recoverExistingWorkspace"
   | "routeTask"
   | "scheduleLane"
   | "settleFinishedRuns"
@@ -507,7 +508,10 @@ export class TaskQuantum {
         const restored = this.context.resolution.update(
           this.context.store.task(task.id),
           { stop: null, attention: false },
-          { phase: "queued", reason: "Fresh host observation recovered; requeued" },
+          {
+            phase: "queued",
+            reason: "Fresh host observation recovered; requeued",
+          },
           "host_read_transient_phase_restored",
           "queued",
         );
@@ -520,14 +524,24 @@ export class TaskQuantum {
         (task.workspaceIntent && !task.workspaceId) ||
         (task.agentIntent && !task.agentId)
       ) {
-        if (!task.resolution.stop) {
+        const bound =
+          task.workspaceIntent && !task.workspaceId
+            ? await this.context.recoverExistingWorkspace(task)
+            : false;
+        const latest = this.context.store.task(task.id);
+        if (!bound && !latest.resolution.stop) {
           this.context.resolution.waiting(
-            task,
-            task.agentIntent && !task.agentId
-              ? `Worker creation is uncertain; use run.start worker fresh${task.runId ? ` replacing=${task.runId}` : ""} or run.release`
+            latest,
+            latest.agentIntent && !latest.agentId
+              ? `Worker creation is uncertain; use run.start worker fresh${latest.runId ? ` replacing=${latest.runId}` : ""} or run.release`
               : "Workspace creation is uncertain; inspect the host and resolve explicitly",
             "lifecycle",
-            { fact: { code: "worker_lookup", ...(task.runId ? { subject: task.runId } : {}) } },
+            {
+              fact: {
+                code: "worker_lookup",
+                ...(latest.runId ? { subject: latest.runId } : {}),
+              },
+            },
           );
         }
       } else if (
@@ -603,7 +617,9 @@ export class TaskQuantum {
           // Only Queue's own origin error text is classified. A task reason can
           // be an agent's report, and reading a wait out of it invents one.
           const detail =
-            current.originError || current.reason || UNKNOWN_TASK_ATTENTION_REASON;
+            current.originError ||
+            current.reason ||
+            UNKNOWN_TASK_ATTENTION_REASON;
           const classification = current.originError
             ? taskStopClassification(detail)
             : {
