@@ -56,8 +56,8 @@ export type PipelineBoard = {
   cards: Record<PipelineColumn, PipelineCard[]>;
 };
 
-/** Triage pages (Tom, 2026-11-07): a column shows one page of cards, then an "…and N more" card loads the next. */
-export const triagePageSize = 8;
+/** Triage pages (Tom, 2026-11-07; 25 since 2026-11-22): a column shows one page of cards, then an "…and N more" card loads the next. */
+export const triagePageSize = 25;
 export function triagePage<T>(
   cards: T[],
   shown: number,
