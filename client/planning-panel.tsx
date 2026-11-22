@@ -1189,7 +1189,6 @@ export function PlanningTab({
         const at = projectLastActivity({
           project: section.project,
           activity: activityByKey.get(section.project.key),
-          lanes,
           tasks,
           plan: section.latest,
         });
@@ -1263,6 +1262,8 @@ export function PlanningTab({
       <PlanEditor section={section} {...editorProps} onRetry={onRetryPlans} />
     ) : (
       <ProjectRoadmapView
+        // Each project's roadmap keeps its own History and Finished state.
+        key={section.project.key}
         section={section}
         group={groupOf(section)}
         badge={badgeFor(section.project)}

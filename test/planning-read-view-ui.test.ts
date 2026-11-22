@@ -113,7 +113,7 @@ test("1531 wide: the list groups projects with a status line in words, and the f
     assert.equal(ui.query("1 need you in BB as a host"), undefined);
     assert.ok(
       ui.get(
-        "Progress for Queue reliability: 1 need you, 1 working, 1 in review, 1 queued, 2 done",
+        "Progress for Queue reliability: 1 need you, 1 working, 1 in review, 1 queued, 2 finished",
       ),
     );
     ui.press("Finished lanes, 2");

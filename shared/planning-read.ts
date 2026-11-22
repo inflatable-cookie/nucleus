@@ -1,5 +1,5 @@
 import type { LaneView, Project, ProjectPlan, TaskSummary } from "./contracts";
-import { projectLanes, projectPlanningCounts } from "./planning-tab";
+import { projectPlanningCounts } from "./planning-tab";
 import { hiddenQueuedByProject } from "./queued-more";
 import {
   projectDormantByActivity,
@@ -46,14 +46,14 @@ export function projectGroup(
 
 /**
  * A project row's last activity: the store-wide activity read's `lastAt` (the newest
- * task, outcome or lead in the project's repositories, in a lane or not, with no window),
- * then its recent items, the project's lanes' last activity, its live tasks' own times and
- * the plan's last save. The newest wins; null when the project has none.
+ * task, outcome or lead in the project's own repositories, in a lane or not, with no
+ * window), its recent items, its live tasks' own times and the plan's last save. The newest
+ * wins; null when the project has none. Lane activity is never read: a lane two projects
+ * share carries the other project's work too (review 6010316003).
  */
 export function projectLastActivity(input: {
   project: Project;
   activity?: ProjectActivity;
-  lanes: readonly LaneView[];
   tasks: readonly Pick<
     TaskSummary,
     "repoPath" | "repository" | "updatedAt" | "phase"
@@ -69,9 +69,6 @@ export function projectLastActivity(input: {
   const times = [
     input.activity?.lastAt,
     ...(input.activity?.items ?? []).map((item) => item.at),
-    ...projectLanes(input.project, [...input.lanes]).map(
-      (lane) => lane.lastActivityAt,
-    ),
     ...input.tasks
       .filter((task) => owns(task.repository, task.repoPath))
       .map((task) => task.updatedAt),

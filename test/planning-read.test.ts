@@ -1,10 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  projectSchema,
-  laneViewSchema,
-  type TaskSummary,
-} from "../shared/contracts";
+import { projectSchema, type TaskSummary } from "../shared/contracts";
 import { projectLastActivity, projectStatus } from "../shared/planning-read";
 
 const repo = { origin: "fixture/app", path: "/fixture/app" };
@@ -14,38 +10,18 @@ const project = projectSchema.parse({
   repositories: [repo],
   primary: repo,
 });
-const lane = (key: string, lastActivityAt: string | null) =>
-  laneViewSchema.parse({
-    id: key,
-    key,
-    title: key,
-    aim: `Aim ${key}`,
-    status: "active",
-    repositories: [repo],
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    liveByPhase: {},
-    liveByRepository: {},
-    terminalCount: 0,
-    lastActivityAt,
-  });
-
-test("1531 a project row's last activity reaches past the three-day activity read", () => {
-  // No recent items at all: the store-wide read is empty, but the lanes remember older work.
-  const lanes = [
-    lane("old", "2026-09-01T10:00:00.000Z"),
-    lane("older", "2026-08-01T10:00:00.000Z"),
-  ];
+test("1531 a project row's last activity is its own work however old, never a shared lane's", () => {
+  // The store's unwindowed lastAt covers work with no lane at all, past the three-day window.
+  const activity = {
+    key: "app",
+    items: [],
+    lastAt: "2026-07-01T00:00:00.000Z",
+  };
   assert.equal(
-    projectLastActivity({
-      project,
-      activity: { key: "app", items: [] },
-      lanes,
-      tasks: [],
-    }),
-    "2026-09-01T10:00:00.000Z",
+    projectLastActivity({ project, activity, tasks: [] }),
+    "2026-07-01T00:00:00.000Z",
   );
-  // A plan save or a live task newer than the lanes wins; another project's task never counts.
+  // A live task in the project's repository or a plan save newer than that wins; another project's task never counts.
   const tasks = [
     {
       repoPath: "/fixture/app",
@@ -59,29 +35,19 @@ test("1531 a project row's last activity reaches past the three-day activity rea
     },
   ] as Pick<TaskSummary, "repoPath" | "repository" | "updatedAt" | "phase">[];
   assert.equal(
-    projectLastActivity({ project, lanes, tasks }),
+    projectLastActivity({ project, activity, tasks }),
     "2026-09-05T10:00:00.000Z",
   );
   assert.equal(
     projectLastActivity({
       project,
-      lanes,
+      activity,
       tasks,
       plan: { createdAt: "2026-10-01T00:00:00.000Z" },
     }),
     "2026-10-01T00:00:00.000Z",
   );
-  assert.equal(projectLastActivity({ project, lanes: [], tasks: [] }), null);
-  // The store's unwindowed lastAt covers work with no lane at all.
-  assert.equal(
-    projectLastActivity({
-      project,
-      activity: { key: "app", items: [], lastAt: "2026-07-01T00:00:00.000Z" },
-      lanes: [],
-      tasks: [],
-    }),
-    "2026-07-01T00:00:00.000Z",
-  );
+  assert.equal(projectLastActivity({ project, tasks: [] }), null);
 });
 
 test("1531 a project row counts a task in two lanes once, and adds the queued tasks the board holds back", () => {

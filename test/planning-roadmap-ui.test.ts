@@ -58,6 +58,7 @@ const lane = (key: string) =>
     key,
     title: `Title ${key}`,
     aim: `Aim ${key}`,
+    status: "active",
     repositories: [repo("alpha")],
     liveByPhase: { working: 1 },
     terminalCount: 3,
@@ -121,6 +122,7 @@ type MountOver = {
   leads?: LeadListFacts[];
   projectActivity?: ProjectActivity[];
   tasks?: TaskSummary[];
+  readPlanVersion?: (project: string, version: number) => Promise<ProjectPlan>;
 };
 
 async function mountTab(over: MountOver = {}) {
@@ -547,7 +549,7 @@ test("041-2 / 1531 rendered: Now, Next and Later columns, finished lanes collaps
   assert.match(text("Later column"), /Title l1/);
   assert.match(ui.text(), /Aim n1/);
   assert.match(ui.text(), /Ship it/);
-  assert.ok(ui.get("Progress for Title n1: 1 working, 3 done"));
+  assert.ok(ui.get("Progress for Title n1: 1 working, 3 finished"));
   assert.equal(
     ui.query("Open lane Title d-old, finished"),
     undefined,
@@ -573,9 +575,60 @@ test("041-2 / 1531 rendered: Now, Next and Later columns, finished lanes collaps
   );
   ui.press("Show alpha plan history");
   assert.match(JSON.stringify(ui.get("Plan history for alpha")), /Version 4/);
+  // "joined" sits in the live projection but not in version 4 as saved, so it is not planned yet.
   assert.match(
     JSON.stringify(ui.get("Plan history for alpha")),
-    /1 lane is not in the plan yet: Title unplanned/,
+    /2 lanes are not in the plan yet: Title joined, Title unplanned/,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(ui.get("Now in version 4")),
+    /Title joined/,
+    "the saved membership never lists a lane that joined after it",
+  );
+});
+
+test("1531 History reads the selected project's own versions, and switching projects starts over at its latest", async () => {
+  const betaPlan: ProjectPlan = {
+    ...latest,
+    project: "beta",
+    version: 1,
+    entries: [entry("b1", "now")],
+  };
+  const reads: Array<[string, number]> = [];
+  const readPlanVersion = async (project: string, version: number) => {
+    reads.push([project, version]);
+    return project === "beta" ? betaPlan : { ...saved, version };
+  };
+  const { ui } = await mountTab({
+    lanes: [...lanes, lane("b1")],
+    sections: [
+      { project: projects[0], latest, saved },
+      { project: projects[1], latest: betaPlan, saved: betaPlan },
+    ],
+    readPlanVersion,
+  });
+  ui.press("Show alpha plan history");
+  ui.press("Show the earlier version of the alpha plan");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(reads, [
+    ["alpha", 4],
+    ["alpha", 3],
+  ]);
+  ui.press("Project row beta");
+  ui.press("Show beta plan history");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    reads.at(-1),
+    ["beta", 1],
+    "beta opens on its own latest save, not alpha's version 3",
+  );
+  assert.equal(
+    reads.some(([project, version]) => project === "beta" && version !== 1),
+    false,
+  );
+  assert.match(
+    JSON.stringify(ui.get("Plan history for beta")),
+    /Version 1 · saved .* · the latest/,
   );
 });
 

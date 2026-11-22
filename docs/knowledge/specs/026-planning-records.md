@@ -825,8 +825,9 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   lanes it is in (Spec 019), plus the queued tasks the board holds back; "need you" is the
   distinct ones that are blocked, in error or need attention. Last activity is the newest
   item the store-wide activity read knows for the project with no window (`lastAt`: a
-  task, outcome or lead in its repositories, in a lane or not), or a newer lane, live task
-  or plan save, so a project quiet for more than three days still shows a date.
+  task, outcome or lead in its repositories, in a lane or not), or a newer live task or
+  plan save, so a project quiet for more than three days still shows a date. Lane activity
+  is never read, because a lane two projects share carries the other project's work too.
   Selecting a row shows that project's roadmap; there are no accordions in the list.
 - **Roadmap (detail pane):** the project's badge and name, "Plan updated <age> by
   <author>" (never the version number), History, and Edit plan (the edit icon, as every
@@ -836,13 +837,15 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   and Later are columns, each with its count and a one-line hint, and they stack into one
   column in a narrow pane. A lane card shows its title with a "N need you" pill, its aim
   clamped to three lines, a bar of live tasks by phase with the counts in words and the
-  finished count, and "Done when". An empty column says "Nothing here". Finished lanes sit
+  finished count (done, cancelled and superseded alike, so it says "finished", not
+  "done"), and "Done when". An empty column says "Nothing here". Finished lanes sit
   in a collapsed row at the bottom. History reads each save exactly as stored with
   `plan.get` (the latest included, never the live projection of lanes that joined or
   closed since), opening on the latest and paging back through every earlier version. A
   version shows who saved it and when, its idle mark, and its Now, Next and Later lanes
-  with the note and finish line saved for each; the latest also names the lanes the plan
-  does not list yet. Edit plan opens
+  with the note and finish line saved for each; the latest also names the open lanes its
+  save does not list yet, including any that joined the live plan since. Each project's
+  History opens on that project's latest save. Edit plan opens
   the plan editor unchanged ([Spec 041](041-planning-roadmap.md)).
 - **Lane page:** opens in the detail pane from a lane card, with the breadcrumb
   Planning › Project › Lane. The header has the title and chips for its horizon in the

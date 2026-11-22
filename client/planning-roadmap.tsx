@@ -159,7 +159,8 @@ export function LaneProgress({
   const total = groups.reduce((sum, item) => sum + item.count, 0);
   const words = [
     ...groups.map((item) => `${item.count} ${PHASE_GROUP_WORDS[item.group]}`),
-    `${lane.terminalCount.toLocaleString()} done`,
+    // Finished, not done: the total counts cancelled and superseded work too.
+    `${lane.terminalCount.toLocaleString()} finished`,
   ];
   return (
     <View
@@ -219,7 +220,9 @@ export function LaneProgress({
             </Text>
           </View>
         ))}
-        <Text style={meta(c)}>{lane.terminalCount.toLocaleString()} done</Text>
+        <Text style={meta(c)}>
+          {lane.terminalCount.toLocaleString()} finished
+        </Text>
       </View>
     </View>
   );
@@ -626,7 +629,14 @@ function PlanHistory({
   c: Colors;
 }) {
   const r = roles(c);
-  const [viewing, setViewing] = useState(latest.version);
+  // The version on screen belongs to one project: another project starts at its own latest save.
+  const [pick, setPick] = useState({
+    project: project.key,
+    version: latest.version,
+  });
+  const viewing = pick.project === project.key ? pick.version : latest.version;
+  const setViewing = (version: number) =>
+    setPick({ project: project.key, version });
   const [read, setRead] = useState<{
     version: number;
     plan?: ProjectPlan;
@@ -687,8 +697,8 @@ function PlanHistory({
           {shown.idle && (
             <Text style={meta(c)}>
               Idle on purpose since {formatLocalDateTime(shown.idle.at)}:{" "}
-              {shown.idle.reason}. Saving a changed plan or finishing new work
-              ends it.
+              {shown.idle.reason.replace(/[.!?]+$/, "")}. Saving a changed plan
+              or finishing new work ends it.
             </Text>
           )}
           {PLAN_HORIZONS.map((horizon) => {
@@ -817,7 +827,11 @@ export function ProjectRoadmapView({
   c: Colors;
 }) {
   const r = roles(c);
-  const [history, setHistory] = useState(false);
+  // History is open for one project at a time, so a newly picked project's opens closed.
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
+  const history = historyFor === section.project.key;
+  const setHistory = (open: boolean) =>
+    setHistoryFor(open ? section.project.key : null);
   const [finished, setFinished] = useState(false);
   const { project, latest, error } = section;
   const name = project.name;
@@ -832,12 +846,19 @@ export function ProjectRoadmapView({
   const projectKeys = new Set(
     projectLanes(project, lanes).map((lane) => lane.key),
   );
+  // "Not in the plan yet" is against the latest save as stored: a lane that joined the
+  // live projection after it is not planned until a save names it.
   const planned = new Set([
-    ...(latest?.entries ?? []).map((entry) => entry.lane),
+    ...(section.saved?.entries ?? latest?.entries ?? []).map(
+      (entry) => entry.lane,
+    ),
     ...(latest?.done ?? []).map((entry) => entry.lane),
   ]);
   const unplanned = lanes.filter(
-    (lane) => projectKeys.has(lane.key) && !planned.has(lane.key),
+    (lane) =>
+      projectKeys.has(lane.key) &&
+      !planned.has(lane.key) &&
+      (lane.status === "active" || lane.status === "paused"),
   );
   const stacked =
     forceStacked || (width > 0 && width < planningRead.columnsMin);
@@ -1038,6 +1059,7 @@ export function ProjectRoadmapView({
       )}
       {latest && history && (
         <PlanHistory
+          key={project.key}
           project={project}
           latest={latest}
           saved={section.saved}

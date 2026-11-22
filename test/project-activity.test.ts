@@ -666,3 +666,59 @@ test("nucleus#1531 rows: lastAt is the newest owned repository time, and never a
     iso(NOW - 2 * DAY),
   );
 });
+
+test("nucleus#1531 store: a lane two projects share never lends one project the other's newer activity", () => {
+  const store = fixture();
+  try {
+    seedApp(store);
+    store.upsertProject({
+      key: "tool",
+      name: "Tool",
+      repositories: [{ origin: "owner/tool", path: "/tool" }],
+    });
+    store.upsertLane({
+      key: "shared",
+      title: "Shared",
+      aim: "One aim across both.",
+      repositories: [
+        { origin: "owner/app", path: "/app" },
+        { origin: "owner/tool", path: "/tool" },
+      ],
+    });
+    // App's only work is old; Tool finishes something in the shared lane just now.
+    const old = insertTask(store, "app-old");
+    store.update(old.id, { phase: "done", reason: "Done" });
+    const oldAt = ago(20 * DAY);
+    ageEvents(store, old.id, oldAt);
+    store.db.prepare("UPDATE outcomes SET finished_at=?").run(oldAt);
+    const recent = store.insert(
+      submissionSchema.parse({
+        submissionId: "tool-new",
+        title: "tool-new",
+        repoPath: "/tool",
+        planningCommit: head,
+        handoffPath: "tool-new.md",
+        originAgentId: "origin",
+        lanes: ["shared"],
+      }),
+      "host",
+      "handoff",
+      head,
+      {},
+      undefined,
+      "owner/tool",
+    );
+    store.update(recent.id, { phase: "done", reason: "Done" });
+    assert.equal(
+      readRows(store, "app").lastAt,
+      oldAt,
+      "App keeps its own last activity",
+    );
+    assert.ok(
+      Date.parse(readRows(store, "tool").lastAt!) > Date.parse(oldAt),
+      "Tool has the newer completion",
+    );
+  } finally {
+    store.close();
+  }
+});
