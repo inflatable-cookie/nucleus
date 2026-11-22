@@ -1,4 +1,4 @@
-import { Linking, Pressable, Text, View } from "react-native";
+import { Linking, Platform, Pressable, Text, View } from "react-native";
 import { Icon } from "../shell";
 import { muted, row, type Colors } from "../controls";
 import type {
@@ -178,16 +178,25 @@ export function PullRequestBadge({
   );
   const prUrl = task.prUrl;
   // The row's PR flag is a link (nucleus#1515): it opens the pull request and leaves
-  // the row's own press, which opens the task detail, untouched.
+  // the row's own press, which opens the task detail, untouched. On the web it renders
+  // as a real anchor (react-native-web turns `href` into `<a href>`), so Enter
+  // activates it natively; react-native-web leaves a link role's keyboard activation
+  // to that native click. Native hosts open it through Linking.
+  const web = Platform.OS === "web";
+  const anchor = {
+    href: prUrl,
+    hrefAttrs: { target: "_blank", rel: "noopener noreferrer" },
+  };
   if (flag)
     return (
       <Pressable
         accessibilityRole="link"
         accessibilityLabel={`${label}, open on GitHub`}
         hitSlop={touchSlop(cardRow.tile)}
+        {...(anchor as object)}
         onPress={(event?: { stopPropagation?: () => void }) => {
           event?.stopPropagation?.();
-          void Linking.openURL(prUrl);
+          if (!web) void Linking.openURL(prUrl);
         }}
         style={{
           flexDirection: "row",

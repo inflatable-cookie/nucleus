@@ -22,7 +22,6 @@ import {
 } from "../../shared/contracts";
 import { waitStateLabels } from "../../shared/wait-state";
 import { recordedStopIsHeld, recordedStopIsWait } from "../../shared/task-stop";
-import { hostDisplayLabel } from "../../shared/host-outage";
 import { decisionAge, phaseNeedsAttention } from "../../shared/pipeline-board";
 import {
   UNKNOWN_ASKER_LABEL,
@@ -812,7 +811,9 @@ export const TaskCard = React.memo(function TaskCard({
         ? `, Dispatch held by ${holdOwner}`
         : "";
   const accessibleWait = hostWait
-    ? `, Waiting on ${hostDisplayLabel(hostWait.hostId)} since ${hostWait.since}`
+    ? // The outage host and its start time are task detail (nucleus#1515); the row
+      // names the wait and its age, as its status line does.
+      `, Waiting on the host · ${decisionAge(hostWait.since)}`
     : plainWait
       ? `, ${plainWait}`
       : task.heavyRun

@@ -2048,6 +2048,20 @@ test("a task row keeps one status line and no host identity, while the detail ke
       !text.includes(routing),
       "the row carries no routing explanation",
     );
+    // The accessible name follows the row: the wait and its age, never the outage
+    // host's identity, its exact start time or the routing sentence.
+    const label = String((row as HostNode).props.accessibilityLabel);
+    assert.match(label, /Waiting on the host · \d+d ago/);
+    assert.doesNotMatch(
+      label,
+      /32be2844|T3Code host/,
+      "no host identifier in the label",
+    );
+    assert.ok(!label.includes(at), "no exact outage time in the label");
+    assert.ok(
+      !label.includes("not ruled out"),
+      "no routing sentence in the label",
+    );
 
     // The task detail keeps the host selection and the reason behind it.
     const { taskDetailView } = await import("../shared/task-view");
@@ -2724,8 +2738,27 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
       "opening the PR does not open the task",
     );
 
-    // Many projects stay inside line 1: two marks, a count, and the age keeps its place.
+    // A decision names its asking project by its display name.
+    assert.match(nodeText(asked), /^\s*Decision\s+AP\s+App\s+\d+d ago/);
+
+    // A pending submission names its project and carries its age.
+    const submitted = tree.query(/^Queued: Freshly submitted,/) as HostNode;
+    assert.match(
+      nodeText(submitted),
+      /^\s*Submitting\s+AP\s+App\s+\d+d ago\s+Freshly submitted\s+Submitting/,
+    );
+    // Many projects stay inside line 1: two marks, a count, and the age keeps its place,
+    // at the board's measured narrow layout (390 points, below the 720 breakpoint).
     openView(tree.raw, "Leads");
+    const pane = tree.raw
+      .ofType("View")
+      .find((node) => typeof node.props.onLayout === "function");
+    assert.ok(pane, "the board measures its pane");
+    pane!.props.onLayout({ nativeEvent: { layout: { width: 390 } } });
+    assert.ok(
+      tree.raw.query("Open the board menu"),
+      "the board is in its narrow layout",
+    );
     const wide = tree.raw.query(/^Lead: Spans many projects,/) as HostNode;
     const marks = (node: HostNode): number =>
       (node.type === "Text" && /^P\d+$/.test(node.children.join("")) ? 1 : 0) +
@@ -2753,16 +2786,6 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     assert.ok(projectGroup, "the project group is one bounded unit");
     assert.equal(projectGroup!.props.style.flexShrink, 1);
     assert.equal(projectGroup!.props.style.minWidth, 0);
-
-    // A decision names its asking project by its display name.
-    assert.match(nodeText(asked), /^\s*Decision\s+AP\s+App\s+\d+d ago/);
-
-    // A pending submission names its project and carries its age.
-    const submitted = tree.query(/^Queued: Freshly submitted,/) as HostNode;
-    assert.match(
-      nodeText(submitted),
-      /^\s*Submitting\s+AP\s+App\s+\d+d ago\s+Freshly submitted\s+Submitting/,
-    );
   } finally {
     mounted?.update(h("View", null));
     store.close();

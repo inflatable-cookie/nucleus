@@ -614,7 +614,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     interactive, budget reached and the PR as a small flag. A hold flag is dropped only
     when the status line was chosen from that fence (a dispatch hold, a held stop, a
     declared merge-hold wait), never because other text mentions it. The PR flag is a
-    link that opens the pull request without opening the task. A normal task shows none.
+    link that opens the pull request without opening the task; on the web board it is a
+    real anchor, so the keyboard opens it too. A normal task shows none.
   - **Buttons** only where the row is the action: the hold prompt's Release and Keep
     (with its reason) and the drained lane's Close lane and Keep. They sit inside the
     row's frame, below its content and outside its press target, so a press on a
@@ -630,7 +631,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     project; a drained lane's Planning screen names its Nucleus-raised escalation. The
     row's accessible name keeps the record's own title as written, the status with its
     detail, and the wording the row shortens, with identifiers sanitized only in
-    operational text.
+    operational text; like the row, it names a host wait and its age, never the host
+    or the exact time.
 - **Pending submissions** (Tom, 2026-09-27): a submitted brief or handoff whose
   operation has not yet created its task shows as a Queued card marked
   "submitting", so an accepted submission is never invisible. Brief-bearing leads
