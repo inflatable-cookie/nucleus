@@ -20,6 +20,8 @@ export interface DispatchAdmissionContext {
   /** The open outage the host's own record names, when one exists. */
   hostOutageSince(id: string): string | null;
   firstWorkerUnbound(task: Task): boolean;
+  /** The engine's own reading of whether a task's host can take it now. */
+  taskHostAvailable(task: Task): boolean;
   targetHostWait(task: Task): string | null;
   /** Hosts online with a read catalog that could take a first worker. */
   workerHostIds(task: { hostId?: string | null }): string[];
@@ -103,7 +105,8 @@ export class DispatchAdmission {
     )
       return "Waiting for consistent run host identity";
     const hostId = task.hostId;
-    if (this.context.withHost(hostId, () => this.context.hostAvailable(hostId)))
+    // The same reading admission uses, so the card and the admitter agree.
+    if (this.context.withHost(hostId, () => this.context.taskHostAvailable(task)))
       return "";
     const since = this.context.hostOutageSince(hostId);
     return since
