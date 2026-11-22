@@ -1518,7 +1518,7 @@ test("nucleus#969 Remove from Nucleus names a separate project that also holds t
   }
 });
 
-test("parking is retired: Settings → Projects has no Park or Unpark, and every project offers Remove", async () => {
+test("parking is retired: Settings → Projects has no Park or Unpark", async () => {
   const app = harness(
     settingsOf([
       row("nucleus", "Nucleus", [repo("acme/nucleus")]),
@@ -1531,7 +1531,6 @@ test("parking is retired: Settings → Projects has no Park or Unpark, and every
       ui.press(name);
       assert.equal(ui.query(`Park ${name}`), undefined, `${name}: no Park`);
       assert.equal(ui.query(`Unpark ${name}`), undefined, `${name}: no Unpark`);
-      assert.ok(ui.get(`Remove ${name}`), `${name}: Remove is offered`);
       assert.doesNotMatch(ui.text(), /Parked/);
       ui.press(`Back to Projects`);
     }

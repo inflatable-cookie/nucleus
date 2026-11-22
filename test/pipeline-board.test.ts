@@ -223,7 +223,7 @@ test("Spec 027 #11 retired 2026-11-22: All projects shows every project's work, 
   const everyone = board({ projects: [project], selection: [], tasks });
   assert.deepEqual(
     everyone.cards.Working.map((card) => card.id),
-    [],
+    ["running"],
   );
   assert.deepEqual(
     everyone.cards.Attention.map((card) => card.id),
