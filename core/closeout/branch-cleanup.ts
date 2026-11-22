@@ -372,6 +372,10 @@ export async function cleanupTerminalBranches(
   const candidates = terminalBranchCandidates(task, ctx.store.runs(taskId));
   if (!candidates.length) return task;
   const due = candidates.filter((candidate) => {
+    // The branch is deletable only once its worktree is gone, and until then the
+    // lane already owes the workspace archive that records that state. Keeping the
+    // check here, before any Git read, keeps a backed-off pass as cheap as before.
+    if (existsSync(candidate.directory)) return false;
     const record = task.resolution.branchCleanups.find((item) => item.branch === candidate.branch);
     if (record && !branchCleanupOwed(record)) return false;
     if (options.retry || !record?.nextAttemptAt) return true;
