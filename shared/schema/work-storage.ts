@@ -23,7 +23,6 @@ export const workStorageRetiredSchema = z
     worktreesRoot: z.string().min(1).nullable(),
     backupRoot: z.string().min(1).nullable(),
     projectQaRoot: z.string().min(1).nullable(),
-    custodianRoot: z.string().min(1).nullable(),
   })
   .strict();
 

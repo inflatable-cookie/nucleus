@@ -19,7 +19,6 @@ export interface RetiredWorkPlacement {
   worktreesRoot?: string;
   backupRoot?: string;
   projectQaRoot?: string;
-  custodianRoot?: string;
 }
 /** The work-volume locations Nucleus writes, and the ones it still reads. */
 export interface WorkPlacement {
@@ -57,6 +56,8 @@ export function defaultWorkPlacement(root: string): WorkPlacementDefaults;
 export function retiredWorkPlacement(root: string): RetiredWorkPlacement;
 export function mergedWorkSettings(dataDir: string, update?: WorkPlacementUpdate): Record<string, unknown>;
 export function previewWorkPlacement(update?: WorkPlacementUpdate, dataDir?: string, env?: NodeJS.ProcessEnv): WorkPlacement;
+/** The placement the saved settings would mean with no environment override. */
+export function previewSavedWorkPlacement(update?: WorkPlacementUpdate, dataDir?: string): WorkPlacement;
 export function writeWorkSettings(dataDir: string, update?: WorkPlacementUpdate): Record<string, unknown>;
 export function validSubpathInsideMount(mount: string, value: string, label: string): string;
 export function recordedWorkRoots(records: unknown[]): string[];

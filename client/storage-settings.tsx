@@ -42,7 +42,7 @@ const CLASSES: readonly StorageClass[] = [
     field: "custodianRoot",
     setting: "custodianRoot",
     noun: "Custodian records",
-    help: "The start and stop handshake files for a Barge lease custodian. They carry one live lease and are removed when it is returned.",
+    help: "The start and stop handshake files for a Barge lease custodian. They carry one live lease and are removed when it is returned; an in-flight lease keeps the paths it recorded, so a retired queue/barge-custodians directory is never read.",
   },
 ];
 
@@ -148,7 +148,7 @@ export function StoragePanel({ c, state, loading, loadError, save, inset }: {
       <View style={{ marginTop: space.sm, gap: space.xxs }}>
         <Text style={muted(c)}>Retired locations still read</Text>
         <Text selectable accessibilityLabel="Retired locations" style={{ color: c.foreground, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>
-          {[state.retired.worktreesRoot, state.retired.backupRoot, state.retired.projectQaRoot, state.retired.custodianRoot]
+          {[state.retired.worktreesRoot, state.retired.backupRoot, state.retired.projectQaRoot]
             .filter(Boolean).join(" · ")}
         </Text>
       </View>

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultDataDir } from "../shared/service/default-data-dir";
@@ -13,6 +13,7 @@ import { saveWorkStorage } from "../core/workspaces/work-storage";
 import { assertLegacyQaSettled } from "../service/install/legacy-qa-custody";
 import { legacyQaRoots } from "../core/qa/qa-evidence-roots";
 import {
+  assertLiveBackupComponents,
   listLiveBackups,
   liveBackupReadDirs,
   newestLiveScheduledSnapshotAt,
@@ -70,7 +71,6 @@ test("a fresh install derives every class from the work root, outside any queue 
     worktreesRoot: join(mount, "queue", "workspaces"),
     backupRoot: join(mount, "queue", "backups"),
     projectQaRoot: join(mount, "queue", "project-qa"),
-    custodianRoot: join(mount, "queue", "barge-custodians"),
   });
   assert.deepEqual(placement.retainedRoots, [join(mount, "queue", "workspaces")]);
   assert.deepEqual(placement.overrides, {});
@@ -238,4 +238,58 @@ test("legacy QA history is found at the configured root and the retired one, and
   assert.throws(() => assertLegacyQaSettled(data), /still present/);
   rmSync(join(mount, "queue"), { recursive: true, force: true });
   assert.doesNotThrow(() => assertLegacyQaSettled(data));
+});
+
+test("the live backup class proves its own levels, and an absent unpinned work root is not a fault", (t) => {
+  const { root } = fixture(t);
+  // Nothing creates the portable work root at startup, so a live snapshot may run
+  // first: the proof reports there was nothing to prove and creates nothing itself.
+  const absentRoot = join(root, "fresh", "work");
+  assert.equal(assertLiveBackupComponents(absentRoot, join(absentRoot, "archives", "nucleus-backups")), false);
+  assert.equal(existsSync(absentRoot), false, "the proof creates nothing; the backup directory's mkdir does");
+  // A real tree proves every existing level, and a missing leaf is created after it.
+  const workRoot = join(root, "work");
+  const backupRoot = join(workRoot, "archives", "nucleus-backups");
+  mkdirSync(backupRoot, { recursive: true });
+  assert.equal(assertLiveBackupComponents(workRoot, backupRoot), true);
+  assert.equal(assertLiveBackupComponents(workRoot, join(workRoot, "archives", "second")), true);
+  // A redirected level inside the work root refuses before anything is written there.
+  const redirected = join(root, "redirected");
+  const otherRoot = join(root, "other-work");
+  mkdirSync(redirected, { recursive: true });
+  mkdirSync(otherRoot, { recursive: true });
+  symlinkSync(redirected, join(otherRoot, "archives"));
+  assert.throws(
+    () => assertLiveBackupComponents(otherRoot, join(otherRoot, "archives", "nucleus-backups")),
+    /redirected/,
+  );
+  // So does a work root that is itself a symlink.
+  const linkedRoot = join(root, "linked-work");
+  symlinkSync(otherRoot, linkedRoot);
+  assert.throws(() => assertLiveBackupComponents(linkedRoot, join(linkedRoot, "archives")), /redirected/);
+});
+
+test("a save validates the stored values themselves, so an environment override cannot mask an invalid path", (t) => {
+  const { root, data, mount, writeSettings, volume } = fixture(t);
+  writeSettings();
+  // A valid environment override must not make an invalid saved value acceptable.
+  assert.throws(
+    () => saveWorkStorage({ backupRoot: join(root, "outside") }, {
+      dataDir: data, env: { NUCLEUS_BACKUP_ROOT: join(mount, "env", "snapshots") }, observe: volume,
+    }),
+    /inside workRoot/,
+  );
+  // Nor may an overridden work root make a value valid that the file does not place.
+  assert.throws(
+    () => saveWorkStorage({ backupRoot: join(root, "env-work", "snapshots") }, {
+      dataDir: data, env: { NUCLEUS_WORK_ROOT: join(root, "env-work") }, observe: volume,
+    }),
+    /inside workRoot/,
+  );
+  // Without any override the same value is refused too, so the two answers agree.
+  assert.throws(
+    () => saveWorkStorage({ backupRoot: join(root, "outside") }, { dataDir: data, env: {}, observe: volume }),
+    /inside workRoot/,
+  );
+  assert.equal(JSON.parse(readFileSync(join(data, "settings.json"), "utf8")).backupRoot, undefined);
 });

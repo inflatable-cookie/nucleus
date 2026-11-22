@@ -6,6 +6,7 @@ import {
 } from "./checkout-volume";
 import {
   getWorkPlacement,
+  previewSavedWorkPlacement,
   previewWorkPlacement,
   writeWorkSettings,
   type WorkPlacement,
@@ -43,7 +44,6 @@ export function workStorageState(placement: WorkPlacement): WorkStorageState {
       worktreesRoot: placement.retired.worktreesRoot ?? null,
       backupRoot: placement.retired.backupRoot ?? null,
       projectQaRoot: placement.retired.projectQaRoot ?? null,
-      custodianRoot: placement.retired.custodianRoot ?? null,
     },
     retainedRoots: placement.retainedRoots,
     appliesOnRestart: true,
@@ -61,9 +61,11 @@ export function readWorkStorage(options: WorkStorageOptions = {}): WorkStorageSt
  * Settings → Storage: persist the operator's paths and answer with the placement
  * now on disk. Every candidate path is resolved and guarded before anything is
  * written — canonical, absolute, strictly inside `workRoot`, on the pinned volume,
- * no redirected component — and the guard runs again over the resolved volume and
- * its existing components. Nothing is written when any of it refuses, and a saved
- * change applies when the service next starts.
+ * no redirected component — once as the `settings.json` values stand on their own
+ * and again as they resolve under this process's environment overrides, and the
+ * guard then runs over the resolved volume and its existing components. Nothing is
+ * written when any of it refuses, and a saved change applies when the service next
+ * starts.
  */
 export function saveWorkStorage(
   input: WorkStorageInput,
@@ -80,6 +82,11 @@ export function saveWorkStorage(
     scratchRoot: input.scratchRoot,
     custodianRoot: input.custodianRoot,
   };
+  // Both are needed. The saved placement is validated with no environment
+  // override at all, so an override set in this process cannot mask a stored path
+  // that would break the next start; the effective placement is then proved on the
+  // volume this save actually writes to.
+  previewSavedWorkPlacement(update, dataDir);
   const candidate = previewWorkPlacement(update, dataDir, env);
   assertWorkPlacementAvailable(candidate, {
     observe: options.observe,

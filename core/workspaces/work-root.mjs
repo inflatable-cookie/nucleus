@@ -30,8 +30,10 @@ const CLASSES = [
   { field: 'projectQaRoot', setting: 'projectQaRoot', env: 'NUCLEUS_PROJECT_QA_ROOT', defaultParts: ['archives', 'nucleus-project-qa'], retiredParts: ['queue', 'project-qa'] },
   { field: 'scratchRoot', setting: 'scratchRoot', env: 'NUCLEUS_SCRATCH_ROOT', defaultParts: ['scratch', 'nucleus'] },
   // Custodian control files carry one lease's live start/stop handshake, so they
-  // belong to the scratch class rather than the archive one.
-  { field: 'custodianRoot', setting: 'custodianRoot', env: 'NUCLEUS_CUSTODIAN_ROOT', defaultParts: ['scratch', 'nucleus', 'barge-custodians'], retiredParts: ['queue', 'barge-custodians'] },
+  // belong to the scratch class rather than the archive one. A retired
+  // `queue/barge-custodians` directory has no reader: an in-flight lease keeps the
+  // ready and stop paths recorded before its custodian started.
+  { field: 'custodianRoot', setting: 'custodianRoot', env: 'NUCLEUS_CUSTODIAN_ROOT', defaultParts: ['scratch', 'nucleus', 'barge-custodians'] },
 ];
 /** Every placement setting that holds one path. */
 export const WORK_PLACEMENT_SETTINGS = [...new Set(CLASSES.map(entry => entry.setting))];
@@ -207,6 +209,17 @@ export function mergedWorkSettings(dataDir, update = {}) {
 export function previewWorkPlacement(update = {}, dataDir = dataHome(), env = process.env) {
   const value = mergedWorkSettings(dataDir, update);
   return placementFrom(value, storageFrom(value, dataDir, env), env);
+}
+
+/**
+ * The placement the settings would mean with no environment override at all. A
+ * save validates this before anything is written: an override that happens to be
+ * set in the saving process must never mask a stored path that would break the
+ * next start once the override is gone.
+ */
+export function previewSavedWorkPlacement(update = {}, dataDir = dataHome()) {
+  const value = mergedWorkSettings(dataDir, update);
+  return placementFrom(value, storageFrom(value, dataDir, {}), {});
 }
 
 /** Persist a validated candidate; the caller proves the volume and paths first. */

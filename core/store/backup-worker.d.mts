@@ -90,6 +90,17 @@ export function volumeRootFor(dir: string): string | null;
 export function isStorageUnavailable(error: unknown): boolean;
 /** Require an external volume root to be a mounted directory, not an ordinary local one. */
 export function assertBackupVolume(root: string, stat?: (path: string) => VolumeStat): void;
+/**
+ * Prove every existing level from the work root down to the live backup directory
+ * is a real directory on the mount's own device. An absent work root answers
+ * `false` and is not a fault (an unpinned install creates it with the directory);
+ * a redirected level or a non-directory root throws.
+ */
+export function assertLiveBackupComponents(workRoot: string, backupRoot: string, options?: {
+  stat?: (path: string) => VolumeStat;
+  lstat?: (path: string) => { dev: number | bigint; isDirectory(): boolean; isSymbolicLink(): boolean };
+  realpath?: (path: string) => string;
+}): boolean;
 /** Whether the backup directory is usable right now, and why not. */
 export function backupDirState(dir: string, volumeRoot?: string | null): { available: boolean; error: string | null };
 

@@ -21,7 +21,6 @@ const RETIRED = {
   worktreesRoot: `${ROOT}/queue/workspaces`,
   backupRoot: `${ROOT}/queue/backups`,
   projectQaRoot: `${ROOT}/queue/project-qa`,
-  custodianRoot: `${ROOT}/queue/barge-custodians`,
 };
 const state = (overrides: Partial<WorkStorageState["overrides"]> = {}): WorkStorageState => ({
   workRoot: ROOT,

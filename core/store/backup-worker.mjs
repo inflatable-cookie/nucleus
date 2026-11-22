@@ -155,22 +155,44 @@ const unwritable = (dir, reason) => Object.assign(
  * The live backup class is a path setting (nucleus#1526), so every existing level
  * from the work root down to it must be a real directory on the mount's own
  * device: a symlinked `archives` level would otherwise receive snapshots somewhere
- * else on the drive, or off it. A missing leaf is created after this proof.
+ * else on the drive, or off it.
+ *
+ * An absent work root is not a fault. An unpinned install may not have it yet, and
+ * the recursive mkdir that follows creates the tree exactly as it did before these
+ * paths were settings; a pinned volume was already proved by the mount check, which
+ * refuses an absent drive. The answer says whether a level existed to prove.
  */
+export function assertLiveBackupComponents(workRoot, backupRoot, options = {}) {
+  const stat = options.stat ?? statSync;
+  const lstat = options.lstat ?? lstatSync;
+  const realpath = options.realpath ?? realpathSync;
+  let mount;
+  try { mount = stat(workRoot); }
+  catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
+  if (typeof mount?.isDirectory === 'function' && !mount.isDirectory())
+    throw new Error(`Work root ${workRoot} is not a directory`);
+  const components = [workRoot];
+  let path = workRoot;
+  for (const part of relative(workRoot, backupRoot).split(sep)) {
+    path = join(path, part);
+    components.push(path);
+  }
+  for (const component of components) {
+    let current;
+    try { current = lstat(component); }
+    catch (error) { if (error?.code === 'ENOENT') continue; throw error; }
+    if (current.isSymbolicLink() || !current.isDirectory() || current.dev !== mount.dev || realpath(component) !== component)
+      throw new Error(`Backup directory ${component} is redirected or is not a directory on the backup volume`);
+  }
+  return true;
+}
+
+/** Prove the live backup class's own levels, when this directory is the live one. */
 const proveLivePlacement = (dir, stat = statSync) => {
   let live, workRoot;
   try { live = liveBackupDir(); workRoot = getWorkStorage(liveStoreDir()).root; } catch { return; }
   if (dir !== live) return;
-  const mount = stat(workRoot);
-  let path = workRoot;
-  for (const part of relative(workRoot, live).split(sep)) {
-    path = join(path, part);
-    let current;
-    try { current = lstatSync(path); }
-    catch (error) { if (error?.code === 'ENOENT') continue; throw error; }
-    if (current.isSymbolicLink() || !current.isDirectory() || current.dev !== mount.dev || realpathSync(path) !== path)
-      throw new Error(`Backup directory ${path} is redirected or is not a directory on the backup volume`);
-  }
+  assertLiveBackupComponents(workRoot, live, { stat });
 };
 
 /**

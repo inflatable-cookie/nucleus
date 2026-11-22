@@ -585,7 +585,7 @@ proof lands with its task.
   | Database backups | `backupRoot` (`NUCLEUS_BACKUP_ROOT`) | `<workRoot>/archives/nucleus-backups/` | `<workRoot>/queue/backups/` |
   | Legacy milestone QA history | `projectQaRoot` (`NUCLEUS_PROJECT_QA_ROOT`) | `<workRoot>/archives/nucleus-project-qa/` | `<workRoot>/queue/project-qa/` |
   | Run and service scratch | `scratchRoot` (`NUCLEUS_SCRATCH_ROOT`) | `<workRoot>/scratch/nucleus/` | — (recorded run directories keep their own path) |
-  | Barge custodian records | `custodianRoot` (`NUCLEUS_CUSTODIAN_ROOT`) | `<workRoot>/scratch/nucleus/barge-custodians/` | `<workRoot>/queue/barge-custodians/` |
+  | Barge custodian records | `custodianRoot` (`NUCLEUS_CUSTODIAN_ROOT`) | `<workRoot>/scratch/nucleus/barge-custodians/` | — (an in-flight lease keeps its recorded ready and stop paths) |
 
   Custodian control files carry one live lease's start/stop handshake, so they use
   the scratch class rather than the archive class. A repository-scoped scratch
@@ -608,8 +608,11 @@ proof lands with its task.
     Settings-only on the same transport surfaces as `queue.capacity`
     (`SETTINGS_ONLY_METHODS`), and each write also needs the web Settings marker.
     A save validates the whole candidate placement — every path through the guard
-    above — before writing `settings.json` (mode `0600`), explains a refusal on the
-    page, and applies on the next service start. An empty control restores that
+    above — before writing `settings.json` (mode `0600`), once as the stored values
+    stand on their own and again as they resolve under the saving process's
+    environment overrides, so an override can never mask a value that would break
+    the next start. It explains a refusal on the page and applies on the next
+    service start. An empty control restores that
     class's portable default; an untouched work root is not written, so a portable
     install stays portable.
   - **Existing installs keep working.** An install whose data sits in the retired
