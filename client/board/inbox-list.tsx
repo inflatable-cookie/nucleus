@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
@@ -14,7 +14,6 @@ import {
   decisionAge,
   pipelineBoard,
   triageKind,
-  triagePage,
   triagePageSize,
   type PipelineCard,
 } from "../../shared/pipeline-board";
@@ -52,7 +51,7 @@ export function usePipelineState() {
   const [queueRepo, setQueueRepo] = useState<string | null>(null);
   const [queueOffset, setQueueOffset] = useState(0);
   const [triageTag, setTriageTag] = useState<string | null>(null);
-  // Leads and papercuts shown (Tom, 2026-11-07: one page at a time); a tag change starts Leads back at one page.
+  // Leads and papercuts load in pages of eight as the list approaches its end.
   const [triageShown, setTriageShown] = useState(triagePageSize);
   const [papercutShown, setPapercutShown] = useState(triagePageSize);
   const queuedPage = useQuery({
@@ -264,8 +263,43 @@ export function InboxList({
     setPapercutShown,
   } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
-  const boardRead = state ? "loaded" : stateError ? "failed" : "loading";
   const sections = inboxSections(board, view);
+  const listMeasurements = useRef({ view, viewportHeight: 0, contentHeight: 0 });
+  const loadedPage = useRef({ view, count: triagePageSize });
+  const isTriageList = view === "leads" || view === "papercuts";
+  const shown = view === "papercuts" ? papercutShown : triageShown;
+  const setShown = view === "papercuts" ? setPapercutShown : setTriageShown;
+  const totalInList = sections.reduce(
+    (total, section) => total + section.cards.length,
+    0,
+  );
+  useEffect(() => {
+    listMeasurements.current = { view, viewportHeight: 0, contentHeight: 0 };
+    loadedPage.current = { view, count: triagePageSize };
+    setTriageShown(triagePageSize);
+    setPapercutShown(triagePageSize);
+  }, [view, setPapercutShown, setTriageShown]);
+  const loadNextPage = () => {
+    const loaded = loadedPage.current;
+    if (loaded.view !== view) {
+      loadedPage.current = { view, count: triagePageSize };
+    }
+    const current = loadedPage.current;
+    if (current.count >= totalInList) return;
+    const next = Math.min(current.count + triagePageSize, totalInList);
+    current.count = next;
+    setShown(next);
+  };
+  const fillIfNotScrollable = (viewportHeight: number, contentHeight: number) => {
+    if (
+      isTriageList &&
+      viewportHeight > 0 &&
+      contentHeight <= viewportHeight &&
+      shown < totalInList
+    )
+      loadNextPage();
+  };
+  const boardRead = state ? "loaded" : stateError ? "failed" : "loading";
   const releaseHold = (task: TaskSummary) =>
     void act(() =>
       setTask({ taskId: task.id, version: task.version, action: "release" }),
@@ -591,6 +625,8 @@ export function InboxList({
                 onChange={(value) => {
                   setTriageTag(value || null);
                   setTriageShown(triagePageSize);
+                  loadedPage.current = { view: "leads", count: triagePageSize };
+                  listMeasurements.current.contentHeight = 0;
                 }}
                 minWidth={110}
               />
@@ -601,28 +637,52 @@ export function InboxList({
       <ScrollView
         style={{ flex: 1, minHeight: 0 }}
         contentContainerStyle={{ borderTopWidth: 1, borderTopColor: c.border }}
+        onLayout={(event) => {
+          const height = event.nativeEvent.layout.height;
+          const current = listMeasurements.current;
+          listMeasurements.current = {
+            ...current,
+            view,
+            viewportHeight: height,
+          };
+          fillIfNotScrollable(
+            height,
+            current.view === view ? current.contentHeight : 0,
+          );
+        }}
+        onContentSizeChange={(_width, height) => {
+          const current = listMeasurements.current;
+          listMeasurements.current = {
+            ...current,
+            view,
+            contentHeight: height,
+          };
+          fillIfNotScrollable(
+            current.view === view ? current.viewportHeight : 0,
+            height,
+          );
+        }}
+        onScroll={(event) => {
+          if (!isTriageList) return;
+          const { contentOffset, contentSize, layoutMeasurement } =
+            event.nativeEvent;
+          if (
+            contentOffset.y + layoutMeasurement.height >=
+            contentSize.height - layoutMeasurement.height
+          )
+            loadNextPage();
+        }}
+        scrollEventThrottle={16}
       >
         <BoardCardVariantContext.Provider value="row">
           {sections.map((section) => {
-            // Leads and papercuts show one page at a time; the "…and N more" row loads the next.
-            const paged = view === "leads" || view === "papercuts";
-            const shown = view === "papercuts" ? papercutShown : triageShown;
-            const page = paged ? triagePage(section.cards, shown) : null;
-            const visible = page ? page.visible : section.cards;
+            const visible =
+              isTriageList && section.cards.length > shown
+                ? section.cards.slice(0, shown)
+                : section.cards;
             return (
               <View key={section.id}>
                 {visible.map(renderCard)}
-                {page &&
-                  page.hidden > 0 &&
-                  moreRow(
-                    `${section.id}-more`,
-                    `Show ${page.hidden} more ${section.label.toLowerCase()}`,
-                    `…and ${page.hidden} more`,
-                    () =>
-                      (view === "papercuts"
-                        ? setPapercutShown
-                        : setTriageShown)(shown + triagePageSize),
-                  )}
               </View>
             );
           })}

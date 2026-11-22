@@ -158,9 +158,11 @@ papercuts by name. Migrate every existing papercut without losing data.
   (`Checks passed · unapproved`, or a papercut's area). The body, tags, lanes and
   decision links stay in the record. Triage orders checked leads awaiting approval
   first, then other leads awaiting approval, then approved leads awaiting promotion,
-  then papercuts, newest first within each (2026-11-07). A row shows eight cards;
-  an in-column "…and N more" card loads the next eight, and the column header shows
-  the total. The tag filter narrows the cards, the paging and the total. The
+  then papercuts, newest first within each (2026-11-07). The list starts with eight
+  cards and loads another page automatically when scrolling within one viewport of
+  the end. If the pane has room, it keeps loading until the list can scroll or all
+  cards are visible. The header shows the real total. The tag filter narrows the
+  Leads cards and their total. The
   filter is a dropdown listing only the tags on leads Triage shows in the current
   scope, each with its count (Tom, 2026-10-15: cycling through every tag was
   tedious, and tags from other projects or briefed leads matched nothing).
@@ -511,8 +513,9 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   **Needs you** (decisions, Nucleus-raised holds, drained-lane prompts and tasks
   needing attention, in one list, newest needing action first), **Planning** (the
   plan in the list pane, the open lane in the detail pane, or a modal without one),
-  **Leads** (open leads, with the tag filter and pages of eight), **Papercuts** (open
-  papercuts, with pages of eight and no tag filter; Tom, 2026-11-21), **Queue**
+  **Leads** (open leads, with the tag filter and automatic pages of eight),
+  **Papercuts** (open papercuts, with automatic pages of eight and no tag filter;
+  Tom, 2026-11-21), **Queue**
   (queued tasks, pending submissions and the per-project "…and N more" rows),
   **Working** (working tasks), **In review** (tasks awaiting or under review) and
   **Closing** (verifying, merging and closing tasks). The menu reads Needs you, a
@@ -521,8 +524,9 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   background. Each entry shows its real total; only Needs you is highlighted.
   An entry whose count is 0 renders dimmed but stays selectable; the selected
   entry keeps its selected styling, and Planning (which carries no count) never dims.
-  Opening a view clears the open record. The card-once projection below decides where
-  a card goes; the menu groups its columns. Milestone QA is not a board surface: QA
+  Opening a view clears the open record and resets Leads and Papercuts to their
+  first page. The card-once projection below decides where a card goes; the menu
+  groups its columns. Milestone QA is not a board surface: QA
   runs as an ordinary task, and the QA runs tab is gone.
 - **Needs you is one list** (Tom, 2026-11-21: "one list of cards, and make the cards
   obvious what they are"). Its header names the count and there are no section
