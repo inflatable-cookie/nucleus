@@ -16,7 +16,7 @@ import {
 } from "../../shared/contracts";
 import { climbedTier, requestedTier } from "../../shared/demand";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { automaticReachable, groupIsUnavailable, requestOnly } from "../../shared/pool";
+import { groupIsUnavailable, requestOnly } from "../../shared/pool";
 import type {
   ExplicitResolution,
   ResolutionWarningId,
@@ -385,7 +385,7 @@ function selectProfileForStart(
   if (!profile) {
     const entry = pool.find(
       (item) => item.enabled && item.roles.includes(role) &&
-        automaticReachable(item, usage, requestedTier(task.complexity), climbedTier(task), role),
+        !requestOnly(item, usage, requestedTier(task.complexity), climbedTier(task)),
     );
     profile =
       (entry
@@ -393,7 +393,7 @@ function selectProfileForStart(
         : null) ??
       allProfiles.find((candidate) => {
         const entry = pool.find((item) => item.profileId === candidate.id);
-        return !entry || automaticReachable(entry, usage, requestedTier(task.complexity), climbedTier(task), role);
+        return !entry || !requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task));
       }) ??
       null;
   }

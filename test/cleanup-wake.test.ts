@@ -30,7 +30,6 @@ function fixture() {
     lifecycle: { archive: async (task: { id: string }) => { archives.push(task.id); await held; } },
   });
   // The sweep and lane drain are tested elsewhere; this proves the projection cut.
-  state.archivePlannerGrants = async () => {};
   state.ensureSweep = async () => {};
   state.quiesce = async () => {};
   return { engine, state, archives, titles, release: () => release() };
