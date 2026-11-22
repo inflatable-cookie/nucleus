@@ -626,6 +626,14 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     press on a control or the PR link never opens the record too, and no control is
     nested inside the row's button. Pressing a drained lane's row opens that lane
     in Planning.
+  - **A sidebar surface, not a ruled table** (Tom, 2026-11-22): at rest a row has no
+    divider, border or background — spacing alone separates rows, and the list
+    carries no top rule either. Hover and keyboard focus dim the row (the selected
+    surface at low alpha) with rounded corners, inset from the list edges by a
+    small gutter so the highlight reads with padding around the content. The open
+    record's row keeps the selected surface, stronger than hover; hovering it
+    keeps it. The menu's entries hover the same way, while the selected entry
+    keeps its surface.
   - **Detail only:** routing sentences, host identity and kind, profile names, host
     waits beyond "on the host", attempt counts, report headlines beyond the status
     line, prerequisite counts and promotion, a decision's choices, a lane's aim, and the

@@ -114,6 +114,15 @@ export const cardRow = {
 } as const;
 
 /** Overlay colours that are structure, not theme roles: the modal scrim and popover shadow. */
+/**
+ * Sidebar-style hover for inbox rows and menu entries (nucleus#1528): the selected
+ * surface at low alpha, so hover reads dimmer than the solid selected surface.
+ * Selected stays the `surface2` token itself; hover over a selected row keeps it.
+ */
+export function hoverSurface(c: Colors): string {
+  return toneSurface(c.surface2, c.surface1);
+}
+
 export const overlay = { scrim: "rgba(0,0,0,0.68)", shadow: "#000" } as const;
 
 /**

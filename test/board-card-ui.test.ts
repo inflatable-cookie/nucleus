@@ -1324,7 +1324,9 @@ test("Papercuts load the next page near the end and keep the real total", async 
     openView(tree, "Papercuts");
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 8);
     assert.equal(tree.raw.text().includes("…and 2 more"), false);
-    const list = tree.raw.ofType("ScrollView").find((node) => node.props.onScroll);
+    const list = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
     assert.ok(list, "the list exposes its real scroll event");
     list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
     list.props.onContentSizeChange(390, 1500);
@@ -1360,7 +1362,9 @@ test("Leads load the next page near the end and keep the real total", async () =
     openView(tree, "Leads");
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 8);
     assert.equal(tree.raw.text().includes("…and 2 more"), false);
-    const list = tree.raw.ofType("ScrollView").find((node) => node.props.onScroll);
+    const list = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
     assert.ok(list, "the list exposes its real scroll event");
     list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
     list.props.onContentSizeChange(390, 1500);
@@ -1400,7 +1404,9 @@ test("Leads fill a tall pane, and changing the tag or view resets the page", asy
     const tree = mounted;
     await settle(() => Boolean(tree.query("Leads, 20")));
     openView(tree, "Leads");
-    const list = tree.raw.ofType("ScrollView").find((node) => node.props.onScroll);
+    const list = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
     assert.ok(list, "the list exposes its layout and content-size events");
     list.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
     list.props.onContentSizeChange(390, 450);
@@ -1858,8 +1864,9 @@ test("a task row in the inbox list shows its T3 project badge from its own host,
 const nodeText = (node: HostNode | string): string =>
   typeof node === "string" ? node : node.children.map(nodeText).join(" ");
 /**
- * The row frame around a row's press target (nucleus#1515): the task button and, beside
- * it, the row's flags and controls, which sit outside the button.
+ * The row frame around a row's press target (nucleus#1528): the sidebar-style
+ * highlight around the task button and, beside it, the row's flags and
+ * controls, which sit outside the button.
  */
 const rowFrame = (
   tree: { ofType(type: string): HostNode[] },
@@ -1869,7 +1876,8 @@ const rowFrame = (
     .ofType("View")
     .find(
       (node) =>
-        node.props.style?.borderLeftWidth === 2 &&
+        node.props.style?.borderRadius === 8 &&
+        node.props.style?.marginHorizontal === 8 &&
         node.children.some(
           (child) =>
             typeof child !== "string" &&
@@ -2018,13 +2026,15 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
     await settle(() => tree.text().includes("Alpha lane has drained"));
     openView(tree, "Needs you");
 
-    // Close and Keep draw inside the row's own frame (divider and accent edge), not under it.
+    // Close and Keep draw inside the row's own sidebar frame (no dividers), not under it.
     const rowFrame = tree.raw
       .ofType("View")
       .find(
         (node) =>
-          node.props.style?.borderBottomWidth === 1 &&
-          node.props.style?.borderLeftWidth === 2 &&
+          node.props.style?.borderRadius === 8 &&
+          node.props.style?.marginHorizontal === 8 &&
+          node.props.style?.borderBottomWidth === undefined &&
+          node.props.style?.borderLeftWidth === undefined &&
           nodeHas(
             node,
             (child) =>

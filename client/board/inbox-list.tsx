@@ -294,7 +294,10 @@ export function InboxList({
     current.count = next;
     setShown(next);
   };
-  const fillIfNotScrollable = (viewportHeight: number, contentHeight: number) => {
+  const fillIfNotScrollable = (
+    viewportHeight: number,
+    contentHeight: number,
+  ) => {
     if (
       isTriageList &&
       viewportHeight > 0 &&
@@ -512,8 +515,7 @@ export function InboxList({
                 style={{
                   gap: space.xxs,
                   padding: space.md,
-                  borderBottomWidth: 1,
-                  borderBottomColor: c.border,
+                  marginHorizontal: space.xs,
                 }}
               >
                 {queuedPage.isLoading && (
@@ -640,7 +642,7 @@ export function InboxList({
       </View>
       <ScrollView
         style={{ flex: 1, minHeight: 0 }}
-        contentContainerStyle={{ borderTopWidth: 1, borderTopColor: c.border }}
+        contentContainerStyle={{ paddingVertical: space.xs }}
         onLayout={(event) => {
           const height = event.nativeEvent.layout.height;
           const current = listMeasurements.current;
@@ -683,7 +685,7 @@ export function InboxList({
                 ? section.cards.slice(0, shown)
                 : section.cards;
             return (
-              <View key={section.id}>
+              <View key={section.id} style={{ gap: space.xxs }}>
                 {visible.map(renderCard)}
               </View>
             );

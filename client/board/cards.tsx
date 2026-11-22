@@ -62,12 +62,14 @@ import {
 } from "./badges";
 import {
   cardRow,
+  hoverSurface,
   roles,
   space,
   radius,
   toneSurface,
   type as typeScale,
 } from "../design";
+import { useFocusVisible } from "../focus-modality";
 
 /**
  * Spec 026 row 12a: the single card component for the inbox board. Every card is
@@ -79,9 +81,10 @@ import {
  * and attempt counts live in the detail pane.
  */
 /**
- * How a board card draws its frame. The inbox list (Tom, 2026-11-21) draws every
- * card as a flat row with a divider and an accent edge when selected; the content
- * and actions are the card's own either way.
+ * How a board card draws its frame. The inbox list (Tom, 2026-11-22) draws every
+ * card as a sidebar-style row: no dividers or borders at rest, a dimmed hover
+ * (and keyboard-focus) background, and the selected surface when open; the
+ * content and actions are the card's own either way.
  */
 export type BoardCardVariant = "card" | "row";
 export const BoardCardVariantContext =
@@ -383,6 +386,12 @@ export const BoardCard = React.memo(function BoardCard({
       {content}
     </View>
   );
+  // Sidebar-style hover and keyboard focus (nucleus#1528): a dimmed background
+  // while hovered or keyboard-focused, the selected surface when the record is
+  // open. Hover over a selected row keeps the selected background.
+  const [hovered, setHovered] = useState(false);
+  const focus = useFocusVisible();
+  const highlighted = hovered || focus.visible;
   // Flags and buttons line up under the content, past the tile.
   const actionInset = kind ? cardRow.tile + space.sm : 0;
   // The flags sit outside the row's press target, like its buttons, so the PR link is
@@ -399,17 +408,20 @@ export const BoardCard = React.memo(function BoardCard({
     </View>
   ) : null;
   const below = Boolean(flags) || actions !== undefined;
-  // A row keeps its divider, padding and accent edge on the outer frame, so a
-  // card's own flags and controls land inside the row instead of under its divider.
+  // A row keeps its highlight inset from the list edges, so the hover and
+  // selected backgrounds read with padding around the content; spacing alone
+  // separates rows. A card's own flags and controls land inside the row.
   if (variant === "row")
     return (
       <View
         style={{
-          borderBottomWidth: 1,
-          borderBottomColor: c.border,
-          borderLeftWidth: 2,
-          borderLeftColor: selected ? c.accent : "transparent",
-          backgroundColor: selected ? c.surface2 : c.surface0,
+          marginHorizontal: space.xs,
+          borderRadius: radius.control,
+          backgroundColor: selected
+            ? c.surface2
+            : highlighted
+              ? hoverSurface(c)
+              : "transparent",
         }}
       >
         <Pressable
@@ -417,6 +429,10 @@ export const BoardCard = React.memo(function BoardCard({
           accessibilityLabel={label}
           accessibilityState={{ selected }}
           onPress={onPress}
+          onHoverIn={() => setHovered(true)}
+          onHoverOut={() => setHovered(false)}
+          onFocus={focus.onFocus}
+          onBlur={focus.onBlur}
           style={{
             paddingHorizontal: space.md,
             paddingTop: space.sm,
