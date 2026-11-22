@@ -285,10 +285,10 @@ test("stop refusals agree across view, direct apply and offline admission", asyn
             integrationTurn: { sequence: 1 },
           },
         } as Task;
-        assert.equal(
-          stopStateRefusal(integrationTask),
-          null,
-          "stop still releases an integration turn after termination or disposition",
+        assert.match(
+          stopStateRefusal(integrationTask) ?? "",
+          /use turn\.release to release its integration turn/,
+          "stop refuses terminal/disposed tasks and names turn.release",
         );
       }
     const unstarted = store.update(task.id, {

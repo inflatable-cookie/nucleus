@@ -556,16 +556,11 @@ test('the preserved recorded source head survives the automatic external-merge r
     const blocker=store.insert(submissionSchema.parse({submissionId:'earlier-integration',title:'Earlier integration',
       repoPath:f.repo,planningCommit:f.planningCommit,handoffPath:'docs/handoff.md',originAgentId:'origin'}),'host','handoff',f.planningCommit);
     const blockerTask=store.task(blocker.id);
-    // The blocker holds integration turn 1 and is inert: its own retained
-    // prerequisite wait lets no lifecycle step change its phase or attention, so
-    // the FIFO state this test depends on cannot be raced by the same tick.
-    const prereq=store.insert(submissionSchema.parse({submissionId:'integration-prereq',title:'Incomplete prerequisite',
-      repoPath:f.repo,planningCommit:f.planningCommit,handoffPath:'docs/handoff.md',originAgentId:'origin'}),'host','handoff',f.planningCommit);
-    store.update(prereq.id,{phase:'working',reason:'Unrelated work still in progress'});
+    // The blocker holds integration turn 1 with an in-flight merge intent, so
+    // the FIFO state this test depends on cannot be bypassed or raced by the same tick.
     store.setMeta(`integrationTurnSeq:${f.repo}`,1);
-    store.update(blocker.id,{phase:'verifying',reason:'Earlier task holds the repository integration turn',
-      resolution:{...blockerTask.resolution,integrationTurn:{sequence:1,acceptedAt:now()}},
-      prerequisiteWait:{id:randomUUID(),waitsFor:[prereq.id],reason:'Waiting for its retained prerequisite',releasedAt:null}});
+    store.update(blocker.id,{phase:'merging',reason:'Earlier task holds the repository integration turn',
+      resolution:{...blockerTask.resolution,integrationTurn:{sequence:1,acceptedAt:now()},mergeIntent:true,mergeHead:f.planningCommit}});
 
     await runtime.taskControl(closeout(service,{qualification:ACCEPTANCE}));
     const waiting=store.task(task.id);
