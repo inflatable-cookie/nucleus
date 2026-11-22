@@ -97,7 +97,13 @@ nothing.
   `repository.set` or `repository.get`, so no caller silently writes the wrong
   record.
 
-## Parking (Tom, 2026-09-27)
+## Parking (Tom, 2026-09-27; retired 2026-11-22)
+
+**Retired (Tom, 2026-11-22):** "we can get rid of the concept of parked projects -
+just leaving projects alone will mark them as dormant and not require any ceremony
+to reactivate them.. parking is too fiddly and unnecessary." Dormancy (Spec 026,
+"Active and dormant projects") replaces it, and the Dormant group stays. nucleus#1530
+removes parking; until it lands, the rules below still describe the shipped behaviour.
 
 Source: nucleus contract 002 "Projects and repositories" (Parking) and contract 006
 "Direction" (nucleus be70741). "Parked", not "shelved".
