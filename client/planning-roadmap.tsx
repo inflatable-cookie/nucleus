@@ -29,6 +29,7 @@ import { decisionAge } from "../shared/pipeline-board";
 import { formatLocalDateTime } from "../shared/date-time";
 import type { ProjectBadge } from "../shared/t3/project-badge";
 import { ActionButton, Button, row, type Colors } from "./controls";
+import { ReopenHelp } from "./lane-mark-done";
 import {
   cardRow,
   hoverSurface,
@@ -804,6 +805,7 @@ export function ProjectRoadmapView({
   onEditPlan,
   onRetry,
   onOpenTask,
+  onReopenLane,
   stacked: forceStacked = false,
   readPlanVersion,
   c,
@@ -824,6 +826,8 @@ export function ProjectRoadmapView({
   onEditPlan?: () => void;
   onRetry?: () => void;
   onOpenTask?: (id: string) => void;
+  /** Finished lanes reopen through the existing `lane.status`, with no confirmation. */
+  onReopenLane?: (lane: string) => void;
   c: Colors;
 }) {
   const r = roles(c);
@@ -1125,18 +1129,34 @@ export function ProjectRoadmapView({
               }}
             >
               {roadmap.done.map((item) => (
-                <Pressable
+                <View
                   key={item.lane}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open lane ${item.title}, ${item.status === "done" ? "finished" : "abandoned"}`}
-                  onPress={() => onOpenLane(item.lane)}
-                  style={{ minWidth: planningRead.finishedMin }}
+                  style={{ minWidth: planningRead.finishedMin, gap: space.xxs }}
                 >
-                  <Text style={{ ...body(c), color: r.muted }}>
-                    {item.status === "done" ? "✓" : "✕"} {item.title}
-                    {item.closedAt ? ` · ${item.closedAt.slice(0, 10)}` : ""}
-                  </Text>
-                </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open lane ${item.title}, ${item.status === "done" ? "finished" : "abandoned"}`}
+                    onPress={() => onOpenLane(item.lane)}
+                  >
+                    <Text style={{ ...body(c), color: r.muted }}>
+                      {item.status === "done" ? "✓" : "✕"} {item.title}
+                      {item.closedAt ? ` · ${item.closedAt.slice(0, 10)}` : ""}
+                    </Text>
+                  </Pressable>
+                  {onReopenLane && (
+                    <View style={row}>
+                      <Button
+                        small
+                        c={c}
+                        text="Reopen"
+                        label={`Reopen lane ${item.title}`}
+                        disabled={busy}
+                        onPress={() => onReopenLane(item.lane)}
+                      />
+                      <ReopenHelp c={c} laneTitle={item.title} />
+                    </View>
+                  )}
+                </View>
               ))}
             </View>
           )}

@@ -18,6 +18,8 @@ import {
   taskNumberLabel,
   type HoldKind,
   type LaneView,
+  type Project,
+  type ProjectPlan,
   type Task,
   type TaskSummary,
 } from "../../shared/contracts";
@@ -53,6 +55,7 @@ import {
   longShellCommandStart,
 } from "./text";
 import { useTick } from "../use-tick";
+import { MarkDoneConfirm } from "../lane-mark-done";
 import {
   HoldBadge,
   PullRequestBadge,
@@ -1120,7 +1123,8 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
 });
 /**
  * Spec 041: a drained lane that outlived its escalation timer is the operator's to answer.
- * Close finishes the step (lane.status done); Keep records a reason and ends the episode.
+ * Mark done finishes the step (lane.status done), always asking first; Keep records a
+ * reason and ends the episode.
  * The lane's aim is in the plan view the row opens.
  */
 export const LaneDrainCard = React.memo(function LaneDrainCard({
@@ -1133,6 +1137,8 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   onClose,
   onKeep,
   project,
+  projects = [],
+  plans = [],
 }: {
   lane: LaneView;
   selected: boolean;
@@ -1144,6 +1150,9 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   onKeep: (reason: string) => void;
   /** Line 1's project: the lane's projects with their badges; the lane key when it has none. */
   project?: React.ReactNode;
+  /** Every project and plan, so the mark-done confirmation names each plan that lists the lane. */
+  projects?: Project[];
+  plans?: ProjectPlan[];
 }) {
   useTick(lane.drain?.escalatedAt ? 30_000 : null);
   const laneStatus: CardStatus = {
@@ -1153,6 +1162,8 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   };
   const [keeping, setKeeping] = useState(false),
     [reason, setReason] = useState("");
+  // Marking the drained lane done always asks first (nucleus#1536).
+  const [confirmingDone, setConfirmingDone] = useState(false);
   return (
     <BoardCard
       label={`Drained lane: ${lane.title}, ${statusLabel(laneStatus)}`}
@@ -1173,9 +1184,9 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
               small
               c={c}
               disabled={busy}
-              text="Close lane"
-              label={plainCardText(`Close drained lane ${lane.key}`)}
-              onPress={onClose}
+              text="Mark done"
+              label={plainCardText(`Mark drained lane ${lane.key} done`)}
+              onPress={() => setConfirmingDone(true)}
             />
             <Button
               small
@@ -1210,6 +1221,20 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
                 }}
               />
             </View>
+          )}
+          {confirmingDone && (
+            <MarkDoneConfirm
+              c={c}
+              lane={lane}
+              projects={projects}
+              plans={plans}
+              busy={busy}
+              onConfirm={() => {
+                setConfirmingDone(false);
+                onClose();
+              }}
+              onCancel={() => setConfirmingDone(false)}
+            />
           )}
         </View>
       }

@@ -15,6 +15,9 @@ import {
   summarizeTask,
   syncHoldProjection,
   visibleTaskSummaries,
+  type LaneView,
+  type Project,
+  type ProjectPlan,
   type Task,
   type TaskSummary,
 } from "../shared/contracts";
@@ -2601,7 +2604,8 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
           nodeHas(
             node,
             (child) =>
-              child.props.accessibilityLabel === "Close drained lane alpha",
+              child.props.accessibilityLabel ===
+                "Mark drained lane alpha done",
           ) &&
           nodeHas(node, (child) =>
             /^Drained lane: Alpha lane, Status: Drained/.test(
@@ -2621,7 +2625,7 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
     // the status; the lane's aim is in the plan view the row opens.
     assert.match(
       nodeText(rowFrame!),
-      /^\s*Lane drained\s+App\s+\d+d ago\s+Alpha lane has drained\s+Drained\s+· plan owner has not answered\s+Close lane\s+Keep\s*$/,
+      /^\s*Lane drained\s+App\s+\d+d ago\s+Alpha lane has drained\s+Drained\s+· plan owner has not answered\s+Mark done\s+Keep\s*$/,
     );
     assert.ok(
       nodeHas(
@@ -2653,6 +2657,61 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
     mounted?.update(h("View", null));
     store.close();
   }
+});
+
+test("a drained lane asks before it is marked done, and cancel writes nothing", async () => {
+  const { LaneDrainCard } = await import("../client/board/cards");
+  const calls: string[] = [];
+  const lane = {
+    key: "alpha",
+    title: "Alpha lane",
+    aim: "Done looks like alpha shipped.",
+    status: "active",
+    repositories: [repo],
+    liveByPhase: { working: 2 },
+    terminalCount: 0,
+    lastActivityAt: at,
+    recentOutcomes: [],
+    drain: { since: at, notices: 1, lastNoticeAt: at, escalatedAt: at },
+  } as unknown as LaneView;
+  const projects = [{ ...project, name: "App" }] as Project[];
+  const plans = [
+    {
+      project: "app",
+      version: 1,
+      author: null,
+      createdAt: at,
+      entries: [{ lane: "alpha", note: "", horizon: "now" }],
+    },
+  ] as unknown as ProjectPlan[];
+  const ui = mount(
+    h(LaneDrainCard, {
+      lane,
+      selected: false,
+      onPress: () => {},
+      c,
+      busy: false,
+      onClose: () => calls.push("done"),
+      onKeep: () => {},
+      projects,
+      plans,
+    }),
+  );
+  ui.press("Mark drained lane alpha done");
+  assert.ok(ui.get("Mark Alpha lane done"), "marking done asks first");
+  assert.match(
+    ui.text(),
+    /It moves to Finished lanes on every plan that lists it\. You can reopen it\./,
+  );
+  assert.match(ui.text(), /App \(Now\)/);
+  assert.match(ui.text(), /2 live tasks/);
+  assert.deepEqual(calls, [], "the confirmation writes nothing until it is confirmed");
+  ui.press("Cancel marking Alpha lane done");
+  assert.equal(ui.query("Mark Alpha lane done"), undefined);
+  assert.deepEqual(calls, [], "cancel writes nothing");
+  ui.press("Mark drained lane alpha done");
+  ui.press("Mark Alpha lane done");
+  assert.deepEqual(calls, ["done"]);
 });
 
 test("a task row keeps one status line and no host identity, while the detail keeps the routing", async () => {

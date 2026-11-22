@@ -287,7 +287,7 @@ test("Spec 041 rows 7 and 8 rendered: an escalated drained lane is answered on t
   await settle(() => !tree.text().includes("Alpha lane has drained"));
 });
 
-test("Spec 041 rendered: Close from the Decisions column finishes the drained lane", async () => {
+test("Spec 041 rendered: Mark done from the Decisions column asks first, then finishes the drained lane", async () => {
   const queue = await import("../client/queue");
   let escalated = true;
   const calls: Array<{ method: string; input: unknown }> = [];
@@ -370,7 +370,13 @@ test("Spec 041 rendered: Close from the Decisions column finishes the drained la
     () => tree.text().includes("Alpha lane has drained"),
     "the escalated lane card on the Decisions column",
   );
-  tree.press("Close drained lane alpha");
+  tree.press("Mark drained lane alpha done");
+  await settle(
+    () => Boolean(tree.query("Mark Alpha lane done")),
+    "the mark-done confirmation",
+  );
+  assert.equal(calls.length, 0, "the confirmation writes nothing until it is confirmed");
+  tree.press("Mark Alpha lane done");
   await settle(() => calls.length === 1);
   assert.deepEqual(calls[0]!.input, { key: "alpha", status: "done" });
   await settle(() => !tree.text().includes("Alpha lane has drained"));

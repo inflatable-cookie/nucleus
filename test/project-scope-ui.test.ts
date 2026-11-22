@@ -649,7 +649,7 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
   assert.ok(compact.get("Lane detail"), "the lane opens in a modal");
   assert.ok(compact.get("Planning plan"), "the plan stays beneath it");
   assert.equal(compact.text().includes("shared"), true);
-  compact.press("Close lane");
+  compact.press("Close");
   assert.deepEqual(
     sections(compact),
     ["Plan for project-a-accelerator"],
