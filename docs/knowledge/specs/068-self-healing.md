@@ -197,16 +197,19 @@ These rules stay:
 
 ## Batches
 
-Each batch is at most 3 modules and about 1.5k lines.
+Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are split in two.
 
-| Batch | Scope | Depends on |
-|---|---|---|
-| 1 | `taskActivity` and its facts (process liveness, running tool, pending permission, last activity). The board and `next` read it. No behaviour change. | — |
-| 2 | ACP task thread: `plan` progress and `tool_call` runs and repairs, plus clearer messages. | 1 |
-| 3 | Creation lookup for every role, process-death release, single-thread T3 lookup. | 1, Spec 067 batch 5 |
-| 4 | Completion releases its run, the verdict-only ticket, reattach, and per-round reviewer worktrees. | 1 |
-| 5 | Orphan-phase readmission, hung-tool limit, permission policy, the coordinator cap counting failures, and typed budget and cap stops. | 1, 3 |
-| 6 | Reads leave the task lane. | nucleus#1545 |
+| Batch | Task | Scope | Depends on |
+|---|---|---|---|
+| 1 | nucleus#1549 | `taskActivity` and its facts (process liveness, running tool, pending permission, last activity). The board and `next` read it. No behaviour change. | — |
+| 2 | nucleus#1554 | ACP task thread: `plan` progress and `tool_call` runs and repairs, plus clearer messages. | 1 |
+| 3a | nucleus#1555 | Creation lookup for every role, and single-thread T3 lookup. | 1, Spec 067 batch 5 (nucleus#1523) |
+| 3b | nucleus#1552 | Process-death release, and `run_stalled` admits the coordinator. | 1 |
+| 4a | nucleus#1551 | A completion releases its run, `run.release` keeps a reported verdict, and the verdict-only credential. | — |
+| 4b | nucleus#1550 | Per-round reviewer worktrees and reattach. | — |
+| 5a | nucleus#1553 | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. | 1 |
+| 5b | nucleus#1556 | Hung-tool limit, permission policy and orphan-phase readmission. | 1, 3b |
+| 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
 
 **Done when:** over one week, no task spends more than 30 minutes outside the four
 states, and no planner or operator action resolves a mechanical stall.
