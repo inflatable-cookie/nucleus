@@ -94,17 +94,14 @@ export function mergeOccurrence(
       r.externalMergePreAttention &&
       !hasEpisode &&
       current.reasonFact?.code === "external_merge_check" &&
-      (!r.stop ||
-        r.stop.fact?.code === "external_merge_check") &&
+      (!r.stop || r.stop.fact?.code === "external_merge_check") &&
       (!r.incident ||
         r.incident.status === "resolved" ||
         r.incident.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)),
   );
   const otherStop = Boolean(r.stop && !recoveredProbe);
   const otherIncident = Boolean(
-    r.incident &&
-      r.incident.status !== "resolved" &&
-      !recoveredProbe,
+    r.incident && r.incident.status !== "resolved" && !recoveredProbe,
   );
   const otherBinding = Boolean(r.currentRunId && bound?.role !== "closeout");
   const liveRun = runs.find((run) => !run.released);
@@ -236,11 +233,7 @@ export class Closeout {
         reobserved: continuation.kind === "sweep" && continuation.reobserved,
         effectsHold: () => this.closeoutEffects(current).length > 0,
       });
-      const {
-        parked,
-        recoveredProbe,
-        held,
-      } = occurrence;
+      const { parked, recoveredProbe, held } = occurrence;
       // An owner move names the holder it cannot pass, never a silent no-op.
       if (occurrence.hold && continuation.kind === "owner")
         throw new Error(`Recorded merge waits: ${occurrence.hold}`);

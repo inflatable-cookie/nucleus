@@ -24,9 +24,7 @@ Gates serve normal operation. No gate, fence, stale record or uncertain effect m
 Read `next` for ordinary progress. The live project planner, Nucleus planner
 and operator can still use `move` with `force: true` and a reason. A planner
 may also be a past participant on the task. Use the explicit commands below to
-release a run or clear a stuck effect. A forced move
-records the blockers it settles and releases the merge turn; stop releases the
-turn too. A forced move to review may bind an unbound PR supplied as `prNumber` after verifying its task branch, base and canonical repository; a different bound number is refused. The resulting head still needs independent review. A blocked or errored revision's verified PR is identity only and leaves its block unresolved. `next`, the stop and the coordinator snapshot show the latest author report. A forced move to work, or an ordinary move to work, returns the retained author with the owner's instruction. Force to merge still uses GitHub's exact-head guard. When no applied
+release a run or clear a stuck effect. A forced move records the blockers it settles and releases the merge turn; stop releases the turn on unfinished work (use `turn.release` to free a terminal or fenced holder). A forced move to review may bind an unbound PR supplied as `prNumber` after verifying its task branch, base and canonical repository; a different bound number is refused. The resulting head still needs independent review. A blocked or errored revision's verified PR is identity only and leaves its block unresolved. `next`, the stop and the coordinator snapshot show the latest author report. A forced move to work, or an ordinary move to work, returns the retained author with the owner's instruction. Force to merge still uses GitHub's exact-head guard. When no applied
 verdict exists at that head, only explicit operator source acceptance can replace
 review: include the qualification and, for a relay, the note quoting Tom. A
 merged PR may be moved to closeout on the observed merge. After that verified

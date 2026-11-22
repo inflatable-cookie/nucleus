@@ -153,7 +153,8 @@ export function stopStateRefusal(task: Task): string | null {
   const turnHint = task.resolution.integrationTurn
     ? "; use turn.release to release its integration turn"
     : "";
-  if (isDispositionActive(task)) return `${DISPOSITION_CONTROL_REFUSAL}${turnHint}`;
+  if (isDispositionActive(task))
+    return `${DISPOSITION_CONTROL_REFUSAL}${turnHint}`;
   return ["done", "cancelled"].includes(task.phase) ||
     task.resolution.mergedCommit
     ? `stop applies to unfinished work; this task is ${task.phase}${turnHint}`

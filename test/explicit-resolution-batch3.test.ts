@@ -55,7 +55,7 @@ async function fixture(
     observe: async (id: string) => ({
       id,
       title: id,
-      workspaceId: null,
+      workspaceId: "ws-1",
       status: "idle",
       directory: REPO,
     }),
@@ -91,6 +91,10 @@ async function fixture(
     unknown
   >;
   Object.assign(resAdapter, resolutionOverrides);
+  if (resolutionOverrides.syncMain) {
+    (adapter as unknown as Record<string, unknown>).syncMain =
+      resolutionOverrides.syncMain;
+  }
 
   let seq = 0;
   const insertTask = (title: string, prNumber: number): Task => {
@@ -420,21 +424,26 @@ test("merge.now enforces both hard gates even with accept, warns on turn_held/ch
   };
   let checksWait = "Non-required check failed";
 
-  const { store, insertTask, attachCoordinator, attachReadyReview, callExplicit } =
-    await fixture(t, {
-      merge: async () => {
-        mergeCalls += 1;
-      },
-      merged: async () => {
-        if (mergedResponse instanceof Error) throw mergedResponse;
-        return mergedResponse;
-      },
-      requiredChecks: async () => ({
-        head: HEAD,
-        wait: checksWait,
-        checksFailed: Boolean(checksWait),
-      }),
-    });
+  const {
+    store,
+    insertTask,
+    attachCoordinator,
+    attachReadyReview,
+    callExplicit,
+  } = await fixture(t, {
+    merge: async () => {
+      mergeCalls += 1;
+    },
+    merged: async () => {
+      if (mergedResponse instanceof Error) throw mergedResponse;
+      return mergedResponse;
+    },
+    requiredChecks: async () => ({
+      head: HEAD,
+      wait: checksWait,
+      checksFailed: Boolean(checksWait),
+    }),
+  });
 
   const task = insertTask("merge target", 10);
   const holder = insertTask("other holder", 11);
@@ -535,17 +544,33 @@ test("merge.now enforces both hard gates even with accept, warns on turn_held/ch
   assert.equal(warned.explicitResolution?.status, "warnings");
   assert.deepEqual(
     warned.explicitResolution?.warnings.map((w) => w.id),
-    ["turn_held", "checks", "holds"],
+    ["turn_held", "checks", "holds", "hold_owner"],
   );
   assert.equal(mergeCalls, 0);
 
-  // Coordinator can apply merge.now with accepted warnings!
+  // Coordinator cannot override a planner-placed hold (hold_owner is planner/operator only).
+  await assert.rejects(
+    () =>
+      callExplicit(
+        task.id,
+        {
+          action: "merge.now",
+          head: HEAD,
+          accept: ["turn_held", "checks", "holds", "hold_owner"],
+        },
+        coordinator,
+      ),
+    /Only the live responsible planner or operator board can accept hold_owner/,
+  );
+
+  // Once the planner hold is absent, coordinator can apply merge.now with turn_held + checks.
+  store.update(task.id, { holds: {} });
   const applied = await callExplicit(
     task.id,
     {
       action: "merge.now",
       head: HEAD,
-      accept: ["turn_held", "checks", "holds"],
+      accept: ["turn_held", "checks"],
     },
     coordinator,
   );
@@ -556,19 +581,30 @@ test("merge.now enforces both hard gates even with accept, warns on turn_held/ch
 });
 
 test("closeout.now closes merged-but-parked task, enforces hard gate, and gates unverified_merge to operator board", async (t) => {
+  let syncCalls = 0;
   let mergedResult:
     | { merged: boolean; commit: string | null; head: string; base: string }
     | Error = new Error("GitHub offline");
 
-  const { store, insertTask, attachCoordinator, attachReadyReview, callExplicit } =
-    await fixture(t, {
-      merged: async () => {
-        if (mergedResult instanceof Error) throw mergedResult;
-        return mergedResult;
-      },
-    });
+  const {
+    runtime,
+    store,
+    insertTask,
+    attachCoordinator,
+    attachReadyReview,
+    callExplicit,
+  } = await fixture(t, {
+    merged: async () => {
+      if (mergedResult instanceof Error) throw mergedResult;
+      return mergedResult;
+    },
+    syncMain: async () => {
+      syncCalls += 1;
+      return MERGED_COMMIT;
+    },
+  });
 
-  // Case 1: merged-but-parked task closes in one step via coordinator.
+  // Case 1: merged-but-parked task closes in one step via coordinator AND reaches sync + closeout.
   const parked = insertTask("parked merged", 20);
   attachReadyReview(parked.id, HEAD);
   store.update(parked.id, {
@@ -596,7 +632,19 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
   assert.equal(closed.phase, "syncing");
   assert.equal(closed.resolution.stop, null);
   assert.equal(closed.resolution.attention, false);
+  assert.equal(closed.resolution.recoveryActive, false);
+  assert.equal(closed.resolution.recovery?.status, "resolved");
   assert.ok(closed.resolution.integrationTurn);
+  assert.equal(
+    store.runs(parked.id).some((r) => !r.released),
+    false,
+  );
+  // Real sync step advances syncing -> closing using the handoff.
+  await runtime.engine.withHost(HOST, () =>
+    runtime.engine.resolution.closeout.advanceSyncing(store.task(parked.id)),
+  );
+  assert.equal(syncCalls, 1);
+  assert.equal(store.task(parked.id).phase, "closing");
 
   // Case 2: hard gate refuses when no applied verdict or operator source acceptance exists.
   const unreviewed = insertTask("unreviewed external merge", 21);
@@ -722,5 +770,164 @@ test("deleted levers: restart on merged-but-parked task refuses with closeout.no
         caller: PLANNER,
       }),
     /turn\.release/,
+  );
+});
+
+test("review findings: exact-head gate ignores skipPRReview and pending proofs, validates target branch, preserves FIFO waiters and late merge responses", async (t) => {
+  let mergeCallNum = 0;
+  let resolveFirstEntered!: () => void;
+  const firstEntered = new Promise<void>((resolve) => {
+    resolveFirstEntered = resolve;
+  });
+  let rejectFirstMerge!: (error: Error) => void;
+  let mergedBase = "release";
+  let mergedState = false;
+
+  const { runtime, store, insertTask, attachReadyReview, callExplicit } =
+    await fixture(t, {
+      merge: async () => {
+        mergeCallNum += 1;
+        if (mergeCallNum === 1) {
+          resolveFirstEntered();
+          await new Promise<void>((_, reject) => {
+            rejectFirstMerge = reject;
+          });
+        }
+      },
+      merged: async () => ({
+        merged: mergedState,
+        commit: mergedState ? MERGED_COMMIT : null,
+        head: HEAD,
+        base: mergedBase,
+      }),
+    });
+
+  // 1. skipPRReview: true and sourceApproved with awaitingProofs still fail the hard gate.
+  const skipped = insertTask("skip review task", 40);
+  store.update(skipped.id, { skipPRReview: true, phase: "verifying" });
+  await assert.rejects(
+    () => callExplicit(skipped.id, { action: "merge.now", head: HEAD }),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+  mergedState = true;
+  mergedBase = "main";
+  await assert.rejects(
+    () =>
+      callExplicit(skipped.id, {
+        action: "closeout.now",
+        accept: ["no_verdict"],
+      }),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+  store.update(skipped.id, {
+    resolution: {
+      ...store.task(skipped.id).resolution,
+      review: {
+        taskId: skipped.id,
+        runId: "rev-pending-proof",
+        eventId: "ev-pending-proof",
+        status: "changes_required",
+        head: HEAD,
+        summary: "Source approved pending proof",
+        sourceApproved: true,
+        awaitingProofs: [{ proof: "Screenshot", route: "author" }],
+      },
+    },
+  });
+  await assert.rejects(
+    () => callExplicit(skipped.id, { action: "merge.now", head: HEAD }),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+
+  // 2. Target branch validation: wrong base refuses both merge.now and closeout.now.
+  const wrongBase = insertTask("wrong base task", 41);
+  attachReadyReview(wrongBase.id, HEAD);
+  mergedState = true;
+  mergedBase = "release";
+  await assert.rejects(
+    () => callExplicit(wrongBase.id, { action: "closeout.now" }),
+    /merged into release, not task base main/,
+  );
+  mergedState = false;
+  await assert.rejects(
+    () => callExplicit(wrongBase.id, { action: "merge.now", head: HEAD }),
+    /PR targets release, not task base main/,
+  );
+
+  // 3. Late merge response does not overwrite a newer accepted merge outcome.
+  mergedBase = "main";
+  mergedState = false;
+  const race = insertTask("merge race task", 42);
+  attachReadyReview(race.id, HEAD);
+  const firstPending = callExplicit(race.id, {
+    action: "merge.now",
+    head: HEAD,
+  });
+  // Wait deterministically until the first merge request has committed pending and entered finish().
+  await firstEntered;
+  assert.equal(store.task(race.id).resolution.mergeResponseOutcome, "pending");
+
+  const second = await callExplicit(race.id, {
+    action: "merge.now",
+    head: HEAD,
+  });
+  assert.equal(second.explicitResolution?.status, "applied");
+  assert.equal(store.task(race.id).resolution.mergeResponseOutcome, "accepted");
+
+  // First request now times out; it must NOT overwrite the newer "accepted" outcome.
+  rejectFirstMerge(new Error("first request timed out"));
+  await firstPending;
+  assert.equal(store.task(race.id).resolution.mergeResponseOutcome, "accepted");
+  assert.ok(
+    store
+      .eventsAll(race.id)
+      .some((e) => e.kind === "merge_response_late_uncertain"),
+  );
+
+  // 4. turn.take on C displaces holder A while preserving unrelated waiter B's FIFO sequence.
+  store.update(race.id, {
+    phase: "done",
+    resolution: {
+      ...store.task(race.id).resolution,
+      integrationTurn: null,
+      mergeIntent: false,
+    },
+  });
+  const a = insertTask("holder A", 50);
+  const b = insertTask("waiter B", 51);
+  const c = insertTask("taker C", 52);
+  store.update(a.id, {
+    phase: "verifying",
+    resolution: {
+      ...store.task(a.id).resolution,
+      integrationTurn: { sequence: 1, acceptedAt: new Date().toISOString() },
+    },
+  });
+  store.update(b.id, {
+    phase: "verifying",
+    resolution: {
+      ...store.task(b.id).resolution,
+      integrationTurn: { sequence: 2, acceptedAt: new Date().toISOString() },
+    },
+  });
+  store.update(c.id, {
+    phase: "verifying",
+    resolution: {
+      ...store.task(c.id).resolution,
+      integrationTurn: { sequence: 3, acceptedAt: new Date().toISOString() },
+    },
+  });
+
+  const taken = await callExplicit(c.id, {
+    action: "turn.take",
+    accept: ["turn_held"],
+  });
+  assert.equal(taken.explicitResolution?.status, "applied");
+  assert.equal(store.task(a.id).resolution.integrationTurn, null);
+  assert.equal(store.task(b.id).resolution.integrationTurn?.sequence, 2);
+  assert.equal(store.task(c.id).resolution.integrationTurn?.sequence, 1);
+  assert.equal(
+    runtime.engine.resolution.holdsIntegrationTurn(store.task(c.id)),
+    true,
   );
 });

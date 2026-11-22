@@ -1,4 +1,4 @@
-import { REMOVED_TASK_REFUSAL, stopStateRefusal } from './control-refusals';
+import { REMOVED_TASK_REFUSAL, stopStateRefusal } from "./control-refusals";
 import type {
   OwnerStopCancellation,
   OwnerStopRecord,
@@ -12,12 +12,23 @@ import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { dispatchBlocked, DISPATCH_HELD_REASON } from "../dispatch/capacity";
 import type { Engine } from "../engine";
-import { holdPatch, OPERATOR_HOLD_OWNER, OWNER_STOP_HOLD_PREFIX, releasePatch } from "../merge/merge-hold";
+import {
+  holdPatch,
+  OPERATOR_HOLD_OWNER,
+  OWNER_STOP_HOLD_PREFIX,
+  releasePatch,
+} from "../merge/merge-hold";
 import { ownerControlEventDetail, type RouteRole } from "./owner-verbs";
 import { ownerStoppedRunIds } from "./owner-facts";
 import { ProvenPreSendRefusalError } from "../host";
-import { DurableFenceRefusal, matchingInactiveParticipant } from "../intake/run-settlement";
-import { observationAdvanceSince, runsUnchangedSince } from "../recovery/observation-advance";
+import {
+  DurableFenceRefusal,
+  matchingInactiveParticipant,
+} from "../intake/run-settlement";
+import {
+  observationAdvanceSince,
+  runsUnchangedSince,
+} from "../recovery/observation-advance";
 import type { Adapter } from "../host/adapter";
 import { digest, now } from "../store/store";
 
@@ -71,9 +82,15 @@ export function stopControlNeedsHost(
  */
 export class OwnerStop {
   constructor(readonly engine: Engine) {}
-  get store() { return this.engine.store; }
-  get adapter() { return this.engine.adapter; }
-  get resolution() { return this.engine.resolution; }
+  get store() {
+    return this.engine.store;
+  }
+  get adapter() {
+    return this.engine.adapter;
+  }
+  get resolution() {
+    return this.engine.resolution;
+  }
 
   /** Round 4: the task's dispatch hold is the one an owner `stop` placed. */
   ownerStopHold(task: Task): boolean {
@@ -83,7 +100,9 @@ export class OwnerStop {
 
   /** Whether the record says this exact run was stopped by the owner and not restarted since. */
   ownerStopNamesRun(task: Task, runId: string | null | undefined): boolean {
-    return Boolean(runId && ownerStoppedRunIds(this.store.eventsAll(task.id)).has(runId));
+    return Boolean(
+      runId && ownerStoppedRunIds(this.store.eventsAll(task.id)).has(runId),
+    );
   }
 
   /**
@@ -92,11 +111,20 @@ export class OwnerStop {
    * hold does not hold back the owner's own next verb — but it does hold back a
    * coordinator and a verb recorded before the stop.
    */
-  dispatchWaitsFor(task: Task, ownerStopYields = false, inFlight = false): "paused" | "held" | null {
-    if (this.engine.stopped || (!inFlight && this.store.getMeta("paused"))) return "paused";
+  dispatchWaitsFor(
+    task: Task,
+    ownerStopYields = false,
+    inFlight = false,
+  ): "paused" | "held" | null {
+    if (this.engine.stopped || (!inFlight && this.store.getMeta("paused")))
+      return "paused";
     if (
       dispatchBlocked(task) &&
-      !(!task.resolution.ownerStop && this.ownerStopHold(task) && (ownerStopYields || this.engine.isOwnerCall()))
+      !(
+        !task.resolution.ownerStop &&
+        this.ownerStopHold(task) &&
+        (ownerStopYields || this.engine.isOwnerCall())
+      )
     )
       return "held";
     return null;
@@ -108,7 +136,12 @@ export class OwnerStop {
     const task = this.store.task(taskId);
     if (task.resolution.ownerStop) return false;
     if (!this.ownerStopHold(task)) return false;
-    this.store.update(task.id, releasePatch(task, "dispatch"), "release", "Owner stop released by the owner's next verb");
+    this.store.update(
+      task.id,
+      releasePatch(task, "dispatch"),
+      "release",
+      "Owner stop released by the owner's next verb",
+    );
     return true;
   }
 
@@ -117,7 +150,9 @@ export class OwnerStop {
     mergeHead: string | null;
     mergeNote: string;
   } {
-    const mergeRequested = Boolean(task.resolution.mergeIntent && !task.resolution.mergedCommit);
+    const mergeRequested = Boolean(
+      task.resolution.mergeIntent && !task.resolution.mergedCommit,
+    );
     const mergeHead = task.resolution.mergeHead ?? task.prHead ?? null;
     const mergeNote = mergeRequested
       ? ` The merge was already requested for ${mergeHead ?? "the recorded head"} before this stop, so it may still land; Nucleus cannot cancel a request it already sent`
@@ -125,16 +160,17 @@ export class OwnerStop {
     return { mergeRequested, mergeHead, mergeNote };
   }
 
-  private holdWaitDetail(
-    task: Task,
-    issues: string[],
-  ): string {
+  private holdWaitDetail(task: Task, issues: string[]): string {
     const { mergeNote } = this.mergeNoteFor(task);
     const issueText = issues.filter(Boolean).join("; ");
     return `${DISPATCH_HELD_REASON}${mergeNote}${issueText ? ` Remaining activity needs attention: ${issueText}` : ""}`;
   }
 
-  private commitOperationSuccessInTx(operationId: string | null | undefined, task: Task, settleState: boolean): void {
+  private commitOperationSuccessInTx(
+    operationId: string | null | undefined,
+    task: Task,
+    settleState: boolean,
+  ): void {
     if (!operationId) return;
     const op = this.store.operation(operationId);
     if (!op) return;
@@ -154,7 +190,11 @@ export class OwnerStop {
             kind: "superseded",
           },
         });
-        this.store.event(task.id, "operation_superseded", JSON.stringify(record));
+        this.store.event(
+          task.id,
+          "operation_superseded",
+          JSON.stringify(record),
+        );
       }
       return;
     }
@@ -184,7 +224,11 @@ export class OwnerStop {
     });
   }
 
-  private recordAuditForObservedSettle(task: Task, stop: OwnerStopRecord, phaseBefore: Task["phase"]): void {
+  private recordAuditForObservedSettle(
+    task: Task,
+    stop: OwnerStopRecord,
+    phaseBefore: Task["phase"],
+  ): void {
     if (!stop.operationId) return;
     const opKey = `operation:${stop.operationId}`;
     try {
@@ -193,7 +237,14 @@ export class OwnerStop {
         "owner_control",
         ownerControlEventDetail(
           task,
-          { action: "stop", taskId: task.id, version: stop.taskVersion, reason: stop.reason, role: stop.role ?? undefined, caller: stop.caller ?? undefined },
+          {
+            action: "stop",
+            taskId: task.id,
+            version: stop.taskVersion,
+            reason: stop.reason,
+            role: stop.role ?? undefined,
+            caller: stop.caller ?? undefined,
+          },
           phaseBefore,
           task.phase,
         ),
@@ -208,7 +259,10 @@ export class OwnerStop {
         "stop",
         "applied",
         "owner",
-        { ...(stop.role ? { role: stop.role } : {}), caller: stop.caller ?? null },
+        {
+          ...(stop.role ? { role: stop.role } : {}),
+          caller: stop.caller ?? null,
+        },
         opKey,
       );
     } catch {
@@ -240,8 +294,15 @@ export class OwnerStop {
         shouldSend = false;
         return;
       }
-      const entry = stop.cancellations.find((c) => c.effectId === cancellation.effectId);
-      if (!entry || entry.status === "sent" || entry.status === "settled" || entry.boundaryStartedAt !== null) {
+      const entry = stop.cancellations.find(
+        (c) => c.effectId === cancellation.effectId,
+      );
+      if (
+        !entry ||
+        entry.status === "sent" ||
+        entry.status === "settled" ||
+        entry.boundaryStartedAt !== null
+      ) {
         shouldSend = false;
         return;
       }
@@ -263,7 +324,12 @@ export class OwnerStop {
         );
         this.store.update(
           taskId,
-          { resolution: { ...current.resolution, ownerStop: { ...stop, cancellations: updated } } },
+          {
+            resolution: {
+              ...current.resolution,
+              ownerStop: { ...stop, cancellations: updated },
+            },
+          },
           "owner_stop_progress",
           `Settled pending stop on ${cancellation.runId} after task transition`,
         );
@@ -272,7 +338,8 @@ export class OwnerStop {
       }
       const runRows = this.store.runs(taskId);
       const stillBound = cancellation.isInitialWorker
-        ? current.agentId === cancellation.agentId && current.workspaceId === cancellation.workspaceId
+        ? current.agentId === cancellation.agentId &&
+          current.workspaceId === cancellation.workspaceId
         : runRows.some(
             (r) =>
               r.id === cancellation.runId &&
@@ -294,7 +361,12 @@ export class OwnerStop {
         );
         this.store.update(
           taskId,
-          { resolution: { ...current.resolution, ownerStop: { ...stop, cancellations: updated } } },
+          {
+            resolution: {
+              ...current.resolution,
+              ownerStop: { ...stop, cancellations: updated },
+            },
+          },
           "owner_stop_progress",
           `Settled pending stop on ${cancellation.runId} after binding release`,
         );
@@ -311,7 +383,12 @@ export class OwnerStop {
         );
         this.store.update(
           taskId,
-          { resolution: { ...current.resolution, ownerStop: { ...stop, cancellations: updated } } },
+          {
+            resolution: {
+              ...current.resolution,
+              ownerStop: { ...stop, cancellations: updated },
+            },
+          },
           "owner_stop_uncertain_recorded",
           msg,
         );
@@ -326,7 +403,12 @@ export class OwnerStop {
       );
       this.store.update(
         taskId,
-        { resolution: { ...current.resolution, ownerStop: { ...stop, cancellations: updated } } },
+        {
+          resolution: {
+            ...current.resolution,
+            ownerStop: { ...stop, cancellations: updated },
+          },
+        },
         "owner_stop_boundary",
         `Crossing cancellation boundary for ${cancellation.runId}`,
       );
@@ -359,7 +441,9 @@ export class OwnerStop {
         ...(cancellation.turnId !== null ? [cancellation.turnId] : []),
       );
     } catch (error) {
-      const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+      const message = (
+        error instanceof Error ? error.message : String(error)
+      ).slice(0, 2000);
       this.store.transaction(() => {
         const current = this.store.task(taskId);
         const stop = current.resolution.ownerStop;
@@ -376,16 +460,27 @@ export class OwnerStop {
         );
         this.store.update(
           taskId,
-          { resolution: { ...current.resolution, ownerStop: { ...stop, cancellations: updated } } },
+          {
+            resolution: {
+              ...current.resolution,
+              ownerStop: { ...stop, cancellations: updated },
+            },
+          },
           "owner_stop_uncertain_recorded",
           `Owner stop cancellation uncertain on ${cancellation.runId}: ${message}`,
         );
       });
       if (error instanceof ProvenPreSendRefusalError) {
-        const refreshed = this.store.task(taskId).resolution.ownerStop?.cancellations.find(
-          (c) => c.effectId === cancellation.effectId,
-        );
-        if (refreshed && refreshed.status !== "sent" && refreshed.status !== "settled") {
+        const refreshed = this.store
+          .task(taskId)
+          .resolution.ownerStop?.cancellations.find(
+            (c) => c.effectId === cancellation.effectId,
+          );
+        if (
+          refreshed &&
+          refreshed.status !== "sent" &&
+          refreshed.status !== "settled"
+        ) {
           await this.observeOrResumeParticipant(taskId, refreshed);
         }
       }
@@ -407,7 +502,12 @@ export class OwnerStop {
       );
       this.store.update(
         taskId,
-        { resolution: { ...current.resolution, ownerStop: { ...stop, cancellations: updated } } },
+        {
+          resolution: {
+            ...current.resolution,
+            ownerStop: { ...stop, cancellations: updated },
+          },
+        },
         "owner_stop_sent_recorded",
         `Owner stop cancellation sent for ${cancellation.runId}`,
       );
@@ -446,7 +546,12 @@ export class OwnerStop {
           );
           this.store.update(
             taskId,
-            { resolution: { ...cur.resolution, ownerStop: { ...curStop, cancellations: updated } } },
+            {
+              resolution: {
+                ...cur.resolution,
+                ownerStop: { ...curStop, cancellations: updated },
+              },
+            },
             "owner_stop_progress",
             `Settled pre-boundary stop on ${cancellation.runId} after task transition`,
           );
@@ -455,7 +560,8 @@ export class OwnerStop {
       }
       const runRows = this.store.runs(taskId);
       const stillBound = cancellation.isInitialWorker
-        ? taskBefore.agentId === cancellation.agentId && taskBefore.workspaceId === cancellation.workspaceId
+        ? taskBefore.agentId === cancellation.agentId &&
+          taskBefore.workspaceId === cancellation.workspaceId
         : runRows.some(
             (r) =>
               r.id === cancellation.runId &&
@@ -497,7 +603,12 @@ export class OwnerStop {
           );
           this.store.update(
             taskId,
-            { resolution: { ...cur.resolution, ownerStop: { ...curStop, cancellations: updated } } },
+            {
+              resolution: {
+                ...cur.resolution,
+                ownerStop: { ...curStop, cancellations: updated },
+              },
+            },
             "owner_stop_progress",
             `Settled pre-boundary stop on ${cancellation.runId}: run already settled`,
           );
@@ -514,7 +625,12 @@ export class OwnerStop {
       observeError = error instanceof Error ? error.message : String(error);
     }
 
-    if (observeError !== null || !observed || observed.id !== cancellation.agentId || observed.workspaceId !== cancellation.workspaceId) {
+    if (
+      observeError !== null ||
+      !observed ||
+      observed.id !== cancellation.agentId ||
+      observed.workspaceId !== cancellation.workspaceId
+    ) {
       const reason =
         observeError !== null
           ? `Agent cannot be observed (${observeError})`
@@ -525,14 +641,27 @@ export class OwnerStop {
         const cur = this.store.task(taskId);
         const curStop = cur.resolution.ownerStop;
         if (!curStop) return;
-        const prev = curStop.cancellations.find((c) => c.effectId === cancellation.effectId);
-        if (!prev || (prev.status === "uncertain" && prev.note === reason.slice(0, 2000))) return;
+        const prev = curStop.cancellations.find(
+          (c) => c.effectId === cancellation.effectId,
+        );
+        if (
+          !prev ||
+          (prev.status === "uncertain" && prev.note === reason.slice(0, 2000))
+        )
+          return;
         const updated = curStop.cancellations.map((c) =>
           c.effectId === cancellation.effectId
-            ? { ...c, status: "uncertain" as const, note: reason.slice(0, 2000) }
+            ? {
+                ...c,
+                status: "uncertain" as const,
+                note: reason.slice(0, 2000),
+              }
             : c,
         );
-        if (cancellation.boundaryStartedAt === null && prev.status !== "uncertain") {
+        if (
+          cancellation.boundaryStartedAt === null &&
+          prev.status !== "uncertain"
+        ) {
           this.store.event(
             taskId,
             "owner_stop_uncertain",
@@ -552,7 +681,12 @@ export class OwnerStop {
         }
         this.store.update(
           taskId,
-          { resolution: { ...cur.resolution, ownerStop: { ...curStop, cancellations: updated } } },
+          {
+            resolution: {
+              ...cur.resolution,
+              ownerStop: { ...curStop, cancellations: updated },
+            },
+          },
           "owner_stop_progress",
           `Owner stop observation inconclusive for ${cancellation.runId}: ${reason}`,
         );
@@ -562,10 +696,19 @@ export class OwnerStop {
 
     const ownedHold =
       observed.status !== "closed" &&
-      Boolean(await this.engine.ownedToolHold(cancellation.agentId, cancellation.runId, taskId));
+      Boolean(
+        await this.engine.ownedToolHold(
+          cancellation.agentId,
+          cancellation.runId,
+          taskId,
+        ),
+      );
     const inactive =
       matchingInactiveParticipant(
-        { agentId: cancellation.agentId, workspaceId: cancellation.workspaceId },
+        {
+          agentId: cancellation.agentId,
+          workspaceId: cancellation.workspaceId,
+        },
         observed,
       ) && !ownedHold;
 
@@ -575,7 +718,10 @@ export class OwnerStop {
         const cur = this.store.task(taskId);
         const curStop = cur.resolution.ownerStop;
         if (!curStop) return;
-        if (cancellation.isInitialWorker && cur.agentId === cancellation.agentId) {
+        if (
+          cancellation.isInitialWorker &&
+          cur.agentId === cancellation.agentId
+        ) {
           this.store.update(
             taskId,
             {
@@ -628,7 +774,12 @@ export class OwnerStop {
         );
         this.store.update(
           taskId,
-          { resolution: { ...refreshed.resolution, ownerStop: { ...stopLatest, cancellations: updated } } },
+          {
+            resolution: {
+              ...refreshed.resolution,
+              ownerStop: { ...stopLatest, cancellations: updated },
+            },
+          },
           "owner_stop_progress",
           `Settled stop on ${cancellation.runId}: observed ${observed!.status}`,
         );
@@ -638,7 +789,11 @@ export class OwnerStop {
 
     // Participant is still active / holding permissions / owned tool hold.
     const observedTurn = observed.activeTurnId ?? null;
-    if (cancellation.turnId !== null && observedTurn && observedTurn !== cancellation.turnId) {
+    if (
+      cancellation.turnId !== null &&
+      observedTurn &&
+      observedTurn !== cancellation.turnId
+    ) {
       const msg = `Intended turn ${cancellation.turnId} ended; newer active turn ${observedTurn} left untouched`;
       this.store.transaction(() => {
         const cur = this.store.task(taskId);
@@ -673,7 +828,12 @@ export class OwnerStop {
         );
         this.store.update(
           taskId,
-          { resolution: { ...cur.resolution, ownerStop: { ...curStop, cancellations: updated } } },
+          {
+            resolution: {
+              ...cur.resolution,
+              ownerStop: { ...curStop, cancellations: updated },
+            },
+          },
           "owner_stop_progress",
           msg,
         );
@@ -682,12 +842,15 @@ export class OwnerStop {
     }
 
     if (cancellation.boundaryStartedAt !== null) {
-      const msg = "Agent remains active after stop boundary; cancellation delivery is unconfirmed";
+      const msg =
+        "Agent remains active after stop boundary; cancellation delivery is unconfirmed";
       this.store.transaction(() => {
         const cur = this.store.task(taskId);
         const curStop = cur.resolution.ownerStop;
         if (!curStop) return;
-        const prev = curStop.cancellations.find((c) => c.effectId === cancellation.effectId);
+        const prev = curStop.cancellations.find(
+          (c) => c.effectId === cancellation.effectId,
+        );
         if (!prev || (prev.status === "uncertain" && prev.note === msg)) return;
         const updated = curStop.cancellations.map((c) =>
           c.effectId === cancellation.effectId
@@ -696,7 +859,12 @@ export class OwnerStop {
         );
         this.store.update(
           taskId,
-          { resolution: { ...cur.resolution, ownerStop: { ...curStop, cancellations: updated } } },
+          {
+            resolution: {
+              ...cur.resolution,
+              ownerStop: { ...curStop, cancellations: updated },
+            },
+          },
           "owner_stop_progress",
           msg,
         );
@@ -718,7 +886,9 @@ export class OwnerStop {
         const cur = this.store.task(taskId);
         const curStop = cur.resolution.ownerStop;
         if (!curStop) return;
-        const prev = curStop.cancellations.find((c) => c.effectId === cancellation.effectId);
+        const prev = curStop.cancellations.find(
+          (c) => c.effectId === cancellation.effectId,
+        );
         if (!prev || (prev.status === "uncertain" && prev.note === msg)) return;
         const updated = curStop.cancellations.map((c) =>
           c.effectId === cancellation.effectId
@@ -743,7 +913,12 @@ export class OwnerStop {
         );
         this.store.update(
           taskId,
-          { resolution: { ...cur.resolution, ownerStop: { ...curStop, cancellations: updated } } },
+          {
+            resolution: {
+              ...cur.resolution,
+              ownerStop: { ...curStop, cancellations: updated },
+            },
+          },
           "owner_stop_progress",
           msg,
         );
@@ -770,7 +945,8 @@ export class OwnerStop {
     }
 
     for (const cancellation of stop.cancellations) {
-      if (cancellation.status === "sent" || cancellation.status === "settled") continue;
+      if (cancellation.status === "sent" || cancellation.status === "settled")
+        continue;
       if (mode === "execute" && cancellation.boundaryStartedAt === null) {
         await this.cancelParticipantBoundary(taskId, cancellation);
       } else {
@@ -803,7 +979,10 @@ export class OwnerStop {
           ...untouchedNotes,
         ].filter(Boolean);
         const detail = this.holdWaitDetail(cur, issues);
-        if (cur.resolution.stop?.reason !== "held" || cur.resolution.stop?.detail !== detail)
+        if (
+          cur.resolution.stop?.reason !== "held" ||
+          cur.resolution.stop?.detail !== detail
+        )
           this.resolution.waiting(cur, detail, "held");
         const held = this.store.task(taskId);
         const nextTask = this.store.update(
@@ -839,14 +1018,27 @@ export class OwnerStop {
             runIds: curStop.targetRunIds,
             cancelled,
             ...(settled.length ? { settled } : {}),
-            ...(curStop.executorContinues.length ? { executorContinues: curStop.executorContinues } : {}),
-            ...(curStop.mergeRequested
-              ? { mergeAlreadyRequested: { head: curStop.mergeHead, requestedAt: curStop.mergeRequestedAt } }
+            ...(curStop.executorContinues.length
+              ? { executorContinues: curStop.executorContinues }
               : {}),
-            ...(curStop.operationId ? { operationId: curStop.operationId } : {}),
+            ...(curStop.mergeRequested
+              ? {
+                  mergeAlreadyRequested: {
+                    head: curStop.mergeHead,
+                    requestedAt: curStop.mergeRequestedAt,
+                  },
+                }
+              : {}),
+            ...(curStop.operationId
+              ? { operationId: curStop.operationId }
+              : {}),
           }),
         );
-        this.commitOperationSuccessInTx(curStop.operationId, nextTask, mode === "observe");
+        this.commitOperationSuccessInTx(
+          curStop.operationId,
+          nextTask,
+          mode === "observe",
+        );
         if (mode === "observe") {
           this.recordAuditForObservedSettle(nextTask, curStop, phaseBefore);
         }
@@ -857,14 +1049,23 @@ export class OwnerStop {
 
     // Some cancellations remain unresolved / uncertain: keep visible wait under hold.
     const issueSummary = unresolved
-      .map((u) => `Turn cancellation for ${u.runId} is unconfirmed (${u.note || u.status})`)
+      .map(
+        (u) =>
+          `Turn cancellation for ${u.runId} is unconfirmed (${u.note || u.status})`,
+      )
       .join("; ");
     this.store.transaction(() => {
       const cur = this.store.task(taskId);
       const curStop = cur.resolution.ownerStop;
       if (!curStop) return;
-      const detail = this.holdWaitDetail(cur, [curStop.nonTransientIssue ?? "", issueSummary]);
-      if (cur.resolution.stop?.reason !== "held" || cur.resolution.stop?.detail !== detail)
+      const detail = this.holdWaitDetail(cur, [
+        curStop.nonTransientIssue ?? "",
+        issueSummary,
+      ]);
+      if (
+        cur.resolution.stop?.reason !== "held" ||
+        cur.resolution.stop?.detail !== detail
+      )
         this.resolution.waiting(cur, detail, "held");
     });
 
@@ -889,7 +1090,10 @@ export class OwnerStop {
   }
 
   /** Resume an interrupted owner `stop` operation for `operationId`. */
-  async resumeOwnerStop(input: TaskControlInput, operationId: string): Promise<Task> {
+  async resumeOwnerStop(
+    input: TaskControlInput,
+    operationId: string,
+  ): Promise<Task> {
     return this.engine.control(async () => {
       const task = this.store.task(input.taskId);
       if (task.resolution.ownerStop?.operationId === operationId) {
@@ -897,14 +1101,20 @@ export class OwnerStop {
       }
       // If `ownerStop` is null, check if this operation already completed cleanly.
       const op = this.store.operation(operationId);
-      if (op?.result?.taskId && op.effect?.status === "reconciled" && !op.preSendReceipt) {
+      if (
+        op?.result?.taskId &&
+        op.effect?.status === "reconciled" &&
+        !op.preSendReceipt
+      ) {
         return task;
       }
       if (task.resolution.ownerStop) {
         await this.driveOwnerStop(task.id, "observe");
         const refreshed = this.store.task(input.taskId);
         if (refreshed.resolution.ownerStop) {
-          throw new DurableFenceRefusal(ownerStopPendingRefusal(refreshed.resolution.ownerStop));
+          throw new DurableFenceRefusal(
+            ownerStopPendingRefusal(refreshed.resolution.ownerStop),
+          );
         }
       }
       return this.performStopInControl(input, operationId);
@@ -922,23 +1132,35 @@ export class OwnerStop {
     if (!reason) throw Error("stop requires a reason");
     return this.engine.control(async () => {
       const initial = this.store.task(input.taskId);
-      if (operationId && initial.resolution.ownerStop?.operationId === operationId) {
+      if (
+        operationId &&
+        initial.resolution.ownerStop?.operationId === operationId
+      ) {
         return this.driveOwnerStop(initial.id, "resume");
       }
       if (initial.removedAt) throw Error(REMOVED_TASK_REFUSAL);
-      this.engine.requireOwnerControlCurrent(initial, input.version, "Task changed; refresh before retrying");
+      this.engine.requireOwnerControlCurrent(
+        initial,
+        input.version,
+        "Task changed; refresh before retrying",
+      );
       if (initial.resolution.ownerStop) {
         await this.driveOwnerStop(initial.id, "observe");
         const afterObserve = this.store.task(input.taskId);
         if (afterObserve.resolution.ownerStop) {
-          throw new DurableFenceRefusal(ownerStopPendingRefusal(afterObserve.resolution.ownerStop));
+          throw new DurableFenceRefusal(
+            ownerStopPendingRefusal(afterObserve.resolution.ownerStop),
+          );
         }
       }
       return this.performStopInControl(input, operationId);
     }, `task:${input.taskId}`);
   }
 
-  private async performStopInControl(input: TaskControlInput, operationId?: string): Promise<Task> {
+  private async performStopInControl(
+    input: TaskControlInput,
+    operationId?: string,
+  ): Promise<Task> {
     const reason = (input.reason ?? "").trim();
     const task = this.store.task(input.taskId);
     if (task.removedAt) throw Error(REMOVED_TASK_REFUSAL);
@@ -946,7 +1168,11 @@ export class OwnerStop {
     if (refusal) throw Error(refusal);
     const role = input.role as RouteRole | undefined;
     const roleOf = (run: Run): RouteRole =>
-      run.role === "reviewer" ? "reviewer" : run.role === "revision" ? "worker" : "coordinator";
+      run.role === "reviewer"
+        ? "reviewer"
+        : run.role === "revision"
+          ? "worker"
+          : "coordinator";
     // nucleus#1195: a live proof executor is never interrupted by an owner stop.
     const runRowsBefore = this.store.runs(task.id);
     const liveExecutors = runRowsBefore.filter(
@@ -956,16 +1182,28 @@ export class OwnerStop {
     const finished = await this.engine
       .collectVerbFinishedRuns(
         task.id,
-        (run) => run.role === "executor" || (role !== undefined && roleOf(run) !== role),
+        (run) =>
+          run.role === "executor" ||
+          (role !== undefined && roleOf(run) !== role),
         { displace: true },
       )
       .catch((error) => {
         if (!task.resolution.integrationTurn) throw error;
         collectionIssue = String(error);
-        return { settleable: [], fenced: [], live: [], observations: new Map<string, Awaited<ReturnType<Adapter["observe"]>>>() };
+        return {
+          settleable: [],
+          fenced: [],
+          live: [],
+          observations: new Map<
+            string,
+            Awaited<ReturnType<Adapter["observe"]>>
+          >(),
+        };
       });
     if (finished.fenced.length && !task.resolution.integrationTurn)
-      throw new DurableFenceRefusal(this.engine.displaceRefusal(finished.fenced[0]!));
+      throw new DurableFenceRefusal(
+        this.engine.displaceRefusal(finished.fenced[0]!),
+      );
 
     const busy = [...finished.live];
     const observations = new Map(finished.observations);
@@ -983,7 +1221,9 @@ export class OwnerStop {
       (role === undefined || role === "worker") &&
       task.agentId &&
       task.workspaceId &&
-      !runRowsBefore.some((run) => !run.released && run.agentId === task.agentId)
+      !runRowsBefore.some(
+        (run) => !run.released && run.agentId === task.agentId,
+      )
     ) {
       initialRun = {
         id: task.runId ?? `initial-worker-${task.id}`,
@@ -1008,7 +1248,8 @@ export class OwnerStop {
     if (busy.length > 0 && !this.adapter.stopAgentTurn) {
       const host = HOST_KIND_LABELS[hostKindOf(task.hostId)];
       const unavailableMsg = `${host} active-turn cancellation is unavailable, so Nucleus cannot stop the live run; retry once ${host} offers it`;
-      if (!task.resolution.integrationTurn) throw new DurableFenceRefusal(unavailableMsg);
+      if (!task.resolution.integrationTurn)
+        throw new DurableFenceRefusal(unavailableMsg);
       stopIssue = [stopIssue, unavailableMsg].filter(Boolean).join("; ");
     }
 
@@ -1032,7 +1273,8 @@ export class OwnerStop {
         );
       }
 
-      const { mergeRequested, mergeHead, mergeNote } = this.mergeNoteFor(current);
+      const { mergeRequested, mergeHead, mergeNote } =
+        this.mergeNoteFor(current);
       const holdReason =
         `Owner stop: ${reason}${mergeNote}${stopIssue ? ` Remaining activity needs attention: ${stopIssue}` : ""}`.slice(
           0,
@@ -1041,7 +1283,13 @@ export class OwnerStop {
       if (!holdsOf(current).dispatch) {
         this.store.update(
           current.id,
-          holdPatch(current, "dispatch", input.caller ?? OPERATOR_HOLD_OWNER, holdReason, null),
+          holdPatch(
+            current,
+            "dispatch",
+            input.caller ?? OPERATOR_HOLD_OWNER,
+            holdReason,
+            null,
+          ),
           "hold",
           holdReason,
         );
@@ -1057,7 +1305,8 @@ export class OwnerStop {
             : role === "worker"
               ? run.role === "revision"
               : !["reviewer", "revision"].includes(run.role));
-        if (targeted && !run.released && !run.completion) stoppedRunIds.add(run.id);
+        if (targeted && !run.released && !run.completion)
+          stoppedRunIds.add(run.id);
       }
       if (
         (role === undefined || role === "worker") &&
@@ -1082,7 +1331,9 @@ export class OwnerStop {
               workspaceId: run.workspaceId ?? null,
               turnId: obs?.activeTurnId ?? null,
               effectId: `ns-owner-stop-${digest(effectKey).slice(0, 32)}`,
-              isInitialWorker: Boolean(isInitialBusy && initialRun && run.id === initialRun.id),
+              isInitialWorker: Boolean(
+                isInitialBusy && initialRun && run.id === initialRun.id,
+              ),
               status: "intent" as const,
               boundaryStartedAt: null,
               settledKind: null,
@@ -1099,7 +1350,10 @@ export class OwnerStop {
           "held",
         );
         let held = this.store.task(task.id);
-        if (held.resolution.integrationTurn || held.resolution.ownerStop !== null) {
+        if (
+          held.resolution.integrationTurn ||
+          held.resolution.ownerStop !== null
+        ) {
           held = this.store.update(
             held.id,
             {
@@ -1109,7 +1363,9 @@ export class OwnerStop {
                 ownerStop: null,
               },
             },
-            held.resolution.integrationTurn ? "integration_turn_released" : "owner_stopped_settled",
+            held.resolution.integrationTurn
+              ? "integration_turn_released"
+              : "owner_stopped_settled",
             `stop: ${reason}`,
           );
         }
@@ -1142,7 +1398,11 @@ export class OwnerStop {
             `${String(recorded.input.action)}: superseded by stop`,
           );
         }
-        this.commitOperationSuccessInTx(operationId, this.store.task(task.id), false);
+        this.commitOperationSuccessInTx(
+          operationId,
+          this.store.task(task.id),
+          false,
+        );
         return this.store.task(task.id);
       }
 
@@ -1178,7 +1438,9 @@ export class OwnerStop {
             ownerStop: ownerStopRecord,
           },
         },
-        waitingTask.resolution.integrationTurn ? "integration_turn_released" : "owner_stop_accepted",
+        waitingTask.resolution.integrationTurn
+          ? "integration_turn_released"
+          : "owner_stop_accepted",
         `Accepted owner stop: ${reason}`,
       );
       for (const c of cancellations) {

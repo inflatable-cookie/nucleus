@@ -208,7 +208,8 @@ export class IntegrationTurns {
     // A verification waiting for that slot cannot also fence its synchronization.
     return (
       this.idleOrdinaryVerification(t) &&
-      (t.resolution.stop?.fact?.code === "integration_turn" || t.reasonFact?.code === "integration_turn" ||
+      (t.resolution.stop?.fact?.code === "integration_turn" ||
+        t.reasonFact?.code === "integration_turn" ||
         (recordedSlotWait(t) &&
           Boolean(this.resolution.slotAdmissionReason(t))))
     );
@@ -336,7 +337,12 @@ export class IntegrationTurns {
           )
         : "Waiting for repository integration turn",
       "lifecycle",
-      { fact: { code: "integration_turn", ...(holder ? { subject: holder.id } : {}) } },
+      {
+        fact: {
+          code: "integration_turn",
+          ...(holder ? { subject: holder.id } : {}),
+        },
+      },
     );
     return false;
   }

@@ -775,10 +775,7 @@ function explicitCommandsFor(
       fill: ["reason"],
       note: "Start synchronization and closeout for this recorded merge.",
     });
-  } else if (
-    task.prHead &&
-    ["verifying", "merging"].includes(task.phase)
-  ) {
+  } else if (task.prHead && ["verifying", "merging"].includes(task.phase)) {
     push({
       action: "merge.now",
       args: { action: "merge.now", ...base, head: task.prHead },

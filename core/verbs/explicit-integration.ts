@@ -11,10 +11,7 @@ import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
 import { now } from "../store/store";
-import type {
-  ExplicitPlan,
-  ExplicitWarning,
-} from "./explicit-resolution";
+import type { ExplicitPlan, ExplicitWarning } from "./explicit-resolution";
 
 export type ExplicitIntegrationAction = Extract<
   ExplicitResolution,
@@ -26,17 +23,31 @@ export type ExplicitIntegrationPreflight = {
     merged: boolean;
     commit: string | null;
     head: string | null;
+    base: string | null;
   } | null;
   mergeReadError?: string;
+  prIdentityError?: string;
   checksWarning?: string | null;
 };
 
-function activeOtherHolders(engine: Engine, task: Task): Task[] {
+/**
+ * Spec 067 hard gate for `merge.now` and `closeout.now`: requires an applied
+ * qualifying review verdict (`ready_to_merge` or `owner_reviewed`) or an
+ * explicit recorded `operator_source` acceptance at the exact head. Never
+ * waived by `skipPRReview` and never satisfied by `source_approved` with
+ * pending proofs.
+ */
+function hasExplicitMergeEvidence(task: Task, head: string): boolean {
+  const evidence = mergeReviewEvidenceAt(task, head);
+  return Boolean(evidence && evidence.kind !== "source_approved");
+}
+
+function currentTurnHolders(engine: Engine, task: Task): Task[] {
   return engine.store
     .integrationTasks(task.repoPath)
     .filter(
       (other) =>
-        other.id !== task.id && engine.resolution.integrationActive(other),
+        other.id !== task.id && engine.resolution.holdsIntegrationTurn(other),
     );
 }
 
@@ -108,12 +119,8 @@ export async function preflightExplicitIntegration(
   if (input.action === "merge.now") {
     const r = task.resolution;
     const result: ExplicitIntegrationPreflight = {};
-    const unknownMergeOutcome =
-      !r.mergedCommit &&
-      (r.mergeIntent ||
-        r.mergeResponseOutcome === "uncertain" ||
-        r.mergeRetryOutcome === "uncertain");
-    if (unknownMergeOutcome) {
+    const prNumber = taskPrNumber(task);
+    if (!r.mergedCommit && prNumber) {
       if (!engine.resolution.adapter.merged) {
         result.mergeReadError = "GitHub merge observation is unavailable";
       } else {
@@ -123,9 +130,20 @@ export async function preflightExplicitIntegration(
             merged: observed.merged,
             commit: observed.commit,
             head: observed.head ?? null,
+            base: observed.base ?? null,
           };
+          if (observed.base && observed.base !== task.baseBranch) {
+            result.prIdentityError = `PR targets ${observed.base}, not task base ${task.baseBranch}`;
+          }
         } catch (error) {
           result.mergeReadError = String(error);
+        }
+      }
+      if (!result.prIdentityError && engine.adapter.verifyPrIdentity) {
+        try {
+          await engine.adapter.verifyPrIdentity(task, prNumber);
+        } catch (error) {
+          result.prIdentityError = `PR identity verification failed: ${String(error)}`;
         }
       }
     }
@@ -133,7 +151,7 @@ export async function preflightExplicitIntegration(
       result.checksWarning = "PR checks are still pending or failed.";
     } else if (
       !r.mergedCommit &&
-      taskPrNumber(task) &&
+      prNumber &&
       engine.resolution.adapter.requiredChecks
     ) {
       try {
@@ -142,8 +160,11 @@ export async function preflightExplicitIntegration(
           result.checksWarning =
             checks.wait || "PR checks are pending or failed.";
         }
-      } catch {
-        /* A failed optional check read does not block merge.now. */
+      } catch (error) {
+        const message = String(error);
+        if (/PR|base|branch|identity|canonical/i.test(message)) {
+          result.prIdentityError ??= message;
+        }
       }
     }
     return result;
@@ -156,6 +177,7 @@ export async function preflightExplicitIntegration(
         merged: true,
         commit: task.resolution.mergedCommit,
         head: task.resolution.mergeHead ?? task.prHead ?? null,
+        base: task.baseBranch,
       },
     };
   }
@@ -167,6 +189,7 @@ export async function preflightExplicitIntegration(
           merged: observed.merged,
           commit: observed.commit,
           head: observed.head ?? null,
+          base: observed.base ?? null,
         },
       };
     } catch (error) {
@@ -178,8 +201,13 @@ export async function preflightExplicitIntegration(
       const observed = await engine.resolution.adapter.externalMerge(task);
       return {
         observedMerge: observed
-          ? { merged: true, commit: observed.commit, head: observed.head }
-          : { merged: false, commit: null, head: null },
+          ? {
+              merged: true,
+              commit: observed.commit,
+              head: observed.head,
+              base: task.baseBranch,
+            }
+          : { merged: false, commit: null, head: null, base: null },
       };
     } catch (error) {
       return { observedMerge: null, mergeReadError: String(error) };
@@ -239,27 +267,28 @@ export function turnTakePlan(
   const store = engine.store;
   const reservationKey = `closeoutTurn:${task.repoPath}`;
   const reservation = store.getMeta<{ taskId: string }>(reservationKey);
-  const otherHolders = activeOtherHolders(engine, task);
+  const currentHolders = currentTurnHolders(engine, task);
   const otherReservation =
     reservation && reservation.taskId !== task.id
       ? store.taskOrNull(reservation.taskId)
       : null;
+  const displaced = [
+    ...currentHolders,
+    ...(otherReservation &&
+    !currentHolders.some((h) => h.id === otherReservation.id)
+      ? [otherReservation]
+      : []),
+  ];
   const warnings: ExplicitWarning[] = [];
-  if (otherHolders.length > 0 || otherReservation) {
-    const names = [
-      ...otherHolders.map((h) => `${h.title} (${h.id})`),
-      ...(otherReservation &&
-      !otherHolders.some((h) => h.id === otherReservation.id)
-        ? [`${otherReservation.title} (${otherReservation.id})`]
-        : []),
-    ];
+  if (displaced.length > 0) {
+    const names = displaced.map((h) => `${h.title} (${h.id})`);
     warnings.push({
       id: "turn_held",
       text: `Repository integration turn is currently held by ${names.join(", ")}; taking it displaces them.`,
     });
   }
   if (
-    otherHolders.some(
+    displaced.some(
       (h) => h.resolution.mergeIntent && !h.resolution.mergedCommit,
     )
   ) {
@@ -273,7 +302,8 @@ export function turnTakePlan(
     apply() {
       if (reservation && reservation.taskId !== task.id)
         store.deleteMeta(reservationKey);
-      for (const other of otherHolders) {
+      const displacedIds = new Set(displaced.map((h) => h.id));
+      for (const other of displaced) {
         store.update(
           other.id,
           { resolution: { ...other.resolution, integrationTurn: null } },
@@ -281,17 +311,51 @@ export function turnTakePlan(
           `displaced by turn.take on ${task.id}: ${input.reason}`,
         );
       }
-      const integrationTurn = task.resolution.integrationTurn ?? {
-        sequence: store.nextIntegrationSequence(task.repoPath),
-        acceptedAt: now(),
+      // Preserve FIFO sequence of unrelated waiting tasks while placing `task`
+      // strictly ahead of them at sequence 1.
+      const remaining = store
+        .integrationTasks(task.repoPath)
+        .filter((other) => other.id !== task.id && !displacedIds.has(other.id))
+        .sort(
+          (a, b) =>
+            (a.resolution.integrationTurn?.sequence ?? 0) -
+            (b.resolution.integrationTurn?.sequence ?? 0),
+        );
+      const needsShift = remaining.some(
+        (other) => (other.resolution.integrationTurn?.sequence ?? 0) <= 1,
+      );
+      if (needsShift) {
+        let maxSeq = 1;
+        for (const other of [...remaining].reverse()) {
+          const nextSeq = (other.resolution.integrationTurn?.sequence ?? 1) + 1;
+          if (nextSeq > maxSeq) maxSeq = nextSeq;
+          store.update(other.id, {
+            resolution: {
+              ...other.resolution,
+              integrationTurn: {
+                ...other.resolution.integrationTurn!,
+                sequence: nextSeq,
+              },
+            },
+          });
+        }
+        const metaKey = `integrationTurnSeq:${task.repoPath}`;
+        const currentMeta = store.getMeta<number>(metaKey) ?? 0;
+        if (maxSeq > currentMeta) store.setMeta(metaKey, maxSeq);
+      }
+      const integrationTurn = {
+        sequence: 1,
+        acceptedAt: task.resolution.integrationTurn?.acceptedAt ?? now(),
       };
+      const metaKey = `integrationTurnSeq:${task.repoPath}`;
+      if ((store.getMeta<number>(metaKey) ?? 0) < 1) store.setMeta(metaKey, 1);
       const clearTurnWait =
         task.resolution.stop?.fact?.code === "integration_turn" ||
         task.reasonFact?.code === "integration_turn";
       return {
         before: {
           integrationTurn: task.resolution.integrationTurn,
-          displaced: otherHolders.map((h) => h.id),
+          displaced: displaced.map((h) => h.id),
         },
         patch: {
           resolution: {
@@ -330,13 +394,22 @@ export function mergeNowPlan(
   if (!taskPrNumber(task)) {
     throw Error("merge.now requires a pull request number on the task");
   }
-  // Hard gate 1: applied review verdict at exact head or explicit operator source acceptance.
-  if (
-    engine.resolution.reviewRequired(task) &&
-    !mergeReviewEvidenceAt(task, input.head)
-  ) {
+  // Hard gate 1: applied qualifying review verdict at exact head or explicit operator source acceptance.
+  if (!hasExplicitMergeEvidence(task, input.head)) {
     throw Error(
       `merge.now refused: head ${input.head} has no applied review verdict or explicit operator source acceptance`,
+    );
+  }
+  // PR identity and target branch validation.
+  if (preflight?.prIdentityError) {
+    throw Error(`merge.now refused: ${preflight.prIdentityError}`);
+  }
+  if (
+    preflight?.observedMerge?.base &&
+    preflight.observedMerge.base !== task.baseBranch
+  ) {
+    throw Error(
+      `merge.now refused: PR targets ${preflight.observedMerge.base}, not task base ${task.baseBranch}`,
     );
   }
   // Hard gate 2: no re-request while an earlier merge outcome is unknown unless GitHub shows it unmerged in the same call.
@@ -355,12 +428,20 @@ export function mergeNowPlan(
         `merge.now refused: GitHub reports the PR is already merged (${preflight.observedMerge.commit ?? "commit unknown"}); use closeout.now`,
       );
     }
+  } else if (preflight?.observedMerge?.merged) {
+    throw Error(
+      `merge.now refused: GitHub reports the PR is already merged (${preflight.observedMerge.commit ?? "commit unknown"}); use closeout.now`,
+    );
+  } else if (preflight?.mergeReadError) {
+    throw Error(
+      `merge.now refused: could not verify PR target branch on GitHub (${preflight.mergeReadError})`,
+    );
   }
   if (!engine.resolution.adapter.merge) {
     throw Error("GitHub guarded merge is unavailable");
   }
 
-  const otherHolders = activeOtherHolders(engine, task);
+  const otherHolders = currentTurnHolders(engine, task);
   const warnings: ExplicitWarning[] = [];
   if (otherHolders.length > 0) {
     warnings.push({
@@ -384,6 +465,25 @@ export function mergeNowPlan(
       id: "holds",
       text: `Task has active hold(s): ${activeHolds.join(", ")}.`,
     });
+    const foreignOwners = [fences.merge, fences.dispatch]
+      .filter((hold): hold is NonNullable<typeof hold> =>
+        Boolean(hold?.owner && hold.owner !== input.caller),
+      )
+      .map((hold) => hold.owner);
+    if (foreignOwners.length > 0) {
+      warnings.push({
+        id: "hold_owner",
+        text: `Active hold belongs to ${[...new Set(foreignOwners)].join(", ")}.`,
+      });
+    }
+  }
+
+  let requestedAt = now();
+  if (r.mergeRequestedAt && requestedAt <= r.mergeRequestedAt) {
+    const prevMs = Date.parse(r.mergeRequestedAt);
+    requestedAt = Number.isFinite(prevMs)
+      ? new Date(prevMs + 1).toISOString()
+      : `${requestedAt}-next`;
   }
 
   return {
@@ -409,7 +509,7 @@ export function mergeNowPlan(
             integrationTurn,
             mergeIntent: true,
             mergeHead: input.head,
-            mergeRequestedAt: now(),
+            mergeRequestedAt: requestedAt,
             mergeResponseOutcome: "pending",
             mergeProofSince: null,
             mergeRetryAt: null,
@@ -421,26 +521,51 @@ export function mergeNowPlan(
     },
     async finish() {
       const current = store.task(task.id);
+      const matchesRequest = (candidate: Task) =>
+        candidate.resolution.mergeIntent &&
+        candidate.resolution.mergeHead === input.head &&
+        candidate.resolution.mergeRequestedAt === requestedAt &&
+        candidate.resolution.mergeResponseOutcome === "pending" &&
+        !candidate.resolution.mergedCommit;
       try {
-        await engine.resolution.adapter.merge!(current, () => true);
-        const after = store.task(task.id);
-        engine.resolution.update(
-          after,
-          { mergeResponseOutcome: "accepted" },
-          {},
-          "merge_response_accepted",
-          `GitHub accepted the guarded merge for ${input.head}`,
+        await engine.resolution.adapter.merge!(current, () =>
+          matchesRequest(store.task(task.id)),
         );
+        const after = store.task(task.id);
+        if (matchesRequest(after)) {
+          engine.resolution.update(
+            after,
+            { mergeResponseOutcome: "accepted" },
+            {},
+            "merge_response_accepted",
+            `GitHub accepted the guarded merge for ${input.head}`,
+          );
+        } else {
+          store.event(
+            task.id,
+            "merge_response_late_accepted",
+            `Late accepted reply for ${input.head} (${requestedAt}); preserved current merge outcome`,
+          );
+        }
         return { issues: [] };
       } catch (error) {
         const after = store.task(task.id);
-        engine.resolution.update(
-          after,
-          { mergeResponseOutcome: "uncertain" },
-          {},
-          "merge_response_uncertain",
-          String(error).slice(0, 2000),
-        );
+        const detail = String(error).slice(0, 2000);
+        if (matchesRequest(after)) {
+          engine.resolution.update(
+            after,
+            { mergeResponseOutcome: "uncertain" },
+            {},
+            "merge_response_uncertain",
+            detail,
+          );
+        } else {
+          store.event(
+            task.id,
+            "merge_response_late_uncertain",
+            `Late uncertain reply for ${input.head} (${requestedAt}): ${detail}`,
+          );
+        }
         return {
           issues: [
             `GitHub merge request did not confirm: ${String(error).slice(0, 500)}.`,
@@ -476,6 +601,14 @@ export function closeoutNowPlan(
       throw Error("closeout.now refused: GitHub reports the PR is not merged");
     }
     if (
+      preflight.observedMerge.base &&
+      preflight.observedMerge.base !== task.baseBranch
+    ) {
+      throw Error(
+        `closeout.now refused: GitHub reports the PR merged into ${preflight.observedMerge.base}, not task base ${task.baseBranch}`,
+      );
+    }
+    if (
       input.mergedCommit &&
       input.mergedCommit !== preflight.observedMerge.commit
     ) {
@@ -484,7 +617,8 @@ export function closeoutNowPlan(
       );
     }
     mergedCommit = preflight.observedMerge.commit;
-    mergeHead = preflight.observedMerge.head ?? r.mergeHead ?? task.prHead ?? null;
+    mergeHead =
+      preflight.observedMerge.head ?? r.mergeHead ?? task.prHead ?? null;
   } else {
     if (!input.mergedCommit) {
       throw Error(
@@ -496,11 +630,8 @@ export function closeoutNowPlan(
     unverified = true;
   }
 
-  // Hard gate: applied review verdict at that head or explicit operator source acceptance.
-  if (
-    engine.resolution.reviewRequired(task) &&
-    (!mergeHead || !mergeReviewEvidenceAt(task, mergeHead))
-  ) {
+  // Hard gate: applied qualifying review verdict at that head or explicit operator source acceptance.
+  if (!mergeHead || !hasExplicitMergeEvidence(task, mergeHead)) {
     throw Error(
       `closeout.now refused: merged head ${mergeHead ?? "unknown"} has no applied review verdict or explicit operator source acceptance`,
     );
@@ -528,6 +659,33 @@ export function closeoutNowPlan(
   return {
     warnings,
     apply() {
+      // Handoff from any active recovery episode / coordinator run so
+      // `advanceSyncing` and `advanceClosing` can proceed immediately.
+      const unreleasedRecoveryRuns = store
+        .runs(task.id)
+        .filter((run) => run.role === "recovery" && !run.released);
+      let clearedCurrentRunId = r.currentRunId;
+      for (const run of unreleasedRecoveryRuns) {
+        store.putRun({
+          ...run,
+          active: false,
+          released: true,
+          explicitlyReleasedAt: now(),
+          status: run.completion ? "finished" : "superseded",
+        });
+        store.deleteCredential(run.id);
+        if (clearedCurrentRunId === run.id) clearedCurrentRunId = null;
+      }
+      const settledRecovery =
+        r.recovery && r.recovery.status !== "resolved"
+          ? {
+              ...r.recovery,
+              runId: null,
+              status: "resolved" as const,
+              summary: `Closed by closeout.now: ${input.reason}`.slice(0, 2000),
+            }
+          : r.recovery;
+
       const integrationTurn = r.integrationTurn ?? {
         sequence: store.nextIntegrationSequence(task.repoPath),
         acceptedAt: now(),
@@ -544,6 +702,7 @@ export function closeoutNowPlan(
           mergeHead: r.mergeHead,
           stop: r.stop,
           attention: r.attention,
+          recoveryActive: r.recoveryActive,
         },
         patch: {
           phase,
@@ -558,6 +717,9 @@ export function closeoutNowPlan(
             stop: null,
             attention: false,
             externalMergePreAttention: null,
+            recoveryActive: false,
+            recovery: settledRecovery,
+            currentRunId: clearedCurrentRunId,
           },
         },
       };
