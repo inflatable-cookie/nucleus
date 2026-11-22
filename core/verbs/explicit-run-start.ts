@@ -580,27 +580,36 @@ async function prepareReviewerCheckout(
     run.head,
   );
   await detachedReviewViewSource(task, run.reviewCheckoutDirectory, run.head);
-  if (typeof engine.adapter.createWorkspace === "function") {
-    const viewTask: Task = {
-      ...task,
-      directory: run.reviewCheckoutDirectory,
-      branch: `ns-review-${run.id.slice(0, 12)}`,
-    };
-    const workspace = await engine.adapter.createWorkspace(viewTask);
-    if (
-      workspace.directory &&
-      realpathSync(workspace.directory) !==
-        realpathSync(run.reviewCheckoutDirectory)
-    ) {
-      throw Error(
-        `Host registered review workspace at ${workspace.directory}, expected ${run.reviewCheckoutDirectory}`,
-      );
-    }
-    const updated: Run = { ...run, workspaceId: workspace.id };
-    engine.store.putRun(updated);
-    return updated;
+  if (typeof engine.adapter.registerDetachedReviewWorkspace !== "function") {
+    throw Error(
+      "Host adapter cannot register a separate detached review workspace",
+    );
   }
-  return run;
+  const workspace = await engine.adapter.registerDetachedReviewWorkspace({
+    requestId: `ns-review-${run.id}`,
+    title: `Review: ${task.title}`,
+    directory: run.reviewCheckoutDirectory,
+    repoPath: task.repoPath,
+  });
+  if (
+    !workspace.directory ||
+    realpathSync(workspace.directory) !==
+      realpathSync(run.reviewCheckoutDirectory)
+  ) {
+    throw Error(
+      `Host registered review workspace at ${workspace.directory}, expected ${run.reviewCheckoutDirectory}`,
+    );
+  }
+  let updated: Run = run;
+  engine.store.transaction(() => {
+    const currentRun = engine.store.run(run.id);
+    if (!currentRun) return;
+    // Preserve terminal release/superseded state if run.release raced with registration;
+    // recording workspaceId still lets cleanup know about the late-registered handle.
+    updated = { ...currentRun, workspaceId: workspace.id };
+    engine.store.putRun(updated);
+  });
+  return updated;
 }
 
 export function runStartPlan(
@@ -972,12 +981,16 @@ export function runStartPlan(
             priorForAgent.reviewCheckoutDirectory,
             run.head,
           );
-          activeRun = {
-            ...run,
-            workspaceId: priorForAgent.workspaceId,
-            reviewCheckoutDirectory: priorForAgent.reviewCheckoutDirectory,
-          };
-          store.putRun(activeRun);
+          store.transaction(() => {
+            const currentRun = store.run(run.id);
+            if (!currentRun) return;
+            activeRun = {
+              ...currentRun,
+              workspaceId: priorForAgent.workspaceId,
+              reviewCheckoutDirectory: priorForAgent.reviewCheckoutDirectory,
+            };
+            store.putRun(activeRun);
+          });
         }
         const deliveryTask =
           runRole === "reviewer" && activeRun.reviewCheckoutDirectory

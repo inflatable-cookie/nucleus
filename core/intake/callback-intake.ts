@@ -345,7 +345,9 @@ export class CallbackIntake {
       const sourceTask = this.store.task(input.taskId);
       if (sourceTask.reviewEntry) {
         if (
-          sourceRun.workspaceId !== sourceTask.workspaceId ||
+          (!sourceRun.reviewCheckoutDirectory &&
+            sourceRun.workspaceId !== sourceTask.workspaceId) ||
+          (sourceRun.reviewCheckoutDirectory && !sourceRun.workspaceId) ||
           sourceRun.head !== sourceTask.prHead
         )
           throw Error(
@@ -371,7 +373,15 @@ export class CallbackIntake {
           observed.workspaceId !== sourceRun.workspaceId
         )
           throw Error("Reviewer callback workspace binding changed");
-        await assertReviewEntryExecutionSource(this.store.task(input.taskId));
+        if (sourceRun.reviewCheckoutDirectory) {
+          await detachedReviewViewSource(
+            this.store.task(input.taskId),
+            sourceRun.reviewCheckoutDirectory,
+            sourceRun.head,
+          );
+        } else {
+          await assertReviewEntryExecutionSource(this.store.task(input.taskId));
+        }
       }
     }
     // Task 405: a passing proof execution is re-checked against the exact published

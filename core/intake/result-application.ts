@@ -315,8 +315,9 @@ export function publishedReviewDecision(
     c.runId !== run.id ||
     !run.agentId ||
     run.agentId !== reviewerAgentId ||
-    !task.workspaceId ||
-    run.workspaceId !== task.workspaceId ||
+    (!run.reviewCheckoutDirectory &&
+      (!task.workspaceId || run.workspaceId !== task.workspaceId)) ||
+    (run.reviewCheckoutDirectory && !run.workspaceId) ||
     (run.hostId && run.hostId !== task.hostId) ||
     (run.profile &&
       task.resolution.reviewerProfile &&

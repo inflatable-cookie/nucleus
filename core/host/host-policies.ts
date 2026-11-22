@@ -1,7 +1,10 @@
 import type { WorkerPromptMeasurement } from "../dispatch/prompt-text/measure";
 import { AgentPolicy } from "../dispatch/agent-policy";
 import { ReviewPolicy } from "../review/review-policy";
-import { createHostedReviewEntryWorkspace, type ReviewEntryAdapter } from "../review/review-entry";
+import {
+  createHostedReviewEntryWorkspace,
+  type ReviewEntryAdapter,
+} from "../review/review-entry";
 import {
   OwnedWorkspaceArchive,
   type WorkspaceArchiveOptions,
@@ -203,7 +206,17 @@ export abstract class HostPolicies extends MachinePorts {
     return this.workspaceLifecycle.createWorkspace(task, options);
   }
 
-  createReviewEntryWorkspace(spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0]) {
+  registerDetachedReviewWorkspace(
+    spec: Parameters<
+      NonNullable<Adapter["registerDetachedReviewWorkspace"]>
+    >[0],
+  ) {
+    return this.workspaceLifecycle.registerDetachedReviewWorkspace(spec);
+  }
+
+  createReviewEntryWorkspace(
+    spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0],
+  ) {
     return createHostedReviewEntryWorkspace(this, spec);
   }
 

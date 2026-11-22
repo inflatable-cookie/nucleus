@@ -64,7 +64,14 @@ export interface HostPolicyPort
       | "continueReviewer"
     >
   > {
-  createReviewEntryWorkspace(spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0]): Promise<{ id: string }>;
+  createReviewEntryWorkspace(
+    spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0],
+  ): Promise<{ id: string }>;
+  registerDetachedReviewWorkspace(
+    spec: Parameters<
+      NonNullable<Adapter["registerDetachedReviewWorkspace"]>
+    >[0],
+  ): Promise<{ id: string; directory: string }>;
   creationOwner(): CreationOwner;
   binding(key: string, task: Task, runId: string, token: string): string;
   dataDir(): string;

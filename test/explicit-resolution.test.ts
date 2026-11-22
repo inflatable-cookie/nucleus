@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { publishFormalReview } from "../core/forge/reviews";
+import { publishedReviewDecision } from "../core/intake/result-application";
+import { WorkspaceLifecycle } from "../core/workspaces/workspace-lifecycle";
 import { git } from "../core/git/index";
 import { readGitCheckout, readGitRef } from "../core/git/git-identity";
 import { hostCatalogSchema } from "../shared/host";
@@ -120,12 +122,12 @@ async function fixture(
     archiveAgent: async (id: string) => {
       calls.push(`archive ${id}`);
     },
-    createWorkspace: async (tObj: {
-      id: string;
-      directory: string | null;
+    registerDetachedReviewWorkspace: async (spec: {
+      requestId: string;
+      directory: string;
     }) => ({
-      id: `ws-${tObj.id}-${calls.length}`,
-      directory: tObj.directory ?? "",
+      id: `ws-${spec.requestId}`,
+      directory: spec.directory,
     }),
     createRun: async (
       _task: unknown,
@@ -2222,16 +2224,18 @@ test("review round 5: native reviewer gets its own host workspace, terminal verd
   let launchedWorkspaceContents: string | null = null;
   let createdToken = "";
 
+  let lifecycle: WorkspaceLifecycle | null = null;
   const { root, store, current, command, runtime } = await fixture(t, {
     verifyPrIdentity: async () => ({
       head: forgeHead,
       url: "https://github.com/example/repo/pull/77",
     }),
-    createWorkspace: async (taskObj: { directory: string | null }) => {
-      const id = `review-ws-${registeredWorkspaces.size + 1}`;
-      registeredWorkspaces.set(id, taskObj.directory!);
-      return { id, directory: taskObj.directory! };
-    },
+    registerDetachedReviewWorkspace: async (spec: {
+      requestId: string;
+      title: string;
+      directory: string;
+      repoPath: string;
+    }) => lifecycle!.registerDetachedReviewWorkspace(spec),
     createRun: async (
       _taskObj: unknown,
       r: { id: string; role: string; workspaceId: string },
@@ -2255,6 +2259,23 @@ test("review round 5: native reviewer gets its own host workspace, terminal verd
     store,
     current().id,
     "round5-git",
+  );
+  lifecycle = new WorkspaceLifecycle({
+    store,
+    workspaceHost: {
+      repositoryProject: async (rp: string) => ({ workspaceRoot: rp }),
+      createWorkspace: async (spec: { directory: string }) => {
+        const id = `review-ws-${registeredWorkspaces.size + 1}`;
+        registeredWorkspaces.set(id, spec.directory);
+        return { id, directory: spec.directory };
+      },
+    },
+  } as unknown as ConstructorParameters<typeof WorkspaceLifecycle>[0]);
+  // Confirm normal task createWorkspace rejects once task.workspaceId is recorded,
+  // while registerDetachedReviewWorkspace succeeds for the detached review checkout.
+  await assert.rejects(
+    () => lifecycle!.createWorkspace(current()),
+    /Workspace already recorded/,
   );
   const branch = current().branch;
   // Remote push ahead of local worker checkout (#1508).
@@ -2314,6 +2335,10 @@ test("review round 5: native reviewer gets its own host workspace, terminal verd
     "worker-local-dirty\n",
   );
 
+  store.patchRepository(
+    { path: repoDir, origin: "example/repo" },
+    { reviewer: { login: "reviewer-bot" } },
+  );
   // 2. Formal publication of a terminal verdict succeeds even though the worker checkout is behind & dirty.
   await git(
     repoDir,
@@ -2369,6 +2394,17 @@ test("review round 5: native reviewer gets its own host workspace, terminal verd
     createdToken,
   );
   assert.equal(accepted.accepted, true);
+  // Once the finished reviewer run is released, published verdict admission must admit
+  // the run's separate registered reviewer workspace instead of rejecting workspaceId !== task.workspaceId.
+  store.putRun({
+    ...store.run(revRunId)!,
+    status: "finished",
+    released: true,
+  });
+  const decision = publishedReviewDecision(store, current());
+  assert.equal(decision.kind, "ready", JSON.stringify(decision));
+  assert.equal(decision.run.workspaceId, revRun.workspaceId);
+  assert.equal(decision.publicationId, reviewId);
   // Let any in-flight step triggered by complete() settle before issuing the next command.
   await new Promise((r) => setTimeout(r, 200));
 
@@ -2424,4 +2460,121 @@ test("review round 5: native reviewer gets its own host workspace, terminal verd
       }),
     /detached review checkout/i,
   );
+});
+
+test("review round 6: delayed detached workspace registration preserves concurrent run.release and does not resurrect duplicate_thread", async (t) => {
+  let forgeHead = "";
+  let releaseRegistration!: () => void;
+  let registrationEntered!: () => void;
+  const registrationEnteredPromise = new Promise<void>((resolve) => {
+    registrationEntered = resolve;
+  });
+  let registrationCalls = 0;
+  let createdRuns = 0;
+
+  const { root, store, current, command, runtime } = await fixture(t, {
+    verifyPrIdentity: async () => ({
+      head: forgeHead,
+      url: "https://github.com/example/repo/pull/88",
+    }),
+    registerDetachedReviewWorkspace: async (spec: {
+      requestId: string;
+      directory: string;
+    }) => {
+      registrationCalls += 1;
+      if (registrationCalls === 1) {
+        registrationEntered();
+        await new Promise<void>((resolve) => {
+          releaseRegistration = resolve;
+        });
+      }
+      return {
+        id: `late-review-ws-${registrationCalls}`,
+        directory: spec.directory,
+      };
+    },
+    createRun: async (
+      _taskObj: unknown,
+      r: { id: string; role: string; workspaceId: string },
+    ) => {
+      createdRuns += 1;
+      return {
+        id: `${r.role}-agent-${r.id.slice(0, 8)}`,
+        workspaceId: r.workspaceId,
+      };
+    },
+  });
+
+  const { initialSha } = await attachGitCheckout(
+    root,
+    store,
+    current().id,
+    "round6-git",
+  );
+  forgeHead = initialSha;
+  store.update(current().id, {
+    repository: "example/repo",
+    prUrl: "https://github.com/example/repo/pull/88",
+    prHead: initialSha,
+    resumePrNumber: 88,
+    phase: "awaiting_review",
+    profile: profile("worker-a", "model-alpha"),
+    agentId: "worker-1",
+    agentActive: false,
+  });
+  runtime.engine.profiles = [
+    profile("worker-a", "model-alpha"),
+    profile("rev-b", "model-beta"),
+  ];
+  store.setMeta("pool", [
+    {
+      profileId: "rev-b",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+
+  const startPromise = command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+  });
+  await registrationEnteredPromise;
+  const run1Id = current().resolution.currentRunId!;
+  const run1Before = store.run(run1Id)!;
+  writeFileSync(
+    join(run1Before.reviewCheckoutDirectory!, "a.txt"),
+    "dirty-during-registration\n",
+  );
+
+  // Release run 1 while registerDetachedReviewWorkspace is still in flight.
+  const released = await command({
+    action: "run.release",
+    run: run1Id,
+    accept: ["live_turn", "unreported_result"],
+  });
+  assert.equal(released.explicitResolution?.status, "applied");
+  assert.equal(store.run(run1Id)?.released, true);
+  assert.equal(store.run(run1Id)?.status, "superseded");
+
+  // Complete the delayed registration: run 1 must stay terminally released, no reviewer launched, dirty view preserved.
+  releaseRegistration();
+  await startPromise;
+  assert.equal(createdRuns, 0);
+  assert.equal(store.run(run1Id)?.released, true);
+  assert.equal(store.run(run1Id)?.status, "superseded");
+  assert.equal(store.run(run1Id)?.workspaceId, "late-review-ws-1");
+  assert.equal(existsSync(run1Before.reviewCheckoutDirectory!), true);
+
+  // A subsequent fresh reviewer start must NOT trigger duplicate_thread from the released run.
+  const probe = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+  });
+  assert.equal(probe.explicitResolution?.status, "applied");
+  assert.equal(createdRuns, 1);
 });
