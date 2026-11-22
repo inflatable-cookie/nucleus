@@ -22,9 +22,7 @@ import {
   unfinishedReturnFor,
 } from "../recovery/non-delivery";
 import {
-  assertDetachedReviewViewIdentity,
   assertOrdinaryReviewIdentity,
-  detachedReviewViewSource,
   ordinaryReviewSource,
 } from "../review/ordinary-review";
 import type { Adapter } from "../host/adapter";
@@ -345,9 +343,7 @@ export class CallbackIntake {
       const sourceTask = this.store.task(input.taskId);
       if (sourceTask.reviewEntry) {
         if (
-          (!sourceRun.reviewCheckoutDirectory &&
-            sourceRun.workspaceId !== sourceTask.workspaceId) ||
-          (sourceRun.reviewCheckoutDirectory && !sourceRun.workspaceId) ||
+          sourceRun.workspaceId !== sourceTask.workspaceId ||
           sourceRun.head !== sourceTask.prHead
         )
           throw Error(
@@ -373,15 +369,7 @@ export class CallbackIntake {
           observed.workspaceId !== sourceRun.workspaceId
         )
           throw Error("Reviewer callback workspace binding changed");
-        if (sourceRun.reviewCheckoutDirectory) {
-          await detachedReviewViewSource(
-            this.store.task(input.taskId),
-            sourceRun.reviewCheckoutDirectory,
-            sourceRun.head,
-          );
-        } else {
-          await assertReviewEntryExecutionSource(this.store.task(input.taskId));
-        }
+        await assertReviewEntryExecutionSource(this.store.task(input.taskId));
       }
     }
     // Task 405: a passing proof execution is re-checked against the exact published
@@ -410,13 +398,7 @@ export class CallbackIntake {
         ? this.engine.control(apply, `task:${input.taskId}`)
         : apply();
     }
-    if (sourceRun?.reviewCheckoutDirectory)
-      await detachedReviewViewSource(
-        this.store.task(input.taskId),
-        sourceRun.reviewCheckoutDirectory,
-        sourceRun.head,
-      );
-    else if (sourceRun?.ordinaryDetached)
+    if (sourceRun?.ordinaryDetached)
       await ordinaryReviewSource(
         this.store.task(input.taskId),
         sourceRun.head,
@@ -840,13 +822,7 @@ export class CallbackIntake {
     token: string,
   ): Promise<CheckpointResult> {
     const progressRun = this.store.run(input.runId);
-    if (progressRun?.reviewCheckoutDirectory)
-      await detachedReviewViewSource(
-        this.store.task(input.taskId),
-        progressRun.reviewCheckoutDirectory,
-        progressRun.head,
-      );
-    else if (progressRun?.ordinaryDetached)
+    if (progressRun?.ordinaryDetached)
       await ordinaryReviewSource(
         this.store.task(input.taskId),
         progressRun.head,
@@ -859,13 +835,7 @@ export class CallbackIntake {
           "A disposition fence is active; review progress is not accepted",
         );
       const run = this.store.run(input.runId);
-      if (run?.reviewCheckoutDirectory)
-        assertDetachedReviewViewIdentity(
-          task,
-          run.reviewCheckoutDirectory,
-          run.head,
-        );
-      else if (run?.ordinaryDetached)
+      if (run?.ordinaryDetached)
         assertOrdinaryReviewIdentity(task, run.head, true);
       if (!run || run.taskId !== task.id || run.role !== "reviewer")
         throw new Error("A review progress report requires a reviewer run");

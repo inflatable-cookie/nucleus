@@ -1,14 +1,8 @@
-import { existsSync, realpathSync } from "node:fs";
-import type { Run, Task } from "../../shared/contracts";
-import { git, queueCheckoutStatus } from "../git/index";
-import { gitPrefix } from "../git/git-command";
-import {
-  GitIdentityError,
-  commonDirMatchesTask,
-  originsMatchForTask,
-  readGitCheckout,
-  readGitRef,
-} from "../git/git-identity";
+import { realpathSync } from 'node:fs';
+import type { Run, Task } from '../../shared/contracts';
+import { git, queueCheckoutStatus } from '../git/index';
+import { gitPrefix } from '../git/git-command';
+import { GitIdentityError, commonDirMatchesTask, originsMatchForTask, readGitCheckout, readGitRef } from '../git/git-identity';
 
 /**
  * The largest single inlined report (review text, worker return) a prompt may
@@ -28,23 +22,15 @@ export const REVIEW_PROMPT_SECTION_BUDGET = 50 * 1024;
  * through unchanged; over-budget text keeps its head and names what was cut
  * and where the full text lives, so no prompt silently drops review evidence.
  */
-export function boundInlineReport(
-  text: string,
-  label: string,
-  budget = REVIEW_PROMPT_INLINE_BUDGET,
-): string {
+export function boundInlineReport(text: string, label: string, budget = REVIEW_PROMPT_INLINE_BUDGET): string {
   if (text.length <= budget) return text;
   return `${text.slice(0, budget)}\n\u2026[truncated ${label}: ${budget} of ${text.length} characters shown; read the full text at its source before judging]`;
 }
 
 /** One bounded reference section: the head of the text plus a line count,
  * so the reviewer knows how much stayed out of the prompt. */
-function boundDeltaSection(
-  text: string,
-  label: string,
-  budget = REVIEW_PROMPT_SECTION_BUDGET,
-): string {
-  const lines = text.split("\n");
+function boundDeltaSection(text: string, label: string, budget = REVIEW_PROMPT_SECTION_BUDGET): string {
+  const lines = text.split('\n');
   if (text.length <= budget) return text;
   return `${text.slice(0, budget)}\n\u2026[truncated ${label}: showing the first ${budget} of ${text.length} characters across ${lines.length} lines]`;
 }
@@ -53,26 +39,10 @@ function boundDeltaSection(
  * Exact-head and repository identity from the filesystem. Safe inside a
  * transaction or a stillAllowed send guard: no git spawn, no tree walk.
  */
-export function assertOrdinaryReviewIdentity(
-  task: Task,
-  head: string,
-  detached: boolean,
-) {
-  if (
-    !task.workspaceIntent ||
-    !task.directory ||
-    !task.branch ||
-    task.branch === task.baseBranch
-  ) {
-    const missing = [
-      !task.workspaceIntent ? "workspace intent" : "",
-      !task.directory ? "checkout directory" : "",
-      !task.branch ? "branch" : "",
-      task.branch === task.baseBranch ? "distinct task branch" : "",
-    ].filter(Boolean);
-    throw Error(
-      `Ordinary reviewer source identity is incomplete: expected workspace intent, checkout directory and a task branch distinct from ${task.baseBranch}; missing or invalid ${missing.join(", ") || "identity fields"}`,
-    );
+export function assertOrdinaryReviewIdentity(task: Task, head: string, detached: boolean) {
+  if (!task.workspaceIntent || !task.directory || !task.branch || task.branch === task.baseBranch) {
+    const missing = [!task.workspaceIntent ? 'workspace intent' : '', !task.directory ? 'checkout directory' : '', !task.branch ? 'branch' : '', task.branch === task.baseBranch ? 'distinct task branch' : ''].filter(Boolean);
+    throw Error(`Ordinary reviewer source identity is incomplete: expected workspace intent, checkout directory and a task branch distinct from ${task.baseBranch}; missing or invalid ${missing.join(', ') || 'identity fields'}`);
   }
   let checkout, repo;
   try {
@@ -84,51 +54,21 @@ export function assertOrdinaryReviewIdentity(
       // from a checkout whose head, ref or origin cannot be proved; the typed
       // fault says which without reading the message.
       if (["no-git", "unreadable-git", "malformed-git"].includes(error.code))
-        throw Error(
-          "Ordinary reviewer requires its recorded Queue-owned checkout root",
-        );
-      throw Error(
-        `Ordinary reviewer checkout identity could not be read: ${String(error)}; expected a clean checkout at ${head} on ${task.branch}`,
-      );
+        throw Error('Ordinary reviewer requires its recorded Queue-owned checkout root');
+      throw Error(`Ordinary reviewer checkout identity could not be read: ${String(error)}; expected a clean checkout at ${head} on ${task.branch}`);
     }
     throw error;
   }
-  if (
-    realpathSync(task.directory) === realpathSync(task.repoPath) ||
-    checkout.toplevel !== realpathSync(task.directory)
-  )
-    throw Error(
-      "Ordinary reviewer requires its recorded Queue-owned checkout root",
-    );
+  if (realpathSync(task.directory) === realpathSync(task.repoPath) || checkout.toplevel !== realpathSync(task.directory))
+    throw Error('Ordinary reviewer requires its recorded Queue-owned checkout root');
   // Origin is compared because a worktree gitDir config can override commonDir.
-  if (
-    !commonDirMatchesTask(
-      task,
-      checkout.commonDir,
-      repo.commonDir,
-      task.directory,
-    ) ||
-    !originsMatchForTask(checkout.origin, repo.origin)
-  )
-    throw Error(
-      `Ordinary reviewer repository identity changed: expected common directory ${repo.commonDir} and origin ${repo.origin}, observed ${checkout.commonDir} and ${checkout.origin}`,
-    );
+  if (!commonDirMatchesTask(task, checkout.commonDir, repo.commonDir, task.directory) || !originsMatchForTask(checkout.origin, repo.origin))
+    throw Error(`Ordinary reviewer repository identity changed: expected common directory ${repo.commonDir} and origin ${repo.origin}, observed ${checkout.commonDir} and ${checkout.origin}`);
   let branchTip: string;
-  try {
-    branchTip = readGitRef(checkout, `refs/heads/${task.branch}`);
-  } catch (error) {
-    throw Error(
-      `Ordinary reviewer branch ref refs/heads/${task.branch} could not be read: ${String(error)}; expected ${head}`,
-    );
-  }
-  if (
-    checkout.head !== head ||
-    branchTip !== head ||
-    checkout.branch !== (detached ? "" : task.branch)
-  )
-    throw Error(
-      `Ordinary reviewer checkout identity mismatch: expected HEAD ${head}, branch tip ${head}, and branch ${detached ? "(detached)" : task.branch}; observed HEAD ${checkout.head}, branch tip ${branchTip}, and branch ${checkout.branch || "(detached)"}`,
-    );
+  try { branchTip = readGitRef(checkout, `refs/heads/${task.branch}`); }
+  catch (error) { throw Error(`Ordinary reviewer branch ref refs/heads/${task.branch} could not be read: ${String(error)}; expected ${head}`); }
+  if (checkout.head !== head || branchTip !== head || checkout.branch !== (detached ? '' : task.branch))
+    throw Error(`Ordinary reviewer checkout identity mismatch: expected HEAD ${head}, branch tip ${head}, and branch ${detached ? '(detached)' : task.branch}; observed HEAD ${checkout.head}, branch tip ${branchTip}, and branch ${checkout.branch || '(detached)'}`);
 }
 
 /**
@@ -137,165 +77,27 @@ export function assertOrdinaryReviewIdentity(
  * before a transaction or as the last await before send; re-check identity
  * cheaply inside the guard or transaction.
  */
-export async function ordinaryReviewSource(
-  task: Task,
-  head: string,
-  detached: boolean,
-) {
+export async function ordinaryReviewSource(task: Task, head: string, detached: boolean) {
   assertOrdinaryReviewIdentity(task, head, detached);
-  const status = await queueCheckoutStatus(
-    task.directory!,
-    "status",
-    "--porcelain",
-  );
-  if (status)
-    throw Error(
-      `Ordinary reviewer checkout is dirty: expected an empty porcelain status; observed ${status.slice(0, 1000)}`,
-    );
+  const status = await queueCheckoutStatus(task.directory!, 'status', '--porcelain');
+  if (status) throw Error(`Ordinary reviewer checkout is dirty: expected an empty porcelain status; observed ${status.slice(0, 1000)}`);
 }
 
-/**
- * Exact-head and repository identity of a run-owned detached review worktree.
- * Separate from the worker's `task.directory`, so the worker's HEAD, branch
- * and files remain untouched through launch, callback intake and settlement.
- */
-export function assertDetachedReviewViewIdentity(
-  task: Task,
-  viewDirectory: string,
-  head: string,
-) {
-  let checkout, repo;
-  try {
-    checkout = readGitCheckout(viewDirectory);
-    repo = readGitCheckout(task.repoPath);
-  } catch (error) {
-    if (error instanceof GitIdentityError) {
-      throw Error(
-        `Detached review view identity could not be read: ${String(error)}; expected detached checkout at ${head}`,
-      );
-    }
-    throw error;
-  }
-  const realView = realpathSync(viewDirectory);
-  if (
-    realView === realpathSync(task.repoPath) ||
-    (task.directory && realView === realpathSync(task.directory)) ||
-    checkout.toplevel !== realView
-  ) {
-    throw Error(
-      "Detached review view must be its own worktree distinct from the repository and worker checkout",
-    );
-  }
-  if (
-    !commonDirMatchesTask(
-      task,
-      checkout.commonDir,
-      repo.commonDir,
-      viewDirectory,
-    ) ||
-    !originsMatchForTask(checkout.origin, repo.origin)
-  ) {
-    throw Error(
-      `Detached review view repository identity changed: expected ${repo.commonDir} / ${repo.origin}, observed ${checkout.commonDir} / ${checkout.origin}`,
-    );
-  }
-  if (checkout.head !== head || checkout.branch !== "") {
-    throw Error(
-      `Detached review view mismatch: expected detached HEAD ${head}; observed HEAD ${checkout.head} on ${checkout.branch || "(detached)"}`,
-    );
-  }
-}
-
-export async function detachedReviewViewSource(
-  task: Task,
-  viewDirectory: string,
-  head: string,
-) {
-  assertDetachedReviewViewIdentity(task, viewDirectory, head);
-  const status = await queueCheckoutStatus(
-    viewDirectory,
-    "status",
-    "--porcelain",
-  );
-  if (status) {
-    throw Error(
-      `Detached review view is dirty: expected an empty porcelain status; observed ${status.slice(0, 1000)}`,
-    );
-  }
-}
-
-/**
- * Remove a run-owned detached review worktree only when it still belongs to
- * this repository/run and has no uncommitted changes. Dirty worktrees are
- * preserved and reported; never force-removes uncommitted edits.
- */
-export async function removeCleanDetachedReviewView(
-  task: Task,
-  run: Run,
-): Promise<{ removed: boolean; preservedReason?: string }> {
-  const dir = run.reviewCheckoutDirectory;
-  if (!dir || !existsSync(dir)) return { removed: false };
-  assertDetachedReviewViewIdentity(task, dir, run.head);
-  const status = await queueCheckoutStatus(dir, "status", "--porcelain");
-  if (status) {
-    return {
-      removed: false,
-      preservedReason: `Detached review worktree ${dir} has uncommitted changes and was preserved`,
-    };
-  }
-  await git(task.repoPath, "worktree", "remove", dir);
-  return { removed: true };
-}
-
-export async function ordinaryReviewDelta(
-  task: Task,
-  prior: Run,
-  head: string,
-  base: string,
-): Promise<string> {
+export async function ordinaryReviewDelta(task: Task, prior: Run, head: string, base: string): Promise<string> {
   const read = (...args: string[]) => git(task.directory!, ...args);
-  const oldBase = await read("merge-base", prior.base, prior.head);
-  const newBase = await read("merge-base", base, head);
+  const oldBase = await read('merge-base', prior.base, prior.head);
+  const newBase = await read('merge-base', base, head);
   // The range-diff is read to classify the round and never inlined: range-diff
   // emits '=' rows for an unchanged patch series; an empty series is also unchanged.
-  const range = await read(
-    "range-diff",
-    "--no-color",
-    "--no-patch",
-    `${oldBase}..${prior.head}`,
-    `${newBase}..${head}`,
-  );
-  const confirmation = range
-    .split("\n")
-    .filter(Boolean)
-    .every((line) => /^\s*\d+:\s+\S+\s+=\s+\d+:/.test(line));
-  const header = `Prior run: ${prior.id}; priorHead: ${prior.head}\nBase movement: ${prior.base} -> ${base}\n${confirmation ? "Pure rebase confirmation: unchanged patch series. Judge actual covering evidence at this new head; issue a genuine new verdict." : "Review the revision delta and resolve the earlier findings."}\n`;
-  const findings = `Earlier findings:\n${prior.completion?.reviewText ?? prior.completion?.summary}\nEarlier verdicts:\n${JSON.stringify(prior.completion?.verdicts ?? [])}\nBrief: earlier v${prior.briefVersion ?? "legacy"}, current v${task.briefVersions.at(-1)?.version ?? "legacy"}; amendments are marked in the supplied brief.\n`;
+  const range = await read('range-diff', '--no-color', '--no-patch', `${oldBase}..${prior.head}`, `${newBase}..${head}`);
+  const confirmation = range.split('\n').filter(Boolean).every(line => /^\s*\d+:\s+\S+\s+=\s+\d+:/.test(line));
+  const header = `Prior run: ${prior.id}; priorHead: ${prior.head}\nBase movement: ${prior.base} -> ${base}\n${confirmation ? 'Pure rebase confirmation: unchanged patch series. Judge actual covering evidence at this new head; issue a genuine new verdict.' : 'Review the revision delta and resolve the earlier findings.'}\n`;
+  const findings = `Earlier findings:\n${prior.completion?.reviewText ?? prior.completion?.summary}\nEarlier verdicts:\n${JSON.stringify(prior.completion?.verdicts ?? [])}\nBrief: earlier v${prior.briefVersion ?? 'legacy'}, current v${task.briefVersions.at(-1)?.version ?? 'legacy'}; amendments are marked in the supplied brief.\n`;
   // No delta or range-diff text enters the prompt at any size (Tom, 2026-11-01:
   // diffs are what git is for). The reviewer gets the stat, the changed files,
   // the exact SHAs and the commands to read the delta in its own checkout,
   // plus the earlier findings.
-  const stat = boundDeltaSection(
-    await gitPrefix(
-      task.directory!,
-      [
-        "diff",
-        "--stat",
-        "--no-color",
-        "--stat-count=100",
-        `${prior.head}..${head}`,
-      ],
-      REVIEW_PROMPT_SECTION_BUDGET,
-    ),
-    "diff stat",
-  );
-  const files = boundDeltaSection(
-    await gitPrefix(
-      task.directory!,
-      ["diff", "--name-only", "--no-color", `${prior.head}..${head}`],
-      REVIEW_PROMPT_SECTION_BUDGET,
-    ),
-    "changed files",
-  );
+  const stat = boundDeltaSection(await gitPrefix(task.directory!, ['diff', '--stat', '--no-color', '--stat-count=100', `${prior.head}..${head}`], REVIEW_PROMPT_SECTION_BUDGET), 'diff stat');
+  const files = boundDeltaSection(await gitPrefix(task.directory!, ['diff', '--name-only', '--no-color', `${prior.head}..${head}`], REVIEW_PROMPT_SECTION_BUDGET), 'changed files');
   return `${header}The delta and range-diff are never inlined; read them in this checkout with the commands below before judging, and do not report a verdict from the stat alone.\nDiff stat:\n${stat}\nChanged files:\n${files}\nExact SHAs: priorHead ${prior.head}, head ${head}, oldBase ${oldBase} (of ${prior.base}..${prior.head}), newBase ${newBase} (of ${base}..${head})\nCommands to read the delta:\n  git diff --no-ext-diff --no-color ${prior.head}..${head}\n  git range-diff --no-color ${oldBase}..${prior.head} ${newBase}..${head}\n${findings}`;
 }

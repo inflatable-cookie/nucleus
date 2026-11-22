@@ -24,12 +24,6 @@ export interface HostWorkspaces {
     task: Task,
     options?: { freshlyPopulated?: boolean },
   ): Promise<{ id: string; directory: string }>;
-  registerDetachedReviewWorkspace?(spec: {
-    requestId: string;
-    title: string;
-    directory: string;
-    repoPath: string;
-  }): Promise<{ id: string; directory: string }>;
   /** Queue-owned gitBulk populate; admission must not wrap this. */
   populateTaskWorktree?(task: Task): Promise<{
     directory: string;

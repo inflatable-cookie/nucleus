@@ -117,8 +117,6 @@ export const runSchema = z.object({
   hostId: z.string().min(1).optional(),
   /** Queue-owned temporary root recorded before a fresh agent is launched. */
   temporaryDirectory: z.string().max(2000).optional(),
-  /** Run-owned detached git worktree created for an explicit reviewer run. */
-  reviewCheckoutDirectory: z.string().max(2000).optional(),
   reviewSourceView: reviewSourceViewSchema.optional(),
   ordinaryDetached: z.literal(true).optional(),
   priorRunId: z.string().optional(),

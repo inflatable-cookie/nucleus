@@ -29,7 +29,7 @@ import {
   type WorkspaceCreationState,
 } from "./workspace-allocation";
 import { taskWorkspaceTitle } from "./workspace-title";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
   Task,
@@ -873,31 +873,6 @@ export class WorkspaceLifecycle {
     );
     if (!workspace.directory)
       throw new Error("Workspace returned no directory");
-    return { id: workspace.id, directory: workspace.directory };
-  }
-  async registerDetachedReviewWorkspace(spec: {
-    requestId: string;
-    title: string;
-    directory: string;
-    repoPath: string;
-  }): Promise<{ id: string; directory: string }> {
-    const project = await this.host.workspaceHost.repositoryProject(
-      spec.repoPath,
-    );
-    const workspace = await this.host.workspaceHost.createWorkspace({
-      requestId: spec.requestId,
-      title: spec.title,
-      directory: spec.directory,
-      project,
-    });
-    if (!workspace.directory) {
-      throw new Error("Detached review workspace returned no directory");
-    }
-    if (realpathSync(workspace.directory) !== realpathSync(spec.directory)) {
-      throw new Error(
-        `Host registered review workspace at ${workspace.directory}, expected ${spec.directory}`,
-      );
-    }
     return { id: workspace.id, directory: workspace.directory };
   }
   /**

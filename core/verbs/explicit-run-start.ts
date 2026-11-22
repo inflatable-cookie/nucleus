@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   authorModelKey,
   queueAuthorModelKey,
@@ -30,7 +30,7 @@ import {
 import { usageGateBlocked } from "../dispatch/usage-gate";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
-import { git } from "../git/index";
+import { git, queueCheckoutStatus } from "../git/index";
 import {
   commonDirMatchesTask,
   originsMatchForTask,
@@ -38,8 +38,8 @@ import {
 } from "../git/git-identity";
 import type { Adapter } from "../host/adapter";
 import {
-  assertDetachedReviewViewIdentity,
-  detachedReviewViewSource,
+  assertOrdinaryReviewIdentity,
+  ordinaryReviewSource,
 } from "../review/ordinary-review";
 import { digest, now } from "../store/store";
 import type {
@@ -60,6 +60,8 @@ export type MessageTarget = {
 
 export type ExplicitRunStartPreflight = {
   forgeHead: string | null;
+  localHead: string | null;
+  branchDiverged: boolean;
   workerTurnActive: boolean;
 };
 
@@ -491,9 +493,26 @@ export async function preflightExplicitRunStart(
   input: Extract<ExplicitResolution, { action: "run.start" }>,
 ): Promise<ExplicitRunStartPreflight> {
   if (input.role !== "reviewer") {
-    return { forgeHead: null, workerTurnActive: false };
+    return {
+      forgeHead: null,
+      localHead: null,
+      branchDiverged: false,
+      workerTurnActive: false,
+    };
   }
   assertReviewSourceAvailable(task);
+  if (task.entrypoint !== "proof" && task.directory) {
+    const dirty = await queueCheckoutStatus(
+      task.directory,
+      "status",
+      "--porcelain",
+    );
+    if (dirty) {
+      throw Error(
+        `Reviewer checkout at ${task.directory} has uncommitted changes; commit or clean them before starting review`,
+      );
+    }
+  }
   let forgeHead: string | null = null;
   let workerTurnActive = false;
   const probe = async () => {
@@ -531,85 +550,119 @@ export async function preflightExplicitRunStart(
     }
   };
   await (task.hostId ? engine.withHost(task.hostId, probe) : probe());
-  return { forgeHead, workerTurnActive };
+
+  let localHead: string | null = null;
+  let branchDiverged = false;
+  if (task.entrypoint !== "proof" && task.directory) {
+    localHead = readGitCheckout(task.directory).head;
+    const targetHead = forgeHead ?? input.head ?? task.prHead ?? null;
+    if (targetHead && localHead !== targetHead) {
+      const hasCommit = await git(
+        task.repoPath,
+        "rev-parse",
+        "--verify",
+        `${targetHead}^{commit}`,
+      )
+        .then(() => true)
+        .catch(() => false);
+      if (!hasCommit && task.branch) {
+        await git(
+          task.repoPath,
+          "fetch",
+          "origin",
+          `refs/heads/${task.branch}`,
+        ).catch(() => {});
+      }
+      const isAncestor = await git(
+        task.directory,
+        "merge-base",
+        "--is-ancestor",
+        localHead,
+        targetHead,
+      )
+        .then(() => true)
+        .catch(() => false);
+      if (!isAncestor) {
+        branchDiverged = true;
+      }
+    }
+  }
+  return { forgeHead, localHead, branchDiverged, workerTurnActive };
 }
 
 /**
- * Create a separate, run-owned detached Git worktree at `run.head` and register
- * its host workspace so the native reviewer launches in the detached view while
- * the worker's `task.directory`, `HEAD`, `refs/heads/<task.branch>` and working
- * files remain completely untouched through launch and settlement.
+ * Align the single task checkout to `run.head` strictly by verified
+ * fast-forward (`merge-base --is-ancestor` + `git merge --ff-only`).
+ * Never rewinds, resets, detaches or force-updates the task branch.
  */
-async function prepareReviewerCheckout(
-  engine: Engine,
-  task: Task,
-  run: Run,
-): Promise<Run> {
-  if (task.entrypoint === "proof" || !run.reviewCheckoutDirectory) return run;
+async function prepareReviewerCheckout(task: Task, run: Run): Promise<void> {
+  if (task.entrypoint === "proof" || !task.directory) return;
   assertReviewSourceAvailable(task);
-  let fetchError: unknown = null;
-  if (task.branch) {
-    try {
-      await git(task.repoPath, "fetch", "origin", `refs/heads/${task.branch}`);
-    } catch (error) {
-      fetchError = error;
-    }
+  const dirty = await queueCheckoutStatus(
+    task.directory,
+    "status",
+    "--porcelain",
+  );
+  if (dirty) {
+    throw Error(
+      `Reviewer checkout at ${task.directory} has uncommitted changes; commit or clean them before starting review`,
+    );
   }
-  try {
-    await git(task.repoPath, "rev-parse", "--verify", `${run.head}^{commit}`);
-  } catch (error) {
-    if (fetchError) {
+  const checkout = readGitCheckout(task.directory);
+  if (checkout.head !== run.head) {
+    if (checkout.branch !== task.branch) {
       throw Error(
-        `Reviewer commit ${run.head} is unavailable after fetch failure: ${String(fetchError).slice(0, 300)}`,
+        `Task checkout is not on branch ${task.branch}; refusing to move it`,
       );
     }
-    throw error;
+    let fetchError: unknown = null;
+    const hasCommit = await git(
+      task.repoPath,
+      "rev-parse",
+      "--verify",
+      `${run.head}^{commit}`,
+    )
+      .then(() => true)
+      .catch(() => false);
+    if (!hasCommit && task.branch) {
+      try {
+        await git(
+          task.repoPath,
+          "fetch",
+          "origin",
+          `refs/heads/${task.branch}`,
+        );
+      } catch (error) {
+        fetchError = error;
+      }
+    }
+    try {
+      await git(task.repoPath, "rev-parse", "--verify", `${run.head}^{commit}`);
+    } catch (error) {
+      if (fetchError) {
+        throw Error(
+          `Reviewer commit ${run.head} is unavailable after fetch failure: ${String(fetchError).slice(0, 300)}`,
+        );
+      }
+      throw error;
+    }
+    const isAncestor = await git(
+      task.directory,
+      "merge-base",
+      "--is-ancestor",
+      checkout.head,
+      run.head,
+    )
+      .then(() => true)
+      .catch(() => false);
+    if (!isAncestor) {
+      throw Error(
+        `Task branch ${task.branch} at ${checkout.head.slice(0, 12)} has unpushed or diverged commits relative to ${run.head.slice(0, 12)}; refusing to rewind (head_mismatch)`,
+      );
+    }
+    await git(task.directory, "merge", "--ff-only", run.head);
   }
-  if (existsSync(run.reviewCheckoutDirectory)) {
-    throw Error(
-      `Detached review view path already exists at ${run.reviewCheckoutDirectory}; refusing to overwrite it`,
-    );
-  }
-  await git(
-    task.repoPath,
-    "worktree",
-    "add",
-    "--quiet",
-    "--detach",
-    run.reviewCheckoutDirectory,
-    run.head,
-  );
-  await detachedReviewViewSource(task, run.reviewCheckoutDirectory, run.head);
-  if (typeof engine.adapter.registerDetachedReviewWorkspace !== "function") {
-    throw Error(
-      "Host adapter cannot register a separate detached review workspace",
-    );
-  }
-  const workspace = await engine.adapter.registerDetachedReviewWorkspace({
-    requestId: `ns-review-${run.id}`,
-    title: `Review: ${task.title}`,
-    directory: run.reviewCheckoutDirectory,
-    repoPath: task.repoPath,
-  });
-  if (
-    !workspace.directory ||
-    realpathSync(workspace.directory) !==
-      realpathSync(run.reviewCheckoutDirectory)
-  ) {
-    throw Error(
-      `Host registered review workspace at ${workspace.directory}, expected ${run.reviewCheckoutDirectory}`,
-    );
-  }
-  let updated: Run = run;
-  engine.store.transaction(() => {
-    const currentRun = engine.store.run(run.id);
-    if (!currentRun) return;
-    // Preserve terminal release/superseded state if run.release raced with registration;
-    // recording workspaceId still lets cleanup know about the late-registered handle.
-    updated = { ...currentRun, workspaceId: workspace.id };
-    engine.store.putRun(updated);
-  });
-  return updated;
+  await ordinaryReviewSource(task, run.head, false);
 }
 
 export function runStartPlan(
@@ -647,26 +700,6 @@ export function runStartPlan(
     (input.replacing ? "fresh" : retainedAgentId ? "retained" : "fresh");
   if (agentMode === "retained" && !retainedAgentId) {
     throw Error(`No retained ${input.role} thread is bound to this task`);
-  }
-  if (
-    input.role === "reviewer" &&
-    agentMode === "retained" &&
-    task.entrypoint !== "proof"
-  ) {
-    const priorDetached = runs.findLast(
-      (r) =>
-        r.role === "reviewer" &&
-        r.agentId === retainedAgentId &&
-        Boolean(r.reviewCheckoutDirectory),
-    );
-    if (
-      !priorDetached?.reviewCheckoutDirectory ||
-      !existsSync(priorDetached.reviewCheckoutDirectory)
-    ) {
-      throw Error(
-        `Retained reviewer ${retainedAgentId} has no detached review checkout; use run.start reviewer fresh`,
-      );
-    }
   }
 
   const replacedRun = input.replacing ? store.run(input.replacing) : null;
@@ -770,7 +803,12 @@ export function runStartPlan(
     );
   }
   const referencePrHead = preflight?.forgeHead ?? task.prHead ?? null;
-  if (input.head && referencePrHead && input.head !== referencePrHead) {
+  if (preflight?.branchDiverged && preflight.localHead && referencePrHead) {
+    warn(
+      "head_mismatch",
+      `Task checkout ${preflight.localHead.slice(0, 12)} has unpushed or diverged commits relative to ${preflight.forgeHead ? "forge PR head" : "recorded PR head"} ${referencePrHead.slice(0, 12)}; branch will not be moved.`,
+    );
+  } else if (input.head && referencePrHead && input.head !== referencePrHead) {
     warn(
       "head_mismatch",
       `Requested head ${input.head.slice(0, 12)} differs from ${preflight?.forgeHead ? "forge PR head" : "recorded PR head"} ${referencePrHead.slice(0, 12)}.`,
@@ -813,12 +851,17 @@ export function runStartPlan(
       const basePatch = releaseChange?.patch ?? {};
       const resolution = { ...(basePatch.resolution ?? task.resolution) };
       const runId = randomUUID();
-      // For reviewers, the forge-confirmed PR head always governs placement,
-      // delivery and intake even after head_mismatch is accepted.
+      // For reviewers: if the branch has unpushed/diverged commits, accepting
+      // head_mismatch starts the run at the current local head and never rewinds.
+      // Otherwise the forge-confirmed PR head governs placement, delivery and intake.
       const head =
-        runRole === "reviewer" && preflight?.forgeHead
-          ? preflight.forgeHead
-          : (input.head ?? task.prHead ?? task.planningCommit);
+        runRole === "reviewer" &&
+        preflight?.branchDiverged &&
+        preflight.localHead
+          ? preflight.localHead
+          : runRole === "reviewer" && preflight?.forgeHead
+            ? preflight.forgeHead
+            : (input.head ?? task.prHead ?? task.planningCommit);
       const base = task.planningCommit;
       const generation =
         runRole === "recovery" ? task.coordinatorGeneration + 1 : 1;
@@ -826,10 +869,6 @@ export function runStartPlan(
         runId,
         task,
       );
-      const reviewCheckoutDirectory =
-        runRole === "reviewer" && task.entrypoint !== "proof" && task.directory
-          ? join(dirname(task.directory), `.ns-review-${runId.slice(0, 12)}`)
-          : undefined;
 
       createdRun = runSchema.parse({
         id: runId,
@@ -851,7 +890,6 @@ export function runStartPlan(
         active: null,
         completion: null,
         released: false,
-        ...(reviewCheckoutDirectory ? { reviewCheckoutDirectory } : {}),
         ...(temporaryDirectory ? { temporaryDirectory } : {}),
       });
       token = randomBytes(24).toString("hex");
@@ -859,11 +897,12 @@ export function runStartPlan(
       store.putRun(createdRun);
 
       const patch: Partial<Task> = { ...basePatch, resolution };
-      // Only record a forge-confirmed PR head; never overwrite prHead with an
-      // unconfirmed caller-supplied head.
+      // Only record a forge-confirmed PR head when the task checkout aligns to it;
+      // never overwrite prHead with an unconfirmed caller-supplied head or diverged local head.
       if (
         runRole === "reviewer" &&
         preflight?.forgeHead &&
+        !preflight.branchDiverged &&
         task.prHead !== preflight.forgeHead
       ) {
         patch.prHead = preflight.forgeHead;
@@ -929,73 +968,27 @@ export function runStartPlan(
       }
 
       const latestTask = store.task(task.id);
-      let activeRun = run;
       const sendGuard = {
         allowed: async () => {
           if (!isRunStillOwned()) return false;
-          if (runRole === "reviewer" && activeRun.reviewCheckoutDirectory) {
-            await detachedReviewViewSource(
-              store.task(task.id),
-              activeRun.reviewCheckoutDirectory,
-              activeRun.head,
-            );
+          if (runRole === "reviewer" && latestTask.entrypoint !== "proof") {
+            await ordinaryReviewSource(store.task(task.id), run.head, false);
           }
           return isRunStillOwned();
         },
         stillAllowed: () => {
           if (!isRunStillOwned()) return false;
-          if (runRole === "reviewer" && activeRun.reviewCheckoutDirectory) {
-            assertDetachedReviewViewIdentity(
-              store.task(task.id),
-              activeRun.reviewCheckoutDirectory,
-              activeRun.head,
-            );
+          if (runRole === "reviewer" && latestTask.entrypoint !== "proof") {
+            assertOrdinaryReviewIdentity(store.task(task.id), run.head, false);
           }
           return true;
         },
       };
 
       const deliver = async () => {
-        if (runRole === "reviewer" && agentMode === "fresh") {
-          activeRun = await prepareReviewerCheckout(engine, latestTask, run);
-        } else if (runRole === "reviewer" && agentMode === "retained") {
-          const priorForAgent = store
-            .runs(task.id)
-            .findLast(
-              (r) =>
-                r.id !== run.id &&
-                r.role === "reviewer" &&
-                r.agentId === run.agentId &&
-                Boolean(r.reviewCheckoutDirectory),
-            );
-          if (
-            !priorForAgent?.reviewCheckoutDirectory ||
-            !existsSync(priorForAgent.reviewCheckoutDirectory)
-          ) {
-            throw Error(
-              `Retained reviewer ${run.agentId} is not bound to an existing detached review view; use run.start reviewer fresh`,
-            );
-          }
-          await detachedReviewViewSource(
-            latestTask,
-            priorForAgent.reviewCheckoutDirectory,
-            run.head,
-          );
-          store.transaction(() => {
-            const currentRun = store.run(run.id);
-            if (!currentRun) return;
-            activeRun = {
-              ...currentRun,
-              workspaceId: priorForAgent.workspaceId,
-              reviewCheckoutDirectory: priorForAgent.reviewCheckoutDirectory,
-            };
-            store.putRun(activeRun);
-          });
+        if (runRole === "reviewer") {
+          await prepareReviewerCheckout(latestTask, run);
         }
-        const deliveryTask =
-          runRole === "reviewer" && activeRun.reviewCheckoutDirectory
-            ? { ...latestTask, directory: activeRun.reviewCheckoutDirectory }
-            : latestTask;
         if (!isRunStillOwned()) {
           issues.push(
             `Run ${run.id} was already replaced or released before delivery.`,
@@ -1025,8 +1018,8 @@ export function runStartPlan(
           }
           await sendRun.call(
             engine.adapter,
-            deliveryTask,
-            activeRun,
+            latestTask,
+            run,
             token,
             null,
             null,
@@ -1048,12 +1041,12 @@ export function runStartPlan(
           throw Error("Host adapter supports no fresh run creation method");
         }
         const created = await engine.adapter.createRun(
-          deliveryTask,
-          activeRun,
+          latestTask,
+          run,
           token,
           null,
           null,
-          runRole === "reviewer" && activeRun.reviewCheckoutDirectory
+          runRole === "reviewer" && latestTask.entrypoint !== "proof"
             ? sendGuard
             : undefined,
         );
