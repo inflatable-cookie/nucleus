@@ -1161,7 +1161,7 @@ export function PlanningTab({
   // else (with a detail pane) the first project listed.
   const selectedSection =
     chosenSection ??
-    (selectedLane
+    (laneOpen
       ? ordered.find((section) => lists(section, selectedLane))
       : undefined) ??
     (twoPane || sections.length === 1 ? ordered[0] : undefined);
@@ -1274,7 +1274,14 @@ export function PlanningTab({
         {
           text: "Planning",
           label: "Back to Planning",
-          onPress: twoPane || sections.length === 1 ? () => onStep("plan") : backToList,
+          // With a detail pane the list is already beside it, so Planning returns to the lane's plan.
+          onPress:
+            twoPane || sections.length === 1
+              ? () =>
+                  laneSection
+                    ? pickProject(laneSection.project.key)
+                    : onStep("plan")
+              : backToList,
         },
         ...(laneSection
           ? [
