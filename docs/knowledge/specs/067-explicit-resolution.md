@@ -213,7 +213,7 @@ replacement.
 | 2 (delivered in nucleus#1520) | `run.start`, `phase.set`, `message.send`. `next`, stop text and refusals name the explicit command. Coordinators launch for mechanical stalls. | `core/recovery/absent-creation/**`, creation gates in `route`/`restart`/`reviewer-report`, responsible-fault fallback |
 | 3 (delivered in nucleus#1521) | `turn.take`/`turn.release`, `merge.now`, `closeout.now`. Prerequisite wait releases the turn. | `merge-occurrence`, restart-to-closeout path, turn-lever refusals (nucleus#1513 retired in favour of this batch) |
 | 4 | Escalations bound to version, carrying explicit commands, closing when the cause clears. | escalation binding-hash refusals in `escalation-settlement` |
-| 5 | Host availability from health readings, not one call. | host-wide timeout stamping |
+| 5 (absorbed by [Spec 069](069-scheduler.md) batch 2) | Host availability from health readings, not one call. | host-wide timeout stamping |
 | 6 | Proof owners out of the gate path. | pre-send receipts, owned-tool proof, archive proof, per-effect settlement modules, `restart-episode`, `retry_effect` replay variants; shrink `verb-fences`, `recovery-effects`, `fence-settlement`, coordinator episode modules |
 
 Acceptance for every batch: today's cases resolve in one explicit step each —

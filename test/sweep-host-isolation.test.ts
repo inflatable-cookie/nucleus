@@ -133,14 +133,22 @@ test("a host transport failure waits only that host while the sweep processes he
     f.processed.includes(`dispatch:${f.healthy.id}`),
     "healthy-host dispatch runs in the same pass",
   );
+  // A host whose context cannot be bound reads as down (Spec 069 §2): the sweep
+  // sends its task nothing.
+  assert.equal(f.engine.hostHealth.read(OFFLINE_HOST).state, "down");
   assert.equal(
-    f.processed.some((entry) => entry.endsWith(f.offline.id)),
+    f.processed.includes(`quantum:${f.offline.id}`),
     false,
     "offline-host work does not start",
   );
 });
 
-test("a host whose pass failed at the transport boundary keeps its own waits while the other host settles its own", async (t) => {
+/**
+ * Spec 069 §2 (superseding Spec 066 R6): a step that fails at the transport on a
+ * connected host fails only itself. One failed pass leaves the host up, so both hosts
+ * settle their own transport waits and both tasks are visited by their owners.
+ */
+test("a host whose pass failed at the transport boundary stays up, and both hosts settle their own waits", async (t) => {
   // The registry claims both hosts are connected; only one client answers a step.
   const f = fixture(t, {
     reconcileTaskRow: async () => {
@@ -185,23 +193,21 @@ test("a host whose pass failed at the transport boundary keeps its own waits whi
     "the host that answered settles its own wait",
   );
   assert.equal(f.store.task(f.healthy.id).resolution.hostWait, null);
+  assert.equal(f.engine.hostHealth.read(OFFLINE_HOST).state, "up");
+  assert.equal(f.engine.hostOutages.current(OFFLINE_HOST), null);
   assert.equal(
-    f.store.task(f.offline.id).resolution.stop?.reason,
-    "host_unavailable",
-    "the host that did not answer keeps its own wait",
+    f.store.task(f.offline.id).resolution.stop,
+    null,
+    "a connected host settles its own transport wait",
   );
-  assert.ok(
-    f.store.task(f.offline.id).resolution.hostWait,
-    "and keeps its own host wait",
-  );
+  assert.equal(f.store.task(f.offline.id).resolution.hostWait, null);
   assert.ok(
     f.processed.includes(`quantum:${f.healthy.id}`),
-    "the healthy task is still visited",
+    "the healthy task is visited",
   );
-  assert.equal(
-    f.processed.some((entry) => entry === `quantum:${f.offline.id}`),
-    false,
-    "the unanswered host's task is not started",
+  assert.ok(
+    f.processed.includes(`quantum:${f.offline.id}`),
+    "and the failing host's running task is visited by its own owner",
   );
 });
 
@@ -229,7 +235,7 @@ test("a transport failure inside the failover pass answers for one host and leav
   assert.ok(f.processed.includes(`dispatch:${f.healthy.id}`), "and dispatched");
 });
 
-test("a host fault in a fleet step leaves other hosts running and clears on return", async (t) => {
+test("a host fault in a fleet step fails only that step, leaves other hosts running and clears on return", async (t) => {
   let offline = true;
   const f = fixture(t);
   const t3 = f.add("t3code:primary", "T3 task");
@@ -257,15 +263,18 @@ test("a host fault in a fleet step leaves other hosts running and clears on retu
       first.visited.has(f.healthy.id) &&
       first.visited.has(t3.id),
   );
+  // Spec 069 §2: one failed call changes no host state; no task on the host is written.
+  assert.equal(f.engine.hostHealth.read(OFFLINE_HOST).state, "up");
+  assert.equal(f.store.task(f.offline.id).resolution.stop, null);
   assert.equal(
-    f.store.task(f.offline.id).resolution.stop?.reason,
-    "host_unavailable",
-  );
-  assert.match(
     f.store
       .eventsAll(f.offline.id)
-      .find((event) => event.kind === "host_transport_fault")?.detail ?? "",
-    /Transport not connected/,
+      .some((event) => event.kind === "host_transport_fault"),
+    false,
+  );
+  assert.match(
+    String(f.store.getMeta("hostPassError")),
+    /deliverNotices: Transport not connected/,
   );
   assert.ok(f.processed.includes(`quantum:${f.healthy.id}`));
   assert.ok(f.processed.includes(`quantum:${t3.id}`));
@@ -273,6 +282,7 @@ test("a host fault in a fleet step leaves other hosts running and clears on retu
 
   offline = false;
   await f.engine.auditPass(true);
+  assert.equal(f.engine.hostHealth.read(OFFLINE_HOST).state, "up");
   assert.equal(f.store.task(f.offline.id).resolution.hostWait, null);
   assert.equal(f.store.task(f.offline.id).resolution.stop, null);
   assert.ok(f.processed.includes(`quantum:${f.offline.id}`));
@@ -291,7 +301,7 @@ test("a non-host fleet failure still records engineError", async (t) => {
   );
 });
 
-test("a host fault preserves an owner stop through outage and return", async (t) => {
+test("a host fault preserves an owner stop and writes no host wait on a connected host", async (t) => {
   const f = fixture(t);
   f.engine.resolution.recordStop(
     f.store.task(f.offline.id),
@@ -315,7 +325,12 @@ test("a host fault preserves an owner stop through outage and return", async (t)
     f.store.task(f.offline.id).resolution.stop?.detail,
     "Awaiting proof decision",
   );
-  assert.ok(f.store.task(f.offline.id).resolution.hostWait);
+  assert.equal(f.engine.hostHealth.read(OFFLINE_HOST).state, "up");
+  assert.equal(
+    f.store.task(f.offline.id).resolution.hostWait,
+    null,
+    "a failed call on a connected host is no outage",
+  );
   failing = false;
   await f.engine.auditPass(true);
   assert.equal(f.store.task(f.offline.id).resolution.hostWait, null);
@@ -329,7 +344,7 @@ test("a host fault preserves an owner stop through outage and return", async (t)
   );
 });
 
-test("an observation fault preserves an owner stop and holds the host until the next pass", async (t) => {
+test("an observation fault fails only that observation and preserves an owner stop", async (t) => {
   let online = false;
   const adapter = {
     observe: async (id: string) => {
@@ -377,8 +392,13 @@ test("an observation fault preserves an owner stop and holds the host until the 
   const first = await f.engine.auditPass(true);
   assert.equal(first.fault, null);
   assert.equal(f.store.task(task.id).resolution.stop?.reason, "awaiting_proof");
-  assert.ok(f.store.task(task.id).resolution.hostWait);
-  assert.equal(f.processed.includes(`quantum:${task.id}`), false);
+  assert.equal(f.store.task(task.id).resolution.hostWait, null);
+  assert.equal(f.engine.hostHealth.read(OFFLINE_HOST).state, "up");
+  assert.equal(
+    f.store.run("review-run")?.lastObservedAt,
+    null,
+    "the failed observation wrote nothing",
+  );
   assert.ok(f.processed.includes(`quantum:${f.healthy.id}`));
   online = true;
   await f.engine.auditPass(true);
@@ -439,19 +459,13 @@ test("queued dispatch contains one host fault and retains other starts", async (
   };
   await f.engine.dispatchOwner.dispatchQueued();
   assert.deepEqual(new Set(sent), new Set([f.healthy.id, t3.id]));
-  assert.equal(
-    f.store.task(f.offline.id).resolution.stop?.reason,
-    "host_unavailable",
-  );
-  assert.match(
-    f.store
-      .eventsAll(f.offline.id)
-      .find((event) => event.kind === "host_transport_fault")?.detail ?? "",
-    /plugin build mismatch/,
-  );
+  // Spec 069 §2: the failed dispatch fails only itself; its host stays up.
+  assert.equal(f.store.task(f.offline.id).phase, "queued");
+  assert.equal(f.store.task(f.offline.id).resolution.stop, null);
+  assert.equal(f.engine.hostHealth.read(OFFLINE_HOST).state, "up");
 });
 
-test("dispatch host broadcast does not replace another task’s owner stop", async (t) => {
+test("a failed dispatch writes nothing to another task on its host", async (t) => {
   const f = fixture(t);
   const protectedTask = f.add(OFFLINE_HOST, "BB budget stop");
   f.engine.resolution.recordStop(
@@ -459,6 +473,7 @@ test("dispatch host broadcast does not replace another task’s owner stop", asy
     "budget",
     "Awaiting budget decision",
   );
+  const before = f.store.task(protectedTask.id).version;
   f.store.update(f.offline.id, { phase: "queued" });
   f.store.setMeta("globalLimit", 3);
   f.engine.dispatchTask = async (id) => {
@@ -469,7 +484,8 @@ test("dispatch host broadcast does not replace another task’s owner stop", asy
   const current = f.store.task(protectedTask.id);
   assert.equal(current.resolution.stop?.reason, "budget");
   assert.equal(current.resolution.stop?.detail, "Awaiting budget decision");
-  assert.ok(current.resolution.hostWait);
+  assert.equal(current.resolution.hostWait, null, "no host-wide broadcast");
+  assert.equal(current.version, before);
 });
 
 test("an unavailable first queue head gives the free slot to a healthy host", async (t) => {
@@ -490,7 +506,7 @@ test("an unavailable first queue head gives the free slot to a healthy host", as
   assert.deepEqual(attempted, [f.offline.id, f.healthy.id]);
 });
 
-test("a repeated host fault keeps one stable wait and diagnostic", async (t) => {
+test("a repeated host fault on a down host keeps one stable wait and writes no per-task diagnostic", async (t) => {
   const f = fixture(t);
   f.engine.hostAvailable = (host) => host !== OFFLINE_HOST;
   f.engine.resolution.deliverNotices = async () => {
@@ -505,9 +521,11 @@ test("a repeated host fault keeps one stable wait and diagnostic", async (t) => 
   await f.engine.auditPass(true);
   assert.deepEqual(f.store.task(f.offline.id).resolution.stop, stop);
   assert.deepEqual(f.store.eventsAll(f.offline.id), events);
+  assert.equal(stop?.reason, "host_unavailable");
   assert.equal(
     events.filter((event) => event.kind === "host_transport_fault").length,
-    1,
+    0,
+    "the fault is the step's own diagnostic, not a task event",
   );
 });
 

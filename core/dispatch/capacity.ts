@@ -651,12 +651,37 @@ export class SlotAdmission {
     revision: number;
     facts: Pick<SlotAdmissionView, "integrationReady" | "dependencyWait">;
   }>();
-  /** Memoize ordering reads within one unchanged dispatch pass. */
-  withDispatchPass<T>(pass: () => Promise<T>): Promise<T> {
-    return this.dispatchPass.run(
-      { revision: -1, facts: this.orderingFacts() },
-      pass,
-    );
+  /**
+   * The host sets each running dispatch pass skips (Spec 069 §2): hosts whose own
+   * call failed during that pass. Each pass registers its own set for its own
+   * duration. Lanes run outside the pass's async context, so the slot reading in a
+   * visit checks every running pass's set; a set ends with its pass.
+   */
+  private readonly passHostFaults = new Set<ReadonlySet<string>>();
+
+  /**
+   * Memoize ordering reads within one unchanged dispatch pass. `skippedHosts`, when
+   * given, is the pass's own set of hosts to skip; while the pass runs, a
+   * never-started task on one of them holds no place in slot order, so the free
+   * slot goes to another host. It changes no host state and writes nothing.
+   */
+  async withDispatchPass<T>(
+    pass: () => Promise<T>,
+    skippedHosts?: ReadonlySet<string>,
+  ): Promise<T> {
+    if (skippedHosts) this.passHostFaults.add(skippedHosts);
+    try {
+      return await this.dispatchPass.run(
+        { revision: -1, facts: this.orderingFacts() },
+        pass,
+      );
+    } finally {
+      if (skippedHosts) this.passHostFaults.delete(skippedHosts);
+    }
+  }
+  private passSkipsHost(hostId: string): boolean {
+    for (const hosts of this.passHostFaults) if (hosts.has(hostId)) return true;
+    return false;
   }
 
   private orderingFacts() {
@@ -761,18 +786,25 @@ export class SlotAdmission {
       return requesting;
     };
     const readsAsRequest = (candidate: Task) => {
-      // An offline host cannot use a free slot or reserve another host's turn.
+      // An offline host cannot use a free slot or reserve another host's turn,
+      // and a never-started task cannot while its host admits no launch (Spec 069 §2).
       if (
         (boardHeld && boardDispatchHoldApplies(candidate)) ||
         !candidate.hostId ||
         !this.resolution.withHost(candidate.hostId, () =>
           this.resolution.hostAvailable(candidate),
         ) ||
-        !queuedReviewOriginReady(candidate, (id) =>
-          this.resolution.withHost(id, () =>
-            this.resolution.originHostAvailable(id),
-          ),
-        )
+        !queuedReviewOriginReady(
+          candidate,
+          (id) =>
+            !this.passSkipsHost(id) &&
+            this.resolution.withHost(id, () =>
+              this.resolution.originHostAvailable(id),
+            ),
+        ) ||
+        (candidate.phase === "queued" &&
+          (this.passSkipsHost(candidate.hostId) ||
+            this.resolution.hostLaunchWait(candidate.hostId, candidate.id)))
       )
         return false;
       const input: {

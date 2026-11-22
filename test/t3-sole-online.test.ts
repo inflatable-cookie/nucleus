@@ -1,3 +1,4 @@
+import { taskWithCurrentWait } from "../core/recovery/wait-context";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -511,7 +512,16 @@ test("an already running T3 host losing Paseo keeps the board quiet and T3 work 
       true,
     );
     await f.runtime.engine.dispatchTask(paseoTask.id, false);
-    const waiting = f.runtime.store.task(paseoTask.id);
+    // A queued row stores no host wait (Spec 069 §1); the read names it from the
+    // host's health (Spec 069 §2).
+    assert.equal(f.runtime.store.task(paseoTask.id).resolution.stop ?? null, null);
+    const runtime = f.runtime;
+    const waiting = taskWithCurrentWait(
+      runtime.store,
+      runtime.store.task(paseoTask.id),
+      {},
+      (task) => runtime.engine.queuedExternalWait(task),
+    );
     assert.equal(waiting.resolution.stop?.reason, "host_unavailable");
     assert.equal(waiting.resolution.hostWait?.hostId, paseoHost);
     assert.equal(
@@ -670,13 +680,14 @@ test("a cold start with stored Paseo configuration and only T3 online resumes du
       "the new T3 task dispatched after the cold start",
     );
     assert.equal(f.hosts.t3.agents.length, firstAgents + 1);
-    // The stored Paseo-bound task waits on its own host.
+    // The stored Paseo-bound task waits on its own host. A cold start has not yet
+    // seen Paseo connected, so the host is unknown (Spec 069 §2): the task stays
+    // queued with nothing written and nothing sent.
     const paseoTask = insertTask(cold, f, paseoHost, "Stored Paseo work", true);
     await cold.engine.dispatchTask(paseoTask.id, false);
-    assert.equal(
-      cold.store.task(paseoTask.id).resolution.stop?.reason,
-      "host_unavailable",
-    );
+    assert.equal(cold.engine.hostHealth.read(paseoHost).state, "unknown");
+    assert.equal(cold.store.task(paseoTask.id).phase, "queued");
+    assert.equal(cold.store.task(paseoTask.id).resolution.stop ?? null, null);
     assert.equal(f.hosts.paseo.workspaces.length, 0);
   } finally {
     if (cold) await cold.drain();

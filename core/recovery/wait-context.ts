@@ -90,7 +90,7 @@ function legacySlotText(task: Task): boolean {
  */
 const QUEUED_HOST_STOP_TEXT = /^(?:Waiting on .+ since (\S+)|Waiting for host \S.*)$/;
 const QUEUED_HOST_WAIT_TEXT =
-  /^(?:Waiting on .+ since \S+|Waiting for host \S.*|Waiting for a proven host identity|Waiting for consistent run host identity|Waiting for a proven origin host|Waiting for origin host \S.*|Waiting for (?:repository|operator default) host .+|(?:Repository|Operator default) host .+ is not registered; waiting for its configuration)$/;
+  /^(?:Waiting on .+ since \S+|Waiting for host \S.*|Waiting for a proven host identity|Waiting for consistent run host identity|Waiting for a proven origin host|Waiting for origin host \S.*|Waiting for (?:repository|operator default) host .+|(?:Repository|Operator default) host .+ is not registered; waiting for its configuration|Waiting for .+(?: to connect after the service start|: its calls are not answering, so it takes one launch at a time))$/;
 export const isQueuedHostWait = (text: string): boolean =>
   QUEUED_HOST_WAIT_TEXT.test(text);
 /** Stops a queued task's dispatch waits record; a current host wait replaces them. */
