@@ -2554,10 +2554,12 @@ movement invalidates source approval and preserves the normal readiness gates.
   integration-turn ordering remains separate.
 
 - A task unable to act because of a blocking recovery effect, unresolved
-  operation or publication, attention, escalation, hold or pause yields while
-  keeping its FIFO sequence (Tom, 2026-11-04). Active integration work keeps
-  the turn through its awaited response; a possibly delivered merge never
-  yields on uncertainty, and a returning task re-proves the current base gates.
+  operation or publication, attention, escalation, hold, prerequisite wait or
+  pause yields while keeping its FIFO sequence (Tom, 2026-11-04; Spec 067).
+  Active integration work keeps the turn through its awaited response; a
+  possibly delivered merge never yields on uncertainty, and a returning task
+  re-proves the current base gates. When a turn is released or taken, waiting
+  tasks in the repository re-read the current holder and the successor wakes.
 
 ### Merge gates
 

@@ -778,11 +778,13 @@ Planned briefs run the responsible lifecycle. Explicit `queue.responsible: false
 
 **When a run or record is stuck:** the task's coordinator, responsible planner
 or operator can use `nucleus run.start -`, `nucleus run.release -`,
-`nucleus record.clear -`, `nucleus phase.set -` or `nucleus message.send -`.
-Use the task version from `next` and include a reason. Repeat a warning response
-with the warning IDs you accept. Only a planner or operator may accept
-`hold_owner`, `route_policy` or `two_writers`, or resolve a critical task.
-Workers and reviewers ask one of those roles to act.
+`nucleus record.clear -`, `nucleus phase.set -`, `nucleus message.send -`,
+`nucleus turn.take -`, `nucleus turn.release -`, `nucleus merge.now -` or
+`nucleus closeout.now -`. Use the task version from `next` and include a reason.
+Repeat a warning response with the warning IDs you accept. Only a planner or
+operator may accept `hold_owner`, `route_policy` or `two_writers`, or resolve a
+critical task; only the operator board may accept `unverified_merge`. Workers
+and reviewers ask one of those roles to act.
 
 An authenticated task worker, reviewer or recovery run can still use `move`
 with `force: true` on its own task. Critical tasks, owner holds and active

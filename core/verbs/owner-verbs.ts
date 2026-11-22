@@ -394,8 +394,13 @@ const stop: OwnerVerb = {
         refusal: ownerStopPendingRefusal(task.resolution.ownerStop),
       };
     const fence = durableRunFence(facts);
-    if (fence && !task.resolution.integrationTurn)
-      return { available: false, refusal: fence };
+    if (fence)
+      return {
+        available: false,
+        refusal: task.resolution.integrationTurn
+          ? `${fence}; use turn.release to release its integration turn`
+          : fence,
+      };
     return {
       available: true,
       fill: ["reason"],

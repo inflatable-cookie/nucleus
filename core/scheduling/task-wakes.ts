@@ -844,6 +844,49 @@ export class TaskWakes {
    */
   wakeIntegrationSuccessor(repoPath: string): void {
     if (this.engine.stopped) return;
+    const holder =
+      this.store
+        .integrationTasks(repoPath)
+        .find((task) => this.resolution.holdsIntegrationTurn(task)) ?? null;
+    for (const candidate of this.store.tasks()) {
+      if (
+        candidate.repoPath !== repoPath ||
+        candidate.removedAt != null ||
+        ["done", "cancelled"].includes(candidate.phase)
+      )
+        continue;
+      const isTurnWait =
+        candidate.resolution.stop?.fact?.code === "integration_turn" ||
+        candidate.reasonFact?.code === "integration_turn";
+      if (!isTurnWait) continue;
+      if (!holder || holder.id === candidate.id) {
+        this.store.update(candidate.id, {
+          resolution: {
+            ...candidate.resolution,
+            ...(candidate.resolution.stop?.fact?.code === "integration_turn"
+              ? { stop: null }
+              : {}),
+          },
+          reason: "Task progressing",
+          reasonFact: null,
+        });
+      } else if (candidate.resolution.stop?.fact?.subject !== holder.id) {
+        const holderDetail =
+          holder.resolution.stop?.fact?.code === "integration_turn" ||
+          holder.reasonFact?.code === "integration_turn"
+            ? "integration work pending"
+            : holder.reason;
+        this.resolution.waiting(
+          candidate,
+          `Waiting for repository integration turn: ${holder.title} (${holder.id}) holds it — ${holderDetail}`.slice(
+            0,
+            2000,
+          ),
+          "lifecycle",
+          { fact: { code: "integration_turn", subject: holder.id } },
+        );
+      }
+    }
     const next = this.store
       .integrationTasks(repoPath)
       .filter((task) => this.resolution.holdsIntegrationTurn(task))

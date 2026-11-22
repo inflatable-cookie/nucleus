@@ -942,21 +942,6 @@ export class OwnerStop {
     const reason = (input.reason ?? "").trim();
     const task = this.store.task(input.taskId);
     if (task.removedAt) throw Error(REMOVED_TASK_REFUSAL);
-    if (
-      task.resolution.integrationTurn &&
-      (isDispositionActive(task) || ["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit)
-    ) {
-      return this.store.transaction(() => {
-        const nextTask = this.store.update(
-          task.id,
-          { resolution: { ...task.resolution, integrationTurn: null } },
-          "integration_turn_released",
-          `stop: ${reason}`,
-        );
-        this.commitOperationSuccessInTx(operationId, nextTask, false);
-        return nextTask;
-      });
-    }
     const refusal = stopStateRefusal(task);
     if (refusal) throw Error(refusal);
     const role = input.role as RouteRole | undefined;

@@ -1,0 +1,3 @@
+- Added explicit resolution commands `turn.take`, `turn.release`, `merge.now` and `closeout.now` (Spec 067 batch 3), including exact-head review / operator source acceptance and unknown-merge-outcome hard gates, coordinator access to `merge.now` and `closeout.now`, and operator-only `unverified_merge` acceptance.
+- Prerequisite waits now release the repository integration turn like other non-verifying states, and waiting tasks re-read the current holder after a turn release or take.
+- Removed `core/recovery/merge-occurrence.ts` and its derived-witness rules, the `restart`-to-closeout lever, and terminal/fenced `stop` turn-lever bypasses in favour of `turn.release` and `closeout.now`.

@@ -747,6 +747,46 @@ function explicitCommandsFor(
     });
   }
 
+  if (task.resolution.integrationTurn) {
+    push({
+      action: "turn.release",
+      args: { action: "turn.release", ...base },
+      fill: ["reason"],
+      note: "Release this task's repository integration turn and wake waiting tasks.",
+    });
+  }
+
+  if (
+    task.resolution.stop?.fact?.code === "integration_turn" ||
+    task.reasonFact?.code === "integration_turn"
+  ) {
+    push({
+      action: "turn.take",
+      args: { action: "turn.take", ...base },
+      fill: ["reason"],
+      note: "Take the repository integration turn for this task.",
+    });
+  }
+
+  if (task.resolution.mergedCommit) {
+    push({
+      action: "closeout.now",
+      args: { action: "closeout.now", ...base },
+      fill: ["reason"],
+      note: "Start synchronization and closeout for this recorded merge.",
+    });
+  } else if (
+    task.prHead &&
+    ["verifying", "merging"].includes(task.phase)
+  ) {
+    push({
+      action: "merge.now",
+      args: { action: "merge.now", ...base, head: task.prHead },
+      fill: ["reason"],
+      note: `Request GitHub's guarded merge for head ${task.prHead.slice(0, 12)} now.`,
+    });
+  }
+
   if (task.resolution.stop) {
     push({
       action: "record.clear",

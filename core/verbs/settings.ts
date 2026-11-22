@@ -446,6 +446,9 @@ export class SettingsControls {
         return this.engine.applyTaskControlHold(input, task);
       throw new Error("This action is only available before dispatch");
     });
+    if (input.action === "set_prerequisite_wait") {
+      this.engine.wakeIntegrationSuccessor(result.repoPath);
+    }
     if (input.action !== "release") {
       void this.engine.cleanContext(() => this.engine.wakeTask(result.id));
       void this.engine.cleanContext(() =>

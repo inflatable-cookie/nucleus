@@ -44,11 +44,12 @@ another identity. Callback authentication remains separate and unchanged.
 ## Explicit resolution
 
 [Spec 067](067-explicit-resolution.md) defines the explicit command contract.
-Send `run.start`, `run.release`, `record.clear`, `phase.set` or `message.send` as
-`action` on `queue.task`, or run `nucleus <command> -` with JSON on stdin. Each
-call carries `taskId` or `reference`, the task `version`, a `reason` and
-optional `accept` listing the warning IDs. The updated task includes
-`explicitResolution` with the result, warnings and what the scheduler does next.
+Send `run.start`, `run.release`, `record.clear`, `phase.set`, `message.send`,
+`turn.take`, `turn.release`, `merge.now` or `closeout.now` as `action` on
+`queue.task`, or run `nucleus <command> -` with JSON on stdin. Each call carries
+`taskId` or `reference`, the task `version`, a `reason` and optional `accept`
+listing the warning IDs. The updated task includes `explicitResolution` with the
+result, warnings and what the scheduler does next.
 
 `run.start` takes `role` (`worker`, `reviewer` or `coordinator`), optional
 `agent` (`retained` or `fresh`), `head`, `instruction` and `replacing` (which
@@ -65,12 +66,24 @@ ID or `recordedAt` when it has none, and a deferred verb uses its `at`.
 reason only (`live_runs` warning when unreleased runs exist). `message.send`
 takes `role` (`worker`, `reviewer`, `coordinator` or `planner`) and `text`,
 delivers immediately without changing task state, and reports `delivered`,
-`queued` or `unknown` (`queued`, `no_thread` warnings).
+`queued` or `unknown` (`queued`, `no_thread` warnings). `turn.take` and
+`turn.release` take or release the repository integration turn and wake waiting
+tasks (`turn_held`, `merge_in_flight` warnings). `merge.now` takes `head` and
+requests GitHub's guarded merge of that head now, taking the integration turn if
+free (`turn_held`, `checks`, `holds` warnings). `closeout.now` takes optional
+`mergedCommit`, records the merge from GitHub (or the operator-stated commit
+when GitHub cannot be read), and starts synchronization and closeout
+(`unverified_merge`, `no_verdict` warnings). Both `merge.now` and `closeout.now`
+enforce the exact-head review or operator source acceptance hard gate;
+`merge.now` also refuses while an earlier merge outcome is unknown unless a
+GitHub read in the same call shows the PR unmerged.
 
 The board, the task's live responsible project planner and its coordinator
-may use the explicit commands. Only the board or planner may accept `hold_owner`,
-`route_policy` or `two_writers`, or resolve a critical task. Explicit resolution
-updates only the named record and preserves its previous state in the audit history.
+may use the explicit commands, including `merge.now` and `closeout.now`. Only
+the board or planner may accept `hold_owner`, `route_policy` or `two_writers`,
+or resolve a critical task; only the operator board may accept
+`unverified_merge`. Explicit resolution updates only the named record and
+preserves its previous state in the audit history.
 
 
 ## Problem

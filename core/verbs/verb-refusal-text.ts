@@ -17,5 +17,9 @@ export const NO_RESOLUTION_RUN_REFUSAL = "No resolution run to resume";
 export function restartTerminalRefusal(task: Task, parkedRefusal?: string): string {
   const why = parkedRefusal && task.resolution.recovery?.status === 'escalated'
     ? `, and ${parkedRefusal[0]!.toLowerCase()}${parkedRefusal.slice(1)}` : '';
-  return `restart requires an unfinished, unmerged task; this task is ${task.phase}${why}`;
+  const hint =
+    task.resolution.mergedCommit && !["done", "cancelled"].includes(task.phase)
+      ? "; use closeout.now to close the merged task"
+      : "";
+  return `restart requires an unfinished, unmerged task; this task is ${task.phase}${why}${hint}`;
 }

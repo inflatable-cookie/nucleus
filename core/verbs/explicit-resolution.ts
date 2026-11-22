@@ -35,6 +35,14 @@ import {
   resolveMessageTarget,
   runStartPlan,
 } from "./explicit-run-start";
+import {
+  closeoutNowPlan,
+  mergeNowPlan,
+  OPERATOR_ONLY_WARNINGS,
+  preflightExplicitIntegration,
+  turnReleasePlan,
+  turnTakePlan,
+} from "./explicit-integration";
 
 type Source = "operator_board" | "project_planner" | "coordinator";
 export type ExplicitWarning = { id: ResolutionWarningId; text: string };
@@ -181,6 +189,15 @@ export async function resolveExplicitly(
     !before.removedAt
       ? await preflightExplicitRunStart(engine, before, input)
       : undefined;
+  const integrationPreflight =
+    (input.action === "turn.take" ||
+      input.action === "turn.release" ||
+      input.action === "merge.now" ||
+      input.action === "closeout.now") &&
+    input.version === before.version &&
+    !before.removedAt
+      ? await preflightExplicitIntegration(engine, before, input)
+      : undefined;
   const result = store.transaction(() => {
     const task = store.task(id);
     const reply = (
@@ -200,6 +217,11 @@ export async function resolveExplicitly(
       throw Error(
         "Only the live responsible planner or operator board can accept hold_owner, route_policy or two_writers",
       );
+    if (
+      source !== "operator_board" &&
+      input.accept.some((id) => OPERATOR_ONLY_WARNINGS.has(id))
+    )
+      throw Error("Only the operator board can accept unverified_merge");
 
     const inHost = <T>(fn: () => T): T =>
       task.hostId ? engine.withHost(task.hostId, fn) : fn();
@@ -212,7 +234,20 @@ export async function resolveExplicitly(
             ? inHost(() => runStartPlan(engine, task, input, runStartPreflight))
             : input.action === "phase.set"
               ? phaseSetPlan(engine, task, input)
-              : messageSendPlan(engine, task, input, messageTarget!);
+              : input.action === "message.send"
+                ? messageSendPlan(engine, task, input, messageTarget!)
+                : input.action === "turn.take"
+                  ? turnTakePlan(engine, task, input)
+                  : input.action === "turn.release"
+                    ? turnReleasePlan(engine, task, input)
+                    : input.action === "merge.now"
+                      ? mergeNowPlan(engine, task, input, integrationPreflight)
+                      : closeoutNowPlan(
+                          engine,
+                          task,
+                          input,
+                          integrationPreflight,
+                        );
     if (plan.warnings.some((warning) => !input.accept.includes(warning.id)))
       return reply("warnings", plan.warnings);
 
