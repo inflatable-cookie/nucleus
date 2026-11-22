@@ -2906,10 +2906,9 @@ test("a bare escalation wait is not accepted", () => {
   );
 });
 
-test("a planner retry choice invokes the ordinary recorded effect", async () => {
+test("a fresh escalation with a pending effect offers plain choices only (no retry_effect option)", async () => {
   const f = fixture({ responsible: true });
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
-  const calls: string[] = [];
   let asks = 0;
   (f.adapter as unknown as Record<string, unknown>).askPlanner = async (
     _: string,
@@ -2919,11 +2918,8 @@ test("a planner retry choice invokes the ordinary recorded effect", async () => 
     const label = input.prompt
       .split("\n")
       .find((line) => line.startsWith("- Retry workspace_archive.ghost:"));
-    if (asks === 1) {
-      assert.ok(label, input.prompt);
-      return `Choice: ${label!.slice(2)}\nReason: Observe the recorded archive`;
-    }
-    return "Choice: Return to the worker with a new approach\nReason: Continue after the refusal";
+    assert.equal(label, undefined, input.prompt);
+    return "Choice: Stop and keep the work\nReason: Plain choice only";
   };
   try {
     f.store.upsertProject({
@@ -2958,25 +2954,12 @@ test("a planner retry choice invokes the ordinary recorded effect", async () => 
       "unused_workspace_archive_intent",
       JSON.stringify({ workspaceId: "ghost" }),
     );
-    (f.adapter as unknown as Record<string, unknown>).archiveTaskWorkspace =
-      async () => true;
-    const apply = f.engine.resolution.applyOperatorControl!;
-    f.engine.resolution.applyOperatorControl = async (input) => {
-      calls.push(`${input.action}:${input.effect ?? ""}`);
-      return apply(input);
-    };
     await f.report("blocked", {
       summary: "Archive result unobserved",
       cause: { kind: "external", name: "archive" },
     });
     await until(() => f.events("planner_escalation_applied").length > 0);
-    assert.ok(calls.includes("retry_effect:workspace_archive.ghost"));
-    assert.equal(
-      f.store.getMeta<{ status: string }>(
-        `unusedWorkspaceArchive:${task.id}:ghost`,
-      )?.status,
-      "archived",
-    );
+    assert.equal(asks, 1);
   } finally {
     await f.close();
   }
@@ -3585,7 +3568,7 @@ test("an answer after the task merged settles the escalation and leaves the task
     await until(() => f.events("planner_escalation_resolved").length > 0);
     assert.match(
       f.events("planner_escalation_resolved")[0]!.detail,
-      /merged or ended/,
+      /completed|merged or ended/,
     );
     assert.doesNotMatch(f.current().reason, /is unresolved/);
     assert.equal(f.current().phase, "done");
@@ -3623,7 +3606,7 @@ test("a merged task starts no decider when its planner gives no answer", async (
   }
 });
 
-test("a delegated restart choice applies through the ordinary verb", async () => {
+test("a fresh escalation offers plain choices only (no delegated restart option)", async () => {
   const f = fixture({ responsible: true });
   let asks = 0;
   askedEscalation(f, (prompt) => {
@@ -3631,8 +3614,8 @@ test("a delegated restart choice applies through the ordinary verb", async () =>
     const label = prompt
       .split("\n")
       .find((line) => line.startsWith("- Restart"));
-    assert.ok(label, prompt);
-    return `Choice: ${label!.slice(2)}\nReason: The gate cleared`;
+    assert.equal(label, undefined, prompt);
+    return "Choice: Stop and keep the work\nReason: Plain choice only";
   });
   try {
     await f.reviews(1);
@@ -3651,10 +3634,6 @@ test("a delegated restart choice applies through the ordinary verb", async () =>
       f.events("planner_escalation_refused").length,
       0,
       f.events("planner_escalation_refused")[0]?.detail,
-    );
-    assert.match(
-      f.events("planner_escalation_applied")[0]!.detail,
-      /^[^:]+: Restart/,
     );
     assert.equal(asks, 1);
   } finally {
