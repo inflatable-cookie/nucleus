@@ -6,6 +6,7 @@ import { threadRunningReason } from '../../intake/thread-waits';
 import { liveWorkingParticipant, type LiveParticipant } from '../../recovery/live-noop';
 import { collectOwnerVerbFacts, ownerVerbViews, restartShape } from '../../verbs/owner-verbs';
 import { NO_RESOLUTION_RUN_REFUSAL } from '../../verbs/verb-refusal-text';
+import { closeClearedEscalations } from './continuation';
 import { escalationWaitState, establishEscalationWait, type EscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { consultRecovery, escalationRecovery } from './pass';
@@ -121,6 +122,7 @@ async function wakeIntoOrdinaryNext(ladder: Ladder, task: Task, id: string, wait
 
 /** Resume the consults and escalations a restart left recorded, in the order they were made. */
 export function resumeDelegations(ladder: Ladder, task: Task): void {
+  closeClearedEscalations(ladder.store, task);
   const events = ladder.store.eventsAll(task.id);
   // Spec 058 slice 17: durable consult and escalation intents survive a restart.
   // A recorded delivery resumes its original answer window or consumes its receipt.
@@ -183,6 +185,7 @@ export function resumeDelegations(ladder: Ladder, task: Task): void {
 
 /** Re-assert every recorded escalation wait, and wake the ones whose target settled. */
 export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise<void> {
+  closeClearedEscalations(ladder.store, task);
   reconcileLegacyPlaceholderDecisions(ladder, task);
   const events = ladder.store.eventsAll(task.id);
   for (const event of events.filter(item => item.kind === 'planner_escalation_wait')) {

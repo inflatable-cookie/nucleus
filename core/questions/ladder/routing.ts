@@ -12,7 +12,6 @@ import { collectOwnerVerbFacts, ownerVerbViews } from "../../verbs/owner-verbs";
 import type { Ladder } from "./ladder";
 import { plannerEscalationSuggestedVerbs } from "./proof";
 import {
-  escalationChoiceBinding,
   escalationVerbChoices,
   plannerEscalationChoicesFor,
   type EscalationVerbChoice,
@@ -20,7 +19,10 @@ import {
 import { plannerEscalations, type LadderEvent } from "./records";
 import { parseEscalationReply } from "./replies";
 import { escalationWaitDetail } from "./waits";
-import { closeEscalationFollowups } from "./continuation";
+import {
+  closeClearedEscalations,
+  closeEscalationFollowups,
+} from "./continuation";
 
 /**
  * Routing one recorded escalation: the durable intent and wait the caller records,
@@ -241,6 +243,7 @@ async function routeEscalationRound(
   phase: "initial" | "return",
   phaseAfter: number,
 ): Promise<void> {
+  closeClearedEscalations(ladder.store, ladder.store.task(t.id));
   const events = () => ladder.store.eventsAll(t.id) as LadderEvent[];
   const deferred = ladder.store.task(t.id).resolution.deferredVerb?.input
     .__workerAsk as { escalationId?: string } | undefined;
@@ -335,10 +338,7 @@ async function routeEscalationRound(
     ? (JSON.parse(
         offerEvent.detail.slice(id.length + 2),
       ) as EscalationVerbChoice[])
-    : escalationVerbChoices(
-        ownerVerbViews(offerFacts),
-        escalationChoiceBinding(offerFacts),
-      );
+    : escalationVerbChoices(ownerVerbViews(offerFacts));
   if (!offerEvent)
     ladder.store.event(
       t.id,
@@ -508,6 +508,7 @@ async function routeEscalationRound(
     closeEscalationFollowups(ladder.store, t.id, id);
     return;
   }
+  closeClearedEscalations(ladder.store, ladder.store.task(t.id));
   if (plannerEscalations(events()).find((item) => item.id === id)?.answered)
     return;
   if (!reply || !who) {
@@ -605,10 +606,7 @@ async function routeEscalationRound(
     );
     const currentOffers =
       followupOffer?.ownerChoices ??
-      escalationVerbChoices(
-        ownerVerbViews(followupFacts),
-        escalationChoiceBinding(followupFacts),
-      );
+      escalationVerbChoices(ownerVerbViews(followupFacts));
     const retryChoices = followupOffer?.choices ?? [
       ...plannerEscalationChoicesFor(ladder.store.task(t.id)),
       ...currentOffers.map((item) => item.label),

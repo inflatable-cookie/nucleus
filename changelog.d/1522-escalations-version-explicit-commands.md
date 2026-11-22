@@ -1,0 +1,3 @@
+- Escalation answers now bind to the task version rather than a snapshot binding hash, removing binding-hash and "offer no longer available" refusal loops.
+- Escalation answers may carry an explicit resolution `command` (applied through the explicit-resolution warning, version, hard-gate and authority contract) and open escalations close automatically when their cause clears.
+- Removed the legacy `restart`-as-escalation-answer lever in favour of explicit commands and `record.clear`.

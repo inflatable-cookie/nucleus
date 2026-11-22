@@ -6,6 +6,7 @@ import { coordinatorReportMatches } from "./coordinator-report";
 import { latestAuthorResult } from "../verbs/owner-verbs";
 import {
   blockerLadderStep as decideBlockerLadderStep,
+  closeClearedEscalations,
   plannerEscalations,
   reviewerConsults,
   blockerCauseId,
@@ -90,6 +91,7 @@ export class RecoveryLifecycle {
     return t;
   }
   async blockerLadderStep(t: Task): Promise<Task | null> {
+    closeClearedEscalations(this.context.store, t);
     this.context.reconcileLegacyPlaceholderDecisions?.(t);
     t = this.context.store.task(t.id);
     // Spec 058 slice 17: a parked blocked responsible task climbs the ladder once

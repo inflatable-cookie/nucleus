@@ -358,6 +358,8 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
+      command?: import("../../shared/contracts").ExplicitCommand;
+      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -448,6 +450,8 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
+      command?: import("../../shared/contracts").ExplicitCommand;
+      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -489,6 +493,8 @@ export class Delegation {
         questionId: input.questionId,
         answer: input.answer,
         choice: input.choice,
+        command: input.command,
+        version: input.version,
         reason: input.reason,
         decision: input.decision,
         overtakes: input.overtakes,
@@ -502,6 +508,8 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
+      command?: import("../../shared/contracts").ExplicitCommand;
+      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -568,6 +576,8 @@ export class Delegation {
         questionId: string;
         caller: string;
         answer?: string;
+        command?: import("../../shared/contracts").ExplicitCommand;
+        version?: number;
         reason: string;
         decision?: "operator";
         overtakes?: string[];
@@ -601,7 +611,10 @@ export class Delegation {
         if (
           answer === receipt.answer &&
           input.reason?.trim() === receipt.reason &&
-          input.decision === receipt.decision
+          input.decision === receipt.decision &&
+          input.version === receipt.version &&
+          JSON.stringify(input.command ?? null) ===
+            JSON.stringify(receipt.command ?? null)
         )
           return Promise.reject(
             Error(outcome.detail.slice(outcome.detail.indexOf(":") + 2)),
@@ -668,13 +681,17 @@ export class Delegation {
       throw Error("A one-line reason is required (up to 500 characters)");
     if (
       input.decision !== "operator" &&
+      !input.command &&
       (!answer || answer.length > 4000 || /[\r\n]/.test(answer))
     )
       throw Error(
         "An answer or choice is required (one line, up to 4000 characters)",
       );
+    if (input.command && !isEscalation)
+      throw Error("Explicit commands are only supported on escalation answers");
     if (
       input.decision !== "operator" &&
+      !input.command &&
       (input.choice ||
         (choices.length && input.questionId.startsWith("queue-delegate-"))) &&
       !choices.includes(
@@ -722,7 +739,9 @@ export class Delegation {
     const receipt = {
       questionId: input.questionId,
       caller,
-      answer,
+      ...(answer !== undefined ? { answer } : {}),
+      ...(input.command ? { command: input.command } : {}),
+      ...(input.version !== undefined ? { version: input.version } : {}),
       reason,
       ...(input.decision ? { decision: input.decision } : {}),
       ...(authority.role === "planner" && input.overtakes?.length
@@ -730,6 +749,45 @@ export class Delegation {
         : {}),
     };
     if (input.dryRun) return { ...receipt, status: "validated" as const };
+    if (escalation && input.command) {
+      const task = this.store.task(authority.taskId);
+      const role = authority.role === "decider" ? "decider" : "planner";
+      return this.resolution.escalationSettlement
+        .settleExplicitEscalationCommand(
+          task,
+          escalationId,
+          input.command,
+          reason,
+          `${authority.role} ${caller}`,
+          { role, agentId: caller },
+          input.version,
+        )
+        .then((outcome) => {
+          if (outcome.status !== "applied")
+            return {
+              ...receipt,
+              version: outcome.taskVersion,
+              status: outcome.status,
+              explicitResolution: outcome,
+            };
+          this.store.event(key, "delegated_answer", JSON.stringify(receipt));
+          const appliedReceiptId = this.store
+            .eventsAll(key)
+            .findLast((event) => event.kind === "delegated_answer")!.id;
+          this.store.event(
+            authority.taskId,
+            "delegated_command_answered",
+            `${input.questionId}: ${caller}`,
+          );
+          this.recordCommandApplied(key, escalationId, appliedReceiptId);
+          return {
+            ...receipt,
+            version: outcome.taskVersion,
+            status: "applied" as const,
+            explicitResolution: outcome,
+          };
+        });
+    }
     this.store.event(key, "delegated_answer", JSON.stringify(receipt));
     const receiptEventId = this.store
       .eventsAll(key)
@@ -964,6 +1022,7 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
+      version?: number;
       decision?: "operator";
     },
     caller: string,
@@ -993,6 +1052,7 @@ export class Delegation {
             input.questionId,
             answer,
             `${role} ${caller}`,
+            input.version,
           );
         if (refusal) throw Error(refusal);
       }
@@ -1139,6 +1199,8 @@ export class Delegation {
       if (receipt) {
         const value = JSON.parse(receipt.detail) as {
           answer?: string;
+          command?: import("../../shared/contracts").ExplicitCommand;
+          version?: number;
           reason: string;
           decision?: string;
           overtakes?: string[];
@@ -1167,6 +1229,8 @@ export class Delegation {
               {
                 questionId: id,
                 ...(value.answer ? { answer: value.answer } : {}),
+                ...(value.command ? { command: value.command } : {}),
+                ...(value.version !== undefined ? { version: value.version } : {}),
                 ...(value.decision === "operator"
                   ? { decision: "operator" as const }
                   : {}),

@@ -123,7 +123,10 @@ import type {
 } from "../shared/contracts";
 import { taskControlChanges } from "../shared/task-control-changes";
 import type { ExplicitResolution } from "../shared/schema/task-control";
-import { resolveExplicitly } from "../core/verbs/explicit-resolution";
+import {
+  describeExplicitNext,
+  resolveExplicitly,
+} from "../core/verbs/explicit-resolution";
 import {
   type OperationAcceptance,
   type OperationResult,
@@ -2341,22 +2344,9 @@ export class QueueRuntime {
       request.action === "merge.now" ||
       request.action === "closeout.now"
     )
-      return resolveExplicitly(this.engine, request, (task) => {
-        if (task.removedAt)
-          return "The scheduler leaves this removed task alone.";
-        const next = this.taskNext({ taskId: task.id });
-        if (next.paused) return "The scheduler waits for Nucleus to resume.";
-        if (next.stop)
-          return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
-        if (
-          ["awaiting_review", "reviewing"].includes(task.phase) &&
-          !next.activeRun
-        )
-          return "The scheduler rechecks reviewer admission at the recorded PR head.";
-        if (next.activeRun)
-          return `The scheduler checks the ${next.activeRun.role} run for progress.`;
-        return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
-      });
+      return resolveExplicitly(this.engine, request, (task) =>
+        describeExplicitNext(this.store, task),
+      );
     const input = this.engine.resolveTaskControl(request);
     const before = this.store.task(input.taskId);
     if (!controlHasExternalEffect(input)) {

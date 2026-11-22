@@ -1,19 +1,20 @@
 import {
+  explicitResolutionSchema,
+  OPERATOR_BOARD_CALLER,
   taskControlInputSchema,
   type DecisionView,
+  type ExplicitCommand,
   type Task,
   type TaskControlInput,
+  type TaskControlTask,
 } from "../../shared/contracts";
 import { escalationOutlived } from "../recovery/task-reasons";
 import { Decisions } from "../planning/decisions";
 import type { Resolution } from "../resolution";
-import { collectOwnerVerbFacts, ownerVerbViews } from "../verbs/owner-verbs";
 import {
   decodeEscalationChoice,
   escalationAnswerControl,
   escalationContinuationInstruction,
-  escalationChoiceBinding,
-  escalationVerbChoices,
   extractDecisionIdCandidates,
   extractFirstIsoTimestamp,
   extractTaskReferenceCandidates,
@@ -21,8 +22,15 @@ import {
   type EscalationVerbChoice,
   type LadderEvent,
 } from "./ladder";
-import { closeEscalationFollowups } from "./ladder/continuation";
+import {
+  closeClearedEscalations,
+  closeEscalationFollowups,
+} from "./ladder/continuation";
 import { HostReadRefusalError, ProvenPreSendRefusalError } from "../host/errors";
+
+export type EscalationExplicitOutcome = NonNullable<
+  TaskControlTask["explicitResolution"]
+> & { taskVersion: number };
 
 type Answerer =
   | { role: "planner" | "decider"; agentId: string }
@@ -57,6 +65,7 @@ export class EscalationSettlement {
     offered: EscalationVerbChoice[] = [],
     questionId = `ns-escalation-${id}`,
     answerer: Answerer = answererFromLabel(who),
+    version?: number,
   ): Promise<string | null> {
     const key = `${t.id}:${id}`;
     const existing = this.escalationSettlements.get(key);
@@ -69,6 +78,7 @@ export class EscalationSettlement {
       offered,
       questionId,
       answerer,
+      version,
     ).then((result) => {
       if (
         !result &&
@@ -80,11 +90,87 @@ export class EscalationSettlement {
       return result;
     });
     this.escalationSettlements.set(key, settlement);
-    void settlement.finally(() => {
+    const cleanup = () => {
       if (this.escalationSettlements.get(key) === settlement)
         this.escalationSettlements.delete(key);
-    });
+    };
+    settlement.then(cleanup, cleanup);
     return settlement;
+  }
+  /**
+   * Spec 067 batch 4: apply an explicit resolution command carried inside an
+   * escalation answer through the batch 1 contract with the answerer's
+   * authority. Warnings and stale versions change nothing and return directly
+   * so the caller can repeat with `accept` or the current version.
+   */
+  async settleExplicitEscalationCommand(
+    t: Task,
+    id: string,
+    command: ExplicitCommand,
+    reason: string,
+    who: string,
+    answerer: Answerer = answererFromLabel(who),
+    version?: number,
+  ): Promise<EscalationExplicitOutcome> {
+    const current = this.store.task(t.id);
+    if (!escalationOutlived(current))
+      closeClearedEscalations(this.store, current);
+    if (
+      plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[]).find(
+        (item) => item.id === id,
+      )?.answered
+    )
+      throw Error(`Escalation ${id} is already settled; read next again`);
+    if (!this.resolution.applyExplicitResolution)
+      throw Error("No explicit resolution applier is bound");
+    const fresh = this.store.task(t.id);
+    const caller =
+      answerer.role === "operator" ? OPERATOR_BOARD_CALLER : answerer.agentId;
+    const {
+      version: commandVersion,
+      accept,
+      ...commandArgs
+    } = command;
+    const explicitInput = explicitResolutionSchema.parse({
+      ...commandArgs,
+      taskId: fresh.id,
+      version: commandVersion ?? version ?? fresh.version,
+      reason: reason.slice(0, 4000),
+      accept: accept ?? [],
+      caller,
+    });
+    try {
+      const resolved =
+        await this.resolution.applyExplicitResolution(explicitInput);
+      const outcome = resolved.explicitResolution;
+      if (!outcome)
+        throw Error("Explicit resolution did not return a resolution outcome");
+      if (outcome.status === "applied") {
+        this.store.event(
+          fresh.id,
+          "planner_escalation_answered",
+          `${id}: answered by ${who}: ${command.action} — ${reason}`.slice(
+            0,
+            4000,
+          ),
+        );
+        this.store.event(
+          fresh.id,
+          "planner_escalation_applied",
+          `${id}: ${command.action}`,
+        );
+        closeEscalationFollowups(this.store, fresh.id, id);
+      }
+      return { ...outcome, taskVersion: resolved.version };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.store.event(
+        fresh.id,
+        "planner_escalation_refused",
+        `${id}: ${message}`.slice(0, 4000),
+      );
+      throw error;
+    }
   }
   /** Share a live route settlement with a duplicate receipt observer instead of declaring it uncertain. */
   async awaitDelegatedEscalationSettlement(
@@ -219,8 +305,12 @@ export class EscalationSettlement {
     offered: EscalationVerbChoice[],
     questionId: string,
     answerer: Answerer,
+    version?: number,
   ): Promise<string | null> {
     const delegatedAnswer = answerer.role !== "operator";
+    const latestTask = this.store.task(t.id);
+    if (!escalationOutlived(latestTask))
+      closeClearedEscalations(this.store, latestTask);
     if (
       plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[]).find(
         (item) => item.id === id,
@@ -267,6 +357,10 @@ export class EscalationSettlement {
           ),
         };
     try {
+      if (version !== undefined && version !== current.version)
+        throw Error(
+          `Task is now at version ${current.version}. Repeat with that version.`,
+        );
       if (!this.resolution.applyOperatorControl)
         throw Error("No control applier is bound");
       const escalation = plannerEscalations(this.store.eventsAll(t.id)).find(
@@ -285,20 +379,6 @@ export class EscalationSettlement {
               reviewerIncident.runId
             ? this.store.run(reviewerIncident.runId)
             : null;
-      const choiceFacts =
-        selected.kind === "owner"
-          ? collectOwnerVerbFacts(this.store, current)
-          : null;
-      if (selected.kind === "owner" && choiceFacts) {
-        if (selected.choice.binding === undefined)
-          throw Error(
-            "This offer has no recorded run or PR binding. Use a fresh offer or apply the current action from task next",
-          );
-        if (selected.choice.binding !== escalationChoiceBinding(choiceFacts))
-          throw Error(
-            "The task's run or PR binding changed after this escalation offer; read next again",
-          );
-      }
       const workerChoice =
         selected.kind === "owner" &&
         ((selected.choice.verb === "move" &&
@@ -482,27 +562,11 @@ export class EscalationSettlement {
       }
       if (selected.kind === "owner") {
         const choice = selected.choice;
-        // Re-read `next` and match the offered identity, never accepting new fields,
-        // force or an operator-only qualification from the delegate.
-        const withoutVersion = (args: Record<string, unknown>) =>
-          Object.fromEntries(
-            Object.entries(args).filter(([key]) => key !== "version"),
-          );
-        const fresh = escalationVerbChoices(ownerVerbViews(choiceFacts!)).find(
-          (item) =>
-            item.verb === choice.verb &&
-            JSON.stringify(withoutVersion(item.args)) ===
-              JSON.stringify(withoutVersion(choice.args)),
-        );
-        if (!fresh)
-          throw Error(
-            `The selected ${choice.verb} is no longer available; read next again`,
-          );
         const controlInput = taskControlInputSchema.parse({
-          ...fresh.args,
+          ...choice.args,
           taskId: current.id,
           version: current.version,
-          action: fresh.verb,
+          action: choice.verb,
           reason,
           ...grant,
         });
@@ -520,7 +584,7 @@ export class EscalationSettlement {
         this.store.event(
           t.id,
           "planner_escalation_answer_pending",
-          `${id}: ${JSON.stringify({ questionId, who, answer, label: fresh.label, control: controlInput })}`,
+          `${id}: ${JSON.stringify({ questionId, who, answer, label: choice.label, control: controlInput })}`,
         );
         await this.resolution.applyOperatorControl(controlInput);
         this.store.event(
@@ -531,7 +595,7 @@ export class EscalationSettlement {
         this.store.event(
           current.id,
           "planner_escalation_applied",
-          `${id}: ${fresh.label}`,
+          `${id}: ${choice.label}`,
         );
         return null;
       }
@@ -760,6 +824,7 @@ export class EscalationSettlement {
     questionId: string,
     answer: string,
     who: string,
+    version?: number,
   ): Promise<string | null> {
     const task = this.store.task(taskId);
     const events = this.store.eventsAll(taskId);
@@ -804,6 +869,8 @@ export class EscalationSettlement {
       who,
       offered,
       questionId,
+      answererFromLabel(who),
+      version,
     );
   }
 

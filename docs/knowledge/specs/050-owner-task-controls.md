@@ -86,6 +86,16 @@ or resolve a critical task; only the operator board may accept
 `unverified_merge`. Explicit resolution updates only the named record and
 preserves its previous state in the audit history.
 
+Escalation answers bind to the task `version`, not a snapshot binding hash, and
+never refuse an offered verb solely because `next` no longer lists that offer.
+A delegated or operator escalation answer may carry an explicit `command`
+(applied through the explicit resolution contract with the answerer's
+authority, returning warnings or a stale version without settling the
+escalation until repeated with `accept` or the current version). Open
+escalations close themselves automatically when their recorded cause clears.
+`restart` no longer answers escalations; use the explicit command and
+`record.clear` instead.
+
 
 ## Problem
 

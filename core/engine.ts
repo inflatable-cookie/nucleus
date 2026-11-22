@@ -87,6 +87,10 @@ import { stopThreads } from "../shared/contracts";
 import type { Submission } from "../shared/contracts";
 
 import { controlHasExternalEffect } from "./verbs/control-decisions";
+import {
+  describeExplicitNext,
+  resolveExplicitly,
+} from "./verbs/explicit-resolution";
 export { controlHasExternalEffect } from "./verbs/control-decisions";
 export { workspaceAdmissionGapMs } from "./workspaces/admission-decisions";
 export { queuedDispatchOrder } from "./dispatch/queue-order";
@@ -1043,6 +1047,10 @@ export class Engine {
     // through the ordinary owner controls, with that answer as the authority.
     this.resolution.applyOperatorControl = (input) =>
       this.performTaskControl(input);
+    this.resolution.applyExplicitResolution = (input) =>
+      resolveExplicitly(this, input, (task) =>
+        describeExplicitNext(this.store, task),
+      );
     this.resolution.wakeDeferredDirection = (taskId) => {
       void this.cleanContext(() => this.wakeTask(taskId));
     };

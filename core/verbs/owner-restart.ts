@@ -40,8 +40,6 @@ import {
   neverDispatched,
   workerBlockedOnOwnRun,
   prIdentity,
-  escalatedEpisode,
-  escalationBackedByLiveWork,
   retainedWorkerDeliveryRefusal,
   replacementAllowanceNote,
 } from "./owner-facts";
@@ -63,14 +61,10 @@ const agentlessCreation = (run: Run): boolean =>
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
  * one. It re-runs a parked step: a never-dispatched park, a blocked task behind
- * its retained PR, or a parked resolution check. Or it answers an escalation
- * with the restart's reason once nothing live backs it (owner-only). Store
- * reads only; the engine dispatches the same result, so `next` and the handler
- * agree.
+ * its retained PR, or a parked resolution check. Store reads only; the engine
+ * dispatches the same result, so `next` and the handler agree.
  */
-type ParkedRestart =
-  | { kind: "retry" | "answer"; note?: string }
-  | { refusal: string };
+type ParkedRestart = { kind: "retry"; note?: string } | { refusal: string };
 
 /**
  * Whether `restart` takes the parked step instead of the role's run shape. A
@@ -198,18 +192,6 @@ export function parkedRestart(facts: OwnerVerbFacts): ParkedRestart {
     !(current && !current.completion)
   )
     return { kind: "retry" };
-  if (escalatedEpisode(task, runs)) {
-    if (live)
-      return {
-        refusal: `An unreleased ${live.role} run still owns this task; settle that run before resolving the recorded recovery episode`,
-      };
-    if (escalationBackedByLiveWork(task, runs))
-      return {
-        refusal:
-          "The recorded recovery episode is still backed by the task's own work or fault; finish the task or clear its fault before resolving the episode",
-      };
-    return { kind: "answer" };
-  }
   return { refusal: `Nothing is parked while the task is ${task.phase}` };
 }
 
@@ -785,14 +767,12 @@ export const restart: OwnerVerb = {
       task.resolution.mergedCommit
     ) {
       // A finished or merged task restarts no run. A merged one still re-runs its
-      // parked step (a closeout resynchronization), and an escalation left on
-      // either is still the owner's to answer, with the restart's reason.
+      // parked step (a closeout resynchronization).
       const parked = parkedRestart(facts);
       if (
         "kind" in parked &&
-        (parked.kind === "answer" ||
-          (task.resolution.mergedCommit &&
-            !["done", "cancelled"].includes(task.phase)))
+        task.resolution.mergedCommit &&
+        !["done", "cancelled"].includes(task.phase)
       )
         return {
           available: true,

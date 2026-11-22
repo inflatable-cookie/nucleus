@@ -1,7 +1,104 @@
 import type { Task, TaskControlInput } from '../../../shared/contracts';
+import { TASK_PROGRESSING_REASON } from '../../../shared/task-stop';
+import { appliedMergeVerdict, escalationOutlived, readyReviewAtHead } from '../../recovery/task-reasons';
 import type { Ladder } from './ladder';
-import { plannerEscalations } from './records';
+import { plannerEscalations, type LadderEvent, type PlannerEscalation } from './records';
 import type { Store } from '../../store/store';
+
+function escalationPayload(events: readonly LadderEvent[], id: string): Record<string, unknown> | null {
+  const event = events.find(item => item.kind === 'planner_escalation_payload' && item.detail.startsWith(`${id}:`));
+  if (!event) return null;
+  try {
+    const parsed: unknown = JSON.parse(event.detail.slice(event.detail.indexOf(':') + 1));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Spec 067 batch 4: an open escalation closes itself when its recorded cause
+ * clears. Returns the human-readable reason it cleared, or null while open.
+ */
+export function escalationCauseClearedReason(
+  store: Store,
+  task: Task,
+  escalation: PlannerEscalation,
+  events: readonly LadderEvent[],
+): string | null {
+  if (escalation.answered) return null;
+  if (task.removedAt) return 'the task was removed';
+  if (escalationOutlived(task)) return 'the task merged or ended';
+  const intentEvent = events.find(
+    item => item.kind === 'planner_escalation' && item.detail.startsWith(`${escalation.id}:`),
+  );
+  const payload = escalationPayload(events, escalation.id);
+  if (payload?.reviewContinuation) {
+    if (readyReviewAtHead(task)) return 'a ready review verdict arrived for the current head';
+    if (typeof payload.reader === 'string') {
+      const reader = store.run(payload.reader);
+      if (!reader || reader.released || (task.resolution.currentRunId && task.resolution.currentRunId !== payload.reader))
+        return 'the stopped reviewer run was released or replaced';
+    }
+  }
+  if (typeof payload?.commit === 'string' && typeof payload?.head === 'string' && appliedMergeVerdict(task, payload.head))
+    return 'review or operator source acceptance arrived for the merged head';
+  if (typeof payload?.revisionCap === 'number' && readyReviewAtHead(task))
+    return 'a ready review verdict arrived for the current head';
+  if (payload?.cause === 'recovery-pending' && (!task.resolution.incident || task.resolution.incident.status === 'resolved'))
+    return 'the escalated incident cleared';
+  if (
+    intentEvent &&
+    (payload?.source === 'worker' || payload?.source === 'revision') &&
+    !escalation.refusal &&
+    task.completion?.status === 'ready_for_review' &&
+    events.some(item => item.id > intentEvent.id && item.detail.includes(task.completion!.eventId))
+  )
+    return 'a ready result arrived after the blocker escalation';
+  const currentRun = task.resolution.currentRunId ? store.run(task.resolution.currentRunId) : null;
+  if (
+    intentEvent &&
+    currentRun &&
+    !currentRun.released &&
+    !currentRun.completion &&
+    currentRun.role !== 'recovery' &&
+    currentRun.id !== escalation.runId &&
+    Date.parse(currentRun.createdAt) > Date.parse(intentEvent.at)
+  )
+    return `a new ${currentRun.role} run (${currentRun.id}) took over the task`;
+  return null;
+}
+
+/** Close any open escalations on this task whose cause has already cleared. */
+export function closeClearedEscalations(store: Store, task: Task): string[] {
+  const current = store.taskOrNull(task.id);
+  if (!current) return [];
+  const events = store.eventsAll(current.id) as LadderEvent[];
+  const closed: string[] = [];
+  for (const escalation of plannerEscalations(events)) {
+    if (escalation.answered) continue;
+    const cleared = escalationCauseClearedReason(store, current, escalation, events);
+    if (!cleared) continue;
+    store.event(current.id, 'planner_escalation_resolved', `${escalation.id}: closed automatically; ${cleared}`);
+    closeEscalationFollowups(store, current.id, escalation.id);
+    const latest = store.task(current.id);
+    if (latest.resolution.stop?.fact?.code === 'escalation' && latest.resolution.stop.fact.subject === escalation.id) {
+      store.update(
+        current.id,
+        {
+          resolution: { ...latest.resolution, stop: null },
+          ...(!['done', 'cancelled', 'blocked', 'error', 'needs_attention'].includes(latest.phase)
+            ? { reason: TASK_PROGRESSING_REASON }
+            : {}),
+        },
+        'planner_escalation_cause_cleared',
+        `${escalation.id}: ${cleared}`,
+      );
+    }
+    closed.push(escalation.id);
+  }
+  return closed;
+}
 
 /** Retire every recorded refusal follow-up and return prompt once its escalation has settled. */
 export function closeEscalationFollowups(store: Store, taskId: string, escalationId: string): void {
