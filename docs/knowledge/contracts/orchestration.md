@@ -241,8 +241,9 @@ cleanup lane's `stop()`. Delegates remain on Engine.
 
 ### Worker-path owners
 
-**Dispatch** (`core/dispatch/dispatch.ts`). Visits queued tasks, admits workspace
-creation and review entry, and owns the workspace-pressure wake. Enforces
+**Dispatch** (`core/dispatch/dispatch.ts`). The queued admitter: visits the
+startable queue heads, admits workspace creation and review entry, signals
+admission for a submission into free capacity, and owns the workspace-pressure wake. Enforces
 [Admission, limits and priority](#admission-limits-and-priority) and
 [Review entry](#review-entry). Pures: `dispatchGate`,
 `decideWorkspacePressureWait`. Engine.stop clears its timer. Delegates remain
@@ -1175,13 +1176,38 @@ request identities and stored committed-handoff rows are not rewritten.
 - A queued task waiting on a prerequisite does not block a runnable task behind
   it in the same project. When the prerequisite settles, its dependent resumes
   its existing place in dispatch order; queue indexing must preserve that order.
+- The queue is inert (Spec 069 §1). A submission writes its row into the ordered
+  ready index and nothing else: no dispatch pass, task quantum, host read or wait.
+  It signals admission only when the task itself could start (its host, review
+  origin or target host kind is ready, and no Low-usage approval is pending) and
+  its own pools have a free slot. The one exception is a question the operator
+  must answer before any run (the Low usage level's approval, a required profile),
+  which opens through its own step on the task's lane.
+- Admission is event-driven: a freed slot or in-flight place, a prerequisite
+  reaching `done`, a released hold or pause, a submission into free capacity, and
+  the sweep's once-per-pass safety net, which also admits heads whose host came
+  back. It takes heads from the ordered index in fair order and admits as many as
+  the free slots allow. A head that cannot start now (its host is away, a review
+  entry's origin host is away or unproven, or an unbound first worker's target
+  host kind is not ready) is skipped in the index walk and holds no place in slot
+  order, so it takes no visit and hides no head behind it. The walk reads each
+  host and repository target once per round and each head from its own fields, so
+  a skipped head costs an in-memory check, never a store or host read. A visit
+  that starts nothing hands its place on, but one pass makes at most the free
+  slots plus two visits.
 - Dispatch reads indexed ready heads, not every queued row. Prerequisite settlement
   wakes its dependants after commit and refreshes their checkout siblings when the
   final prerequisite settles, even if dispatch is held. Refresh work grows with the
   affected dependants; their dispatch wake is coalesced per repository. A missed
   refresh is also checked before dispatch. Route-unavailable requests are reconsidered
-  when the effective routing inputs change. Queued prerequisite, hold and capacity
-  text is derived on read; waiting alone does not write a task or event.
+  when the effective routing inputs change. Queued prerequisite, hold, capacity and
+  host text is derived on read; waiting alone does not write a task or event.
+  Admission stores no stop or wait on a never-started task: its card and `next`
+  name a slot wait, prerequisites, its host (`host_unavailable` with the host's
+  own outage start) or its review origin from one admission read. A host wait on
+  a queued row is ignored by the read and settled when the task is admitted; the
+  host-failure path still writes one when a host fails, which Spec 069 batch 2
+  removes.
 - The board carries up to five queued heads per repository and the total queued
   count. `queue.queued-page` reads the rest on demand. A completed mutation that
   advances the board revision publishes before its reply. The one-second tick

@@ -1,4 +1,5 @@
 import type { Task } from "../../shared/contracts";
+import { hostUnavailableDetail } from "../../shared/host-outage";
 import type { Adapter } from "../host/adapter";
 import type { Admission } from "../host/admission";
 import type { Store } from "../store/store";
@@ -15,7 +16,26 @@ export interface DispatchAdmissionContext {
   withHost<T>(id: string, fn: () => T): T;
   hostAvailable(id: string): boolean;
   workspacePressureWait(task: Task): string;
+  hostIds(): readonly string[];
+  /** The open outage the host's own record names, when one exists. */
+  hostOutageSince(id: string): string | null;
+  firstWorkerUnbound(task: Task): boolean;
+  /** A host's availability as the origin and admission reads take it, this pass's failures included. */
+  originHostAvailable(id: string): boolean;
+  /** The engine's own reading of whether a task's host can take it now. */
+  taskHostAvailable(task: Task): boolean;
+  targetHostWait(task: Task): string | null;
+  /** Hosts online with a read catalog that could take a first worker. */
+  workerHostIds(task: { hostId?: string | null }): string[];
 }
+
+/** The host-wait sentence a queued task reads with a `host_unavailable` stop. */
+export const QUEUED_HOST_WAIT_PREFIX = "Waiting for host ";
+/** The wait a queued task with no proven host identity reads. */
+export const QUEUED_HOST_IDENTITY_WAIT = "Waiting for a proven host identity";
+/** The review-entry origin waits, worded as review-entry admission words them. */
+export const QUEUED_ORIGIN_IDENTITY_WAIT = "Waiting for a proven origin host";
+export const QUEUED_ORIGIN_WAIT_PREFIX = "Waiting for origin host ";
 
 export class DispatchAdmission {
   constructor(readonly context: DispatchAdmissionContext) {}
@@ -34,30 +54,30 @@ export class DispatchAdmission {
     const owned = active.filter(
       (task) => occupiesSlot(task) && task.workspaceId,
     ).length;
+    // Queued host waits are read, not stored (Spec 069 §1), so a host coming or
+    // going changes the board without a task write.
+    const hosts = this.context
+      .hostIds()
+      .map((id) => [
+        id,
+        this.context.withHost(id, () => this.context.hostAvailable(id)),
+        this.context.hostOutageSince(id),
+      ]);
     return JSON.stringify([
       this.context.profileCatalogKnown(),
       Boolean(host && host.load > host.cpus),
       (this.store.getMeta<number>("workspacePressureNotBefore") ?? 0) >
         Date.now(),
       this.admission?.workspaceAdmissionReason(owned) ?? "",
+      hosts,
+      this.context.workerHostIds({}),
     ]);
   }
   /** Present-time wait that needs no durable queued-task update. */
   queuedExternalWait(task: Task): string {
     if (task.phase !== "queued") return "";
-    if (!task.hostId) return "Waiting for a proven host identity";
-    if (
-      this.store
-        .runs(task.id)
-        .some((run) => !run.released && run.hostId !== task.hostId)
-    )
-      return "Waiting for consistent run host identity";
-    if (
-      !this.context.withHost(task.hostId, () =>
-        this.context.hostAvailable(task.hostId),
-      )
-    )
-      return `Waiting for host ${task.hostId}`;
+    const hostWait = this.queuedHostWait(task);
+    if (hostWait) return hostWait;
     if (!this.context.profileCatalogKnown())
       return PROFILE_CATALOG_PENDING_REASON;
     const pressure = this.context.workspacePressureWait(task);
@@ -68,6 +88,47 @@ export class DispatchAdmission {
         (candidate) => occupiesSlot(candidate) && candidate.workspaceId,
       ).length;
     return this.admission.workspaceAdmissionReason(owned);
+  }
+  /**
+   * Spec 069 §1: the host a queued task waits for, worked out when the board or
+   * `next` is read. A never-started task stores no host wait. An unbound first
+   * worker waits for its target host kind, else for any host that can take it; a
+   * bound task waits for its own host, named with the outage that host recorded.
+   */
+  queuedHostWait(task: Task): string {
+    if (task.phase !== "queued") return "";
+    if (this.context.firstWorkerUnbound(task)) {
+      const target = this.context.targetHostWait(task);
+      if (target) return target;
+      if (this.context.workerHostIds(task).length > 0) return "";
+    }
+    if (!task.hostId) return QUEUED_HOST_IDENTITY_WAIT;
+    if (
+      this.store
+        .runs(task.id)
+        .some((run) => !run.released && run.hostId !== task.hostId)
+    )
+      return "Waiting for consistent run host identity";
+    const hostId = task.hostId;
+    // The same reading admission uses, so the card and the admitter agree.
+    if (!this.context.withHost(hostId, () => this.context.taskHostAvailable(task))) {
+      const since = this.context.hostOutageSince(hostId);
+      return since
+        ? hostUnavailableDetail(hostId, since)
+        : `${QUEUED_HOST_WAIT_PREFIX}${hostId}`;
+    }
+    // A review entry also reads its origin host, as review-entry admission does.
+    if (task.entrypoint !== "review") return "";
+    const origin = task.originHostId;
+    if (!origin) return QUEUED_ORIGIN_IDENTITY_WAIT;
+    if (
+      origin !== hostId &&
+      !this.context.withHost(origin, () =>
+        this.context.originHostAvailable(origin),
+      )
+    )
+      return `${QUEUED_ORIGIN_WAIT_PREFIX}${origin}`;
+    return "";
   }
   reviewContinuationLimit(): number {
     return reviewContinuationLimit(this.store);

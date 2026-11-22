@@ -515,18 +515,6 @@ export class Sweep {
             host,
             new Error(`Host ${host} did not answer its pass`),
           );
-        } else {
-          // Never-started queue heads are absent from the lifecycle window, but
-          // their host wait must settle before they can reserve a slot again.
-          for (const task of allTasks) {
-            if (
-              task.hostId === host &&
-              task.phase === "queued" &&
-              (task.resolution.hostWait ||
-                task.resolution.stop?.reason === "host_unavailable")
-            )
-              this.engine.hostWait(this.engine.store.task(task.id));
-          }
         }
         if (passed.inventory) inventory = passed.inventory;
         for (const [id, task] of passed.finishedCatchUp)
@@ -857,6 +845,9 @@ export class Sweep {
         for (const id of reconciled) this.engine.enqueueTitle(id);
         return { fault: null, covered, visited };
       }
+      // Spec 069 §1: the admitter's once-per-pass safety net, which also admits
+      // heads whose host came back this pass. Heads that cannot start cost an
+      // in-memory check; visits stay within the free slots plus a margin.
       await this.fleetStep("dispatchQueued", () =>
         this.engine.dispatchQueued(),
       );

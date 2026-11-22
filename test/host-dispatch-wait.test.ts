@@ -9,6 +9,7 @@ import { Store } from "../core/store/store";
 import { submissionSchema, summarizeTask } from "../shared/contracts";
 import type { Adapter } from "../core/host/adapter";
 import { fakeAdapter, profile, submission } from "./support/fakes";
+import { taskWithCurrentWait } from "../core/recovery/wait-context";
 import { HostTransportFault } from "../core/host/adapter-routing";
 import { HostExecutorLink } from "../service/host-executor";
 import { createBbHostAdapter } from "../service/bb-host";
@@ -48,19 +49,26 @@ test("an offline or unknown task host waits without starting a workspace effect"
       );
     const offline = make("offline", "offline");
     const unknown = make("unknown", "");
+    const versions = [offline, unknown].map((task) => store.task(task.id).version);
+    // The sweep's host loop records the outage; the queued tasks record nothing.
+    engine.hostOutages.observe("offline", false);
     await engine.dispatchTask(offline.id, false);
     await engine.dispatchTask(unknown.id, false);
+    assert.deepEqual(
+      [offline, unknown].map((task) => store.task(task.id).version),
+      versions,
+      "a never-started task stores no wait (Spec 069 §1)",
+    );
     // The known offline host is one named host wait (Tom, 2026-11-14, T3 lane v18
-    // host dropout option 1: wait); a task with no proven host keeps its own wait.
-    assert.match(
-      store.task(offline.id).reason,
-      /Waiting on Paseo host offline since /,
-    );
-    assert.equal(
-      store.task(offline.id).resolution.stop?.reason,
-      "host_unavailable",
-    );
-    assert.match(store.task(unknown.id).reason, /proven host/);
+    // host dropout option 1: wait), read at the boundary; a task with no proven
+    // host keeps its own wait.
+    const read = (id: string) =>
+      taskWithCurrentWait(store, store.task(id), {}, (task) =>
+        engine.queuedExternalWait(task),
+      );
+    assert.match(read(offline.id).reason, /Waiting on Paseo host offline since /);
+    assert.equal(read(offline.id).resolution.stop?.reason, "host_unavailable");
+    assert.match(read(unknown.id).reason, /proven host/);
     assert.equal(creates, 0);
     assert.equal(store.task(offline.id).workspaceIntent, false);
     assert.equal(store.task(unknown.id).workspaceIntent, false);
@@ -98,21 +106,27 @@ test("new dispatch for a project on an offline host waits with host_unavailable"
       "handoff",
       "a".repeat(40),
     );
+    // The sweep's host loop records the outage once for the host.
+    const outage = engine.hostOutages.observe("offline", false)!;
     await engine.dispatchTask(task.id, false);
-    const waiting = store.task(task.id);
+    const stored = store.task(task.id);
+    assert.equal(stored.resolution.stop, null, "a never-started task stores no stop (Spec 069 §1)");
+    assert.equal(stored.resolution.hostWait, null, "nor a host wait");
     // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): new dispatch for
-    // a project whose host is away waits on that host, visibly and with its start.
+    // a project whose host is away waits on that host, visibly and with its start,
+    // now worked out when the task is read.
+    const waiting = taskWithCurrentWait(store, stored, {}, (candidate) =>
+      engine.queuedExternalWait(candidate),
+    );
     assert.equal(waiting.resolution.stop?.reason, "host_unavailable");
     assert.match(
       waiting.resolution.stop?.detail ?? "",
       /^Waiting on Paseo host offline since \d{4}-\d{2}-\d{2}T/,
     );
     assert.deepEqual(
-      waiting.resolution.hostWait && {
-        hostId: waiting.resolution.hostWait.hostId,
-      },
-      { hostId: "offline" },
-      "the task records its own host wait while it is queued",
+      waiting.resolution.hostWait,
+      { hostId: "offline", since: outage.since },
+      "the read names the host and the outage's own start",
     );
     assert.equal(waiting.phase, "queued");
     assert.equal(creates, 0);
@@ -375,11 +389,22 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
       store.update(bb2.id, { phase: "done", agentActive: false });
       bbOnline = false;
       const direct = add("bb:offline", "direct");
+      const directVersion = store.task(direct.id).version;
       await engine.dispatchTask(direct.id, false);
+      // A host the registry reports away is read live, with nothing written
+      // (Spec 069 §1); a refused call is the host-failure path (Spec 069 batch 2).
+      if (refusal === "registry offline")
+        assert.equal(
+          store.task(direct.id).version,
+          directVersion,
+          "direct dispatch on an away host writes no wait",
+        );
       assert.equal(
-        store.task(direct.id).resolution.stop?.reason,
+        taskWithCurrentWait(store, store.task(direct.id), {}, (task) =>
+          engine.queuedExternalWait(task),
+        ).resolution.stop?.reason,
         "host_unavailable",
-        "direct dispatch records the host wait",
+        "the read names the host wait",
       );
       store.update(direct.id, { phase: "done" });
       bbOnline = true;
@@ -542,15 +567,45 @@ test("a refused BB origin holds only its review while Paseo and T3 use real admi
     assert.ok(originReads >= 1);
     assert.equal(store.task(review.id).resolution.stop?.reason, "origin_busy");
     assert.match(store.task(review.id).reason, /bb:origin/);
-    assert.ok(
-      extraReviews.every(
-        (item) => store.task(item.id).resolution.stop?.reason === "origin_busy",
-      ),
-    );
+    // Spec 069 §1: once the refused call has failed the origin host, the other
+    // reviews behind it are skipped without a visit or a write; their wait is read.
+    const read = (id: string) =>
+      taskWithCurrentWait(store, store.task(id), {}, (task) =>
+        engine.queuedExternalWait(task),
+      ).reason;
+    for (const item of extraReviews) {
+      assert.equal(store.task(item.id).resolution.stop, null);
+      assert.equal(read(item.id), "Waiting for origin host bb:origin");
+    }
     assert.equal(store.task(review.id).resolution.hostWait, null);
     assert.deepEqual(new Set(launches), new Set([paseo.id, t3.id]));
     assert.equal(engine.taskHostAvailable(store.task(paseo.id)), true);
     assert.equal(engine.taskHostAvailable(store.task(t3.id)), true);
+
+    // The origin host is reported away outright. Reviews from it are not
+    // startable heads, so they never stop the project's queue: freed slots go to
+    // the worker behind them, pass after pass.
+    engine.hostAvailable = (id) => id !== "bb:origin";
+    for (const done of [paseo, t3])
+      store.update(done.id, { phase: "done", agentActive: false });
+    const worker = store.insert(
+      submission({ title: "worker", repoPath: "/synthetic/review" }),
+      "paseo:primary",
+      "handoff",
+      "a".repeat(40),
+    );
+    const reviewVersions = [review, ...extraReviews].map(
+      (item) => store.task(item.id).version,
+    );
+    await engine.auditPass(true);
+    await engine.auditPass(true);
+    assert.ok(launches.includes(worker.id), "the worker behind the reviews starts");
+    assert.deepEqual(
+      [review, ...extraReviews].map((item) => store.task(item.id).version),
+      reviewVersions,
+      "a review whose origin is away is neither visited nor written",
+    );
+    assert.equal(read(extraReviews[0].id), "Waiting for origin host bb:origin");
   } finally {
     await engine.stop();
     store.close();

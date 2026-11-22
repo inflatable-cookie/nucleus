@@ -170,7 +170,7 @@ export class TaskQuantum {
       });
   }
 
-  private reconcileProfileAdmission(task: Task): Task {
+  reconcileProfileAdmission(task: Task): Task {
     const { store, routingDecisions } = this.context;
     reconcileUsageGate(store, routingDecisions, task.id);
     const current = store.task(task.id);

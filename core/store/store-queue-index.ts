@@ -328,12 +328,17 @@ export class StoreQueueIndex {
     this.readyRepository.set(task.id, task.repoPath);
   }
 
-  /** At most limit candidates per repository, oldest first on equal priority. */
+  /**
+   * At most limit candidates per repository, oldest first on equal priority.
+   * `admissible` lets the admitter skip heads that cannot start now (Spec 069
+   * §1), so they neither take a place in the window nor hide the heads behind them.
+   */
   readyQueueHeads(
     limit: number,
     repoPath?: string,
     startedOnly = false,
     forAdmission = false,
+    admissible?: (task: Task) => boolean,
   ): Task[] {
     this.hooks.ensureProjection();
     if (limit <= 0) return [];
@@ -346,10 +351,20 @@ export class StoreQueueIndex {
     const papercuts = startedOnly
       ? this.readyStartedPapercutQueues
       : this.readyPapercutQueues;
-    const eligible = (id: string) =>
-      !forAdmission || !queuedSlotObservationPending(this.task(id)!);
+    const verdicts = new Map<string, boolean>();
+    const eligible = (id: string) => {
+      let verdict = verdicts.get(id);
+      if (verdict === undefined) {
+        const task = this.task(id)!;
+        verdict =
+          (!forAdmission || !queuedSlotObservationPending(task)) &&
+          (!admissible || admissible(task));
+        verdicts.set(id, verdict);
+      }
+      return verdict;
+    };
     const head = (ids: readonly string[]) => {
-      if (!forAdmission) return ids.slice(0, limit);
+      if (!forAdmission && !admissible) return ids.slice(0, limit);
       const selected: string[] = [];
       for (const id of ids) {
         if (eligible(id)) selected.push(id);

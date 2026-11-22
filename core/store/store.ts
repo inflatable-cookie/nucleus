@@ -766,8 +766,15 @@ export class Store {
     limit: number,
     repoPath?: string,
     startedOnly = false,
+    admissible?: (task: Task) => boolean,
   ): Task[] {
-    return this.tasksStore.queue.readyQueueHeads(limit, repoPath, startedOnly);
+    return this.tasksStore.queue.readyQueueHeads(
+      limit,
+      repoPath,
+      startedOnly,
+      false,
+      admissible,
+    );
   }
   boardQueueCounts(): Array<{ repoPath: string; count: number }> {
     return this.tasksStore.board.boardQueueCounts();

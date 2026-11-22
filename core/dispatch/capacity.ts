@@ -445,18 +445,33 @@ function slotAdmissionExempt(task: Task, occupied = false): boolean {
   return prerequisiteWaitBlocksPhase(task) || occupied;
 }
 
-/** These queued tasks are still visited for observation, but own no place in slot order. */
+/**
+ * A queued review entry reads its origin host before it can start (review-entry
+ * admission), so a review whose origin is away, or unproven, neither starts nor
+ * holds a place in slot order (Spec 069 §1). Read live, never from a stored stop.
+ */
+export function queuedReviewOriginReady(
+  task: Task,
+  originReady: (hostId: string) => boolean,
+): boolean {
+  if (task.phase !== "queued" || task.entrypoint !== "review") return true;
+  if (task.originHostId === task.hostId) return true;
+  return Boolean(task.originHostId) && originReady(task.originHostId!);
+}
+
+/**
+ * These queued tasks are still visited for observation, but own no place in slot
+ * order. A queued task's host is read live where it requests a slot (Spec 069
+ * §1), never from a host wait stored on the row, so a stale wait cannot keep a
+ * task out of the order after its host returns.
+ */
 export function queuedSlotObservationPending(task: Task): boolean {
   return (
     task.phase === "queued" &&
-    Boolean(
-      task.resolution.hostWait ||
-        task.resolution.stop?.reason === "host_unavailable" ||
-        (task.entrypoint === "review" &&
-          task.originHostId &&
-          task.originHostId !== task.hostId &&
-          task.resolution.stop?.reason === "origin_busy"),
-    )
+    task.entrypoint === "review" &&
+    Boolean(task.originHostId) &&
+    task.originHostId !== task.hostId &&
+    task.resolution.stop?.reason === "origin_busy"
   );
 }
 
@@ -752,6 +767,11 @@ export class SlotAdmission {
         !candidate.hostId ||
         !this.resolution.withHost(candidate.hostId, () =>
           this.resolution.hostAvailable(candidate),
+        ) ||
+        !queuedReviewOriginReady(candidate, (id) =>
+          this.resolution.withHost(id, () =>
+            this.resolution.originHostAvailable(id),
+          ),
         )
       )
         return false;
