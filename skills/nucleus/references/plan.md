@@ -45,6 +45,12 @@ list of closed lanes. `plan.set` saves it: the latest `version`,
   "consumer profiles read from docs/knowledge/contracts in every repository".
   Set it for every `now` and `next` lane, so anyone can tell whether the step
   is complete.
+- `note` is the lane's latest status, shown on the Planning lane page with your
+  name and the save's age.
+- Write `note`, `doneWhen` and the idle reason as plain sentences for the
+  operator to read: no commit hashes, run IDs or thread IDs. Reference a task as
+  `#1234` if you need to. For example, "Batch 1 merged and batch 2 is in review;
+  milestone QA runs once all six land."
 - Keep the plan current. When a lane closes, or work changes order, save the
   plan again. A lane that newly lists the project's repository joins the end by
   itself, so reorder after creating one.
@@ -69,7 +75,8 @@ a drained-board prompt never escalates (Tom, 2026-10-15).
   idle on purpose: `plan.set` with `idle: "<reason>"` and no `now` or `next`
   lanes, for example "waiting for consumer demand before more integration work".
   The mark lasts until work finishes after it or the plan is saved again
-  without `idle`, and the Planning tab shows the reason.
+  without `idle`, and Planning lists the project as idle on purpose with the
+  reason.
 
 A step that waits on the operator's answer can't be briefed, and keeping it
 only postpones the prompt. Record the question as a decision (see [SKILL.md](../SKILL.md))

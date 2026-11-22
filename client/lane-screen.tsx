@@ -515,7 +515,8 @@ export function LaneScreen({
                 status={{
                   tone: phaseTone(task),
                   state: rowPhaseWords(task),
-                  detail: signal ?? task.headline ?? null,
+                  // The inbox row's detail: the wait or hold, else the latest report, else the stored reason.
+                  detail: signal ?? (task.headline || task.reason || null),
                 }}
                 c={c}
               />

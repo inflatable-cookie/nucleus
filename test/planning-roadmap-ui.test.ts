@@ -50,25 +50,20 @@ async function mountTab(over: MountOver = {}) {
   return { ui: mount(h(Harness)), log };
 }
 
-test('041-1 rendered: one project in scope shows its roadmap; several show compact rows, one expanded at a time; no selector', async () => {
+test('041-1 / 1531 rendered: one project shows its roadmap; several list as rows with the first open and one roadmap at a time; no selector', async () => {
   const one = (await mountTab()).ui;
   assert.ok(one.get('Plan for alpha'));
   assert.doesNotMatch(one.text(), /project planner missing/, 'the planner gap is the Projects problem icon now');
-  assert.equal(one.query(/^Project row /), undefined);
   assert.equal(one.query(/^Plan project /), undefined);
   const many = (await mountTab({ lanes: lanes.map(item => item.key === 'n1' ? { ...item, liveByPhase: { blocked: 2 } } : item), sections: [{ project: projects[0], latest, saved }, { project: projects[1] }, { project: projects[2] }] })).ui;
   assert.equal(many.all(/^Project row /).length, 3);
-  assert.equal(many.query(/^Plan for /), undefined, 'rows start collapsed');
-  assert.match(many.text(), /Aim n1/, 'the row names the current aim');
-  assert.match(many.text(), /2 need attention/, 'the row promotes the server-reported blocked total');
+  assert.deepEqual(many.all(/^Plan for /).map(node => node.props.accessibilityLabel), ['Plan for alpha'], 'the first project opens beside the list');
+  assert.ok(many.get('Status for alpha: 2 need you · 3 lanes in progress · 9 tasks live'), 'the row says where the project stands in words');
   assert.doesNotMatch(many.text(), /\d+ now · \d+ next · \d+ later · \d+ live/, 'the row does not lead with repeated counts');
   assert.equal(many.query(/^Plan project /), undefined, 'no selector in the tab');
-  many.press('Project row alpha');
-  assert.ok(many.get('Plan for alpha'));
   many.press('Project row beta');
   assert.deepEqual(many.all(/^Plan for /).map(node => node.props.accessibilityLabel), ['Plan for beta']);
-  many.press('Project row beta');
-  assert.equal(many.query(/^Plan for /), undefined);
+  assert.equal(many.get('Project row beta').props.accessibilityState.selected, true);
 });
 
 test('1420 Planning shows the batch digest, proposed and applied reasons, and working task links', async () => {
@@ -99,7 +94,6 @@ test('1420 Planning shows the batch digest, proposed and applied reasons, and wo
     assert.ok(store.boardRevision() > boardBefore, 'board clients can see the new plans revision');
     // No activity read: the project has no substantive record the board can see yet, so it is dormant (Spec 026, nucleus#1446).
     const dormant = (await mountTab({ sections: [section()], projectActivity: [] })).ui;
-    dormant.press('Dormant projects, 1');
     assert.match(dormant.text(), /Waiting for a project planner/);
     assert.match(dormant.text(), /Current batch · 2 records · 2 pending/);
 
@@ -156,6 +150,9 @@ test('1420 Planning shows the batch digest, proposed and applied reasons, and wo
     };
     try {
       ui.press('Planning');
+      // Medium width with two projects: the list shows first, and a row opens its roadmap in place.
+      await waitFor(`Project row ${store.projectByKey(projectKey)!.name}`);
+      ui.press(`Project row ${store.projectByKey(projectKey)!.name}`);
       const digest = 'Last completed batch · 2 records · 2 applied · 1 for operator';
       await waitFor(digest);
       assert.equal(ui.query(/^Current batch /), undefined);
@@ -191,7 +188,7 @@ test('all-projects rows render each project plan and counts, and Views contain n
       { project: projects[0], latest, saved },
       { project: { ...projects[1], name: longName }, latest: betaLatest, saved: betaLatest },
     ] });
-    assert.match(ui.text(), /Aim n1/);
+    assert.match(ui.text(), /3 lanes in progress/);
     assert.doesNotMatch(ui.text(), /\d+ now · \d+ next · \d+ later · \d+ live/);
     assert.equal(ui.get('Project row alpha').props.accessibilityRole, 'button');
     assert.ok(ui.get(`Project row ${longName}`));
@@ -225,27 +222,25 @@ test('all-projects rows keep loading and failed reads distinct from an empty pla
   assert.doesNotMatch(laneFailure.text(), /No now step|0 now · 0 next/);
 });
 
-test('041-2 rendered: four bands, Done collapsed, unplanned lanes tucked away', async () => {
+test('041-2 / 1531 rendered: Now, Next and Later columns, finished lanes collapsed, unplanned lanes under History', async () => {
   const { ui } = await mountTab();
-  for (const band of ['Now band', 'Next band', 'Later band']) assert.ok(ui.get(band));
-  assert.ok(ui.get('Now step n1'));
-  assert.ok(ui.get('Next step x1'));
-  assert.ok(ui.get('Later step l1'));
+  const text = (label: string) => JSON.stringify(ui.get(label));
+  assert.match(text('Now column'), /Title n1[\s\S]*Title n2[\s\S]*Title joined/);
+  assert.match(text('Next column'), /Title x1/);
+  assert.match(text('Later column'), /Title l1/);
   assert.match(ui.text(), /Aim n1/);
-  assert.match(ui.text(), /Done when: Ship it/);
-  assert.match(ui.text(), /3 done · 1 live · 0 open leads/);
-  assert.ok(ui.get('Done band'));
-  assert.match(ui.text(), /Done · 2/);
-  assert.equal(ui.query('Done step d-old'), undefined, 'Done starts collapsed');
-  ui.press('Done, 2');
-  assert.deepEqual(ui.all(/^Done step /).map(node => node.props.accessibilityLabel), ['Done step d-new', 'Done step d-old']);
-  assert.match(ui.text(), /abandoned · 2026-10-01/);
-  ui.press('Done, 2');
-  assert.equal(ui.query('Done step d-new'), undefined);
-  assert.ok(ui.get('Now step joined'), 'current plan membership ignores the lagging saved read');
-  assert.equal(ui.query('Open lane unplanned'), undefined, 'unplanned lanes start hidden');
-  ui.press('1 unplanned lanes');
-  assert.ok(ui.get('Open lane unplanned'));
+  assert.match(ui.text(), /Ship it/);
+  assert.ok(ui.get('Progress for Title n1: 1 working, 3 done'));
+  assert.equal(ui.query('Open lane Title d-old, finished'), undefined, 'finished lanes start collapsed');
+  ui.press('Finished lanes, 2');
+  assert.deepEqual(ui.all(/, (finished|abandoned)$/).map(node => node.props.accessibilityLabel), ['Open lane Title d-new, abandoned', 'Open lane Title d-old, finished']);
+  ui.press('Finished lanes, 2');
+  assert.equal(ui.query('Open lane Title d-new, abandoned'), undefined);
+  assert.ok(ui.get('Open lane Title joined'), 'current plan membership ignores the lagging saved read');
+  assert.equal(ui.query('Open lane Title unplanned'), undefined, 'unplanned lanes stay out of the columns');
+  ui.press('Show alpha plan history');
+  assert.match(JSON.stringify(ui.get('Plan history for alpha')), /Version 4/);
+  assert.match(JSON.stringify(ui.get('Plan history for alpha')), /1 lane is not in the plan yet: Title unplanned/);
 });
 
 test('041-3 rendered: Next to Now writes a new plan version through Save; unplanned lanes add or close', async () => {
@@ -287,30 +282,30 @@ test('041 Drained flag stays hidden until part 2 computes it', async () => {
 test('an idle plan shows its reason on the roadmap, and an ordinary plan shows none', async () => {
   const idlePlan: ProjectPlan = { ...latest, entries: [entry('l1', 'later')], idle: { reason: 'Waiting for real Cream gaps', at: '2026-10-15T10:00:00.000Z' } };
   const { ui } = await mountTab({ sections: [{ project: projects[0], latest: idlePlan, saved: idlePlan }] });
-  assert.ok(ui.get('Idle on purpose: Waiting for real Cream gaps'));
-  assert.match(ui.text(), /Idle on purpose since 2026-10-15/);
+  assert.match(JSON.stringify(ui.get('Idle on purpose')), /Waiting for real Cream gaps/);
+  assert.equal(ui.query('Focus'), undefined, 'the idle reason stands in for the focus');
   const plain = await mountTab();
-  assert.equal(plain.ui.query('Idle on purpose: Waiting for real Cream gaps'), undefined);
+  assert.equal(plain.ui.query('Idle on purpose'), undefined);
+  assert.match(JSON.stringify(plain.ui.get('Focus')), /Aim n1/, 'an ordinary plan focuses on its first Now lane');
 });
 
 test('Planning renders the current plan while saved membership lags, but waits for the plan itself', async () => {
   const waiting = await mountTab({ sections: [{ project: projects[0] }] });
   assert.match(waiting.ui.text(), /Loading plan…/);
-  assert.equal(waiting.ui.query('Now band'), undefined, 'no roadmap is drawn before the current plan arrives');
-  assert.equal(waiting.ui.query('1 unplanned lanes'), undefined);
+  assert.equal(waiting.ui.query('Roadmap'), undefined, 'no roadmap is drawn before the current plan arrives');
   // Saved membership can lag: current plan entries still drive every roadmap group.
   const stale = await mountTab({ sections: [{ project: projects[0], latest, saved: { ...saved, version: 3 } }] });
-  assert.ok(stale.ui.get('Now band'));
-  assert.ok(stale.ui.get('Now step joined'));
-  assert.equal(stale.ui.query('Open lane unplanned'), undefined, 'an actual unplanned lane remains tucked away');
+  assert.ok(stale.ui.get('Roadmap'));
+  assert.ok(stale.ui.get('Open lane Title joined'));
+  assert.equal(stale.ui.query('Open lane Title unplanned'), undefined, 'an actual unplanned lane remains tucked away');
   // A matching version has the same current roadmap.
   const ready = await mountTab();
-  assert.ok(ready.ui.get('Now band'));
+  assert.ok(ready.ui.get('Roadmap'));
   assert.doesNotMatch(ready.ui.text(), /Loading plan…/);
   // A project that never saved a plan has nothing to wait for (version 0).
   const empty = await mountTab({ sections: [{ project: projects[1], latest: { ...latest, project: 'beta', version: 0, entries: [], done: undefined } }] });
   assert.doesNotMatch(empty.ui.text(), /Loading plan…/);
-  assert.ok(empty.ui.get('Now band'));
+  assert.match(empty.ui.text(), /No plan saved yet/);
 });
 
 /** A draft with its own spies, for states the stateful harness cannot reach (a conflict, a failed save, an idle mark). */
@@ -349,14 +344,13 @@ test('reading shows no move or save controls at either size; Edit plan opens a d
 test('an empty plan says so; unplanned lanes start it in edit mode, and no lanes says so', async () => {
   const empty: ProjectPlan = { project: 'alpha', version: 0, entries: [], author: null, createdAt: null };
   const bare = await mountTab({ sections: [{ project: projects[0], latest: empty, saved: empty }], lanes: [] });
-  assert.match(bare.ui.text(), /No plan yet\. No lanes for this project yet\./);
+  assert.match(bare.ui.text(), /No lanes for this project yet\./);
   assert.ok(bare.ui.get('Edit alpha plan'), 'a project with no plan can still start one');
   const withLanes = await mountTab({ sections: [{ project: projects[0], latest: empty, saved: empty }], lanes: [lane('joined')] });
-  assert.match(withLanes.ui.text(), /No plan yet\. Edit plan to start one/);
-  withLanes.ui.press('1 unplanned lanes');
-  assert.ok(withLanes.ui.get('Open lane joined'));
+  assert.match(withLanes.ui.text(), /No lanes in the plan yet\. Edit plan to start one\./);
   assert.equal(withLanes.ui.query('Add joined to alpha plan'), undefined, 'adding waits for edit mode');
   withLanes.ui.press('Edit alpha plan');
+  withLanes.ui.press('1 unplanned lanes');
   withLanes.ui.press('Add joined to alpha plan');
   assert.ok(withLanes.ui.get('Later step joined'));
 });
@@ -372,11 +366,11 @@ test('a plan that could not be read is an error with a retry, never an empty pla
 
   const savedFailed = await mountTab({ sections: [{ project: projects[0], error: 'Timed out' }], onRetryPlans });
   assert.match(savedFailed.ui.text(), /Couldn’t load this plan: Timed out/, 'a plan that has not been read is still an error');
-  assert.equal(savedFailed.ui.query('Now band'), undefined);
+  assert.equal(savedFailed.ui.query('Roadmap'), undefined);
 
   const stale = await mountTab({ sections: [{ project: projects[0], latest, saved, error: 'Timed out' }], onRetryPlans });
-  assert.match(stale.ui.text(), /Showing version 4\. The latest plan could not be refreshed: Timed out\. It may be out of date\./);
-  assert.ok(stale.ui.get('Now band'), 'the last version read still reads');
+  assert.match(stale.ui.text(), /The latest plan could not be refreshed: Timed out\. This may be out of date\./);
+  assert.ok(stale.ui.get('Roadmap'), 'the last version read still reads');
   stale.ui.press('Retry refreshing alpha plan');
   assert.equal(retries, 2);
 });
@@ -479,5 +473,7 @@ test('an idle plan: a changed save ends its mark, End idle saves without one, an
 test('a read plan that is idle says so and says what ends it', async () => {
   const idlePlan: ProjectPlan = { ...latest, entries: [entry('l1', 'later')], idle: { reason: 'Waiting', at: '2026-10-15T10:00:00.000Z' } };
   const { ui } = await mountTab({ sections: [{ project: projects[0], latest: idlePlan, saved: idlePlan }] });
-  assert.match(ui.text(), /Idle on purpose since 2026-10-15: Waiting\. Saving a changed plan or finishing new work ends it\./);
+  assert.match(JSON.stringify(ui.get('Idle on purpose')), /Waiting/);
+  ui.press('Show alpha plan history');
+  assert.match(JSON.stringify(ui.get('Plan history for alpha')), /Idle on purpose since .*Saving a changed plan or finishing new work ends it\./);
 });

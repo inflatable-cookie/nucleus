@@ -807,34 +807,56 @@ render. The lane document `nucleus-ui` (U5) carries the design.
 
 ## Planning tab
 
-> Superseded in part by [Spec 041](041-planning-roadmap.md) (Tom, 2026-10-03): one project at a time, Now/Next/Later/Done bands, `doneWhen`, and lane close-out prompts. The Lane column stays.
+> Superseded in part by [Spec 041](041-planning-roadmap.md) (Tom, 2026-10-03): Now/Next/Later, `doneWhen`, the plan editor and lane close-out prompts. The read view below is nucleus#1531's.
 
 Planning is a menu view of the inbox board (Tom, 2026-11-21; top-level since
 2026-10-03; the Lanes tab was folded into Planning in Spec 019's 2026-11-07 revision).
 The header's project selector chooses the projects (Board, "Scope"); Planning has no
-chooser of its own since 2026-11-21. It has two panes:
+chooser of its own since 2026-11-21. Its read view is a project roadmap and a lane page
+(nucleus#1531, Tom 2026-11-22: "it's quite impenetrable as a human reading it"; "1. Yeah
+lanes as columns 2. Just go with first lane 3. Land the read view first"):
 
-- **Plan:** for each selected project, a flat row — the list's divider, and an accent
-  edge on the expanded row — that opens and closes the project's lanes, with that
-  project's lanes in plan order, each with its live-task count and last activity,
-  grouped under **Now** and **Later** (each plan entry
-  carries `horizon: now | later`; existing entries are `now`). Up and down
-  controls reorder, and a move between groups changes the horizon; saving writes a
-  new plan version with the stale-save refusal. Lanes that list one of the
-  project's repositories but are not in its plan appear below, with one action to
-  add them.
-- **Lane:** the lane's aim and projects, its document, and its work, leads and papercuts
-  (`client/lane-screen.tsx`, Spec 041 part 4). The document shows a preview and a
-  readable full text with earlier versions. Editing sends the version the text was written
-  against; a newer version blocks the save until the operator picks it as the base or
-  discards their text. Leads and papercuts (open leads tagged `papercut`) come from every
-  project that lists the lane, not the chooser's selection, so their counts are the
-  lane's own; a lane no project lists falls back to the projects in scope. Counts show
-  only from complete reads. Lane key, repositories and status actions sit behind Details.
+- **Projects (list pane):** grouped **Active**, **Idle on purpose** (the plan's `idle`
+  mark is set; it wins over the activity rule) and **Dormant** (the activity rule above).
+  Each row is the inbox row style: project badge and name, last activity on the right,
+  and one status line in words, such as "2 need you · 3 lanes in progress · 19 tasks
+  live", "Idle · <reason>" or "No recent activity". "Need you" counts the live tasks in
+  the project's lanes that are blocked, in error or need attention. Selecting a row
+  shows that project's roadmap; there are no accordions in the list.
+- **Roadmap (detail pane):** the project's badge and name, "Plan updated <age> by
+  <author>" (never the version number), and History and Edit plan. The banner is the
+  **Focus**, the aim of the first Now lane; an idle plan shows "Idle on purpose" with its
+  reason instead, and a dormant project with no Now lane says it is dormant. Now, Next
+  and Later are columns, each with its count and a one-line hint, and they stack into one
+  column in a narrow pane. A lane card shows its title with a "N need you" pill, its aim
+  clamped to three lines, a bar of live tasks by phase with the counts in words and the
+  finished count, and "Done when". An empty column says "Nothing here". Finished lanes sit
+  in a collapsed row at the bottom. History holds the plan version, who saved it and
+  when, the idle mark's start, and the lanes the plan does not name yet. Edit plan opens
+  the plan editor unchanged ([Spec 041](041-planning-roadmap.md)).
+- **Lane page:** opens in the detail pane from a lane card, with the breadcrumb
+  Planning › Project › Lane. The header has the title and chips for its horizon in the
+  plan it was opened from, open or closed, and the other plans that list it, with Close
+  lane and Edit lane (the lane document). Below are the aim in full; the finish line
+  (`doneWhen`) with "Why it's still open" from `lane.keep.reason`; the latest status
+  (the plan entry's `note`, with the plan's author and age); what is in flight (live
+  tasks as inbox rows with phase and detail, paged from the server total); what is
+  waiting to start (open leads, then papercuts, eight at a time); and recently finished
+  work with the total and See all. A side column holds the lane document (name from its
+  first heading, version, edited age, Open document), the counts at a glance and the
+  plans it is in with their horizons. Opening the document gives the readable full text
+  with earlier versions and the version-safe editor of `client/lane-screen.tsx`. Leads
+  and papercuts come from every project that lists the lane, so their counts are the
+  lane's own; counts show only from complete reads. Lane key, repositories and status
+  actions sit behind Details.
 
-The plan fills the list pane and the lane the detail pane. Without a detail pane
-(below 1100 points), the lane opens in a modal over the plan, and closing it returns
-to the plan. Editing uses the existing dark-theme styling.
+The list fills the list pane and the roadmap or lane page the detail pane. Without a
+detail pane (below 1100 points) a picked project's roadmap takes the list pane with a
+way back, and the lane page opens in the existing modal with the same breadcrumb.
+
+Plan notes, `doneWhen` and idle reasons are written as plain sentences for the operator
+to read, without hashes or run IDs; a task is referenced as `#1234` when needed (the
+`nucleus` skill's plan guidance).
 
 ## Tasks and order
 
@@ -868,7 +890,8 @@ to the plan. Editing uses the existing dark-theme styling.
 | 13 | A task in each phase, and an empty project selection | One row of columns, each card once; every phase lands in its column (Working, Attention, Review, Closing as mapped); no Status view; no selection shows all projects and a selection scopes them |
 | 12a | A column with 300 cards | Every card in a full-height column that scrolls on its own, the header counting all 300; cards are the standard task card size |
 | 14 | Planning tab edits: reorder, move between Now and Later, add a listed lane, save a lane document | Plan and document saved as operator versions with the horizon kept; stale save refused |
-| 14a | Planning tab navigation at both viewport sizes | Plan and lane columns at the wide size; plan, lane drill-down with back at the compact size; the pipeline board has no side pane |
+| 14a | Planning tab navigation at both viewport sizes | Project list beside the roadmap or lane page at the wide size, with a breadcrumb back from the lane; below 1100 points the roadmap opens in place of the list and the lane page in a modal with the same breadcrumb; the pipeline board has no side pane |
+| 14e | Planning read view with an active, an idle and a dormant project, Next and Later lanes, and a lane with live tasks, leads, finished work and a keep reason | Grouped rows with status lines in words; Focus from the first Now lane, or the idle or dormant banner; Now, Next and Later columns with the attention pill; the lane page's finish line, why it's still open, latest status, in flight, waiting and recently finished; no version number, step counter or shared-lane caveat in the main view, and each is reachable under History, Details or Edit plan |
 | 14c | Open the Nucleus board in a workspace of a project's repository, and in a workspace outside every project | Scoped to that project's Pipeline and Planning; outside every project, a plain message |
 | 14d | Open a project row's chevron: Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection and counts are unchanged by disclosure or a re-sorting rename |
 | 14b | Click one project, Shift-click a second, Shift-click the first off, then Clear or Shift-clear the last one | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; an empty selection means all projects, and Clear (beside Settings, or alone on a host without it) or Shift-clearing the last project restores them while the picker stays open |

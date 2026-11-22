@@ -657,9 +657,10 @@ export function ProjectRoadmapView({
         key={horizon}
         accessibilityLabel={`${horizonTitle(horizon)} column`}
         style={{
-          flexGrow: 1,
-          flexShrink: 1,
-          flexBasis: stacked ? "100%" : 0,
+          // Stacked, each column takes its own height; side by side, they share the width.
+          flexGrow: stacked ? 0 : 1,
+          flexShrink: stacked ? 0 : 1,
+          flexBasis: stacked ? "auto" : 0,
           minWidth: 0,
           gap: space.xs,
         }}

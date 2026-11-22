@@ -1,13 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import React, { useState } from "react";
-import { mount, useNativeStubs } from "./support/render";
+import { mount, useNativeStubs, type HostNode } from "./support/render";
 import type { BoardLead, LaneDocumentVersion, LaneView, Project, TaskSummary } from "../shared/contracts";
 import type { LaneDocumentRead, LaneDraft, LaneListRead } from "../client/lane-screen";
 
 useNativeStubs();
 const h = React.createElement;
 const c = new Proxy({}, { get: () => "#000" }) as never;
+const textOf = (node: HostNode | string): string => typeof node === "string" ? node : node.children.map(textOf).join(" ");
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 const lane = {
@@ -54,7 +55,6 @@ async function mountLane(over: Over = {}) {
       compact: props.compact ?? false,
       projects,
       plans: [],
-      selected: [],
       busy: props.busy ?? false,
       canEdit: props.canEdit ?? true,
       doc: props.doc ?? { data: latest },
@@ -84,7 +84,7 @@ async function mountLane(over: Over = {}) {
   };
 }
 
-test("the document states are distinct: loading, failed, none yet, and a preview", async () => {
+test("the document states are distinct: loading, failed, none yet, and the document's name and version", async () => {
   const loading = await mountLane({ doc: {} });
   assert.match(loading.ui.text(), /Loading document…/);
   assert.equal(loading.ui.query("Read full document for Alpha lane"), undefined);
@@ -98,21 +98,20 @@ test("the document states are distinct: loading, failed, none yet, and a preview
   assert.match(none.ui.text(), /No lane document yet\./);
   assert.equal(none.ui.get("Write document for Alpha lane").props.accessibilityLabel, "Write document for Alpha lane");
 
-  const preview = await mountLane();
-  assert.ok(preview.ui.get("Lane document preview"));
-  assert.ok(preview.ui.ofType("Text").some(node => node.props.accessibilityRole === "header" && node.children.join("") === "Alpha"), "the preview sets a Markdown heading as a heading");
-  assert.doesNotMatch(preview.ui.text(), /# Alpha/, "the preview does not show raw Markdown markers");
-  assert.match(preview.ui.text(), /Preview only\./);
-  assert.doesNotMatch(preview.ui.text(), /The last line of the full text/, "the preview stops short of the full text");
-  assert.ok(preview.ui.get("Read full document for Alpha lane"));
-  assert.ok(preview.ui.get("Edit the Alpha lane document"));
+  const ready = await mountLane();
+  const box = textOf(ready.ui.get("Lane document"));
+  assert.match(box, /Document\s+Alpha\s+Version\s+3\s+· edited/, "the side column names the document by its first heading, with its version and age");
+  assert.doesNotMatch(ready.ui.text(), /# Alpha/, "no raw Markdown markers");
+  assert.doesNotMatch(ready.ui.text(), /The last line of the full text/, "the full text waits for Open document");
+  assert.ok(ready.ui.get("Read full document for Alpha lane"));
+  assert.ok(ready.ui.get("Edit the Alpha lane document"));
 });
 
 test("a stale document says which version it shows and that it may be out of date", async () => {
   const stale = await mountLane({ doc: { data: latest, error: "timeout" } });
   assert.match(stale.ui.text(), /Showing version 3\. The latest could not be refreshed: timeout\. It may be out of date\./);
   assert.ok(stale.ui.get("Retry refreshing the Alpha lane document"));
-  assert.ok(stale.ui.get("Lane document preview"), "the last read stays on screen");
+  assert.ok(stale.ui.get("Lane document"), "the last read stays on screen");
 });
 
 test("reading the full document shows every line, and older versions are read on demand", async () => {
@@ -132,7 +131,7 @@ test("reading the full document shows every line, and older versions are read on
   assert.match(ui.text(), /The last line of the full text\./);
 
   ui.press("Back to lane Alpha lane");
-  assert.ok(ui.get("Lane document preview"));
+  assert.ok(ui.get("Lane document"));
   assert.equal(ui.query("Lane document, full text"), undefined);
 });
 
@@ -189,7 +188,7 @@ test("discarding a conflicting draft drops the text and keeps the latest version
   assert.equal(ui.query("Lane document editor"), undefined);
   assert.equal(log.drafts.at(-1), null);
   assert.doesNotMatch(ui.text(), /Mine\./);
-  assert.ok(ui.get("Lane document preview"), "the latest version is what the lane shows");
+  assert.ok(ui.get("Lane document"), "the latest version is what the lane shows");
 });
 
 test("the first version is written from version zero, with no latest text to compare", async () => {
@@ -214,10 +213,10 @@ test("a draft from before the tab was left opens in the editor, and Edit never r
 test("work counts come from the lane, and a partial list says how many it shows", async () => {
   const held = { ...work("t1", "Build it"), held: true, hold: { owner: "Tom", reason: "Awaiting the source decision" } } as unknown as TaskSummary;
   const { ui, log } = await mountLane({ lane: { ...lane, liveByPhase: { working: 2 } } as LaneView, tasks: { items: [held] } });
-  assert.match(ui.text(), /Work · 2/);
+  assert.match(ui.text(), /In flight\s*2\s*tasks/);
   assert.match(ui.text(), /Showing 1–1 of 2 live tasks/);
   assert.match(ui.query(/^Open task Build it/).props.accessibilityLabel, /Held · Awaiting the source decision/);
-  assert.match(ui.text(), /Working · Held · Awaiting the source decision/);
+  assert.match(ui.text(), /Working\s*· Held · Awaiting the source decision/);
   ui.press(/^Open task Build it/);
   assert.deepEqual(log.opened, ["task:t1"]);
 });
@@ -230,7 +229,7 @@ test("lane work pages through queued tasks beyond the board overflow with the se
     onLoadMoreTasks: offset => { requested = offset; },
   });
   assert.match(ui.text(), /Showing 1–25 of 30 live tasks/);
-  assert.equal(ui.all("Load next page of lane tasks").length, 2, "next is available above and below the list");
+  assert.equal(ui.all("Load next page of lane tasks").length, 1, "next follows the list");
   ui.all("Load next page of lane tasks")[0].props.onPress();
   assert.equal(requested, 25);
   let returned = false;
@@ -240,7 +239,7 @@ test("lane work pages through queued tasks beyond the board overflow with the se
     onLoadPreviousTasks: () => { returned = true; },
   });
   assert.match(pageTwo.ui.text(), /Showing 26–30 of 30 live tasks/);
-  assert.equal(pageTwo.ui.all("Load previous page of lane tasks").length, 2, "previous is available above and below the list");
+  assert.equal(pageTwo.ui.all("Load previous page of lane tasks").length, 1, "previous follows the list");
   pageTwo.ui.all("Load previous page of lane tasks")[0].props.onPress();
   assert.equal(returned, true);
 });
@@ -248,11 +247,12 @@ test("lane work pages through queued tasks beyond the board overflow with the se
 test("work loading is not an empty list, and a failed work read says it may be out of date", async () => {
   const loading = await mountLane({ tasks: {} });
   assert.match(loading.ui.text(), /Loading work…/);
-  assert.doesNotMatch(loading.ui.text(), /No work in this lane/);
+  assert.doesNotMatch(loading.ui.text(), /No tasks running in this lane/);
 
   const empty = await mountLane({ lane: { ...lane, liveByPhase: {}, terminalCount: 0 } as LaneView, tasks: { items: [] } });
-  assert.match(empty.ui.text(), /No work in this lane\./);
-  assert.match(empty.ui.text(), /Finished · 0/);
+  assert.match(empty.ui.text(), /No tasks running in this lane/);
+  assert.match(empty.ui.text(), /0\s*in total/);
+  assert.match(empty.ui.text(), /Nothing finished yet\./);
 
   let retried = false;
   const failed = await mountLane({ tasks: { error: "timeout" }, onRetryTasks: () => { retried = true; } });
@@ -264,17 +264,15 @@ test("work loading is not an empty list, and a failed work read says it may be o
 test("leads and papercuts split the lane's open records, and each opens its record", async () => {
   const records = [lead("l1", "Triage the plan"), lead("p1", "Board overflow", ["papercut"], "board"), lead("l2", "Second lead")];
   const { ui, log } = await mountLane({ leads: { items: records } });
-  assert.match(ui.text(), /Leads · 2/);
-  assert.match(ui.text(), /Papercuts · 1/);
-
-  ui.press("Show leads for Alpha lane");
+  assert.ok(ui.get("Leads waiting: 2"));
+  assert.ok(ui.get("Papercuts waiting: 1"));
   assert.ok(ui.get("Open lead Triage the plan"));
   assert.equal(ui.query("Open lead Board overflow"), undefined, "a papercut is not listed as a lead");
   ui.press("Open lead Triage the plan");
   assert.deepEqual(log.opened, ["lead:l1"]);
 
-  ui.press("Show papercuts for Alpha lane");
   assert.ok(ui.get("Open papercut Board overflow"));
+  assert.match(textOf(ui.get("Waiting to start")), /Triage the plan[\s\S]*Board overflow/, "both wait to start, leads first");
   ui.press("Open papercut Board overflow");
   assert.deepEqual(log.opened, ["lead:l1", "lead:p1"]);
 });
@@ -282,8 +280,7 @@ test("leads and papercuts split the lane's open records, and each opens its reco
 test("lead lists page eight at a time from the complete read, so a first page is never a total", async () => {
   const records = Array.from({ length: 10 }, (_, index) => lead(`l${index}`, `Lead ${index}`));
   const { ui } = await mountLane({ leads: { items: records } });
-  assert.match(ui.text(), /Leads · 10/, "the count is the lane's total, not the page");
-  ui.press("Show leads for Alpha lane");
+  assert.ok(ui.get("Leads waiting: 10"), "the count is the lane's total, not the page");
   assert.match(ui.text(), /Showing 8 of 10 leads\./);
   assert.ok(ui.get("Open lead Lead 7"));
   assert.equal(ui.query("Open lead Lead 8"), undefined, "the rest wait for the next page");
@@ -294,8 +291,7 @@ test("lead lists page eight at a time from the complete read, so a first page is
 
   const cuts = Array.from({ length: 9 }, (_, index) => lead(`p${index}`, `Papercut ${index}`, ["papercut"], "board"));
   const paged = await mountLane({ leads: { items: cuts } });
-  assert.match(paged.ui.text(), /Papercuts · 9/);
-  paged.ui.press("Show papercuts for Alpha lane");
+  assert.ok(paged.ui.get("Papercuts waiting: 9"));
   assert.match(paged.ui.text(), /Showing 8 of 9 papercuts\./);
   paged.ui.press("Show 1 more papercuts");
   assert.ok(paged.ui.get("Open papercut Papercut 8"));
@@ -303,38 +299,66 @@ test("lead lists page eight at a time from the complete read, so a first page is
 
 test("a lead list still loading or failing shows no count, so a partial read is never a total", async () => {
   const loading = await mountLane({ leads: {} });
-  loading.ui.press("Show leads for Alpha lane");
   assert.match(loading.ui.text(), /Loading leads…/);
-  assert.doesNotMatch(loading.ui.text(), /Leads · /);
+  assert.ok(loading.ui.get("Leads waiting: …"), "no count while loading");
 
   const failed = await mountLane({ leads: { error: "lead.board refused" } });
-  failed.ui.press("Show leads for Alpha lane");
   assert.match(failed.ui.text(), /Couldn’t load leads: lead\.board refused/);
   assert.match(failed.ui.text(), /Nothing here is a total until it loads\./);
-  assert.doesNotMatch(failed.ui.text(), /Leads · /);
+  assert.ok(failed.ui.get("Leads waiting: …"), "no count from a failed read");
   assert.ok(failed.ui.get("Retry loading leads"));
 
   const stale = await mountLane({ leads: { items: [lead("l1", "Kept")], error: "timeout" } });
-  stale.ui.press("Show leads for Alpha lane");
   assert.match(stale.ui.text(), /Showing the last leads read\. It may be out of date: timeout/);
-  assert.match(stale.ui.text(), /Leads · 1/);
+  assert.ok(stale.ui.get("Leads waiting: 1"));
 });
 
-test("an empty related list says what is absent", async () => {
+test("nothing waiting says so once, with no empty tabs", async () => {
   const { ui } = await mountLane({ leads: { items: [] } });
-  ui.press("Show papercuts for Alpha lane");
-  assert.match(ui.text(), /No open papercuts in this lane\./);
-  ui.press("Show leads for Alpha lane");
-  assert.match(ui.text(), /No open leads in this lane\./);
+  assert.match(textOf(ui.get("Waiting to start")), /Nothing waiting/);
+  assert.equal(ui.query(/^Show (leads|papercuts) for /), undefined, "no tabs");
 });
 
-test("the layout stacks at narrow sizes and sits the document beside the lists at wide sizes", async () => {
+test("the header names the horizon, open state and other plans; Close lane and Edit lane keep their actions", async () => {
+  const projects = [
+    { key: "alpha", name: "Alpha project", repositories: [{ origin: "owner/alpha", path: "/alpha" }], primary: { origin: "owner/alpha", path: "/alpha" } },
+    { key: "beta", name: "Beta project", repositories: [{ origin: "owner/alpha", path: "/alpha" }], primary: { origin: "owner/alpha", path: "/alpha" } },
+  ] as unknown as Project[];
+  const plan = (project: string, horizon: "now" | "later", note: string) => ({ project, version: 2, author: "the planner", createdAt: new Date().toISOString(), entries: [{ lane: "alpha-lane", horizon, note, doneWhen: "The plan reads plainly." }] });
+  const { LaneScreen } = await import("../client/lane-screen");
+  const status: string[] = [];
+  const ui = mount(h(LaneScreen, {
+    lane: { ...lane, keep: { reason: "One more pass on the copy.", at: "2026-11-20T00:00:00Z", by: "operator" } } as LaneView,
+    project: "alpha", compact: false, projects, plans: [plan("alpha", "now", "Copy pass in review."), plan("beta", "later", "")] as never,
+    busy: false, canEdit: true, doc: { data: latest }, draft: null, onDraft: (next: unknown) => status.push(next ? "draft" : "no draft"), onSaveDocument: async () => {}, onRetryDocument: () => {},
+    readVersion: async () => null, tasks: { items: [] }, leads: { items: [] }, onOpenTask: () => {}, onOpenLead: () => {},
+    onSetStatus: (next: string) => status.push(next), onSelectProject: (key: string) => status.push(`show:${key}`), c,
+  }));
+  assert.match(ui.text(), /Now\s*Open\s*Also on Beta project \(Later\)/);
+  assert.match(textOf(ui.get("Finish line")), /The plan reads plainly\.[\s\S]*Why it’s still open:[\s\S]*One more pass on the copy\./);
+  assert.match(textOf(ui.get("Latest status")), /Copy pass in review\.[\s\S]*the planner · just now/);
+  assert.ok(ui.get("Alpha project: Now"));
+  ui.press("Show the Beta project plan, Later");
+  assert.doesNotMatch(ui.text(), /step \d+ of|Shared by/);
+  ui.press("Close lane Alpha lane");
+  assert.deepEqual(status, ["show:beta", "done"]);
+  ui.press("Edit the Alpha lane document");
+  assert.equal(status.at(-1), "draft", "Edit lane starts a document draft");
+  const closed = mount(h(LaneScreen, {
+    lane: { ...lane, status: "done" } as LaneView, compact: false, projects: [], plans: [], busy: false, canEdit: true, doc: { data: latest }, draft: null,
+    onDraft: () => {}, onSaveDocument: async () => {}, onRetryDocument: () => {}, readVersion: async () => null, tasks: { items: [] }, leads: { items: [] },
+    onOpenTask: () => {}, onOpenLead: () => {}, onSetStatus: () => {}, c,
+  }));
+  assert.ok(closed.get("Lane closed"));
+  assert.equal(closed.query("Close lane Alpha lane"), undefined, "a closed lane has nothing to close");
+  assert.match(textOf(closed.get("Finish line")), /Not set/);
+});
+
+test("the side column sits beside the sections at wide sizes and stacks below them at narrow ones", async () => {
   const wide = await mountLane({ compact: false });
-  assert.equal(wide.ui.get("Lane document and records").props.style.flexDirection, "row");
-  assert.equal(wide.ui.get("Lane document and records").props.style.flexWrap, "wrap");
+  assert.equal(wide.ui.get("Lane sections").props.style.flexDirection, "row");
   const narrow = await mountLane({ compact: true });
-  assert.equal(narrow.ui.get("Lane document and records").props.style.flexDirection, "column");
-  assert.equal(narrow.ui.get("Lane document and records").props.style.flexWrap, "wrap");
+  assert.equal(narrow.ui.get("Lane sections").props.style.flexDirection, "column");
 });
 
 test("raw keys, repositories and lane status stay behind Details", async () => {

@@ -125,10 +125,13 @@ Replaces the Plan column in Spec 026's Planning tab.
   place in that horizon). A shared lane has no single global order. Loading, a
   failed read and a stale plan stay distinct from an empty result, and no first
   page is presented as a total.
-- **Now:** full cards with aim, `doneWhen`, tasks done and live, open leads,
-  last activity, and a Drained flag with its age.
-- **Next** and **Later:** compact rows with title, aim, `doneWhen` and counts.
-  Reading shows no controls. **Edit plan** opens a draft, the only place that
+- **Now**, **Next** and **Later** are columns of lane cards (nucleus#1531, Tom
+  2026-11-22: "lanes as columns"). A card shows the title with a "N need you"
+  pill and a Drained flag with its age, the aim clamped to three lines, live tasks
+  as a bar by phase with the counts in words and the finished count, and "Done
+  when" (a `now` or `next` card without one says it is not set). The roadmap's
+  Focus is the first Now lane's aim (Tom: "Just go with first lane"). Spec 026's
+  "Planning tab" owns the rest of the read view. Reading shows no controls. **Edit plan** opens a draft, the only place that
   reorders steps or changes a horizon: accessible Up and Down, Move to Now /
   Next / Later, Add to plan for unplanned lanes, a visible draft with Save plan
   and Cancel (Tom, 2026-11-07: no drag-only ordering). A save writes a plan
@@ -144,13 +147,15 @@ Replaces the Plan column in Spec 026's Planning tab.
 - **Failures:** a plan that cannot be read is an error with Retry, never an
   empty plan. A refresh failure keeps the last version and says it may be out of
   date. Loading shows its own state.
-- **Done:** collapsed, with a count, newest first.
+- **Done:** the "Finished lanes" row, collapsed, with a count, newest first.
 - Milestone qualifications live in the task's lane document
   ([milestone QA](../contracts/milestone-qa.md)).
-- Lanes that list the project's repositories but sit outside the plan go behind
-  "N unplanned lanes", each with Add to plan and Close.
-- Selecting a step opens the existing Lane view: document, history, leads, plus
-  the lane's tasks.
+- Lanes that list the project's repositories but sit outside the plan are named
+  under History; Edit plan lists them behind "N unplanned lanes", each with Add to
+  plan and Close.
+- Selecting a lane card opens the lane page (Spec 026, "Planning tab"): finish
+  line, why it's still open, latest status, in flight, waiting to start, recently
+  finished, the document and the plans it is in.
 - Dark theme only when checked by eye.
 - Built in part 1: `plan.get` returns `done` (lanes that sat in the plan and are now `done` or `abandoned`, read from plan history, newest close first) beside `entries`; saves send open lanes only. The Drained flag is in the view model and hidden until part 2. Add to plan puts a lane in Later.
 - Built in part 3 (nucleus#866): the project chooser and "Find lanes" share `shared/lane-finder.ts`; the lane panel shows each project's plan position; the separate Lanes destination and its table are retired (Spec 019, revision 2026-11-07).
@@ -201,11 +206,11 @@ Times are first guesses and are settings, not constants (Tom, 2026-10-03).
 
 | # | Case | Expected |
 |---|---|---|
-| 1 | Planning tab with one, then three, projects in scope | One roadmap; then one compact row per project, one expanded at a time; the tab's chooser writes the same scope; no header addition |
+| 1 | Planning tab with one, then three, projects in scope | One row per project grouped Active, Idle on purpose and Dormant, and one roadmap at a time beside the list; no header addition |
 | 12 | Find lanes from one project, then from the labelled all-projects scope | Results show title, aim, project and status; a lane outside the chosen project opens and keeps the plan context |
 | 13 | A lane two projects list | Each project's own position is shown; no global order is implied |
 | 14 | Lanes still loading, failed, or a stale plan, then a query with no match | Each says its own state; empty says no match; never a silent empty list |
-| 2 | Plan with now, next, later and a done lane | Four bands; Done collapsed |
+| 2 | Plan with now, next, later and a done lane | Now, Next and Later columns; Finished lanes collapsed |
 | 3 | Move a step from Next to Now and save | New plan version, `horizon: now`; a stale save is refused |
 | 4 | `now` step without `doneWhen` | Saves; tab marks it |
 | 5 | Lane's last task finishes, no leads, timer passes | One notice to the plan owner |
