@@ -7,7 +7,7 @@ import { submissionQueueFields } from "../planning/handoff";
 /** The operator's stated reason for a merge hold, or the recorded absence. */
 const mergeHoldReason = (value: unknown): string => typeof value === 'string' ? value : HOLD_REASON_NOT_RECORDED;
 
-/** The routing fields the ordinary profile validation and sign-off path owns. */
+/** The routing fields the ordinary profile validation path owns. */
 const ROUTING_KEYS = ['scope', 'complexity', 'preferredProfileId', 'requirePreferred', 'thinkingOptionId', 'profileRequests', 'critical'];
 
 /**
@@ -79,7 +79,7 @@ function applyRoutingFields(engine: Engine, task: Task, next: Record<string, unk
   if (fields.includes('dependsOn')) task = store.updateDependencies(task, (values.dependsOn as string[]).map(id => store.resolveTaskId(id)), 'brief amendment');
   if (fields.includes('lanes')) task = store.setTaskLanes(task, values.lanes as string[], task.repository);
   if (fields.some(key => ROUTING_KEYS.includes(key))) {
-    // Use the ordinary profile validation and sign-off path. A document supplies no board authority.
+    // Use the ordinary profile validation path.
     const routing = Object.fromEntries(ROUTING_KEYS.filter(key => key in values).map(key => [key, values[key]]));
     if (fields.includes('profileRequests')) {
       const requests = { ...(values.profileRequests as NonNullable<Task['profileRequests']>) };

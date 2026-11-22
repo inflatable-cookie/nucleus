@@ -38,7 +38,6 @@ export type SweepContext = Pick<
   | "adapter"
   | "applyDeferredOwnerVerbs"
   | "deliverPendingBriefAmendments"
-  | "archivePlannerGrants"
   | "archiveRetiredErroredAgents"
   | "auditPass"
   | "clearRetiredInvalidations"
@@ -282,7 +281,6 @@ export class Sweep {
     };
     return this.engine
       .flushPrerequisiteReleases()
-      .then(() => this.engine.archivePlannerGrants())
       .then(
         () => {
           const drain = this.engine.ensureSweep("drain");

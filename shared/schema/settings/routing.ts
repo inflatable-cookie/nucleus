@@ -12,7 +12,7 @@ import { usageViewSchema } from "./usage";
 
 /**
  * How one task's routing reads: the profile each role would use and why, the
- * automatic selection explanation, the requests and their board sign-offs, and
+ * automatic selection explanation, the requests and their reasons, and
  * the host rules that translated or ruled a profile out. Read-only diagnostics;
  * selection itself is the dispatcher's `chooseProfile`.
  */
@@ -30,8 +30,8 @@ const isRecord = (raw: unknown): raw is Record<string, unknown> =>
 
 /** A recorded diagnostic row that carried the retired `cost` reads without it (nucleus#1488). */
 const routePolicyFromLegacy = (raw: unknown): unknown => {
-  if (!isRecord(raw) || !("cost" in raw)) return raw;
-  const { cost: _retired, ...rest } = raw;
+  if (!isRecord(raw)) return raw;
+  const { cost: _retired, signoff: _retiredSignoff, ...rest } = raw;
   return rest;
 };
 
@@ -66,18 +66,7 @@ const routePolicyShape = z
     automatic: z.enum(["allowed", "request_tier"]).nullable(),
     explanation: z.string(),
     gates: z.array(z.string()),
-    /** Spec 052: a request row's board sign-off; absent for other rows and requests that need none. `grantId` when a planner grant covered it. */
-    signoff: z
-      .object({
-        status: z.enum(["pending", "approved", "declined"]),
-        decisionId: z.string().nullable(),
-        note: z.string(),
-        grantId: z.string().optional(),
-        endedGrantId: z.string().optional(),
-      })
-      .strict()
-      .nullable()
-      .optional(),
+    reason: z.string().optional(),
   })
   .strict();
 
@@ -196,36 +185,8 @@ export const profileRequestSchema = z
     routedAt: z.string().optional(),
     /** Spec 050: thinking override for this role's next run. */
     thinkingOptionId: z.string().optional(),
-    /** Who recorded the request: the routing caller, or the submitting origin for a brief. Spec 052 sign-off decisions are asked on its behalf. */
+    /** Who recorded the request: the routing caller, or the submitting origin for a brief. */
     requestedBy: z.string().max(300).optional(),
-    /**
-     * Spec 052 (Tom, 2026-10-21): a request for a profile above the usage level's
-     * permission rule holds applies only once the operator
-     * signs it off on the board.
-     * Queue writes this; a submission or amendment never carries it.
-     */
-    signoff: z
-      .object({
-        status: z.enum(["pending", "approved", "declined"]),
-        decisionId: z.string().nullable(),
-        by: z.string().nullable(),
-        at: z.string(),
-        note: z.string().max(400).default(""),
-        /** Spec 052 planner grant: the standing grant that signed this request off. Absent for a per-task board answer. */
-        grantId: z.string().optional(),
-        /** The request was covered by this grant, which has ended; stay automatic until explicitly requested again. */
-        endedGrantId: z.string().optional(),
-        /** While pending: the option texts the question offered and the profile each names, fixed when it was asked. */
-        options: z
-          .object({
-            approve: z.string(),
-            choices: z.record(z.string(), z.string()),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
   })
   .strict();
 

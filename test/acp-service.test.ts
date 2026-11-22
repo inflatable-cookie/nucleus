@@ -10,11 +10,6 @@ import {
   proposedOwner,
   type DecisionScope,
 } from "../core/acp/decisions";
-import {
-  reconcileRoutingSignoffs,
-  signoffApprove,
-} from "../core/dispatch/routing-signoff";
-import { poolSchema } from "../shared/contracts";
 import { Store } from "../core/store/store";
 import { startCallbacks } from "../service/callbacks/callback";
 import {
@@ -1349,74 +1344,6 @@ test("an Inbox-owned decision keeps its owner, and raises no duplicate, across a
     );
     assert.equal(fixture.store.decision(id).status, "answered");
     assert.equal(fixture.store.task(fixture.taskId).held, true);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test("an Inbox routing sign-off authorizes the requested role without releasing an independent hold", async () => {
-  const fixture = await acpFixture("t3code:synthetic");
-  try {
-    const requested = profile("frontier", "synthetic-frontier", "pi");
-    fixture.store.setMeta("pool", [
-      poolSchema.parse({
-        profileId: requested.id,
-        enabled: true,
-        group: "frontier",
-        roles: ["reviewer"],
-        weight: "default",
-        scopes: ["general"],
-        capability: "frontier",
-      }),
-    ]);
-    fixture.store.update(fixture.taskId, {
-      phase: "queued",
-      held: true,
-      profileRequests: {
-        reviewer: {
-          profileId: requested.id,
-          reason: "Independent review",
-          required: true,
-          requestedBy: "planner",
-        },
-      },
-    });
-    const decisions = new Decisions(fixture.store);
-    reconcileRoutingSignoffs(fixture.store, decisions, fixture.taskId, [
-      requested,
-    ]);
-    const decisionId = fixture.store.task(fixture.taskId).profileRequests!
-      .reviewer!.signoff!.decisionId!;
-    const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
-    const token = readAcpBinding(inbox.bindingPath).token;
-    const caller = {
-      kind: "inbox" as const,
-      hostId: inbox.hostId,
-      sessionId: inbox.sessionId,
-    };
-    fixture.acp.observedCards({ hostId: inbox.hostId }, []);
-    assert.deepEqual(
-      (
-        await fixture.acp.turn({ ...caller, waitMs: 0 }, token)
-      ).elicitations?.map((row) => row.id),
-      [decisionId],
-    );
-    await fixture.acp.answer(
-      {
-        ...caller,
-        id: decisionId,
-        version: 1,
-        action: "accept",
-        answer: signoffApprove(requested.name),
-      },
-      token,
-    );
-    reconcileRoutingSignoffs(fixture.store, decisions, fixture.taskId, [
-      requested,
-    ]);
-    const task = fixture.store.task(fixture.taskId);
-    assert.equal(task.profileRequests!.reviewer!.signoff!.status, "approved");
-    assert.equal(task.held, true);
   } finally {
     await fixture.close();
   }

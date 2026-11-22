@@ -9,10 +9,10 @@ import { isTransportFailure } from "../../shared/transport";
 import {
   demandRank,
   groupIsUnavailable,
-  honouredWorkerThinking,
+  workerThinking,
   unavailableGroupNames,
 } from "../../shared/pool";
-import { climbedTier, requestedTier, runDemand } from "../../shared/demand";
+import { runDemand } from "../../shared/demand";
 import type { Engine } from "../engine";
 import {
   isQuotaExhaustion,
@@ -46,7 +46,7 @@ import {
 } from "../recovery/task-reasons";
 import {
   decideWorkerReplacement,
-  isWorkerRouteApproved,
+  isWorkerRouteAllowed,
   replacementCeilingRefusal,
   retainedWorkerFailureCause,
   supersededReplacementRefusal,
@@ -254,7 +254,12 @@ function planWorkerFailover(
   const replacingReassignedWorker = task.failoverReason.startsWith(
     OPERATOR_ROLE_REASSIGNMENT_REASON,
   );
-  const requested = task.replacementProfile;
+  const pool = store.pool();
+  const usage = store.usageLevel();
+  const pending = task.replacementProfile;
+  const requested = pending && isWorkerRouteAllowed(task, pending.profileId, pool, usage)
+    ? pending
+    : null;
   // An errored process is not evidence against its profile. Profile failures
   // are represented by the durable exclusions that an owner can inspect/lift.
   const profiles = facts.profiles.filter(
@@ -280,13 +285,7 @@ function planWorkerFailover(
   const replacementTask = requested
     ? {
         ...task,
-        thinkingOptionId: honouredWorkerThinking(
-          task,
-          store.pool(),
-          store.usageLevel(),
-          requestedTier(task.complexity),
-          climbedTier(task),
-        ),
+        thinkingOptionId: workerThinking(task),
         preferredProfileId: requested.profileId,
         requirePreferred: true,
         profileRequests: {
@@ -301,7 +300,6 @@ function planWorkerFailover(
         },
       }
     : task;
-  const pool = store.pool();
   const assignedGroup =
     task.profileGroup ??
     pool.find((entry) => entry.profileId === task.profile?.id)?.group;
@@ -310,7 +308,7 @@ function planWorkerFailover(
     Boolean(assignedGroup && unavailable.has(assignedGroup)) || catalogOutage;
   const demand = runDemand(task.complexity, "worker", store.usageLevel());
   // An outage alone must not promote work to a stronger fallback. An explicit
-  // request is already subject to the normal route/sign-off rules.
+  // request is already subject to the normal routing rules.
   const explicitlyRequested =
     requested?.profileId ?? task.profileRequests?.worker?.profileId;
   const selectionPool = outage
@@ -469,7 +467,7 @@ function planWorkerFailover(
     const approved =
       operatorArmed ||
       (requestedId
-        ? isWorkerRouteApproved(
+        ? isWorkerRouteAllowed(
             task,
             requestedId,
             store.pool(),

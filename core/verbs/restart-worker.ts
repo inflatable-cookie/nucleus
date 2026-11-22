@@ -20,7 +20,7 @@ import {
 import { runsUnchangedSince } from "../recovery/observation-advance";
 import {
   decideWorkerReplacement,
-  isWorkerRouteApproved,
+  isWorkerRouteAllowed,
   retainedWorkerFailureCause,
 } from "../recovery/worker-replacement";
 import { OPERATOR_WORKER_REMAP_REASON } from "../recovery/task-reasons";
@@ -402,7 +402,7 @@ export class WorkerRestarts {
             revised.profile?.model ??
             null,
           currentModel: revised.profile?.model ?? null,
-          approved: isWorkerRouteApproved(
+          approved: isWorkerRouteAllowed(
             revised,
             moveRoute,
             this.store.pool(),
@@ -918,7 +918,7 @@ export class WorkerRestarts {
                       latestTask.profile?.model ??
                       null,
                     currentModel: latestTask.profile?.model ?? null,
-                    approved: isWorkerRouteApproved(
+                    approved: isWorkerRouteAllowed(
                       latestTask,
                       restartRoute,
                       this.store.pool(),

@@ -38,10 +38,6 @@ import { holdsQueueWorkspace } from "../dispatch/capacity";
 import { boundDrainProjection } from "../closeout/queue-drain";
 import { summarizeOperation } from "../../shared/operations";
 import {
-  activeRoutingGrants,
-  reconcileRoutingGrants,
-} from "../dispatch/routing-signoff";
-import {
   readBbSidebarGroups,
   type BbSidebarThreadRecord,
   type BbSidebarWorkspace,
@@ -222,7 +218,6 @@ export class RuntimeBoard {
         this.context.store.getMeta<number>("projectLimit") ??
         DEFAULT_PROJECT_LIMIT,
       usage: this.context.store.usageView(),
-      routingGrants: activeRoutingGrants(this.context.store),
       papercutProjectLimit:
         this.context.store.getMeta<number>("papercutProjectLimit") ??
         DEFAULT_PAPERCUT_PROJECT_LIMIT,
@@ -419,7 +414,6 @@ export class RuntimeBoard {
       this.advanceRevisionForProjection("usage level");
     }
     this.boardUsageLevel = usage;
-    reconcileRoutingGrants(this.context.store, this.context.decisions);
     // Spec 028: a snapshot settling, or a location failing, changes the board with no
     // durable write. Advance the revision once when that health changes, so a poller
     // holding a bounded acknowledgement re-projects instead of keeping the old fact.

@@ -10,8 +10,6 @@ import {chooseProfile} from '../core/dispatch/routing';
 import {submissionSchema,profileRequestsSchema,poolSchema,type Profile,type ProfileCapability,type ProfileWeight} from '../shared/contracts';
 import type {Adapter} from '../core/host';
 import {activeGroupLimit,normalizeRetryAt,saveProfileSettings} from '../shared/pool';
-/** Spec 052: these requests were signed off on the board (2026-10-21). */
-const SIGNED={status:'approved' as const,decisionId:'decision',by:'operator (board)',at:'2026-10-21T00:00:00.000Z',note:''};
 
 const profiles=[profile('normal'),profile('astra'),profile('fable')];
 const pool=profiles.map(p=>poolSchema.parse({profileId:p.id,enabled:true,group:p.id,roles:['worker','reviewer','coordinator'],weight:'default',scopes:['general','complex'],capability:p.id==='normal'?null:'frontier'}));
@@ -20,12 +18,12 @@ function fixture(){
  const task=store.insert(submissionSchema.parse({submissionId:'task',title:'Complex work',repoPath:'/repo',planningCommit:'a'.repeat(40),handoffPath:'handoff.md',originAgentId:'origin',scope:'complex'}),'host','handoff','a'.repeat(40));
  return {store,task,close:()=>{store.close();rmSync(dir,{recursive:true,force:true});}};
 }
-test('frontier profiles never enter automatic selection or fallback below Maximum, regardless of weight or usage',()=>{
+test('frontier profiles never enter automatic selection or fallback at Normal, regardless of weight',()=>{
  const f=fixture();try{
   assert.equal(chooseProfile(f.task,profiles,pool,{normal:999},new Set())?.profile.id,'normal');
   assert.equal(chooseProfile(f.task,profiles,pool,{},new Set(['normal'])),null);
   assert.equal(chooseProfile({...f.task,preferredProfileId:'astra',requirePreferred:true},profiles,pool,{},new Set()),null);
-  const task={...f.task,profileRequests:{worker:{profileId:'astra',reason:'Difficult cross-system reasoning',required:false,signoff:SIGNED}}};
+  const task={...f.task,profileRequests:{worker:{profileId:'astra',reason:'Difficult cross-system reasoning',required:false}}};
   assert.equal(chooseProfile(task,profiles,pool,{},new Set())?.profile.id,'astra');
   assert.equal(chooseProfile(task,profiles,pool,{},new Set(['astra']))?.profile.id,'normal');
   assert.equal(chooseProfile(task,profiles,pool,{},new Set(['astra','normal'])),null);
@@ -41,13 +39,13 @@ test('a Heavyweight profile needs a request at Normal even when not frontier: au
    assert.equal(chooseProfile(f.task,profiles,unflagged,{normal:999},new Set(),role)?.profile.id,'normal',`${role}: the unrated Worker profile wins`);
    assert.equal(chooseProfile(f.task,profiles,unflagged,{},new Set(['normal']),role),null,`${role}: with it unavailable, nothing falls back to Heavyweight`);
   }
-  const requested={...f.task,profileRequests:{worker:{profileId:'astra',reason:'Two same-defect review rounds',required:false,signoff:SIGNED}}};
+  const requested={...f.task,profileRequests:{worker:{profileId:'astra',reason:'Two same-defect review rounds',required:false}}};
   assert.equal(chooseProfile(requested,profiles,unflagged,{},new Set(['normal']))?.profile.id,'astra','an explicit owner request with a reason still selects it');
  }finally{f.close();}
 });
 test('requests remain subject to enabled state and provider availability; scope and role no longer gate (Spec 053)',()=>{
  const f=fixture();try{
-  const task={...f.task,profileRequests:{worker:{profileId:'astra',reason:'Complexity justified',required:true,signoff:SIGNED}}};
+  const task={...f.task,profileRequests:{worker:{profileId:'astra',reason:'Complexity justified',required:true}}};
   assert.equal(chooseProfile(task,profiles,pool.map(p=>p.profileId==='astra'?poolSchema.parse({...p,enabled:false}):p),{},new Set()),null);
   for(const changed of [{scopes:['mechanical'] as const},{roles:['reviewer'] as const}]){
    const entries=pool.map(p=>p.profileId==='astra'?poolSchema.parse({...p,...changed}):p);
@@ -60,14 +58,14 @@ test('requests remain subject to enabled state and provider availability; scope 
 test('review and coordinator routing require their own request, including recovery selection',()=>{
  const f=fixture();try{
   f.store.setMeta('pool',pool);const engine=new Engine(f.store,{} as Adapter);engine.profiles=profiles;
-  const workerRequested={...f.task,workerModel:'other-author',profileRequests:{worker:{profileId:'astra',reason:'Worker needs it',required:true,signoff:SIGNED}}};
+  const workerRequested={...f.task,workerModel:'other-author',profileRequests:{worker:{profileId:'astra',reason:'Worker needs it',required:true}}};
   assert.equal(engine.resolution.select(workerRequested,'reviewer')?.profile.id,'normal');
   assert.equal(engine.resolution.select(workerRequested,'coordinator')?.profile.id,'normal');
   for(const role of ['reviewer','coordinator'] as const){
-   const explicit={...workerRequested,profileRequests:{...workerRequested.profileRequests,[role]:{profileId:'fable',reason:'Independent complex reasoning required',required:true,signoff:SIGNED}}};
+   const explicit={...workerRequested,profileRequests:{...workerRequested.profileRequests,[role]:{profileId:'fable',reason:'Independent complex reasoning required',required:true}}};
    assert.equal(engine.resolution.select(explicit,role)?.profile.id,'fable');
   }
-  const sameAuthor={...workerRequested,workerModel:'fable',profileRequests:{reviewer:{profileId:'fable',reason:'Review',required:true,signoff:SIGNED}}};
+  const sameAuthor={...workerRequested,workerModel:'fable',profileRequests:{reviewer:{profileId:'fable',reason:'Review',required:true}}};
   assert.equal(engine.resolution.select(sameAuthor,'reviewer'),null);
  }finally{f.close();}
 });
@@ -96,7 +94,7 @@ const tiered=(ids:Record<string,{capability?:ProfileCapability;weight?:ProfileWe
 const live=tiered({cheap:{capability:'mechanical',weight:'most'},mid:{capability:'worker'},pricey:{capability:'worker'},'frontier-a':{capability:'heavyweight'},'frontier-b':{capability:'frontier'}});
 const pick=(usage:'low'|'normal'|'high'|'extra_high'|'maximum',recent:Record<string,number>={},unavailable=new Set<string>(),request?:{profileId:string;reason:string})=>{
   const f=fixture();try{
-    const task=f.store.update(f.task.id,{profileRequests:request?profileRequestsSchema.parse({worker:{...request,required:false,signoff:SIGNED}}):undefined});
+    const task=f.store.update(f.task.id,{profileRequests:request?profileRequestsSchema.parse({worker:{...request,required:false}}):undefined});
     return chooseProfile(task,live.profiles,live.pool,recent,unavailable,'worker',recent,usage,true)?.profile.id??null;
   }finally{f.close()}
 };
@@ -121,7 +119,7 @@ test('Spec 052 (Tom, 2026-11-17): Extra high needs no permission, weight exclude
   assert.equal(pick('extra_high',{},new Set(),{profileId:'frontier-b',reason:'Needs the strongest model'}),'frontier-b','an explicit request reaches above the requested tier');
   assert.equal(pick('low'),'cheap','at Low a medium task starts a tier below and keeps to the covered tiers');
   assert.notEqual(pick('low'),'frontier-b','a frontier profile still needs permission at Low');
-  assert.equal(pick('low',{},new Set(),{profileId:'frontier-b',reason:'Needs the strongest model'}),'frontier-b','a signed-off request is unaffected by the level');
+  assert.equal(pick('low',{},new Set(),{profileId:'frontier-b',reason:'Needs the strongest model'}),'frontier-b','an explicit request is unaffected by the level');
 });
 
 test('Spec 052: a frontier profile needs permission at High whatever its weight, and is automatic at Maximum',()=>{
@@ -152,14 +150,14 @@ test('Spec 052: a role left without a profile by the level permission says so an
     f.store.setMeta('pool',reviewPool.pool);const engine=new Engine(f.store,{} as Adapter);engine.profiles=reviewPool.profiles;
     const task={...f.task,workerModel:'author',complexity:'high' as const};
     assert.equal(engine.resolution.select(task,'reviewer'),null);
-    assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'; the normal usage level needs the operator\'s board sign-off for heavyweight runs: raise the usage level or route the reviewer to a profile');
+    assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'; the normal usage level requires an explicit profile request for heavyweight runs: route the reviewer to a profile or raise the usage level');
     f.store.setMeta('usageLevel',{level:'extra_high',until:null,setAt:new Date().toISOString()});
     assert.equal(engine.resolution.select(task,'reviewer')?.profile.id,'critic','Extra high needs no permission');
     assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'');
     // The retained-reviewer replacement wait carries the same note.
     f.store.setMeta('usageLevel',{level:'low',until:null,setAt:new Date().toISOString()});
     const retained={...task,phase:'awaiting_review' as const,resolution:{...task.resolution,reviewerProfile:{...reviewPool.profiles[1],id:'gone'}}};
-    assert.match(engine.resolution.usageCeilingNote(retained,'reviewer'),/low usage level needs the operator's board sign-off for heavyweight runs/);
+    assert.match(engine.resolution.usageCeilingNote(retained,'reviewer'),/low usage level requires an explicit profile request for heavyweight runs/);
     // When the pool itself has no candidate, the note stays silent.
     f.store.setMeta('pool',tiered({author:{}}).pool);
     assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'');
@@ -170,7 +168,7 @@ test('a required role request that cannot serve is named in the wait, with the r
   const f=fixture();try{
     const reviewPool=tiered({author:{},critic:{}});
     f.store.setMeta('pool',reviewPool.pool);const engine=new Engine(f.store,{} as Adapter);engine.profiles=reviewPool.profiles;
-    const required=(profileId:string)=>({...f.task,profileRequests:profileRequestsSchema.parse({coordinator:{profileId,reason:'Owner pinned it',required:true,signoff:SIGNED}})});
+    const required=(profileId:string)=>({...f.task,profileRequests:profileRequestsSchema.parse({coordinator:{profileId,reason:'Owner pinned it',required:true}})});
     assert.equal(engine.resolution.requiredRouteNote(required('critic'),'coordinator'),'','an eligible required profile needs no note');
     assert.equal(engine.resolution.requiredRouteNote(required('astra'),'coordinator'),'; the required coordinator request names astra, but it is not in the profile pool: route role=coordinator to another profile');
     f.store.setMeta('pool',reviewPool.pool.map(entry=>entry.profileId==='critic'?{...entry,enabled:false}:entry));

@@ -59,18 +59,9 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
         const picked = chooseProfile(adopt, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id ?? null;
         assert.equal(picked === 'p', automaticRole === 'allowed', `${label} ${role}: automatic selection agrees with the explanation`);
         const requestedProfile = { ...adopt, profileRequests: { [role]: { profileId: 'p', reason: 'Owner request', required: false } } };
-        // A request reaches exactly the profiles the level's permission rule does
-        // not hold; the task's requested-tier bound only stops automatic
-        // selection, which is what the explanation reports.
-        // Maximum reserves the top two tiers for workers and reviewers, an explicit request included.
         const roleTopTier = !(level === 'maximum' && role !== 'coordinator' && !topTier(capability));
-        assert.equal(chooseProfile(requestedProfile, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id === 'p',
-          !requestOnly(entry, level, requested) && roleTopTier,
-          `${label} ${role}: an unsigned request reaches exactly where the level and the role floor allow it`);
-        const signed = { ...adopt, profileRequests: { [role]: { profileId: 'p', reason: 'Owner request', required: false,
-          signoff: { status: 'approved' as const, decisionId: 'd', by: 'operator (board)', at: '2026-10-21T00:00:00.000Z', note: '' } } } };
-        assert.equal(chooseProfile(signed, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id, roleTopTier ? 'p' : undefined,
-          `${label} ${role}: a signed-off request works wherever the level and the role floor allow it`);
+        assert.equal(chooseProfile(requestedProfile, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id,
+          roleTopTier ? 'p' : undefined, `${label} ${role}: the explicit request applies directly`);
       }
       // Cost is never the permission rule (Tom, 2026-11-17), and a tier at or
       // below the task's requested tier is automatic whenever the level's
@@ -133,7 +124,7 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
     // Usage permission never masks a hard gate, and an explicit request stays explicit.
     assert.equal(lifted['reviewer:off']!.automatic, 'allowed');
     assert.deepEqual(lifted['reviewer:off']!.gates, ['disabled in the pool']);
-    assert.match(lifted['reviewer:off']!.explanation, /^Explicit reviewer request; .*; also disabled in the pool$/);
+    assert.match(lifted['reviewer:off']!.explanation, /^Explicit reviewer request: Owner route; .*; also disabled in the pool$/);
     assert.equal(lifted['coordinator:gone']!.automatic, null);
     assert.match(lifted['coordinator:gone']!.explanation, /not in the pool/);
 
@@ -183,7 +174,7 @@ test('Spec 052: the board explains a recorded climb at the bracket it earned', (
     assert.equal(before.requested, 'heavyweight', 'a high task may climb to Heavyweight');
     assert.equal(before.climbTier, null);
     assert.equal(before.profiles.find(row => row.profileId === 'wide')?.automatic, 'request_tier', 'before the climb Heavyweight is held');
-    assert.match(before.profiles.find(row => row.profileId === 'wide')!.explanation, /Heavyweight: needs permission at Normal/);
+    assert.match(before.profiles.find(row => row.profileId === 'wide')!.explanation, /Heavyweight: request-only at Normal/);
     store.update(task.id, { resolution: { ...store.task(task.id).resolution,
       workerClimb: { reviewRunId: 'review-1', from: 'worker', to: 'heavyweight', profileId: 'wide', at: '2026-11-17T00:00:00.000Z' } } });
     const climbed = store.routingPolicy(store.task(task.id), Date.now());

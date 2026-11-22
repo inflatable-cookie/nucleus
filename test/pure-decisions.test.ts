@@ -443,7 +443,7 @@ test("coordinatorActionPlan: it applies the reported verb’s own view, or names
       expect: {
         ok: false,
         refusal:
-          "A coordinator cannot route to sol: its heavyweight tier needs the operator's permission at the normal usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot",
+          "A coordinator cannot route to sol: its heavyweight tier requires a planner or owner request at the normal usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot",
       },
     },
     {
@@ -470,7 +470,7 @@ test("coordinatorActionPlan: it applies the reported verb’s own view, or names
       expect: {
         ok: false,
         refusal:
-          "A coordinator cannot route to opus: its frontier tier needs the operator's permission at the high usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot",
+          "A coordinator cannot route to opus: its frontier tier requires a planner or owner request at the high usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot",
       },
     },
     {

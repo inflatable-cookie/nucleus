@@ -26,8 +26,6 @@ import {
   capacitySchema,
   projectDispatchLimitSchema,
 } from "../../shared/contracts";
-import type { Decisions } from "../planning/decisions";
-import { applyRoutingGrant } from "../dispatch/routing-signoff";
 import type { CapacityChangeJournal } from "../dispatch/capacity-changes";
 import {
   capacityWriteRefusalMessage,
@@ -57,7 +55,6 @@ export interface SettingsContext {
         | "scheduleDecisionNotices"
       >
     >;
-  decisions: Decisions;
   capacityChanges: CapacityChangeJournal;
   readonly started: Promise<void>;
   readonly hostId: string;
@@ -310,26 +307,6 @@ export class RuntimeSettings {
     this.context.store.advanceRevision();
     void this.context.wakeAndSettlePostBootstrapTimeout();
     return { ok: true as const };
-  }
-
-  /** Spec 052: a planner asks for a standing frontier grant; the operator answers on the board. */
-  routingGrant(input: {
-    action: "request" | "end" | "revoke";
-    caller: string;
-    reason?: string;
-    profiles?: string[];
-    until?: string | null;
-    grantId?: string;
-  }) {
-    const result = applyRoutingGrant(
-      this.context.store,
-      this.context.decisions,
-      input,
-    );
-    void this.context.engine.wake().catch(() => {
-      /* a failed drain is recorded as engineError */
-    });
-    return result;
   }
 
   /** Spec 052: the operator's usage level, read live by every automatic selection. */

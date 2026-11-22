@@ -1267,8 +1267,7 @@ request identities and stored committed-handoff rows are not rewritten.
   whose catalog has not been read is absent evidence, so the control waits with
   that host named (`The T3Code host <id> profile catalog is still loading after
   service start; retry shortly`), while the legacy primary keeps the daemon
-  wording; offline hosts, transport faults, a genuinely incompatible profile,
-  the replacement rule and routing sign-off stay as they are. `next` reads the
+  wording; offline hosts, transport faults, a genuinely incompatible profile and the replacement rules still apply. `next` reads the
   same per-host evidence through `routingHostViews`, so the preview and the
   control agree. The requested reviewer on `move to=review` and on the
   proof-only receipt review still preflights against the primary profile set
@@ -1286,17 +1285,11 @@ request identities and stored committed-handoff rows are not rewritten.
   eligible profiles, then rotates over the last 50 assignments by recent use
   over the profile's weight share: one of five stops from 80% to 120% of
   Default, with no cost input (Spec 053, Tom, 2026-11-21).
-- Frontier profiles, and profiles the usage level's permission rule holds, need a
-  per-role request with a reason and the operator's board sign-off unless the
-  usage level puts them in automatic selection: Frontier only at Extra high and Maximum
-  ([Spec 052](../specs/052-usage-level.md), Tom 2026-11-09). Worker authorization does
-  not authorize frontier review or coordination.
-- For Nucleus's own implementation and review work, request frontier profiles
-  while usage allows, per role with a reason (Tom, 2026-10-18).
-- A coordinator's `route` never names a profile the level holds (a Heavyweight or Frontier profile at Normal);
-  availability and environment blocks are not capability failures (Tom,
-  2026-10-01 and 2026-10-15). Owners may route there with a reason and board
-  sign-off. A coordinator never routes to a profile the level's permission rule holds either.
+- At Low, Normal and High, Frontier runs only on an explicit request for
+  that role with a reason. Heavyweight profiles outside automatic selection
+  at Low or Normal follow the same rule. A planner records the request in the
+  brief or an owner uses `route`. It applies to the next run for that role
+  ([Spec 052](../specs/052-usage-level.md), Tom, 2026-11-22).
 - Before every retained revision Nucleus rechecks the worker profile against the
   live catalog, role, enablement and subscription group; failure stops in
   `needs_attention` before run intent and escalates without a coordinator turn.
@@ -2949,7 +2942,7 @@ resulting state on its own cadence.
 - The owner verbs and reconciliation act on current forge, checkout,
   integration and participant observations. Exact-head review or operator
   source acceptance, preservation of uncommitted work, exclusive writers,
-  callback authentication, unknown delivery and routing sign-off remain real
+  callback authentication, unknown delivery and profile eligibility remain real
   invariants. A stale phase or absent internal record is not itself an invariant.
 - A recorded merge is re-observed at its exact head and commit before returning
   to the ordinary integration synchronization and closeout gates. An ambiguous
@@ -2959,9 +2952,8 @@ resulting state on its own cadence.
   stay with the reviewer. A coordinator can report an offered forced move
   under its authenticated recovery binding and use explicit resolution for a
   run or effect it needs to clear.
-- A required worker preference needing board sign-off enters the same routing
-  request and decision lifecycle as an explicit role request; unsigned requests
-  use automatic selection until the decision is answered.
+- A legacy worker preference selects within automatic routing. Use an
+  explicit profile request to select a request-only profile.
 - Owner task controls are the verbs ([Spec 050](../specs/050-owner-task-controls.md)):
   `next` (read), `route`, `restart`, `move`, `stop`, `complete`, `retry_effect`
   and `proof`. Every verb derives its identities from the task, writes one

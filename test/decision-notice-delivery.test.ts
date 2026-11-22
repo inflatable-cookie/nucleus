@@ -589,7 +589,6 @@ test("pause holds delivery and unpause via queueControl resumes through the same
     dataDir: f.dataDir,
     store: f.store,
     engine: f.engine,
-    decisions: f.decisions,
     capacityChanges: new CapacityChangeJournal(f.store),
     started: Promise.resolve(),
     hostId: "host-primary",

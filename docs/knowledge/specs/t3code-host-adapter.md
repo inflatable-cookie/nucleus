@@ -1062,9 +1062,8 @@ this ruling moves to its Inbox on its next offer, and the sweep's read of the ta
 thread settles and cancels the card left there; answered and withdrawn decisions
 are untouched. An Inbox card for a task-linked decision is titled with that
 task's reference and title, as the board's task link is. Opening, withdrawing or
-superseding a decision (including a routing sign-off opened during a task
-quantum) wakes the reconciliation sweep so the inbox refreshes its title and
-raises or settles cards without waiting for an unrelated wake. The
+superseding a decision wakes the reconciliation sweep so the inbox refreshes its
+title and raises or settles cards without waiting for an unrelated wake. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,
 but cannot send a task message, report a run or exercise task controls. Re-minting

@@ -433,8 +433,7 @@ a privileged install.
   limit (`projectCapacities`); project overrides keep no change record of their
   own. A failed first read or a failed refresh says whether
   the values shown may be stale, and Try again re-reads; nothing is written.
-  Sections run usage level, task slots, project overrides, role demand, then
-  frontier grants (Nucleus UI lane, step 5).
+  Sections cover usage level, task slots and project overrides.
 - **Restart and upgrade.** The meta keys are the limits, so a restart or roll
   reads the same values and record. Nothing resets them or re-asserts over a
   later change.
@@ -525,7 +524,10 @@ The runtime build packages both bundles together.
     `counters` event carries the unchanged-board acknowledgement when only the
     counters move, as the plugin's poll reads it. An `unavailable` event carries
     the reason while the executor cannot publish. A keepalive comment goes out
-    every 15 seconds, and at most eight streams stay open. The web client suspends
+    every 15 seconds, and at most eight streams stay open. A stream whose socket
+    holds more than 256 KiB of unsent bytes gets no further frames until it
+    drains, then receives the latest board; one still backlogged after 30 seconds
+    is closed, which frees its slot, and its client reconnects. The web client suspends
     snapshot polling while this channel is connected and resumes it after a
     disconnect; an unavailable event still triggers a read to expose the failure.
 - **Surface.** Web calls carry `via: "web"`. The web board mounts Settings through
@@ -535,7 +537,7 @@ The runtime build packages both bundles together.
   `QueueSettingsScreen` directly. The Settings writes (`queue.capacity`,
   `queue.pool`, `queue.profile`, `queue.availability`,
   `queue.usage`, `queue.project-dispatch-limit`,
-  `queue.routing-grant`, `repository.set`, `backup.now`,
+  `repository.set`, `backup.now`,
   `profile.create`, `profile.update`, `profile.remove`;
   `SETTINGS_WRITE_METHODS` in `shared/web-surface.ts`) are served over the web only
   when the request also carries `x-nucleus-surface: settings`, which the web

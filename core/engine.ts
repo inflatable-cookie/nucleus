@@ -9,7 +9,6 @@ import { PrerequisiteReleases } from "./scheduling/prerequisites";
 import { TaskQuantum } from "./scheduling/task-quantum";
 
 import { unavailableGroupNames } from "../shared/pool";
-import { PlannerGrantCleanup } from "./questions/planner-grants";
 
 import { Dispatch } from "./dispatch/dispatch";
 import { combineWorkerHostProfiles } from "./dispatch/first-host-selection";
@@ -301,13 +300,12 @@ export class Engine {
         "reconcileBlockedEffects",
         "reconcileClosedRetainedReviewer",
         "recoverExistingWorkspace",
-        "routeTask",
         "scheduleLane",
         "settleFinishedRuns",
         "settleHistoricalProofExecutions",
         "settleRunBuildOutputs",
         "settleSupersededIdleRuns",
-        "signoffDecisions",
+        "routingDecisions",
         "stopped",
         "store",
         "wakeRepository",
@@ -335,18 +333,6 @@ export class Engine {
         "waiting",
       ],
     ),
-  );
-
-  readonly plannerGrantCleanup = new PlannerGrantCleanup(
-    portsContext(this, [
-      "adapter",
-      "host",
-      "signoffDecisions",
-      "store",
-      "withHost",
-      "hostAvailable",
-      "hostIds",
-    ]),
   );
 
   private readonly hostContext = new AsyncLocalStorage<string>();
@@ -525,7 +511,6 @@ export class Engine {
           "adapter",
           "applyDeferredOwnerVerbs",
           "deliverPendingBriefAmendments",
-          "archivePlannerGrants",
           "archiveRetiredErroredAgents",
           "auditPass",
           "clearRetiredInvalidations",
@@ -931,8 +916,8 @@ export class Engine {
   readonly proofControls: ProofControls;
   readonly forceVerbs: ForceVerbs;
   private readonly unsubscribePrerequisites: () => void;
-  /** Spec 052 routing sign-off asks the operator through the decisions surface. */
-  readonly signoffDecisions: Decisions;
+  /** Decisions for the Low submission gate and unavailable required profiles. */
+  readonly routingDecisions: Decisions;
   /** The Host contract over this engine's adapter, read at each call (`core/host/host-facade.ts`). */
   get host(): HostFacade {
     return new HostFacade(this);
@@ -1046,7 +1031,7 @@ export class Engine {
     this.resolution.wakeDeferredDirection = (taskId) => {
       void this.cleanContext(() => this.wakeTask(taskId));
     };
-    this.signoffDecisions = new Decisions(store);
+    this.routingDecisions = new Decisions(store);
     this.resolution.recovery.setCoordinatorActionHandler((task, run, action) =>
       this.applyCoordinatorAction(task, run, action),
     );
@@ -1686,10 +1671,6 @@ export class Engine {
    */
   wake(): Promise<void> {
     return this.sweep.wake();
-  }
-  /** Spec 052: an archived planner thread ends its grant. A failed inventory leaves grants standing. */
-  archivePlannerGrants(): Promise<void> {
-    return this.plannerGrantCleanup.archivePlannerGrants();
   }
   /** Durable cursor evidence for service health and telemetry. */
   reconciliationSnapshot(): ReconciliationSweep {

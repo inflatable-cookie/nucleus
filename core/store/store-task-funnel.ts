@@ -258,7 +258,6 @@ export interface TaskFunnelServices {
   operation(id: string): QueueOperation | null;
   putOutcome(record: Outcome): Outcome;
   completePapercutsForTask(task: Task): Papercut[];
-  noteGrantRun(task: Task, role: "worker" | "reviewer" | "coordinator"): void;
   receipt(
     input: Completion,
     token: string,
@@ -493,7 +492,6 @@ export class StoreTaskFunnel {
       };
       // Spec 050: the `ownerRoute` marker is route-only. A submission never
       // carries it, so strip it here rather than trusting the input record.
-      // Spec 052: Queue writes `signoff`, never a submission; the request is the origin's.
       for (const role of ["worker", "reviewer", "coordinator"] as const) {
         if (task.profileRequests?.[role])
           task.profileRequests = {
@@ -1023,20 +1021,6 @@ export class StoreTaskFunnel {
   }
 
   /**
-   * Same mapping OwnerStop.stopTask uses: reviewer stays reviewer, revision is
-   * worker, recovery/verification/closeout/executor are the coordinator route.
-   */
-  private routeRoleForRun(
-    role: Run["role"],
-  ): "worker" | "reviewer" | "coordinator" {
-    return role === "reviewer"
-      ? "reviewer"
-      : role === "revision"
-        ? "worker"
-        : "coordinator";
-  }
-
-  /**
    * Spec 058 slice 1: persist one run's observed usage. Writes only that field and never
    * restamps the run's dispatch-time pins; a no-op write touches nothing.
    */
@@ -1270,14 +1254,6 @@ export class StoreTaskFunnel {
           workspaceId,
           role,
         });
-      }
-      try {
-        this.services.noteGrantRun(
-          this.services.task(run.taskId),
-          this.routeRoleForRun(run.role),
-        );
-      } catch {
-        /* a missing task cannot increment a grant */
       }
     }
     this.services.taskChanged(run.taskId);

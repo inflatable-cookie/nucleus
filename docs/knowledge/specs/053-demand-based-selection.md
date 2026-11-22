@@ -234,7 +234,7 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | 2 | Complexity high, Normal, worker | Starts on Worker; after an applied changes-required review, climbs once to Heavyweight |
 | 2b | Same task, reviewer, Worker author | Mechanical (one bracket below); on the author's bracket at High |
 | 3 | Any complexity, coordinator | Mechanical when available, else the lowest permitted bracket with a profile |
-| 4 | Complexity very_high, Normal | Starts on Heavyweight; climbs to Frontier only with sign-off |
+| 4 | Complexity very_high, Normal | Starts on Heavyweight. Frontier requires an explicit request. |
 | 5 | Same task at Maximum | Heavyweight or Frontier |
 | 6 | Same task at Low after an approved submission | Starts one bracket below the bracket it may climb to |
 | 7 | Reviewer shares the author's model | Excluded, as today |

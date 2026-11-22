@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { decideWorkerReplacement, isWorkerRouteApproved, retainedWorkerFailureCause } from '../core/recovery/worker-replacement';
+import { decideWorkerReplacement, isWorkerRouteAllowed, retainedWorkerFailureCause } from '../core/recovery/worker-replacement';
 import { OPERATOR_WORKER_REMAP_REASON } from '../core/recovery/task-reasons';
 import { submissionSchema, taskControlInputSchema, type Profile, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
@@ -84,14 +84,14 @@ test('decideWorkerReplacement allows a fresh restart with an explicit operator r
   assert.equal(decision.allowed, true);
 });
 
-test('decideWorkerReplacement refuses a route waiting on sign-off', () => {
+test('decideWorkerReplacement refuses an above-level route without a request', () => {
   const decision = decideWorkerReplacement({
     task: {} as never,
     requestedProfileId: 'sol', requestedModel: 'sol-model', currentModel: 'terra-model',
     approved: false, failure: null, explicitOperatorRelay: false, freshRestart: false,
   });
   assert.equal(decision.allowed, false);
-  if (!decision.allowed) assert.equal(decision.rule, 'signoff_pending');
+  if (!decision.allowed) assert.equal(decision.rule, 'request_required');
 });
 
 test('decideWorkerReplacement allows an approved route to a different model', () => {
@@ -103,16 +103,15 @@ test('decideWorkerReplacement allows an approved route to a different model', ()
   assert.equal(decision.allowed, true);
 });
 
-test('isWorkerRouteApproved needs board sign-off only for by-request or above-level routes', () => {
+test('isWorkerRouteAllowed checks the per-role request for above-level routes', () => {
   const pool = [
     { profileId: 'terra', enabled: true, group: 'terra', roles: ['worker'], weight: "default", scopes: ['general'] },
     { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker'], weight: "default", scopes: ['general'], capability: 'frontier' },
   ] as never;
-  assert.equal(isWorkerRouteApproved({}, 'terra', pool, 'normal'), true, 'a within-level route needs no sign-off');
-  assert.equal(isWorkerRouteApproved({}, 'sol', pool, 'normal'), false, 'a by-request route without sign-off is not approved');
-  const approved = { profileRequests: { worker: { profileId: 'sol', reason: 'Board choice', required: true,
-    signoff: { status: 'approved', decisionId: 'd', by: 'operator (board)', at: new Date().toISOString(), note: '' } } } };
-  assert.equal(isWorkerRouteApproved(approved as never, 'sol', pool, 'normal'), true, 'a signed-off route is approved');
+  assert.equal(isWorkerRouteAllowed({}, 'terra', pool, 'normal'), true, 'a within-level route needs no request');
+  assert.equal(isWorkerRouteAllowed({}, 'sol', pool, 'normal'), false, 'a request-only profile requires a request');
+  const approved = { profileRequests: { worker: { profileId: 'sol', reason: 'Needed for this role', required: true } } };
+  assert.equal(isWorkerRouteAllowed(approved as never, 'sol', pool, 'normal'), true, 'the explicit route applies');
 });
 
 const terra = (id: string, model: string): Profile =>
@@ -257,59 +256,6 @@ test('an approved model change replaces once', async () => {
     assert.equal(settled.retiredWorkers.length, 1, 'a second sweep retires nothing more');
     assert.equal(settled.version, firstHead, 'nothing further changed');
   } finally { await f.close(); }
-});
-
-test('a route waiting on sign-off records the request and replaces nothing', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ns-worker-route-'));
-  const store = new Store(join(dir, 'queue.sqlite'));
-  store.setMeta('paused', false);
-  const author = terra('author', 'author-model');
-  const sol = terra('sol', 'sol-model');
-  store.setMeta('pool', [
-    { profileId: 'author', enabled: true, group: 'author', roles: ['worker'], weight: "default", scopes: ['general'] },
-    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker'], weight: "default", scopes: ['general'], capability: 'frontier' },
-  ]);
-  const submitted = store.insert(submissionSchema.parse({
-    submissionId: randomUUID(), title: 'Route waits', repoPath: '/repo', planningCommit: base,
-    handoffPath: 'handoff.md', originAgentId: 'origin',
-  }), 'host', 'handoff', base);
-  const task = store.update(submitted.id, {
-    phase: 'working', reason: 'Working', workspaceId: 'workspace', directory: '/worktree',
-    agentId: 'worker', runId: 'initial', profile: author, workerModel: author.model, workerModels: [author.model],
-  });
-  const adapter = fakeAdapter({
-    profiles: async () => [author, sol],
-    validate: async () => base, verifyWorkspace: async () => {}, verifyCleanQueueWorktree: async () => {},
-    createWorkspace: async () => { throw new Error('no workspace creation'); },
-    createAgent: async () => { throw new Error('no agent creation'); },
-    observe: async () => ({ id: 'worker', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' }) as never,
-     notify: async () => {}, findRunAgents: async () => [],
-    verifyPr: async () => ({ head, url: 'https://github.com/example/repo/pull/1' }),
-    verifyPrIdentity: async () => ({ head, url: 'https://github.com/example/repo/pull/1' }),
-    verifyResume: async () => {}, stopAgentTurn: async () => {},
-    createRun: async () => { throw new Error('no run creation'); },
-    sendRun: async () => {}, verifyReview: async () => {},
-    mergeGate: async () => ({ head, base, wait: '' }), merge: async () => {},
-    merged: async () => ({ merged: false, commit: null, head, base: 'main' }), syncMain: async () => base,
-    verifyCloseout: async () => {},
-  } as unknown as Adapter & ResolutionAdapter);
-  const engine = new Engine(store, adapter, 0);
-  engine.profiles = [author, sol];
-  try {
-    // effigy#531 10:30: a route to Sol awaiting sign-off fell back to automatic
-    // selection and replaced the worker with another Terra agent.
-    const routed = await engine.performTaskControl(taskControlInputSchema.parse({
-      taskId: task.id, version: store.task(task.id).version, action: 'route',
-      role: 'worker', profileId: 'sol', reason: 'Sol is stronger for the revision', caller: 'owner-thread',
-    }));
-    assert.equal(routed.profileRequests?.worker?.profileId, 'sol', 'the request is recorded');
-    assert.equal(routed.replacementProfile, null, 'nothing is armed while sign-off is pending');
-    assert.equal(routed.failoverReason, '', 'no failover is armed');
-    assert.equal(routed.agentId, 'worker', 'the retained worker is untouched');
-    const refused = store.eventsAll(task.id).find(event => event.kind === 'worker_replacement_refused')!;
-    assert.ok(refused, 'the refusal is recorded');
-    assert.match(refused.detail, /^signoff_pending:/, 'the refusal names its rule');
-  } finally { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a provider failure replaces once', async () => {

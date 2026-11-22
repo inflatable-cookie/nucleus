@@ -1055,7 +1055,7 @@ export function ProfileEditor({
           <View style={{ ...half, gap: space.xs }}>
             {sliderLabel(
               "Capability",
-              "Low complexity runs on Mechanical, medium and high on Worker, very high on Heavyweight; a high task may step up to Heavyweight after review changes. Heavyweight and Frontier need permission at Low and Normal, Frontier at High. Unset counts as Worker.",
+              "Low complexity runs on Mechanical, medium and high on Worker, very high on Heavyweight; a high task may step up to Heavyweight after review changes. Frontier requires a request at Low, Normal and High. Heavyweight does too at Low and Normal unless the task starts or climbs there. Unset counts as Worker.",
               entry.capability,
             )}
             <StopSlider

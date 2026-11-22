@@ -195,9 +195,8 @@ export function coordinatorActionPlan(input: {
       ok: false,
       refusal: `restart ${action.role} does not match the stopped role ${String(offeredArgs.role)}`,
     };
-  // A coordinator stays within the operator's usage level's permission rule
-  // (Spec 052, Tom 2026-11-17): a top-tier route above the task's own requested
-  // tier at Low or Normal, or a frontier route at High, is the owner's call.
+  // Recovery coordinators route within the usage level's automatic bounds.
+  // A planner or owner chooses a request-only profile (Spec 052).
   if (
     action.verb === "route" &&
     input.routeCapability &&
@@ -209,7 +208,7 @@ export function coordinatorActionPlan(input: {
   )
     return {
       ok: false,
-      refusal: `A coordinator cannot route to ${action.profileId}: its ${input.routeCapability.replaceAll("_", " ")} tier needs the operator's permission at the ${input.usage} usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot`,
+      refusal: `A coordinator cannot route to ${action.profileId}: its ${input.routeCapability.replaceAll("_", " ")} tier requires a planner or owner request at the ${input.usage} usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot`,
     };
   if (!input.verbRegistered)
     return {

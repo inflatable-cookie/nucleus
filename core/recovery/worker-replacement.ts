@@ -6,7 +6,7 @@
  *
  * Every other path continues the same retained worker agent: recovery actions,
  * "remap" restarts, owner restarts without a model change, route requests
- * still waiting on sign-off, non-delivery push-backs and unfinished
+ * non-delivery push-backs and unfinished
  * continuations.
  *
  * This module owns the one guard every replacement path reads — `restart`,
@@ -16,7 +16,7 @@
  * refuses records `worker_replacement_refused` naming the rule and continues
  * the retained worker.
  */
-import { requestOnly, honouredRequest } from "../../shared/pool";
+import { requestOnly } from "../../shared/pool";
 import { climbedTier, requestedTier } from "../../shared/demand";
 import { WORKER_REPLACEMENT_CEILING } from "../../shared/contracts";
 import type { PoolEntry, Task, UsageLevel } from "../../shared/contracts";
@@ -33,7 +33,7 @@ export type WorkerReplacementFailure =
 
 /** The rule a `worker_replacement_refused` event names. */
 export type WorkerReplacementRefusalRule =
-  | "signoff_pending"
+  | "request_required"
   | "same_model_no_failure"
   | "fresh_without_cause_or_relay"
   | "route_superseded";
@@ -103,12 +103,8 @@ export function retainedWorkerFailureCause(args: {
   return null;
 }
 
-/**
- * Whether the named worker route is approved and effective: a profile within
- * the usage level covers needs no approval, while a profile it holds
- * needs the operator's board sign-off on this task and profile.
- */
-export function isWorkerRouteApproved(
+/** Check the stored per-role request before a replacement uses a request-only profile. */
+export function isWorkerRouteAllowed(
   task: Pick<Task, "profileRequests" | "complexity">,
   profileId: string,
   pool: readonly Pick<PoolEntry, "capability" | "profileId">[],
@@ -117,16 +113,9 @@ export function isWorkerRouteApproved(
   const entry = pool.find((item) => item.profileId === profileId);
   const requested = requestedTier(task.complexity);
   const climb = climbedTier(task);
-  if (!entry || !requestOnly(entry, usage, requested, climb)) return true;
-  return (
-    honouredRequest(
-      task.profileRequests?.worker ?? null,
-      pool,
-      usage,
-      requested,
-      climb,
-    )?.profileId === profileId
-  );
+  return !entry || !requestOnly(entry, usage, requested, climb) ||
+    task.profileRequests?.worker?.profileId === profileId;
+
 }
 
 /**
@@ -134,7 +123,7 @@ export function isWorkerRouteApproved(
  * replacement candidate's model, `currentModel` the retained worker's; both
  * compare by normalized model key, so two profiles on one model are the same
  * worker thread. `approved` is whether the new route is approved and effective
- * (see `isWorkerRouteApproved`); `failure` is positive evidence the retained
+ * (see `isWorkerRouteAllowed`); `failure` is positive evidence the retained
  * worker cannot continue; `explicitOperatorRelay` is an explicit
  * operator-relayed reason (the board caller or a relayed operator note), which
  * is the only other way a `restart role=worker fresh` without a failure or a
@@ -171,8 +160,8 @@ export function decideWorkerReplacement(args: {
   if (args.requestedProfileId && !args.approved)
     return {
       allowed: false,
-      rule: "signoff_pending",
-      detail: `route to ${args.requestedProfileId} is waiting on the operator's board sign-off; the request is recorded and nothing replaces the retained worker until it is approved`,
+      rule: "request_required",
+      detail: `route to ${args.requestedProfileId} requires an explicit worker profile request`,
     };
   if (args.requestedProfileId && modelChanges && args.approved)
     return {

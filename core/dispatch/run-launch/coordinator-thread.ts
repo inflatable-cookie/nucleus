@@ -1,3 +1,4 @@
+import { climbedTier, requestedTier } from "../../../shared/demand";
 import type { LaunchThreadContext } from '../launch';
 import type { Run, Task } from '../../../shared/contracts';
 import { supersedingRouteProfile } from '../../../shared/pool';
@@ -16,7 +17,7 @@ export type CoordinatorThread = { binding: ThreadBinding; routeSwitch: string | 
  * selection reads the route; the reservation clears it in the store so the new
  * agent is recorded. Other coordinator requests keep the sticky binding, and a
  * route naming the bound profile changes nothing. Spec 052 refuses a bound
- * coordinator whose profile now needs sign-off for the same reason.
+ * coordinator whose profile is now request-only for the same reason.
  * A coordinator is never the author or the reviewer: that separation is a
  * programming error, not a wait.
  */
@@ -29,15 +30,14 @@ export function applyCoordinatorThread(ctx: LaunchThreadContext, t: Task, role: 
     const request = t.profileRequests?.coordinator;
     const boundProfile = agentId ? ctx.store.runs(t.id).findLast(run => run.agentId === agentId && run.profile)?.profile ?? null : null;
     // Task 515: the recorded route wins over the sticky binding, whether it
-    // is an owner `route` or a required request the operator approved (the
-    // same general rule as the worker yield above).
+    // is an owner `route` or a superseding profile request.
     const recordedRoute = request?.ownerRoute === true ? request.profileId
-      : supersedingRouteProfile(request, boundProfile?.id, ctx.store.pool(), ctx.store.usageLevel());
+      : supersedingRouteProfile(request, boundProfile?.id, ctx.store.pool(), ctx.store.usageLevel(), requestedTier(t.complexity), climbedTier(t));
     if (recordedRoute && agentId && (!boundProfile || boundProfile.id !== recordedRoute)) {
       routeSwitch = recordedRoute;
       agentId = null; profile = null; group = null;
-    } else if (agentId && ctx.signoffIssue(t, boundProfile, 'coordinator')) {
-      routeSwitch = `sign-off:${boundProfile!.id}`;
+    } else if (agentId && ctx.retainedRouteIssue(t, boundProfile, 'coordinator')) {
+      routeSwitch = `request-only:${boundProfile!.id}`;
       agentId = null; profile = null; group = null;
     }
   }

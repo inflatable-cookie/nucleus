@@ -1247,7 +1247,7 @@ export class Resolution {
       "reviewerSetting",
       "select",
       "selectLaunchThread",
-      "signoffIssue",
+      "retainedRouteIssue",
       "slotAdmissionReason",
       "startsNoRuns",
       "store",
@@ -2308,12 +2308,12 @@ export class Resolution {
   retainedWorkerProfileIssue(t: Task) {
     return this.selection.retainedWorkerProfileIssue(t);
   }
-  signoffIssue(
+  retainedRouteIssue(
     t: Task,
     assigned: Profile | null,
     role: "reviewer" | "coordinator",
   ): string | null {
-    return this.selection.signoffIssue(t, assigned, role);
+    return this.selection.retainedRouteIssue(t, assigned, role);
   }
   reviewContinuationOwner(t: Task): Run | null {
     return this.reviewContinuations.reviewContinuationOwner(t);

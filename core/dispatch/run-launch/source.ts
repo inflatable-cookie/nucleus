@@ -1,3 +1,4 @@
+import { climbedTier, requestedTier } from "../../../shared/demand";
 import type { LaunchSourceContext } from "../launch";
 import type { LaunchMachinePorts } from "./machine";
 import { git } from "../../git/index";
@@ -203,7 +204,7 @@ export class RunLaunchSource {
       }
       // Task 515: a recorded dispatch selection that predates the latest
       // required route for the worker yields to it. The retained agent cannot
-      // change profile, so the approved route is armed for the existing
+      // change profile, so the requested route is armed for the existing
       // replacement machinery instead of launching another run on the stale
       // profile; an in-flight owner replacement keeps its own authority.
       const superseding = supersedingRouteProfile(
@@ -211,6 +212,8 @@ export class RunLaunchSource {
         t.profile?.id,
         this.store.pool(),
         this.store.usageLevel(),
+        requestedTier(t.complexity),
+        climbedTier(t),
       );
       const hostCatalogs = this.resolution.workerHostCatalogs?.(t) ?? [];
       const supersedingHost =
@@ -242,7 +245,7 @@ export class RunLaunchSource {
           (supersedingMovesHost && !t.failoverReason))
       ) {
         const supersedingReason = (
-          t.profileRequests?.worker?.reason ?? "Operator-approved route"
+          t.profileRequests?.worker?.reason ?? "Recorded worker route"
         ).slice(0, 4000);
         t = this.resolution.update(
           t,

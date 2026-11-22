@@ -860,7 +860,6 @@ export class QueueRuntime {
       dataDir: this.dataDir,
       store: this.store,
       engine: this.engine,
-      decisions: this.decisions,
       capacityChanges: this.capacityChanges,
       markStoreAccess: () => this.markStoreAccess(),
       connected: () => this.anyHostConnected(),
@@ -2481,16 +2480,6 @@ export class QueueRuntime {
     >,
   ) {
     return this.settingsOperations.availabilityControl(input);
-  }
-  routingGrant(input: {
-    action: "request" | "end" | "revoke";
-    caller: string;
-    reason?: string;
-    profiles?: string[];
-    until?: string | null;
-    grantId?: string;
-  }) {
-    return this.settingsOperations.routingGrant(input);
   }
   async configureUsage(input: { level: UsageLevel; until?: string | null }) {
     return this.settingsOperations.configureUsage(input);
