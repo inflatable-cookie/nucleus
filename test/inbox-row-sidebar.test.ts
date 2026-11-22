@@ -244,6 +244,7 @@ for (const [name, c] of [
 
 const counts = {
   needs: 1,
+  planning: 2,
   leads: 0,
   papercuts: 2,
   queue: 0,
@@ -318,8 +319,7 @@ test("menu entries hover and focus dimmed; the selected entry keeps its surface"
     );
 
     // A dimmed zero-count entry still shows the hover.
-    const leads = ui.query("Leads, 0");
-    assert.equal(leads.props.style.opacity, 0.55, "zero counts stay dimmed");
+    const leads = ui.query("Leads, 0");    assert.equal(leads.props.style.opacity, 0.55, "zero counts stay dimmed");
     leads.props.onHoverIn();
     const hovered = ui.query("Leads, 0");
     assert.equal(
@@ -334,5 +334,70 @@ test("menu entries hover and focus dimmed; the selected entry keeps its surface"
     );
   } finally {
     ui.update(h("View", null));
+  }
+});
+
+test("1546 the Planning entry counts the open lanes, dimmed at zero like the rest", async () => {
+  await load();
+  const ui = mountMenu(dark);
+  try {
+    // The accessible label names the unit, so the count reads as open lanes.
+    const planning = ui.query("Planning, 2 open lanes");
+    assert.equal(
+      planning.props.style.opacity,
+      1,
+      "a non-zero Planning count never dims",
+    );
+    // Planning is not highlighted: its count reads in the same muted text as
+    // the other unhighlighted entries.
+    const countTextOf = (label: string) => {
+      const entry = ui.query(label);
+      const wanted = label.match(/, (\d+)/)?.[1];
+      const count = (entry.children as unknown[]).find(
+        (child) =>
+          typeof child !== "string" &&
+          (child as { type: string }).type === "Text" &&
+          ((child as { children: unknown[] }).children ?? []).join("") ===
+            wanted,
+      ) as { props: { style: unknown } };
+      assert.ok(count, `${label} draws its count as text`);
+      return count.props.style;
+    };
+    assert.deepEqual(
+      countTextOf("Planning, 2 open lanes"),
+      countTextOf("Papercuts, 2"),
+      "Planning counts in the same style as the other entries",
+    );
+    planning.props.onHoverIn();
+    assert.equal(
+      ui.query("Planning, 2 open lanes").props.style.backgroundColor,
+      design.hoverSurface(dark as never),
+      "hover dims the Planning entry like a list row",
+    );
+  } finally {
+    ui.update(h("View", null));
+  }
+  // At zero the Planning entry dims but stays selectable, like every entry.
+  const zero = mount(
+    h(menu.InboxMenu as never, {
+      c: dark,
+      view: "working",
+      counts: { ...counts, planning: 0 },
+      loaded: true,
+      onSelect: () => {},
+    }),
+  );
+  try {
+    assert.ok(
+      zero.query("Planning, 0 open lanes"),
+      "the zero count still names its unit",
+    );
+    assert.equal(
+      zero.query("Planning, 0 open lanes").props.style.opacity,
+      0.55,
+      "a zero Planning count dims",
+    );
+  } finally {
+    zero.update(h("View", null));
   }
 });

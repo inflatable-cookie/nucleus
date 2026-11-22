@@ -6,7 +6,7 @@ import { useFocusVisible } from "../focus-modality";
 import { muted, type Colors } from "../controls";
 import { hoverSurface, radius, space, type as typeScale } from "../design";
 
-export type InboxMenuCounts = Record<Exclude<InboxView, "planning">, number>;
+export type InboxMenuCounts = Record<InboxView, number>;
 
 /**
  * One menu entry (nucleus#1528): the same sidebar hover as a list row — a dimmed
@@ -28,7 +28,7 @@ function MenuEntry({
   value: number | null;
   loaded: boolean;
   onPress: () => void;
-  options: { icon?: string; hot?: boolean; dimmed?: boolean };
+  options: { icon?: string; hot?: boolean; dimmed?: boolean; countNoun?: string };
 }) {
   const [hovered, setHovered] = useState(false);
   const focus = useFocusVisible();
@@ -38,7 +38,11 @@ function MenuEntry({
       accessibilityRole="tab"
       accessibilityState={{ selected: on }}
       accessibilityLabel={
-        value === null || !loaded ? label : `${label}, ${value}`
+        value === null || !loaded
+          ? label
+          : options.countNoun
+            ? `${label}, ${value} ${options.countNoun}`
+            : `${label}, ${value}`
       }
       onPress={onPress}
       onHoverIn={() => setHovered(true)}
@@ -114,8 +118,8 @@ function MenuEntry({
 /**
  * The board menu (Tom, 2026-11-21): Needs you, a divider, Planning, Leads,
  * Papercuts, Queue, a divider, then Working, In review and Closing. Counts are
- * real totals; only Needs you is highlighted, because only it asks the operator
- * to act. A count is hidden until the board loads. An entry whose count is 0
+ * real totals — Planning shows the number of open lanes in scope (nucleus#1546);
+ * only Needs you is highlighted, because only it asks the operator to act. A count is hidden until the board loads. An entry whose count is 0
  * renders dimmed but stays selectable; the selected entry keeps its styling.
  * Hover and keyboard focus dim an entry like a list row; hovering the selected
  * entry keeps it.
@@ -133,14 +137,14 @@ export function InboxMenu({
   loaded: boolean;
   onSelect: (view: InboxView) => void;
 }) {
-  const count = (id: InboxView) => (id === "planning" ? null : counts[id]);
+  const count = (id: InboxView) => counts[id];
   const item = (
     key: string,
     label: string,
     on: boolean,
     value: number | null,
     onPress: () => void,
-    options: { icon?: string; hot?: boolean; dimmed?: boolean } = {},
+    options: { icon?: string; hot?: boolean; dimmed?: boolean; countNoun?: string } = {},
   ) => (
     <MenuEntry
       key={key}
@@ -187,7 +191,9 @@ export function InboxMenu({
             {
               icon: entry.icon,
               hot: entry.id === "needs",
-              // Planning carries no count, so its null never dims; unloaded counts stay hidden.
+              // Planning names its unit, so the count reads as open lanes.
+              countNoun: entry.id === "planning" ? "open lanes" : undefined,
+              // An unloaded entry's hidden count never dims; a loaded zero does.
               dimmed: loaded && count(entry.id) === 0,
             },
           )}

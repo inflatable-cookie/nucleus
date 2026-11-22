@@ -681,8 +681,8 @@ const navigationButtons = (ui: ReturnType<typeof mount>) =>
     );
 const navigationLabels = (ui: ReturnType<typeof mount>) =>
   navigationButtons(ui).map((node) => String(node.props.accessibilityLabel));
-/** A menu entry's name, without its count. */
-const viewName = (label: string) => label.replace(/, \d+$/, "");
+/** A menu entry's name, without its count. Planning's count names its unit (nucleus#1546). */
+const viewName = (label: string) => label.replace(/, \d+( open lanes)?$/, "");
 const navigationButton = (ui: ReturnType<typeof mount>, name: string) => {
   const button = navigationButtons(ui).find(
     (node) => viewName(String(node.props.accessibilityLabel)) === name,
@@ -2509,7 +2509,7 @@ for (const compact of [false, true]) {
         navigationLabels(empty),
         [
           "Needs you, 0",
-          "Planning",
+          "Planning, 2 open lanes",
           "Leads, 0",
           "Papercuts, 0",
           "Queue, 0",
@@ -2517,7 +2517,7 @@ for (const compact of [false, true]) {
           "In review, 0",
           "Closing, 0",
         ],
-        "every menu entry reads its real zero total",
+        "every menu entry reads its real total, Planning its open lanes",
       );
       assert.ok(
         empty.text().includes("Nothing here."),
@@ -2658,16 +2658,20 @@ for (const compact of [false, true]) {
         );
       assert.ok(ui.query("Working, 1"), "Working carries its own count");
       assert.ok(ui.query("In review, 1"), "In review carries its own count");
+      assert.ok(
+        ui.query("Planning, 2 open lanes"),
+        "Planning carries its open lanes",
+      );
       assert.ok(ui.query("Closing, 0"), "Closing reads its real zero");
       assert.equal(ui.query(/^Active/), undefined, "no Active entry remains");
-      // Dimming: a zero-count entry dims, while the selected zero entry, the
-      // uncounted Planning entry and non-zero entries do not.
+      // Dimming: a zero-count entry dims, while the selected entry and
+      // non-zero entries do not.
       const opacityOf = (name: string) =>
         navigationButton(ui, name).props.style.opacity;
       assert.equal(
         opacityOf("Planning"),
         1,
-        "Planning carries no count and never dims",
+        "a non-zero Planning count never dims",
       );
       assert.equal(opacityOf("Working"), 1, "a non-zero entry never dims");
       assert.equal(opacityOf("Closing"), 0.55, "a zero-count entry dims");

@@ -529,9 +529,11 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   **Closing** (verifying, merging and closing tasks). The menu reads Needs you, a
   divider, Planning, Leads, Papercuts, Queue, a divider, Working, In review and
   Closing; both dividers read at half the border's contrast against the menu
-  background. Each entry shows its real total; only Needs you is highlighted.
+  background. Each entry shows its real total — Planning shows the number of
+  open (active) lanes the selected projects list, counting a lane two selected
+  projects list once; only Needs you is highlighted.
   An entry whose count is 0 renders dimmed but stays selectable; the selected
-  entry keeps its selected styling, and Planning (which carries no count) never dims.
+  entry keeps its selected styling.
   Opening a view clears the open record and resets Leads and Papercuts to their
   first page. The card-once projection below decides where a card goes; the menu
   groups its columns. Milestone QA is not a board surface: QA

@@ -23,6 +23,7 @@ import {
   leadsCards,
   type InboxView,
 } from "../../shared/inbox-board";
+import { openScopeLanes } from "../../shared/project-scope";
 import { useRpc } from "../shell";
 import { DropdownSelect, muted, row, type Colors } from "../controls";
 import { projectName } from "./text";
@@ -240,13 +241,25 @@ export function useInboxBoard({
         group: api.RESERVED_LEAD_TAGS[tag] ? "Reserved" : "Tags",
       })),
   ];
+  // Planning's count is the open lanes in scope, not cards: every active lane
+  // a selected project lists, counted once (nucleus#1546). The tag filter
+  // never narrows it, like the rest of the menu counts.
+  const planning = useMemo(
+    () =>
+      openScopeLanes(state?.projects ?? [], state?.lanes ?? [], selection)
+        .length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state?.projects, state?.lanes, selectionKey],
+  );
   // The menu counts ignore the tag filter: it narrows the list, not the inbox. The list's
   // own header counts what it shows.
   const counts = useMemo(
-    () => inboxCounts(columns, hiddenQueued),
-    [columns, hiddenQueued],
+    () => ({ ...inboxCounts(columns, hiddenQueued), planning }),
+    [columns, hiddenQueued, planning],
   );
-  const listCounts = triageTag ? inboxCounts(board, hiddenQueued) : counts;
+  const listCounts = triageTag
+    ? { ...inboxCounts(board, hiddenQueued), planning }
+    : counts;
   return { board, counts, listCounts, triageTagOptions };
 }
 export type InboxBoard = ReturnType<typeof useInboxBoard>;

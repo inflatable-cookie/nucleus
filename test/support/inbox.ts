@@ -9,6 +9,8 @@ type Tree = {
 };
 
 const menuEntry = (name: string) => new RegExp(`^${name}(, \\d+)?$`);
+/** The Planning menu entry, whose count names its unit (nucleus#1546). */
+export const planningEntry = /^Planning, \d+ open lanes$/;
 /** The list views, in menu order. Working, In review and Closing are top-level entries (Tom, 2026-11-21). */
 export const INBOX_LIST_VIEWS = [
   "Needs you",
@@ -23,6 +25,11 @@ export const INBOX_LIST_VIEWS = [
 /** Opens one menu view. */
 export function openView(tree: Tree, name: string): void {
   tree.press(menuEntry(name));
+}
+
+/** Opens the Planning view, whose entry counts its open lanes (nucleus#1546). */
+export function openPlanning(tree: Tree): void {
+  tree.press(planningEntry);
 }
 
 /** Visits each list view until `visit` returns true; returns whether one did. */
@@ -75,10 +82,11 @@ export function acrossViews<T extends Mounted>(tree: T): T & { raw: T } {
   const isMenuEntry = (label: string | RegExp) =>
     typeof label === "string"
       ? INBOX_LIST_VIEWS.some((name) => menuEntry(name).test(label)) ||
-        label === "Planning"
+        label === "Planning" ||
+        planningEntry.test(label)
       : INBOX_LIST_VIEWS.some(
           (name) => label.source === menuEntry(name).source,
-        );
+        ) || label.source === planningEntry.source;
   const recordOpen = () => pinned || tree.all(DETAIL).length > 0;
   const reveal = (label: string | RegExp) => {
     if (tree.all(label).length || recordOpen()) return;

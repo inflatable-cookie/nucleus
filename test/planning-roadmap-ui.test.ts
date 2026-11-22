@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mount, useNativeStubs } from "./support/render";
+import { planningEntry } from "./support/inbox";
 import {
   fakeAdapter,
   recentProjectActivity,
@@ -391,13 +392,14 @@ test("1420 Planning shows the batch digest, proposed and applied reasons, and wo
         }),
       }),
     );
-    const waitFor = async (label: string) => {
+    const waitFor = async (label: string | RegExp) => {
       for (let i = 0; i < 200 && !ui.query(label); i++)
         await new Promise((resolve) => setTimeout(resolve, 5));
       return ui.get(label);
     };
     try {
-      ui.press("Planning");
+      await waitFor(planningEntry);
+      ui.press(planningEntry);
       // Medium width with two projects: the list shows first, and a row opens its roadmap in place.
       await waitFor(`Project row ${store.projectByKey(projectKey)!.name}`);
       ui.press(`Project row ${store.projectByKey(projectKey)!.name}`);
