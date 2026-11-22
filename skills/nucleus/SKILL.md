@@ -1261,6 +1261,15 @@ handle the matter when none exists. A task's own dispatching planner remains
 first for its questions. `project.agents` lists named non-task threads;
 `agent.register` and `agent.unregister` maintain explicit addresses (Spec 060).
 
+## Planner handover
+
+Treat "planner handover", "handoff" or "hand this to a new thread" as a request
+to run the whole [handover](references/handover.md) without stopping. Use the
+model the operator names, or ask with a question card and a recommendation.
+Write a thorough handoff. Start the successor thread, then move the planner role
+and every open task this thread owns to it, check that everything moved, and
+stop acting for the project.
+
 ## Review entry for external PRs
 
 Treat "adopt this PR" or "queue this external PR" as a request to bring the named
