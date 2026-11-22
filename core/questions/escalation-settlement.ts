@@ -82,7 +82,10 @@ function retireEscalationSurfaces(
     );
     const decisionId = linked?.detail.match(/decision ([0-9a-f-]{36})/)?.[1];
     if (decisionId) {
-      try {
+      const exists = Boolean(
+        store.db.prepare("SELECT 1 FROM decisions WHERE id=?").get(decisionId),
+      );
+      if (exists) {
         const stored = store.decision(decisionId);
         if (stored.status === "open") {
           const decisions = new Decisions(store);
@@ -96,8 +99,6 @@ function retireEscalationSurfaces(
             decisions.withdrawInTransaction(withdrawInput);
           else decisions.withdraw(withdrawInput);
         }
-      } catch {
-        /* A missing or concurrently closed decision needs no withdrawal. */
       }
     }
   }
@@ -127,20 +128,18 @@ function retireEscalationSurfaces(
 }
 
 /**
- * Spec 067 batch 4 (round 9): when a task reaches a terminal phase (merged,
- * done, cancelled, or removed), close its open escalations and retire their
- * stops, waits, followups, question windows, and open linked decisions in one
- * transaction. Non-terminal tasks use `record.clear kind=escalation` manually.
+ * Spec 067 batch 4 (round 10): when a task reaches a terminal phase (`done` or
+ * `cancelled`), close its open escalations and retire their stops, waits,
+ * followups, question windows, and open linked decisions in one transaction.
+ * Never closes on merge intent or non-terminal states; non-terminal tasks use
+ * `record.clear kind=escalation` manually.
  */
 export function closeTerminalEscalations(store: Store, task: Task): string[] {
   const current = store.taskOrNull(task.id);
   if (!current) return [];
-  const reason = current.removedAt
-    ? "the task was removed"
-    : escalationOutlived(current)
-      ? "the task merged or ended"
-      : null;
-  if (!reason) return [];
+  if (current.phase !== "done" && current.phase !== "cancelled") return [];
+  const reason =
+    current.phase === "done" ? "the task completed" : "the task was cancelled";
   const events = store.eventsAll(current.id) as LadderEvent[];
   const escalations = plannerEscalations(events);
   if (escalations.length === 0) return [];

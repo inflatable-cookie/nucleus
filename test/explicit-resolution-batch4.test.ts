@@ -9,6 +9,7 @@ import type { Adapter } from "../core/host";
 import { Decisions } from "../core/planning/decisions";
 import { closeTerminalEscalations } from "../core/questions/escalation-settlement";
 import {
+  PLANNER_ESCALATION_CHOICES,
   escalationVerbChoices,
   plannerEscalations,
   type EscalationVerbChoice,
@@ -96,6 +97,7 @@ function makeFixture() {
     },
     sendRun: async () => {},
     notify: async () => {},
+    askPlanner: async () => null,
     findAnyOpenBranchPr: async () => [],
   } as unknown as Adapter;
   const engine = new Engine(store, adapter, 0);
@@ -509,5 +511,242 @@ test("deleted restart-as-escalation-answer path: parkedRestart never returns ans
     assert.ok(!parked || !("answer" in parked));
   } finally {
     fx.close();
+  }
+});
+
+test("round 10: pending merge intent does not close open escalations or linked decisions, and a decision-write error rolls back terminal completion", async () => {
+  const fx = makeFixture();
+  try {
+    const decisions = new Decisions(fx.store);
+    fx.store.putRun(
+      makeRun(fx.taskId, {
+        id: "run-r10-1",
+        status: "finished",
+        active: false,
+        released: true,
+        endedAt: new Date(Date.now() - 1_000).toISOString(),
+      }),
+    );
+    recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-merge-intent");
+    const linked = decisions.add({
+      headline: "Escalation with pending merge intent",
+      question: "How should esc-merge-intent proceed?",
+      choices: [
+        { label: "Stop and keep the work", consequence: "Parks task" },
+        {
+          label: "Return to the worker with a new approach",
+          consequence: "Continues worker",
+        },
+      ],
+      askedBy: PLANNER,
+      tasks: [fx.taskId],
+    });
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_decision_linked",
+      `esc-merge-intent: decision ${linked.id}`,
+    );
+
+    // Pending merge intent is not a terminal phase: maintenance must leave escalation and decision open.
+    fx.store.update(
+      fx.taskId,
+      {
+        phase: "merging",
+        resolution: {
+          ...fx.task().resolution,
+          mergeIntent: true,
+        },
+      },
+      "merge_intent",
+      "pending merge",
+    );
+    assert.deepEqual(closeTerminalEscalations(fx.store, fx.task()), []);
+    fx.engine.resolution.ladder.reconcileLegacyPlaceholderDecisions(fx.task());
+    await fx.engine.resolution.ladder.resumeEscalationWaits(fx.task());
+    assert.equal(fx.store.decision(linked.id).status, "open");
+    assert.equal(
+      plannerEscalations(fx.store.eventsAll(fx.taskId)).find(
+        (e) => e.id === "esc-merge-intent",
+      )?.answered,
+      false,
+    );
+
+    // Move back to parked state and inject a SQLite decision-write failure: owner complete must roll back atomically.
+    fx.store.update(
+      fx.taskId,
+      {
+        phase: "blocked",
+        resolution: { ...fx.task().resolution, mergeIntent: false },
+      },
+      "blocked",
+      "parked before complete",
+    );
+    fx.store.db.exec(`
+      CREATE TRIGGER fail_decision_update BEFORE UPDATE ON decisions
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated decision write failure');
+      END;
+    `);
+    await assert.rejects(
+      async () =>
+        await fx.engine.performTaskControl(
+          taskControlInputSchema.parse({
+            taskId: fx.taskId,
+            version: fx.task().version,
+            action: "complete",
+            reason: "Operator complete during decision fault",
+            caller: OPERATOR_BOARD_CALLER,
+          }),
+        ),
+      /simulated decision write failure/,
+    );
+    assert.equal(fx.task().phase, "blocked");
+    assert.equal(fx.store.decision(linked.id).status, "open");
+    assert.equal(
+      plannerEscalations(fx.store.eventsAll(fx.taskId)).find(
+        (e) => e.id === "esc-merge-intent",
+      )?.answered,
+      false,
+    );
+
+    // Once the fault clears, owner complete succeeds and closes both atomically.
+    fx.store.db.exec("DROP TRIGGER fail_decision_update;");
+    await fx.engine.performTaskControl(
+      taskControlInputSchema.parse({
+        taskId: fx.taskId,
+        version: fx.task().version,
+        action: "complete",
+        reason: "Operator complete after fault cleared",
+        caller: OPERATOR_BOARD_CALLER,
+      }),
+    );
+    assert.equal(fx.task().phase, "done");
+    assert.equal(fx.store.decision(linked.id).status, "withdrawn");
+    assert.equal(
+      plannerEscalations(fx.store.eventsAll(fx.taskId)).find(
+        (e) => e.id === "esc-merge-intent",
+      )?.answered,
+      true,
+    );
+  } finally {
+    await fx.close();
+  }
+});
+
+test("round 10: fresh escalations offer plain choices only (no route, restart, move or retry_effect options)", async () => {
+  const fx = makeFixture();
+  try {
+    const runId = "run-plain-only";
+    const deliveryId = `ns-review-${"d".repeat(64)}`;
+    const at = new Date().toISOString();
+    fx.store.putRun(
+      makeRun(fx.taskId, {
+        id: runId,
+        role: "reviewer",
+        agentId: "agent-plain-only",
+        workspaceId: "ws-plain-only",
+        active: false,
+        reviewDeliveries: [
+          {
+            authorizationId: randomUUID(),
+            operationId: randomUUID(),
+            deliveryId,
+            taskId: fx.taskId,
+            runId,
+            head: HEAD_A,
+            checkpointOrdinal: 1,
+            taskVersion: fx.task().version,
+            briefVersion: 1,
+            briefDigest: null,
+            reason: "Review head A",
+            instruction: "Review head A",
+            createdAt: at,
+            status: "uncertain",
+            evidence: "delivery timed out",
+            observedAt: at,
+          },
+        ],
+      }),
+    );
+    fx.store.update(
+      fx.taskId,
+      {
+        phase: "reviewing",
+        prHead: HEAD_A,
+        resolution: { ...fx.task().resolution, currentRunId: runId },
+      },
+      "review_started",
+      "uncertain reviewer delivery",
+    );
+    // Confirm the task actually has executable owner verbs available via next/ownerVerbViews.
+    const availableVerbs = escalationVerbChoices(
+      ownerVerbViews(collectOwnerVerbFacts(fx.store, fx.task())),
+    );
+    assert.ok(
+      availableVerbs.length > 0,
+      "fixture must have at least one available owner verb",
+    );
+
+    const escId = "esc-plain-only";
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation",
+      `${escId}: cause worker_error; run ${runId}; question q; options ${PLANNER_ESCALATION_CHOICES.join(" | ")}`,
+    );
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_question",
+      `${escId}: Worker stopped; choose how it proceeds.`,
+    );
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_payload",
+      `${escId}: ${JSON.stringify({ id: escId, runId })}`,
+    );
+
+    const routing = fx.engine.resolution.ladder.routePlannerEscalation(
+      fx.task(),
+      escId,
+      "Worker stopped; choose how it proceeds.",
+    );
+    let askedRow: { taskId: string; detail: string } | undefined;
+    for (let i = 0; i < 40 && !askedRow; i++) {
+      askedRow = fx.store.db
+        .prepare(
+          "SELECT taskId, detail FROM events WHERE kind='delegated_delivery' AND taskId LIKE ? ORDER BY id DESC LIMIT 1",
+        )
+        .get(`delegation:%${escId}%`) as
+        | { taskId: string; detail: string }
+        | undefined;
+      if (!askedRow) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const offeredEvent = fx.store
+      .eventsAll(fx.taskId)
+      .find(
+        (e) =>
+          e.kind === "planner_escalation_offered" &&
+          e.detail.startsWith(`${escId}: `),
+      );
+    assert.ok(offeredEvent, "planner_escalation_offered must be recorded");
+    assert.deepEqual(
+      JSON.parse(offeredEvent.detail.slice(escId.length + 2)),
+      [],
+      "fresh escalation must not offer executable owner-verb options",
+    );
+    assert.ok(askedRow, "delegated question must be opened");
+    const asked = JSON.parse(askedRow.detail) as { choices?: string[] };
+    assert.deepEqual(asked.choices, [...PLANNER_ESCALATION_CHOICES]);
+
+    await fx.engine.resolution.answerDelegatedQuestion(
+      {
+        questionId: askedRow.taskId.slice("delegation:".length),
+        choice: "Wait until a time (put an ISO timestamp in Reason)",
+        reason: new Date(Date.now() + 3_600_000).toISOString(),
+      },
+      PLANNER,
+    );
+    await routing;
+  } finally {
+    await fx.close();
   }
 });

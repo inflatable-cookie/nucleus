@@ -4,7 +4,6 @@ import type {
   TaskControlInput,
 } from "../../../shared/contracts";
 import type { Resolution } from "../../resolution";
-import { escalationOutlived } from "../../recovery/task-reasons";
 import { closeTerminalEscalations } from "../escalation-settlement";
 import { attentionUnknownEscalation } from "./attention";
 import { continueWorkerAfterLadder, settleLadderControl } from "./continuation";
@@ -201,7 +200,7 @@ export class Ladder {
     after: Task,
     action: TaskControlInput["action"],
   ): void {
-    if (after.removedAt || escalationOutlived(after)) {
+    if (after.phase === "done" || after.phase === "cancelled") {
       closeTerminalEscalations(this.store, after);
       return;
     }

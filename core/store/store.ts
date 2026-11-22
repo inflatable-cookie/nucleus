@@ -2618,7 +2618,7 @@ export class Store {
     );
   }
   private readonly terminalTaskHooks: Array<(task: Task) => void> = [];
-  /** Register an in-transaction hook that runs whenever `update()` moves a task to a terminal phase or removes it. */
+  /** Register an in-transaction hook that runs whenever `update()` moves a task to `done` or `cancelled`. */
   onTerminalTask(hook: (task: Task) => void): void {
     this.terminalTaskHooks.push(hook);
   }
@@ -2630,9 +2630,7 @@ export class Store {
     expected?: number,
   ): Task {
     const becomesTerminal =
-      change.phase === "done" ||
-      change.phase === "cancelled" ||
-      Boolean(change.removedAt);
+      change.phase === "done" || change.phase === "cancelled";
     if (!becomesTerminal || this.terminalTaskHooks.length === 0)
       return this.funnel.update(id, change, kind, detail, expected);
     const apply = () => {
