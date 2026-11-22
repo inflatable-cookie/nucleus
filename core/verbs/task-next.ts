@@ -617,32 +617,40 @@ function explicitCommandsFor(
     }
   };
 
+  const startRoleFor = (
+    runRole: Run["role"],
+  ): "worker" | "reviewer" | "coordinator" | null =>
+    runRole === "revision"
+      ? "worker"
+      : runRole === "reviewer"
+        ? "reviewer"
+        : runRole === "recovery"
+          ? "coordinator"
+          : null;
+
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
-    const role =
-      run.role === "recovery"
-        ? "coordinator"
-        : run.role === "reviewer"
-          ? "reviewer"
-          : "worker";
-    push({
-      action: "run.start",
-      args: {
+    const role = startRoleFor(run.role);
+    if (role) {
+      push({
         action: "run.start",
-        ...base,
-        role,
-        agent: "fresh",
-        replacing: run.id,
-      },
-      fill: ["reason"],
-      note: `Replace uncertain ${role} run ${run.id} with a fresh run in one step.`,
-    });
+        args: {
+          action: "run.start",
+          ...base,
+          role,
+          agent: "fresh",
+          replacing: run.id,
+        },
+        fill: ["reason"],
+        note: `Replace uncertain ${role} run ${run.id} with a fresh run in one step.`,
+      });
+    }
     push({
       action: "run.release",
       args: { action: "run.release", ...base, run: run.id },
       fill: ["reason"],
-      note: `Release uncertain ${role} run ${run.id} without starting a replacement.`,
+      note: `Release uncertain ${role ?? run.role} run ${run.id} without starting a replacement.`,
     });
   }
 
@@ -668,30 +676,28 @@ function explicitCommandsFor(
       task.runId;
     if (stalledRunId) {
       const stored = runs.find((r) => r.id === stalledRunId);
-      const role =
-        stored?.role === "reviewer"
-          ? "reviewer"
-          : stored?.role === "recovery"
-            ? "coordinator"
-            : "worker";
+      const role = stored ? startRoleFor(stored.role) : "worker";
+      const label = role ?? stored?.role ?? "worker";
       push({
         action: "run.release",
         args: { action: "run.release", ...base, run: stalledRunId },
         fill: ["reason"],
-        note: `Release stalled ${role} run ${stalledRunId}.`,
+        note: `Release stalled ${label} run ${stalledRunId}.`,
       });
-      push({
-        action: "run.start",
-        args: {
+      if (role) {
+        push({
           action: "run.start",
-          ...base,
-          role,
-          agent: "fresh",
-          replacing: stalledRunId,
-        },
-        fill: ["reason"],
-        note: `Replace stalled ${role} run ${stalledRunId} with a fresh run.`,
-      });
+          args: {
+            action: "run.start",
+            ...base,
+            role,
+            agent: "fresh",
+            replacing: stalledRunId,
+          },
+          fill: ["reason"],
+          note: `Replace stalled ${role} run ${stalledRunId} with a fresh run.`,
+        });
+      }
     }
   }
 

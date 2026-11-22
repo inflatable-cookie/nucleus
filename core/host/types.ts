@@ -291,6 +291,12 @@ export interface RecoveryDispatchSnapshot {
       note?: string;
     }
   >;
+  explicitCommands?: Array<{
+    action: string;
+    args: Record<string, unknown>;
+    fill?: string[];
+    note?: string;
+  }>;
 }
 
 /** Structural slice of a Paseo timeline entry; shell detail is normalized by Paseo across providers. */

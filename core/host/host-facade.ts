@@ -337,11 +337,25 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     });
   }
 
-  steerOrNotify(id: AgentId, input: HostMessage): Promise<void> {
+  steerOrNotify(
+    id: AgentId,
+    input: HostMessage,
+  ): Promise<"delivered" | "queued" | void> {
     return this.#route(id, (adapter, nativeId) => {
       const read = adapter.steerOrNotify ?? adapter.notify;
       if (!read) return refused("This host cannot send messages");
       const source = this.#sourceForHost(input.sourceAgentId, adapter);
+      if (adapter.steerOrNotify) {
+        return adapter.steerOrNotify(
+          nativeId,
+          input.messageId,
+          input.text,
+          source,
+          {
+            allowQueuedFallback: input.allowQueuedFallback,
+          },
+        );
+      }
       return read.call(adapter, nativeId, input.messageId, input.text, source);
     });
   }

@@ -31,6 +31,7 @@ import { splitOwnerEffectKey } from "./owner-effects";
 import {
   messageSendPlan,
   phaseSetPlan,
+  preflightExplicitRunStart,
   resolveMessageTarget,
   runStartPlan,
 } from "./explicit-run-start";
@@ -174,6 +175,13 @@ export async function resolveExplicitly(
     input.action === "message.send"
       ? await resolveMessageTarget(engine, before, input.role)
       : null;
+  if (
+    input.action === "run.start" &&
+    input.version === before.version &&
+    !before.removedAt
+  ) {
+    await preflightExplicitRunStart(engine, before, input);
+  }
   const result = store.transaction(() => {
     const task = store.task(id);
     const reply = (

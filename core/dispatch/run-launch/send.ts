@@ -62,7 +62,9 @@ export async function sendRunVia(
   const agent = owner.retainedAgentRef(run.agentId!);
   await agent.refresh();
   const key = wireLabel(agent.current()?.labels, "mcpBinding");
-  if (key && !run.ordinaryDetached) owner.binding(key, task, run.id, token);
+  if (key && !run.ordinaryDetached && !guard) {
+    owner.binding(key, task, run.id, token);
+  }
   const effectiveRun = { ...run, temporaryDirectory: temporary.TMPDIR };
   materializeRunContext(
     temporary.TMPDIR,
@@ -128,6 +130,7 @@ export async function sendRunVia(
         error instanceof Error ? error.message : String(error),
       );
     }
+    if (key) owner.binding(key, task, run.id, token);
   }
   await agent.send(prompt, { messageId: `ns-run-${run.id}` });
 }

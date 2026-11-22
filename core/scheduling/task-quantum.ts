@@ -525,7 +525,8 @@ export class TaskQuantum {
         (task.agentIntent && !task.agentId)
       ) {
         const bound =
-          task.workspaceIntent && !task.workspaceId
+          (task.workspaceIntent && !task.workspaceId) ||
+          (task.entrypoint === "proof" && task.proofOnly)
             ? await this.context.recoverExistingWorkspace(task)
             : false;
         const latest = this.context.store.task(task.id);

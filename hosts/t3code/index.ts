@@ -291,8 +291,20 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     notify(id: string, messageId: string, text: string) {
       return this.native.sendMessage(id, { messageId, text });
     }
-    steerOrNotify(id: string, messageId: string, text: string) {
-      return this.native.steerOrNotify(id, { messageId, text });
+    steerOrNotify(
+      id: string,
+      messageId: string,
+      text: string,
+      _sourceAgentId?: string,
+      options?: { allowQueuedFallback?: boolean },
+    ) {
+      return this.native.steerOrNotify(id, {
+        messageId,
+        text,
+        ...(options?.allowQueuedFallback !== undefined
+          ? { allowQueuedFallback: options.allowQueuedFallback }
+          : {}),
+      });
     }
     stopAgentTurn(id: string, expectedTurnId?: string) {
       return expectedTurnId !== undefined

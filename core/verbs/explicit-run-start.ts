@@ -1,6 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import {
+  authorModelKey,
+  queueAuthorModelKey,
+  taskAuthorModelKeys,
+} from "../../shared/authors";
 import {
   REVISION_BUDGET,
   WORKER_REPLACEMENT_CEILING,
@@ -17,11 +22,30 @@ import type {
   ResolutionWarningId,
 } from "../../shared/schema/task-control";
 import { taskBudget } from "../../shared/task-budget";
-import { chooseProfile } from "../dispatch/routing";
+import {
+  chooseProfile,
+  isOwnerRoutedReviewer,
+  reviewerIndependence,
+} from "../dispatch/routing";
 import { usageGateBlocked } from "../dispatch/usage-gate";
 import type { Engine } from "../engine";
-import { git } from "../git/index";
-import { readGitCheckout } from "../git/git-identity";
+import { git, queueCheckoutStatus } from "../git/index";
+import {
+  commonDirMatchesTask,
+  originsMatchForTask,
+  readGitCheckout,
+  readGitRef,
+} from "../git/git-identity";
+import type { Adapter } from "../host/adapter";
+import {
+  assertOrdinaryReviewIdentity,
+  ordinaryReviewSource,
+} from "../review/ordinary-review";
+import {
+  assertReviewEntryWriterYielded,
+  reviewEntryInputForTask,
+  type ReviewEntryAdapter,
+} from "../review/review-entry";
 import { digest, now } from "../store/store";
 import type {
   ExplicitFinishResult,
@@ -153,6 +177,7 @@ export function messageSendPlan(
   const { hasSteer, hasEnqueue, hasNotify } = target;
   const routeQueues = !hasSteer && hasEnqueue;
   const willQueue = routeQueues || (target.active && (hasSteer || hasEnqueue));
+  const allowQueuedFallback = input.accept.includes("queued");
 
   const warnings: ExplicitWarning[] = [];
   if (!target.agentId) {
@@ -185,12 +210,14 @@ export function messageSendPlan(
       const issues: string[] = [];
       const deliver = async () => {
         if (hasSteer) {
-          await engine.adapter.steerOrNotify!(
+          const outcome = await engine.adapter.steerOrNotify!(
             target.agentId!,
             messageId,
             input.text,
+            undefined,
+            { allowQueuedFallback },
           );
-          delivery = target.active ? "queued" : "delivered";
+          delivery = outcome === "queued" ? "queued" : "delivered";
         } else if (hasEnqueue) {
           await engine.adapter.enqueueMessage!(
             target.agentId!,
@@ -218,6 +245,45 @@ export function messageSendPlan(
       return { issues, delivery };
     },
   };
+}
+
+function isIndependentReviewerProfile(
+  task: Task,
+  runs: Run[],
+  profile: Profile,
+): boolean {
+  const modelKey = authorModelKey(profile.model);
+  if (modelKey === "default") return false;
+  const authors = taskAuthorModelKeys(
+    task,
+    runs.filter((run) => run.role === "revision"),
+  );
+  const currentQueueModel = queueAuthorModelKey(task);
+  const currentAuthorModels =
+    currentQueueModel === null ? authors : new Set([currentQueueModel]);
+  const selectState = reviewerIndependence({
+    site: "select",
+    entrypoint: task.entrypoint,
+    authors,
+    currentAuthorModels,
+  });
+  if (selectState !== "independent") return false;
+  const reviewerRequest = task.profileRequests?.reviewer;
+  const explicitReviewer =
+    reviewerRequest?.required === true ? reviewerRequest.profileId : undefined;
+  const ownerRouted = Boolean(
+    explicitReviewer && isOwnerRoutedReviewer(task, explicitReviewer),
+  );
+  return (
+    reviewerIndependence({
+      site: "profile",
+      authors,
+      currentAuthorModels,
+      reviewerModel: modelKey,
+      namedRequired: profile.id === explicitReviewer,
+      ownerRouted,
+    }) !== "collision"
+  );
 }
 
 function selectProfileForStart(
@@ -285,6 +351,15 @@ function selectProfileForStart(
             null)
           : (runs.findLast((r) => r.role === "recovery" && r.profile)
               ?.profile ?? null);
+    if (
+      role === "reviewer" &&
+      profile &&
+      !isIndependentReviewerProfile(task, runs, profile)
+    ) {
+      throw Error(
+        `Retained reviewer profile ${profile.id} is not independent of the task author model`,
+      );
+    }
     return {
       profile,
       group: groupOf(profile),
@@ -292,8 +367,32 @@ function selectProfileForStart(
     };
   }
 
+  if (role === "reviewer") {
+    const selected = engine.resolution.select(task, "reviewer");
+    let profile: Profile | null = selected?.profile ?? null;
+    if (!profile && request?.profileId) {
+      const requested =
+        allProfiles.find((item) => item.id === request.profileId) ?? null;
+      if (requested && isIndependentReviewerProfile(task, runs, requested)) {
+        profile = requested;
+      }
+    }
+    if (!profile) {
+      throw Error("No independent reviewer profile is available for this task");
+    }
+    return {
+      profile,
+      group: selected?.entry.group ?? groupOf(profile),
+      needsPolicySignoff: policySignoffFor(profile),
+    };
+  }
+
   let profile: Profile | null = null;
-  if (request?.profileId) {
+  if (role === "coordinator") {
+    const selected = engine.resolution.select(task, "coordinator");
+    if (selected) profile = selected.profile;
+  }
+  if (!profile && request?.profileId) {
     profile = allProfiles.find((item) => item.id === request.profileId) ?? null;
   }
   if (!profile) {
@@ -309,10 +408,6 @@ function selectProfileForStart(
       false,
     );
     if (chosen) profile = chosen.profile;
-  }
-  if (!profile && role !== "worker") {
-    const selected = engine.resolution.select(task, role);
-    if (selected) profile = selected.profile;
   }
   if (!profile) {
     const entry = pool.find(
@@ -332,26 +427,194 @@ function selectProfileForStart(
   };
 }
 
-async function prepareReviewerCheckout(
+function hasRealReviewWorktree(task: Task): boolean {
+  return Boolean(
+    task.directory &&
+      task.directory !== task.repoPath &&
+      existsSync(join(task.directory, ".git")),
+  );
+}
+
+function assertReviewWorktreeIdentity(task: Task): void {
+  if (!task.directory || !task.branch || task.branch === task.baseBranch) {
+    throw Error(
+      `Reviewer source identity is incomplete: expected checkout directory and a task branch distinct from ${task.baseBranch}`,
+    );
+  }
+  const checkout = readGitCheckout(task.directory);
+  const repo = readGitCheckout(task.repoPath);
+  if (
+    realpathSync(task.directory) === realpathSync(task.repoPath) ||
+    checkout.toplevel !== realpathSync(task.directory)
+  ) {
+    throw Error("Reviewer requires its recorded Queue-owned checkout root");
+  }
+  if (
+    !commonDirMatchesTask(
+      task,
+      checkout.commonDir,
+      repo.commonDir,
+      task.directory,
+    ) ||
+    !originsMatchForTask(checkout.origin, repo.origin)
+  ) {
+    throw Error(
+      `Reviewer repository identity changed: expected ${repo.commonDir} / ${repo.origin}, observed ${checkout.commonDir} / ${checkout.origin}`,
+    );
+  }
+}
+
+async function assertReviewerCustodyAndClean(
+  engine: Engine,
   task: Task,
-  head: string,
+  ignoreRunId: string | undefined,
 ): Promise<void> {
-  if (!task.directory || task.reviewEntry || task.directory === task.repoPath)
-    return;
-  if (!existsSync(join(task.directory, ".git"))) return;
+  if (!hasRealReviewWorktree(task)) return;
+  const runs = engine.store.runs(task.id);
+  const otherUnreleased = runs.find((r) => !r.released && r.id !== ignoreRunId);
+  if (otherUnreleased) {
+    throw Error(
+      `Cannot start reviewer while unreleased ${otherUnreleased.role} run ${otherUnreleased.id} owns the checkout`,
+    );
+  }
+  if (
+    task.runId &&
+    task.runId !== ignoreRunId &&
+    !task.completion &&
+    (task.agentActive !== false || task.agentIntent)
+  ) {
+    throw Error(
+      "Cannot start reviewer while the worker is still live in the shared checkout",
+    );
+  }
+  const hostWork = async () => {
+    if (task.reviewEntry) {
+      await assertReviewEntryWriterYielded(
+        reviewEntryInputForTask(task),
+        engine.adapter as Adapter & ReviewEntryAdapter,
+        task.id,
+      );
+    }
+    if (task.agentId && typeof engine.host?.observe === "function") {
+      const state = await engine.host.observe(task.agentId).catch(() => null);
+      if (state && (state.status === "running" || state.activeTurnId)) {
+        throw Error(
+          "Cannot start reviewer while the worker turn is active in the shared checkout",
+        );
+      }
+    }
+  };
+  await (task.hostId ? engine.withHost(task.hostId, hostWork) : hostWork());
+  assertReviewWorktreeIdentity(task);
+  const dirty = await queueCheckoutStatus(
+    task.directory!,
+    "status",
+    "--porcelain",
+  );
+  if (dirty) {
+    throw Error(
+      `Reviewer checkout is dirty; clean or commit changes before starting review: ${dirty.slice(0, 500)}`,
+    );
+  }
+}
+
+/**
+ * Preflight reviewer source custody and cleanliness before the transaction
+ * creates a run or updates `prHead`, so a dirty checkout or live writer
+ * refuses cleanly without mutating the task or detaching the worktree.
+ */
+export async function preflightExplicitRunStart(
+  engine: Engine,
+  task: Task,
+  input: Extract<ExplicitResolution, { action: "run.start" }>,
+): Promise<void> {
+  if (input.role !== "reviewer") return;
+  await assertReviewerCustodyAndClean(engine, task, input.replacing);
+}
+
+async function prepareReviewerCheckout(
+  engine: Engine,
+  task: Task,
+  run: Run,
+): Promise<void> {
+  if (!hasRealReviewWorktree(task)) return;
+  if (run.ordinaryDetached) {
+    await engine.resolution.ordinaryRoundCustody(task, run);
+  } else {
+    await assertReviewerCustodyAndClean(engine, task, run.id);
+  }
   if (task.branch) {
     await git(
-      task.directory,
+      task.directory!,
       "fetch",
       "origin",
       `refs/heads/${task.branch}`,
     ).catch(() => {});
   }
-  await git(task.directory, "checkout", "--quiet", "--detach", head);
-  const checkout = readGitCheckout(task.directory);
-  if (checkout.head !== head) {
-    throw Error(`Reviewer checkout is at ${checkout.head}, expected ${head}`);
+  await git(task.directory!, "rev-parse", "--verify", `${run.head}^{commit}`);
+  const checkout = readGitCheckout(task.directory!);
+  const branchRef = `refs/heads/${task.branch}`;
+  let branchTip: string | null = null;
+  try {
+    branchTip = readGitRef(checkout, branchRef);
+  } catch {
+    branchTip = null;
   }
+  if (branchTip !== run.head) {
+    if (checkout.branch === task.branch) {
+      await git(
+        task.directory!,
+        "checkout",
+        "--quiet",
+        "-B",
+        task.branch,
+        run.head,
+      );
+    } else {
+      await git(task.directory!, "branch", "-f", task.branch, run.head);
+    }
+  }
+  if (run.ordinaryDetached) {
+    await git(task.directory!, "checkout", "--quiet", "--detach", run.head);
+    await ordinaryReviewSource(task, run.head, true);
+  } else {
+    const after = readGitCheckout(task.directory!);
+    if (after.branch !== task.branch || after.head !== run.head) {
+      await git(task.directory!, "checkout", "--quiet", task.branch);
+    }
+    await ordinaryReviewSource(task, run.head, false);
+  }
+}
+
+function priorFinishedReviewForDetached(
+  engine: Engine,
+  task: Task,
+  runs: Run[],
+  head: string,
+): Run | null {
+  if (task.entrypoint === "proof" || !hasRealReviewWorktree(task)) return null;
+  const prior = runs.findLast(
+    (r) =>
+      r.role === "reviewer" &&
+      r.released &&
+      r.status === "finished" &&
+      Boolean(r.completion) &&
+      r.workspaceId === task.workspaceId,
+  );
+  if (!prior?.completion) return null;
+  if (prior.head === head && !prior.completion.sourceApproved) return null;
+  const receipt = engine.store.db
+    .prepare("SELECT response FROM receipts WHERE id=? AND task=? AND run=?")
+    .get(prior.completion.eventId, task.id, prior.id) as
+    | { response: string }
+    | undefined;
+  if (!receipt) return null;
+  try {
+    if (JSON.parse(String(receipt.response)).accepted !== true) return null;
+  } catch {
+    return null;
+  }
+  return prior;
 }
 
 export function runStartPlan(
@@ -390,6 +653,27 @@ export function runStartPlan(
     throw Error(`No retained ${input.role} thread is bound to this task`);
   }
 
+  const replacedRun = input.replacing ? store.run(input.replacing) : null;
+  const replacedInitial = Boolean(
+    input.replacing && !replacedRun && task.runId === input.replacing,
+  );
+  if (input.replacing && (replacedRun || replacedInitial)) {
+    const replacedRole = replacedInitial
+      ? "worker"
+      : replacedRun!.role === "revision"
+        ? "worker"
+        : replacedRun!.role === "reviewer"
+          ? "reviewer"
+          : replacedRun!.role === "recovery"
+            ? "coordinator"
+            : replacedRun!.role;
+    if (replacedRole !== input.role) {
+      throw Error(
+        `Run ${input.replacing} is a ${replacedRole} run and cannot be replaced by run.start ${input.role}`,
+      );
+    }
+  }
+
   const replacingPlan = input.replacing
     ? releasePlan(engine, task, {
         action: "run.release",
@@ -417,6 +701,22 @@ export function runStartPlan(
   const warn = (id: ResolutionWarningId, text: string) => {
     if (!warnings.some((item) => item.id === id)) warnings.push({ id, text });
   };
+
+  const replacedAgentlessUncertain = Boolean(
+    replacedRun
+      ? !replacedRun.agentId &&
+          !replacedRun.completion &&
+          ["intent", "uncertain"].includes(replacedRun.status)
+      : replacedInitial &&
+          !task.agentId &&
+          !task.completion &&
+          task.agentIntent,
+  );
+  if (replacingPlan && !replacedAgentlessUncertain) {
+    for (const warning of replacingPlan.warnings) {
+      warn(warning.id, warning.text);
+    }
+  }
 
   const unreleasedRoleRuns = runs.filter(
     (r) => r.role === runRole && !r.released,
@@ -502,6 +802,10 @@ export function runStartPlan(
         runId,
         task,
       );
+      const priorDetached =
+        runRole === "reviewer"
+          ? priorFinishedReviewForDetached(engine, task, runs, head)
+          : null;
 
       createdRun = runSchema.parse({
         id: runId,
@@ -523,6 +827,13 @@ export function runStartPlan(
         active: null,
         completion: null,
         released: false,
+        ...(priorDetached
+          ? {
+              ordinaryDetached: true as const,
+              priorRunId: priorDetached.id,
+              priorHead: priorDetached.head,
+            }
+          : {}),
         ...(temporaryDirectory ? { temporaryDirectory } : {}),
       });
       token = randomBytes(24).toString("hex");
@@ -594,13 +905,38 @@ export function runStartPlan(
       }
 
       const latestTask = store.task(task.id);
-      const messageId = `ns-run-${run.id}`;
-      const promptText = input.instruction
-        ? `${input.instruction}\n\nReason: ${input.reason}`
-        : `Explicit ${input.role} run ${run.id} started for task ${task.reference ?? task.id} at head ${run.head}. Reason: ${input.reason}`;
+      const sendGuard = {
+        allowed: async () => {
+          if (!isRunStillOwned()) return false;
+          if (runRole === "reviewer" && hasRealReviewWorktree(latestTask)) {
+            const current = store.task(task.id);
+            if (run.ordinaryDetached) {
+              await engine.resolution.ordinaryRoundCustody(current, run);
+            }
+            await ordinaryReviewSource(
+              current,
+              run.head,
+              Boolean(run.ordinaryDetached),
+            );
+          }
+          return isRunStillOwned();
+        },
+        stillAllowed: () => {
+          if (!isRunStillOwned()) return false;
+          if (runRole === "reviewer" && hasRealReviewWorktree(latestTask)) {
+            assertOrdinaryReviewIdentity(
+              store.task(task.id),
+              run.head,
+              Boolean(run.ordinaryDetached),
+            );
+          }
+          return true;
+        },
+      };
+
       const deliver = async () => {
         if (runRole === "reviewer") {
-          await prepareReviewerCheckout(latestTask, run.head);
+          await prepareReviewerCheckout(engine, latestTask, run);
         }
         if (!isRunStillOwned()) {
           issues.push(
@@ -610,27 +946,34 @@ export function runStartPlan(
         }
         if (agentMode === "retained") {
           const sendRun = (
-            engine.adapter as {
-              sendRun?: (t: Task, r: Run, tok: string) => Promise<void>;
+            engine.adapter as Adapter & {
+              sendRun?: (
+                t: Task,
+                r: Run,
+                tok: string,
+                context?: unknown,
+                ownerContext?: unknown,
+                guard?: {
+                  allowed: () => Promise<boolean>;
+                  stillAllowed: () => boolean;
+                },
+              ) => Promise<void>;
             }
           ).sendRun;
-          if (typeof sendRun === "function") {
-            await sendRun.call(engine.adapter, latestTask, run, token);
-          } else if (engine.adapter.continueRun) {
-            await engine.adapter.continueRun(run, messageId, promptText);
-          } else if (engine.adapter.steerOrNotify) {
-            await engine.adapter.steerOrNotify(
-              run.agentId!,
-              messageId,
-              promptText,
-            );
-          } else if (engine.adapter.notify) {
-            await engine.adapter.notify(run.agentId!, messageId, promptText);
-          } else {
+          if (typeof sendRun !== "function") {
             throw Error(
-              "Host adapter supports no retained run delivery method",
+              "Host adapter supports no authenticated retained run delivery method (sendRun)",
             );
           }
+          await sendRun.call(
+            engine.adapter,
+            latestTask,
+            run,
+            token,
+            null,
+            null,
+            sendGuard,
+          );
           store.transaction(() => {
             const currentRun = store.run(run.id);
             if (
@@ -646,7 +989,16 @@ export function runStartPlan(
         if (!engine.adapter.createRun) {
           throw Error("Host adapter supports no fresh run creation method");
         }
-        const created = await engine.adapter.createRun(latestTask, run, token);
+        const created = await engine.adapter.createRun(
+          latestTask,
+          run,
+          token,
+          null,
+          null,
+          runRole === "reviewer" && hasRealReviewWorktree(latestTask)
+            ? sendGuard
+            : undefined,
+        );
         store.transaction(() => {
           const currentRun = store.run(run.id) ?? run;
           const currentTask = store.task(task.id);

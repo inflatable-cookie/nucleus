@@ -24,6 +24,13 @@ import {
   ownerPendingEffects,
 } from "../core/verbs/owner-verbs";
 import { taskControlOperation } from "../core/verbs/task-control-key";
+import {
+  sendRunVia,
+  type RunSendOwner,
+} from "../core/dispatch/run-launch/send";
+import { recoveryDispatchSnapshot } from "../core/recovery/recovery-context";
+import { ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
+import { checkoutRunScratchPlacement } from "../core/workspaces/run-scratch";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
@@ -79,6 +86,21 @@ async function fixture(
         workspaceId: r.workspaceId || "workspace",
       };
     },
+    sendRun: async (
+      _task: unknown,
+      r: { id: string; role: string; agentId: string | null },
+      _token: string,
+      _ctx?: unknown,
+      _ownerCtx?: unknown,
+      guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean },
+    ) => {
+      if (guard && (!(await guard.allowed()) || !guard.stillAllowed())) {
+        throw new ProvenPreSendRefusalError(
+          "Run ownership changed before send",
+        );
+      }
+      calls.push(`sendRun ${r.role} ${r.agentId}`);
+    },
     continueRun: async (
       r: { id: string; role: string; agentId: string | null },
       _msgId: string,
@@ -88,6 +110,7 @@ async function fixture(
     },
     steerOrNotify: async (agentId: string, _msgId: string, text: string) => {
       calls.push(`steer ${agentId}: ${text.slice(0, 40)}`);
+      return "delivered" as const;
     },
     ...adapterOverrides,
   } as unknown as Adapter;
@@ -591,6 +614,7 @@ test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolv
     phase: "reviewing",
     prHead: head,
     workspaceId: "workspace",
+    profile: profile("worker-author"),
     resolution: { ...current().resolution, currentRunId: stuck.id },
   });
   runtime.engine.profiles = [profile("fresh-reviewer")];
@@ -647,6 +671,7 @@ test("#1508: run.start reviewer head=<pushed> warns on head_mismatch and starts 
     phase: "working",
     prHead: head,
     workspaceId: "workspace",
+    profile: profile("worker-author"),
   });
   runtime.engine.profiles = [profile("rev-1")];
   store.setMeta("pool", [
@@ -700,7 +725,7 @@ test("#1498: run.start worker retained starts a revision run on the bound worker
   assert.equal(created?.agentId, "worker-1");
   assert.equal(created?.status, "running");
   assert.equal(calls.length, 1);
-  assert.match(calls[0]!, /^continue revision worker-1: Apply the review fix/);
+  assert.match(calls[0]!, /^sendRun revision worker-1$/);
 });
 
 test("run.start enforces two_writers, budget, and route_policy warnings and coordinator authority", async (t) => {
@@ -864,7 +889,7 @@ test("message.send warns on queued and no_thread, delivers without changing task
     accept: ["queued"],
   });
   assert.equal(delivered.explicitResolution?.status, "applied");
-  assert.equal(delivered.explicitResolution?.delivery, "queued");
+  assert.equal(delivered.explicitResolution?.delivery, "delivered");
   assert.equal(delivered.phase, "reviewing");
   assert.ok(
     calls.some((c) => c.startsWith("steer reviewer-1: Resend your report now")),
@@ -879,6 +904,7 @@ test("an uncertain-creation stall launches a coordinator that can resolve it wit
     phase: "reviewing",
     prHead: head,
     workspaceId: "workspace",
+    profile: profile("worker-author"),
     resolution: { ...current().resolution, currentRunId: stuck.id },
   });
   runtime.engine.profiles = [profile("coord-prof"), profile("rev-prof")];
@@ -954,7 +980,12 @@ test("an uncertain-creation stall launches a coordinator that can resolve it wit
 });
 
 test("review fixes: reviewer head binds real checkout and updates prHead; retained sendRun installs fresh credential", async (t) => {
-  const { root, adapter, store, current, command, runtime } = await fixture(t);
+  let deliveredToken = "";
+  const { root, store, current, command, runtime } = await fixture(t, {
+    sendRun: async (_task: unknown, _r: { id: string }, tok: string) => {
+      deliveredToken = tok;
+    },
+  });
   const remote = join(root, "remote.git");
   const repoDir = join(root, "repo");
   const worktree = join(root, "worktree");
@@ -985,6 +1016,7 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
     workspaceIntent: true,
     prHead: firstSha,
     phase: "working",
+    profile: profile("worker-author"),
   });
   runtime.engine.profiles = [profile("rev-1")];
   store.setMeta("pool", [
@@ -1012,18 +1044,6 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
   // Retained worker uses sendRun with a newly minted credential after prior credential was revoked.
   store.setCredential("old-rev", "revoked-secret");
   store.deleteCredential("old-rev");
-  let deliveredToken = "";
-  (
-    adapter as unknown as {
-      sendRun?: (
-        task: unknown,
-        r: { id: string },
-        tok: string,
-      ) => Promise<void>;
-    }
-  ).sendRun = async (_task, _r, tok) => {
-    deliveredToken = tok;
-  };
   store.update(current().id, {
     phase: "changes_requested",
     agentId: "worker-1",
@@ -1048,6 +1068,7 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
     phase: "reviewing",
     prHead: head,
     workspaceId: "workspace",
+    profile: profile("worker-author"),
   });
   runtime.engine.profiles = [profile("rev-1")];
   store.setMeta("pool", [
@@ -1176,6 +1197,7 @@ test("review fixes: phase.set preserves stop, message.send warns on queue-only r
     phase: "reviewing",
     prHead: head,
     workspaceId: "workspace",
+    profile: profile("worker-author"),
     resolution: { ...current().resolution, currentRunId: stuck.id },
   });
   runtime.engine.resolution.waiting(
@@ -1248,4 +1270,474 @@ test("review fixes: phase.set preserves stop, message.send warns on queue-only r
   );
   assert.equal(bound, true);
   assert.equal(current().workspaceId, "existing-ws");
+});
+
+test("review round 2: reviewer source custody refuses dirty checkout and live worker, handles #1508 remote push through callback intake", async (t) => {
+  let createdToken = "";
+  const { root, store, current, command, runtime } = await fixture(t, {
+    createRun: async (
+      _task: unknown,
+      r: { id: string; role: string; workspaceId: string },
+      tok: string,
+    ) => {
+      createdToken = tok;
+      return {
+        id: `${r.role}-agent-${r.id.slice(0, 8)}`,
+        workspaceId: r.workspaceId || "workspace",
+      };
+    },
+  });
+  const remote = join(root, "remote.git");
+  const repoDir = join(root, "repo");
+  const worktree = join(root, "worktree");
+  const pusher = join(root, "pusher");
+  await git(root, "init", "--bare", remote);
+  await git(root, "init", repoDir);
+  await git(repoDir, "config", "user.email", "test@example.com");
+  await git(repoDir, "config", "user.name", "Test");
+  await git(repoDir, "checkout", "-b", "main");
+  writeFileSync(join(repoDir, "a.txt"), "v1\n");
+  await git(repoDir, "add", "a.txt");
+  await git(repoDir, "commit", "-m", "v1");
+  await git(repoDir, "remote", "add", "origin", remote);
+  await git(repoDir, "push", "-u", "origin", "main");
+  const branch = current().branch;
+  await git(repoDir, "worktree", "add", "-b", branch, worktree, "main");
+  const firstSha = await git(worktree, "rev-parse", "HEAD");
+  await git(worktree, "push", "-u", "origin", branch);
+
+  // Remote push ahead of local branch (#1508).
+  await git(root, "clone", remote, pusher);
+  await git(pusher, "config", "user.email", "test@example.com");
+  await git(pusher, "config", "user.name", "Test");
+  await git(pusher, "checkout", branch);
+  writeFileSync(join(pusher, "a.txt"), "v2-remote\n");
+  await git(pusher, "add", "a.txt");
+  await git(pusher, "commit", "-m", "v2 remote");
+  const remoteSha = await git(pusher, "rev-parse", "HEAD");
+  await git(pusher, "push", "origin", branch);
+
+  store.update(current().id, {
+    repoPath: repoDir,
+    directory: worktree,
+    workspaceId: "workspace",
+    workspaceIntent: true,
+    prUrl: "https://github.com/example/repo/pull/42",
+    prHead: firstSha,
+    phase: "awaiting_review",
+    profile: profile("worker-a", "model-alpha"),
+    agentId: "worker-1",
+    agentActive: false,
+  });
+  runtime.engine.profiles = [
+    profile("worker-a", "model-alpha"),
+    profile("rev-b", "model-beta"),
+  ];
+  store.setMeta("pool", [
+    {
+      profileId: "worker-a",
+      enabled: true,
+      group: "workers",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["worker"],
+    },
+    {
+      profileId: "rev-b",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+
+  // Dirty checkout refuses before apply() without mutating prHead or detaching.
+  writeFileSync(join(worktree, "a.txt"), "dirty-edit\n");
+  await assert.rejects(
+    command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+      head: remoteSha,
+      accept: ["head_mismatch"],
+    }),
+    /checkout is dirty/i,
+  );
+  assert.equal(current().prHead, firstSha);
+  assert.equal(readGitCheckout(worktree).branch, branch);
+  await git(worktree, "checkout", "--", "a.txt");
+
+  // Live worker refuses before apply().
+  store.update(current().id, { runId: "live-w", agentActive: true });
+  await assert.rejects(
+    command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+      head: remoteSha,
+      accept: ["head_mismatch"],
+    }),
+    /worker is still live/i,
+  );
+  store.update(current().id, { runId: null, agentActive: false });
+
+  // Clean #1508 launch fetches remoteSha, updates branch, and accepts real sourceApproved callback intake.
+  const started = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    head: remoteSha,
+    accept: ["head_mismatch"],
+  });
+  assert.equal(started.explicitResolution?.status, "applied");
+  const revRunId = started.explicitResolution!.runId!;
+  assert.equal(current().prHead, remoteSha);
+  assert.equal(readGitCheckout(worktree).head, remoteSha);
+  assert.equal(readGitCheckout(worktree).branch, branch);
+
+  assert.ok(createdToken.length > 0);
+  const accepted = await runtime.engine.complete(
+    {
+      taskId: current().id,
+      runId: revRunId,
+      eventId: "evt-rev-1508",
+      status: "blocked",
+      head: remoteSha,
+      sourceApproved: true,
+      reviewResponsibility: "environment",
+      awaitingProofs: [{ proof: "e2e", route: "external" }],
+      summary: "Source approved at remote head; awaiting external proof",
+      reviewText: "Looks good",
+    },
+    createdToken,
+  );
+  assert.equal(accepted.accepted, true);
+  assert.equal(store.run(revRunId)?.completion?.head, remoteSha);
+});
+
+test("review round 2: replacing checks role and preserves live_turn/unreported_result; reviewer enforces model independence", async (t) => {
+  const { store, current, run, command, runtime } = await fixture(t);
+  const liveWorker = run("live-worker-run", "revision", "worker-1");
+  store.putRun({
+    ...liveWorker,
+    active: true,
+    status: "running",
+    profile: profile("author-p", "model-alpha"),
+  });
+  store.update(current().id, {
+    phase: "reviewing",
+    prHead: head,
+    workspaceId: "workspace",
+    profile: profile("author-p", "model-alpha"),
+  });
+  runtime.engine.profiles = [
+    profile("author-p", "model-alpha"),
+    profile("same-model-rev", "model-alpha"),
+  ];
+  store.setMeta("pool", [
+    {
+      profileId: "same-model-rev",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+
+  // Cross-role replacement is refused.
+  await assert.rejects(
+    command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+      replacing: liveWorker.id,
+    }),
+    /cannot be replaced by run\.start reviewer/i,
+  );
+
+  // Same-model reviewer is refused by independence policy.
+  await assert.rejects(
+    command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+    }),
+    /No independent reviewer profile/i,
+  );
+
+  // Adding an independent profile selects it; replacing a live reviewer surfaces live_turn and unreported_result.
+  runtime.engine.profiles.push(profile("indep-rev", "model-beta"));
+  store.setMeta("pool", [
+    {
+      profileId: "same-model-rev",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+    {
+      profileId: "indep-rev",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+  const liveRev = run("live-rev-run", "reviewer", "rev-agent-1");
+  store.putRun({ ...liveRev, active: true, status: "running" });
+  const probe = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    replacing: liveRev.id,
+  });
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  const ids = probe.explicitResolution!.warnings.map((w) => w.id);
+  assert.ok(ids.includes("live_turn"));
+  assert.ok(ids.includes("unreported_result"));
+  assert.ok(ids.includes("duplicate_thread"));
+});
+
+test("review round 2: delayed retained sendRunVia does not rotate binding back to replaced run", async (t) => {
+  const bindings: Array<{ key: string; runId: string; token: string }> = [];
+  const sentMessages: string[] = [];
+  let releaseFirstRefresh!: () => void;
+  let refreshCount = 0;
+  let rootDir = "";
+
+  const { root, store, current, command, runtime } = await fixture(t, {
+    sendRun: async (
+      task: Parameters<typeof sendRunVia>[1],
+      r: Parameters<typeof sendRunVia>[2],
+      token: string,
+      _ctx?: unknown,
+      _ownerCtx?: unknown,
+      guard?: Parameters<typeof sendRunVia>[6],
+    ) => {
+      const myRefresh = ++refreshCount;
+      const owner: RunSendOwner = {
+        helperPath: join(rootDir, "helper.mjs"),
+        scratchPlacement: () => checkoutRunScratchPlacement(),
+        retainedAgentRef: () =>
+          ({
+            refresh: async () => {
+              if (myRefresh === 1) {
+                await new Promise<void>((resolve) => {
+                  releaseFirstRefresh = resolve;
+                });
+              }
+            },
+            current: () => ({
+              id: r.agentId!,
+              labels: { "nucleus.mcpBinding": "bind-key-1" },
+            }),
+            send: async (_text: string, opts: { messageId: string }) => {
+              sentMessages.push(opts.messageId);
+            },
+          }) as unknown as ReturnType<RunSendOwner["retainedAgentRef"]>,
+        binding: (key, _t, runId, tok) => {
+          bindings.push({ key, runId, token: tok });
+        },
+        ticket: (_t, runObj) => join(rootDir, `ticket-${runObj.id}.json`),
+        continueReviewer: async () => ({ sent: true }),
+      };
+      await sendRunVia(owner, task, r, token, null, null, guard);
+    },
+  });
+  rootDir = root;
+  store.update(current().id, {
+    phase: "changes_requested",
+    prHead: head,
+    workspaceId: "workspace",
+    agentId: "worker-1",
+    agentActive: false,
+    profile: profile("w-1"),
+  });
+
+  const firstPromise = command({
+    action: "run.start",
+    role: "worker",
+    agent: "retained",
+    instruction: "First turn",
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  const firstRunId = current().resolution.currentRunId!;
+  assert.ok(firstRunId);
+
+  // Replace run 1 while its refresh is still paused.
+  const second = await command({
+    action: "run.start",
+    role: "worker",
+    agent: "retained",
+    replacing: firstRunId,
+    accept: [
+      "duplicate_thread",
+      "two_writers",
+      "live_turn",
+      "unreported_result",
+    ],
+    instruction: "Second turn",
+  });
+  const secondRunId = second.explicitResolution!.runId!;
+  assert.equal(bindings.at(-1)?.runId, secondRunId);
+  assert.deepEqual(sentMessages, [`ns-run-${secondRunId}`]);
+
+  // Resume run 1's refresh: guard must refuse before rotating binding or sending.
+  releaseFirstRefresh();
+  await firstPromise;
+  assert.equal(bindings.length, 1);
+  assert.equal(bindings[0]!.runId, secondRunId);
+  assert.deepEqual(sentMessages, [`ns-run-${secondRunId}`]);
+
+  // Run 2's credential authenticates a real callback.
+  const accepted = await runtime.engine.complete(
+    {
+      taskId: current().id,
+      runId: secondRunId,
+      eventId: "evt-1498-retained",
+      status: "blocked",
+      summary: "Needs clarification",
+    },
+    bindings[0]!.token,
+  );
+  assert.equal(accepted.accepted, true);
+});
+
+test("review round 2: message.send reports host steer disposition and blocks queued fallback without accept; proof-only recovers with bound workspace; next/snapshot handle executor role", async (t) => {
+  let lastAllowFallback: boolean | undefined;
+  let steerHandler: (
+    id: string,
+    msgId: string,
+    text: string,
+    src?: string,
+    opts?: { allowQueuedFallback?: boolean },
+  ) => Promise<"delivered" | "queued"> = async (
+    _id,
+    _msgId,
+    _text,
+    _src,
+    opts,
+  ) => {
+    lastAllowFallback = opts?.allowQueuedFallback;
+    return "delivered";
+  };
+  const { store, current, command, runtime } = await fixture(t, {
+    steerOrNotify: (
+      id: string,
+      msgId: string,
+      text: string,
+      src?: string,
+      opts?: { allowQueuedFallback?: boolean },
+    ) => steerHandler(id, msgId, text, src, opts),
+  });
+  store.update(current().id, {
+    phase: "working",
+    prHead: head,
+    workspaceId: "workspace",
+    agentId: "worker-1",
+    agentActive: true,
+  });
+
+  // 1. Successful steer on active thread returns delivered (not queued).
+  const steered = await command({
+    action: "message.send",
+    role: "worker",
+    text: "Focus on tests",
+    accept: ["queued"],
+  });
+  assert.equal(steered.explicitResolution?.delivery, "delivered");
+  assert.equal(lastAllowFallback, true);
+
+  // 2. Idle snapshot without queued acceptance passes allowQueuedFallback=false and does not silently queue.
+  store.update(current().id, { agentActive: false });
+  steerHandler = async (_id, _msgId, _text, _src, opts) => {
+    lastAllowFallback = opts?.allowQueuedFallback;
+    if (opts?.allowQueuedFallback === false) {
+      throw new ProvenPreSendRefusalError(
+        "Steer refused; queued fallback not accepted",
+      );
+    }
+    return "queued";
+  };
+  const refusedFallback = await command({
+    action: "message.send",
+    role: "worker",
+    text: "Ping",
+  });
+  assert.equal(lastAllowFallback, false);
+  assert.equal(refusedFallback.explicitResolution?.delivery, "unknown");
+
+  // 3. Uncertain executor run in task.next offers run.release, never run.start worker, and flows into coordinator snapshot.
+  const execRun = runSchema.parse({
+    id: "exec-uncertain",
+    taskId: current().id,
+    role: "executor",
+    hostId: host,
+    workspaceId: "workspace",
+    agentId: null,
+    generation: 1,
+    head,
+    base: head,
+    instruction: null,
+    profile: null,
+    profileGroup: null,
+    status: "uncertain",
+    createdAt: new Date().toISOString(),
+    lastObservedAt: null,
+    idleSince: null,
+    active: null,
+    completion: null,
+    released: false,
+  });
+  store.putRun(execRun);
+  const next = runtime.taskNext({ taskId: current().id });
+  assert.ok(
+    next.explicitCommands?.some(
+      (c) => c.action === "run.release" && c.args.run === execRun.id,
+    ),
+  );
+  assert.equal(
+    next.explicitCommands?.some(
+      (c) => c.action === "run.start" && c.args.replacing === execRun.id,
+    ),
+    false,
+  );
+  const snapshot = recoveryDispatchSnapshot(
+    collectOwnerVerbFacts(store, current()),
+    { cause: "lifecycle", target: "worker", recoveryRunId: "rec-1" },
+  );
+  assert.ok(
+    snapshot.explicitCommands?.some(
+      (c) => c.action === "run.release" && c.args.run === execRun.id,
+    ),
+  );
+
+  // 4. Proof-only task with bound workspaceId and agentIntent recovers via recoverExistingWorkspace in quantumSteps.
+  store.setMeta("paused", false);
+  let launchedProofOnly = false;
+  runtime.engine.launchProofOnly = async () => {
+    launchedProofOnly = true;
+  };
+  store.update(current().id, {
+    entrypoint: "proof",
+    proofOnly: { commit: head },
+    workspaceId: "bound-proof-ws",
+    directory: "/bound/proof/dir",
+    workspaceIntent: true,
+    agentIntent: true,
+    agentId: null,
+    phase: "dispatching",
+    resolution: { ...current().resolution, stop: null },
+  });
+  await runtime.engine.withHost(host, () =>
+    runtime.engine.quantumSteps(current().id, current(), {
+      pausedForPrerequisiteWait: false,
+    }),
+  );
+  assert.equal(launchedProofOnly, true);
+  assert.equal(current().resolution.stop, null);
 });

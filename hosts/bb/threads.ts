@@ -164,12 +164,18 @@ export class BbThreads {
   workspaceFor(row: BbRow, agent: BbAgent | undefined): string | null {
     if (agent) {
       const workspace = this.ports.workspace(agent.workspaceId);
-      return workspace && workspace.environmentId === row.environmentId &&
-        workspace.directory === row.environmentPath ? agent.workspaceId : null;
+      return workspace &&
+        workspace.environmentId === row.environmentId &&
+        workspace.directory === row.environmentPath
+        ? agent.workspaceId
+        : null;
     }
     if (!row.environmentId) return null;
-    const directory = row.environmentPath && linkedWorktreePath(row.environmentPath);
-    return directory ? workspaceHandleForPath(directory) : `bb-environment:${row.environmentId}`;
+    const directory =
+      row.environmentPath && linkedWorktreePath(row.environmentPath);
+    return directory
+      ? workspaceHandleForPath(directory)
+      : `bb-environment:${row.environmentId}`;
   }
 
   private observation(row: BbRow): AgentObservation {
@@ -704,7 +710,10 @@ export class BbThreads {
       this.ports.save(state);
       return;
     }
-    if (expectedTurnId !== undefined && observation.activeTurnId !== expectedTurnId) {
+    if (
+      expectedTurnId !== undefined &&
+      observation.activeTurnId !== expectedTurnId
+    ) {
       throw new ProvenPreSendRefusalError(
         `Intended turn ${expectedTurnId} ended or changed to ${observation.activeTurnId ?? "unknown"}; refusing to stop newer turn`,
       );
@@ -845,7 +854,12 @@ export class BbThreads {
    * one queued send under its own durable identity; any other failure is unknown
    * delivery and is never resent (Spec 062, phase 4).
    */
-  async steerOrNotify(id: string, text: string, messageId: string) {
+  async steerOrNotify(
+    id: string,
+    text: string,
+    messageId: string,
+    options?: { allowQueuedFallback?: boolean },
+  ): Promise<"delivered" | "queued"> {
     if (!this.ports.state().agents[id])
       throw new ProvenPreSendRefusalError(
         "BB delivery needs a recorded task thread",
@@ -854,7 +868,7 @@ export class BbThreads {
     const previous = this.ports.state().writes[key];
     if (previous?.status === "unknown")
       throw new HostUnknownDeliveryError({ command: "bb.thread.send" });
-    if (previous?.status === "settled") return;
+    if (previous?.status === "settled") return "delivered";
     if (previous?.status !== "refused") {
       try {
         await this.write(key, "thread.send", {
@@ -863,12 +877,18 @@ export class BbThreads {
           messageId,
           mode: "steer",
         });
-        return;
+        return "delivered";
       } catch (error) {
         if (!this.ports.notSent(error)) throw error;
       }
     }
+    if (options?.allowQueuedFallback === false) {
+      throw new ProvenPreSendRefusalError(
+        "Steer could not be sent and queued fallback was not accepted",
+      );
+    }
     await this.send(id, text, messageId);
+    return "queued";
   }
   private async interactions(id: string): Promise<BbInteraction[]> {
     const read = await this.read<{

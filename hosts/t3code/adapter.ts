@@ -1520,7 +1520,10 @@ export class T3CodeHost implements Host {
    * refusal cannot prove it stayed unsent (planner ruling, 2026-11-11), so it
    * is never resent.
    */
-  async steerOrNotify(id: string, input: HostMessage): Promise<void> {
+  async steerOrNotify(
+    id: string,
+    input: HostMessage,
+  ): Promise<"delivered" | "queued"> {
     const { messageId, text } = input;
     let runId: string | null;
     try {
@@ -1535,7 +1538,10 @@ export class T3CodeHost implements Host {
         error instanceof Error ? error.message : String(error),
       );
     }
-    if (!runId) return this.sendMessage(id, input);
+    if (!runId) {
+      await this.sendMessage(id, input);
+      return "delivered";
+    }
     try {
       await this.presentation.wakeBeforeDelivery(id, messageId);
     } catch (error) {
@@ -1564,9 +1570,12 @@ export class T3CodeHost implements Host {
           dispatchMode: { type: "steer_active", targetRunId: runId },
         },
       );
+      return "delivered";
     } catch (error) {
       if (!(error instanceof ProvenPreSendRefusalError)) throw error;
-      return this.sendMessage(id, input);
+      if (input.allowQueuedFallback === false) throw error;
+      await this.sendMessage(id, input);
+      return "queued";
     }
   }
 
