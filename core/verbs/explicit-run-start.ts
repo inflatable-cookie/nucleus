@@ -30,7 +30,7 @@ import {
 import { usageGateBlocked } from "../dispatch/usage-gate";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
-import { git, queueCheckoutStatus } from "../git/index";
+import { queueCheckoutStatus } from "../git/index";
 import {
   commonDirMatchesTask,
   originsMatchForTask,
@@ -60,8 +60,8 @@ export type MessageTarget = {
 
 export type ExplicitRunStartPreflight = {
   forgeHead: string | null;
+  forgeReadFailed: boolean;
   localHead: string | null;
-  branchDiverged: boolean;
   workerTurnActive: boolean;
 };
 
@@ -481,11 +481,11 @@ function assertReviewSourceAvailable(task: Task): void {
 }
 
 /**
- * Preflight reviewer source availability, forge-confirmed PR head and live
- * writer observation before the transaction creates a run. Never refuses on
- * control-actor recovery runs or live workers (live workers surface as the
- * `two_writers` warning). A PR whose forge head cannot be confirmed refuses
- * instead of falling through to an unconfirmed commit.
+ * Preflight reviewer source availability, forge PR head, checkout HEAD and live
+ * writer observation before the transaction creates a run. Makes no Git writes.
+ * If the forge head differs from the checkout HEAD or cannot be read,
+ * `runStartPlan` returns `head_mismatch` and accepting starts the run on the
+ * checkout as it is.
  */
 export async function preflightExplicitRunStart(
   engine: Engine,
@@ -495,12 +495,13 @@ export async function preflightExplicitRunStart(
   if (input.role !== "reviewer") {
     return {
       forgeHead: null,
+      forgeReadFailed: false,
       localHead: null,
-      branchDiverged: false,
       workerTurnActive: false,
     };
   }
   assertReviewSourceAvailable(task);
+  let localHead: string | null = null;
   if (task.entrypoint !== "proof" && task.directory) {
     const dirty = await queueCheckoutStatus(
       task.directory,
@@ -512,8 +513,10 @@ export async function preflightExplicitRunStart(
         `Reviewer checkout at ${task.directory} has uncommitted changes; commit or clean them before starting review`,
       );
     }
+    localHead = readGitCheckout(task.directory).head;
   }
   let forgeHead: string | null = null;
+  let forgeReadFailed = false;
   let workerTurnActive = false;
   const probe = async () => {
     let prNumber: number | null = null;
@@ -524,22 +527,18 @@ export async function preflightExplicitRunStart(
       prNumber = match ? Number(match[1]) : null;
     }
     if (prNumber) {
-      if (typeof engine.adapter.verifyPrIdentity === "function") {
-        const pr = await engine.adapter.verifyPrIdentity(task, prNumber);
-        if (!pr?.head) {
-          throw Error(
-            "Forge PR head is unavailable; cannot start review on an unconfirmed commit",
-          );
+      try {
+        if (typeof engine.adapter.verifyPrIdentity === "function") {
+          const pr = await engine.adapter.verifyPrIdentity(task, prNumber);
+          if (pr?.head) forgeHead = pr.head;
+          else forgeReadFailed = true;
+        } else if (typeof engine.adapter.verifyPr === "function") {
+          const pr = await engine.adapter.verifyPr(task, prNumber);
+          if (pr?.head) forgeHead = pr.head;
+          else forgeReadFailed = true;
         }
-        forgeHead = pr.head;
-      } else if (typeof engine.adapter.verifyPr === "function") {
-        const pr = await engine.adapter.verifyPr(task, prNumber);
-        if (!pr?.head) {
-          throw Error(
-            "Forge PR head is unavailable; cannot start review on an unconfirmed commit",
-          );
-        }
-        forgeHead = pr.head;
+      } catch {
+        forgeReadFailed = true;
       }
     }
     if (task.agentId && typeof engine.host?.observe === "function") {
@@ -550,118 +549,16 @@ export async function preflightExplicitRunStart(
     }
   };
   await (task.hostId ? engine.withHost(task.hostId, probe) : probe());
-
-  let localHead: string | null = null;
-  let branchDiverged = false;
-  if (task.entrypoint !== "proof" && task.directory) {
-    localHead = readGitCheckout(task.directory).head;
-    const targetHead = forgeHead ?? input.head ?? task.prHead ?? null;
-    if (targetHead && localHead !== targetHead) {
-      const hasCommit = await git(
-        task.repoPath,
-        "rev-parse",
-        "--verify",
-        `${targetHead}^{commit}`,
-      )
-        .then(() => true)
-        .catch(() => false);
-      if (!hasCommit && task.branch) {
-        await git(
-          task.repoPath,
-          "fetch",
-          "origin",
-          `refs/heads/${task.branch}`,
-        ).catch(() => {});
-      }
-      const isAncestor = await git(
-        task.directory,
-        "merge-base",
-        "--is-ancestor",
-        localHead,
-        targetHead,
-      )
-        .then(() => true)
-        .catch(() => false);
-      if (!isAncestor) {
-        branchDiverged = true;
-      }
-    }
-  }
-  return { forgeHead, localHead, branchDiverged, workerTurnActive };
+  return { forgeHead, forgeReadFailed, localHead, workerTurnActive };
 }
 
 /**
- * Align the single task checkout to `run.head` strictly by verified
- * fast-forward (`merge-base --is-ancestor` + `git merge --ff-only`).
- * Never rewinds, resets, detaches or force-updates the task branch.
+ * Read-only verification of the task checkout before delivering a reviewer run.
+ * `run.start` makes no Git writes at all.
  */
-async function prepareReviewerCheckout(task: Task, run: Run): Promise<void> {
+async function verifyReviewerCheckout(task: Task, run: Run): Promise<void> {
   if (task.entrypoint === "proof" || !task.directory) return;
   assertReviewSourceAvailable(task);
-  const dirty = await queueCheckoutStatus(
-    task.directory,
-    "status",
-    "--porcelain",
-  );
-  if (dirty) {
-    throw Error(
-      `Reviewer checkout at ${task.directory} has uncommitted changes; commit or clean them before starting review`,
-    );
-  }
-  const checkout = readGitCheckout(task.directory);
-  if (checkout.head !== run.head) {
-    if (checkout.branch !== task.branch) {
-      throw Error(
-        `Task checkout is not on branch ${task.branch}; refusing to move it`,
-      );
-    }
-    let fetchError: unknown = null;
-    const hasCommit = await git(
-      task.repoPath,
-      "rev-parse",
-      "--verify",
-      `${run.head}^{commit}`,
-    )
-      .then(() => true)
-      .catch(() => false);
-    if (!hasCommit && task.branch) {
-      try {
-        await git(
-          task.repoPath,
-          "fetch",
-          "origin",
-          `refs/heads/${task.branch}`,
-        );
-      } catch (error) {
-        fetchError = error;
-      }
-    }
-    try {
-      await git(task.repoPath, "rev-parse", "--verify", `${run.head}^{commit}`);
-    } catch (error) {
-      if (fetchError) {
-        throw Error(
-          `Reviewer commit ${run.head} is unavailable after fetch failure: ${String(fetchError).slice(0, 300)}`,
-        );
-      }
-      throw error;
-    }
-    const isAncestor = await git(
-      task.directory,
-      "merge-base",
-      "--is-ancestor",
-      checkout.head,
-      run.head,
-    )
-      .then(() => true)
-      .catch(() => false);
-    if (!isAncestor) {
-      throw Error(
-        `Task branch ${task.branch} at ${checkout.head.slice(0, 12)} has unpushed or diverged commits relative to ${run.head.slice(0, 12)}; refusing to rewind (head_mismatch)`,
-      );
-    }
-    await git(task.directory, "merge", "--ff-only", run.head);
-  }
   await ordinaryReviewSource(task, run.head, false);
 }
 
@@ -803,15 +700,33 @@ export function runStartPlan(
     );
   }
   const referencePrHead = preflight?.forgeHead ?? task.prHead ?? null;
-  if (preflight?.branchDiverged && preflight.localHead && referencePrHead) {
+  if (preflight?.forgeReadFailed) {
     warn(
       "head_mismatch",
-      `Task checkout ${preflight.localHead.slice(0, 12)} has unpushed or diverged commits relative to ${preflight.forgeHead ? "forge PR head" : "recorded PR head"} ${referencePrHead.slice(0, 12)}; branch will not be moved.`,
+      "Forge PR head could not be confirmed; accepting starts the reviewer on the checkout as it is.",
+    );
+  } else if (
+    preflight?.localHead &&
+    preflight?.forgeHead &&
+    preflight.localHead !== preflight.forgeHead
+  ) {
+    warn(
+      "head_mismatch",
+      `Task checkout ${preflight.localHead.slice(0, 12)} differs from forge PR head ${preflight.forgeHead.slice(0, 12)}; checkout will not be moved.`,
     );
   } else if (input.head && referencePrHead && input.head !== referencePrHead) {
     warn(
       "head_mismatch",
       `Requested head ${input.head.slice(0, 12)} differs from ${preflight?.forgeHead ? "forge PR head" : "recorded PR head"} ${referencePrHead.slice(0, 12)}.`,
+    );
+  } else if (
+    input.head &&
+    preflight?.localHead &&
+    input.head !== preflight.localHead
+  ) {
+    warn(
+      "head_mismatch",
+      `Requested head ${input.head.slice(0, 12)} differs from task checkout HEAD ${preflight.localHead.slice(0, 12)}; checkout will not be moved.`,
     );
   }
   const budgetState = taskBudget(
@@ -851,17 +766,12 @@ export function runStartPlan(
       const basePatch = releaseChange?.patch ?? {};
       const resolution = { ...(basePatch.resolution ?? task.resolution) };
       const runId = randomUUID();
-      // For reviewers: if the branch has unpushed/diverged commits, accepting
-      // head_mismatch starts the run at the current local head and never rewinds.
-      // Otherwise the forge-confirmed PR head governs placement, delivery and intake.
+      // For reviewers: run.start makes no Git writes; the run always starts on
+      // the task checkout's current HEAD as it is.
       const head =
-        runRole === "reviewer" &&
-        preflight?.branchDiverged &&
-        preflight.localHead
+        runRole === "reviewer" && preflight?.localHead
           ? preflight.localHead
-          : runRole === "reviewer" && preflight?.forgeHead
-            ? preflight.forgeHead
-            : (input.head ?? task.prHead ?? task.planningCommit);
+          : (input.head ?? task.prHead ?? task.planningCommit);
       const base = task.planningCommit;
       const generation =
         runRole === "recovery" ? task.coordinatorGeneration + 1 : 1;
@@ -897,12 +807,13 @@ export function runStartPlan(
       store.putRun(createdRun);
 
       const patch: Partial<Task> = { ...basePatch, resolution };
-      // Only record a forge-confirmed PR head when the task checkout aligns to it;
-      // never overwrite prHead with an unconfirmed caller-supplied head or diverged local head.
+      // Only record a forge-confirmed PR head when the task checkout already
+      // matches it (e.g. #1508 where the worker pushed from the task checkout).
+      // Never record an unconfirmed SHA as prHead.
       if (
         runRole === "reviewer" &&
         preflight?.forgeHead &&
-        !preflight.branchDiverged &&
+        preflight.localHead === preflight.forgeHead &&
         task.prHead !== preflight.forgeHead
       ) {
         patch.prHead = preflight.forgeHead;
@@ -987,7 +898,7 @@ export function runStartPlan(
 
       const deliver = async () => {
         if (runRole === "reviewer") {
-          await prepareReviewerCheckout(latestTask, run);
+          await verifyReviewerCheckout(latestTask, run);
         }
         if (!isRunStillOwned()) {
           issues.push(

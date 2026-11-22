@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -9,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
+import { mergeGate } from "../core/forge/merge";
 import { publishFormalReview } from "../core/forge/reviews";
 import { publishedReviewDecision } from "../core/intake/result-application";
 import { ordinaryReviewSource } from "../core/review/ordinary-review";
@@ -1094,9 +1097,10 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
   assert.equal(started.explicitResolution?.status, "applied");
   const reviewRun = store.run(started.explicitResolution!.runId!)!;
   assert.equal(reviewRun.workspaceId, current().workspaceId);
-  // Unconfirmed caller head does not overwrite task.prHead; verified fast-forward advances the one task checkout cleanly on task.branch.
+  // run.start makes no Git writes: unconfirmed caller head does not overwrite task.prHead or move the checkout.
   assert.equal(current().prHead, firstSha);
-  assert.equal(readGitCheckout(worktree).head, pushedSha);
+  assert.equal(reviewRun.head, firstSha);
+  assert.equal(readGitCheckout(worktree).head, firstSha);
   assert.equal(readGitCheckout(worktree).branch, current().branch);
 
   // Retained worker uses sendRun with a newly minted credential after prior credential was revoked.
@@ -1433,8 +1437,10 @@ test("review round 2: reviewer source custody refuses dirty checkout, warns two_
       }),
     /uncommitted changes/i,
   );
-  // Clean checkout with live worker surfaces two_writers warning (never a hard refusal).
+  // Clean checkout at the worker-pushed remoteSha (#1508) with live worker surfaces two_writers warning (never a hard refusal).
   await git(worktree, "checkout", "--", "a.txt");
+  await git(worktree, "fetch", "origin", `refs/heads/${branch}`);
+  await git(worktree, "merge", "--ff-only", remoteSha);
   const liveProbe = await command({
     action: "run.start",
     role: "reviewer",
@@ -1446,8 +1452,8 @@ test("review round 2: reviewer source custody refuses dirty checkout, warns two_
     liveProbe.explicitResolution?.warnings.some((w) => w.id === "two_writers"),
   );
 
-  // Clean #1508 launch fast-forwards the one task checkout to remoteSha on task.branch,
-  // updates forge-confirmed prHead, and accepts sourceApproved callback + settlement.
+  // Clean #1508 launch makes no Git writes, updates forge-confirmed prHead when checkout matches forge,
+  // and accepts sourceApproved callback + settlement.
   const started = await command({
     action: "run.start",
     role: "reviewer",
@@ -1963,16 +1969,31 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
   assert.equal(mismatchRun.head, unpushedSha);
   assert.equal(readGitCheckout(worktree).head, unpushedSha);
 
-  // 3. Unavailable forge head refuses instead of falling through to an unconfirmed commit.
+  // 3. Unreadable forge head returns head_mismatch; accepting starts on the checkout as it is and never records an unconfirmed prHead.
   forgeHead = "";
-  await assert.rejects(
-    command({
-      action: "run.start",
-      role: "reviewer",
-      agent: "fresh",
-      accept: ["duplicate_thread"],
-    }),
-    /forge pr head is unavailable/i,
+  const unreadableProbe = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    accept: ["duplicate_thread"],
+  });
+  assert.equal(unreadableProbe.explicitResolution?.status, "warnings");
+  assert.ok(
+    unreadableProbe.explicitResolution?.warnings.some(
+      (w) => w.id === "head_mismatch",
+    ),
+  );
+  const unreadableApplied = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    accept: ["duplicate_thread", "head_mismatch"],
+  });
+  assert.equal(unreadableApplied.explicitResolution?.status, "applied");
+  assert.equal(current().prHead, publishedSha);
+  assert.equal(
+    store.run(unreadableApplied.explicitResolution!.runId!)?.head,
+    unpushedSha,
   );
   forgeHead = publishedSha;
 
@@ -2200,25 +2221,35 @@ test("review round 4: reviewer profile selection scopes to task host catalog; BB
   assert.deepEqual(ops, [{ op: "thread.send", mode: "steer" }]);
 });
 
-test("review round 7: #1508 fast-forwards clean behind checkout, passes formal review and normal merge verification, and preserves unpushed local commits with head_mismatch", async (t) => {
+test("review round 8: run.start makes no Git writes; #1508 passes ordinary result application and real mergeGate; ahead checkout and unreadable forge return head_mismatch", async (t) => {
   let forgeHead = "";
+  let failForgeRead = false;
   let launchedWorkspaceId: string | null = null;
   let launchedContents: string | null = null;
   let createdToken = "";
 
   const { root, store, current, command, runtime } = await fixture(t, {
-    verifyPrIdentity: async () => ({
-      head: forgeHead,
-      url: "https://github.com/example/repo/pull/77",
-    }),
-    verifyPr: async (taskObj: { directory: string | null }) => {
-      const checkout = readGitCheckout(taskObj.directory!);
-      assert.equal(checkout.head, forgeHead);
+    verifyPrIdentity: async () => {
+      if (failForgeRead) throw Error("GitHub unavailable");
       return {
         head: forgeHead,
         url: "https://github.com/example/repo/pull/77",
+        number: 77,
+        repository: "example/repo",
+        headRepository: "example/repo",
+        crossRepository: false,
       };
     },
+    verifyReview: async () => 505,
+    observe: async (id: string) => ({
+      id,
+      workspaceId: current().workspaceId,
+      status: "idle",
+      activeTurnId: null,
+      archivedAt: null,
+      active: false,
+      permissions: 0,
+    }),
     createRun: async (
       taskObj: { directory: string | null },
       r: { id: string; role: string; workspaceId: string },
@@ -2240,21 +2271,17 @@ test("review round 7: #1508 fast-forwards clean behind checkout, passes formal r
     root,
     store,
     current().id,
-    "round7-git",
+    "round8-git",
   );
   const branch = current().branch;
+  const baseSha = await git(repoDir, "rev-parse", "main");
 
-  // Remote push ahead of the clean, behind task checkout (#1508).
-  const pusher = join(root, "round7-pusher");
-  await git(root, "clone", remote, pusher);
-  await git(pusher, "config", "user.email", "test@example.com");
-  await git(pusher, "config", "user.name", "Test");
-  await git(pusher, "checkout", branch);
-  writeFileSync(join(pusher, "a.txt"), "v2-pushed\n");
-  await git(pusher, "add", "a.txt");
-  await git(pusher, "commit", "-m", "v2 pushed");
-  const pushedSha = await git(pusher, "rev-parse", "HEAD");
-  await git(pusher, "push", "origin", branch);
+  // #1508 shape: worker commits and pushes v2-pushed from the task checkout while task.prHead is still stale at initialSha.
+  writeFileSync(join(worktree, "a.txt"), "v2-pushed\n");
+  await git(worktree, "add", "a.txt");
+  await git(worktree, "commit", "-m", "v2 pushed");
+  const pushedSha = await git(worktree, "rev-parse", "HEAD");
+  await git(worktree, "push", "origin", branch);
   forgeHead = pushedSha;
 
   store.update(current().id, {
@@ -2286,7 +2313,7 @@ test("review round 7: #1508 fast-forwards clean behind checkout, passes formal r
     },
   ]);
 
-  // 1. Clean, behind checkout fast-forwards to forge-confirmed pushedSha on task.branch in the single task workspace.
+  // 1. run.start makes no Git writes, confirms forgeHead === localHead, updates task.prHead, and launches reviewer in task.workspaceId.
   const started = await command({
     action: "run.start",
     role: "reviewer",
@@ -2302,105 +2329,263 @@ test("review round 7: #1508 fast-forwards clean behind checkout, passes formal r
   assert.equal(readGitCheckout(worktree).head, pushedSha);
   assert.equal(readGitCheckout(worktree).branch, branch);
 
-  // 2. Formal publication, callback intake, publishedReviewDecision and normal merge verification all pass on the task checkout.
-  await git(
-    repoDir,
-    "remote",
-    "set-url",
-    "origin",
-    "https://github.com/example/repo.git",
+  // 2. Formal publication, callback intake, ordinary published-verdict application, and first real mergeGate all pass.
+  const bin = join(root, "fake-bin");
+  mkdirSync(bin, { recursive: true });
+  const fakeGhConfig = join(root, "fake-gh.json");
+  const ghScript = join(bin, "gh");
+  writeFileSync(
+    ghScript,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync(process.env.FAKE_GH_CONFIG, 'utf8'));
+const args = process.argv.slice(2);
+const key = args[0] === 'api' ? args[1] : args.slice(0, 2).join(' ');
+const entry = config[key] ?? config[String(key).replace(/\\?.*$/, '')];
+if (!entry) { process.stderr.write('gh: no fake response for ' + key + '\\n'); process.exit(1); }
+process.stdout.write(JSON.stringify(entry.body));
+`,
   );
-  const reviewId = await publishFormalReview(
-    store,
-    current(),
-    revRun,
-    "ready_to_merge",
-    "Approved at pushed head",
-    { login: "reviewer-bot" },
-    () => true,
-    {
-      readToken: async () => "fake-token",
-      verifyPr: async () => ({
-        head: pushedSha,
-        url: "https://github.com/example/repo/pull/77",
+  chmodSync(ghScript, 0o755);
+  const sshScript = join(bin, "ssh");
+  writeFileSync(
+    sshScript,
+    `#!/bin/sh\nexec git-upload-pack ${JSON.stringify(remote)}\n`,
+  );
+  chmodSync(sshScript, 0o755);
+  const priorPath = process.env.PATH;
+  const priorGhConfig = process.env.FAKE_GH_CONFIG;
+  process.env.PATH = `${bin}:${priorPath ?? ""}`;
+  process.env.FAKE_GH_CONFIG = fakeGhConfig;
+
+  let reviewBody = "";
+  try {
+    await git(
+      repoDir,
+      "remote",
+      "set-url",
+      "origin",
+      "git@github.com:example/repo.git",
+    );
+    await git(
+      worktree,
+      "remote",
+      "set-url",
+      "origin",
+      "git@github.com:example/repo.git",
+    );
+    const reviewId = await publishFormalReview(
+      store,
+      current(),
+      revRun,
+      "ready_to_merge",
+      "Approved at pushed head",
+      { login: "reviewer-bot" },
+      () => true,
+      {
+        readToken: async () => "fake-token",
+        verifyPr: async () => ({
+          head: pushedSha,
+          url: "https://github.com/example/repo/pull/77",
+        }),
+        runGh: async (_t, endpoint, args) => {
+          if (endpoint.endsWith("/reviews") && args.includes("POST")) {
+            const bodyArg = args.find((a) => a.startsWith("body="))!;
+            reviewBody = bodyArg.slice("body=".length);
+            return {
+              id: 505,
+              user: { login: "reviewer-bot" },
+              body: reviewBody,
+              commit_id: pushedSha,
+              state: "APPROVED",
+            };
+          }
+          return [];
+        },
+      },
+    );
+    assert.equal(reviewId, 505);
+
+    writeFileSync(
+      fakeGhConfig,
+      JSON.stringify({
+        graphql: {
+          body: {
+            data: {
+              repository: {
+                pullRequest: {
+                  headRefOid: pushedSha,
+                  baseRefOid: baseSha,
+                  baseRefName: "main",
+                  isDraft: false,
+                  state: "OPEN",
+                  mergeable: "MERGEABLE",
+                  mergeStateStatus: "CLEAN",
+                  reviewDecision: "APPROVED",
+                  reviewThreads: {
+                    nodes: [],
+                    pageInfo: { hasNextPage: false },
+                  },
+                  statusCheckRollup: {
+                    contexts: {
+                      nodes: [
+                        {
+                          __typename: "CheckRun",
+                          databaseId: 1,
+                          name: "ci",
+                          status: "COMPLETED",
+                          conclusion: "SUCCESS",
+                          startedAt: "2026-11-22T00:00:00Z",
+                          completedAt: "2026-11-22T00:01:00Z",
+                          detailsUrl: null,
+                          checkSuite: { app: { databaseId: 1 } },
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        "repos/example/repo/branches/main/protection": { body: {} },
+        "repos/example/repo/branches/main/protection/required_status_checks": {
+          body: { strict: false, contexts: [] },
+        },
+        "repos/example/repo/rules/branches/main": { body: [] },
       }),
-      runGh: async (_t, endpoint, args) => {
-        if (endpoint.endsWith("/reviews") && args.includes("POST")) {
-          const bodyArg = args.find((a) => a.startsWith("body="))!;
-          return {
-            id: 505,
+    );
+
+    const accepted = await runtime.engine.complete(
+      {
+        taskId: current().id,
+        runId: revRunId,
+        eventId: "evt-round8-terminal",
+        status: "ready_to_merge",
+        head: pushedSha,
+        summary: "Approved",
+        reviewText: "Approved at pushed head",
+        reviewId,
+      },
+      createdToken,
+    );
+    assert.equal(accepted.accepted, true);
+    store.putRun({
+      ...store.run(revRunId)!,
+      status: "finished",
+      released: true,
+    });
+    const decision = publishedReviewDecision(store, current());
+    assert.equal(decision.kind, "ready", JSON.stringify(decision));
+    // Apply the published verdict through the ordinary result-application path.
+    const applied = await runtime.engine.withHost(current().hostId!, () =>
+      runtime.engine.resolution.resultApplication.applyPublishedReview(
+        current(),
+        decision,
+      ),
+    );
+    assert.equal(applied.kind, "applied", JSON.stringify(applied));
+    assert.equal(current().phase, "verifying");
+    assert.equal(current().resolution.review?.head, pushedSha);
+    assert.equal(current().resolution.review?.status, "ready_to_merge");
+    assert.equal(current().resolution.review?.reviewId, reviewId);
+
+    // First real mergeGate passes on the task checkout.
+    const gate = await mergeGate(
+      current(),
+      undefined,
+      { login: "reviewer-bot" },
+      "all",
+      {
+        readToken: async () => "fake-token",
+        verifyPr: async () => ({
+          head: pushedSha,
+          url: "https://github.com/example/repo/pull/77",
+        }),
+        runGh: async (_t, endpoint) => {
+          const reviewObj = {
+            id: reviewId,
             user: { login: "reviewer-bot" },
-            body: bodyArg.slice("body=".length),
+            body: reviewBody,
             commit_id: pushedSha,
             state: "APPROVED",
           };
-        }
-        return [];
+          if (endpoint.endsWith(`/reviews/${reviewId}`)) return reviewObj;
+          if (endpoint.endsWith("/reviews")) return [reviewObj];
+          return [];
+        },
       },
-    },
-  );
-  await git(repoDir, "remote", "set-url", "origin", remote);
-  assert.equal(reviewId, 505);
+    );
+    assert.equal(gate.wait, "");
+    assert.equal(gate.head, pushedSha);
+  } finally {
+    process.env.PATH = priorPath;
+    if (priorGhConfig === undefined) delete process.env.FAKE_GH_CONFIG;
+    else process.env.FAKE_GH_CONFIG = priorGhConfig;
+    await git(repoDir, "remote", "set-url", "origin", remote);
+    await git(worktree, "remote", "set-url", "origin", remote);
+  }
 
-  const accepted = await runtime.engine.complete(
-    {
-      taskId: current().id,
-      runId: revRunId,
-      eventId: "evt-round7-terminal",
-      status: "ready_to_merge",
-      head: pushedSha,
-      summary: "Approved",
-      reviewText: "Approved at pushed head",
-      reviewId,
-    },
-    createdToken,
-  );
-  assert.equal(accepted.accepted, true);
-  store.putRun({
-    ...store.run(revRunId)!,
-    status: "finished",
-    released: true,
-  });
-  const decision = publishedReviewDecision(store, current());
-  assert.equal(decision.kind, "ready", JSON.stringify(decision));
-  assert.equal(decision.run.workspaceId, current().workspaceId);
-  assert.equal(decision.publicationId, reviewId);
-  // Normal ordinaryReviewSource & verifyPr verification pass on the single task checkout.
-  await ordinaryReviewSource(current(), pushedSha, false);
-  const verified = await runtime.engine.withHost(current().hostId!, () =>
-    runtime.engine.adapter.verifyPr!(current(), 77),
-  );
-  assert.equal(verified.head, pushedSha);
-  await new Promise((r) => setTimeout(r, 200));
-
-  // 3. An unpushed local commit on the task branch warns head_mismatch and never rewinds.
+  // 3. Checkout ahead of forge head (unpushed local commit): returns head_mismatch, never moves branch,
+  // accepting starts on checkout as it is and never overwrites task.prHead.
   writeFileSync(join(worktree, "a.txt"), "v3-unpushed\n");
   await git(worktree, "add", "a.txt");
   await git(worktree, "commit", "-m", "v3 unpushed");
   const unpushedSha = await git(worktree, "rev-parse", "HEAD");
   store.update(current().id, { phase: "awaiting_review" });
 
-  const diverged = await command({
+  const aheadProbe = await command({
     action: "run.start",
     role: "reviewer",
     agent: "fresh",
   });
-  assert.equal(diverged.explicitResolution?.status, "warnings");
+  assert.equal(aheadProbe.explicitResolution?.status, "warnings");
   assert.ok(
-    diverged.explicitResolution?.warnings.some((w) => w.id === "head_mismatch"),
+    aheadProbe.explicitResolution?.warnings.some(
+      (w) => w.id === "head_mismatch",
+    ),
   );
   assert.equal(readGitCheckout(worktree).head, unpushedSha);
 
-  const acceptedDiverged = await command({
+  const aheadApplied = await command({
     action: "run.start",
     role: "reviewer",
     agent: "fresh",
     accept: ["head_mismatch", "budget"],
   });
-  assert.equal(acceptedDiverged.explicitResolution?.status, "applied");
-  const divergedRun = store.run(acceptedDiverged.explicitResolution!.runId!)!;
-  assert.equal(divergedRun.head, unpushedSha);
+  assert.equal(aheadApplied.explicitResolution?.status, "applied");
+  assert.equal(
+    store.run(aheadApplied.explicitResolution!.runId!)?.head,
+    unpushedSha,
+  );
   assert.equal(readGitCheckout(worktree).head, unpushedSha);
-  assert.equal(readGitCheckout(worktree).branch, branch);
+  assert.equal(current().prHead, pushedSha);
+
+  // 4. Unreadable forge head: returns head_mismatch, accepting starts on checkout as it is without updating task.prHead.
+  failForgeRead = true;
+  const unreadableProbe = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    accept: ["duplicate_thread", "budget"],
+  });
+  assert.equal(unreadableProbe.explicitResolution?.status, "warnings");
+  assert.ok(
+    unreadableProbe.explicitResolution?.warnings.some(
+      (w) => w.id === "head_mismatch",
+    ),
+  );
+  const unreadableApplied = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    accept: ["duplicate_thread", "budget", "head_mismatch"],
+  });
+  assert.equal(unreadableApplied.explicitResolution?.status, "applied");
+  assert.equal(
+    store.run(unreadableApplied.explicitResolution!.runId!)?.head,
+    unpushedSha,
+  );
   assert.equal(current().prHead, pushedSha);
 });
