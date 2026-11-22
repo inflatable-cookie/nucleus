@@ -535,12 +535,17 @@ export async function preflightExplicitRunStart(
 }
 
 /**
- * Create a separate, run-owned detached Git worktree at `run.head` so the
- * worker's `task.directory`, `HEAD`, `refs/heads/<task.branch>` and working
+ * Create a separate, run-owned detached Git worktree at `run.head` and register
+ * its host workspace so the native reviewer launches in the detached view while
+ * the worker's `task.directory`, `HEAD`, `refs/heads/<task.branch>` and working
  * files remain completely untouched through launch and settlement.
  */
-async function prepareReviewerCheckout(task: Task, run: Run): Promise<void> {
-  if (task.entrypoint === "proof" || !run.reviewCheckoutDirectory) return;
+async function prepareReviewerCheckout(
+  engine: Engine,
+  task: Task,
+  run: Run,
+): Promise<Run> {
+  if (task.entrypoint === "proof" || !run.reviewCheckoutDirectory) return run;
   assertReviewSourceAvailable(task);
   let fetchError: unknown = null;
   if (task.branch) {
@@ -561,13 +566,9 @@ async function prepareReviewerCheckout(task: Task, run: Run): Promise<void> {
     throw error;
   }
   if (existsSync(run.reviewCheckoutDirectory)) {
-    await git(
-      task.repoPath,
-      "worktree",
-      "remove",
-      "--force",
-      run.reviewCheckoutDirectory,
-    ).catch(() => {});
+    throw Error(
+      `Detached review view path already exists at ${run.reviewCheckoutDirectory}; refusing to overwrite it`,
+    );
   }
   await git(
     task.repoPath,
@@ -579,6 +580,27 @@ async function prepareReviewerCheckout(task: Task, run: Run): Promise<void> {
     run.head,
   );
   await detachedReviewViewSource(task, run.reviewCheckoutDirectory, run.head);
+  if (typeof engine.adapter.createWorkspace === "function") {
+    const viewTask: Task = {
+      ...task,
+      directory: run.reviewCheckoutDirectory,
+      branch: `ns-review-${run.id.slice(0, 12)}`,
+    };
+    const workspace = await engine.adapter.createWorkspace(viewTask);
+    if (
+      workspace.directory &&
+      realpathSync(workspace.directory) !==
+        realpathSync(run.reviewCheckoutDirectory)
+    ) {
+      throw Error(
+        `Host registered review workspace at ${workspace.directory}, expected ${run.reviewCheckoutDirectory}`,
+      );
+    }
+    const updated: Run = { ...run, workspaceId: workspace.id };
+    engine.store.putRun(updated);
+    return updated;
+  }
+  return run;
 }
 
 export function runStartPlan(
@@ -616,6 +638,26 @@ export function runStartPlan(
     (input.replacing ? "fresh" : retainedAgentId ? "retained" : "fresh");
   if (agentMode === "retained" && !retainedAgentId) {
     throw Error(`No retained ${input.role} thread is bound to this task`);
+  }
+  if (
+    input.role === "reviewer" &&
+    agentMode === "retained" &&
+    task.entrypoint !== "proof"
+  ) {
+    const priorDetached = runs.findLast(
+      (r) =>
+        r.role === "reviewer" &&
+        r.agentId === retainedAgentId &&
+        Boolean(r.reviewCheckoutDirectory),
+    );
+    if (
+      !priorDetached?.reviewCheckoutDirectory ||
+      !existsSync(priorDetached.reviewCheckoutDirectory)
+    ) {
+      throw Error(
+        `Retained reviewer ${retainedAgentId} has no detached review checkout; use run.start reviewer fresh`,
+      );
+    }
   }
 
   const replacedRun = input.replacing ? store.run(input.replacing) : null;
@@ -878,29 +920,26 @@ export function runStartPlan(
       }
 
       const latestTask = store.task(task.id);
-      const deliveryTask =
-        runRole === "reviewer" && run.reviewCheckoutDirectory
-          ? { ...latestTask, directory: run.reviewCheckoutDirectory }
-          : latestTask;
+      let activeRun = run;
       const sendGuard = {
         allowed: async () => {
           if (!isRunStillOwned()) return false;
-          if (runRole === "reviewer" && run.reviewCheckoutDirectory) {
+          if (runRole === "reviewer" && activeRun.reviewCheckoutDirectory) {
             await detachedReviewViewSource(
               store.task(task.id),
-              run.reviewCheckoutDirectory,
-              run.head,
+              activeRun.reviewCheckoutDirectory,
+              activeRun.head,
             );
           }
           return isRunStillOwned();
         },
         stillAllowed: () => {
           if (!isRunStillOwned()) return false;
-          if (runRole === "reviewer" && run.reviewCheckoutDirectory) {
+          if (runRole === "reviewer" && activeRun.reviewCheckoutDirectory) {
             assertDetachedReviewViewIdentity(
               store.task(task.id),
-              run.reviewCheckoutDirectory,
-              run.head,
+              activeRun.reviewCheckoutDirectory,
+              activeRun.head,
             );
           }
           return true;
@@ -908,9 +947,42 @@ export function runStartPlan(
       };
 
       const deliver = async () => {
-        if (runRole === "reviewer") {
-          await prepareReviewerCheckout(latestTask, run);
+        if (runRole === "reviewer" && agentMode === "fresh") {
+          activeRun = await prepareReviewerCheckout(engine, latestTask, run);
+        } else if (runRole === "reviewer" && agentMode === "retained") {
+          const priorForAgent = store
+            .runs(task.id)
+            .findLast(
+              (r) =>
+                r.id !== run.id &&
+                r.role === "reviewer" &&
+                r.agentId === run.agentId &&
+                Boolean(r.reviewCheckoutDirectory),
+            );
+          if (
+            !priorForAgent?.reviewCheckoutDirectory ||
+            !existsSync(priorForAgent.reviewCheckoutDirectory)
+          ) {
+            throw Error(
+              `Retained reviewer ${run.agentId} is not bound to an existing detached review view; use run.start reviewer fresh`,
+            );
+          }
+          await detachedReviewViewSource(
+            latestTask,
+            priorForAgent.reviewCheckoutDirectory,
+            run.head,
+          );
+          activeRun = {
+            ...run,
+            workspaceId: priorForAgent.workspaceId,
+            reviewCheckoutDirectory: priorForAgent.reviewCheckoutDirectory,
+          };
+          store.putRun(activeRun);
         }
+        const deliveryTask =
+          runRole === "reviewer" && activeRun.reviewCheckoutDirectory
+            ? { ...latestTask, directory: activeRun.reviewCheckoutDirectory }
+            : latestTask;
         if (!isRunStillOwned()) {
           issues.push(
             `Run ${run.id} was already replaced or released before delivery.`,
@@ -941,7 +1013,7 @@ export function runStartPlan(
           await sendRun.call(
             engine.adapter,
             deliveryTask,
-            run,
+            activeRun,
             token,
             null,
             null,
@@ -964,11 +1036,11 @@ export function runStartPlan(
         }
         const created = await engine.adapter.createRun(
           deliveryTask,
-          run,
+          activeRun,
           token,
           null,
           null,
-          runRole === "reviewer" && run.reviewCheckoutDirectory
+          runRole === "reviewer" && activeRun.reviewCheckoutDirectory
             ? sendGuard
             : undefined,
         );

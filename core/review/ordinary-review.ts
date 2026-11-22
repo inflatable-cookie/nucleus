@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import type { Run, Task } from "../../shared/contracts";
 import { git, queueCheckoutStatus } from "../git/index";
 import { gitPrefix } from "../git/git-command";
@@ -222,6 +222,29 @@ export async function detachedReviewViewSource(
       `Detached review view is dirty: expected an empty porcelain status; observed ${status.slice(0, 1000)}`,
     );
   }
+}
+
+/**
+ * Remove a run-owned detached review worktree only when it still belongs to
+ * this repository/run and has no uncommitted changes. Dirty worktrees are
+ * preserved and reported; never force-removes uncommitted edits.
+ */
+export async function removeCleanDetachedReviewView(
+  task: Task,
+  run: Run,
+): Promise<{ removed: boolean; preservedReason?: string }> {
+  const dir = run.reviewCheckoutDirectory;
+  if (!dir || !existsSync(dir)) return { removed: false };
+  assertDetachedReviewViewIdentity(task, dir, run.head);
+  const status = await queueCheckoutStatus(dir, "status", "--porcelain");
+  if (status) {
+    return {
+      removed: false,
+      preservedReason: `Detached review worktree ${dir} has uncommitted changes and was preserved`,
+    };
+  }
+  await git(task.repoPath, "worktree", "remove", dir);
+  return { removed: true };
 }
 
 export async function ordinaryReviewDelta(

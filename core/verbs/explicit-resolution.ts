@@ -17,12 +17,12 @@ import {
   isWaitingTaskStop,
 } from "../../shared/task-stop";
 import type { Engine } from "../engine";
-import { git } from "../git/index";
 import { signalProcessGroupByLeader } from "../machine/process-group";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
 import { plannerIdMatches } from "../recovery/task-reasons";
+import { removeCleanDetachedReviewView } from "../review/ordinary-review";
 import { reviewPublicationKey } from "../review/review-publication";
 import { now, type Store } from "../store/store";
 import { threadServesAnotherTask } from "../workspaces/thread-ownership";
@@ -444,15 +444,12 @@ export function releasePlan(
         );
       }
       if (run?.reviewCheckoutDirectory) {
-        await attempt("Detached review worktree cleanup", () =>
-          git(
-            task.repoPath,
-            "worktree",
-            "remove",
-            "--force",
-            run.reviewCheckoutDirectory!,
-          ),
-        );
+        await attempt("Detached review worktree cleanup", async () => {
+          const cleaned = await removeCleanDetachedReviewView(task, run);
+          if (cleaned.preservedReason) {
+            issues.push(cleaned.preservedReason);
+          }
+        });
       }
       return { issues };
     },

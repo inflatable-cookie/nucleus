@@ -52,7 +52,9 @@ import { automaticRetryForbidden } from "../../shared/automatic-retry";
 import { runBindsCurrentWork } from "../../shared/task-view";
 import {
   assertOrdinaryReviewIdentity,
+  detachedReviewViewSource,
   ordinaryReviewSource,
+  removeCleanDetachedReviewView,
 } from "../review/ordinary-review";
 import { ProofExecutionRefusal } from "../qa/proof-refusal";
 import { verifyProofSource } from "../qa/proof-source";
@@ -614,15 +616,7 @@ export class ResultApplication {
 
     // Retained ordinary rounds can leave the worktree detached. The prior
     // receipt and the existing source and owned-tool proofs still govern restoration.
-    if (run.reviewCheckoutDirectory) {
-      await git(
-        t.repoPath,
-        "worktree",
-        "remove",
-        "--force",
-        run.reviewCheckoutDirectory,
-      ).catch(() => {});
-    } else if (run.ordinaryDetached) {
+    if (run.ordinaryDetached) {
       const prior = runs.find((item) => item.id === run.priorRunId);
       if (
         !prior?.released ||
@@ -663,7 +657,10 @@ export class ResultApplication {
           );
       }
     }
-    for (const agentId of new Set([t.agentId, run.agentId])) {
+    const participantsToObserve = run.reviewCheckoutDirectory
+      ? new Set([run.agentId])
+      : new Set([t.agentId, run.agentId]);
+    for (const agentId of participantsToObserve) {
       if (!agentId) continue;
       const state = await this.resolution.host.observe(agentId);
       if (state.workspaceId !== run.workspaceId)
@@ -681,13 +678,7 @@ export class ResultApplication {
         );
     }
     if (run.reviewCheckoutDirectory) {
-      await git(
-        t.repoPath,
-        "worktree",
-        "remove",
-        "--force",
-        run.reviewCheckoutDirectory,
-      ).catch(() => {});
+      await detachedReviewViewSource(t, run.reviewCheckoutDirectory, run.head);
     } else if (run.ordinaryDetached) {
       const branch = readGitCheckout(t.directory!).branch;
       await ordinaryReviewSource(t, run.head, branch === "");
@@ -696,30 +687,55 @@ export class ResultApplication {
       if (!branch) await git(t.directory!, "checkout", "--quiet", t.branch);
       assertOrdinaryReviewIdentity(t, run.head, false);
     }
-    return this.commitReviewerVerdict(t, run, completion, true, () => {
-      const boundary = recheck();
-      if ("refusal" in boundary) return blocked(boundary.refusal);
-      const settledId = retainReviewPublication(
-        this.store,
-        boundary.task,
-        run,
-        completion,
-        reviewer,
-        publicationId,
-      );
-      if (settledId !== publicationId)
-        throw Error("Retained review publication changed during application");
-      if (completion !== run.completion)
-        this.store.putRun({ ...this.store.run(run.id)!, completion });
-      for (const { id, resolved } of boundary.decision.settledWaits) {
-        const detail = `${id}: completed wait retired with application of the published review`;
-        this.store.event(t.id, "planner_escalation_wait_superseded", detail);
-        if (!resolved)
-          this.store.event(t.id, "planner_escalation_resolved", detail);
-        closeEscalationFollowups(this.store, t.id, id);
+    const committed = this.commitReviewerVerdict(
+      t,
+      run,
+      completion,
+      true,
+      () => {
+        const boundary = recheck();
+        if ("refusal" in boundary) return blocked(boundary.refusal);
+        const settledId = retainReviewPublication(
+          this.store,
+          boundary.task,
+          run,
+          completion,
+          reviewer,
+          publicationId,
+        );
+        if (settledId !== publicationId)
+          throw Error("Retained review publication changed during application");
+        if (completion !== run.completion)
+          this.store.putRun({ ...this.store.run(run.id)!, completion });
+        for (const { id, resolved } of boundary.decision.settledWaits) {
+          const detail = `${id}: completed wait retired with application of the published review`;
+          this.store.event(t.id, "planner_escalation_wait_superseded", detail);
+          if (!resolved)
+            this.store.event(t.id, "planner_escalation_resolved", detail);
+          closeEscalationFollowups(this.store, t.id, id);
+        }
+        return boundary.decision;
+      },
+    );
+    if (committed.kind === "applied" && run.reviewCheckoutDirectory) {
+      try {
+        const cleaned = await removeCleanDetachedReviewView(t, run);
+        if (cleaned.preservedReason) {
+          this.store.event(
+            t.id,
+            "review_worktree_preserved",
+            cleaned.preservedReason,
+          );
+        }
+      } catch (error) {
+        this.store.event(
+          t.id,
+          "review_worktree_cleanup_failed",
+          String(error).slice(0, 500),
+        );
       }
-      return boundary.decision;
-    });
+    }
+    return committed;
   }
 
   /** Published verdicts use current facts. Unpublished replay keeps its existing admission. */
@@ -912,13 +928,7 @@ export class ResultApplication {
     }
     let c = run.completion;
     if (run.reviewCheckoutDirectory) {
-      await git(
-        t.repoPath,
-        "worktree",
-        "remove",
-        "--force",
-        run.reviewCheckoutDirectory,
-      ).catch(() => {});
+      await detachedReviewViewSource(t, run.reviewCheckoutDirectory, run.head);
     } else if (run.ordinaryDetached) {
       await this.resolution.ordinaryRoundCustody(t, run, true);
       const branch = readGitCheckout(t.directory!).branch;
@@ -1676,7 +1686,27 @@ export class ResultApplication {
       }
     }
     if (settlementHeld(this.store, this.resolution.stopped())) return false;
-    return this.commitReviewerVerdict(t, run, c, reapplied).kind === "applied";
+    const applied =
+      this.commitReviewerVerdict(t, run, c, reapplied).kind === "applied";
+    if (applied && run.reviewCheckoutDirectory) {
+      try {
+        const cleaned = await removeCleanDetachedReviewView(t, run);
+        if (cleaned.preservedReason) {
+          this.store.event(
+            t.id,
+            "review_worktree_preserved",
+            cleaned.preservedReason,
+          );
+        }
+      } catch (error) {
+        this.store.event(
+          t.id,
+          "review_worktree_cleanup_failed",
+          String(error).slice(0, 500),
+        );
+      }
+    }
+    return applied;
   }
 
   /** Commit the verdict and, for a published result, its verified evidence together. */
