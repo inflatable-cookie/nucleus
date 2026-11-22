@@ -3293,6 +3293,7 @@ export class Resolution {
   applyExplicitResolution?: (
     input: ExplicitResolution,
   ) => Promise<TaskControlTask>;
+  describeExplicitNext?: (task: Task) => string;
   wakeDeferredDirection?: (taskId: string) => void;
   launch(
     t: Task,

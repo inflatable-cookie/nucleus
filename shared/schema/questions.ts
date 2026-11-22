@@ -41,7 +41,8 @@ const commandVersionValid = <
   value: T,
 ) =>
   !value.command ||
-  (value.version !== undefined || value.command.version !== undefined);
+  value.version !== undefined ||
+  value.command.version !== undefined;
 const commandVersionsMatch = <
   T extends { version?: number; command?: ExplicitCommand },
 >(

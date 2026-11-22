@@ -239,10 +239,11 @@ async function answerQuestion(input, context) {
   if (ticket?.participantId) return { input: await stampWithIdentitySource(input, 'caller', context) };
   context.credentialFor(ticket, 'question.answer');
   if (typeof input.questionId !== 'string' || !input.questionId.trim())
-    throw new Error('CLI question.answer with a run ticket takes {questionId, answer or choice, reason}');
+    throw new Error('CLI question.answer with a run ticket takes {questionId, answer, choice or command, reason}');
   const payload = {
     taskId: ticket.taskId, runId: ticket.runId, questionId: input.questionId,
-    answer: input.answer, choice: input.choice, reason: input.reason,
+    answer: input.answer, choice: input.choice, command: input.command,
+    version: input.version, reason: input.reason,
     decision: input.decision, overtakes: input.overtakes, dryRun: input.dryRun,
   };
   for (const key of Object.keys(payload)) if (payload[key] === undefined) delete payload[key];

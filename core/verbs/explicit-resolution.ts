@@ -25,7 +25,7 @@ import { plannerIdMatches } from "../recovery/task-reasons";
 import { reviewPublicationKey } from "../review/review-publication";
 import { now, type Store } from "../store/store";
 import { threadServesAnotherTask } from "../workspaces/thread-ownership";
-import { collectOwnerVerbFacts, ownerPendingEffects, ownerTaskNext } from "./owner-verbs";
+import { collectOwnerVerbFacts, ownerPendingEffects } from "./owner-verbs";
 import { splitOwnerEffectKey } from "./owner-effects";
 
 import {
@@ -167,20 +167,6 @@ async function authority(
       ? "A critical task requires its live responsible planner or the operator board"
       : "Explicit resolution requires this task's coordinator, its live responsible planner or the operator board",
   );
-}
-
-/** Describe what the scheduler will do next for one task after an explicit resolution call. */
-export function describeExplicitNext(store: Store, task: Task): string {
-  if (task.removedAt) return "The scheduler leaves this removed task alone.";
-  const next = ownerTaskNext(collectOwnerVerbFacts(store, task));
-  if (next.paused) return "The scheduler waits for Nucleus to resume.";
-  if (next.stop)
-    return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
-  if (["awaiting_review", "reviewing"].includes(task.phase) && !next.activeRun)
-    return "The scheduler rechecks reviewer admission at the recorded PR head.";
-  if (next.activeRun)
-    return `The scheduler checks the ${next.activeRun.role} run for progress.`;
-  return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
 }
 
 /** Each command reads and applies its own records within the same transaction. */

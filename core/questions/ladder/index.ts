@@ -60,11 +60,11 @@ export {
   plannerEscalationOwnerSuffix,
   plannerEscalationSuggestedVerbs,
 } from "./proof";
+export { closeEscalationFollowups } from "./continuation";
 export {
   closeClearedEscalations,
-  closeEscalationFollowups,
   escalationCauseClearedReason,
-} from "./continuation";
+} from "../escalation-settlement";
 export {
   hasConcreteOperatorChoices,
   isPlaceholderDecisionRecord,

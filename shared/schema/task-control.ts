@@ -229,20 +229,17 @@ export const explicitCommandSchema = explicitCommandVariants(
   explicitCommandFields,
 );
 export type ExplicitCommand = z.infer<typeof explicitCommandSchema>;
-export const explicitResolutionSchema = z.preprocess(
-  (raw) => {
-    if (
-      !raw ||
-      typeof raw !== "object" ||
-      Array.isArray(raw) ||
-      !("reference" in raw)
-    )
-      return raw;
-    const { reference, ...input } = raw;
-    return "taskId" in input ? raw : { ...input, taskId: reference };
-  },
-  explicitCommandVariants(resolutionFields),
-);
+export const explicitResolutionSchema = z.preprocess((raw) => {
+  if (
+    !raw ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    !("reference" in raw)
+  )
+    return raw;
+  const { reference, ...input } = raw;
+  return "taskId" in input ? raw : { ...input, taskId: reference };
+}, explicitCommandVariants(resolutionFields));
 export type ExplicitResolution = z.infer<typeof explicitResolutionSchema>;
 export type ResolutionWarningId = z.infer<typeof resolutionWarningId>;
 const resolutionResultSchema = z.object({

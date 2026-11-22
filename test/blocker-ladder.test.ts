@@ -2273,8 +2273,14 @@ test("a bare planner operator classification returns to the planner without an o
     assert.equal(calls, 2);
     assert.equal(f.events("planner_escalation_returned").length, 1);
     assert.equal(f.events("planner_escalation_decision_linked").length, 0);
-    assert.equal(new Decisions(f.store).list({ task: f.current().id }).length, 0);
-    assert.match(f.delegated.planner[1]!.prompt, /returned to the planner for a recommendation/i);
+    assert.equal(
+      new Decisions(f.store).list({ task: f.current().id }).length,
+      0,
+    );
+    assert.match(
+      f.delegated.planner[1]!.prompt,
+      /returned to the planner for a recommendation/i,
+    );
     assert.match(f.delegated.planner[1]!.prompt, /Work needed:/);
     assert.match(
       f.events("planner_escalation_applied")[0]!.detail,
@@ -2314,7 +2320,8 @@ test("concrete operator choices reach Tom, and the board answer settles the esca
         question: `Escalation ${escalationId}: should this task widen the product scope?`,
         choices: [
           {
-            label: "Return to the worker with a new approach — treat the admission premise as out of scope",
+            label:
+              "Return to the worker with a new approach — treat the admission premise as out of scope",
             consequence: "Keeps the existing product scope intact.",
           },
           {

@@ -1,4 +1,10 @@
-import { isOperatorOrigin, taskOwner, taskPlanner, type Task, type TaskStopVerb } from "../../../shared/contracts";
+import {
+  isOperatorOrigin,
+  taskOwner,
+  taskPlanner,
+  type Task,
+  type TaskStopVerb,
+} from "../../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../../shared/lanes";
 import { digest } from "../../store/store";
 import {
@@ -19,10 +25,8 @@ import {
 import { plannerEscalations, type LadderEvent } from "./records";
 import { parseEscalationReply } from "./replies";
 import { escalationWaitDetail } from "./waits";
-import {
-  closeClearedEscalations,
-  closeEscalationFollowups,
-} from "./continuation";
+import { closeEscalationFollowups } from "./continuation";
+import { closeClearedEscalations } from "../escalation-settlement";
 
 /**
  * Routing one recorded escalation: the durable intent and wait the caller records,
@@ -110,7 +114,10 @@ export function openPlannerEscalation(
   });
 }
 
-function nonOperatorEscalationHolder(ladder: Ladder, task: Task): string | undefined {
+function nonOperatorEscalationHolder(
+  ladder: Ladder,
+  task: Task,
+): string | undefined {
   const planner = taskPlanner(task);
   if (planner && !isOperatorOrigin(planner)) return planner;
   const project = ladder.store.projectFor(
@@ -388,7 +395,10 @@ async function routeEscalationRound(
     const reason = issue ? `${detail}. ${issue}` : detail;
     const resolvedHolder = holderAgentId ?? fallbackHolder;
     const routed = issue
-      ? { detail: reason, ...(resolvedHolder ? { holderAgentId: resolvedHolder } : {}) }
+      ? {
+          detail: reason,
+          ...(resolvedHolder ? { holderAgentId: resolvedHolder } : {}),
+        }
       : null;
     const entry = `${id}: ${JSON.stringify(routed)}`;
     if ((latest || routed) && latest?.detail !== entry)
@@ -435,9 +445,12 @@ async function routeEscalationRound(
         )
       ) {
         if (phase === "return")
-          ladder.store.event(t.id, "planner_escalation_return_sent", `${id}: sent`);
-        else
-          ladder.store.event(t.id, "planner_escalation_sent", `${id}: sent`);
+          ladder.store.event(
+            t.id,
+            "planner_escalation_return_sent",
+            `${id}: sent`,
+          );
+        else ladder.store.event(t.id, "planner_escalation_sent", `${id}: sent`);
       }
       if (role === "planner")
         recordRoutingWait(
@@ -649,9 +662,7 @@ async function routeEscalationRound(
         },
         "planner",
       );
-      if (
-        plannerEscalations(events()).find((item) => item.id === id)?.answered
-      )
+      if (plannerEscalations(events()).find((item) => item.id === id)?.answered)
         return;
       const next = parseEscalationReply(followup, retryChoices);
       if (next?.kind === "operator")
@@ -660,7 +671,10 @@ async function routeEscalationRound(
           id,
           next.reason,
           who,
-          { authority: "bare_classification", sourceQuestionId: followupQuestionId },
+          {
+            authority: "bare_classification",
+            sourceQuestionId: followupQuestionId,
+          },
         );
       else if (next) {
         const nextAnswer =

@@ -706,7 +706,7 @@ decider settles or classifies to the operator. Escalation answers bind to the
 task version rather than a snapshot binding hash, may carry an explicit
 resolution command applied with the answerer's authority, and open escalations
 close themselves when their recorded cause clears (`closeClearedEscalations` in
-`continuation.ts`). Also settles open escalations
+`escalation-settlement.ts`). Also settles open escalations
 when an ordinary control moves the task. Enforces
 [Non-converging review ladder](#non-converging-review-ladder-spec-058-cutover-3)
 and [Responsible tasks](#responsible-tasks-spec-058-cutover-1). The folder splits the

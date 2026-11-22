@@ -8,9 +8,15 @@ import {
   type TaskControlInput,
   type TaskControlTask,
 } from "../../shared/contracts";
-import { escalationOutlived } from "../recovery/task-reasons";
+import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
+import {
+  appliedMergeVerdict,
+  escalationOutlived,
+  readyReviewAtHead,
+} from "../recovery/task-reasons";
 import { Decisions } from "../planning/decisions";
 import type { Resolution } from "../resolution";
+import type { Store } from "../store/store";
 import {
   decodeEscalationChoice,
   escalationAnswerControl,
@@ -21,12 +27,219 @@ import {
   plannerEscalations,
   type EscalationVerbChoice,
   type LadderEvent,
+  type PlannerEscalation,
 } from "./ladder";
+import { closeEscalationFollowups } from "./ladder/continuation";
 import {
-  closeClearedEscalations,
-  closeEscalationFollowups,
-} from "./ladder/continuation";
-import { HostReadRefusalError, ProvenPreSendRefusalError } from "../host/errors";
+  HostReadRefusalError,
+  ProvenPreSendRefusalError,
+} from "../host/errors";
+
+function escalationPayload(
+  events: readonly LadderEvent[],
+  id: string,
+): Record<string, unknown> | null {
+  const event = events.find(
+    (item) =>
+      item.kind === "planner_escalation_payload" &&
+      item.detail.startsWith(`${id}:`),
+  );
+  if (!event) return null;
+  try {
+    const parsed: unknown = JSON.parse(
+      event.detail.slice(event.detail.indexOf(":") + 1),
+    );
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retire an escalation's owned stop, waits, followups, and optionally its open
+ * operator-classification decision so the scheduler cannot re-park the task on
+ * a settled or cause-cleared escalation.
+ */
+function retireEscalationSurfaces(
+  store: Store,
+  taskId: string,
+  escalationId: string,
+  detail: string,
+  options: { withdrawDecision?: boolean } = {},
+): void {
+  closeEscalationFollowups(store, taskId, escalationId);
+  const events = store.eventsAll(taskId);
+  const activeWaits = events.filter(
+    (event) =>
+      event.kind === "planner_escalation_wait" &&
+      event.detail.startsWith(`${escalationId}:`) &&
+      !events.some(
+        (sup) =>
+          sup.kind === "planner_escalation_wait_superseded" &&
+          sup.id > event.id &&
+          sup.detail.startsWith(`${escalationId}:`),
+      ),
+  );
+  if (activeWaits.length > 0)
+    store.event(
+      taskId,
+      "planner_escalation_wait_superseded",
+      `${escalationId}: ${detail}`.slice(0, 4000),
+    );
+  if (options.withdrawDecision) {
+    const linked = events.findLast(
+      (event) =>
+        event.kind === "planner_escalation_decision_linked" &&
+        event.detail.startsWith(`${escalationId}:`),
+    );
+    const decisionId = linked?.detail.match(/decision ([0-9a-f-]{36})/)?.[1];
+    if (decisionId) {
+      try {
+        const stored = store.decision(decisionId);
+        if (stored.status === "open") {
+          new Decisions(store).withdraw({
+            id: stored.id,
+            version: stored.version,
+            reason: `Escalation ${escalationId} closed automatically: ${detail}`,
+            withdrawnBy: "nucleus",
+          });
+        }
+      } catch {
+        /* A missing or concurrently closed decision needs no withdrawal. */
+      }
+    }
+  }
+  const latest = store.task(taskId);
+  if (
+    latest.resolution.stop?.fact?.code === "escalation" &&
+    latest.resolution.stop.fact.subject === escalationId
+  ) {
+    store.update(
+      taskId,
+      {
+        resolution: { ...latest.resolution, stop: null },
+        ...(![
+          "done",
+          "cancelled",
+          "blocked",
+          "error",
+          "needs_attention",
+        ].includes(latest.phase)
+          ? { reason: TASK_PROGRESSING_REASON }
+          : {}),
+      },
+      "planner_escalation_stop_cleared",
+      `${escalationId}: ${detail}`.slice(0, 4000),
+    );
+  }
+}
+
+/**
+ * Spec 067 batch 4: an open escalation closes itself when its recorded cause
+ * clears. Each typed cause uses its own clearance condition and never falls
+ * through to a generic run check.
+ */
+export function escalationCauseClearedReason(
+  store: Store,
+  task: Task,
+  escalation: PlannerEscalation,
+  events: readonly LadderEvent[],
+): string | null {
+  if (escalation.answered) return null;
+  if (task.removedAt) return "the task was removed";
+  if (escalationOutlived(task)) return "the task merged or ended";
+  const intentEvent = events.find(
+    (item) =>
+      item.kind === "planner_escalation" &&
+      item.detail.startsWith(`${escalation.id}:`),
+  );
+  const payload = escalationPayload(events, escalation.id);
+  if (payload?.reviewContinuation) {
+    if (readyReviewAtHead(task))
+      return "a ready review verdict arrived for the current head";
+    if (typeof payload.reader === "string") {
+      const reader = store.run(payload.reader);
+      if (
+        !reader ||
+        reader.released ||
+        (task.resolution.currentRunId &&
+          task.resolution.currentRunId !== payload.reader)
+      )
+        return "the stopped reviewer run was released or replaced";
+    }
+    return null;
+  }
+  if (typeof payload?.commit === "string" && typeof payload?.head === "string")
+    return appliedMergeVerdict(task, payload.head)
+      ? "review or operator source acceptance arrived for the merged head"
+      : null;
+  if (typeof payload?.revisionCap === "number")
+    return readyReviewAtHead(task)
+      ? "a ready review verdict arrived for the current head"
+      : null;
+  if (payload?.cause === "recovery-pending")
+    return !task.resolution.incident ||
+      task.resolution.incident.status === "resolved"
+      ? "the escalated incident cleared"
+      : null;
+  if (
+    intentEvent &&
+    (payload?.source === "worker" || payload?.source === "revision") &&
+    !escalation.refusal &&
+    task.completion?.status === "ready_for_review" &&
+    events.some(
+      (item) =>
+        item.id > intentEvent.id &&
+        item.detail.includes(task.completion!.eventId),
+    )
+  )
+    return "a ready result arrived after the blocker escalation";
+  const currentRun = task.resolution.currentRunId
+    ? store.run(task.resolution.currentRunId)
+    : null;
+  if (
+    intentEvent &&
+    currentRun &&
+    currentRun.status === "running" &&
+    !currentRun.released &&
+    !currentRun.completion &&
+    currentRun.role !== "recovery" &&
+    currentRun.id !== escalation.runId &&
+    Date.parse(currentRun.createdAt) > Date.parse(intentEvent.at)
+  )
+    return `a new ${currentRun.role} run (${currentRun.id}) took over the task`;
+  return null;
+}
+
+/** Close any open escalations on this task whose cause has already cleared. */
+export function closeClearedEscalations(store: Store, task: Task): string[] {
+  const current = store.taskOrNull(task.id);
+  if (!current) return [];
+  const events = store.eventsAll(current.id) as LadderEvent[];
+  const closed: string[] = [];
+  for (const escalation of plannerEscalations(events)) {
+    if (escalation.answered) continue;
+    const cleared = escalationCauseClearedReason(
+      store,
+      current,
+      escalation,
+      events,
+    );
+    if (!cleared) continue;
+    store.event(
+      current.id,
+      "planner_escalation_resolved",
+      `${escalation.id}: closed automatically; ${cleared}`,
+    );
+    retireEscalationSurfaces(store, current.id, escalation.id, cleared, {
+      withdrawDecision: true,
+    });
+    closed.push(escalation.id);
+  }
+  return closed;
+}
 
 export type EscalationExplicitOutcome = NonNullable<
   TaskControlTask["explicitResolution"]
@@ -126,11 +339,7 @@ export class EscalationSettlement {
     const fresh = this.store.task(t.id);
     const caller =
       answerer.role === "operator" ? OPERATOR_BOARD_CALLER : answerer.agentId;
-    const {
-      version: commandVersion,
-      accept,
-      ...commandArgs
-    } = command;
+    const { version: commandVersion, accept, ...commandArgs } = command;
     const explicitInput = explicitResolutionSchema.parse({
       ...commandArgs,
       taskId: fresh.id,
@@ -159,7 +368,16 @@ export class EscalationSettlement {
           "planner_escalation_applied",
           `${id}: ${command.action}`,
         );
-        closeEscalationFollowups(this.store, fresh.id, id);
+        retireEscalationSurfaces(
+          this.store,
+          fresh.id,
+          id,
+          `answered by ${who}: ${command.action}`,
+        );
+        const afterTask = this.store.task(fresh.id);
+        const next =
+          this.resolution.describeExplicitNext?.(afterTask) ?? outcome.next;
+        return { ...outcome, next, taskVersion: afterTask.version };
       }
       return { ...outcome, taskVersion: resolved.version };
     } catch (error) {
@@ -357,10 +575,15 @@ export class EscalationSettlement {
           ),
         };
     try {
-      if (version !== undefined && version !== current.version)
-        throw Error(
-          `Task is now at version ${current.version}. Repeat with that version.`,
+      if (version !== undefined && version !== current.version) {
+        const staleMessage = `Task is now at version ${current.version}. Repeat with that version.`;
+        this.store.event(
+          current.id,
+          "planner_escalation_refused",
+          `${id}: ${staleMessage}`,
         );
+        return staleMessage;
+      }
       if (!this.resolution.applyOperatorControl)
         throw Error("No control applier is bound");
       const escalation = plannerEscalations(this.store.eventsAll(t.id)).find(

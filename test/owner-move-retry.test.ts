@@ -1,6 +1,4 @@
-import {
-  escalationVerbChoices,
-} from "../core/questions/ladder";
+import { escalationVerbChoices } from "../core/questions/ladder";
 import { profile, observeIdle } from "./support/fakes";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -2068,8 +2066,14 @@ for (const followup of [false, true]) {
           );
           assert.equal(f.events("owner_control").length, 0);
         }
-        assert.equal((await answer(questionId, f.task().version)).answer, legacyOffer.label);
-        assert.equal((await answer(questionId, f.task().version)).answer, legacyOffer.label);
+        assert.equal(
+          (await answer(questionId, f.task().version)).answer,
+          legacyOffer.label,
+        );
+        assert.equal(
+          (await answer(questionId, f.task().version)).answer,
+          legacyOffer.label,
+        );
         assert.equal(f.events("owner_control").length, 1);
         assert.equal(f.events("planner_escalation_applied").length, 1);
       } finally {
@@ -4019,8 +4023,14 @@ test("stop is refused for finished work and an uncertain cancellation preserves 
       /could not stop the live reviewer run \(review-run\): daemon unreachable/,
     );
     assert.equal(f.events("owner_stop_uncertain").length, 1);
-    assert.ok(f.task().holds?.dispatch, "accepted stop hold is persisted before native cancellation");
-    assert.equal(f.task().resolution.ownerStop?.cancellations[0]?.status, "uncertain");
+    assert.ok(
+      f.task().holds?.dispatch,
+      "accepted stop hold is persisted before native cancellation",
+    );
+    assert.equal(
+      f.task().resolution.ownerStop?.cancellations[0]?.status,
+      "uncertain",
+    );
     assert.equal(f.view("stop").available, false);
     f.store.update(f.taskId, { phase: "done" });
     assert.equal(f.view("stop").available, false);
