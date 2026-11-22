@@ -107,12 +107,10 @@ Record the successor's thread ID and link.
 
 ## 5. Transfer ownership
 
-From this thread, with your Nucleus ticket:
+From this thread, with your Nucleus ticket. Move the tasks first: assigning
+the planner role revokes your participant ticket.
 
-1. **Planner role:** `project.set-planner` with the project `key` and the
-   successor's agent ID. This revokes your participant ticket and issues the
-   successor's, which it takes on its next authenticated call.
-2. **Tasks:** for each project in the inventory:
+1. **Tasks:** for each project in the inventory:
 
    ```sh
    nucleus helper reparent SUCCESSOR_AGENT_ID --project PROJECT --from YOUR_AGENT_ID --reason "Planner handover"
@@ -120,6 +118,9 @@ From this thread, with your Nucleus ticket:
 
    Move any task outside those projects with the `--task` form; see
    [Change a task's owner](../SKILL.md#change-a-tasks-owner).
+2. **Planner role:** `project.set-planner` with the project `key` and the
+   successor's agent ID. This revokes your participant ticket and issues the
+   successor's, which it takes on its next authenticated call.
 3. **Check:**
    - `nucleus helper reparent --inventory YOUR_AGENT_ID` now lists nothing;
    - the same inventory for the successor lists the moved tasks;
