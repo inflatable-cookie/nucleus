@@ -158,9 +158,9 @@ papercuts by name. Migrate every existing papercut without losing data.
   (`Checks passed · unapproved`, or a papercut's area). The body, tags, lanes and
   decision links stay in the record. Triage orders checked leads awaiting approval
   first, then other leads awaiting approval, then approved leads awaiting promotion,
-  then papercuts, newest first within each (2026-11-07). The list starts with
-  twenty-five cards and loads another page automatically when scrolling within
-  one viewport of the end. If the pane has room, it keeps loading until the list can scroll or all
+  then papercuts, newest first within each (2026-11-07). The list starts with eight
+  cards and loads another page automatically when scrolling within one viewport of
+  the end. If the pane has room, it keeps loading until the list can scroll or all
   cards are visible. The header shows the real total. The tag filter narrows the
   Leads cards and their total. The
   filter is a dropdown listing only the tags on leads Triage shows in the current
@@ -513,9 +513,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   **Needs you** (decisions, Nucleus-raised holds, drained-lane prompts and tasks
   needing attention, in one list, newest needing action first), **Planning** (the
   plan in the list pane, the open lane in the detail pane, or a modal without one),
-  **Leads** (open leads, with the tag filter and automatic pages of twenty-five),
-  **Papercuts** (open papercuts, with automatic pages of twenty-five and no tag
-  filter;
+  **Leads** (open leads, with the tag filter and automatic pages of eight),
+  **Papercuts** (open papercuts, with automatic pages of eight and no tag filter;
   Tom, 2026-11-21), **Queue**
   (queued tasks, pending submissions and the per-project "…and N more" rows),
   **Working** (working tasks), **In review** (tasks awaiting or under review) and
@@ -599,15 +598,13 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     not change with phase; the status dot and words carry the phase. Tile colours are
     the theme's tone roles at low alpha.
   - **Line 1:** for a task its reference (`#1072`), otherwise the kind in words
-    (Decision, Merge hold, Lane drained, Lead, Papercut) — except the single-kind
-    Leads and Papercuts views, which drop the kind word so the line starts with
-    the project; lists that mix kinds keep it, and task references stay everywhere.
-    Then the project by its display name (a lane's or lead's projects; a decision's
-    asking repository), with the T3 project badge where matched, otherwise the
-    folder icon; the age, right-aligned (a stop, wait or hold's start, else the
-    task's last change; a decision's ask, a lane's escalation, a lead's or
-    submission's creation). The project group shrinks and clips as one unit so the
-    age keeps its place: at most two project marks, the rest as one "+N" count.
+    (Decision, Merge hold, Lane drained, Lead, Papercut); then the project by its
+    display name (a lane's or lead's projects; a decision's asking repository), with
+    the T3 project badge where matched, otherwise the folder icon; the age,
+    right-aligned (a stop, wait or hold's start, else the task's last change; a
+    decision's ask, a lane's escalation, a lead's or submission's creation). The
+    project group shrinks and clips as one unit so the age keeps its place: at most two
+    project marks, the rest as one "+N" count.
     The label reads at normal weight in the muted foreground, like the project.
   - **Line 2:** the title, up to two lines — the row's only bold line.
   - **Line 3:** a coloured dot, the state in plain words and the single most useful
@@ -615,8 +612,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     reviewer launch unconfirmed", "Waiting · on the host", "Checked · awaiting
     approval"). The state word reads at normal weight in its dot's tone (muted
     for a neutral tone); the detail stays muted. The detail is the existing wait,
-    stop or report wording, shortened, never a raw ID. A declared wait names its state and next action, its owner in the
-    accessible name (Spec 043). A lead's state follows its current check first:
+    stop or report wording, shortened, never a raw ID. A declared wait names its state
+    and next action, its owner in the accessible name (Spec 043). A lead's state follows its current check first:
     unchecked, then checks failed (even with an earlier approval kept), then approved
     or awaiting approval.
   - **Flags**, below, only for exceptions: a dispatch or merge hold, parked,
