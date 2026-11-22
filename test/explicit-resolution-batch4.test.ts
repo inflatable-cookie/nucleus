@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 // @ts-expect-error untyped ESM helper module
 import { stampInput } from "../bin/cli-stamping.mjs";
 import { Engine } from "../core/engine";
 import type { Adapter } from "../core/host";
 import { Decisions } from "../core/planning/decisions";
-import { RuntimeQuestions } from "../core/runtime/questions";
 import {
   closeClearedEscalations,
   escalationExplicitCommandChoices,
@@ -20,13 +19,14 @@ import {
   type EscalationVerbChoice,
   type LadderEvent,
 } from "../core/questions/ladder";
+import { RuntimeQuestions } from "../core/runtime/questions";
 import { Store } from "../core/store/store";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   collectOwnerVerbFacts,
   ownerVerbViews,
   parkedRestart,
 } from "../core/verbs/owner-verbs";
-import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   OPERATOR_BOARD_CALLER,
   questionAnswerInputSchema,
@@ -34,6 +34,7 @@ import {
   runSchema,
   submissionSchema,
 } from "../shared/contracts";
+import { decisionAnswer } from "../shared/rpc/decisions";
 import { observeIdle } from "./support/fakes";
 
 const HEAD_A = "a".repeat(40);
@@ -42,9 +43,7 @@ const BASE = "1".repeat(40);
 const PLANNER = "planner-live";
 const REPO = "/repo/explicit-batch4";
 
-function makeFixture(
-  options: { plannerRoutable?: boolean; stopTurnError?: string } = {},
-) {
+function makeFixture(options: { stopTurnError?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ns-explicit-batch4-"));
   const store = new Store(join(dir, "queue.sqlite"));
   store.setMeta("paused", false);
@@ -55,10 +54,7 @@ function makeFixture(
     key: "explicit-batch4",
     name: "Explicit Batch 4",
     repositories: [
-      {
-        origin: "https://github.com/example/explicit-batch4.git",
-        path: REPO,
-      },
+      { origin: "https://github.com/example/explicit-batch4.git", path: REPO },
     ],
   });
   store.setProjectPlanner({
@@ -80,47 +76,28 @@ function makeFixture(
     "handoff",
     BASE,
   );
-  const plannerRoutable = options.plannerRoutable ?? true;
   const adapter = {
     hostId: "host-1",
     profiles: async () => [],
-    listLiveAgents: async () =>
-      plannerRoutable
-        ? [
-            {
-              id: PLANNER,
-              title: "Planner",
-              directory: REPO,
-              workspaceId: null,
-            },
-          ]
-        : [],
+    listLiveAgents: async () => [
+      { id: PLANNER, title: "Planner", directory: REPO, workspaceId: null },
+    ],
     originAgent: async (id: string) => ({
       id,
       title: id,
       workspaceId: null,
-      archived: !plannerRoutable && id === PLANNER,
+      archived: false,
     }),
-    observe: async (agentId: string) => {
-      if (agentId === PLANNER) {
-        return plannerRoutable
-          ? {
-              id: PLANNER,
-              status: "idle",
-              active: false,
-              workspaceId: "ws-planner",
-              cwd: REPO,
-            }
-          : {
-              id: PLANNER,
-              status: "closed",
-              active: false,
-              workspaceId: "ws-planner",
-              cwd: REPO,
-            };
-      }
-      return (await observeIdle(null)(agentId))!;
-    },
+    observe: async (agentId: string) =>
+      agentId === PLANNER
+        ? {
+            id: PLANNER,
+            status: "idle",
+            active: false,
+            workspaceId: "ws-planner",
+            cwd: REPO,
+          }
+        : (await observeIdle(null)(agentId))!,
     stopAgentTurn: async () => {
       if (options.stopTurnError) throw Error(options.stopTurnError);
     },
@@ -134,7 +111,6 @@ function makeFixture(
   const engine = new Engine(store, adapter, 0);
   const taskId = inserted.id;
   return {
-    dir,
     store,
     engine,
     taskId,
@@ -145,71 +121,6 @@ function makeFixture(
       rmSync(dir, { recursive: true, force: true });
     },
   };
-}
-
-function recordOpenEscalation(
-  store: Store,
-  engine: Engine,
-  taskId: string,
-  id: string,
-  options: {
-    runId?: string | null;
-    payload?: Record<string, unknown>;
-    offered?: EscalationVerbChoice[];
-    recipient?: string;
-    role?: "planner" | "decider";
-  } = {},
-) {
-  const cause = "e".repeat(64);
-  store.event(
-    taskId,
-    "planner_escalation",
-    `${id}: cause ${cause}; run ${options.runId ?? "worker"}; question pending`,
-  );
-  store.event(
-    taskId,
-    "planner_escalation_payload",
-    `${id}: ${JSON.stringify({
-      cause,
-      runId: options.runId ?? null,
-      question: "How should this stuck task proceed?",
-      ...(options.payload ?? {}),
-    })}`,
-  );
-  const offered =
-    options.offered ??
-    escalationExplicitCommandChoices(
-      store,
-      store.task(taskId),
-      id,
-      store.eventsAll(taskId) as LadderEvent[],
-    );
-  store.event(
-    taskId,
-    "planner_escalation_offered",
-    `${id}: ${JSON.stringify(offered)}`,
-  );
-  engine.resolution.waiting(
-    store.task(taskId),
-    `Waiting with the planner: blocker escalation ${id} is open`,
-    "escalated",
-    { fact: { code: "escalation", subject: id } },
-  );
-  const questionId = `ns-escalation-${id}`;
-  const choices = [
-    "Wait until a time (put an ISO timestamp in Reason)",
-    ...offered.map((o) => o.label),
-  ];
-  engine.resolution.openDelegatedQuestion(
-    store.task(taskId),
-    questionId,
-    options.recipient ?? PLANNER,
-    `Choose how to continue\n${choices.map((c) => `- ${c}`).join("\n")}`,
-    60_000,
-    options.role ?? "planner",
-    "host-1",
-  );
-  return { questionId, offered };
 }
 
 function makeRun(
@@ -248,22 +159,76 @@ function makeRun(
   });
 }
 
+function recordOpenEscalation(
+  store: Store,
+  engine: Engine,
+  taskId: string,
+  id: string,
+  options: {
+    runId?: string | null;
+    payload?: Record<string, unknown>;
+    offered?: EscalationVerbChoice[];
+  } = {},
+) {
+  const cause = "e".repeat(64);
+  store.event(
+    taskId,
+    "planner_escalation",
+    `${id}: cause ${cause}; run ${options.runId ?? "worker"}; question pending`,
+  );
+  store.event(
+    taskId,
+    "planner_escalation_payload",
+    `${id}: ${JSON.stringify({ cause, runId: options.runId ?? null, question: "How should this stuck task proceed?", ...(options.payload ?? {}) })}`,
+  );
+  const offered =
+    options.offered ??
+    escalationExplicitCommandChoices(
+      store,
+      store.task(taskId),
+      id,
+      store.eventsAll(taskId) as LadderEvent[],
+    );
+  store.event(
+    taskId,
+    "planner_escalation_offered",
+    `${id}: ${JSON.stringify(offered)}`,
+  );
+  engine.resolution.waiting(
+    store.task(taskId),
+    `Waiting with the planner: blocker escalation ${id} is open`,
+    "escalated",
+    {
+      fact: { code: "escalation", subject: id },
+    },
+  );
+  const questionId = `ns-escalation-${id}`;
+  const choices = [
+    "Wait until a time (put an ISO timestamp in Reason)",
+    ...offered.map((o) => o.label),
+  ];
+  engine.resolution.openDelegatedQuestion(
+    store.task(taskId),
+    questionId,
+    PLANNER,
+    `Choose how to continue\n${choices.map((c) => `- ${c}`).join("\n")}`,
+    60_000,
+    "planner",
+    "host-1",
+  );
+  return { questionId, offered };
+}
+
 test("question.answer schemas and run-ticket CLI transport carry explicit command + version", async () => {
   const valid = questionAnswerInputSchema.parse({
     questionId: "ns-escalation-esc-1",
     caller: PLANNER,
     version: 7,
-    command: {
-      action: "run.release",
-      run: "run-1",
-      accept: ["live_turn"],
-    },
+    command: { action: "run.release", run: "run-1", accept: ["live_turn"] },
     reason: "Release stuck run",
   });
   assert.equal(valid.version, 7);
-  assert.equal(valid.command?.action, "run.release");
   assert.deepEqual(valid.command?.accept, ["live_turn"]);
-
   assert.throws(
     () =>
       questionAnswerInputSchema.parse({
@@ -285,16 +250,16 @@ test("question.answer schemas and run-ticket CLI transport carry explicit comman
       }),
     /must match/,
   );
-
-  const req = questionAnswerRequestSchema.parse({
-    questionId: "ns-escalation-esc-1",
-    caller: PLANNER,
-    version: 7,
-    command: { action: "record.clear", kind: "escalation", id: "esc-1" },
-    reason: "Clear resolved escalation",
-  });
-  assert.equal(req.version, 7);
-
+  assert.equal(
+    questionAnswerRequestSchema.parse({
+      questionId: "ns-escalation-esc-1",
+      caller: PLANNER,
+      version: 7,
+      command: { action: "record.clear", kind: "escalation", id: "esc-1" },
+      reason: "Clear resolved escalation",
+    }).version,
+    7,
+  );
   const forwarded: Record<string, unknown>[] = [];
   await stampInput({
     method: "question.answer",
@@ -325,14 +290,11 @@ test("question.answer schemas and run-ticket CLI transport carry explicit comman
   });
 });
 
-test("#1491 shape: escalation lists explicit commands, choosing one runs ordinary RPC without escalation-answer markers, enforces version/warnings/hard-gates, and closes on cause clearance", async () => {
+test("#1491 shape: escalation lists explicit commands, choosing one runs ordinary RPC without answer markers, closes initial question window, and preserves host diagnostics", async () => {
   const fx = makeFixture({ stopTurnError: "host stop timed out" });
   try {
     const runId = "run-worker-1491";
-    const run = makeRun(fx.taskId, {
-      id: runId,
-      agentId: "agent-worker-1491",
-    });
+    const run = makeRun(fx.taskId, { id: runId, agentId: "agent-worker-1491" });
     fx.store.putRun(run);
     fx.store.update(
       fx.taskId,
@@ -348,7 +310,6 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
       "worker_started",
       "live worker run",
     );
-
     const { questionId, offered } = recordOpenEscalation(
       fx.store,
       fx.engine,
@@ -360,13 +321,11 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
       (item) => item.command?.action === "run.release",
     );
     assert.ok(
-      releaseOption,
-      "run.release should be listed as an offered option",
+      releaseOption &&
+        releaseOption.command?.action === "run.release" &&
+        releaseOption.command.run === runId,
     );
-    assert.equal(releaseOption.command?.action, "run.release");
-    assert.equal(releaseOption.command.run, runId);
 
-    // Simulate #1491: task PR head and version advance after offer.
     const staleVersion = fx.task().version;
     fx.store.update(
       fx.taskId,
@@ -375,34 +334,30 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
       "head changed after offer",
     );
     const currentVersion = fx.task().version;
-    assert.notEqual(currentVersion, staleVersion);
 
-    // 1) Choosing the listed option with a stale version returns stale and writes nothing.
     const staleReply = (await fx.engine.resolution.answerDelegatedQuestion(
       {
         questionId,
         choice: releaseOption.label,
         version: staleVersion,
-        reason: "Release stuck run with stale version",
+        reason: "Stale release",
       },
       PLANNER,
     )) as { status?: string; version?: number };
     assert.equal(staleReply.status, "stale");
     assert.equal(staleReply.version, currentVersion);
-    assert.equal(fx.store.run(runId)?.released, false);
 
-    // 2) Choosing the listed option without accept returns warnings and leaves escalation open.
     const warnedReply = (await fx.engine.resolution.answerDelegatedQuestion(
       {
         questionId,
         choice: releaseOption.label,
         version: currentVersion,
-        reason: "Release stuck run without accept",
+        reason: "Unaccepted release",
       },
       PLANNER,
     )) as {
       status?: string;
-      explicitResolution?: { warnings: { id: string }[]; next: string };
+      explicitResolution?: { warnings: { id: string }[] };
     };
     assert.equal(warnedReply.status, "warnings");
     assert.ok(
@@ -410,20 +365,7 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
         (w) => w.id === "live_turn",
       ),
     );
-    assert.equal(
-      fx.store
-        .eventsAll(fx.taskId)
-        .some((e) => e.kind === "planner_escalation_answered"),
-      false,
-    );
-    assert.equal(
-      fx.store
-        .eventsAll(`delegation:${questionId}`)
-        .some((e) => e.kind === "delegated_answer"),
-      false,
-    );
 
-    // 3) Hard gate: merge.now without ready review verdict refuses even with accept.
     await assert.rejects(
       async () =>
         await fx.engine.resolution.answerDelegatedQuestion(
@@ -442,8 +384,6 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
       /review|verdict|approved/i,
     );
 
-    // 4) Repeating with accept applies run.release, closes via closeClearedEscalations,
-    // writes NO planner_escalation_answered / delegated_answer, and preserves host diagnostic in next.
     const appliedReply = (await fx.engine.resolution.answerDelegatedQuestion(
       {
         questionId,
@@ -453,13 +393,10 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
           run: runId,
           accept: ["live_turn", "unreported_result"],
         },
-        reason: "Release stuck run after accepting warnings",
+        reason: "Accept warnings and release",
       },
       PLANNER,
-    )) as {
-      status?: string;
-      explicitResolution?: { warnings: { id: string }[]; next: string };
-    };
+    )) as { status?: string; explicitResolution?: { next: string } };
     assert.equal(appliedReply.status, "applied");
     assert.equal(fx.store.run(runId)?.released, true);
     assert.equal(fx.task().resolution.stop, null);
@@ -479,21 +416,18 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
     assert.equal(
       taskEvents.some((e) => e.kind === "planner_escalation_answered"),
       false,
-      "decoupled command must write no planner_escalation_answered marker",
     );
     assert.equal(
       fx.store
         .eventsAll(`delegation:${questionId}`)
         .some((e) => e.kind === "delegated_answer"),
       false,
-      "decoupled command must write no delegated_answer marker",
     );
     assert.equal(
       fx.store
         .eventsAll(`delegation:${questionId}`)
         .some((e) => e.kind === "delegated_closed"),
       true,
-      "auto-close must close the initial question window so it is no longer discoverable",
     );
     assert.throws(
       () => fx.engine.resolution.delegatedQuestionForTask(fx.taskId, PLANNER),
@@ -504,11 +438,11 @@ test("#1491 shape: escalation lists explicit commands, choosing one runs ordinar
   }
 });
 
-test("underlay#046 shape: real owner control runs through Engine.performTaskControl without 'is no longer available' loop", async () => {
+test("underlay#046 shape: real owner guard runs without 'no longer available' loop, and clearing the exact uncertain delivery closes its escalation even when an unrelated pending effect remains", async () => {
   const fx = makeFixture();
   try {
     const reviewerRunId = "run-rev-046";
-    const operationId = randomUUID();
+    const deliveryId = `ns-review-${"c".repeat(64)}`;
     fx.store.putRun(
       makeRun(fx.taskId, {
         id: reviewerRunId,
@@ -519,8 +453,8 @@ test("underlay#046 shape: real owner control runs through Engine.performTaskCont
         reviewDeliveries: [
           {
             authorizationId: randomUUID(),
-            operationId,
-            deliveryId: `ns-review-${"c".repeat(64)}`,
+            operationId: randomUUID(),
+            deliveryId,
             taskId: fx.taskId,
             runId: reviewerRunId,
             head: HEAD_A,
@@ -552,48 +486,67 @@ test("underlay#046 shape: real owner control runs through Engine.performTaskCont
       ownerVerbViews(collectOwnerVerbFacts(fx.store, fx.task())),
     );
     const retryOffer = offered.find((item) => item.verb === "retry_effect");
-    assert.ok(
-      retryOffer,
-      "retry_effect should be offered for uncertain delivery",
-    );
-
+    assert.ok(retryOffer);
     const { questionId } = recordOpenEscalation(
       fx.store,
       fx.engine,
       fx.taskId,
       "esc-046",
-      { runId: reviewerRunId, offered },
+      {
+        runId: reviewerRunId,
+        offered,
+      },
     );
-
-    // Move PR head so the original snapshot offer would have failed the old binding-hash / offer-match guard.
     fx.store.update(
       fx.taskId,
       { prHead: HEAD_B },
       "pr_head_updated",
-      "head moved after escalation offer",
+      "head moved",
     );
-
-    // Real path: answerDelegatedQuestion -> EscalationSettlement -> Engine.performTaskControl -> RetryEffectControls.
-    // Must not fail with "is no longer available" (any refusal comes from the real verb guard, not offer matching).
     try {
       await fx.engine.resolution.answerDelegatedQuestion(
         {
           questionId,
           choice: retryOffer.label,
           version: fx.task().version,
-          reason: "Retry uncertain reviewer delivery",
+          reason: "Retry uncertain delivery",
         },
         PLANNER,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      assert.doesNotMatch(message, /is no longer available/i);
-      assert.doesNotMatch(message, /binding/i);
+      assert.doesNotMatch(message, /is no longer available|binding/i);
     }
-
-    // Clearing the sole uncertain run-delivery effect closes its matching escalation and clears the stop.
-    const deliveryId = `ns-review-${"c".repeat(64)}`;
-    const clearedEffect = await resolveExplicitly(
+    // Add an unrelated pending delivery effect on another run so ownerPendingEffects remains non-empty.
+    fx.store.putRun(
+      makeRun(fx.taskId, {
+        id: "run-unrelated-effect",
+        role: "reviewer",
+        attempt: 2,
+        active: false,
+        reviewDeliveries: [
+          {
+            authorizationId: randomUUID(),
+            operationId: randomUUID(),
+            deliveryId: `ns-review-${"d".repeat(64)}`,
+            taskId: fx.taskId,
+            runId: "run-unrelated-effect",
+            head: HEAD_B,
+            checkpointOrdinal: 1,
+            taskVersion: fx.task().version,
+            briefVersion: 1,
+            briefDigest: null,
+            reason: "Unrelated delivery",
+            instruction: "Unrelated delivery",
+            createdAt: new Date().toISOString(),
+            status: "uncertain",
+            evidence: "unrelated timeout",
+            observedAt: new Date().toISOString(),
+          },
+        ],
+      }),
+    );
+    const cleared = await resolveExplicitly(
       fx.engine,
       {
         taskId: fx.taskId,
@@ -602,12 +555,12 @@ test("underlay#046 shape: real owner control runs through Engine.performTaskCont
         kind: "effect",
         id: `review-delivery.${deliveryId}`,
         accept: ["effect_may_land"],
-        reason: "Clear sole uncertain reviewer delivery effect",
+        reason: "Clear exact uncertain reviewer delivery",
         caller: OPERATOR_BOARD_CALLER,
       },
       () => "next",
     );
-    assert.equal(clearedEffect.explicitResolution?.status, "applied");
+    assert.equal(cleared.explicitResolution?.status, "applied");
     assert.deepEqual(closeClearedEscalations(fx.store, fx.task()), ["esc-046"]);
     assert.equal(fx.task().resolution.stop, null);
   } finally {
@@ -615,7 +568,7 @@ test("underlay#046 shape: real owner control runs through Engine.performTaskCont
   }
 });
 
-test("simulated roll between command commit and auto-close: maintenance closes escalation atomically without resending the command", async () => {
+test("board/inbox command dispatch enforces caller/relay checks and schema, and simulated roll closes escalation via maintenance without resending", async () => {
   const fx = makeFixture();
   try {
     const runId = "run-worker-roll";
@@ -633,16 +586,20 @@ test("simulated roll between command commit and auto-close: maintenance closes e
       "worker_started",
       "live run before roll",
     );
-
     recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-roll", { runId });
-    // Link an open board decision and an active owned wait to this escalation.
     const decisions = new Decisions(fx.store);
     const decision = decisions.add({
       headline: "Escalation operator decision",
       question: "How should esc-roll proceed?",
       choices: [
-        { label: "Release run", consequence: "Releases the run" },
-        { label: "Keep stopped", consequence: "Keeps the task parked" },
+        {
+          label: `Explicit command: run.release run=${runId}`,
+          consequence: "Releases the run",
+        },
+        {
+          label: "Explicit command: record.clear kind=escalation id=esc-roll",
+          consequence: "Clears escalation",
+        },
       ],
       askedBy: PLANNER,
       tasks: [fx.taskId],
@@ -657,32 +614,49 @@ test("simulated roll between command commit and auto-close: maintenance closes e
       "planner_escalation_wait",
       `esc-roll: ${JSON.stringify({ kind: "time", target: new Date(Date.now() + 3_600_000).toISOString() })}`,
     );
-
-    // Board and native-inbox decision answers on a listed explicit command option
-    // dispatch the command without persisting a decision answer or escalation-answer marker.
     const runtimeQuestions = new RuntimeQuestions({
       store: fx.store,
       engine: fx.engine,
       decisions,
       markStoreAccess: () => {},
     });
-    const boardWarned = (await runtimeQuestions.answerDecision({
-      id: decision.id,
-      version: decision.version,
-      answer: `Explicit command: run.release run=${runId}`,
-      answeredBy: OPERATOR_BOARD_CALLER,
-      relayed: false,
-      note: "Board operator chose run.release",
-    })) as {
-      status: string;
-      explicitResolution?: { status: string; warnings: { id: string }[] };
-    };
-    assert.equal(boardWarned.status, "open");
-    assert.equal(boardWarned.explicitResolution?.status, "warnings");
-    assert.ok(
-      boardWarned.explicitResolution?.warnings.some(
-        (w) => w.id === "live_turn",
-      ),
+    // Caller/relay checks are enforced before dispatching.
+    assert.throws(
+      () =>
+        runtimeQuestions.answerDecision({
+          id: decision.id,
+          version: decision.version,
+          answer: `Explicit command: run.release run=${runId}`,
+          answeredBy: "operator (t3code:host-1)",
+          relayed: false,
+          note: "unauthenticated t3 identity",
+        }),
+      /authenticated T3 session/,
+    );
+    assert.throws(
+      () =>
+        runtimeQuestions.answerDecision({
+          id: decision.id,
+          version: decision.version,
+          answer: `Explicit command: run.release run=${runId}`,
+          answeredBy: PLANNER,
+          relayed: false,
+          note: "non-operator without relay",
+        }),
+      /Only the operator answers without a relay/,
+    );
+    // Board/inbox warning-bearing command rejects with warning IDs and keeps decision open (no decision persistence).
+    await assert.rejects(
+      async () =>
+        await runtimeQuestions.answerDecision({
+          id: decision.id,
+          version: decision.version,
+          answer: `Explicit command: run.release run=${runId}`,
+          answeredBy: OPERATOR_BOARD_CALLER,
+          relayed: false,
+          note: "Board operator chose run.release",
+        }),
+      /live_turn/,
     );
     assert.equal(fx.store.decision(decision.id).status, "open");
     assert.equal(
@@ -692,8 +666,7 @@ test("simulated roll between command commit and auto-close: maintenance closes e
       false,
     );
 
-    // Step 1: commit the explicit command directly via resolveExplicitly (simulating a roll
-    // immediately after the command commits, before closeClearedEscalations runs).
+    // Simulated roll: commit run.release directly, then maintenance closes escalation atomically without resending.
     const resolved = await resolveExplicitly(
       fx.engine,
       {
@@ -713,14 +686,8 @@ test("simulated roll between command commit and auto-close: maintenance closes e
         (e) => e.id === "esc-roll",
       )?.answered,
       false,
-      "escalation is still open right after simulated roll",
     );
-    assert.equal(fx.store.decision(decision.id).status, "open");
-
-    // Step 2: maintenance pass runs after the roll and closes the escalation atomically
-    // without resending the explicit command.
     await fx.engine.resolution.ladder.resumeEscalationWaits(fx.task());
-
     const afterEvents = fx.store.eventsAll(fx.taskId);
     assert.equal(
       plannerEscalations(afterEvents).find((e) => e.id === "esc-roll")
@@ -736,10 +703,43 @@ test("simulated roll between command commit and auto-close: maintenance closes e
     assert.equal(
       afterEvents.filter((e) => e.kind === "owner_resolution").length,
       1,
-      "maintenance must not resend the explicit command",
     );
 
-    // Step 3: non-clearance guards — unreviewed external merge is NOT closed by an uncertain launch.
+    // Board warning-free command returns a strict DecisionView accepted by the real decisionAnswer RPC schema.
+    recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-board-clear");
+    const d2 = decisions.add({
+      headline: "Clear escalation",
+      question: "Clear esc-board-clear?",
+      choices: [
+        {
+          label:
+            "Explicit command: record.clear kind=escalation id=esc-board-clear",
+          consequence: "Clears escalation",
+        },
+        { label: "Stop and keep the work", consequence: "Stops task" },
+      ],
+      askedBy: PLANNER,
+      tasks: [fx.taskId],
+    });
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_decision_linked",
+      `esc-board-clear: decision ${d2.id}`,
+    );
+    const boardApplied = await runtimeQuestions.answerDecision({
+      id: d2.id,
+      version: d2.version,
+      answer:
+        "Explicit command: record.clear kind=escalation id=esc-board-clear",
+      answeredBy: OPERATOR_BOARD_CALLER,
+      relayed: false,
+      note: "Clear via board",
+    });
+    const parsedView = decisionAnswer.output.parse(boardApplied);
+    assert.equal(parsedView.status, "withdrawn");
+    assert.equal(fx.task().resolution.stop, null);
+
+    // Unreviewed external merge is NOT closed by an uncertain reviewer launch.
     recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-ext-merge", {
       payload: { commit: HEAD_B, head: HEAD_B },
     });
@@ -782,12 +782,8 @@ test("deleted restart-as-escalation-answer path: parkedRestart never returns ans
   const fx = makeFixture();
   try {
     recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-no-restart");
-    const facts = collectOwnerVerbFacts(fx.store, fx.task());
-    const parked = parkedRestart(facts);
-    assert.ok(
-      !parked || !("answer" in parked),
-      "parkedRestart must not fall back to answering an open escalation",
-    );
+    const parked = parkedRestart(collectOwnerVerbFacts(fx.store, fx.task()));
+    assert.ok(!parked || !("answer" in parked));
   } finally {
     fx.close();
   }

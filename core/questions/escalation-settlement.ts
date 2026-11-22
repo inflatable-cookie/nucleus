@@ -9,6 +9,7 @@ import {
   type TaskControlTask,
 } from "../../shared/contracts";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
+import { isT3OperatorIdentity } from "../../shared/operator-identity";
 import {
   appliedMergeVerdict,
   escalationOutlived,
@@ -327,27 +328,44 @@ export function escalationCauseClearedReason(
     )
       return `the raising ${raisingRun.role} run (${raisingRun.id}) was explicitly released`;
   }
-  if (
-    intentEvent &&
-    events.some((item) => {
+  if (intentEvent) {
+    const clearedEffects = events.flatMap((item) => {
       if (item.id <= intentEvent.id || item.kind !== "owner_resolution")
-        return false;
+        return [];
       try {
         const detail = JSON.parse(item.detail) as {
           command?: string;
-          arguments?: { kind?: string };
+          arguments?: { kind?: string; id?: string };
         };
-        return (
-          detail.command === "record.clear" &&
-          detail.arguments?.kind === "effect"
-        );
+        return detail.command === "record.clear" &&
+          detail.arguments?.kind === "effect" &&
+          typeof detail.arguments.id === "string"
+          ? [detail.arguments.id]
+          : [];
       } catch {
-        return false;
+        return [];
       }
-    }) &&
-    ownerPendingEffects(collectOwnerVerbFacts(store, task)).length === 0
-  )
-    return "the escalated pending effect was cleared";
+    });
+    if (clearedEffects.length > 0) {
+      if (escalation.runId) {
+        const run = store.run(escalation.runId);
+        const deliveries = run?.reviewDeliveries ?? [];
+        const hasPendingDelivery = deliveries.some(
+          (d) => d.status === "reserved" || d.status === "uncertain",
+        );
+        const clearedRunDelivery = clearedEffects.some((effectId) => {
+          const deliveryId = effectId.replace(/^review-delivery\./, "");
+          return deliveries.some(
+            (d) => d.deliveryId === deliveryId && d.status === "refused",
+          );
+        });
+        if (clearedRunDelivery && !hasPendingDelivery)
+          return "the escalated delivery effect was cleared";
+      }
+      if (ownerPendingEffects(collectOwnerVerbFacts(store, task)).length === 0)
+        return "the escalated pending effect was cleared";
+    }
+  }
   if (
     intentEvent &&
     (payload?.source === "worker" || payload?.source === "revision") &&
@@ -562,14 +580,17 @@ export class EscalationSettlement {
    * listed explicit command option of a linked open escalation, dispatch the
    * command through its ordinary RPC without persisting a decision answer.
    */
-  dispatchDecisionExplicitCommand(input: {
-    id: string;
-    version: number;
-    answer: string;
-    answeredBy: string;
-    relayed: boolean;
-    note?: string;
-  }): Promise<EscalationExplicitOutcome> | null {
+  dispatchDecisionExplicitCommand(
+    input: {
+      id: string;
+      version: number;
+      answer: string;
+      answeredBy: string;
+      relayed: boolean;
+      note?: string;
+    },
+    trustedT3 = false,
+  ): Promise<EscalationExplicitOutcome> | null {
     let decision;
     try {
       decision = this.store.decision(input.id);
@@ -608,6 +629,26 @@ export class EscalationSettlement {
         }
         const selected = decodeEscalationChoice(answerText, offered);
         if (selected.kind !== "owner" || !selected.choice.command) continue;
+        if (isT3OperatorIdentity(input.answeredBy) && !trustedT3)
+          throw Error(
+            "T3 operator identity requires an authenticated T3 session",
+          );
+        const isOp =
+          input.answeredBy === "operator" ||
+          input.answeredBy === "operator (board)" ||
+          isT3OperatorIdentity(input.answeredBy);
+        if (input.relayed && isOp)
+          throw Error(
+            "A relayed answer names the relaying agent, not the operator",
+          );
+        if (!input.relayed && !isOp)
+          throw Error(
+            "Only the operator answers without a relay; set relayed true and name the relaying agent",
+          );
+        if (input.relayed && !input.note?.trim())
+          throw Error(
+            "A relayed answer requires a note quoting the operator's authorization",
+          );
         if (decision.version !== input.version)
           throw Error(
             `Decision ${decision.id} is at version ${decision.version}, not ${input.version}`,
@@ -615,14 +656,30 @@ export class EscalationSettlement {
         const answerer: Answerer = input.relayed
           ? { role: "planner", agentId: input.answeredBy }
           : { role: "operator" };
+        const command = selected.choice.command;
         return this.settleExplicitEscalationCommand(
           this.store.task(taskId),
           escalationId,
-          selected.choice.command,
+          command,
           input.note?.trim() || selected.reason,
           input.answeredBy,
           answerer,
-        );
+        ).then((outcome) => {
+          if (outcome.status === "warnings") {
+            const ids = outcome.warnings.map((w) => w.id).join(", ");
+            const texts = outcome.warnings
+              .map((w) => `${w.id}: ${w.text}`)
+              .join("; ");
+            throw Error(
+              `Explicit command ${command.action} requires accepting warnings [${ids}] at version ${outcome.taskVersion}: ${texts}. ${outcome.next}`,
+            );
+          }
+          if (outcome.status === "stale")
+            throw Error(
+              `Explicit command ${command.action} is stale; task is at version ${outcome.taskVersion}. ${outcome.next}`,
+            );
+          return outcome;
+        });
       }
     }
     return null;

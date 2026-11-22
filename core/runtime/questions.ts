@@ -222,16 +222,16 @@ export class RuntimeQuestions {
     trustedT3 = false,
   ) {
     const dispatched =
-      this.context.engine.resolution.dispatchDecisionExplicitCommand?.(input);
+      this.context.engine.resolution.dispatchDecisionExplicitCommand?.(
+        input,
+        trustedT3,
+      );
     if (dispatched) {
-      return dispatched.then((explicitResolution) => {
+      return dispatched.then(() => {
         void this.context.engine.wake().catch(() => {
           /* a failed drain is recorded as engineError */
         });
-        return {
-          ...this.context.decisions.get({ id: input.id }),
-          explicitResolution,
-        };
+        return this.context.decisions.get({ id: input.id });
       });
     }
     const view = this.context.decisions.answer(

@@ -2750,8 +2750,12 @@ export class Resolution {
     input: Parameters<
       EscalationSettlement["dispatchDecisionExplicitCommand"]
     >[0],
+    trustedT3?: boolean,
   ) {
-    return this.escalationSettlement.dispatchDecisionExplicitCommand(input);
+    return this.escalationSettlement.dispatchDecisionExplicitCommand(
+      input,
+      trustedT3,
+    );
   }
   continueWorkerAfterLadder(
     t: Task,
