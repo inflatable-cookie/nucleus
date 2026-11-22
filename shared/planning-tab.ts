@@ -86,7 +86,8 @@ export function projectPlanningCounts(project: Project, tasks: TaskSummary[], le
     origin && repo.origin ? repo.origin === origin : Boolean(path && repo.path === path));
   return {
     tasks: tasks.filter(task => !['done', 'cancelled'].includes(task.phase) && owns(task.repository, task.repoPath)).length,
-    leads: leads.filter(lead => lead.state === 'open' && lead.repositories.some(repo => owns(repo.origin, repo.path))).length,
+    // A parked lead is off the to-do list and out of every count (Nucleus#1543).
+    leads: leads.filter(lead => lead.state === 'open' && !lead.parked && lead.repositories.some(repo => owns(repo.origin, repo.path))).length,
   };
 }
 

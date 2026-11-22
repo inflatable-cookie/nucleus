@@ -1186,8 +1186,9 @@ leads and park the same way. The first use is a T3 board lead that waits on the 
 - **Triage.** `defer` parks the record with its reason and revisit time. Triage has no
   separate defer state, and a parked record is never batched.
 - **Hold tag.** The `hold` tag is retired. On open, each lead still tagged `hold`
-  becomes parked with the reason "Held before parking existed" and no revisit time,
-  and loses the tag. The `leadParkingMigration` record lists the leads it changed.
+  loses the tag. An open lead also becomes parked with the reason "Held before
+  parking existed" and no revisit time; a lead in any other state only loses the tag.
+  The `leadParkingMigration` record lists each lead it changed and whether it parked.
 - **Lead screen.** Park takes a reason and an optional "Check again on" day, two weeks
   out by default, from More actions. A parked lead shows its state and an Unpark
   control. The explanation sits in a `?` popover, not in the labels.

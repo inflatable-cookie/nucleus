@@ -1447,8 +1447,10 @@ one decision per record, copying its `leadVersion` and `digest` exactly.
 - `operator` with a `question`, for decisions only the operator can make.
 
 A record that changed since the batch was made is superseded, not closed, and
-comes back in a later batch. A replayed apply changes nothing. Records tagged
-`hold` are never triaged automatically.
+comes back in a later batch. A replayed apply changes nothing. A parked lead
+(`lead.park`, Nucleus#1543) is never triaged automatically; `defer` parks the
+record with its reason and `revisitAt`, and it returns to the list when that time
+comes due.
 
 ```sh
 nucleus triage.apply - <<'JSON'

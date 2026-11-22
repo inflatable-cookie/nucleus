@@ -243,10 +243,11 @@ export class StoreMigration {
   }
 
   /**
-   * Nucleus#1543 (Tom, 2026-11-22): a park replaces the `hold` tag. Each lead still tagged `hold`
-   * becomes parked with the reason "Held before parking existed" and no recheck date, and loses
-   * the tag. Idempotent on every open: a clean store is scanned and left as it was, and the record
-   * lists each lead the migration changed.
+   * Nucleus#1543 (Tom, 2026-11-22): a park replaces the `hold` tag. Every lead still tagged `hold`
+   * loses the tag. An open lead also becomes parked with the reason "Held before parking existed"
+   * and no recheck date; a lead in any other state only loses the tag, since only open leads park.
+   * Idempotent on every open: a clean store is scanned and left as it was, and the record lists
+   * each lead the migration changed, with whether it was parked.
    */
   migrateHoldTagsToParked(): void {
     const rows = this.db
@@ -257,26 +258,37 @@ export class StoreMigration {
     if (!rows.length) return;
     const at = new Date().toISOString();
     const update = this.db.prepare("UPDATE leads SET data=? WHERE id=?");
-    const changes: Array<{ id: string; title: string }> = [];
+    const changes: Array<{ id: string; title: string; state: string; parked: boolean }> = [];
     for (const row of rows) {
       // The raw record is rewritten as it is stored, so a stripped body stays stripped.
       const lead = JSON.parse(String(row.data)) as {
         title: string;
+        state: string;
         tags: string[];
         parked?: unknown;
       };
+      const parks = lead.state === "open" && !lead.parked;
       const next = {
         ...lead,
         tags: lead.tags.filter((tag) => tag !== "hold"),
-        parked: lead.parked ?? {
-          reason: "Held before parking existed",
-          revisitAt: null,
-          by: "migration",
-          at,
-        },
+        ...(parks
+          ? {
+              parked: {
+                reason: "Held before parking existed",
+                revisitAt: null,
+                by: "migration",
+                at,
+              },
+            }
+          : {}),
       };
       update.run(JSON.stringify(next), String(row.id));
-      changes.push({ id: String(row.id), title: lead.title });
+      changes.push({
+        id: String(row.id),
+        title: lead.title,
+        state: lead.state,
+        parked: parks,
+      });
     }
     this.core.advanceLeadRevision();
     const previous = this.core.getMeta<{ at: string; changes: typeof changes }>(

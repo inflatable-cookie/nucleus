@@ -11,6 +11,8 @@ import { unparkDueLeads } from "../core/planning/parking";
 import { LEAD_PARKING_MIGRATION_KEY } from "../core/store/store-migration";
 import { pipelineBoard } from "../shared/pipeline-board";
 import { inboxCounts, inboxSections, leadsCards, papercutCards, parkedCards } from "../shared/inbox-board";
+import { planningLaneLeads } from "../shared/project-scope";
+import { projectPlanningCounts } from "../shared/planning-tab";
 import { triageStatus } from "../shared/pipeline-board";
 import { defaultRecheckDate, parkedCheckLabel, recheckIsoFromDate, PARK_DEFAULT_DAYS } from "../shared/parking";
 import type { BoardLead, Lead } from "../shared/contracts";
@@ -74,6 +76,23 @@ test("1543-1 a parked lead leaves the list and every count, and unparking return
     assert.equal(inboxCounts(board).leads, 2, "unparking returns it to the count");
     assert.deepEqual(parkedCards(board, "leads"), []);
     assert.throws(() => f.leads.unpark({ id: a.id, version: a.version }), /not parked/);
+  } finally { f.close(); }
+});
+
+test("1543-1b project planning counts and lane leads leave parked leads out", () => {
+  const f = setup(); try {
+    const a = f.add("Parked for the planning tab");
+    f.add("Still open");
+    f.leads.park({ id: a.id, version: a.version, reason: "Waits", revisitAt: null, author: "planner" });
+    const projects = f.store.projects();
+    const project = projects.find(item => item.key === f.projectKey)!;
+    const leads = f.store.openLeads();
+    assert.equal(leads.length, 2, "the store still holds both open leads");
+    assert.equal(projectPlanningCounts(project, [], leads).leads, 1, "the project's open-lead count leaves the parked one out");
+    // Lane membership is what planningLaneLeads filters on; the stored leads carry no lane, so the facts name one.
+    const onLane = leads.map(lead => ({ ...lead, lanes: ["lane-x"] }));
+    const laneLeads = planningLaneLeads(onLane, "lane-x", projects, []);
+    assert.deepEqual(laneLeads.map(lead => lead.id), [onLane.find(lead => lead.title === "Still open")!.id], "a lane shows only its unparked leads");
   } finally { f.close(); }
 });
 
@@ -155,6 +174,20 @@ test("1543-5 the hold tag becomes a park on the next open, once, and the tag goe
     f.reopen();
     assert.equal(f.store.getMeta<{ changes: unknown[] }>(LEAD_PARKING_MIGRATION_KEY)?.changes.length, 1, "a later open changes nothing");
     assert.equal(f.store.lead(held.id).parked?.reason, "Held before parking existed");
+  } finally { f.close(); }
+});
+
+test("1543-5b the hold tag on a lead that is not open is removed without a park", () => {
+  const f = setup(); try {
+    const dropped = f.add("Dropped while held", ["hold"]);
+    f.leads.drop({ id: dropped.id, reason: "superseded" });
+    f.reopen();
+    const after = f.store.lead(dropped.id);
+    assert.deepEqual(after.tags, [], "the hold tag is removed");
+    assert.equal(after.state, "dropped");
+    assert.equal(after.parked ?? null, null, "a lead that is not open is never parked");
+    const record = f.store.getMeta<{ changes: Array<{ id: string; state: string; parked: boolean }> }>(LEAD_PARKING_MIGRATION_KEY);
+    assert.deepEqual(record?.changes.find(change => change.id === dropped.id), { id: dropped.id, title: "Dropped while held", state: "dropped", parked: false });
   } finally { f.close(); }
 });
 
