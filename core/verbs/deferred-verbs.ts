@@ -96,6 +96,7 @@ export class DeferredOwnerVerbs {
         reason: deferredVerbReason(input.action, why),
         resolution: {
           ...task.resolution,
+          stop: null,
           deferredVerb: {
             input: rest as Record<string, unknown>,
             at: now(),

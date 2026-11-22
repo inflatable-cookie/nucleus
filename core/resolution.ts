@@ -2546,6 +2546,9 @@ export class Resolution {
   ): Promise<T> {
     return this.slotAdmission.withDispatchPass(pass, skippedHosts);
   }
+  withPassHostSkips<T>(skippedHosts: ReadonlySet<string>, visit: () => T): T {
+    return this.slotAdmission.withPassHostSkips(skippedHosts, visit);
+  }
   passDependencyWait(task: Task): string {
     return this.slotAdmission.passDependencyWait(task);
   }

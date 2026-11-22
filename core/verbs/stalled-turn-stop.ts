@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 
@@ -220,7 +221,7 @@ export class StalledTurnStops {
         const reason = `The stalled ${assigned.role} run ${input.runId} now has an active permission request. Stop was refused; resolve or inspect that request before deciding again.`;
         this.store.update(
           task.id,
-          { reason },
+          { reason, ...stopClearedPatch(this.store.task(task.id)) },
           "stalled_turn_stop_refused",
           reason,
         );
@@ -304,7 +305,11 @@ export class StalledTurnStops {
         return this.store.update(
           current.id,
           {
-            resolution: { ...current.resolution, stalledTurnStop: intent },
+            resolution: {
+              ...current.resolution,
+              stop: null,
+              stalledTurnStop: intent,
+            },
             reason: `Operator stop requested for stalled ${assigned.role} run ${input.runId} turn ${intent.turnId}; waiting for observed inactivity. No replacement turn will start automatically`,
           },
           "stalled_turn_stop_intent",
@@ -322,7 +327,11 @@ export class StalledTurnStops {
           this.store.update(
             latest.id,
             {
-              resolution: { ...latest.resolution, stalledTurnStop: null },
+              resolution: {
+                ...latest.resolution,
+                stop: null,
+                stalledTurnStop: null,
+              },
               reason: visible,
             },
             "stalled_turn_stop_refused",
@@ -480,6 +489,7 @@ export class StalledTurnStops {
         {
           resolution: {
             ...latest.resolution,
+            stop: null,
             stalledTurnStop: {
               ...latest.resolution.stalledTurnStop,
               status: "sent",

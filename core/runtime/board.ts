@@ -63,7 +63,7 @@ export interface BoardContext {
   store: Store;
   engine: Pick<
     Engine,
-    "profiles" | "retiredObservationKey" | "queuedExternalWait"
+    "profiles" | "retiredObservationKey" | "currentExternalWait"
   > &
     Partial<
       Pick<Engine, "profilesFor" | "workerRoutingProfiles" | "routingHostViews">
@@ -191,7 +191,7 @@ export class RuntimeBoard {
             this.context.store,
             task,
             context,
-            (candidate) => this.context.engine.queuedExternalWait(candidate),
+            (candidate) => this.context.engine.currentExternalWait(candidate),
           ).reason,
         };
       }),
@@ -589,7 +589,7 @@ export class RuntimeBoard {
         this.context.store,
         task,
         contexts.get(task.id)!,
-        (candidate) => this.context.engine.queuedExternalWait(candidate),
+        (candidate) => this.context.engine.currentExternalWait(candidate),
       ),
     );
     const events = new Map(
@@ -718,7 +718,7 @@ export class RuntimeBoard {
           this.context.store,
           task,
           context,
-          (candidate) => this.context.engine.queuedExternalWait(candidate),
+          (candidate) => this.context.engine.currentExternalWait(candidate),
         ),
       });
     } catch (error) {

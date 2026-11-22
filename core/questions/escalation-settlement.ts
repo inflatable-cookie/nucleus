@@ -186,6 +186,7 @@ export class EscalationSettlement {
             "Owner direction recorded; waiting for the worker turn to release",
           resolution: {
             ...current.resolution,
+            stop: null,
             deferredVerb: {
               input: { ...rest, __workerAsk: marker },
               at: new Date().toISOString(),

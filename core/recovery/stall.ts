@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import { observeRunningTool, recordActivityTool } from "../telemetry/task-activity-observation";
 import type { ParticipantActivity } from "../../shared/schema/task-activity";
 import type {
@@ -576,7 +577,10 @@ export class Stalls {
         if (current.reason !== decision.reason)
           this.store.update(
             current.id,
-            { reason: decision.reason },
+            {
+              reason: decision.reason,
+              ...stopClearedPatch(this.store.task(current.id)),
+            },
             "stalled_turn_stop_waiting",
             decision.reason,
           );
@@ -615,6 +619,7 @@ export class Stalls {
           {
             resolution: {
               ...latest.resolution,
+              stop: null,
               stalledTurnStop: {
                 ...latestStop,
                 status: "completed",

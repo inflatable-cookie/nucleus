@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../shared/task-stop";
 import { recordedLegacyPaseoHost } from "./host/host-registry";
 import { enginePorts, portsContext } from "./port-context";
 import { onOwnerHost } from "./host/host-ports";
@@ -14,10 +15,7 @@ import { Dispatch } from "./dispatch/dispatch";
 import { combineWorkerHostProfiles } from "./dispatch/first-host-selection";
 import { independentReviewRoutingConflict } from "./dispatch/routing";
 import { taskNeverDispatched } from "./task-decision-rules";
-import {
-  HOST_WAIT_PRESERVED_STOPS,
-  hostUnavailableDetail,
-} from "../shared/host-outage";
+import { hostUnavailableDetail } from "../shared/host-outage";
 import type { GitTransientEpisode } from "./git/git-transient-backoff";
 
 import { type WorkspaceDiscard } from "./workspaces/orphan-worktree";
@@ -442,39 +440,30 @@ export class Engine {
     );
   }
   /**
-   * Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait). One task's host
-   * wait, read from the host's health (Spec 069 §2) and recorded only while the
-   * host is down:
+   * Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait). The sweep visit's
+   * reading of one task's host (Spec 069 §2, §3). It reads the host's health, the
+   * one place a host's state moves, and writes nothing for an outage:
    *
-   * - Every live task on an unavailable host records its own `resolution.hostWait`
-   *   (nucleus#1198 review), independent of its stop. That is what pauses the
-   *   wall clock, shows on its card and joins its project's outage notice, even
-   *   when the stop beside it belongs to an owner answer.
-   * - The stop reads `host_unavailable` naming the host and the time it went
-   *   offline unless a stop already owns the task's answer (budget, escalation,
-   *   responsible question, hold, proof wait, interactive turn, paused stop,
-   *   operator attention); that stop and its question stay.
-   * - When the host is back the wait clears, and the ordinary observation pass
-   *   re-proves every retained thread before the task sends anything again.
+   * - A `down` host returns the outage's wait. Nothing is recorded on the task:
+   *   the card, `next`, detail and budget all work the wait out from the host's
+   *   own outage record when they are read (`inFlightHostWait`,
+   *   `hostOutageIntervals`), so an outage costs one write, not one per task.
+   * - A host that is `unknown` (not yet read since the service started) returns
+   *   its wait and writes nothing: the task keeps its state, unvisited.
+   * - A connected host (`up` or `degraded`) settles any host-scoped wait the task
+   *   still stores, a transport deferral or a wait an older version recorded
+   *   (`clearHostWait`, which writes only when there is one), and returns null. The
+   *   ordinary observation pass then re-proves every retained thread before the
+   *   task sends anything again.
    *
-   * - A host that is `unknown` (not yet read since the service started) writes
-   *   nothing: the task keeps its state and waits, unvisited, for the first reading.
-   * - A `degraded` host keeps its running tasks; only new launches wait on it
-   *   (`hostLaunchWait`).
-   *
-   * Returns the detail while waiting, or null when the task's host is up or
-   * degraded (or it has no host identity, which is a different, existing wait).
+   * Returns the detail while waiting, or null when the task's host is connected
+   * (or it has no host identity, which is a different, existing wait).
    */
   hostWait(task: Task): string | null {
     const hostId = task.hostId;
     if (!hostId || task.phase === "done" || task.phase === "cancelled")
       return null;
-    // A never-dispatched worker has only a host preference. An offline
-    // preference cannot fence selection on another online host.
-    if (
-      this.firstWorkerUnbound(task) &&
-      this.hostIds().some((id) => id !== hostId && this.workerHostReady(id))
-    ) {
+    if (this.unboundOnOtherHost(task)) {
       this.resolution.clearHostWait(task);
       return null;
     }
@@ -484,30 +473,45 @@ export class Engine {
       this.resolution.clearHostWait(task);
       return null;
     }
-    // HostHealth opened the outage on its transition; its start dates the wait.
-    const since = this.hostOutages.current(hostId)?.since ?? health.since;
-    const detail = hostUnavailableDetail(hostId, since);
-    let current = this.store.task(task.id);
-    const wait = current.resolution.hostWait;
-    if (wait?.hostId !== hostId || wait.since !== since) {
-      current = this.resolution.update(
-        current,
-        { hostWait: { hostId, since } },
-        {},
-        "host_outage_wait",
-      );
-    }
-    const stop = current.resolution.stop;
-    // An owner-facing stop keeps its own answer and question; the independent
-    // host wait above is still recorded, so the clock, card and notice see it.
+    return this.outageDetail(hostId, health.since);
+  }
+  /**
+   * Spec 069 §3: a started task's host wait, worked out when the board, `next`,
+   * task detail or a notice is read. It never writes and never moves the host's
+   * state (`peek`): the wait exists while the task's host is `down`, dated from
+   * the host's own outage record. A queued task's waits are the admission read's
+   * (`queuedExternalWait`); an `unknown` host shows no wait, so a service start
+   * never parks a task.
+   */
+  inFlightHostWait(
+    task: Task,
+  ): { hostId: string; since: string; detail: string } | null {
+    const hostId = task.hostId;
     if (
-      stop &&
-      (HOST_WAIT_PRESERVED_STOPS as readonly string[]).includes(stop.reason)
+      !hostId ||
+      task.phase === "queued" ||
+      task.phase === "done" ||
+      task.phase === "cancelled" ||
+      this.unboundOnOtherHost(task)
     )
-      return detail;
-    if (stop?.reason !== "host_unavailable" || stop.detail !== detail)
-      this.resolution.recordStop(current, "host_unavailable", detail);
-    return detail;
+      return null;
+    const health = this.hostHealth.peek(hostId);
+    if (health.state !== "down") return null;
+    const since = this.hostOutages.current(hostId)?.since ?? health.since;
+    return { hostId, since, detail: hostUnavailableDetail(hostId, since) };
+  }
+  /** A never-dispatched worker has only a host preference; an offline one cannot fence another online host. */
+  private unboundOnOtherHost(task: Task): boolean {
+    const hostId = task.hostId;
+    return (
+      this.firstWorkerUnbound(task) &&
+      this.hostIds().some((id) => id !== hostId && this.workerHostReady(id))
+    );
+  }
+  /** HostHealth opened the outage on its transition; its start dates the wait. */
+  private outageDetail(hostId: string, fallbackSince: string): string {
+    const since = this.hostOutages.current(hostId)?.since ?? fallbackSince;
+    return hostUnavailableDetail(hostId, since);
   }
   private sweepOwner?: Sweep;
   private get sweep(): Sweep {
@@ -607,7 +611,9 @@ export class Engine {
     targetHostWait: (task) => this.targetHostWait(task),
     workerHostIds: (task) =>
       this.workerHostCatalogs(task).map((host) => host.hostId),
-    hostHealthState: (id) => this.hostHealth.read(id).state,
+    // Board reads only: they peek, so a read never moves a host or writes its outage.
+    hostHealthState: (id) => this.hostHealth.peek(id).state,
+    hostLaunching: (id) => this.hostHealth.launching(id),
     hostLaunchWait: (id, taskId) => this.hostLaunchWait(id, taskId),
   });
   private profilesValue: Profile[] = [];
@@ -974,6 +980,7 @@ export class Engine {
         )
           this.store.update(taskId, {
             reason: `Creating workspace: ${step.replaceAll("_", " ")}`,
+            ...stopClearedPatch(this.store.task(taskId)),
           });
       } catch {
         /* Progress reporting must not change workspace creation behavior. */
@@ -3025,6 +3032,15 @@ export class Engine {
   /** Present-time wait that needs no durable queued-task update. */
   queuedExternalWait(task: Task): string {
     return this.dispatchAdmission.queuedExternalWait(task);
+  }
+  /**
+   * Spec 069 §1 and §3: every task's present-time wait the read boundary works
+   * out (`taskWithCurrentWait`): a queued task's admission wait, or a started
+   * task's host wait while its host is down. Never a write.
+   */
+  currentExternalWait(task: Task): string {
+    if (task.phase === "queued") return this.queuedExternalWait(task);
+    return this.inFlightHostWait(task)?.detail ?? "";
   }
   /** Under host pressure, admit bounded progress instead of waiting for unrelated load to disappear. */
   workspacePressureWait(

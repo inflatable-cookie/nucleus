@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import { receiptAcceptanceRefusal } from "../review/proof-receipt-acceptance";
@@ -36,7 +37,7 @@ export function applyReceiptAcceptance(engine: Engine, input: TaskControlInput, 
         if (!engine.store.notices(current.id).some(item => item.id === id)) engine.store.putNotice({ ...notice, id, status: 'pending', error: '', text });
       }
     }
-    return engine.store.update(current.id, { proofReceiptAcceptance: acceptance,
+    return engine.store.update(current.id, { ...stopClearedPatch(current), proofReceiptAcceptance: acceptance,
       proofOnlyResult: { ...originalResult, status: 'passed', evidence: `Operator accepted receipt ${receipt.runId} as release evidence. ${receipt.evidence}`.slice(0, 4000) },
       reason: `Operator accepted receipt ${receipt.runId} as release evidence; original failed qualification remains in history` },
       'proof_receipt_accepted', detail);

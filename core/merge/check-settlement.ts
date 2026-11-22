@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import type { Task } from "../../shared/contracts";
 import type { RequiredChecksResult } from "../resolution";
 import { requiredCheckPollMetaKey } from "../forge/index";
@@ -46,7 +47,10 @@ export class CheckSettlement {
     );
     if (!matchesIncident && !matchesRecovery) {
       if (!current.resolution.attention && current.reason !== detail)
-        this.store.update(t.id, { reason: detail });
+        this.store.update(t.id, {
+          reason: detail,
+          ...stopClearedPatch(this.store.task(t.id)),
+        });
       return;
     }
     const recoveryRun =
@@ -112,7 +116,10 @@ export class CheckSettlement {
         this.ports.recordIncidentEvent(t.id, nextIncident!);
       if (hasEpisode) this.ports.settleAttentionEpisode(t.id, detail);
     } else if (current.reason !== detail) {
-      this.store.update(t.id, { reason: detail });
+      this.store.update(t.id, {
+        reason: detail,
+        ...stopClearedPatch(this.store.task(t.id)),
+      });
     }
   }
   /**

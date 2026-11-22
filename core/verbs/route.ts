@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import {
   DurableFenceRefusal,
   matchingInactiveParticipant,
@@ -702,6 +703,8 @@ export class RouteControls {
           });
           this.store.event(current.id, "route_changed", routeAuditDetail);
         } else {
+          // The route answers the task's stop: it clears it explicitly whenever it
+          // writes a new reason (Spec 069 §3: the funnel no longer does).
           routed = this.store.update(
             current.id,
             archivePending
@@ -710,9 +713,17 @@ export class RouteControls {
                   phase: current.phase,
                   reason:
                     "Reviewer replacement archive is not confirmed; the launch waits until observation releases the retained reviewer, and it releases once that thread is proven archived, gone or closed",
-                  resolution: current.resolution,
+                  resolution: { ...current.resolution, stop: null },
                 }
-              : patch,
+              : patch.reason !== undefined
+                ? {
+                    ...patch,
+                    ...stopClearedPatch(
+                      current,
+                      patch as { resolution?: Task["resolution"] },
+                    ),
+                  }
+                : patch,
             "route_changed",
             routeAuditDetail,
           );

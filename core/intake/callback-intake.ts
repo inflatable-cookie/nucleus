@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import { readToolTimeline } from "../recovery/stall";
 import { timelineSelectorEvidence } from "../qa/proof-selector-evidence";
 import { verifyProofSource } from "../qa/proof-source";
@@ -745,6 +746,7 @@ export class CallbackIntake {
             intent,
           },
           reason: `Checkpoint ${ordinal}/${CHECKPOINT_BUDGET} accepted; continuing the retained worker`,
+          ...stopClearedPatch(this.store.task(current.id)),
         },
         "progress_checkpoint",
         `${record.summary} @ ${record.head}`,
@@ -961,6 +963,7 @@ export class CallbackIntake {
       if (current.task.resolution.currentRunId === current.run.id)
         this.store.update(current.task.id, {
           reason: REVIEW_AUTHORIZATION_REQUIRED,
+          ...stopClearedPatch(this.store.task(current.task.id)),
         });
       this.store.event(
         current.task.id,
@@ -1036,7 +1039,10 @@ export class CallbackIntake {
       );
       // A replaced reader keeps its evidence without moving the current task.
       if (current.resolution.currentRunId === run.id)
-        this.store.update(task.id, { reason: REVIEW_READER_EXHAUSTED });
+        this.store.update(task.id, {
+          reason: REVIEW_READER_EXHAUSTED,
+          ...stopClearedPatch(this.store.task(task.id)),
+        });
       return receipt;
     });
     void this.engine.wake().catch(() => {

@@ -22,6 +22,10 @@ import {
   submission,
 } from "./support/fakes";
 import { holdPatch } from "../core/merge/merge-hold";
+import {
+  taskWaitStateContext,
+  taskWithCurrentWait,
+} from "../core/recovery/wait-context";
 
 /**
  * Spec 069 §2 (Tom, 2026-11-22): host health comes from the host's connection,
@@ -156,6 +160,15 @@ function writes(store: Store, tasks: readonly Task[]) {
     outages: JSON.stringify(store.getMeta("hostOutages") ?? null),
   };
 }
+
+/** The task as the board, `next` and detail read it (Spec 069 §3). */
+const readView = (store: Store, engine: Engine, task: Task) =>
+  taskWithCurrentWait(
+    store,
+    task,
+    taskWaitStateContext(store, task, null),
+    (candidate) => engine.currentExternalWait(candidate),
+  );
 
 const stopReasons = (store: Store, ...tasks: Task[]) =>
   tasks.map((task) => store.task(task.id).resolution.stop?.reason ?? null);
@@ -396,7 +409,12 @@ test("a lost connection takes the host down once: the outage opens once, the tas
   assert.equal(f.engine.hostHealth.read(HOST).state, "down");
   const outage = f.engine.hostOutages.current(HOST);
   assert.ok(outage, "the outage is opened on the transition");
-  const waiting = f.store.task(working.id);
+  // Spec 069 §3: the wait is worked out when read; nothing is written per task.
+  const stored = f.store.task(working.id);
+  assert.equal(stored.version, working.version, "the outage writes no task");
+  assert.equal(stored.resolution.stop, null);
+  assert.equal(stored.resolution.hostWait, null);
+  const waiting = readView(f.store, f.engine, stored);
   assert.equal(waiting.resolution.stop?.reason, "host_unavailable");
   assert.equal(
     waiting.resolution.hostWait?.since,
@@ -426,12 +444,9 @@ test("a lost connection takes the host down once: the outage opens once, the tas
     "up again on the first healthy reading",
   );
   assert.equal(f.engine.hostOutages.current(HOST), null, "the outage closes");
-  assert.equal(
-    f.store.task(working.id).resolution.stop,
-    null,
-    "the wait clears",
-  );
-  assert.equal(f.store.task(working.id).resolution.hostWait, null);
+  const resumed = readView(f.store, f.engine, f.store.task(working.id));
+  assert.equal(resumed.resolution.stop, null, "the wait clears");
+  assert.equal(resumed.resolution.hostWait, null);
   assert.deepEqual(f.visited, [working.id], "the task is visited again");
 });
 
@@ -596,14 +611,21 @@ test("heartbeats that fail across the window take a real T3 connection down, and
     engine.hostWait(store.task(task.id)) ?? "",
     /^Waiting on T3Code host/,
   );
-  assert.equal(store.task(task.id).resolution.stop?.reason, "host_unavailable");
+  assert.equal(
+    readView(store, engine, store.task(task.id)).resolution.stop?.reason,
+    "host_unavailable",
+  );
 
   server.controls.heartbeat = true;
   await connection.ensureConnected();
   assert.equal(engine.hostHealth.read(hostId).state, "up");
   assert.equal(engine.hostOutages.current(hostId), null, "the outage closes");
   assert.equal(engine.hostWait(store.task(task.id)), null);
-  assert.equal(store.task(task.id).resolution.stop, null, "the wait clears");
+  assert.equal(
+    readView(store, engine, store.task(task.id)).resolution.stop,
+    null,
+    "the wait clears",
+  );
 });
 
 /** A real first-dispatch path on one host: catalog, pool, workspace and a gated launch. */

@@ -1,3 +1,4 @@
+import { hostOutageIntervals } from "../scheduling/host-outage";
 import type { WaitStateContext } from "../../shared/wait-state";
 import { taskWaitStateContext } from "../recovery/wait-context";
 import { taskDetailView } from "../../shared/task-view";
@@ -339,6 +340,7 @@ export const ownerTaskBudget = (facts: OwnerVerbFacts) =>
     Date.now(),
     facts.events,
     facts.store.canonicalRepository(facts.task.repoPath, facts.task.repository),
+    hostOutageIntervals(facts.store, facts.task.hostId),
   );
 
 /**

@@ -476,6 +476,7 @@ export class ReviewerControls {
                       "Reviewer replacement archive is not confirmed; waiting for observation",
                     resolution: {
                       ...this.store.task(taskId).resolution,
+                      stop: null,
                       pendingReviewReason: instruction,
                     },
                   },

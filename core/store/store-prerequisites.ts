@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import { randomUUID } from "node:crypto";
 import type { Task } from "../../shared/contracts";
 import { DISPATCH_WAIT_REASON } from "../../shared/task-stop";
@@ -126,7 +127,11 @@ export class StorePrerequisites {
       DISPATCH_WAIT_REASON;
     return this.services.update(
       task.id,
-      { dependsOn: normalized, reason },
+      {
+        dependsOn: normalized,
+        reason,
+        ...stopClearedPatch(this.services.task(task.id)),
+      },
       "dependencies_changed",
       `${task.dependsOn.join(", ") || "none"} → ${normalized.join(", ") || "none"}; requested by ${actor}`,
       task.version,

@@ -361,7 +361,7 @@ export class ProjectValidationRunner {
       processGroupEmpty: result?.processGroupEmpty ?? null, terminationError: result?.terminationError ?? null,
       resubmissionRequired: !cancelled && (observation.kind === "lost" || result?.timedOut === true) && !capacityUnavailable,
       candidateCleanupPending: candidateClean && candidatePath !== null };
-    this.store.update(task.id, { resolution: { ...current.resolution, projectValidation: updated },
+    this.store.update(task.id, { resolution: { ...current.resolution, stop: null, projectValidation: updated },
       reason: state === "passed" ? "Project validation passed" : state === "refused" ? outputTail || `Validation exited ${result?.exitCode}` : outputTail || "Project validation requires attention" },
     "project_validation_result", `${latest.digest} ${state}`);
     if (updated.candidateCleanupPending && candidatePath)
@@ -541,7 +541,7 @@ export class ProjectValidationRunner {
         position: position => {
           const current = this.store.task(task.id).resolution.projectValidation;
           if (!current || current.hostRunId !== hostRunId || current.state !== "running") return;
-          this.store.update(task.id, { resolution: { ...this.store.task(task.id).resolution,
+          this.store.update(task.id, { resolution: { ...this.store.task(task.id).resolution, stop: null,
             projectValidation: { ...current, capacityWait: { position, observedAt: now() } } },
             reason: qaCapacityWaitReason(position) }, "project_validation_capacity_wait", String(position));
         },
@@ -578,7 +578,7 @@ export class ProjectValidationRunner {
             writeProjectValidationPlan(paths.planPath, activePlan);
             const current = this.store.task(task.id).resolution.projectValidation;
             if (current?.hostRunId === hostRunId && current.state === "running")
-              this.store.update(task.id, { resolution: { ...this.store.task(task.id).resolution,
+              this.store.update(task.id, { resolution: { ...this.store.task(task.id).resolution, stop: null,
                 projectValidation: { ...current, capacityWait: null, runTimeoutMs: launched.runTimeoutMs,
                   capacityDeadlineAt: launched.capacityDeadlineAt } }, reason: "Project validation is running under Queue supervision" },
               "project_validation_admitted", "");

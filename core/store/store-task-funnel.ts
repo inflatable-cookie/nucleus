@@ -636,9 +636,12 @@ export class StoreTaskFunnel {
       kind !== "owner_changed"
     )
       throw new Error("Origin host cannot be changed by an ordinary update");
-    const lifecycleChanged =
-      (change.reason !== undefined && change.reason !== task.reason) ||
-      (change.phase !== undefined && change.phase !== task.phase);
+    // Spec 069 §3, one owner per field: a stop belongs to its writer, which
+    // records and clears it explicitly. A write that changes only `reason` never
+    // clears it (two writers alternating made a stop oscillate on 22 Nov). A phase
+    // change still ends the stop's episode unless the write names a new stop.
+    const phaseChanged =
+      change.phase !== undefined && change.phase !== task.phase;
     const hasExplicitStop =
       change.resolution !== undefined &&
       Object.prototype.hasOwnProperty.call(change.resolution, "stop");
@@ -647,7 +650,7 @@ export class StoreTaskFunnel {
       JSON.stringify(change.resolution!.stop) ===
         JSON.stringify(task.resolution.stop);
     if (
-      lifecycleChanged &&
+      phaseChanged &&
       kind !== "owner_resolution" &&
       (!hasExplicitStop || stopRepeatsCurrent)
     ) {
@@ -1363,6 +1366,8 @@ export class StoreTaskFunnel {
           prHead: pr?.head ?? null,
           resolution: {
             ...settled,
+            // The worker's result ends the stop the task was in.
+            stop: null,
             buildOutputCleanups,
             ...(armed ? { attention: false } : {}),
           },

@@ -40,6 +40,22 @@ export const taskStopReasons = [
 export const taskStopReasonSchema = z.enum(taskStopReasons);
 /** Queue's reason for a queued task with nothing in its way but dispatch itself. */
 export const DISPATCH_WAIT_REASON = "Waiting for dispatch";
+
+/**
+ * Spec 069 §3, one owner per field: the task funnel never clears a stop because a
+ * write changed `reason` (two writers alternating made a stop oscillate on 22 Nov).
+ * A writer whose write ends the task's stop says so with this patch, built from
+ * the task as it stands now (read it in the same synchronous step) and merged over
+ * any resolution the write already carries.
+ */
+export function stopClearedPatch<R extends { stop: unknown }>(
+  current: { resolution: R },
+  change: { resolution?: R } = {},
+): { resolution: R } {
+  return {
+    resolution: { ...current.resolution, ...(change.resolution ?? {}), stop: null },
+  };
+}
 /**
  * The words a task with no stop or wait reads with. It is prose, not a fault: no
  * writer may turn it into a stop (nucleus#1437). A settled wait leaves it behind.

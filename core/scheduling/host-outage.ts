@@ -1,7 +1,8 @@
 import type { Task } from "../../shared/contracts";
 import {
-  DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, HOST_OUTAGES_META_KEY, hostOutageNoticeId, hostOutagesSchema,
-  outageDuration, type HostOutage, type HostOutages as HostOutageRecord,
+  DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, HOST_OUTAGE_HISTORY_LIMIT, HOST_OUTAGE_HISTORY_META_KEY, HOST_OUTAGES_META_KEY,
+  hostOutageHistorySchema, hostOutageNoticeId, hostOutagesSchema, outageDuration,
+  type HostOutage, type HostOutageHistory, type HostOutageInterval, type HostOutages as HostOutageRecord,
 } from "../../shared/host-outage";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { now, type Store } from "../store/store";
@@ -57,6 +58,12 @@ export class HostOutages {
       const next = { ...record };
       delete next[hostId];
       this.write(next);
+      // Spec 069 §3: the closed outage joins the host's history, the one record a
+      // task's budget read discounts, so closing an outage writes nothing per task.
+      const history = readHostOutageHistory(this.store);
+      const closed = [...(history[hostId] ?? []), { since: existing.since, until: at }]
+        .slice(-HOST_OUTAGE_HISTORY_LIMIT);
+      this.store.setMeta(HOST_OUTAGE_HISTORY_META_KEY, { ...history, [hostId]: closed });
       return null;
     }
     if (existing) return existing;
@@ -130,6 +137,35 @@ export class HostOutages {
     }
     return groups;
   }
+}
+
+function readHostOutageHistory(store: Pick<Store, "getMeta">): HostOutageHistory {
+  try {
+    const raw = store.getMeta<unknown>(HOST_OUTAGE_HISTORY_META_KEY);
+    return raw === undefined ? {} : hostOutageHistorySchema.parse(raw);
+  } catch { return {}; }
+}
+
+/**
+ * Spec 069 §3: every outage of one host the record still holds, closed ones from
+ * its history and the open one with `until: null`. A task's budget read discounts
+ * these from its wall time, so a host going away or coming back writes one record,
+ * never one per task. Every budget reader passes the same list (`taskBudget`).
+ */
+export function hostOutageIntervals(
+  store: Pick<Store, "getMeta">,
+  hostId: string | null | undefined,
+): HostOutageInterval[] {
+  if (!hostId) return [];
+  const closed = readHostOutageHistory(store)[hostId] ?? [];
+  let open: HostOutageInterval[] = [];
+  try {
+    const raw = store.getMeta<unknown>(HOST_OUTAGES_META_KEY);
+    const record = raw === undefined ? {} : hostOutagesSchema.parse(typeof raw === "string" ? JSON.parse(raw) : raw);
+    const current = record[hostId];
+    if (current) open = [{ since: current.since, until: null }];
+  } catch { /* An unreadable record discounts nothing; the record's owner rewrites it. */ }
+  return [...closed, ...open];
 }
 
 /** The one notice a project's planner receives for an outage past the bound. */

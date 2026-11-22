@@ -556,7 +556,7 @@ function taskDisplayFacts(
 ) {
   const holds = holdsOf(task);
   const budget = !["done", "cancelled"].includes(task.phase)
-    ? taskBudget(task, runs, now, events, repository)
+    ? taskBudget(task, runs, now, events, repository, context.hostOutages)
     : null;
   const reason = taskVisibleReason(task, budget);
   const holdKind = taskHoldKind(task);
