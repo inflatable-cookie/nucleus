@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
 import {
@@ -24,7 +24,7 @@ import {
   type InboxView,
 } from "../../shared/inbox-board";
 import { useRpc } from "../shell";
-import { Button, DropdownSelect, muted, row, type Colors } from "../controls";
+import { DropdownSelect, muted, row, type Colors } from "../controls";
 import { projectName } from "./text";
 import {
   BoardCard,
@@ -41,32 +41,85 @@ import { space, type as typeScale } from "../design";
 
 type Project = UiQueueState["projects"][number];
 
+/** The page size `queue.queued-page` reads, and so one fill step of the Queue list. */
+const queuedPageSize = 25;
+/** One project's held-back queued tasks: the cards read so far and the next offset, or null at its end. */
+type QueuedPages = Record<
+  string,
+  { tasks: TaskSummary[]; nextOffset: number | null }
+>;
+
 /**
  * The list's view state: the Leads tag filter, the pages of Leads and Papercuts, and
- * the open queued-more page and its read. The shell holds it, so leaving a view and
- * coming back keeps them.
+ * the Queue list's held-back pages. The shell holds it, so leaving a view and coming
+ * back keeps them.
  */
 export function usePipelineState() {
   const fetchQueuedPage = useRpc(api.queuePage);
-  const [queueRepo, setQueueRepo] = useState<string | null>(null);
-  const [queueOffset, setQueueOffset] = useState(0);
   const [triageTag, setTriageTag] = useState<string | null>(null);
   // Leads and papercuts load in pages of eight as the list approaches its end.
   const [triageShown, setTriageShown] = useState(triagePageSize);
   const [papercutShown, setPapercutShown] = useState(triagePageSize);
-  const queuedPage = useQuery({
-    queryKey: ["nucleus", "queued-page", queueRepo, queueOffset],
-    queryFn: () =>
-      fetchQueuedPage({ repoPath: queueRepo!, offset: queueOffset, limit: 25 }),
-    enabled: Boolean(queueRepo),
+  // The Queue list reads each project's held-back tasks a page at a time as it nears
+  // its end (nucleus#1532); the wanted page count per project names what to read.
+  const [queuedWanted, setQueuedWanted] = useState<Record<string, number>>({});
+  const queuedKey = Object.entries(queuedWanted)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([repoPath, pages]) => `${repoPath}:${pages}`)
+    .join("|");
+  const queuedPages = useQuery({
+    queryKey: ["nucleus", "queued-pages", queuedKey],
+    queryFn: async () => {
+      const read = await Promise.all(
+        Object.entries(queuedWanted)
+          .filter(([, pages]) => pages > 0)
+          .map(async ([repoPath, pages]) => {
+            const tasks: TaskSummary[] = [];
+            let offset = 0;
+            let nextOffset: number | null = null;
+            for (let page = 0; page < pages; page++) {
+              const answer = await fetchQueuedPage({
+                repoPath,
+                offset,
+                limit: queuedPageSize,
+              });
+              tasks.push(...answer.tasks);
+              nextOffset = answer.nextOffset;
+              if (nextOffset === null) break;
+              offset = nextOffset;
+            }
+            return [repoPath, { tasks, nextOffset }] as const;
+          }),
+      );
+      return Object.fromEntries(read) as QueuedPages;
+    },
+    enabled: Boolean(queuedKey),
+    // A new page keeps the cards already read until its own read lands.
+    placeholderData: (previous: QueuedPages | undefined) => previous,
     refetchInterval: 4000,
   });
+  /**
+   * Reads the next held-back page of every project that still has one, so a fill step
+   * advances them together. A project is asked for its first page as soon as it has
+   * held-back tasks, and for another only while its last read said more remain.
+   */
+  const loadQueued = (
+    hidden: ReadonlyArray<{ repoPath: string; hidden: number }>,
+  ) => {
+    const wanted: Record<string, number> = {};
+    for (const item of hidden) {
+      const pages = queuedWanted[item.repoPath] ?? 0;
+      if (pages === 0) wanted[item.repoPath] = 1;
+      else if (queuedPages.data?.[item.repoPath]?.nextOffset != null)
+        wanted[item.repoPath] = pages + 1;
+    }
+    if (Object.keys(wanted).length)
+      setQueuedWanted((current) => ({ ...current, ...wanted }));
+  };
   return {
-    queueRepo,
-    setQueueRepo,
-    queueOffset,
-    setQueueOffset,
-    queuedPage,
+    queuedPages,
+    queuedWanted,
+    loadQueued,
     triageTag,
     setTriageTag,
     triageShown,
@@ -185,7 +238,7 @@ export type InboxListProps = {
   view: Exclude<InboxView, "planning">;
   leadsLoading: boolean;
   decisions: DecisionView[] | undefined;
-  /** Per project, the queued tasks the board holds back for its "…and N more" row. */
+  /** Per project, the queued tasks the board holds back; the Queue list reads them as pages. */
   queuedHidden: Array<{ repoPath: string; hidden: number }>;
   projectForRepository: (
     repoPath: string,
@@ -248,11 +301,9 @@ export function InboxList({
   const changeLaneStatus = useRpc(api.laneStatus);
   const keepLaneRpc = useRpc(api.laneKeep);
   const {
-    queueRepo,
-    setQueueRepo,
-    queueOffset,
-    setQueueOffset,
-    queuedPage,
+    queuedPages,
+    queuedWanted,
+    loadQueued,
     triageTag,
     setTriageTag,
     triageShown,
@@ -275,6 +326,34 @@ export function InboxList({
     (total, section) => total + section.cards.length,
     0,
   );
+  /**
+   * A project's held-back queued tasks, without the ones the board already ships: the
+   * page's first cards repeat the shipped queue heads.
+   */
+  const heldQueued = (repoPath: string) =>
+    (queuedPages.data?.[repoPath]?.tasks ?? []).filter(
+      (task) => !(state?.tasks ?? []).some((shipped) => shipped.id === task.id),
+    );
+  /** The held-back queued cards the list has read and drawn. */
+  const heldShown = queuedHidden.reduce(
+    (total, item) => total + heldQueued(item.repoPath).length,
+    0,
+  );
+  /** Whether any project's held-back queue still has a page to read (nucleus#1532). */
+  const queuedMore =
+    view === "queue" &&
+    queuedHidden.some((item) => {
+      const pages = queuedWanted[item.repoPath] ?? 0;
+      // Nothing read yet, so a page is owed; after that only the last read says.
+      if (pages === 0) return true;
+      const read = queuedPages.data?.[item.repoPath];
+      return read ? read.nextOffset !== null : false;
+    });
+  /** A page on its way: the list says so at its end rather than going quiet. */
+  const queuedPending =
+    view === "queue" &&
+    queuedPages.isFetching &&
+    heldShown < queuedHidden.reduce((total, item) => total + item.hidden, 0);
   useEffect(() => {
     // Switching views keeps the measured viewport height: the ScrollView does
     // not resize, so its layout event never refires and only a content-size
@@ -289,6 +368,10 @@ export function InboxList({
     setPapercutShown(triagePageSize);
   }, [view]);
   const loadNextPage = () => {
+    if (view === "queue") {
+      loadQueued(queuedHidden);
+      return;
+    }
     const loaded = loadedPage.current;
     if (loaded.view !== view) {
       loadedPage.current = { view, count: triagePageSize };
@@ -303,13 +386,9 @@ export function InboxList({
     viewportHeight: number,
     contentHeight: number,
   ) => {
-    if (
-      isTriageList &&
-      viewportHeight > 0 &&
-      contentHeight <= viewportHeight &&
-      shown < totalInList
-    )
-      loadNextPage();
+    if (viewportHeight <= 0 || contentHeight > viewportHeight) return;
+    // A short list keeps loading until it scrolls or every card shows.
+    if (isTriageList ? shown < totalInList : queuedMore) loadNextPage();
   };
   const boardRead = state ? "loaded" : stateError ? "failed" : "loading";
   const releaseHold = (task: TaskSummary) =>
@@ -482,100 +561,52 @@ export function InboxList({
         return null;
     }
   };
-  const moreRow = (
-    key: string,
-    label: string,
-    title: string,
-    onPress: () => void,
-    selectedRow = false,
-  ) => (
-    <BoardCard
-      key={key}
-      label={label}
-      selected={selectedRow}
-      c={c}
-      onPress={onPress}
-      title={title}
-    />
-  );
-  const queuedMore =
-    view === "queue"
-      ? queuedHidden.map((item) => (
-          <View key={item.repoPath}>
-            {moreRow(
-              item.repoPath,
-              `${item.hidden} more queued in ${projectName(item)}`,
-              `…and ${item.hidden} more in ${projectName(item)}`,
-              () => {
-                setQueueRepo(
-                  queueRepo === item.repoPath ? null : item.repoPath,
-                );
-                setQueueOffset(0);
-              },
-              queueRepo === item.repoPath,
-            )}
-            {queueRepo === item.repoPath && (
-              <View
-                style={{
-                  gap: space.xxs,
-                  padding: space.md,
-                  marginHorizontal: space.xs,
-                }}
-              >
-                {queuedPage.isLoading && (
-                  <Text style={{ color: c.foregroundMuted }}>
-                    Loading queued tasks…
-                  </Text>
-                )}
-                {queuedPage.error && (
-                  <Text style={{ color: c.foreground }}>
-                    Could not load queued tasks. Try again.
-                  </Text>
-                )}
-                {(queuedPage.data?.tasks ?? [])
-                  .filter(
-                    (page) => !state?.tasks.some((task) => task.id === page.id),
-                  )
-                  .map((page) => (
-                    <Pressable
-                      key={page.id}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Open ${page.title}`}
-                      onPress={() => onSelectTask(page.id)}
-                    >
-                      <Text numberOfLines={1} style={{ color: c.foreground }}>
-                        {page.reference ?? ""} {page.title} · {page.reason}
-                      </Text>
-                    </Pressable>
-                  ))}
-                <View style={{ ...row, gap: space.xs }}>
-                  <Button
-                    small
-                    c={c}
-                    text="Previous"
-                    disabled={queueOffset === 0}
-                    onPress={() =>
-                      setQueueOffset(Math.max(0, queueOffset - 25))
-                    }
-                  />
-                  <Button
-                    small
-                    c={c}
-                    text="Next"
-                    disabled={queuedPage.data?.nextOffset == null}
-                    onPress={() => setQueueOffset(queuedPage.data!.nextOffset!)}
-                  />
-                </View>
-              </View>
-            )}
-          </View>
-        ))
-      : null;
+  /**
+   * The Queue list (nucleus#1532): every queued task as one card, each project's
+   * held-back tasks right after its shipped queued cards, in queue order. A project
+   * with no shipped card before it ends the list.
+   */
+  const queuedList = () => {
+    const cards = sections.flatMap((section) => section.cards);
+    const repoPathOf = (card: PipelineCard) =>
+      card.kind === "task" || card.kind === "submission"
+        ? card.value.repoPath
+        : null;
+    const rows: React.ReactNode[] = [];
+    const placed = new Set<string>();
+    const placeHeld = (repoPath: string) => {
+      if (placed.has(repoPath)) return;
+      placed.add(repoPath);
+      rows.push(
+        ...heldQueued(repoPath).map((task) =>
+          renderCard({
+            kind: "task",
+            id: task.id,
+            lanes: task.lanes,
+            value: task,
+          }),
+        ),
+      );
+    };
+    cards.forEach((card, index) => {
+      rows.push(renderCard(card));
+      const repoPath = repoPathOf(card);
+      if (!repoPath) return;
+      if (
+        !cards.slice(index + 1).some((later) => repoPathOf(later) === repoPath)
+      )
+        placeHeld(repoPath);
+    });
+    for (const item of queuedHidden) placeHeld(item.repoPath);
+    return rows;
+  };
   const viewCount = counts[view];
   const title = viewTitles[view];
   const total =
     sections.reduce((sum, section) => sum + section.cards.length, 0) +
-    (view === "queue" ? queuedHidden.length : 0);
+    (view === "queue"
+      ? queuedHidden.reduce((sum, item) => sum + item.hidden, 0)
+      : 0);
   const countText =
     boardRead === "loaded"
       ? `${viewCount} item${viewCount === 1 ? "" : "s"}`
@@ -671,30 +702,56 @@ export function InboxList({
           );
         }}
         onScroll={(event) => {
-          if (!isTriageList) return;
           const { contentOffset, contentSize, layoutMeasurement } =
             event.nativeEvent;
           if (
-            contentOffset.y + layoutMeasurement.height >=
+            contentOffset.y + layoutMeasurement.height <
             contentSize.height - layoutMeasurement.height
           )
-            loadNextPage();
+            return;
+          if (isTriageList || (view === "queue" && queuedMore)) loadNextPage();
         }}
         scrollEventThrottle={16}
       >
         <BoardCardVariantContext.Provider value="row">
-          {sections.map((section) => {
-            const visible =
-              isTriageList && section.cards.length > shown
-                ? section.cards.slice(0, shown)
-                : section.cards;
-            return (
-              <View key={section.id} style={{ gap: space.xxs }}>
-                {visible.map(renderCard)}
-              </View>
-            );
-          })}
-          {queuedMore}
+          {view === "queue" ? (
+            <View style={{ gap: space.xxs }}>{queuedList()}</View>
+          ) : (
+            sections.map((section) => {
+              const visible =
+                isTriageList && section.cards.length > shown
+                  ? section.cards.slice(0, shown)
+                  : section.cards;
+              return (
+                <View key={section.id} style={{ gap: space.xxs }}>
+                  {visible.map(renderCard)}
+                </View>
+              );
+            })
+          )}
+          {queuedPending && (
+            <Text
+              style={{ ...muted(c), textAlign: "center", padding: space.md }}
+            >
+              Loading queued tasks…
+            </Text>
+          )}
+          {/* A failed page read never stops the list silently: the end asks to try again. */}
+          {view === "queue" && queuedPages.error && (
+            <BoardCard
+              key="queued-page-retry"
+              label="Could not load queued tasks. Try again."
+              c={c}
+              selected={false}
+              onPress={() => void queuedPages.refetch()}
+              title="Could not load queued tasks."
+              status={{
+                tone: "warning",
+                state: "Try again",
+                detail: "the rest of the queue did not load",
+              }}
+            />
+          )}
         </BoardCardVariantContext.Provider>
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
         {(boardRead !== "loaded" || total === 0) && (

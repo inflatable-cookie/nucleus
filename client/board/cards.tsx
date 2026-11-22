@@ -272,7 +272,7 @@ export const BoardCard = React.memo(function BoardCard({
   selected: boolean;
   c: Colors;
   board?: boolean;
-  /** The kind tile; a list's own "…and N more" row has none. */
+  /** The kind tile; the list's own loading and retry rows have none. */
   kind?: CardKind;
   /** Line 1's lead: the task reference, otherwise the kind in words. */
   meta?: string | null;

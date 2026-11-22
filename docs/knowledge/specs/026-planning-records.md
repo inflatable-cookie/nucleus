@@ -517,7 +517,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   **Papercuts** (open papercuts, with automatic pages of twenty-five and no tag
   filter;
   Tom, 2026-11-21), **Queue**
-  (queued tasks, pending submissions and the per-project "…and N more" rows),
+  (every queued task and pending submission as one card, its held-back pages read
+  as the list nears its end; nucleus#1532),
   **Working** (working tasks), **In review** (tasks awaiting or under review) and
   **Closing** (verifying, merging and closing tasks). The menu reads Needs you, a
   divider, Planning, Leads, Papercuts, Queue, a divider, Working, In review and
@@ -553,7 +554,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   There is no Done column (Tom, 2026-09-27): finished and cancelled
   work leaves the board, and outcome search answers what landed.
   Counts are every record in scope once, whatever its lane count, with Queue
-  including the cards held back behind its "…and N more" rows. While the board
+  including the queued cards the board holds back from its snapshot. While the board
   loads, a list reads "Loading…"; a failed read reads "Not loaded" and names the
   failure in the error banner. Neither reads as empty.
   Queued is `queued`; Working is `dispatching`, `working` and `changes_requested`
@@ -589,8 +590,12 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Cards and long lists** (Tom, 2026-09-27): every card uses the standard card
   component, drawn as a flat row in the inbox list. The list fills its pane and
   scrolls on its own, so the page never grows into one long scroll (Tom,
-  2026-09-28). Leads and Papercuts page their cards, and Queue ends with its "…and N
-  more" rows.
+  2026-09-28). Leads, Papercuts and Queue load their cards automatically as the
+  list nears its end. The board's snapshot carries five queued heads per project, so
+  the Queue list reads the rest a page at a time with `queue.queued-page` and shows
+  each project's held-back tasks as ordinary cards right after its shipped ones, in
+  queue order; a short queue keeps loading until it scrolls or every queued task
+  shows, and a failed page read ends the list with a retry row (nucleus#1532).
 - **Card anatomy: every card is a three-line row** (Tom, 2026-11-21: the cards were
   "way too noisy right now and need redesigning"; nucleus#1515, which replaces the
   nucleus#1511 row rules):

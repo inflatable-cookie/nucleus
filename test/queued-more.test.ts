@@ -48,16 +48,24 @@ test("the Queue counts every queued task, and queue paging stays out of the boar
     /inboxCounts\(columns, hiddenQueued\)/,
     "the menu counts receive them",
   );
-  assert.match(source, /…and \$\{item\.hidden\} more in/);
+  // nucleus#1532: the held-back tasks are ordinary cards in the one list, read on scroll.
+  assert.doesNotMatch(source, /…and \$\{item\.hidden\} more in/);
+  assert.doesNotMatch(source, /"Previous"|"Next"/);
+  assert.doesNotMatch(source, /queueRepo|queueOffset/);
   assert.match(
     source,
-    /const queuedMore =\s*view === "queue"\s*\?\s*queuedHidden\.map/,
-    "the overflow rows belong to the Queue list",
+    /loadQueued\(queuedHidden\)/,
+    "the list reads the held-back queue pages as it nears its end",
   );
   assert.match(
     source,
-    /\{sections\.map\([\s\S]*?\{queuedMore\}[\s\S]*?<\/ScrollView>/,
-    "the overflow rows render inside the list's own scroll",
+    /\{view === "queue" \? \([\s\S]*?\{queuedList\(\)\}[\s\S]*?\) : \(/,
+    "the Queue list renders every queued task in the list's one scroll",
+  );
+  assert.match(
+    source,
+    /heldQueued\(repoPath\)\.map/,
+    "a project's held-back tasks are drawn as ordinary cards",
   );
 });
 

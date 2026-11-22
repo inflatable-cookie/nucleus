@@ -242,31 +242,6 @@ for (const [name, c] of [
   });
 }
 
-test("the queue expander row rests without dividers too", async () => {
-  await load();
-  const ui = mount(
-    h(cards.BoardCardVariantContext.Provider, {
-      value: "row",
-      children: h(cards.BoardCard as never, {
-        label: "2 more queued in app",
-        onPress: () => {},
-        selected: false,
-        c: dark,
-        title: "…and 2 more in app",
-      }),
-    }),
-  );
-  try {
-    const { frame } = frameOf(ui, "2 more queued in app");
-    const style = frame.props.style as Record<string, unknown>;
-    assert.equal(style.borderBottomWidth, undefined);
-    assert.equal(style.borderLeftWidth, undefined);
-    assert.equal(style.backgroundColor, "transparent");
-  } finally {
-    ui.update(h("View", null));
-  }
-});
-
 const counts = {
   needs: 1,
   leads: 0,

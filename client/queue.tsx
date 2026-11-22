@@ -197,7 +197,7 @@ export function MainSurface({
     records,
     onLeaveLane: () => setLaneDraft(null),
   });
-  // The list's tag filter, pages and queued-more read outlive a visit to another view.
+  // The list's tag filter, pages and held-back queue reads outlive a visit to another view.
   const pipeline = usePipelineState();
   const { act, leadAct, busy, error, setError } = useBoardAct({
     selected,
