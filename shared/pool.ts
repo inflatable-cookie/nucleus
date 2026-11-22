@@ -75,7 +75,7 @@ export const USAGE_LABELS: Record<
     summary:
       "High-complexity work starts on Heavyweight; Frontier is request-only",
     detail:
-      "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles require an explicit request. The reviewer runs on the worker's bracket.",
+      "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles require an explicit request. The reviewer runs one bracket below the worker.",
   },
   extra_high: {
     label: "Extra high",

@@ -361,10 +361,10 @@ test('a reviewer takes the nearest permitted bracket above when no independent p
   const worker=profiles.find(p=>p.id==='agent-worker')!;
   const task={...taskOf({complexity:'high'}),profile:worker} as Task;
   const independent=profiles.filter(p=>p.id!=='agent-worker');
-  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'high')),'agent-heavyweight','at High the reviewer is on the worker\'s bracket, so Heavyweight serves instead of parking');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'high')),'agent-mechanical','at High the reviewer is one bracket below the worker\'s bracket, so Mechanical serves');
   assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'extra_high')),'agent-heavyweight','the nearest bracket above, not the top one');
   assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'normal')),'agent-mechanical','at Normal the reviewer is one bracket below');
-  assert.equal(ids(chooseProfile(task,profiles,pool,usage,new Set(),'reviewer',usage,'high')),'agent-worker','an independent profile at the exact bracket still wins over a higher one');
+  assert.equal(ids(chooseProfile(task,profiles,pool,usage,new Set(),'reviewer',usage,'extra_high')),'agent-worker','an independent profile at the exact bracket still wins over a higher one');
   assert.equal(ids(chooseProfile({...task,complexity:'medium'} as Task,independent,pool,usage,new Set(),'worker',usage,'high')),'agent-mechanical','a medium worker stays capped at Worker');
 });
 
@@ -377,7 +377,8 @@ test('the usage level sets the reviewer bracket, a critical task prefers at leas
   const task={...taskOf({complexity:'medium'}),profile:worker} as Task;
   const independent=profiles.filter(p=>p.id!=='agent-worker');
   assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'normal')),'agent-mechanical','a Worker author gets a Mechanical reviewer at Normal');
-  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'high')),'agent-worker-2','and a Worker reviewer at High');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'high')),'agent-mechanical','and a Mechanical reviewer at High');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'extra_high')),'agent-worker-2','and a Worker reviewer at Extra high');
   assert.equal(ids(chooseProfile({...task,critical:true} as Task,independent,pool,usage,new Set(),'reviewer',usage,'normal')),'agent-worker-2','a critical task prefers a reviewer at least as capable as the worker');
   // A Frontier worker: the only other top profile is Heavyweight.
   const top=profiles.find(p=>p.id==='agent-frontier')!;

@@ -186,8 +186,14 @@ test("ordinary tasks keep ordinary routing and critical selection respects avail
     assert.equal(
       f.engine.resolution.select({ ...f.task, critical: false }, "reviewer", [], new Set(), "high")
         ?.profile.id,
+      "cheap",
+      "at High the noncritical reviewer runs one bracket below the Worker author (Tom, 2026-11-22)",
+    );
+    assert.equal(
+      f.engine.resolution.select({ ...f.task, critical: false }, "reviewer", [], new Set(), "extra_high")
+        ?.profile.id,
       "peer",
-      "at High the noncritical reviewer runs on the worker's bracket",
+      "at Extra high the noncritical reviewer runs on the worker's bracket",
     );
     assert.equal(
       f.engine.resolution.select(f.task, "reviewer", ["peer"])?.profile.id,

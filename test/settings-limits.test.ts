@@ -958,6 +958,19 @@ test("Low and Normal show no end time; the slider is the section body on its own
   }
 });
 
+test("the Dispatch-limits level description says the High reviewer runs one bracket below the worker", async () => {
+  const { ui, done } = await mountUsage("high");
+  try {
+    assert.match(
+      ui.get("Usage level help").props.accessibilityHint,
+      /High and very-high complexity start on Heavyweight.*The reviewer runs one bracket below the worker/,
+      "the (?) carries the new High text",
+    );
+  } finally {
+    done();
+  }
+});
+
 test('High and Extra high carry the end time; High with no date reads "No end" as small muted text on the heading row', async () => {
   for (const level of ["high", "extra_high", "maximum"]) {
     const mounted = await mountUsage(level);

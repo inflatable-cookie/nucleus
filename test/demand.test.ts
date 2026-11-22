@@ -60,11 +60,11 @@ test('052 table: every level starts a task at its bracket, with maximum on Heavy
   for (const level of usageLevels) assert.equal(workerStartTier(level, null), START[level].unset, `${level}/unset complexity is medium`);
 });
 
-test('052: the reviewer runs one bracket below the worker at Low and Normal and on it above; the coordinator always asks for Mechanical', () => {
+test('052: the reviewer runs one bracket below the worker at Low, Normal and High and on it above; the coordinator always asks for Mechanical', () => {
   for (const level of usageLevels) for (const complexity of COMPLEXITIES) {
     const worker = profileCapabilityLevels.indexOf(runDemand(complexity, 'worker', level));
     const reviewer = profileCapabilityLevels.indexOf(runDemand(complexity, 'reviewer', level));
-    const below = level === 'low' || level === 'normal';
+    const below = level === 'low' || level === 'normal' || level === 'high';
     assert.equal(reviewer, below ? Math.max(0, worker - 1) : worker, `${level}/${complexity}: reviewer`);
     assert.equal(runDemand(complexity, 'coordinator', level), 'mechanical', `${level}/${complexity}: coordinator`);
   }
@@ -77,8 +77,12 @@ test('052: the reviewer reads the worker\'s actual profile; a critical task floo
   assert.equal(reviewerDemand(on('w'), rated, 'normal'), 'mechanical', 'Worker author → Mechanical reviewer at Normal');
   assert.equal(reviewerDemand(on('m'), rated, 'low'), 'mechanical', 'a Mechanical author gets a Mechanical reviewer');
   assert.equal(reviewerDemand(on('f'), rated, 'normal'), 'heavyweight', 'Frontier author → Heavyweight reviewer');
-  assert.equal(reviewerDemand(on('w'), rated, 'high'), 'worker', 'at High the reviewer is on the author\'s bracket');
+  assert.equal(reviewerDemand(on('w'), rated, 'high'), 'mechanical', 'at High the reviewer is one bracket below the author');
+  assert.equal(reviewerDemand(on('h'), rated, 'high'), 'worker', 'a Heavyweight author gets a Worker reviewer at High');
+  assert.equal(reviewerDemand(on('w', true), rated, 'high'), 'worker', 'critical: at High the reviewer is floored at the worker');
   assert.equal(reviewerDemand(on('h'), rated, 'extra_high'), 'heavyweight');
+  assert.equal(reviewerDemand(on('w'), rated, 'extra_high'), 'worker', 'Extra high keeps the same-bracket reviewer');
+  assert.equal(reviewerDemand(on('w'), rated, 'maximum'), 'worker', 'Maximum keeps the same-bracket reviewer');
   assert.equal(reviewerDemand(on('w', true), rated, 'normal'), 'worker', 'critical: at least the worker');
 });
 
@@ -262,13 +266,17 @@ test('1385 real pool: usage levels shift the worker by whole brackets', () => {
     assert.ok(['heavyweight', 'frontier'].includes(select(realTask(complexity), role, 'maximum')!), `maximum ${complexity} ${role}`);
 });
 
-test('1385 real pool: the reviewer is one bracket below the author at Normal and on its bracket at High; critical prefers at least the worker', () => {
+test('1385 real pool: the reviewer is one bracket below the author at Low, Normal and High and on its bracket above; critical prefers at least the worker', () => {
   const on = (complexity: CapabilityLevel, bracket: ProfileCapability, critical = false) => realTask(complexity, { profile: profileOf(idAt(bracket)), critical } as Partial<Task>);
   assert.equal(select(on('medium', 'worker'), 'reviewer'), 'mechanical');
   assert.equal(select(on('very_high', 'heavyweight'), 'reviewer'), 'worker');
   assert.equal(select(on('low', 'mechanical'), 'reviewer'), 'mechanical');
-  assert.equal(select(on('medium', 'worker'), 'reviewer', 'high'), 'worker');
-  assert.equal(select(on('high', 'heavyweight'), 'reviewer', 'high'), 'heavyweight');
+  assert.equal(select(on('medium', 'worker'), 'reviewer', 'low'), 'mechanical', 'Low is unchanged');
+  assert.equal(select(on('high', 'heavyweight'), 'reviewer', 'high'), 'worker', 'a Heavyweight worker gets a Worker-bracket reviewer at High');
+  assert.equal(select(on('medium', 'worker'), 'reviewer', 'high'), 'mechanical', 'a Worker author gets a Mechanical reviewer at High');
+  assert.equal(select(on('high', 'heavyweight', true), 'reviewer', 'high'), 'heavyweight', 'a critical task at High floors its reviewer at the worker');
+  assert.equal(select(on('medium', 'worker'), 'reviewer', 'extra_high'), 'worker', 'Extra high keeps the same-bracket reviewer');
+  assert.equal(select(on('high', 'heavyweight'), 'reviewer', 'extra_high'), 'heavyweight');
   const critical = select(on('medium', 'worker', true), 'reviewer');
   assert.ok(profileCapabilityLevels.indexOf(critical!) >= profileCapabilityLevels.indexOf('worker'), `critical reviewer on ${critical}`);
 });

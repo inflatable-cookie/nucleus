@@ -64,13 +64,13 @@ export function workerStartTier(usage: UsageLevel, complexity: CapabilityLevel |
   }
 }
 
-/** Whether the reviewer runs one bracket below the worker at this level (Tom, 2026-11-19: Low and Normal). */
-export const reviewerBelowWorker = (usage: UsageLevel): boolean => usage === "low" || usage === "normal";
+/** Whether the reviewer runs one bracket below the worker at this level (Tom, 2026-11-19: Low and Normal; Tom, 2026-11-22: High joins them). */
+export const reviewerBelowWorker = (usage: UsageLevel): boolean => usage === "low" || usage === "normal" || usage === "high";
 
 /**
  * One run's demand before any worker ran: the worker starts at the level's
- * bracket, the reviewer one bracket below it at Low and Normal and on it
- * above, and the coordinator always on Mechanical (Tom, 2026-11-19:
+ * bracket, the reviewer one bracket below it at Low, Normal and High and on
+ * it at Extra high and Maximum, and the coordinator always on Mechanical (Tom, 2026-11-19:
  * "Coordinator should always be mechanical if available").
  */
 export function runDemand(complexity: CapabilityLevel | null | undefined, role: DemandRole, usage: UsageLevel): DemandLevel {
@@ -80,9 +80,10 @@ export function runDemand(complexity: CapabilityLevel | null | undefined, role: 
 }
 
 /**
- * The reviewer's demand (Tom, 2026-11-19): one bracket below the worker's
- * actual profile (or its start bracket before a worker ran) at Low and Normal,
- * the worker's bracket at High, Extra high and Maximum. A Mechanical worker
+ * The reviewer's demand (Tom, 2026-11-19; Tom, 2026-11-22: High joins the
+ * one-below levels): one bracket below the worker's actual profile (or its
+ * start bracket before a worker ran) at Low, Normal and High, the worker's
+ * bracket at Extra high and Maximum. A Mechanical worker
  * gets a Mechanical reviewer. Only a critical task floors it at the worker's
  * bracket, as its brief asks for a reviewer at least as capable as the worker.
  */

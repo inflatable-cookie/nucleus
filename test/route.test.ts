@@ -91,9 +91,9 @@ function fixture() {
     "pool",
     all.map((item) => item.entry),
   );
-  // The reviewer runs on the worker's bracket at High (one below at Normal, Tom
-  // 2026-11-19), so the independent Worker-rated luna, not the Mechanical
-  // coordinator profile, is the natural reviewer these routes are measured against.
+  // The reviewer runs one bracket below the worker at High (Tom, 2026-11-22),
+  // so the independent Mechanical coordinator profile, not the Worker-rated
+  // luna, is the natural reviewer these routes are measured against.
   store.setMeta("usageLevel", { level: "high", until: null, setAt: new Date().toISOString() });
   const submitted = store.insert(
     submissionSchema.parse({
@@ -713,7 +713,7 @@ test("an optional reviewer request on the author model is not selected", async (
     assert.ok(selection, "an independent reviewer is still selected");
     assert.equal(
       selection.profile.id,
-      "luna",
+      "coord",
       "the optional same-model request stays excluded; only a required owner route waives independence",
     );
   } finally {
@@ -759,7 +759,7 @@ test("a workerless review entry honours the owner-routed reviewer on a declared 
         { ...workerless, profileRequests: {} } as never,
         "reviewer",
       )?.profile.id,
-      "luna",
+      "coord",
       "with no request, an independent reviewer is selected",
     );
     assert.equal(

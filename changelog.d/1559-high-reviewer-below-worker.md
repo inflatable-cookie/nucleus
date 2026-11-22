@@ -1,0 +1,1 @@
+- At High, the reviewer runs one bracket below the worker, as at Low and Normal, so heavyweight workers are reviewed by lower-bracket profiles. The reviewer stays on the worker's bracket only at Extra high and Maximum.

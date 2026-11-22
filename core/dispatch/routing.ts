@@ -1118,9 +1118,10 @@ export class RoleSelection {
       : "";
   }
   /**
-   * Spec 052 (Tom, 2026-11-19): a retained reviewer below the bracket the
-   * level asks of it for the worker's actual profile (one below at Low and
-   * Normal, the same above) is replaced on the next round.
+   * Spec 052 (Tom, 2026-11-19; Tom, 2026-11-22: High joins the one-below
+   * levels): a retained reviewer below the bracket the level asks of it for
+   * the worker's actual profile (one below at Low, Normal and High, the same
+   * at Extra high and Maximum) is replaced on the next round.
    */
   reviewerCapabilityIssue(t: Task, assigned: Profile | null): string | null {
     if (!assigned) return null;

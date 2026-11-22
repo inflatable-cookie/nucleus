@@ -87,7 +87,7 @@ const USAGE_EFFECT: Record<UsageLevel, string> = {
   low: "Every task starts one bracket below the one it may climb to. High and very-high complexity work needs permission when it is submitted. Frontier requires an explicit profile request. The reviewer runs one bracket below the worker.",
   normal:
     "Low complexity runs on Mechanical, medium and high on Worker, very high on Heavyweight. A high task may step up to Heavyweight after review changes; Frontier requires an explicit profile request. The reviewer runs one bracket below the worker.",
-  high: "High and very-high complexity start on Heavyweight. Frontier profiles require an explicit request. The reviewer runs on the worker's bracket.",
+  high: "High and very-high complexity start on Heavyweight. Frontier profiles require an explicit request. The reviewer runs one bracket below the worker.",
   extra_high:
     "Starts as at High, and nothing needs permission. The reviewer runs on the worker's bracket.",
   maximum:
