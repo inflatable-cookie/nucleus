@@ -160,7 +160,7 @@ test("lead.board projects narrow card facts; response bytes never grow with bodi
     const byId = new Map(board.cards.map(card => [card.id, card]));
     assert.deepEqual(byId.get(longPreview.id), {
       id: longPreview.id, title: "Twin", preview: "y".repeat(400), repositories: [alpha], lanes: [], tags: [],
-      papercutArea: null, state: "open", version: 1, check: null, approved: false, targets: [],
+      papercutArea: null, state: "open", version: 1, check: null, approved: false, targets: [], parked: null, recheck: null,
     });
     assert.equal(byId.get(unicode.id)!.preview, "中".repeat(400), "the preview cuts on characters, not bytes");
     assert.equal(byId.get(escapes.id)!.preview.length, 400);

@@ -8,6 +8,7 @@ import { Leads } from "../core/planning/leads";
 import { Papercuts } from "../core/planning/papercut-operations";
 import { TriageService, selectTriageBatch, triageDigest, triageNoticeBatch, triageNoticeProject, TRIAGE_BATCH_LIMIT, type TriageDecision, type TriagePromotionRequest } from "../core/planning/triage";
 import { applyTriage, type TriageApplyInput } from "../core/runtime/planning-triage";
+import { unparkDueLeads } from "../core/planning/parking";
 import type { Lead } from "../shared/contracts";
 import { Engine } from "../core/engine";
 import type { Adapter } from "../core/host";
@@ -99,10 +100,12 @@ test("1420-3 dispositions: duplicate and fixed closures with canonical targets, 
     const later = f.add("Defer me");
     const question = f.add("Operator question");
     const promote = f.add("Routine promote");
-    const held = f.add("Held idea", ["hold"]);
+    // Nucleus#1543: a parked lead replaces the hold tag and is never triaged automatically.
+    const held = f.add("Held idea");
+    f.leads.park({ id: held.id, version: held.version, reason: "Waits on a host", revisitAt: null, author: PLANNER });
     f.service.evaluate({ at: Date.now() });
     const batch = f.service.view(f.project.key).batch!;
-    assert.equal(batch.items.some(item => item.recordId === held.id), false, "an intentional hold is never triaged automatically");
+    assert.equal(batch.items.some(item => item.recordId === held.id), false, "a parked lead is never triaged automatically");
     const cutLead = f.store.lead(cut.id);
     const promoted: TriagePromotionRequest[] = [];
     const promoter = { promote: async (request: TriagePromotionRequest) => { promoted.push(request); return { status: "applied" as const, task: "1234", diagnostic: "" }; } };
@@ -263,6 +266,8 @@ test("1420-10 a deferred record returns when its revisit time is due, and an opt
       decisions: [decisionFor(lead, { disposition: "defer", revisitAt: new Date(at + DAY).toISOString(), reason: "Later" })] });
     f.service.evaluate({ at: at + DAY - 1 });
     assert.equal(f.service.view(f.project.key).batch, null, "not yet due");
+    // The sweep unparks a due park before triage reads the records (Nucleus#1543).
+    assert.deepEqual(unparkDueLeads(f.store, at + DAY + 1), [lead.id]);
     f.service.evaluate({ at: at + DAY + 1 });
     assert.deepEqual(f.service.view(f.project.key).batch?.items.map(item => item.recordId), [lead.id]);
     const batchNow = f.service.view(f.project.key).batch!;
