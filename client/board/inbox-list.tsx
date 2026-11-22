@@ -264,7 +264,11 @@ export function InboxList({
   } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
   const sections = inboxSections(board, view);
-  const listMeasurements = useRef({ view, viewportHeight: 0, contentHeight: 0 });
+  const listMeasurements = useRef<{
+    view: typeof view;
+    viewportHeight: number;
+    contentHeight: number | null;
+  }>({ view, viewportHeight: 0, contentHeight: null });
   const loadedPage = useRef({ view, count: triagePageSize });
   const isTriageList = view === "leads" || view === "papercuts";
   const shown = view === "papercuts" ? papercutShown : triageShown;
@@ -274,7 +278,7 @@ export function InboxList({
     0,
   );
   useEffect(() => {
-    listMeasurements.current = { view, viewportHeight: 0, contentHeight: 0 };
+    listMeasurements.current = { view, viewportHeight: 0, contentHeight: null };
     loadedPage.current = { view, count: triagePageSize };
     setTriageShown(triagePageSize);
     setPapercutShown(triagePageSize);
@@ -626,7 +630,7 @@ export function InboxList({
                   setTriageTag(value || null);
                   setTriageShown(triagePageSize);
                   loadedPage.current = { view: "leads", count: triagePageSize };
-                  listMeasurements.current.contentHeight = 0;
+                  listMeasurements.current.contentHeight = null;
                 }}
                 minWidth={110}
               />
@@ -645,10 +649,8 @@ export function InboxList({
             view,
             viewportHeight: height,
           };
-          fillIfNotScrollable(
-            height,
-            current.view === view ? current.contentHeight : 0,
-          );
+          if (current.view === view && current.contentHeight !== null)
+            fillIfNotScrollable(height, current.contentHeight);
         }}
         onContentSizeChange={(_width, height) => {
           const current = listMeasurements.current;
