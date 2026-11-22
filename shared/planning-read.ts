@@ -1,5 +1,5 @@
 import type { LaneView, Project, ProjectPlan, TaskSummary } from "./contracts";
-import { projectPlanningCounts } from "./planning-tab";
+import { projectLanes, projectPlanningCounts } from "./planning-tab";
 import { hiddenQueuedByProject } from "./queued-more";
 import {
   projectDormantByActivity,
@@ -47,13 +47,19 @@ export function projectGroup(
 /**
  * A project row's last activity: the store-wide activity read's `lastAt` (the newest
  * task, outcome or lead in the project's own repositories, in a lane or not, with no
- * window), its recent items, its live tasks' own times and the plan's last save. The newest
- * wins; null when the project has none. Lane activity is never read: a lane two projects
- * share carries the other project's work too (review 6010316003).
+ * window), its recent items, its live tasks' own times, the plan's last save, and the
+ * record times of the lanes listing its repositories (created, edited, closed or kept). The
+ * newest wins; null when the project has none. A lane's aggregate `lastActivityAt` is never
+ * read: a lane two projects share counts the other project's tasks and outcomes in it
+ * (reviews 6010316003 and 6010408992). Its own record belongs to every project it lists.
  */
 export function projectLastActivity(input: {
   project: Project;
   activity?: ProjectActivity;
+  lanes?: readonly Pick<
+    LaneView,
+    "repositories" | "createdAt" | "updatedAt" | "closedAt" | "keep"
+  >[];
   tasks: readonly Pick<
     TaskSummary,
     "repoPath" | "repository" | "updatedAt" | "phase"
@@ -73,6 +79,14 @@ export function projectLastActivity(input: {
       .filter((task) => owns(task.repository, task.repoPath))
       .map((task) => task.updatedAt),
     input.plan?.createdAt,
+    ...projectLanes(input.project, [
+      ...(input.lanes ?? []),
+    ] as LaneView[]).flatMap((lane) => [
+      lane.createdAt,
+      lane.updatedAt,
+      lane.closedAt,
+      lane.keep?.at,
+    ]),
   ].filter(
     (value): value is string =>
       Boolean(value) && Number.isFinite(Date.parse(value!)),

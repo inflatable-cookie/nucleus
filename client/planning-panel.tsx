@@ -1189,6 +1189,7 @@ export function PlanningTab({
         const at = projectLastActivity({
           project: section.project,
           activity: activityByKey.get(section.project.key),
+          lanes,
           tasks,
           plan: section.latest,
         });

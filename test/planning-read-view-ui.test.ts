@@ -20,8 +20,12 @@ const textOf = (node: HostNode | string): string =>
     ? node
     : node.children.map(textOf).join(" ").replace(/\s+/g, " ").trim();
 
-async function mountBoard(compact: boolean) {
+async function mountBoard(
+  compact: boolean,
+  setup?: (fixture: Awaited<ReturnType<typeof planningFixture>>) => void,
+) {
   const fixture = await planningFixture();
+  setup?.(fixture);
   const { MainSurface } = await import("../client/queue");
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -215,6 +219,30 @@ test("1531 wide: the columns sit side by side, and See all pages through the lan
       ui.query("Show more finished work in BB as a host"),
       undefined,
       "the search said there is no more",
+    );
+  } finally {
+    await board.close();
+  }
+});
+
+test("1531 wide: a project whose only record is a new lane shows that lane's time as its last activity", async () => {
+  // The no-work project gains a lane and nothing else (review 6010408992).
+  const board = await mountBoard(false, (fixture) =>
+    fixture.store.upsertLane({
+      key: "dormant-lane",
+      title: "Dormant lane",
+      aim: "A lane for the project with no work.",
+      repositories: [{ origin: "fixture/dormant", path: "/fixture/dormant" }],
+    }),
+  );
+  const { ui, waitFor } = board;
+  try {
+    ui.press("Planning");
+    await waitFor("Project row dormant");
+    assert.match(
+      textOf(ui.get("Project row dormant")),
+      /^dormant (just now|\d+m) /,
+      "the lane record gives the row an age",
     );
   } finally {
     await board.close();

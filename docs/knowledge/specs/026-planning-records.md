@@ -825,9 +825,11 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   lanes it is in (Spec 019), plus the queued tasks the board holds back; "need you" is the
   distinct ones that are blocked, in error or need attention. Last activity is the newest
   item the store-wide activity read knows for the project with no window (`lastAt`: a
-  task, outcome or lead in its repositories, in a lane or not), or a newer live task or
-  plan save, so a project quiet for more than three days still shows a date. Lane activity
-  is never read, because a lane two projects share carries the other project's work too.
+  task, outcome or lead in its repositories, in a lane or not), or a newer live task, plan
+  save, or record time of a lane listing its repositories (created, edited, closed or
+  kept), so a project quiet for more than three days still shows a date. A lane's
+  aggregate activity is never read, because a lane two projects share counts the other
+  project's tasks and outcomes too.
   Selecting a row shows that project's roadmap; there are no accordions in the list.
 - **Roadmap (detail pane):** the project's badge and name, "Plan updated <age> by
   <author>" (never the version number), History, and Edit plan (the edit icon, as every
