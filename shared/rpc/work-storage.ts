@@ -1,6 +1,9 @@
 import { defineRpc } from "../rpc";
 import { z } from "zod";
-import { workStorageInputSchema, workStorageStateSchema } from "../schema/work-storage";
+import {
+  workStorageInputSchema,
+  workStorageStateSchema,
+} from "../schema/work-storage";
 
 /**
  * Settings → Storage (nucleus#1526): the resolved work-volume placement and the

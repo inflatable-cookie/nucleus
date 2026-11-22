@@ -35,7 +35,10 @@ import {
   workStorageWriteRefusalMessage,
 } from "../../shared/capacity-authority";
 import type { WorkStorageInput } from "../../shared/schema/work-storage";
-import { readWorkStorage, saveWorkStorage as persistWorkStorage } from "../workspaces/work-storage";
+import {
+  readWorkStorage,
+  saveWorkStorage as persistWorkStorage,
+} from "../workspaces/work-storage";
 /** Meta key prefix of the stored host catalog, one per host and directory (nucleus#970). */
 const HOST_CATALOG_META_PREFIX = "hostCatalog:";
 

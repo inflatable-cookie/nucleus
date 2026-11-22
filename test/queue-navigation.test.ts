@@ -158,7 +158,15 @@ test("Settings is the native settings screen holding Dispatch limits, Profiles, 
   );
   assert.deepEqual(
     settingsViews.map((view) => view.short),
-    ["Limits", "Profiles", "Projects", "Hosts", "Backups", "Storage", "Telemetry"],
+    [
+      "Limits",
+      "Profiles",
+      "Projects",
+      "Hosts",
+      "Backups",
+      "Storage",
+      "Telemetry",
+    ],
   );
   // The tab row stays one line in Paseo's 640–700 point settings column (nucleus#963): short labels only.
   assert.ok(

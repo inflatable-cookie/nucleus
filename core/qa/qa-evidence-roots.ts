@@ -9,7 +9,11 @@ import { liveWorkPlacement } from "../workspaces/checkout-volume";
  * still there. A private data directory (a fixture or a `NUCLEUS_DATA_HOME`
  * instance) keeps its own `project-qa/` folder and never reads the live roots.
  */
-export function legacyQaRoots(dataDir: string): { live: boolean; roots: string[]; retired: string | null } {
+export function legacyQaRoots(dataDir: string): {
+  live: boolean;
+  roots: string[];
+  retired: string | null;
+} {
   const placement = liveWorkPlacement(dataDir);
   // A data-home copy beside the store is read too: the pre-cutover layout kept one
   // there, and custody must still find whatever it left.

@@ -95,7 +95,10 @@ function defaultCustodianControlDir(
   controlRootDir?: string,
 ): string {
   const safeId = allocationId.replace(/[^A-Za-z0-9-_.]/g, "_").slice(0, 64);
-  return join(custodianControlRoot(controlRootDir), `${safeId}-${token.slice(0, 8)}`);
+  return join(
+    custodianControlRoot(controlRootDir),
+    `${safeId}-${token.slice(0, 8)}`,
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -224,7 +227,10 @@ async function defaultStartCustodian(
         }
         throw spawnErr;
       }
-      const exited = exitInfo as { code: number | null; signal: NodeJS.Signals | null } | null;
+      const exited = exitInfo as {
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      } | null;
       if (exited) {
         const failure = parseBargeRunFailure(exited.code, stderrChunks);
         if (failure.isUnsupportedRunCommand()) {
@@ -429,7 +435,9 @@ async function defaultVerifyCustodian(
         cliOptions,
       );
       const matchingPool = pools.find(
-        (pool) => pool.pool === allocation.pool || pool.roots.some((r) => r.lease_id === allocation.leaseId),
+        (pool) =>
+          pool.pool === allocation.pool ||
+          pool.roots.some((r) => r.lease_id === allocation.leaseId),
       );
       if (matchingPool?.unavailable) {
         return {

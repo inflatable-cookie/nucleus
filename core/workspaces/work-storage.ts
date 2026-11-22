@@ -1,5 +1,8 @@
 import { dataHome } from "../../shared/data-home.mjs";
-import type { WorkStorageInput, WorkStorageState } from "../../shared/schema/work-storage";
+import type {
+  WorkStorageInput,
+  WorkStorageState,
+} from "../../shared/schema/work-storage";
 import {
   assertWorkPlacementAvailable,
   type CheckoutVolumeInfo,
@@ -27,7 +30,7 @@ export function workStorageState(placement: WorkPlacement): WorkStorageState {
   const overrides = {
     workRoot: placement.overrides.workRoot ?? null,
     ...Object.fromEntries(
-      (Object.keys(defaults) as Array<keyof typeof defaults>).map(field => [
+      (Object.keys(defaults) as Array<keyof typeof defaults>).map((field) => [
         field,
         placement.overrides[field] ?? null,
       ]),
@@ -54,7 +57,9 @@ export function workStorageState(placement: WorkPlacement): WorkStorageState {
 }
 
 /** Read the work-volume placement the service and its children use. */
-export function readWorkStorage(options: WorkStorageOptions = {}): WorkStorageState {
+export function readWorkStorage(
+  options: WorkStorageOptions = {},
+): WorkStorageState {
   return workStorageState(
     getWorkPlacement(options.dataDir ?? dataHome(), options.env),
   );
