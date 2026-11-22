@@ -347,7 +347,11 @@ test("Spec 027 #11 retired 2026-11-22: the rendered selector has no Parked heade
     }),
   );
   ui.press(/^Projects, /);
-  assert.equal(ui.query("Parked"), undefined, "parking is retired: no Parked group");
+  assert.equal(
+    ui.query("Parked"),
+    undefined,
+    "parking is retired: no Parked group",
+  );
   assert.equal(
     ui.query("Unpark project-a-accelerator"),
     undefined,
@@ -488,7 +492,11 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
   ].map((key) => ({
     key,
     title: `Lane ${key}`,
+    aim: `Aim ${key}`,
+    status: "active",
     liveByPhase: {},
+    terminalCount: 0,
+    recentOutcomes: [],
     lastActivityAt: null,
     repositories: [],
   }));
@@ -575,10 +583,10 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
   wide.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
   });
-  assert.deepEqual(
-    sections(wide),
-    [],
-    "two projects: compact rows, none expanded",
+  assert.equal(
+    sections(wide).length,
+    1,
+    "two projects: one row each, and the first project's roadmap beside them",
   );
   assert.equal(wide.all(/^Project row /).length, 2);
   wide.press("Project row project-a-accelerator");
@@ -586,11 +594,11 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
   assert.deepEqual(
     sections(wide),
     ["Plan for consumer-b-v2"],
-    "one expanded at a time",
+    "one roadmap at a time",
   );
   assert.ok(
-    wide.get("Planning lane"),
-    "plan and lane columns side by side at the wide size",
+    wide.get("Planning project"),
+    "the list and the roadmap side by side at the wide size",
   );
   wide.press("Edit consumer-b-v2 plan");
   // #896 puts lane-order controls behind the per-step Move disclosure.
@@ -618,9 +626,9 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
   assert.deepEqual(
     sections(wide),
     ["Plan for other"],
-    "one project in scope shows its roadmap with no rows",
+    "one project in scope shows its roadmap",
   );
-  assert.equal(wide.query(/^Project row /), undefined);
+  assert.equal(wide.all(/^Project row /).length, 1);
 
   const compact = mount(h(Harness, { compact: true, storage: fresh() }));
   compact.press(/^Projects, /);
@@ -637,7 +645,7 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
     "compact has no lane pane",
   );
   // Without a detail pane the lane opens in a modal over the plan (Tom, 2026-11-21).
-  compact.press("Open lane shared");
+  compact.press("Open lane Lane shared");
   assert.ok(compact.get("Lane detail"), "the lane opens in a modal");
   assert.ok(compact.get("Planning plan"), "the plan stays beneath it");
   assert.equal(compact.text().includes("shared"), true);
@@ -647,7 +655,7 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
     ["Plan for project-a-accelerator"],
     "same expansion after back",
   );
-  compact.press("Open lane project-a-a");
+  compact.press("Open lane Lane project-a-a");
   compact.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
   });

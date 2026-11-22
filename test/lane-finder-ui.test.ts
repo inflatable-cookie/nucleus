@@ -79,6 +79,8 @@ const lanes = [
   lane("g1", "Gamma lane", "Parked project work", repo("g")),
 ];
 const sections: PlanSection[] = [{ project: alpha, latest, saved: latest }];
+/** A search result's label ends in the lane's status; the roadmap's lane cards beside it do not. */
+const RESULT = /^Open lane .*, (Active|Paused|Done|Abandoned)$/;
 
 type MountOver = {
   compact?: boolean;
@@ -131,8 +133,13 @@ test("866 rendered wide: the finder replaces the plan column, names project and 
   // The board header's project filter scopes Planning; it has no chooser of its own (Tom, 2026-11-21).
   assert.equal(ui.query(/^Project: /), undefined);
   assert.ok(ui.get("Planning plan"));
-  assert.ok(ui.get("Planning lane"), "the lane column is beside the plan");
-  assert.match(ui.text(), /LANE PANEL SENTINEL/);
+  assert.ok(ui.get("Planning project"), "the roadmap is beside the list");
+  assert.ok(ui.get("Plan for alpha"));
+  assert.doesNotMatch(
+    ui.text(),
+    /LANE PANEL SENTINEL/,
+    "the lane page waits for a lane",
+  );
   assert.equal(
     ui.query("Lane search results"),
     undefined,
@@ -146,14 +153,14 @@ test("866 rendered wide: the finder replaces the plan column, names project and 
   );
   assert.ok(ui.get("Lane search results"));
   assert.ok(
-    ui.get("Planning lane"),
-    "and the lane column keeps the project context",
+    ui.get("Planning project"),
+    "and the detail pane keeps the project context",
   );
   const result = ui.get("Open lane Shared lane, alpha and beta, Active");
   assert.equal(result.props.accessibilityRole, "button");
   assert.match(ui.text(), /One aim across projects/);
-  assert.match(ui.text(), /alpha · Now · step 2 of 2/);
-  assert.match(ui.text(), /beta · Later · step 1 of 1/);
+  assert.match(ui.text(), /alpha · Now/);
+  assert.match(ui.text(), /beta · Later/);
   assert.equal(
     ui.get("Lane search scope").children.join(""),
     "Searching all projects. Results match the title, aim or project.",
@@ -194,16 +201,28 @@ test("a board without a detail pane keeps the plan and opens the open lane in a 
   const closed = (await mountTab({ compact: true })).ui;
   assert.ok(closed.get("Planning plan"));
   assert.ok(closed.get("Browse all lanes"));
-  assert.equal(closed.query("Planning lane"), undefined, "no lane pane beside the plan");
+  assert.equal(
+    closed.query("Planning lane"),
+    undefined,
+    "no lane pane beside the plan",
+  );
   assert.equal(closed.ofType("Modal").length, 0);
   // Narrow with a lane open: the plan stays and the lane is a modal.
-  const { ui, log } = await mountTab({ compact: true, step: "lane", selectedLane: "s1" });
+  const { ui, log } = await mountTab({
+    compact: true,
+    step: "lane",
+    selectedLane: "s1",
+  });
   assert.ok(ui.get("Planning plan"), "the plan stays under the modal");
   assert.equal(ui.ofType("Modal").length, 1, "the lane opens in a modal");
   assert.ok(ui.get("Lane detail"));
   assert.match(ui.text(), /LANE PANEL SENTINEL/);
   ui.press("Close lane");
-  assert.deepEqual(log.steps, ["plan"], "closing the modal returns to the plan");
+  assert.deepEqual(
+    log.steps,
+    ["plan"],
+    "closing the modal returns to the plan",
+  );
   // Wide: the lane is the pane beside the plan, never a modal.
   const wide = (await mountTab({ step: "lane", selectedLane: "s1" })).ui;
   assert.ok(wide.get("Planning lane"));
@@ -242,16 +261,16 @@ test("866 rendered: browsing lists every lane in scope with an honest count; an 
   const count = ui.get("Lane search count");
   assert.equal(
     count.children.join(""),
-    `${ui.all(/^Open lane /).length} lanes`,
+    `${ui.all(RESULT).length} lanes`,
     "the count is the whole lane record, not a page",
   );
-  assert.ok(ui.all(/^Open lane /).length >= 3);
+  assert.ok(ui.all(RESULT).length >= 3);
   assert.ok(
     ui.query(/^Open lane Gamma lane/),
     "All projects lists every project's lanes (parking is retired, 2026-11-22)",
   );
   ui.type("Find lanes", "nothing at all");
-  assert.equal(ui.query(/^Open lane /), undefined);
+  assert.equal(ui.query(RESULT), undefined);
   assert.match(ui.text(), /No lanes match “nothing at all”/);
   assert.match(ui.text(), /0 of \d+ lanes/);
   assert.doesNotMatch(
@@ -279,7 +298,10 @@ test("866 rendered: empty browse and empty search copy say what is actually abse
     })
   ).ui;
   scoped.press("Browse all lanes");
-  assert.match(scoped.text(), /No lanes in this scope\. Search all projects to look wider\./);
+  assert.match(
+    scoped.text(),
+    /No lanes in this scope\. Search all projects to look wider\./,
+  );
   scoped.press("Search lanes in all projects");
   assert.ok(
     scoped.get("Open lane Beta lane, beta, Active"),
@@ -305,7 +327,10 @@ test("866 rendered: loading, failed and stale reads stay distinct from empty", a
     await mountTab({ lanesLoading: true, lanesError: "queue.snapshot failed" })
   ).ui;
   firstReadFailed.press("Browse all lanes");
-  assert.match(firstReadFailed.text(), /Couldn't load lanes: queue.snapshot failed/);
+  assert.match(
+    firstReadFailed.text(),
+    /Couldn't load lanes: queue.snapshot failed/,
+  );
   assert.doesNotMatch(firstReadFailed.text(), /Loading lanes…/);
   const failed = (
     await mountTab({
@@ -329,60 +354,4 @@ test("866 rendered: loading, failed and stale reads stay distinct from empty", a
     "a failed plan read is said, not hidden as “not in the plan”",
   );
   assert.ok(stale.get("Lane search count"));
-});
-
-test("866 rendered LaneProjects: a shared lane shows each project's own position and offers its plan", async () => {
-  const { LaneProjects } = await import("../client/planning-panel");
-  const log: string[] = [];
-  const shared = lanes.find((item) => item.key === "shared")!;
-  const ui = mount(
-    h(LaneProjects, {
-      lane: shared,
-      projects,
-      plans: [latest, betaPlan],
-      selected: ["alpha"],
-      onSelectProject: (key: string) => log.push(key),
-      c,
-    }),
-  );
-  assert.equal(
-    ui.get("Projects for Shared lane").props.accessibilityLabel,
-    "Projects for Shared lane",
-  );
-  assert.equal(
-    ui.get("alpha: Now · step 2 of 2").props.accessibilityLabel,
-    "alpha: Now · step 2 of 2",
-  );
-  assert.equal(
-    ui.get("beta: Later · step 1 of 1").props.accessibilityLabel,
-    "beta: Later · step 1 of 1",
-  );
-  assert.match(
-    ui.text(),
-    /each project's plan orders this lane separately\. There is no single order across projects/,
-  );
-  assert.equal(
-    ui.query("Show the alpha plan with this lane open"),
-    undefined,
-    "the chosen project is marked, not offered",
-  );
-  ui.press("Show the beta plan with this lane open");
-  assert.deepEqual(log, ["beta"]);
-  const single = lanes.find((item) => item.key === "s1")!;
-  const one = mount(
-    h(LaneProjects, { lane: single, projects, plans: [latest, betaPlan], c }),
-  );
-  assert.equal(
-    one.get("alpha: Now · step 1 of 2").props.accessibilityLabel,
-    "alpha: Now · step 1 of 2",
-  );
-  assert.doesNotMatch(one.text(), /There is no single order/);
-  const loose = lanes.find((item) => item.key === "loose")!;
-  const unplanned = mount(
-    h(LaneProjects, { lane: loose, projects, plans: [latest, betaPlan], c }),
-  );
-  assert.equal(
-    unplanned.get("alpha: Not in the plan").props.accessibilityLabel,
-    "alpha: Not in the plan",
-  );
 });

@@ -556,7 +556,7 @@ export function rowPhaseWords(
     return "Superseded";
   return ROW_PHASE_WORDS[task.phase];
 }
-function phaseTone(task: Pick<TaskSummary, "phase">): CardTone {
+export function phaseTone(task: Pick<TaskSummary, "phase">): CardTone {
   if (task.phase === "done") return "success";
   if (task.phase === "error") return "danger";
   if (phaseNeedsAttention(task.phase)) return "warning";

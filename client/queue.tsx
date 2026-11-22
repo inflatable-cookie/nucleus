@@ -113,6 +113,8 @@ export function MainSurface({
   const savePlan = useRpc(api.planSet);
   const saveLaneDocument = useRpc(api.laneDocumentEdit);
   const changeLaneStatus = useRpc(api.laneStatus);
+  const readPlan = useRpc(api.planGet);
+  const searchOutcomes = useRpc(api.outcomeSearch);
   const queryClient = useQueryClient();
   const [view, setView] = useState<InboxView>("needs");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -270,7 +272,7 @@ export function MainSurface({
     setLaneDraft(null);
     setPlanningStep("lane");
   };
-  /** Lane projects' "Show plan": the filter moves to that project and the lane stays open. */
+  /** "Plans it's in" for a project outside Planning's scope: the filter moves to it and the lane stays open. */
   const showLanePlan = (project: string) => {
     setScope({ projects: [project] });
     setPlanningStep("plan");
@@ -557,15 +559,21 @@ export function MainSurface({
                   })
                 }
                 onCancel={dropPlanEdit}
-                lanePanel={
+                repositoryBadges={state?.repositoryBadges}
+                tasks={state?.tasks ?? []}
+                queuedCounts={state?.queuedCounts ?? []}
+                readPlanVersion={(project, version) =>
+                  readPlan({ project, version })
+                }
+                lanePanel={(laneContext) =>
                   planningLaneRecord ? (
                     <LaneScreen
                       key={planningLaneRecord.key}
                       lane={planningLaneRecord}
+                      project={laneContext.project}
                       compact={compact}
                       projects={state?.projects ?? []}
                       plans={planQuery.data ?? []}
-                      selected={scope.projects}
                       busy={busy}
                       canEdit
                       doc={{
@@ -629,7 +637,18 @@ export function MainSurface({
                             title: planningLaneRecord.title,
                           });
                       }}
-                      onSelectProject={showLanePlan}
+                      readFinished={(cursor) =>
+                        searchOutcomes({
+                          lane: planningLaneRecord.key,
+                          outcome: "any",
+                          limit: 25,
+                          ...(cursor ? { cursor } : {}),
+                        })
+                      }
+                      onSelectProject={(project) => {
+                        if (!laneContext.showProject(project))
+                          showLanePlan(project);
+                      }}
                       onSetStatus={(status) =>
                         void act(() =>
                           changeLaneStatus({

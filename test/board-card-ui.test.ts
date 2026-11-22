@@ -2919,7 +2919,7 @@ test("a task needing attention on Needs you draws the task tile and its referenc
   }
 });
 
-test("Planning draws its projects as flat rows with the lists' divider and accent edge", async () => {
+test("Planning lists its projects as inbox rows, grouped, with the selected surface on the open one", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -2970,64 +2970,51 @@ test("Planning draws its projects as flat rows with the lists' divider and accen
     await settle(() => Boolean(tree.raw.query("Nucleus header controls")));
     openView(tree, "Planning");
     await settle(() => Boolean(tree.raw.query("Project row Second")));
-    const frame = (name: string) =>
-      tree.raw
-        .ofType("View")
-        .find(
-          (node) =>
-            node.props.style?.borderBottomWidth === 1 &&
-            nodeHas(
-              node,
-              (child) =>
-                child.props.accessibilityLabel === `Project row ${name}`,
-            ),
-        );
-    const appFrame = frame("App");
-    assert.ok(appFrame, "the project row draws a flat row");
+    // nucleus#1531: inbox rows with no divider or card frame; the open row takes the selected surface.
+    const row = (name: string) => tree.raw.get(`Project row ${name}`);
+    const style = (name: string) =>
+      row(name).props.style as {
+        borderWidth?: number;
+        borderBottomWidth?: number;
+        backgroundColor?: string;
+      };
     assert.equal(
-      (appFrame!.props.style as { borderWidth?: number }).borderWidth,
+      style("App").borderWidth,
       undefined,
       "no card border inside the list pane",
     );
     assert.equal(
-      (appFrame!.props.style as { borderRadius?: number }).borderRadius,
+      style("App").borderBottomWidth,
       undefined,
-      "no card corner inside the list pane",
+      "no divider between rows",
     );
     assert.equal(
-      (appFrame!.props.style as { borderLeftWidth?: number }).borderLeftWidth,
-      2,
-      "the row keeps the lists' accent edge",
+      row("App").props.accessibilityState.selected,
+      true,
+      "the first active project opens beside the list",
     );
+    assert.equal(style("App").backgroundColor, dark.surface2);
     assert.equal(
-      (appFrame!.props.style as { borderLeftColor?: string }).borderLeftColor,
+      style("Second").backgroundColor,
       "transparent",
-      "closed rows carry no accent",
+      "a closed row has no background at rest",
     );
-
-    // Expanding keeps the plan editing and marks the open row, as the other lists mark selection.
-    tree.raw.press("Project row App");
+    tree.raw.press("Project row Second");
     await settle(
-      () =>
-        (frame("App")?.props.style as { borderLeftColor?: string })
-          .borderLeftColor === dark.accent,
+      () => row("Second").props.accessibilityState.selected === true,
     );
-
-    // Flat rows touch the pane's edges, so the Dormant group below them keeps its gutter.
-    const dormantLabel = "Dormant projects, 1";
-    assert.ok(tree.raw.query(dormantLabel), "the dormant project is grouped");
+    assert.equal(style("Second").backgroundColor, dark.surface2);
+    assert.ok(tree.raw.query("Plan for Second"));
+    // The project with no recent activity lists under Dormant.
     assert.ok(
-      tree.raw
-        .ofType("View")
-        .some(
-          (node) =>
-            node.props.style?.paddingHorizontal === 16 &&
-            nodeHas(
-              node,
-              (child) => child.props.accessibilityLabel === dormantLabel,
-            ),
-        ),
-      "the Dormant group keeps the list's horizontal gutter",
+      tree.raw.query("Dormant projects"),
+      "the dormant project is grouped",
+    );
+    assert.ok(
+      nodeHas(
+        tree.raw.get("Dormant projects"),
+        (child) => child.props.accessibilityLabel === "Project row Sleepy",
+      ),
     );
   } finally {
     mounted?.update(h("View", null));

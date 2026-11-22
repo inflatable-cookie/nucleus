@@ -96,7 +96,11 @@ test("026-14a Planning has a plan pane and a lane pane wide, and opens the lane 
     panel,
     /accessibilityLabel=\{\s*searching \? "Lane search results" : "Planning plan",?\s*\}/,
   );
-  assert.match(panel, /accessibilityLabel="Planning lane"/);
+  assert.match(
+    panel,
+    /accessibilityLabel=\{laneOpen \? "Planning lane" : "Planning project"\}/,
+    "the detail pane holds the lane page, or the project's roadmap",
+  );
   assert.match(
     panel,
     /bodyLabel="Planning lane"/,

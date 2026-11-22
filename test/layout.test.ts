@@ -118,8 +118,8 @@ test("task detail uses a modal and keeps absent resolution-run recovery out of t
     ui,
     /"Lane table header"|accessibilityLabel="Lane detail"/,
   );
-  // #866 / #867: the lane's projects and document render in the shared lane screen, which queue.tsx mounts.
-  assert.match(read("client/lane-screen.tsx"), /<LaneProjects/);
+  // #866 / #867 / #1531: the lane's plans and document render in the shared lane page, which queue.tsx mounts.
+  assert.match(read("client/lane-screen.tsx"), /Plans it’s in/);
   assert.match(ui, /<LaneScreen/);
   assert.match(ui, /<PlanningTab/);
   assert.doesNotMatch(

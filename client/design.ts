@@ -113,6 +113,28 @@ export const cardRow = {
   },
 } as const;
 
+/**
+ * The Planning read view (nucleus#1531): the lane card's live-work bar, its aim clamp,
+ * the width below which the Now, Next and Later columns stack, the lane page's side
+ * column, and the tints the idle banner and the review segment derive from theme roles.
+ */
+export const planningRead = {
+  bar: 6,
+  aimLines: 3,
+  pillHeight: 18,
+  eyebrowTracking: 0.6,
+  /** Three columns of at least ~260 points each, with their gaps. */
+  columnsMin: 820,
+  /** The lane page puts its side column beside the sections from this width. */
+  sideMin: 760,
+  side: 280,
+  finishedMin: 200,
+  dormantOpacity: 0.6,
+  reviewAlpha: 0.55,
+  bannerAlpha: 0.08,
+  bannerBorderAlpha: 0.2,
+} as const;
+
 /** Overlay colours that are structure, not theme roles: the modal scrim and popover shadow. */
 /**
  * Sidebar-style hover for inbox rows and menu entries (nucleus#1528): the selected
