@@ -1,3 +1,4 @@
+import { participantActivitySchema } from "./task-activity";
 import { z } from "zod";
 import { briefDigestSchema, laneDocumentRefSchema } from "./briefs";
 import { hostSelectionSchema } from "../host-selection";
@@ -289,6 +290,7 @@ export const runSchema = z.object({
   createdAt: z.string(),
   lastObservedAt: z.string().nullable(),
   lastActivityAt: z.string().nullable().optional(),
+  participantActivity: participantActivitySchema.nullable().optional(),
   active: z.boolean().nullable(),
   idleSince: z.string().nullable(),
   completion: completionSchema.nullable(),

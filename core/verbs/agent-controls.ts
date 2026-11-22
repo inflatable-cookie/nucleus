@@ -250,6 +250,7 @@ export class AgentControls {
     return ownerTaskNext({
       ...collectOwnerVerbFacts(this.store, task, null, runId),
       creationGraceMs: this.engine.resolution.graceMs,
+      activityWaitContext: { ...wait, decisionId: this.store.listDecisions({ status: "open", task: task.id })[0]?.id ?? null },
       waitTask: taskWithCurrentWait(this.store, task, wait, (candidate) =>
         this.engine.queuedExternalWait(candidate),
       ),

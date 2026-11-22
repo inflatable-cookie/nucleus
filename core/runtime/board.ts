@@ -1,3 +1,4 @@
+import { activityReadContext } from "../telemetry/task-activity-observation";
 import {
   effectiveDefaultHostKind,
   type HostKind,
@@ -613,6 +614,7 @@ export class RuntimeBoard {
         this.context.hostId,
         events,
         repositorySettings,
+        activityReadContext(this.context.store),
       ),
       nextOffset: page.nextOffset,
     };
@@ -650,6 +652,7 @@ export class RuntimeBoard {
         this.context.hostId,
         events,
         repositorySettings,
+        activityReadContext(this.context.store),
       ),
       total: page.total,
       nextOffset: page.nextOffset,
@@ -710,6 +713,7 @@ export class RuntimeBoard {
         hostProfiles:
           this.context.engine.workerRoutingProfiles?.(task) ?? hostProfiles,
         hostViews: this.context.engine.routingHostViews?.(task),
+        activityWaitContext: { ...context, decisionId: this.context.store.listDecisions({ status: "open", task: task.id })[0]?.id ?? null },
         waitTask: taskWithCurrentWait(
           this.context.store,
           task,

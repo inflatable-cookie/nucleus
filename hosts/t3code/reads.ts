@@ -212,6 +212,8 @@ const timelineEntry = (
     typeof item.title === "string" && item.title.trim()
       ? item.title
       : item.type;
+  const lastOutputAt = typeof item.lastOutputAt === "string" ? item.lastOutputAt
+    : typeof item.output === "string" && item.output ? item.updatedAt : undefined;
   return {
     timestamp,
     ...turnId,
@@ -224,6 +226,8 @@ const timelineEntry = (
         type: kind,
         command: nativeToolIdentity(item),
         nativeType: item.type,
+        ...(item.createdAt ? { startedAt: item.createdAt } : {}),
+        ...(lastOutputAt ? { lastOutputAt } : {}),
       },
     },
   };
