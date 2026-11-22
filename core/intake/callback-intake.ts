@@ -25,6 +25,7 @@ import {
   assertOrdinaryReviewIdentity,
   ordinaryReviewSource,
 } from "../review/ordinary-review";
+import { reattachStoredTaskCheckout } from "../git/checkout-reattach";
 import type { Adapter } from "../host/adapter";
 import type { Resolution } from "../resolution";
 import {
@@ -398,17 +399,18 @@ export class CallbackIntake {
         ? this.engine.control(apply, `task:${input.taskId}`)
         : apply();
     }
-    if (sourceRun?.ordinaryDetached)
+    // A checkout an earlier round already left detached is returned to its task
+    // branch before this run's own source proof; this run settles the checkout,
+    // so its own custody does not refuse it (Spec 068 §4).
+    if (sourceRun)
+      await reattachStoredTaskCheckout(this.store, sourceRun.taskId, sourceRun.id);
+    if (
+      sourceRun &&
+      (sourceRun.ordinaryDetached || input.sourceApproved)
+    )
       await ordinaryReviewSource(
         this.store.task(input.taskId),
         sourceRun.head,
-        true,
-      );
-    else if (input.sourceApproved && sourceRun)
-      await ordinaryReviewSource(
-        this.store.task(input.taskId),
-        sourceRun.head,
-        false,
       );
     const runRoute = completionRoute(input.status, sourceRun);
     if (runRoute === "run" || runRoute === "reviewer") {
@@ -822,11 +824,16 @@ export class CallbackIntake {
     token: string,
   ): Promise<CheckpointResult> {
     const progressRun = this.store.run(input.runId);
+    if (progressRun)
+      await reattachStoredTaskCheckout(
+        this.store,
+        progressRun.taskId,
+        progressRun.id,
+      );
     if (progressRun?.ordinaryDetached)
       await ordinaryReviewSource(
         this.store.task(input.taskId),
         progressRun.head,
-        true,
       );
     const gate = () => {
       const task = this.store.task(input.taskId);
@@ -836,7 +843,7 @@ export class CallbackIntake {
         );
       const run = this.store.run(input.runId);
       if (run?.ordinaryDetached)
-        assertOrdinaryReviewIdentity(task, run.head, true);
+        assertOrdinaryReviewIdentity(task, run.head);
       if (!run || run.taskId !== task.id || run.role !== "reviewer")
         throw new Error("A review progress report requires a reviewer run");
       // Replaced is not released (planner ruling, 2026-11-09): a still-working

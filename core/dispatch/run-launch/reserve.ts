@@ -113,7 +113,7 @@ export class RunLaunchReserve {
         }
         throw error;
       }
-      await ordinaryReviewSource(this.store.task(t.id), run.head, false);
+      await ordinaryReviewSource(this.store.task(t.id), run.head);
     }
     if (source.continuedPr?.progressRunId) {
       const wait = await this.resolution.continuedProgressWait(

@@ -846,7 +846,8 @@ re-record and validation retry. Delegates remain on Engine.
 ### Run-launch owners
 
 **RunLaunchSource** (`core/dispatch/run-launch/source.ts`). The source a launch
-dispatches from: detached ordinary-review custody and worktree, the first
+dispatches from: the one reattach step for a task checkout an earlier round left
+detached, detached ordinary-review custody, the first
 revision worker's independent profile, the retained worker route, and the PR
 head the run is launched at. Enforces [Profile selection](#profile-selection)
 and [PR identity from reports](#pr-identity-from-reports). Pure:
@@ -1552,8 +1553,8 @@ request identities and stored committed-handoff rows are not rewritten.
   `syncIntegrationCheckout` (`core/forge/merge.ts`). `WorkerLauncher` checks
   after `verifyWorkspace`, which can fast-forward the task worktree. The shared
   `RunLaunchSource` and `RunLaunchDeliver` paths check again after the exact
-  source is established and before a task-worktree agent is delivered, including
-  after an ordinary review switches to its detached head. They detect whether
+  source is established and before a task-worktree agent is delivered; the
+  reattach step leaves the checkout on its branch throughout. They detect whether
   the task worktree inherits the shared root link or has a checkout-local link
   to the registered install, and run `npm ci` in that worktree when its
   per-worktree install state does not match its own `package.json` and npm
@@ -2399,9 +2400,21 @@ reports, grants or spends that history.
 ### Retained change review
 
 Ordinary tasks retain the qualified reviewer across revision heads, with a new
-run, credential and full exact-head verdict. The shared checkout is detached only
-after custody and source checks, then restored to the recorded author branch after
-release ([Spec 057](../specs/057-retained-change-review.md)).
+run, credential and full exact-head verdict. No round detaches the shared task
+checkout: a follow-up round reads its exact head there, on its own branch, after
+the same custody and source checks as the first round, and the launch detaches
+nothing ([Spec 068](../specs/068-self-healing.md) §4, after
+[Spec 057](../specs/057-retained-change-review.md)).
+
+One reattach step (`core/git/checkout-reattach.ts`) returns a checkout an earlier
+round already left detached to its task branch. It runs before any launch into
+the task checkout, in `run.start` and in `run.release`; it checks the branch out
+only when no unreleased round owns the checkout, the tree is clean and HEAD
+already equals the branch tip, so the commit never moves. Otherwise it records
+`task_checkout_reattach_refused` naming the cause, the command that ran it
+reports that reason, and the checkout is left exactly as it is. A run's own
+release settles its ownership, so `run.release` then `run.start` is the exit
+from every refused reattach.
 
 The prompt supplies earlier findings, exact SHAs and the git commands that
 read the delta in the reviewer's checkout; diff and range-diff text is never

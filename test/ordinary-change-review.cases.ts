@@ -184,7 +184,7 @@ function fixture() {
     continueReviewer: async (t, run, _id, _text, allowed, stillAllowed) => {
       assert.equal(await allowed(), true);
       assert.equal(stillAllowed(), true);
-      await ordinaryReviewSource(t, run.head, true);
+      await ordinaryReviewSource(t, run.head);
       sends.push(run);
       return { sent: true };
     },
@@ -257,7 +257,7 @@ function fixture() {
       }
       assert.equal(await guard.allowed(), true);
       assert.equal(guard.stillAllowed(), true);
-      await ordinaryReviewSource(t, run.head, true);
+      await ordinaryReviewSource(t, run.head);
       f.tokens.set(run.id, token);
       sends.push(run);
       f.states.set(run.agentId!, {
@@ -647,7 +647,13 @@ test("ordinary public changes-required lifecycle retains the reader with a new e
     assert.doesNotMatch(second.reviewDelta!, /owner revised source/);
     assert.doesNotMatch(second.reviewDelta!, /^diff --git /m);
     assert.doesNotMatch(second.reviewDelta!, /^@@ /m);
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    // The follow-up round reads its exact head in the task checkout and never
+    // detaches it (Spec 068 §4): the checkout stays on the task branch.
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
+    assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), head);
     assert.match(
       runPrompt(f.store.task(f.task.id), second, "/helper", "/ticket", true),
       /Judge the delta/,
@@ -781,6 +787,85 @@ test("a released authenticated review with a lost application is reapplied once 
         ).length,
       1,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a lost follow-up verdict returns a detached checkout before it is reapplied", async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    await f.report(f.current(), "changes_required");
+    const run = await authorRevision(f, 1);
+    assert.equal(run.ordinaryDetached, true);
+    await f.report(run, "ready_to_merge");
+    assert.equal(f.store.task(f.task.id).resolution.review?.runId, run.id);
+
+    // Recreate the persisted shape of a lost application: the accepted result,
+    // the released run and its authentic receipt remain; the task records do not.
+    const task = f.store.task(f.task.id);
+    const storedRun = f.store.run(run.id)!;
+    const {
+      reviewId: _publishedReviewId,
+      reviewCommentId: _publishedCommentId,
+      ...unpublishedCompletion
+    } = storedRun.completion!;
+    f.store.putRun({ ...storedRun, completion: unpublishedCompletion });
+    f.store.deleteMeta(`reviewPublication:${run.id}`);
+    f.store.update(
+      task.id,
+      {
+        phase: "reviewing",
+        reason: "Review application was interrupted",
+        resolution: {
+          ...task.resolution,
+          currentRunId: null,
+          review: null,
+          reviews: task.resolution.reviews.filter(
+            (review) => review.runId !== run.id,
+          ),
+        },
+      },
+      "test_review_application_lost",
+    );
+    f.store.db
+      .prepare(
+        "DELETE FROM events WHERE taskId=? AND kind IN ('review_result_applied','review_reapplied','run_result_applied') AND detail=?",
+      )
+      .run(task.id, run.id);
+
+    // A checkout an earlier round left detached at this exact head. The pass
+    // returns it to the branch before it proves the source it advances, so the
+    // exact released verdict still lands and the commit does not move.
+    runGit(f.workspace, "checkout", "--quiet", "--detach", run.head);
+    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    await f.engine.wake();
+    assert.equal(
+      f.store
+        .eventsAll(task.id)
+        .filter(
+          (event) =>
+            event.kind === "review_reapplied" && event.detail === run.id,
+        ).length,
+      1,
+      "the exact released reviewer result is applied once",
+    );
+    const reattach = f.store
+      .eventsAll(task.id)
+      .filter((event) => event.kind.startsWith("task_checkout_reattach"))
+      .map((event) => `${event.kind}: ${event.detail}`);
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+      JSON.stringify(reattach),
+    );
+    assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), run.head);
+    assert.ok(
+      reattach.some((event) => event.startsWith("task_checkout_reattached")),
+      `the reattach step is what the pass ran first: ${JSON.stringify(reattach)}`,
+    );
+
   } finally {
     await f.close();
   }
@@ -1877,7 +1962,7 @@ test("ordinary checkout refuses dirty source and detects a pure rebase from actu
       base: f.planningCommit,
       completion: { summary: "Read source" },
     } as Run;
-    await ordinaryReviewSource(f.store.task(f.task.id), f.oldHead, false);
+    await ordinaryReviewSource(f.store.task(f.task.id), f.oldHead);
     writeFileSync(join(f.repo, "base-change.txt"), "base movement\n");
     runGit(f.repo, "add", ".");
     runGit(f.repo, "commit", "-m", "move base");
@@ -1890,7 +1975,7 @@ test("ordinary checkout refuses dirty source and detects a pure rebase from actu
     );
     writeFileSync(join(f.workspace, "feature.txt"), "dirty");
     await assert.rejects(
-      () => ordinaryReviewSource(f.store.task(f.task.id), head, false),
+      () => ordinaryReviewSource(f.store.task(f.task.id), head),
       /dirty/,
     );
   } finally {
@@ -2095,7 +2180,7 @@ async function authorRevision(f: ReturnType<typeof fixture>, number: number) {
   return f.current();
 }
 
-test("a detached reviewer redelivers an accepted verdict without reattaching the checkout", async () => {
+test("a follow-up reviewer redelivers an accepted verdict with the checkout on its branch", async () => {
   const f = fixture();
   const oldPath = process.env.PATH;
   try {
@@ -2115,7 +2200,11 @@ test("a detached reviewer redelivers an accepted verdict without reattaching the
       true,
     );
     assert.match(prompt, /Owner direction: Inspect the outstanding proof/);
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
+    assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), run.head);
     f.idle(run);
     const bin = join(f.root, "redelivery-bin");
     mkdirSync(bin);
@@ -2162,7 +2251,10 @@ test("a detached reviewer redelivers an accepted verdict without reattaching the
       }),
     );
     assert.equal(asked, 1);
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
     await f.report(run, "ready_to_merge");
     assert.equal(f.store.run(run.id)?.completion?.status, "ready_to_merge");
   } finally {
@@ -2171,14 +2263,52 @@ test("a detached reviewer redelivers an accepted verdict without reattaching the
   }
 });
 
-test("refusing a fresh reviewer preserves the active detached checkout", async () => {
+test("a launch returns a checkout a settled round left detached to its branch", async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    const first = f.current();
+    // An earlier round left the shared checkout detached at the reviewed head.
+    runGit(f.workspace, "checkout", "--quiet", "--detach", first.head);
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "",
+      "the checkout starts detached at the reviewed head",
+    );
+    await f.report(first, "changes_required");
+    // The revision launch returns it to the task branch before dispatching, and
+    // no commit moves: the branch carries exactly the commit the round read.
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
+    assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), first.head);
+    assert.equal(f.current().role, "revision", f.store.task(f.task.id).reason);
+    assert.ok(
+      f.store
+        .eventsAll(f.task.id)
+        .some(
+          (event) =>
+            event.kind === "task_checkout_reattached" &&
+            event.detail.includes(first.head),
+        ),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("refusing a fresh reviewer preserves the active follow-up checkout", async () => {
   const f = fixture();
   try {
     await f.engine.wake();
     await f.report(f.current(), "changes_required");
     const run = await authorRevision(f, 1);
     assert.equal(run.ordinaryDetached, true);
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
     const head = runGit(f.workspace, "rev-parse", "HEAD");
     const status = runGit(f.workspace, "status", "--porcelain");
     f.adapter.verifyPr = machineVerifyPr;
@@ -2197,7 +2327,10 @@ test("refusing a fresh reviewer preserves the active detached checkout", async (
       ),
       /retained reviewer is still live/,
     );
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
     assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), head);
     assert.equal(runGit(f.workspace, "status", "--porcelain"), status);
     assert.equal(f.store.task(f.task.id).resolution.currentRunId, run.id);

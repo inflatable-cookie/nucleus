@@ -46,6 +46,7 @@ import {
   reviewInProgress,
 } from "./reader";
 import { ordinaryReviewSource } from "../ordinary-review";
+import { reattachStoredTaskCheckout } from "../../git/checkout-reattach";
 import { reviewContinuationLocalRefusal } from "./gate";
 
 export * from "./checkpoints";
@@ -296,13 +297,18 @@ export class ReviewContinuations {
         );
       const verifyPr = run.ordinaryDetached
         ? async (task: Task, number: number) => {
-            await ordinaryReviewSource(task, run.head, true);
+            await reattachStoredTaskCheckout(
+              this.store,
+              run.taskId,
+              run.id,
+            );
+            await ordinaryReviewSource(task, run.head);
             if (!this.adapter.verifyPrIdentity)
               throw Error(
                 "Ordinary review canonical PR observation unavailable",
               );
             const pr = await this.adapter.verifyPrIdentity(task, number);
-            await ordinaryReviewSource(task, run.head, true);
+            await ordinaryReviewSource(task, run.head);
             return pr;
           }
         : this.adapter.verifyPr;
