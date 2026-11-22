@@ -278,7 +278,7 @@ export function InboxList({
     loadedPage.current = { view, count: triagePageSize };
     setTriageShown(triagePageSize);
     setPapercutShown(triagePageSize);
-  }, [view, setPapercutShown, setTriageShown]);
+  }, [view]);
   const loadNextPage = () => {
     const loaded = loadedPage.current;
     if (loaded.view !== view) {
