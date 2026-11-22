@@ -1,3 +1,3 @@
-- Escalation answers now bind to the task version rather than a snapshot binding hash, removing binding-hash and "offer no longer available" refusal loops.
-- Open escalations close durably through one atomic auto-close path once their own recorded cause clears (retiring stops, waits, followups, initial question windows, and open linked decisions, with repair on maintenance).
+- Removed snapshot binding-hash and "offer no longer available" refusal loops on escalation answers; plain-choice answers apply at the current task version and refuse only once closed.
+- Reaching a terminal task phase closes open escalations and open linked decisions in one transaction; `record.clear kind=escalation` remains the manual close.
 - Removed the legacy `restart`-as-escalation-answer lever in favour of explicit commands and `record.clear`.

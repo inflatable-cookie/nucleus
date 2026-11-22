@@ -62,10 +62,6 @@ export {
 } from "./proof";
 export { closeEscalationFollowups } from "./continuation";
 export {
-  closeClearedEscalations,
-  escalationCauseClearedReason,
-} from "../escalation-settlement";
-export {
   hasConcreteOperatorChoices,
   isPlaceholderDecisionRecord,
   type OperatorEscalationChoice,

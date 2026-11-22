@@ -4,7 +4,8 @@ import type {
   TaskControlInput,
 } from "../../../shared/contracts";
 import type { Resolution } from "../../resolution";
-import { closeClearedEscalations } from "../escalation-settlement";
+import { escalationOutlived } from "../../recovery/task-reasons";
+import { closeTerminalEscalations } from "../escalation-settlement";
 import { attentionUnknownEscalation } from "./attention";
 import { continueWorkerAfterLadder, settleLadderControl } from "./continuation";
 import { establishEscalationWait, type EscalationWait } from "./hold";
@@ -47,7 +48,11 @@ import {
  * unknown delivery is never retried.
  */
 export class Ladder {
-  constructor(readonly resolution: Resolution) {}
+  constructor(readonly resolution: Resolution) {
+    this.store.onTerminalTask((task) => {
+      closeTerminalEscalations(this.store, task);
+    });
+  }
   get store() {
     return this.resolution.store;
   }
@@ -92,11 +97,10 @@ export class Ladder {
     return attentionUnknownEscalation(this, t, escalation);
   }
   resumeDelegations(task: Task): void {
-    closeClearedEscalations(this.store, task);
     return resumeDelegations(this, task);
   }
   resumeEscalationWaits(task: Task): Promise<void> {
-    closeClearedEscalations(this.store, task);
+    closeTerminalEscalations(this.store, task);
     return resumeEscalationWaits(this, task);
   }
   /** The wait event and the actual task stop are one durable state transition. */
@@ -162,7 +166,7 @@ export class Ladder {
   }
   /** Withdraw any still-open legacy placeholder ladder decisions and return their occurrence to the planner. */
   reconcileLegacyPlaceholderDecisions(t: Task): void {
-    closeClearedEscalations(this.store, t);
+    closeTerminalEscalations(this.store, t);
     return reconcileLegacyPlaceholderDecisions(this, t);
   }
   /** Classify an escalation: concrete operator choices reach Tom; bare classifications return to the planner. */
@@ -197,6 +201,10 @@ export class Ladder {
     after: Task,
     action: TaskControlInput["action"],
   ): void {
+    if (after.removedAt || escalationOutlived(after)) {
+      closeTerminalEscalations(this.store, after);
+      return;
+    }
     return settleLadderControl(this, before, after, action);
   }
 }

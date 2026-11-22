@@ -26,7 +26,6 @@ import { plannerEscalations, type LadderEvent } from "./records";
 import { parseEscalationReply } from "./replies";
 import { escalationWaitDetail } from "./waits";
 import { closeEscalationFollowups } from "./continuation";
-import { closeClearedEscalations } from "../escalation-settlement";
 
 /**
  * Routing one recorded escalation: the durable intent and wait the caller records,
@@ -69,24 +68,10 @@ export function openPlannerEscalation(
       "planner_escalation_question",
       `${id}: ${input.question}`.slice(0, 12000),
     );
-    const payloadRecord = input.payload as Record<string, unknown>;
-    const raisingRun = input.runId ? ladder.store.run(input.runId) : null;
-    const pendingDelivery = raisingRun?.reviewDeliveries?.findLast(
-      (d) => d.status === "reserved" || d.status === "uncertain",
-    );
-    const derivedEffectId =
-      typeof payloadRecord.effectId === "string" ||
-      typeof payloadRecord.deliveryId === "string"
-        ? undefined
-        : raisingRun && ["intent", "uncertain"].includes(raisingRun.status)
-          ? `run-delivery.${raisingRun.id}`
-          : pendingDelivery
-            ? `review-delivery.${pendingDelivery.deliveryId}`
-            : undefined;
     ladder.store.event(
       t.id,
       "planner_escalation_payload",
-      `${id}: ${JSON.stringify({ ...input.payload, id, runId: input.runId, ...(derivedEffectId ? { effectId: derivedEffectId } : {}) })}`,
+      `${id}: ${JSON.stringify({ ...input.payload, id, runId: input.runId })}`,
     );
   };
   // A caller inside an open transaction (the review application) joins it.
@@ -264,7 +249,6 @@ async function routeEscalationRound(
   phase: "initial" | "return",
   phaseAfter: number,
 ): Promise<void> {
-  closeClearedEscalations(ladder.store, ladder.store.task(t.id));
   const events = () => ladder.store.eventsAll(t.id) as LadderEvent[];
   const deferred = ladder.store.task(t.id).resolution.deferredVerb?.input
     .__workerAsk as { escalationId?: string } | undefined;

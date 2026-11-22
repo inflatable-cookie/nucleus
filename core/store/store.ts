@@ -264,7 +264,10 @@ export class Store {
     advanceRevision: () => this.advanceRevision(),
     taskChanged: (taskId) => this.taskChanged(taskId),
     captureTelemetry: (taskId, at) =>
-      captureRetainedTelemetry(this.outcomesStore.telemetryFactsForTask(taskId), new Date(at)),
+      captureRetainedTelemetry(
+        this.outcomesStore.telemetryFactsForTask(taskId),
+        new Date(at),
+      ),
   });
   private readonly migrationStore = new StoreMigration(this.core, {
     retainedArchiveKeys: () => this.retentionStore.retainedArchiveKeys(),
@@ -1305,7 +1308,11 @@ export class Store {
   }
   /** Task 1496: the retained-telemetry capture faults the last passes recorded, for retention health. */
   telemetryRetentionError(): string {
-    return this.getMeta<string>("telemetryCaptureError") || this.getMeta<string>("telemetrySeedError") || "";
+    return (
+      this.getMeta<string>("telemetryCaptureError") ||
+      this.getMeta<string>("telemetrySeedError") ||
+      ""
+    );
   }
   /**
    * Audits B5: the tasks the next purge would delete, so the caller can reap their owned
@@ -2610,6 +2617,11 @@ export class Store {
       origin,
     );
   }
+  private readonly terminalTaskHooks: Array<(task: Task) => void> = [];
+  /** Register an in-transaction hook that runs whenever `update()` moves a task to a terminal phase or removes it. */
+  onTerminalTask(hook: (task: Task) => void): void {
+    this.terminalTaskHooks.push(hook);
+  }
   update(
     id: string,
     change: Partial<Task> & { attention?: never },
@@ -2617,7 +2629,18 @@ export class Store {
     detail = "",
     expected?: number,
   ): Task {
-    return this.funnel.update(id, change, kind, detail, expected);
+    const becomesTerminal =
+      change.phase === "done" ||
+      change.phase === "cancelled" ||
+      Boolean(change.removedAt);
+    if (!becomesTerminal || this.terminalTaskHooks.length === 0)
+      return this.funnel.update(id, change, kind, detail, expected);
+    const apply = () => {
+      const updated = this.funnel.update(id, change, kind, detail, expected);
+      for (const hook of this.terminalTaskHooks) hook(updated);
+      return this.task(id);
+    };
+    return this.db.isTransaction ? apply() : this.transaction(apply);
   }
   putRun(run: Run, options: { usageOnly?: boolean } = {}): void {
     return this.funnel.putRun(run, options);
