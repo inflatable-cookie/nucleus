@@ -247,8 +247,10 @@ since the last pass and one page (`FINISHED_CATCH_UP_PAGE`) from the cursor
 persisted in `finishedCatchUpCursor:<host>`, and only those reach the finished-parent
 archive, finished rows, hidden-row clearing, title catch-up and the finished-thread
 cleanup selection, so every finished task is revisited once the cursor wraps and no
-pass reads all of them. A host that is down or not yet read is not walked again in
-the same pass. A host step that hangs or fails
+pass reads all of them. The sweep runs that page's thread-cleanup catch-up in its
+own bounded step on each task's lane, outside the live window, so a page that
+changes every pass never resets the window's cursor. A host that is down or not
+yet read is not walked again in the same pass. A host step that hangs or fails
 at the transport fails only itself (Spec 069 §2): a hung call stops that host's
 remaining steps for the pass, the pass reports itself to **HostHealth** as a failed
 pass, and the fleet pass continues; it never becomes `engineError`, never marks the

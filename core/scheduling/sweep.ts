@@ -659,14 +659,48 @@ export class Sweep {
       // racing it, while unrelated keys keep awaiting remote effects
       // concurrently. The audit yields to the event loop between bounded
       // chunks so acceptance and reads stay responsive.
+      // Spec 069 §4: finished history is caught up from this pass's slow-cursor
+      // page (and its fresh finishes), in its own step. The host pass's cursor
+      // bounds and rotates it, so it never rides the live window: a page that
+      // changes every pass would otherwise reset the window's cursor and starve
+      // either side. One window's worth of quanta runs at a time.
+      const catchUp = [...finishedCatchUp.values()];
+      for (let at = 0; at < catchUp.length; at += SWEEP_WINDOW) {
+        const pending: Promise<void>[] = [];
+        for (const task of catchUp.slice(at, at + SWEEP_WINDOW)) {
+          await yieldToLoop();
+          if (this.engine.stopped)
+            return { fault: null, covered: false, visited };
+          pending.push(
+            this.boundTaskQuantum(
+              this.engine.scheduleLane(
+                `task:${task.id}`,
+                LANE_PRIORITY_TASK,
+                async () => {
+                  const current = this.engine.store.task(task.id);
+                  if (
+                    !["done", "cancelled"].includes(current.phase) ||
+                    !current.hostId ||
+                    !this.engine.taskHostAvailable(current)
+                  )
+                    return;
+                  await this.engine.withHost(current.hostId, () =>
+                    catchUpFinishedTaskThreads(
+                      this.engine.store,
+                      this.engine.adapter,
+                      current.id,
+                    ),
+                  );
+                },
+              ),
+              task.id,
+            ),
+          );
+        }
+        await Promise.all(pending);
+      }
       const reconciled = new Set<string>();
-      const order = [
-        ...new Map(
-          [...this.engine.sweepOrder(), ...finishedCatchUp.values()].map(
-            (task) => [task.id, task],
-          ),
-        ).values(),
-      ];
+      const order = this.engine.sweepOrder();
       this.engine.sweepStats.tasks = order.length;
       const cursorAt = this.engine.sweepCursor
         ? order.findIndex((task) => task.id === this.engine.sweepCursor)
@@ -695,35 +729,8 @@ export class Sweep {
             return { fault: null, covered: false, visited };
           visited.add(candidate.id);
           const task = this.engine.store.task(candidate.id);
-          if (["done", "cancelled"].includes(task.phase)) {
-            if (finishedCatchUp.has(task.id)) {
-              pending.push(
-                this.boundTaskQuantum(
-                  this.engine.scheduleLane(
-                    `task:${task.id}`,
-                    LANE_PRIORITY_TASK,
-                    async () => {
-                      const current = this.engine.store.task(task.id);
-                      if (
-                        !current.hostId ||
-                        !this.engine.taskHostAvailable(current)
-                      )
-                        return;
-                      await this.engine.withHost(current.hostId, () =>
-                        catchUpFinishedTaskThreads(
-                          this.engine.store,
-                          this.engine.adapter,
-                          current.id,
-                        ),
-                      );
-                    },
-                  ),
-                  task.id,
-                ),
-              );
-            }
-            continue;
-          }
+          // A task that finished since the order was read is the catch-up's.
+          if (["done", "cancelled"].includes(task.phase)) continue;
           // Spec 058 budgets (nucleus#1153): the wall clock pauses while the host, a
           // workspace or a dispatch hold keeps the task from progress — including a
           // task whose quantum this sweep cannot start at all. A host outage is not

@@ -80,7 +80,7 @@ export type HostPassContext = Pick<
 export type HostPassResult = {
   /** The one bounded inventory read, when this host could answer for it. */
   inventory: ReadonlyMap<string, AgentObservation> | null;
-  /** Finished tasks whose thread cleanup is still owed, for the bounded task window. */
+  /** Finished tasks of this pass's page whose thread cleanup is still owed, for the sweep's catch-up step. */
   finishedCatchUp: Map<string, Task>;
   /**
    * The first step this pass that hung or failed at the transport, or null for a
@@ -617,7 +617,7 @@ export class HostPass {
         retired.observations,
       );
     // Select from this pass's page of finished history, but never await cleanup in
-    // the shared host pass. These tasks join the rotating, bounded task window.
+    // the shared host pass. The sweep's catch-up step runs them on their task lanes.
     if (!this.store.getMeta("paused"))
       for (const task of finishedThreadCleanupCatchUp(
         this.store,
