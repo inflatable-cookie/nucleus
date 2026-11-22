@@ -226,6 +226,38 @@ function queuedPagesRead(
   };
 }
 
+/**
+ * A `queue.queued-page` reader the test answers by hand and can fail, so a read on its
+ * way is observable: one page at a time, from the project's queue in order.
+ */
+function controlledQueuedPages(queue: TaskSummary[]) {
+  const log: Array<{ repoPath: string; offset: number }> = [];
+  const waiting: Array<{ answer: () => void; fail: () => void }> = [];
+  const read = async (input: unknown) => {
+    const { repoPath, offset, limit } = input as {
+      repoPath: string;
+      offset: number;
+      limit: number;
+    };
+    log.push({ repoPath, offset });
+    await new Promise<void>((resolve, reject) =>
+      waiting.push({
+        answer: resolve,
+        fail: () => reject(new Error("queue read failed")),
+      }),
+    );
+    const tasks = queue.slice(offset, offset + limit);
+    const next = offset + tasks.length;
+    return { tasks, nextOffset: next < queue.length ? next : null };
+  };
+  return {
+    log,
+    read,
+    answer: () => waiting.shift()?.answer(),
+    fail: () => waiting.shift()?.fail(),
+  };
+}
+
 /** The list's one ScrollView, whose layout, content-size and scroll events drive its paging. */
 function listScroll(tree: ReturnType<typeof mountBoard>) {
   const list = tree.raw
@@ -1921,6 +1953,198 @@ test("the Queue appends each project's held-back tasks after its shipped cards, 
       before,
       "the loaded end of the queue reads nothing",
     );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+// nucleus#1532 review finding: a scroll while a page is on its way must not read again.
+test("a multi-page Queue waits while a page is on its way instead of reading it twice", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const queue = Array.from({ length: 30 }, (_, index) =>
+      queuedTask(store, `Task ${String(index + 1).padStart(2, "0")}`),
+    );
+    const shipped = queue.slice(0, 2);
+    const paging = controlledQueuedPages(queue);
+    mounted = mountBoard(
+      invokeWith(
+        board(shipped, [{ repoPath: "/app", count: 30 }]),
+        paging.read,
+      ),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Queue, 30")));
+    openView(tree, "Queue");
+    const nearEnd = {
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    };
+    // A tick, for the assertions that no further read started.
+    const quiet = () => new Promise((resolve) => setTimeout(resolve, 20));
+    const scroll = () => {
+      const list = listScroll(tree);
+      list.props.onScroll(nearEnd);
+      list.props.onScroll(nearEnd);
+      list.props.onContentSizeChange(390, 1500);
+      return list;
+    };
+    let list = listScroll(tree);
+    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    list.props.onContentSizeChange(390, 1500);
+    list.props.onScroll(nearEnd);
+    await settle(() => paging.log.length === 1);
+    // Repeated scrolls while the first page is on its way read nothing more.
+    scroll();
+    await quiet();
+    assert.deepEqual(
+      paging.log,
+      [{ repoPath: "/app", offset: 0 }],
+      "a page on its way is not read twice",
+    );
+    assert.ok(
+      tree.raw.text().includes("Task 01"),
+      "the shipped cards stay while the page reads",
+    );
+    paging.answer();
+    await settle(() => tree.raw.text().includes("Task 25"));
+    // The next page starts its read; further scrolls still wait for it.
+    scroll();
+    await settle(() => paging.log.length === 2);
+    scroll();
+    await quiet();
+    assert.equal(paging.log.length, 2, "the page on its way is asked for once");
+    paging.answer();
+    await settle(() => paging.log.length === 3);
+    assert.deepEqual(
+      paging.log[2],
+      { repoPath: "/app", offset: 25 },
+      "the last page is read at its own offset",
+    );
+    scroll();
+    await quiet();
+    assert.equal(
+      paging.log.length,
+      3,
+      "the last page on its way is asked for once",
+    );
+    paging.answer();
+    await settle(() => tree.raw.text().includes("Task 30"));
+    // The end of the queue reads nothing more.
+    scroll();
+    await quiet();
+    assert.equal(paging.log.length, 3, "the end of the queue reads nothing");
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+// nucleus#1532 review finding: a failed page keeps the cards read and waits at the retry row.
+test("a failed Queue page keeps the cards already read and stops reads at the retry row", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const queue = Array.from({ length: 30 }, (_, index) =>
+      queuedTask(store, `Task ${String(index + 1).padStart(2, "0")}`),
+    );
+    const shipped = queue.slice(0, 2);
+    const log: Array<{ repoPath: string; offset: number }> = [];
+    const waiting: Array<() => void> = [];
+    // The first read of a further page fails; the retry's own read is held, so the
+    // list's loading and retry rows can be read while that read is on its way.
+    let failures = 1;
+    mounted = mountBoard(
+      invokeWith(
+        board(shipped, [{ repoPath: "/app", count: 30 }]),
+        async (input) => {
+          const { repoPath, offset, limit } = input as {
+            repoPath: string;
+            offset: number;
+            limit: number;
+          };
+          log.push({ repoPath, offset });
+          if (offset > 0 && failures > 0) {
+            failures -= 1;
+            throw new Error("queue read failed");
+          }
+          if (offset > 0)
+            await new Promise<void>((resolve) => waiting.push(resolve));
+          const tasks = queue.slice(offset, offset + limit);
+          const next = offset + tasks.length;
+          return { tasks, nextOffset: next < queue.length ? next : null };
+        },
+      ),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Queue, 30")));
+    openView(tree, "Queue");
+    const nearEnd = {
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    };
+    const quiet = () => new Promise((resolve) => setTimeout(resolve, 20));
+    const list = listScroll(tree);
+    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    list.props.onContentSizeChange(390, 1500);
+    list.props.onScroll(nearEnd);
+    await settle(() => tree.raw.text().includes("Task 25"));
+    // The second page's read fails: the cards read so far stay, and the list ends there.
+    listScroll(tree).props.onScroll(nearEnd);
+    await settle(() =>
+      Boolean(tree.raw.query("Could not load queued tasks. Try again.")),
+    );
+    assert.ok(
+      tree.raw.text().includes("Task 25"),
+      "a failed page keeps the cards already read",
+    );
+    assert.equal(
+      tree.raw.text().includes("Loading queued tasks…"),
+      false,
+      "the retry row stands alone",
+    );
+    const reads = log.length;
+    const failed = listScroll(tree);
+    failed.props.onScroll(nearEnd);
+    failed.props.onScroll(nearEnd);
+    failed.props.onContentSizeChange(390, 1500);
+    await quiet();
+    assert.equal(log.length, reads, "a failed read waits for the retry row");
+    // The retry reads the page again, and the queue reaches its end.
+    tree.raw.press("Could not load queued tasks. Try again.");
+    await settle(() => waiting.length === 1);
+    assert.equal(
+      tree.raw.query("Could not load queued tasks. Try again."),
+      undefined,
+      "the retry row hides while its own read is on its way",
+    );
+    assert.ok(
+      tree.raw.text().includes("Loading queued tasks…"),
+      "the loading row speaks for the retry's read",
+    );
+    waiting.shift()?.();
+    await settle(() => tree.raw.text().includes("Task 30"));
+    assert.equal(
+      tree.raw.query("Could not load queued tasks. Try again."),
+      undefined,
+      "the retry row clears once the page reads",
+    );
+    const ended = log.length;
+    const done = listScroll(tree);
+    done.props.onScroll(nearEnd);
+    done.props.onContentSizeChange(390, 1500);
+    await quiet();
+    assert.equal(log.length, ended, "the end of the queue reads nothing");
   } finally {
     mounted?.update(h("View", null));
     store.close();

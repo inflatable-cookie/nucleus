@@ -98,14 +98,31 @@ export function usePipelineState() {
     placeholderData: (previous: QueuedPages | undefined) => previous,
     refetchInterval: 4000,
   });
+  // The last read each project answered, so a failed page leaves the cards already read
+  // on screen instead of emptying the list behind its retry row.
+  const queuedLastRead = useRef<QueuedPages>({});
+  useEffect(() => {
+    if (queuedPages.data) queuedLastRead.current = queuedPages.data;
+  }, [queuedPages.data]);
+  /**
+   * Whether a held-back read is settled: not on its way, not showing another key's
+   * cards, and not failed. A scroll or fill step that arrives meanwhile waits; only the
+   * retry row asks again after a failure.
+   */
+  const queuedSettled = () =>
+    !queuedPages.isFetching &&
+    !queuedPages.isPlaceholderData &&
+    !queuedPages.error;
   /**
    * Reads the next held-back page of every project that still has one, so a fill step
    * advances them together. A project is asked for its first page as soon as it has
-   * held-back tasks, and for another only while its last read said more remain.
+   * held-back tasks, and for another only while its last read said more remain. Repeated
+   * scroll events while a page is on its way ask for nothing.
    */
   const loadQueued = (
     hidden: ReadonlyArray<{ repoPath: string; hidden: number }>,
   ) => {
+    if (!queuedSettled()) return;
     const wanted: Record<string, number> = {};
     for (const item of hidden) {
       const pages = queuedWanted[item.repoPath] ?? 0;
@@ -116,8 +133,12 @@ export function usePipelineState() {
     if (Object.keys(wanted).length)
       setQueuedWanted((current) => ({ ...current, ...wanted }));
   };
+  /** The held-back cards to draw: the query's own read, or the last one it answered. */
+  const queuedTasks = queuedPages.data ?? queuedLastRead.current;
   return {
     queuedPages,
+    queuedTasks,
+    queuedSettled,
     queuedWanted,
     loadQueued,
     triageTag,
@@ -302,6 +323,8 @@ export function InboxList({
   const keepLaneRpc = useRpc(api.laneKeep);
   const {
     queuedPages,
+    queuedTasks,
+    queuedSettled,
     queuedWanted,
     loadQueued,
     triageTag,
@@ -331,7 +354,7 @@ export function InboxList({
    * page's first cards repeat the shipped queue heads.
    */
   const heldQueued = (repoPath: string) =>
-    (queuedPages.data?.[repoPath]?.tasks ?? []).filter(
+    (queuedTasks[repoPath]?.tasks ?? []).filter(
       (task) => !(state?.tasks ?? []).some((shipped) => shipped.id === task.id),
     );
   /** The held-back queued cards the list has read and drawn. */
@@ -339,9 +362,14 @@ export function InboxList({
     (total, item) => total + heldQueued(item.repoPath).length,
     0,
   );
-  /** Whether any project's held-back queue still has a page to read (nucleus#1532). */
+  /**
+   * Whether any project's held-back queue still has a page to read (nucleus#1532). A
+   * read on its way, another key's placeholder cards, or a failure asks for nothing:
+   * the list waits, and only the retry row reads again after a failure.
+   */
   const queuedMore =
     view === "queue" &&
+    queuedSettled() &&
     queuedHidden.some((item) => {
       const pages = queuedWanted[item.repoPath] ?? 0;
       // Nothing read yet, so a page is owed; after that only the last read says.
@@ -736,8 +764,9 @@ export function InboxList({
               Loading queued tasks…
             </Text>
           )}
-          {/* A failed page read never stops the list silently: the end asks to try again. */}
-          {view === "queue" && queuedPages.error && (
+          {/* A failed page read never stops the list silently: the end asks to try again.
+              While the retry's own read is on its way, the loading row speaks for it. */}
+          {view === "queue" && queuedPages.error && !queuedPages.isFetching && (
             <BoardCard
               key="queued-page-retry"
               label="Could not load queued tasks. Try again."
