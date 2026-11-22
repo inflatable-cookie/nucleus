@@ -119,6 +119,55 @@ per-task clock.
 Board writes, CLI calls and submissions run separately from sweep and host work
 (nucleus#1545). A slow host or a long pass never blocks them.
 
+### 6. The host's load is bounded by what changed
+
+Measured on 2026-11-22 from T3's own server trace while T3 was heavily loaded:
+`orchestration.subscribeThread` ran 14 times a minute at about 9.5 s each, and
+about 4 a minute failed. Many targets were thread ids Nucleus derived for
+follow-up children T3 never created (`ns-reminder-*`, `ns-checkpoint-*`,
+`ns-brief-amendment-*`, `ns-reviewer-report-*`, and `ns-run-<runId>` for a
+revision run whose real thread is the retained reviewer). A full shell snapshot
+ran about 6 times a minute, and Settings stayed on "loading".
+
+- **One live shell per host.** The T3 adapter holds one
+  `orchestration.subscribeShell` subscription per connection and applies T3's own
+  live tail (`thread.updated`, `thread.removed`, `project.updated`,
+  `project.removed`) to it. Every reader, in a pass or not, answers thread
+  existence, archive state, status, pending request and the change marker from
+  it. A dropped stream, `snapshot-required` or an unknown item drops the copy, and
+  the next reader takes exactly one fresh snapshot.
+- **A thread snapshot only when its row moved.** A thread is read only when the
+  live shell's row for it changed since the snapshot Nucleus holds, or a reader
+  needs what the row cannot carry: a pending question's body, or a running
+  thread's timeline for a stall check. Either is read at most once per pass.
+- **No read of a thread T3 does not list.** A thread the live shell does not list
+  is not live. A follow-up child Nucleus recorded at send time is only a candidate
+  until T3 lists it: it costs no read, and it is dropped, not retired, when its
+  task ends unseen. A bound thread that left the shell (archived or removed) is
+  read once by its exact id, and that answer is kept until T3 names the thread
+  again or a command goes to it.
+- **Pending questions** are read only for threads the shell marks as awaiting
+  input.
+- **At most four thread snapshots at once** to one host
+  (`T3_THREAD_READ_CONCURRENCY`). Heartbeats are control frames and never queue
+  behind them.
+- **The UI never waits on T3.** Live lists and project observations come from the
+  live shell. The catalog is one read in flight at a time; when T3 takes longer
+  than two seconds the caller gets the last catalog read on this connection.
+- **No archived reads in steady state** (Tom, 2026-11-22: "We shouldn't need to
+  be reading archived threads at all"). Archive confirmation trusts the archive
+  command's settled receipt; creation lookup, uncertain-delivery settlement and
+  workspace inventories use the live shell plus an exact read by id. The paired
+  live and archived inventory and `T3InventoryChurnError` are gone.
+- **Retention reads the archived list on its own interval** (Tom, 2026-11-22:
+  "Pruning can read archived threads - it needs to know what's there, but that
+  shouldn't be running regularly? Once or twice a day?"). The pass runs every
+  `threadRetentionIntervalHours` (Settings, 12 by default), detached from the
+  sweep, and checks each candidate against the live shell and its own walk
+  instead of re-reading the inventory per thread. T3 has no paged archived read,
+  so the walk is one `getArchivedShellSnapshot` per interval and removals stay
+  capped at `THREAD_RETENTION_BATCH` per host per pass.
+
 ## Safety
 
 These rules stay:
@@ -149,7 +198,8 @@ dangerous behaviour first.
 | 2 | `HostHealth` per host from connection signals with hysteresis; outages on transitions only; "unknown" at service start; calls fail only their own step. | `auditUnavailableHosts`, the `HOST_FAILURE` walk, `transportAnswered`, timeout promotion; absorbs nucleus#1523 |
 | 3 | Writes only on change: host waits worked out when read, one owner per field, meta compared before writing, coalesced board publication. | the funnel's implicit stop clear, per-task outage rewrites |
 | 4 | Indexed live and active sets; per-pass work over active tasks only; finished-thread catch-up on its own cursor. | `store.tasks()` scans in the pass |
-| 5 | Pass snapshots and reads out of the task lane (nucleus#1557), and simple writes on their own path (nucleus#1545). | — |
+| 5 | Host load (§6, retargeted 2026-11-22): one live T3 shell per host, snapshot reads only for moved rows, no reads of unlisted threads, a thread-read cap, cached catalogs, no steady-state archived reads, retention on its own interval. | per-pass shell snapshots, out-of-pass snapshot reads, the paired live and archived inventory, `T3InventoryChurnError`, hourly retention |
+| 6 | Pass snapshots and reads out of the task lane (nucleus#1557), and simple writes on their own path (nucleus#1545). | — |
 
 **Done when** all of these hold:
 
@@ -158,3 +208,6 @@ dangerous behaviour first.
 - A service restart parks no task.
 - A pass over a board of 2,000 retained tasks costs the same as over 200 with the
   same active work.
+- A steady pass over idle T3 threads sends T3 no request at all, and Nucleus reads
+  T3's archived threads only in the scheduled retention pass
+  (`test/t3code-host-load.test.ts`).

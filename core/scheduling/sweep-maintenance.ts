@@ -8,7 +8,10 @@ import {
   RECLAIM_DRAIN_FREE_PAGES,
   RECLAIM_DRAIN_MAX_PAGES,
 } from "../store/store";
-import { runThreadRetention } from "../workspaces/thread-retention";
+import {
+  runThreadRetention,
+  threadRetentionIntervalMs,
+} from "../workspaces/thread-retention";
 import { evaluateTriage } from "../planning/triage";
 
 const HOUR_MS = 3_600_000;
@@ -131,15 +134,19 @@ export class SweepMaintenance {
       }
     }
     // Orchestration contract, "Archived thread retention": the service schedules
-    // one retention pass itself, never a system job (Tom, 2026-11-19). Hourly, with
-    // a batch cap per host, so the archived backlog drains over sweeps instead of
-    // in one burst against a host. It runs detached (see `startThreadRetention`):
-    // the first pass walks every archived thread on every host, and the audit pass
-    // this maintenance sits in is what the bootstrap's reconciliation waits on.
+    // one retention pass itself, never a system job (Tom, 2026-11-19). It is the
+    // only reader of a host's archived threads, so it runs on its own interval
+    // (`threadRetentionIntervalHours`, 12 by default: Tom, 2026-11-22, "Once or
+    // twice a day?"), with a batch cap per host so the archived backlog drains over
+    // passes instead of in one burst against a host. It runs detached (see
+    // `startThreadRetention`): the first pass walks every archived thread on every
+    // host, and the audit pass this maintenance sits in is what the bootstrap's
+    // reconciliation waits on.
     if (
       !paused &&
       !this.threadRetentionRun &&
-      at - (this.store.getMeta<number>("lastThreadRetentionAt") ?? 0) >= HOUR_MS
+      at - (this.store.getMeta<number>("lastThreadRetentionAt") ?? 0) >=
+        threadRetentionIntervalMs(this.store)
     ) {
       this.store.setMeta("lastThreadRetentionAt", at);
       this.startThreadRetention(at);

@@ -426,13 +426,15 @@ export async function t3Fake(t: TestContext, directory: string) {
   const commands: Value[] = [];
   /** Every thread snapshot this fake served: what the client asked for and what it got. */
   const snapshots: Value[] = [];
+  /** `orchestration.subscribeThread` reads being served now, and the most at once. */
+  const threadReads = { inFlight: 0, max: 0 };
   /** The rows of every shell snapshot served, so a test can prove which shape it exercised. */
   const shells: Array<{ threads: string[]; archivedThreads: string[] }> = [];
   /** Requests refused for a bearer other than this fake's own, as the server answers them. */
   const unauthorized: Array<{ path: string }> = [];
   /** Every bearer a socket ticket was fetched with, in order: which connection carried which call. */
   const bearers: string[] = [];
-  const projectRows: Value[] = [
+  const projectRowsRaw: Value[] = [
     {
       id: "synthetic-project",
       title: "Synthetic project",
@@ -440,7 +442,107 @@ export async function t3Fake(t: TestContext, directory: string) {
     },
   ];
   const archivedProjects = new Set<string>();
-  const threads = new Map<string, Value>([
+  /**
+   * Every held shell subscription hears about a thread change the way the
+   * nightly's live tail tells it (`thread.updated` / `thread.removed`). A test edits
+   * the fixture in place, so the thread map watches its own records: any write
+   * schedules one publication after the current synchronous step.
+   */
+  const shellPublishers = new Set<() => void>();
+  const shellAcks = new Set<{ sent: number; acked: number }>();
+  /**
+   * The client's freshness barrier (`T3LiveShell`'s test seam): publish whatever
+   * changed and wait until every chunk sent is acknowledged, so a read right after
+   * a fixture edit sees it, as it would a moment later on a real host.
+   */
+  const shellBarrier = async () => {
+    for (const publish of shellPublishers) publish();
+    const deadline = Date.now() + 2_000;
+    while (
+      [...shellAcks].some((chunks) => chunks.acked < chunks.sent) &&
+      Date.now() < deadline
+    )
+      await new Promise<void>((resolve) => setImmediate(resolve));
+  };
+  const barriers = ((globalThis as Record<string, unknown>)[
+    "__t3LiveShellBarriers"
+  ] ??= new Set<() => Promise<void>>()) as Set<() => Promise<void>>;
+  barriers.add(shellBarrier);
+  t.after(() => barriers.delete(shellBarrier));
+  let publishQueued = false;
+  const changed = () => {
+    if (publishQueued) return;
+    publishQueued = true;
+    queueMicrotask(() => {
+      publishQueued = false;
+      for (const publish of shellPublishers) publish();
+    });
+  };
+  const watched = new WeakMap<object, object>();
+  const watch = <T,>(target: T): T => {
+    if (target === null || typeof target !== "object" || Buffer.isBuffer(target))
+      return target;
+    const known = watched.get(target as object);
+    if (known) return known as T;
+    const proxy = new Proxy(target as object, {
+      get(object, key, receiver) {
+        return watch(Reflect.get(object, key, receiver));
+      },
+      set(object, key, value, receiver) {
+        const done = Reflect.set(object, key, value, receiver);
+        changed();
+        return done;
+      },
+      deleteProperty(object, key) {
+        const done = Reflect.deleteProperty(object, key);
+        changed();
+        return done;
+      },
+    });
+    watched.set(target as object, proxy);
+    return proxy as T;
+  };
+  class WatchedThreads extends Map<string, Value> {
+    override get(key: string) {
+      return watch(super.get(key));
+    }
+    override set(key: string, value: Value) {
+      super.set(key, value);
+      changed();
+      return this;
+    }
+    override delete(key: string) {
+      const done = super.delete(key);
+      changed();
+      return done;
+    }
+    override clear() {
+      super.clear();
+      changed();
+    }
+    override values(): MapIterator<Value> {
+      return [...super.values()]
+        .map((value) => watch(value))
+        [Symbol.iterator]() as unknown as MapIterator<Value>;
+    }
+    override entries(): MapIterator<[string, Value]> {
+      return [...super.entries()]
+        .map(([key, value]) => [key, watch(value)] as [string, Value])
+        [Symbol.iterator]() as unknown as MapIterator<[string, Value]>;
+    }
+    override [Symbol.iterator]() {
+      return this.entries();
+    }
+    override forEach(
+      callback: (value: Value, key: string, map: Map<string, Value>) => void,
+      thisArg?: unknown,
+    ) {
+      for (const [key, value] of this.entries())
+        callback.call(thisArg, value, key, this as unknown as Map<string, Value>);
+    }
+  }
+  const projectRows: Value[] = watch(projectRowsRaw);
+  const threads = new WatchedThreads([
     ["synthetic-probe", threadProjection("synthetic-probe", directory)],
   ]);
   /**
@@ -582,7 +684,7 @@ export async function t3Fake(t: TestContext, directory: string) {
       );
     return snapshot;
   };
-  const controls = {
+  const controls = watch({
     environmentId: "synthetic-environment",
     version: "nightly-synthetic-unseen",
     protocol: 2,
@@ -594,6 +696,10 @@ export async function t3Fake(t: TestContext, directory: string) {
     snapshotSequence: 1,
     threadCoverage: {} as Record<string, unknown>,
     beforeArchiveRead: (() => {}) as () => void,
+    /** The next this-many `subscribeShell` requests fail remotely: T3 cannot read its shell. */
+    shellFailures: 0,
+    /** Methods this fake receives and never answers, as a wedged T3 does. */
+    stalledMethods: [] as string[],
     /** The next N thread reads end with an Interrupt frame instead of a snapshot (a stream cut mid-turn). */
     interruptThreadReads: 0,
     /** The next N thread projection reads fail with `OrchestrationV2GetThreadProjectionError`. */
@@ -697,7 +803,7 @@ export async function t3Fake(t: TestContext, directory: string) {
      * is what the nightly's shell carries after the run ends (nucleus#1381).
      */
     shellStatuses: {} as Record<string, string>,
-  };
+  });
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<
     string,
@@ -784,6 +890,21 @@ export async function t3Fake(t: TestContext, directory: string) {
     }
     assert.fail(`unexpected HTTP route ${url.pathname}`);
   });
+  let shellSequence = 0;
+  /**
+   * The shell's two lists. A removed thread is normally in no list: the nightly's
+   * own shell reads filter `deleted_at IS NULL`, so absence is the positive answer
+   * there. A nightly that keeps the tombstone is modelled by `controls.shellTombstones`.
+   */
+  const shellLists = () => {
+    const listed = (p: Value, archived: boolean) =>
+      (archived ? Boolean(p.thread.archivedAt) : !p.thread.archivedAt) &&
+      (!p.thread.deletedAt || controls.shellTombstones);
+    return {
+      active: [...threads.values()].filter((p) => listed(p, false)).map(shell),
+      archived: [...threads.values()].filter((p) => listed(p, true)).map(shell),
+    };
+  };
   const shell = (raw: Value) => {
     const p = wireProjection(raw);
     const active = p.runs.find((run: Value) =>
@@ -838,6 +959,9 @@ export async function t3Fake(t: TestContext, directory: string) {
             ]),
       latestUserMessageAt: p.messages.length ? STAMP : null,
       lastError: null,
+      // The nightly's shell counts the thread's items, so a new turn item moves the row.
+      itemCount: p.turnItems.length,
+      visibleItemCount: p.turnItems.length,
     };
     if (controls.shellMissingField) delete value[controls.shellMissingField];
     return value;
@@ -920,9 +1044,129 @@ export async function t3Fake(t: TestContext, directory: string) {
       if (sockets.has(socket)) wsText(socket, text);
     });
     const send = (value: unknown) => wsText(socket, JSON.stringify(value));
+    // Held shell subscriptions on this socket, by request id: the rows each was last sent.
+    const shellSubscribers = new Map<
+      string,
+      Map<string, { location: "active" | "archive"; key: string }>
+    >();
+    const projectSubscribers = new Map<string, Map<string, string>>();
+    const projectKeys = () =>
+      new Map<string, string>(
+        projects().map((row: Value) => [row.id, JSON.stringify(row)]),
+      );
+    const shellKeys = (active: Value[], archived: Value[]) =>
+      new Map<string, { location: "active" | "archive"; key: string }>([
+        ...active.map(
+          (row) =>
+            [row.id, { location: "active" as const, key: JSON.stringify(row) }] as const,
+        ),
+        ...archived.map(
+          (row) =>
+            [row.id, { location: "archive" as const, key: JSON.stringify(row) }] as const,
+        ),
+      ]);
+    /** Send each held shell subscription the rows that changed since it last heard. */
+    const publishShell = () => {
+      if (!shellSubscribers.size || !sockets.has(socket)) return;
+      let lists: { active: Value[]; archived: Value[] };
+      try {
+        lists = shellLists();
+      } catch {
+        return; // a fixture mid-edit is read again on the next tick
+      }
+      const { active, archived } = lists;
+      const rows = new Map<string, Value>(
+        [...active, ...archived].map((row) => [row.id, row]),
+      );
+      const current = shellKeys(active, archived);
+      const currentProjects = projectKeys();
+      for (const [requestId, last] of shellSubscribers) {
+        const values: Value[] = [];
+        const lastProjects = projectSubscribers.get(requestId) ?? new Map();
+        for (const [id, key] of currentProjects)
+          if (lastProjects.get(id) !== key)
+            values.push({
+              kind: "project.updated",
+              sequence: ++shellSequence,
+              project: JSON.parse(key),
+            });
+        for (const id of lastProjects.keys())
+          if (!currentProjects.has(id))
+            values.push({
+              kind: "project.removed",
+              sequence: ++shellSequence,
+              projectId: id,
+            });
+        projectSubscribers.set(requestId, currentProjects);
+        for (const [id, entry] of current) {
+          const prior = last.get(id);
+          if (prior?.key === entry.key) continue;
+          if (prior && prior.location !== entry.location)
+            values.push({
+              kind: "thread.removed",
+              sequence: ++shellSequence,
+              location: prior.location,
+              threadId: id,
+            });
+          values.push({
+            kind: "thread.updated",
+            sequence: ++shellSequence,
+            location: entry.location,
+            thread: rows.get(id),
+          });
+        }
+        for (const [id, prior] of last)
+          if (!current.has(id))
+            values.push({
+              kind: "thread.removed",
+              sequence: ++shellSequence,
+              location: prior.location,
+              threadId: id,
+            });
+        shellSubscribers.set(requestId, current);
+        if (values.length) {
+          shellChunks.sent++;
+          send({ _tag: "Chunk", requestId, values });
+        }
+      }
+    };
+    // The client acknowledges every chunk after applying it, so an acknowledged
+    // count equal to the sent count means the client's copy is current.
+    const shellChunks = { sent: 0, acked: 0 };
+    shellAcks.add(shellChunks);
+    shellPublishers.add(publishShell);
+    // Fixture state outside the thread map (status overrides, projects) is
+    // published on a short tick as well.
+    const shellTimer = setInterval(publishShell, 5);
+    shellTimer.unref();
+    socket.on("close", () => {
+      shellPublishers.delete(publishShell);
+      shellAcks.delete(shellChunks);
+      clearInterval(shellTimer);
+    });
     const handle = (request: Value) => {
+      handleFrame(request);
+      publishShell();
+    };
+    const handleFrame = (request: Value) => {
+      // A stalled method is never answered, as a wedged T3 leaves it.
+      if (request._tag === "Request" && controls.stalledMethods.includes(request.tag)) {
+        requests.push(request);
+        return;
+      }
       if (request._tag !== "Request") {
         controlFrames.push(request);
+        if (
+          request._tag === "Ack" &&
+          shellSubscribers.has(String(request.requestId))
+        )
+          shellChunks.acked++;
+        if (
+          request._tag === "Interrupt" &&
+          shellSubscribers.delete(String(request.requestId))
+        )
+          // A chunk in flight to an interrupted subscription is never acknowledged.
+          shellChunks.acked = shellChunks.sent;
         if (request._tag === "Ping" && controls.heartbeat)
           send({ _tag: "Pong" });
         return;
@@ -1124,18 +1368,23 @@ export async function t3Fake(t: TestContext, directory: string) {
           });
         }
         case "orchestration.subscribeShell": {
-          // A removed thread is normally in no list: the nightly's own shell reads
-          // filter `deleted_at IS NULL`, so absence is the positive answer there. A
-          // nightly that keeps the tombstone is modelled by `controls.shellTombstones`.
-          const listed = (p: Value, archived: boolean) =>
-            (archived ? Boolean(p.thread.archivedAt) : !p.thread.archivedAt) &&
-            (!p.thread.deletedAt || controls.shellTombstones);
-          const active = [...threads.values()]
-            .filter((p) => listed(p, false))
-            .map(shell);
-          const archived = [...threads.values()]
-            .filter((p) => listed(p, true))
-            .map(shell);
+          if (controls.shellFailures > 0) {
+            controls.shellFailures--;
+            return failure({
+              _tag: "Fail",
+              error: {
+                _tag: "OrchestrationV2GetShellSnapshotError",
+                message: "Failed to prepare the application shell stream",
+              },
+            });
+          }
+          const { active, archived } = shellLists();
+          // The live tail follows from these rows (nightly `subscribeShell`: one
+          // snapshot, `synchronized`, then `thread.updated` / `thread.removed`).
+          shellSubscribers.set(String(request.id), shellKeys(active, archived));
+          projectSubscribers.set(String(request.id), projectKeys());
+          // The opening chunk is acknowledged like every later one.
+          shellChunks.sent++;
           shells.push({
             threads: active.map((row) => row.id),
             archivedThreads: archived.map((row) => row.id),
@@ -1287,7 +1536,13 @@ export async function t3Fake(t: TestContext, directory: string) {
             turnItems: frame.projection?.turnItems?.length ?? 0,
             runs: frame.projection?.runs?.length ?? 0,
           });
-          const answer = () => stream([frame, ...marker()]);
+          // Thread reads in flight on the serving side: a busy host's load.
+          threadReads.inFlight++;
+          threadReads.max = Math.max(threadReads.max, threadReads.inFlight);
+          const answer = () => {
+            threadReads.inFlight--;
+            stream([frame, ...marker()]);
+          };
           // A whole projection of a very long thread is the slow read; a bounded
           // window never pays that cost (contract `slowFullSnapshotMs`). A wedged
           // or busy server delays either answer (`slowSnapshotMs`).
@@ -2129,6 +2384,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     commands,
     requests,
     snapshots,
+    threadReads,
     shells,
     unauthorized,
     bearers,

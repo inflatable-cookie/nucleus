@@ -82,6 +82,7 @@ const CAPACITY_LIMITS = {
   laneDrainEscalationMinutes: 1440,
   hostOutageNoticeMinutes: 120,
   threadRetentionDays: 3,
+  threadRetentionIntervalHours: 12,
 };
 const CAPACITY_VALUES = {
   ...CAPACITY_LIMITS,

@@ -572,12 +572,9 @@ test("a deletedAt tombstone in the inventory counts as deleted for a child and f
   // The shape proves itself: the shell the adapter just read listed the removed child
   // as a row, not by omission, so this case exercises the tombstone path and cannot
   // pass through absence (nucleus#1305 review).
+  // The live shell (Spec 069 batch 5) carries it as a `thread.updated` row.
   assert.ok(
-    server.shells.some(
-      (snapshot) =>
-        snapshot.threads.includes(child.id) ||
-        snapshot.archivedThreads.includes(child.id),
-    ),
+    host.reads.live.row(child.id)?.deletedAt,
     "the fake served the removed child as a tombstone row",
   );
 
@@ -594,9 +591,7 @@ test("a deletedAt tombstone in the inventory counts as deleted for a child and f
       ),
   );
   assert.ok(
-    server.shells.some((snapshot) =>
-      snapshot.threads.includes(parent.threadId),
-    ),
+    host.reads.live.row(parent.threadId)?.deletedAt,
     "the fake served the removed parent as a tombstone row",
   );
   assert.equal(
@@ -1212,12 +1207,12 @@ test("#1458 a transient read after the parent binding is stored resumes the same
   // The narrow read and the complete inventory are both unanswerable (nucleus#1460:
   // a working inventory now settles a single narrow failure in the same create).
   server.controls.threadProjectionErrors = 1;
-  churnInventory(server);
+  churnInventory(server, host);
   await assert.rejects(
     () => host.createAgent(spec("worker-create", "Do the work")),
     (error: unknown) => error instanceof HostReadRefusalError,
   );
-  server.controls.beforeArchiveRead = () => {};
+  server.controls.shellFailures = 0;
   const bound = parentOf(host)!;
   assert.ok(bound, "the binding is durable before the launch is sent");
   assert.equal(
@@ -1248,12 +1243,14 @@ test("#1458 a rolled host resumes the prepared launch from durable state without
   const { host, server, spec, acp, root } = await fixture(t);
   // Narrow read and complete inventory both unanswerable (nucleus#1460).
   server.controls.threadProjectionErrors = 1;
-  churnInventory(server);
+  churnInventory(server, host);
   await assert.rejects(
     () => host.createAgent(spec("worker-create", "Do the work")),
     (error: unknown) => error instanceof HostReadRefusalError,
   );
-  server.controls.beforeArchiveRead = () => {};
+  server.controls.shellFailures = 0;
+  // The unread transient fault is not the rolled host's: it reads cleanly.
+  server.controls.threadProjectionErrors = 0;
   const bound = parentOf(host)!;
   host.close();
 
@@ -1290,11 +1287,11 @@ test("#1458 a lost launch reply is settled by the parent T3 shows, with one pare
 test("#1458 a prepared binding whose parent T3 shows archived refuses without a launch or a child", async (t) => {
   const { host, server, spec } = await fixture(t);
   server.controls.threadProjectionErrors = 1;
-  churnInventory(server);
+  churnInventory(server, host);
   await assert.rejects(() =>
     host.createAgent(spec("worker-create", "Do the work")),
   );
-  server.controls.beforeArchiveRead = () => {};
+  server.controls.shellFailures = 0;
   const bound = parentOf(host)!;
   const twin = threadProjection(bound.threadId, bound.directory);
   Object.assign(twin.thread, {
@@ -1317,11 +1314,11 @@ test("#1458 a prepared binding whose parent T3 shows archived refuses without a 
 test("#1458 a prepared binding whose parent id is held by another checkout refuses without adopting it", async (t) => {
   const { host, server, spec } = await fixture(t);
   server.controls.threadProjectionErrors = 1;
-  churnInventory(server);
+  churnInventory(server, host);
   await assert.rejects(() =>
     host.createAgent(spec("worker-create", "Do the work")),
   );
-  server.controls.beforeArchiveRead = () => {};
+  server.controls.shellFailures = 0;
   const bound = parentOf(host)!;
   const twin = threadProjection(bound.threadId, "/synthetic/other-checkout");
   Object.assign(twin.thread, {
@@ -1364,24 +1361,31 @@ test("#1458 an unknown launch whose parent T3 does not show is never resent as a
 });
 
 // nucleus#1460: the installed nightly answers an absent parent with the generic
-// incomplete projection error, which grants no absence. The complete inventory decides.
+// incomplete projection error, which grants no absence. The live shell decides.
 const GENERIC_ABSENT = "OrchestrationV2GetThreadProjectionError" as const;
 /** Makes every complete inventory read fail to pair (the inventory is unavailable). */
-const churnInventory = (server: Awaited<ReturnType<typeof t3Fake>>) => {
-  server.controls.beforeArchiveRead = () => {
-    server.controls.snapshotSequence++;
-  };
+/**
+ * Makes T3's shell unreadable for the next reads (Spec 069 batch 5: the live shell
+ * replaced the paired inventory as what settles an absent parent). The held
+ * subscription is dropped so the next read must open it again, and that open fails.
+ */
+const churnInventory = (
+  server: Awaited<ReturnType<typeof t3Fake>>,
+  host: T3CodeHost,
+) => {
+  server.controls.shellFailures = 99;
+  host.reads.live.close();
 };
 /** A binding stored before its launch was sent, with the inventory unavailable for that dispatch. */
 async function preparedBinding(t: TestContext) {
   const f = await fixture(t);
   f.server.controls.absentThreadError = GENERIC_ABSENT;
-  churnInventory(f.server);
+  churnInventory(f.server, f.host);
   await assert.rejects(
     () => f.host.createAgent(f.spec("worker-create", "Do the work")),
     (error: unknown) => error instanceof HostReadRefusalError,
   );
-  f.server.controls.beforeArchiveRead = () => {};
+  f.server.controls.shellFailures = 0;
   const bound = parentOf(f.host)!;
   assert.ok(bound, "the binding is durable before the launch");
   assert.equal(commandOf(f.server, "orchestration.launchThread"), undefined);
@@ -1461,7 +1465,7 @@ test("#1460 owner restart is not blocked by the generic read: the precheck resto
 
 test("#1460 an unavailable complete inventory keeps a prepared parent waiting for the worker and the restart", async (t) => {
   const { host, server, spec, workspace, bound } = await preparedBinding(t);
-  churnInventory(server);
+  churnInventory(server, host);
   await assert.rejects(
     () => host.createAgent(spec("worker-create", "Do the work")),
     (error: unknown) => error instanceof HostReadRefusalError,

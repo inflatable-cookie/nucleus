@@ -48,6 +48,7 @@ const DEFAULTS = {
   hostOutageNoticeMinutes: DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
   operatorDefaultHostKind: null,
   threadRetentionDays: DEFAULT_THREAD_RETENTION_DAYS,
+  threadRetentionIntervalHours: 12,
 };
 
 function storeFixture(t: { after(fn: () => void): void }) {

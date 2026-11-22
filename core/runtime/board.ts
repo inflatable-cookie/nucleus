@@ -16,6 +16,7 @@ import {
   DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
   DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
   DEFAULT_THREAD_RETENTION_DAYS,
+  DEFAULT_THREAD_RETENTION_INTERVAL_HOURS,
 } from "../../shared/contracts";
 import type {
   SnapshotInput,
@@ -245,6 +246,9 @@ export class RuntimeBoard {
       threadRetentionDays:
         this.context.store.getMeta<number>("threadRetentionDays") ??
         DEFAULT_THREAD_RETENTION_DAYS,
+      threadRetentionIntervalHours:
+        this.context.store.getMeta<number>("threadRetentionIntervalHours") ??
+        DEFAULT_THREAD_RETENTION_INTERVAL_HOURS,
       operatorDefaultHostKind: effectiveDefaultHostKind(
         this.context.store.getMeta<HostKind | null>("operatorDefaultHostKind"),
       ),

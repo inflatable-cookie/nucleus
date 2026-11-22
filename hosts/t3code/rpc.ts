@@ -84,9 +84,11 @@ type Pending = {
   command?: string;
   threadId?: string;
   accept?: (value: unknown) => boolean;
+  /** A held subscription: every value is handed on and none settles it (nucleus Spec 069 batch 5). */
+  persistent?: boolean;
   resolve(value: unknown): void;
   reject(error: unknown): void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
   values: number;
   timedOut?: boolean;
   resolveLate?(value: unknown): void;
@@ -334,6 +336,10 @@ export class T3RpcClient {
       );
   }
 
+  /** The small-request deadline this client was configured with. */
+  get defaultTimeoutMs(): number {
+    return this.timeoutMs;
+  }
   get connected(): boolean {
     return this.socket?.readyState === WebSocket.OPEN;
   }
@@ -524,10 +530,59 @@ export class T3RpcClient {
     return this.request(method, payload, accept);
   }
 
+  /**
+   * One held subscription: every streamed value goes to `onValue`, in order, until
+   * the caller closes it (an `Interrupt`) or the stream ends. `onEnd` runs once,
+   * with the error that ended it — a remote exit, a protocol fault, a disconnect —
+   * or `null` for a plain completion. No deadline applies: the subscriber owns its
+   * own wait for the first values, and heartbeats keep the socket honest.
+   */
+  subscribe(
+    method: string,
+    payload: unknown,
+    onValue: (value: unknown) => void,
+    onEnd: (error: unknown) => void,
+  ): { close(): void } {
+    let id: string | null = null;
+    let ended = false;
+    const end = (error: unknown) => {
+      if (ended) return;
+      ended = true;
+      onEnd(error);
+    };
+    void this.request(
+      method,
+      payload,
+      (value) => {
+        onValue(value);
+        return false;
+      },
+      (assigned) => {
+        id = assigned;
+      },
+    ).then(
+      () => end(null),
+      (error) => end(error),
+    );
+    return {
+      close: () => {
+        if (ended) return;
+        ended = true;
+        if (id === null) return;
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        this.pending.delete(id);
+        if (pending.timer) clearTimeout(pending.timer);
+        this.sendControl({ _tag: "Interrupt", requestId: id });
+      },
+    };
+  }
+
   private request(
     method: string,
     payload: unknown,
     accept?: (value: unknown) => boolean,
+    persistent?: (id: string) => void,
   ): Promise<unknown> {
     if (!/^[A-Za-z][A-Za-z0-9.]{0,100}$/.test(method))
       return Promise.reject(
@@ -568,7 +623,7 @@ export class T3RpcClient {
         new T3RpcError("protocol", method, undefined, "not_sent"),
       );
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(
+      const timer = persistent ? undefined : setTimeout(
         () => {
           const pending = this.pending.get(id);
           if (!pending) return;
@@ -606,11 +661,13 @@ export class T3RpcClient {
           (method === "orchestration.launchThread" ? method : undefined),
         threadId,
         accept,
+        ...(persistent ? { persistent: true } : {}),
         resolve,
         reject,
         timer,
         values: 0,
       });
+      persistent?.(id);
       try {
         this.socket!.send(data);
       } catch {
@@ -655,7 +712,7 @@ export class T3RpcClient {
       this.sendControl({ _tag: "Ack", requestId: id });
       const cap = METHOD_STREAM_VALUES[pending.method] ?? MAX_STREAM_VALUES;
       for (const value of frame.values) {
-        if (++pending.values > cap)
+        if (!pending.persistent && ++pending.values > cap)
           return this.failRequest(id, "stream_overlong", "Chunk");
         let accepted: boolean;
         try {
@@ -740,7 +797,7 @@ export class T3RpcClient {
     const pending = this.pending.get(id);
     if (!pending) return;
     this.pending.delete(id);
-    clearTimeout(pending.timer);
+    if (pending.timer) clearTimeout(pending.timer);
     if (pending.timedOut) {
       if (failed) pending.rejectLate?.(value);
       else pending.resolveLate?.(value);

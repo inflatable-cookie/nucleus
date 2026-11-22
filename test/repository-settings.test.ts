@@ -656,6 +656,7 @@ test("Settings-only capacity writes apply and record the change, refuse every ot
     laneDrainEscalationMinutes: 90,
     hostOutageNoticeMinutes: 120,
     threadRetentionDays: 5,
+    threadRetentionIntervalHours: 6,
     operatorDefaultHostKind: "paseo" as const,
   };
   try {

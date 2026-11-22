@@ -29,6 +29,7 @@ import {
   MAX_HOST_CALL_LIMIT,
   MAX_STALL_THRESHOLD_MINUTES,
   MAX_THREAD_RETENTION_DAYS,
+  MAX_THREAD_RETENTION_INTERVAL_HOURS,
   usageLevels,
   type UiQueueState,
   type UsageLevel,
@@ -214,6 +215,7 @@ const CAPACITY_FIELD_LABELS: Record<keyof api.CapacityAuthorityValues, string> =
     hostOutageNoticeMinutes: "Host outage notice",
     operatorDefaultHostKind: "Default host",
     threadRetentionDays: "Archived thread retention",
+    threadRetentionIntervalHours: "Archived thread pruning",
   };
 type CapacityKey = Exclude<
   keyof api.CapacityAuthorityValues,
@@ -223,7 +225,7 @@ type LimitSpec = {
   key: CapacityKey;
   min: number;
   max: number;
-  unit: "slots" | "calls" | "minutes" | "days";
+  unit: "slots" | "calls" | "minutes" | "hours" | "days";
   advanced?: true;
   /** Explained under a (?) beside the label, for a limit whose meaning the label cannot carry. */
   help?: string;
@@ -289,11 +291,19 @@ const CAPACITY_FIELDS: LimitSpec[] = [
     unit: "days",
     advanced: true,
   },
+  {
+    key: "threadRetentionIntervalHours",
+    min: 1,
+    max: MAX_THREAD_RETENTION_INTERVAL_HOURS,
+    unit: "hours",
+    advanced: true,
+  },
 ];
 const UNIT_SHORT: Record<LimitSpec["unit"], string> = {
   slots: "slots",
   calls: "calls",
   minutes: "min",
+  hours: "h",
   days: "days",
 };
 
