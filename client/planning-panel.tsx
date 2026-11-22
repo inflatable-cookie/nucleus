@@ -19,7 +19,6 @@ import {
   laneFinderRows,
   laneFinderScopeLabel,
   lanePlaceLabel,
-  lanePlaces,
   type LaneFinderRow,
 } from "../shared/lane-finder";
 import { effectiveSelection } from "../shared/project-scope";
@@ -60,11 +59,23 @@ import {
   type,
   type as typeScale,
 } from "./design";
+import { type ProjectActivity } from "../shared/project-activity";
 import {
-  projectDormantByActivity,
-  type ProjectActivity,
-} from "../shared/project-activity";
+  PROJECT_GROUP_TITLES,
+  projectGroup,
+  projectLastActivity,
+  projectStatus,
+  projectStatusParts,
+} from "../shared/planning-read";
+import type { ProjectBadge } from "../shared/t3/project-badge";
 import { ProjectTriage } from "./planning-triage";
+import {
+  Breadcrumb,
+  GroupHeader,
+  ProjectRoadmapView,
+  ProjectRow,
+  type ProjectRowModel,
+} from "./planning-roadmap";
 
 /** `error` is set when the plan or its saved version could not be read; `latest` is then the last version read, if any. */
 export type PlanSection = {
@@ -85,11 +96,12 @@ const day = (value: string | null) => value?.slice(0, 10) ?? "No activity";
 const IDLE_ENDS = "Saving a changed plan or finishing new work ends it.";
 
 /**
- * One project's plan. Reading is the default: Now, Next and Later in order, each with its aim and
- * completion condition. "Edit plan" opens a draft: move controls, Save and Cancel, and the idle mark.
- * The draft is kept when the plan changes underneath it; Reapply or Reload settles it.
+ * The plan editor (nucleus#1531 keeps it unchanged until its own redesign): the roadmap's
+ * "Edit plan" opens a draft here with move controls, Save and Cancel, the idle mark and the
+ * unplanned lanes. The draft is kept when the plan changes underneath it; Reapply or Reload
+ * settles it. Reading is the roadmap (`planning-roadmap.tsx`).
  */
-function ProjectRoadmap({
+function PlanEditor({
   section,
   leads,
   lanes,
@@ -810,183 +822,12 @@ function ProjectRoadmap({
   );
 }
 
-/** Spec 041 Planning tab, following the header's project selector. One project in scope shows
- * its roadmap; several show one compact row each, expanded one at a time. Beside it the Lane
- * column; at the compact size a plan, then lane, drill-down with a back control. */
-/** The collapsed group of projects with no planner and no live owner record: silent, and read-only. */
-function DormantGroup({
-  projects,
-  c,
-  children,
-}: {
-  projects: Project[];
-  c: Colors;
-  children?: (project: Project) => ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  if (!projects.length) return null;
-  return (
-    <View accessibilityLabel="Dormant projects" style={{ gap: space.xs }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Dormant projects, ${projects.length}`}
-        accessibilityState={{ expanded: open }}
-        onPress={() => setOpen(!open)}
-        style={{ flexDirection: "row", gap: space.xs, alignItems: "center" }}
-      >
-        <Text style={{ color: c.foreground, fontWeight: "600" }}>
-          {open ? "▾" : "▸"} Dormant projects
-        </Text>
-        <Text style={muted(c)}>{projects.length}</Text>
-      </Pressable>
-      {open &&
-        projects.map((project) => (
-          <View
-            key={project.key}
-            style={{
-              gap: space.xs,
-              padding: space.xs,
-              borderWidth: 1,
-              borderColor: c.border,
-              borderRadius: radius.control,
-              backgroundColor: c.surface0,
-            }}
-          >
-            <Text
-              numberOfLines={1}
-              style={{
-                color: c.foreground,
-                fontWeight: "600",
-                fontSize: type.body.fontSize,
-              }}
-            >
-              {project.name}
-            </Text>
-            {children?.(project)}
-          </View>
-        ))}
-    </View>
-  );
-}
-
 const statusWord: Record<LaneView["status"], string> = {
   active: "Active",
   paused: "Paused",
   done: "Done",
   abandoned: "Abandoned",
 };
-
-/**
- * A lane's projects and its place in each project's own plan (nucleus#866). A
- * lane lists repositories, so it can belong to several projects; each project's
- * plan orders it separately and there is no single global order. "Show plan"
- * moves the chooser to that project and keeps the lane open, so the originating
- * context is never lost.
- */
-export function LaneProjects({
-  lane,
-  projects,
-  plans,
-  selected = [],
-  busy = false,
-  onSelectProject,
-  c,
-}: {
-  lane: Pick<LaneView, "key" | "title" | "repositories">;
-  projects: Project[];
-  plans: ProjectPlan[];
-  selected?: readonly string[];
-  busy?: boolean;
-  onSelectProject?: (project: string) => void;
-  c: Colors;
-}) {
-  const places = lanePlaces(lane, projects, plans);
-  const shared = places.length > 1;
-  const r = roles(c);
-  return (
-    <View
-      accessibilityLabel={`Projects for ${lane.title}`}
-      style={{ gap: space.xs }}
-    >
-      <Text
-        accessibilityRole="header"
-        style={{
-          color: r.foreground,
-          fontWeight: "600",
-          fontSize: type.body.fontSize,
-          lineHeight: type.body.lineHeight,
-        }}
-      >
-        Projects
-      </Text>
-      {!places.length && (
-        <Text style={muted(c)}>
-          No project lists this lane's repositories yet.
-        </Text>
-      )}
-      {places.map((place) => (
-        <View
-          key={place.key}
-          accessibilityLabel={`${place.name}: ${lanePlaceLabel(place)}`}
-          style={{
-            ...row,
-            justifyContent: "space-between",
-            gap: space.xs,
-            padding: space.xs,
-            borderWidth: 1,
-            borderColor: selected.includes(place.key) ? r.accent : r.border,
-            borderRadius: radius.control,
-            backgroundColor: r.section,
-          }}
-        >
-          <View style={{ flexShrink: 1, minWidth: 0, gap: space.xxs / 2 }}>
-            <Text
-              numberOfLines={1}
-              style={{
-                color: r.foreground,
-                fontSize: type.body.fontSize,
-                lineHeight: type.body.lineHeight,
-              }}
-            >
-              {place.name}
-            </Text>
-            <Text
-              style={{
-                color: r.muted,
-                fontSize: type.metadata.fontSize,
-                lineHeight: type.metadata.lineHeight,
-              }}
-            >
-              {lanePlaceLabel(place)}
-            </Text>
-          </View>
-          {onSelectProject && !selected.includes(place.key) && (
-            <Button
-              small
-              c={c}
-              text="Show plan"
-              label={`Show the ${place.name} plan with this lane open`}
-              disabled={busy}
-              onPress={() => onSelectProject(place.key)}
-            />
-          )}
-        </View>
-      ))}
-      {shared && (
-        <Text
-          style={{
-            ...muted(c),
-            fontSize: type.metadata.fontSize,
-            lineHeight: type.metadata.lineHeight,
-          }}
-        >
-          Shared by {places.length} projects, so each project's plan orders this
-          lane separately. There is no single order across projects.
-        </Text>
-      )}
-    </View>
-  );
-}
 
 /**
  * "Find lanes": the search that replaces the separate Lanes destination
@@ -1186,6 +1027,11 @@ export function LaneFinderResults({
  * The board header's project filter scopes it, so Planning has no chooser of its own.
  */
 export type PlanningInbox = { listWidth: number | null; laneModal: boolean };
+/** What the lane page learns from Planning: the plan it was opened from, and a way to show another project's plan (false when that project is out of scope). */
+export type PlanningLaneContext = {
+  project: string | null;
+  showProject: (project: string) => boolean;
+};
 
 export function PlanningTab({
   sections: allSections,
@@ -1215,6 +1061,7 @@ export function PlanningTab({
   onCancel,
   onCloseLane,
   inbox: inboxLayout,
+  repositoryBadges,
   c,
 }: {
   /** The pane layout; without it the plan fills the panel and the lane opens in a modal. */
@@ -1228,7 +1075,10 @@ export function PlanningTab({
   step: PlanningStep;
   compact: boolean;
   busy: boolean;
-  lanePanel: ReactNode;
+  /** The open lane's page. A function receives the plan it was opened from and a way to show another project's plan. */
+  lanePanel: ReactNode | ((context: PlanningLaneContext) => ReactNode);
+  /** Project badges by repository path, for the list rows and the roadmap header. */
+  repositoryBadges?: Readonly<Record<string, ProjectBadge>>;
   /** Every project and its plan, so the chooser and the lane search see past the tab's own scope. */
   projects?: Project[];
   selection?: readonly string[];
@@ -1284,16 +1134,93 @@ export function PlanningTab({
     projectActivity.map((item) => [item.key, item]),
   );
   const nowMs = Date.now();
-  const dormant = allSections
-    .filter((section) =>
-      projectDormantByActivity(activityByKey.get(section.project.key), nowMs),
-    )
-    .map((section) => section.project);
-  const sections = allSections.filter(
-    (section) => !dormant.includes(section.project),
+  const sections = allSections;
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [detailWidth, setDetailWidth] = useState(0);
+  const inbox = inboxLayout ?? { listWidth: null, laneModal: compact };
+  // Two panes: the list beside the detail. Otherwise the list drills into the
+  // roadmap in place and the lane page opens in the modal (below 1100 points).
+  const twoPane = !inbox.laneModal;
+  const groupOf = (section: PlanSection) =>
+    projectGroup(
+      section.latest,
+      activityByKey.get(section.project.key),
+      nowMs,
+    );
+  const ordered = (["active", "idle", "dormant"] as const).flatMap((group) =>
+    sections.filter((section) => groupOf(section) === group),
   );
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const roadmapProps = {
+  const lists = (section: PlanSection, lane: string) =>
+    projectLanes(section.project, lanes).some((item) => item.key === lane) ||
+    Boolean(section.latest?.entries.some((entry) => entry.lane === lane));
+  const laneOpen = Boolean(selectedLane) && step === "lane";
+  const chosenSection = sections.find(
+    (section) => section.project.key === chosen,
+  );
+  // The roadmap shown: the operator's pick, else the plan an open lane belongs to,
+  // else (with a detail pane) the first project listed.
+  const selectedSection =
+    chosenSection ??
+    (selectedLane
+      ? ordered.find((section) => lists(section, selectedLane))
+      : undefined) ??
+    (twoPane || sections.length === 1 ? ordered[0] : undefined);
+  const laneSection = selectedLane
+    ? selectedSection && lists(selectedSection, selectedLane)
+      ? selectedSection
+      : ordered.find((section) => lists(section, selectedLane))
+    : undefined;
+  const badgeFor = (project: Project) =>
+    [project.primary, ...project.repositories]
+      .map((repo) => (repo ? repositoryBadges?.[repo.path] : undefined))
+      .find(Boolean) ?? null;
+  const rowModel = (section: PlanSection): ProjectRowModel => {
+    const group = groupOf(section);
+    const base = {
+      project: section.project,
+      group,
+      badge: badgeFor(section.project),
+      age: (() => {
+        const at = projectLastActivity(activityByKey.get(section.project.key));
+        return at ? decisionAge(at, nowMs).replace(/ ago$/, "") : null;
+      })(),
+    };
+    const planError = section.error ?? plansError;
+    if (planError)
+      return {
+        ...base,
+        state: { kind: "error", subject: "the plan", error: planError },
+      };
+    if (lanesError)
+      return {
+        ...base,
+        state: { kind: "error", subject: "lanes", error: lanesError },
+      };
+    if (lanesLoading || !section.latest)
+      return { ...base, state: { kind: "loading" } };
+    const parts = projectStatusParts(
+      group,
+      section.latest,
+      projectStatus(section.project, section.latest, lanes),
+    );
+    return { ...base, state: { kind: "ready", ...parts } };
+  };
+  const clearSearch = () => {
+    setQuery("");
+    setBrowse(false);
+  };
+  const chosenScope = effectiveSelection(projects, selection);
+  const allScopeOn = !chosenScope.length || allScope;
+  const pickProject = (key: string) => {
+    setChosen(key);
+    onStep("plan");
+  };
+  const showProject = (key: string) => {
+    if (!sections.some((section) => section.project.key === key)) return false;
+    pickProject(key);
+    return true;
+  };
+  const editorProps = {
     leads,
     lanes,
     edits,
@@ -1308,242 +1235,170 @@ export function PlanningTab({
     onCloseLane,
     c,
   };
-  const roadmapFor = (section: PlanSection) => (
-    <ProjectRoadmap
-      section={section}
-      {...roadmapProps}
-      onRetry={onRetryPlans}
-    />
-  );
-  const summary = (section: PlanSection) => {
-    const planError = section.error ?? plansError;
-    if (planError)
-      return { state: "error" as const, subject: "the plan", error: planError };
-    if (lanesError)
-      return { state: "error" as const, subject: "lanes", error: lanesError };
-    if (lanesLoading || !section.latest) return { state: "loading" as const };
-    const groups = planningPlan(
-      section.latest,
-      section.saved,
-      projectLanes(section.project, lanes).map((lane) => lane.key),
-    );
-    const view = roadmapView({
+  const startEdit = (section: PlanSection) => {
+    const groups = planningPlan(section.latest, section.saved);
+    onEdit(section.project.key, {
       entries: [...groups.now, ...groups.next, ...groups.later],
-      unplanned: [],
-      lanes,
-      leads,
+      version: section.latest?.version ?? 0,
     });
-    const steps = [...view.now, ...view.next, ...view.later];
-    const projectLaneKeys = new Set(
-      projectLanes(section.project, lanes).map((lane) => lane.key),
-    );
-    const attention = lanes
-      .filter((lane) => projectLaneKeys.has(lane.key))
-      .reduce(
-        (sum, lane) =>
-          sum +
-          (lane.liveByPhase.blocked ?? 0) +
-          (lane.liveByPhase.error ?? 0) +
-          (lane.liveByPhase.needs_attention ?? 0),
-        0,
-      );
-    return {
-      state: "ready" as const,
-      aim:
-        view.now[0]?.aim ||
-        view.now[0]?.title ||
-        (section.latest.idle
-          ? `Idle on purpose · ${section.latest.idle.reason}`
-          : "No current aim"),
-      attention,
-    };
   };
-  const clearSearch = () => {
-    setQuery("");
-    setBrowse(false);
-  };
-  const chosenScope = effectiveSelection(projects, selection);
-  const allScopeOn = !chosenScope.length || allScope;
-  {
-    const inbox = inboxLayout ?? { listWidth: null, laneModal: compact };
-    const pane = {
-      flex: 1,
-      minHeight: 0,
-      backgroundColor: c.surface0,
-    } as const;
-    const listStyle = inbox.listWidth
-      ? {
-          width: inbox.listWidth,
-          minHeight: 0,
-          borderRightWidth: 1,
-          borderRightColor: c.border,
-        }
-      : { flex: 1, minHeight: 0 };
-    // Several projects list as flat rows against the pane's own edges, so the
-    // Dormant group below them carries the pane's gutter itself (nucleus#1511).
-    const flatRows = !searching && sections.length > 1;
-    const dormantGroup = (
-      <DormantGroup projects={dormant} c={c}>
-        {(project) => {
-          const triage = allSections.find(
-            (section) => section.project.key === project.key,
-          )?.triage;
-          return (
-            triage && (
-              <ProjectTriage
-                project={project.name}
-                triage={triage}
-                onOpenTask={onOpenTask}
-                c={c}
-              />
-            )
-          );
-        }}
-      </DormantGroup>
-    );
-    const listBody = searching ? (
-      <LaneFinderResults
-        rows={rows}
-        total={scoped.length}
-        query={query}
-        loading={lanesLoading}
-        error={lanesError}
-        plansError={plansError}
-        allProjects={allScopeOn}
-        onRetry={onRetryLanes}
+  const roadmapFor = (section: PlanSection) =>
+    edits[section.project.key] ? (
+      <PlanEditor section={section} {...editorProps} onRetry={onRetryPlans} />
+    ) : (
+      <ProjectRoadmapView
+        section={section}
+        group={groupOf(section)}
+        badge={badgeFor(section.project)}
+        lanes={lanes}
+        leads={leads}
+        width={twoPane ? detailWidth : (inbox.listWidth ?? detailWidth)}
+        busy={busy}
         onOpenLane={onOpenLane}
-        selectedLane={selectedLane}
+        onEditPlan={section.latest ? () => startEdit(section) : undefined}
+        onRetry={onRetryPlans}
+        onOpenTask={onOpenTask}
         c={c}
       />
-    ) : (
-      <>
-        {!allSections.length && <Text style={muted(c)}>No projects yet.</Text>}
-        {sections.length === 1 && roadmapFor(sections[0])}
-        {sections.length > 1 &&
-          sections.map((section) => {
-            const open = expanded === section.project.key,
-              info = summary(section);
-            // One project per flat row, with the divider and the open row's accent edge
-            // the other inbox lists use (nucleus#1511); its plan follows below it.
-            return (
-              <View key={section.project.key}>
-                <View
-                  style={{
-                    borderBottomWidth: 1,
-                    borderBottomColor: c.border,
-                    borderLeftWidth: 2,
-                    borderLeftColor: open ? c.accent : "transparent",
-                    backgroundColor: open ? c.surface2 : c.surface0,
-                  }}
-                >
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Project row ${section.project.name}`}
-                    accessibilityState={{ expanded: open }}
-                    onPress={() =>
-                      setExpanded(open ? null : section.project.key)
-                    }
-                    style={{
-                      gap: space.xxs,
-                      paddingHorizontal: space.md,
-                      paddingVertical: space.sm,
-                    }}
-                  >
-                    <Text style={{ color: c.foreground, fontWeight: "600" }}>
-                      {open ? "▾" : "▸"} {section.project.name}
-                    </Text>
-                    {info.state === "ready" ? (
-                      <>
-                        {info.attention > 0 && (
-                          <Text
-                            accessibilityLabel={`${info.attention} blocked or attention tasks`}
-                            style={{
-                              color: c.statusWarning,
-                              fontSize: type.metadata.fontSize,
-                              fontWeight: "600",
-                            }}
-                          >
-                            {info.attention} need attention
-                          </Text>
-                        )}
-                        <Text
-                          numberOfLines={2}
-                          style={{
-                            ...muted(c),
-                            fontSize: type.metadata.fontSize,
-                          }}
-                        >
-                          {info.aim}
-                        </Text>
-                      </>
-                    ) : (
-                      <Text
-                        accessibilityLabel={`${info.state === "loading" ? "Loading plan" : "Plan unavailable"} for ${section.project.name}`}
-                        accessibilityRole={
-                          info.state === "error" ? "alert" : undefined
-                        }
-                        style={muted(c)}
-                      >
-                        {info.state === "loading"
-                          ? "Loading…"
-                          : `Couldn’t load ${info.subject}: ${info.error}`}
-                      </Text>
-                    )}
-                  </Pressable>
-                  {info.state === "error" && onRetryPlans && (
-                    <View
-                      style={{
-                        paddingHorizontal: space.md,
-                        paddingBottom: space.sm,
-                      }}
-                    >
-                      <Button
-                        small
-                        c={c}
-                        text="Retry"
-                        label={`Retry plan and lane reads for ${section.project.name}`}
-                        onPress={onRetryPlans}
-                      />
-                    </View>
-                  )}
-                </View>
-                {open && (
-                  <View
-                    style={{
-                      padding: space.md,
-                      gap: space.md,
-                      borderBottomWidth: 1,
-                      borderBottomColor: c.border,
-                    }}
-                  >
-                    {roadmapFor(section)}
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        {flatRows ? (
-          <View
-            style={{ paddingHorizontal: space.md, paddingVertical: space.sm }}
-          >
-            {dormantGroup}
-          </View>
-        ) : (
-          dormantGroup
-        )}
-      </>
     );
-    const laneOpen = Boolean(selectedLane) && step === "lane";
-    return (
-      <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
-        <View style={listStyle}>
+  const backToList = () => {
+    setChosen(null);
+    onStep("plan");
+  };
+  const laneTitle =
+    lanes.find((lane) => lane.key === selectedLane)?.title ?? selectedLane;
+  const laneCrumb = (
+    <Breadcrumb
+      c={c}
+      items={[
+        {
+          text: "Planning",
+          label: "Back to Planning",
+          onPress: twoPane || sections.length === 1 ? () => onStep("plan") : backToList,
+        },
+        ...(laneSection
+          ? [
+              {
+                text: laneSection.project.name,
+                label: `Back to ${laneSection.project.name}`,
+                onPress: () => pickProject(laneSection.project.key),
+              },
+            ]
+          : []),
+        { text: laneTitle },
+      ]}
+    />
+  );
+  const laneBody =
+    typeof lanePanel === "function"
+      ? lanePanel({
+          project: laneSection?.project.key ?? null,
+          showProject,
+        })
+      : lanePanel;
+  const lanePage = (
+    <View style={{ gap: space.md }}>
+      {laneCrumb}
+      {laneBody}
+    </View>
+  );
+  const projectList = (
+    <>
+      {!sections.length && (
+        <Text style={{ ...muted(c), padding: space.md }}>No projects yet.</Text>
+      )}
+      {(["active", "idle", "dormant"] as const).map((group) => {
+        const members = ordered.filter((section) => groupOf(section) === group);
+        if (!members.length) return null;
+        return (
           <View
-            accessibilityLabel="Planning header"
+            key={group}
+            accessibilityLabel={`${PROJECT_GROUP_TITLES[group]} projects`}
+            style={{ gap: space.xxs / 2 }}
+          >
+            <GroupHeader title={PROJECT_GROUP_TITLES[group]} c={c} />
+            {members.map((section) => (
+              <ProjectRow
+                key={section.project.key}
+                model={rowModel(section)}
+                selected={
+                  section.project.key === selectedSection?.project.key
+                }
+                onPress={() => pickProject(section.project.key)}
+                onRetry={onRetryPlans}
+                c={c}
+              />
+            ))}
+          </View>
+        );
+      })}
+    </>
+  );
+  // Without a detail pane, a picked project's roadmap takes the list pane, with the way back above it.
+  const drilled = !twoPane && !searching && selectedSection;
+  const listBody = searching ? (
+    <LaneFinderResults
+      rows={rows}
+      total={scoped.length}
+      query={query}
+      loading={lanesLoading}
+      error={lanesError}
+      plansError={plansError}
+      allProjects={allScopeOn}
+      onRetry={onRetryLanes}
+      onOpenLane={onOpenLane}
+      selectedLane={selectedLane}
+      c={c}
+    />
+  ) : drilled ? (
+    <View style={{ gap: space.md }}>
+      {sections.length > 1 && (
+        <Breadcrumb
+          c={c}
+          items={[
+            { text: "Planning", label: "Back to Planning", onPress: backToList },
+            { text: selectedSection.project.name },
+          ]}
+        />
+      )}
+      {roadmapFor(selectedSection)}
+    </View>
+  ) : (
+    projectList
+  );
+  const listStyle = inbox.listWidth
+    ? {
+        width: inbox.listWidth,
+        minHeight: 0,
+        borderRightWidth: 1,
+        borderRightColor: c.border,
+      }
+    : { flex: 1, minHeight: 0 };
+  return (
+    <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
+      <View
+        style={listStyle}
+        onLayout={
+          twoPane
+            ? undefined
+            : (event) => setDetailWidth(event.nativeEvent.layout.width)
+        }
+      >
+        <View
+          accessibilityLabel="Planning header"
+          style={{
+            gap: space.sm,
+            paddingHorizontal: space.md,
+            paddingTop: space.md,
+            paddingBottom: space.sm,
+          }}
+        >
+          <View
             style={{
-              gap: space.sm,
-              paddingHorizontal: space.md,
-              paddingTop: space.md,
-              paddingBottom: space.sm,
+              flexDirection: "row",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              gap: space.xs,
             }}
           >
             <Text
@@ -1557,117 +1412,142 @@ export function PlanningTab({
             >
               Planning
             </Text>
-            <View style={{ ...row, flexWrap: "nowrap" }}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <TextInput
-                  accessibilityLabel="Find lanes"
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Find lanes"
-                  placeholderTextColor={roles(c).muted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={{ ...controlFrame(c), ...controlText(c) }}
-                />
-              </View>
-              {searching ? (
-                <Button
-                  small
-                  c={c}
-                  text="Back to plan"
-                  label="Close lane search"
-                  onPress={clearSearch}
-                />
-              ) : (
-                <Button
-                  small
-                  c={c}
-                  text="Browse"
-                  label="Browse all lanes"
-                  onPress={() => setBrowse(true)}
-                />
-              )}
-            </View>
-            {searching && (
-              <View style={row}>
-                {Boolean(chosenScope.length) && (
-                  <Button
-                    small
-                    c={c}
-                    text={laneFinderScopeLabel(projects, chosenScope)}
-                    label={`Search lanes in ${laneFinderScopeLabel(projects, chosenScope)}`}
-                    selected={!allScopeOn}
-                    onPress={() => setAllScope(false)}
-                  />
-                )}
-                <Button
-                  small
-                  c={c}
-                  text="All projects"
-                  label="Search lanes in all projects"
-                  selected={allScopeOn}
-                  onPress={() => setAllScope(true)}
-                />
-              </View>
-            )}
-            {searching && (
+            {sections.length > 0 && (
               <Text
-                accessibilityLabel="Lane search scope"
                 style={{
                   ...muted(c),
                   fontSize: type.metadata.fontSize,
                   lineHeight: type.metadata.lineHeight,
                 }}
               >
-                Searching{" "}
-                {scopeLabel === "All projects" ? "all projects" : scopeLabel}.{" "}
-                {query.trim()
-                  ? "Results match the title, aim or project."
-                  : "Every lane in scope is listed."}
+                {sections.length} {sections.length === 1 ? "project" : "projects"}
               </Text>
             )}
           </View>
-          <ScrollView
-            accessibilityLabel={
-              searching ? "Lane search results" : "Planning plan"
-            }
-            style={{
-              flex: 1,
-              minHeight: 0,
-              borderTopWidth: 1,
-              borderTopColor: c.border,
-            }}
-            contentContainerStyle={
-              flatRows ? undefined : { padding: space.md, gap: space.md }
-            }
-          >
-            {listBody}
-          </ScrollView>
+          <View style={{ ...row, flexWrap: "nowrap" }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <TextInput
+                accessibilityLabel="Find lanes"
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Find lanes"
+                placeholderTextColor={roles(c).muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={{ ...controlFrame(c), ...controlText(c) }}
+              />
+            </View>
+            {searching ? (
+              <Button
+                small
+                c={c}
+                text="Back to plan"
+                label="Close lane search"
+                onPress={clearSearch}
+              />
+            ) : (
+              <Button
+                small
+                c={c}
+                text="Browse"
+                label="Browse all lanes"
+                onPress={() => setBrowse(true)}
+              />
+            )}
+          </View>
+          {searching && (
+            <View style={row}>
+              {Boolean(chosenScope.length) && (
+                <Button
+                  small
+                  c={c}
+                  text={laneFinderScopeLabel(projects, chosenScope)}
+                  label={`Search lanes in ${laneFinderScopeLabel(projects, chosenScope)}`}
+                  selected={!allScopeOn}
+                  onPress={() => setAllScope(false)}
+                />
+              )}
+              <Button
+                small
+                c={c}
+                text="All projects"
+                label="Search lanes in all projects"
+                selected={allScopeOn}
+                onPress={() => setAllScope(true)}
+              />
+            </View>
+          )}
+          {searching && (
+            <Text
+              accessibilityLabel="Lane search scope"
+              style={{
+                ...muted(c),
+                fontSize: type.metadata.fontSize,
+                lineHeight: type.metadata.lineHeight,
+              }}
+            >
+              Searching{" "}
+              {scopeLabel === "All projects" ? "all projects" : scopeLabel}.{" "}
+              {query.trim()
+                ? "Results match the title, aim or project."
+                : "Every lane in scope is listed."}
+            </Text>
+          )}
         </View>
-        {!inbox.laneModal && (
-          <ScrollView
-            accessibilityLabel="Planning lane"
-            style={pane}
-            contentContainerStyle={{ padding: space.lg, gap: space.sm }}
-          >
-            {lanePanel}
-          </ScrollView>
-        )}
-        {inbox.laneModal && laneOpen && (
-          <Dialog
-            c={c}
-            title="Lane"
-            label="Lane detail"
-            closeLabel="Close lane"
-            bodyLabel="Planning lane"
-            backdropLabel="Close lane detail"
-            wide
-            onClose={() => onStep("plan")}
-          >
-            {lanePanel}
-          </Dialog>
-        )}
+        <ScrollView
+          accessibilityLabel={
+            searching ? "Lane search results" : "Planning plan"
+          }
+          style={{
+            flex: 1,
+            minHeight: 0,
+            borderTopWidth: 1,
+            borderTopColor: c.border,
+          }}
+          contentContainerStyle={
+            searching || drilled
+              ? { padding: space.md, gap: space.md }
+              : { paddingBottom: space.md }
+          }
+        >
+          {listBody}
+        </ScrollView>
       </View>
-    );
-  }
+      {twoPane && (
+        <ScrollView
+          accessibilityLabel={laneOpen ? "Planning lane" : "Planning project"}
+          onLayout={(event) => setDetailWidth(event.nativeEvent.layout.width)}
+          style={{ flex: 1, minHeight: 0, backgroundColor: c.surface0 }}
+          contentContainerStyle={{
+            paddingHorizontal: space.lg,
+            paddingTop: space.md,
+            paddingBottom: space.xl,
+            gap: space.md,
+          }}
+        >
+          {laneOpen ? (
+            lanePage
+          ) : selectedSection ? (
+            roadmapFor(selectedSection)
+          ) : (
+            <Text style={muted(c)}>Select a project to see its plan.</Text>
+          )}
+        </ScrollView>
+      )}
+      {!twoPane && laneOpen && (
+        <Dialog
+          c={c}
+          title="Lane"
+          label="Lane detail"
+          closeLabel="Close lane"
+          bodyLabel="Planning lane"
+          backdropLabel="Close lane detail"
+          wide
+          onClose={() => onStep("plan")}
+        >
+          {lanePage}
+        </Dialog>
+      )}
+    </View>
+  );
 }

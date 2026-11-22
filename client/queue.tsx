@@ -270,7 +270,7 @@ export function MainSurface({
     setLaneDraft(null);
     setPlanningStep("lane");
   };
-  /** Lane projects' "Show plan": the filter moves to that project and the lane stays open. */
+  /** "Plans it's in" for a project outside Planning's scope: the filter moves to it and the lane stays open. */
   const showLanePlan = (project: string) => {
     setScope({ projects: [project] });
     setPlanningStep("plan");
@@ -557,15 +557,16 @@ export function MainSurface({
                   })
                 }
                 onCancel={dropPlanEdit}
-                lanePanel={
+                repositoryBadges={state?.repositoryBadges}
+                lanePanel={(laneContext) =>
                   planningLaneRecord ? (
                     <LaneScreen
                       key={planningLaneRecord.key}
                       lane={planningLaneRecord}
+                      project={laneContext.project}
                       compact={compact}
                       projects={state?.projects ?? []}
                       plans={planQuery.data ?? []}
-                      selected={scope.projects}
                       busy={busy}
                       canEdit
                       doc={{
@@ -629,7 +630,10 @@ export function MainSurface({
                             title: planningLaneRecord.title,
                           });
                       }}
-                      onSelectProject={showLanePlan}
+                      onSelectProject={(project) => {
+                        if (!laneContext.showProject(project))
+                          showLanePlan(project);
+                      }}
                       onSetStatus={(status) =>
                         void act(() =>
                           changeLaneStatus({

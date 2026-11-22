@@ -12,9 +12,24 @@ import type {
 import { formatLocalDateTime } from "../shared/date-time";
 import { phaseStateLabel } from "../shared/task-state";
 import { decisionAge } from "../shared/pipeline-board";
+import { lanePlaces } from "../shared/lane-finder";
+import {
+  horizonTitle,
+  laneAttention,
+  laneDocumentName,
+  laneOpen,
+  lanePlanContext,
+} from "../shared/planning-read";
 import { Button, row, type Colors } from "./controls";
-import { radius, roles, space, type } from "./design";
-import { LaneProjects } from "./planning-panel";
+import { planningRead, radius, roles, space, type } from "./design";
+import {
+  BoardCard,
+  BoardCardVariantContext,
+  phaseTone,
+  rowPhaseWords,
+  type CardKind,
+} from "./board/cards";
+import { Pill } from "./planning-roadmap";
 import { Readable } from "./readable-text";
 
 /** The latest document as read. `null` is a lane with no document yet; `undefined` is not loaded. */
@@ -36,7 +51,6 @@ export type LaneListRead<T> = {
  */
 export type LaneDraft = { base: number; text: string; start: string };
 
-type Section = "work" | "leads" | "papercuts";
 type Mode = "preview" | "read" | "edit";
 
 export const LANE_PREVIEW_LINES = 8;
@@ -80,10 +94,13 @@ const statusWord: Record<LaneView["status"], string> = {
  * so the count and the "showing N of M" line are true totals, never a first page dressed as one.
  */
 export const LANE_LIST_PAGE = 8;
+/** Recently finished shows this many until See all. */
+export const LANE_FINISHED_PREVIEW = 5;
 
 /** One related list: loading, failed, empty and loaded are distinct, and a failed read never shows a count. */
 function RecordList({
   read,
+  kind,
   label,
   empty,
   describe,
@@ -94,6 +111,7 @@ function RecordList({
   c,
 }: {
   read: LaneListRead<BoardLead>;
+  kind: CardKind;
   label: string;
   empty: string;
   describe: (lead: BoardLead) => string;
@@ -158,40 +176,23 @@ function RecordList({
           {retry}
         </View>
       )}
-      {!read.items.length && <Text style={meta}>{empty}</Text>}
+      {!read.items.length && Boolean(empty) && <Text style={meta}>{empty}</Text>}
       {read.items.length > shown && (
         <Text style={meta}>
           Showing {shown} of {read.items.length} {label}.
         </Text>
       )}
       {read.items.slice(0, shown).map((lead) => (
-        <Pressable
+        <BoardCard
           key={lead.id}
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${label.replace(/s$/, "")} ${lead.title}`}
+          label={`Open ${label.replace(/s$/, "")} ${lead.title}`}
           onPress={() => onOpen(lead)}
-          style={{
-            gap: space.xxs,
-            padding: space.sm,
-            borderRadius: radius.card,
-            borderWidth: 1,
-            borderColor: r.border,
-            backgroundColor: r.section,
-          }}
-        >
-          <Text
-            numberOfLines={2}
-            style={{
-              color: r.foreground,
-              fontWeight: "600",
-              fontSize: type.body.fontSize,
-              lineHeight: type.body.lineHeight,
-            }}
-          >
-            {lead.title}
-          </Text>
-          <Text style={meta}>{describe(lead)}</Text>
-        </Pressable>
+          selected={false}
+          kind={kind}
+          title={lead.title}
+          status={{ tone: "muted", state: describe(lead) || "Open" }}
+          c={c}
+        />
       ))}
       {read.items.length > shown && (
         <View style={row}>
@@ -208,20 +209,22 @@ function RecordList({
 }
 
 /**
- * The lane's own screen (nucleus#867): its aim, a preview of its document with a readable full
- * text and version-safe editing, and its work, leads and papercuts. Each related record opens its
- * existing detail. Counts appear only where the read is complete; loading, failed and stale reads
- * say so. Raw keys and repositories sit behind Details.
+ * The lane page (nucleus#867, redesigned in nucleus#1531): the title with its horizon,
+ * open state and other plans; the aim in full; the finish line and why it is still open;
+ * the plan's latest status note; what is in flight, waiting to start and recently
+ * finished. A side column holds the document, the counts at a glance and the plans it is
+ * in. Counts appear only where the read is complete; loading, failed and stale reads say
+ * so. The key, repositories and status actions sit behind Details.
  *
- * Wide puts the document beside the related lists; narrow stacks them. Reading and editing take the
- * whole lane column, with Back to the lane beside them.
+ * Wide puts the side column beside the sections; narrow stacks them. Reading and editing
+ * the document take the whole lane column, with Back to the lane beside them.
  */
 export function LaneScreen({
   lane,
+  project = null,
   compact,
   projects,
   plans,
-  selected,
   busy,
   canEdit,
   doc,
@@ -243,10 +246,11 @@ export function LaneScreen({
   c,
 }: {
   lane: LaneView;
+  /** The plan the lane was opened from: its horizon, note and finish line show. */
+  project?: string | null;
   compact: boolean;
   projects: Project[];
   plans: ProjectPlan[];
-  selected: readonly string[];
   busy: boolean;
   /** Whether the operator may write the lane document. */
   canEdit: boolean;
@@ -270,7 +274,6 @@ export function LaneScreen({
   c: Colors;
 }) {
   const r = roles(c);
-  const [section, setSection] = useState<Section>("work");
   const [mode, setMode] = useState<Mode>(draft ? "edit" : "preview");
   const [pastVersion, setPastVersion] = useState<number | null>(null);
   const [past, setPast] = useState<{
@@ -281,6 +284,8 @@ export function LaneScreen({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [details, setDetails] = useState(false);
+  const [allFinished, setAllFinished] = useState(false);
+  const [width, setWidth] = useState(0);
   // Lead and papercut lists page eight at a time from the lane's complete read.
   const [listShown, setListShown] = useState<{
     leads: number;
@@ -382,27 +387,86 @@ export function LaneScreen({
   };
 
   const liveTotal = liveTaskCount(lane);
+  const attention = laneAttention(lane);
   const workTotal = tasks.total ?? liveTotal;
   const leadItems = leads.items?.filter((lead) => !isPapercut(lead));
   const cutItems = leads.items?.filter(isPapercut);
   const leadRead = { items: leadItems, error: leads.error };
   const cutRead = { items: cutItems, error: leads.error };
-  const countLabel = (label: string, count: number | undefined) =>
-    count === undefined ? label : `${label} · ${count}`;
-  const segment = (key: Section, label: string, count: number | undefined) => (
-    <Button
-      key={key}
-      small
-      c={c}
-      text={countLabel(label, count)}
-      label={`Show ${label.toLowerCase()} for ${name}`}
-      selected={section === key}
-      onPress={() => setSection(key)}
-    />
+  const context = lanePlanContext(lane.key, plans, project);
+  const places = lanePlaces(lane, projects, plans);
+  const others = places.filter(
+    (place) => place.key !== context?.project && place.horizon,
+  );
+  const open = laneOpen(lane);
+  const side = width === 0 ? !compact : width >= planningRead.sideMin;
+  const sectionTitle = (title: string, detail?: React.ReactNode) => (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: space.xs,
+      }}
+    >
+      <Text accessibilityRole="header" style={{ ...text, fontWeight: "600" }}>
+        {title}
+      </Text>
+      {detail}
+    </View>
+  );
+  const box = {
+    gap: space.xs,
+    padding: space.sm,
+    borderRadius: radius.panel,
+    backgroundColor: r.section,
+  } as const;
+  const pager = (
+    <>
+      {(tasks.offset ?? 0) > 0 && onLoadPreviousTasks && (
+        <View style={row}>
+          <Button
+            small
+            c={c}
+            text="Previous tasks"
+            label="Load previous page of lane tasks"
+            onPress={onLoadPreviousTasks}
+          />
+          {tasks.nextOffset != null && onLoadMoreTasks && (
+            <Button
+              small
+              c={c}
+              text="Next tasks"
+              label="Load next page of lane tasks"
+              onPress={() => onLoadMoreTasks(tasks.nextOffset!)}
+            />
+          )}
+        </View>
+      )}
+      {(tasks.offset ?? 0) === 0 &&
+        tasks.nextOffset != null &&
+        onLoadMoreTasks && (
+          <View style={row}>
+            <Button
+              small
+              c={c}
+              text="Next tasks"
+              label="Load next page of lane tasks"
+              onPress={() => onLoadMoreTasks(tasks.nextOffset!)}
+            />
+          </View>
+        )}
+    </>
   );
 
-  const workList = (
-    <View accessibilityLabel="Lane work" style={{ gap: space.xs }}>
+  const inFlight = (
+    <View accessibilityLabel="In flight" style={{ gap: space.xs }}>
+      {sectionTitle(
+        "In flight",
+        <Text style={meta}>
+          {workTotal} {workTotal === 1 ? "task" : "tasks"}
+        </Text>,
+      )}
       {tasks.error && (
         <View accessibilityRole="alert" style={{ gap: space.xxs }}>
           <Text style={{ ...text, color: r.warning }}>
@@ -411,13 +475,15 @@ export function LaneScreen({
               : `Couldn’t load work: ${tasks.error}`}
           </Text>
           {onRetryTasks && (
-            <Button
-              small
-              c={c}
-              text="Retry"
-              label="Retry loading lane tasks"
-              onPress={onRetryTasks}
-            />
+            <View style={row}>
+              <Button
+                small
+                c={c}
+                text="Retry"
+                label="Retry loading lane tasks"
+                onPress={onRetryTasks}
+              />
+            </View>
           )}
         </View>
       )}
@@ -430,126 +496,146 @@ export function LaneScreen({
           {(tasks.offset ?? 0) + tasks.items.length} of {workTotal} live tasks.
         </Text>
       )}
-      {(tasks.offset ?? 0) > 0 && onLoadPreviousTasks && (
-        <View style={row}>
-          <Button
-            small
-            c={c}
-            text="Previous tasks"
-            label="Load previous page of lane tasks"
-            onPress={onLoadPreviousTasks}
-          />
-          {tasks.nextOffset != null && onLoadMoreTasks && (
-            <Button
-              small
-              c={c}
-              text="Next tasks"
-              label="Load next page of lane tasks"
-              onPress={() => onLoadMoreTasks(tasks.nextOffset!)}
-            />
-          )}
+      <BoardCardVariantContext.Provider value="row">
+        <View style={{ marginHorizontal: -space.xs }}>
+          {tasks.items?.map((task) => {
+            const signal = task.held
+              ? `Held${task.hold?.reason ? ` · ${task.hold.reason}` : ""}`
+              : (task.waitState?.nextAction ??
+                (task.waitState ? `Waiting · ${task.waitState.owner}` : null));
+            return (
+              <BoardCard
+                key={task.id}
+                label={`Open task ${task.title}, ${phaseStateLabel(task)}${signal ? `, ${signal}` : ""}`}
+                onPress={() => onOpenTask(task.id)}
+                selected={false}
+                kind="task"
+                meta={task.reference ?? null}
+                title={task.title}
+                status={{
+                  tone: phaseTone(task),
+                  state: rowPhaseWords(task),
+                  detail: signal ?? task.headline ?? null,
+                }}
+                c={c}
+              />
+            );
+          })}
         </View>
-      )}
-      {(tasks.offset ?? 0) === 0 &&
-        tasks.nextOffset != null &&
-        onLoadMoreTasks && (
-          <View style={row}>
-            <Button
-              small
-              c={c}
-              text="Next tasks"
-              label="Load next page of lane tasks"
-              onPress={() => onLoadMoreTasks(tasks.nextOffset!)}
-            />
-          </View>
-        )}
-      {tasks.items?.map((task) => {
-        const signal = task.held
-          ? `Held${task.hold?.reason ? ` · ${task.hold.reason}` : ""}`
-          : (task.waitState?.nextAction ??
-            (task.waitState ? `Waiting · ${task.waitState.owner}` : null));
-        return (
-          <Pressable
-            key={task.id}
-            accessibilityRole="button"
-            accessibilityLabel={`Open task ${task.title}, ${phaseStateLabel(task)}${signal ? `, ${signal}` : ""}`}
-            onPress={() => onOpenTask(task.id)}
-            style={{
-              gap: space.xxs / 2,
-              padding: space.xs,
-              borderRadius: radius.card,
-              borderWidth: 1,
-              borderColor: r.border,
-              backgroundColor: r.section,
-            }}
-          >
-            <Text numberOfLines={2} style={{ ...text, fontWeight: "600" }}>
-              {task.title}
-            </Text>
-            <Text style={meta}>
-              {phaseStateLabel(task)}
-              {signal ? ` · ${signal}` : ""}
-            </Text>
-          </Pressable>
-        );
-      })}
+      </BoardCardVariantContext.Provider>
       {tasks.items && !tasks.items.length && workTotal === 0 && (
-        <Text style={meta}>
-          {lane.terminalCount
-            ? "No live work in this lane."
-            : "No work in this lane."}
-        </Text>
-      )}
-      {(tasks.offset ?? 0) > 0 && onLoadPreviousTasks && (
-        <View style={row}>
-          <Button
-            small
-            c={c}
-            text="Previous tasks"
-            label="Load previous page of lane tasks"
-            onPress={onLoadPreviousTasks}
-          />
-          {tasks.nextOffset != null && onLoadMoreTasks && (
-            <Button
-              small
-              c={c}
-              text="Next tasks"
-              label="Load next page of lane tasks"
-              onPress={() => onLoadMoreTasks(tasks.nextOffset!)}
-            />
-          )}
+        <View style={{ ...box, alignItems: "center" }}>
+          <Text style={meta}>No tasks running in this lane</Text>
         </View>
       )}
-      {(tasks.offset ?? 0) === 0 &&
-        tasks.nextOffset != null &&
-        onLoadMoreTasks && (
-          <View style={row}>
-            <Button
-              small
-              c={c}
-              text="Next tasks"
-              label="Load next page of lane tasks"
-              onPress={() => onLoadMoreTasks(tasks.nextOffset!)}
-            />
+      {pager}
+    </View>
+  );
+
+  const nothingWaiting = Boolean(
+    leadItems && cutItems && !leadItems.length && !cutItems.length,
+  );
+  const waiting = (
+    <View accessibilityLabel="Waiting to start" style={{ gap: space.xs }}>
+      {sectionTitle(
+        "Waiting to start",
+        <Text style={meta}>leads and papercuts</Text>,
+      )}
+      {nothingWaiting ? (
+        <View style={{ ...box, alignItems: "center" }}>
+          <Text style={meta}>Nothing waiting</Text>
+        </View>
+      ) : (
+        <BoardCardVariantContext.Provider value="row">
+          <View style={{ gap: space.xs, marginHorizontal: -space.xs }}>
+            {(leadItems === undefined || leadItems.length > 0) && (
+              <RecordList
+                read={leadRead}
+                kind="lead"
+                label="leads"
+                empty=""
+                describe={(lead) => lead.preview.slice(0, 120)}
+                shown={listShown.leads}
+                onShowMore={() =>
+                  setListShown((value) => ({
+                    ...value,
+                    leads: value.leads + LANE_LIST_PAGE,
+                  }))
+                }
+                onOpen={(lead) => onOpenLead(lead)}
+                onRetry={onRetryLeads}
+                c={c}
+              />
+            )}
+            {cutItems !== undefined && cutItems.length > 0 && (
+              <RecordList
+                read={cutRead}
+                kind="papercut"
+                label="papercuts"
+                empty=""
+                describe={(lead) => lead.papercutArea ?? "Papercut"}
+                shown={listShown.papercuts}
+                onShowMore={() =>
+                  setListShown((value) => ({
+                    ...value,
+                    papercuts: value.papercuts + LANE_LIST_PAGE,
+                  }))
+                }
+                onOpen={(lead) => onOpenLead(lead)}
+                onRetry={onRetryLeads}
+                c={c}
+              />
+            )}
           </View>
-        )}
+        </BoardCardVariantContext.Provider>
+      )}
+    </View>
+  );
+
+  const finishedShown = allFinished
+    ? lane.recentOutcomes
+    : lane.recentOutcomes.slice(0, LANE_FINISHED_PREVIEW);
+  const moreFinished =
+    !allFinished &&
+    (lane.recentOutcomes.length > LANE_FINISHED_PREVIEW ||
+      lane.terminalCount > finishedShown.length);
+  const finished = (
+    <View accessibilityLabel="Recently finished" style={{ gap: space.xs }}>
+      {sectionTitle(
+        "Recently finished",
+        <View style={{ flexDirection: "row", gap: space.xxs }}>
+          <Text style={meta}>
+            {lane.terminalCount.toLocaleString()} in total
+          </Text>
+          {moreFinished && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`See all finished work in ${name}`}
+              onPress={() => setAllFinished(true)}
+            >
+              <Text style={{ ...meta, color: r.accent }}>· See all</Text>
+            </Pressable>
+          )}
+        </View>,
+      )}
       <View
         style={{
-          gap: space.xxs,
-          borderTopWidth: 1,
-          borderTopColor: r.border,
-          paddingTop: space.xs,
+          gap: space.xs,
+          paddingLeft: space.sm,
+          borderLeftWidth: 1,
+          borderLeftColor: r.border,
         }}
       >
-        <Text style={{ ...text, fontWeight: "600" }}>
-          Finished · {lane.terminalCount}
-        </Text>
-        {lane.recentOutcomes.map((outcome) => (
+        {finishedShown.map((outcome) => (
           <View key={outcome.taskId} style={{ gap: space.xxs / 2 }}>
             <Text style={text}>
-              {outcome.title} · {outcome.outcome}
+              {outcome.outcome === "done" ? "✓ " : "✕ "}
+              {outcome.title}
             </Text>
             <Text selectable style={meta}>
+              {outcome.outcome === "done"
+                ? ""
+                : `${outcome.outcome === "cancelled" ? "Cancelled" : "Superseded"} · `}
               {outcome.prNumber
                 ? `PR #${outcome.prNumber}`
                 : (outcome.prUrl ?? "No pull request")}
@@ -559,27 +645,36 @@ export function LaneScreen({
             </Text>
           </View>
         ))}
-        {lane.recentOutcomes.length < lane.terminalCount && (
+        {!lane.terminalCount && <Text style={meta}>Nothing finished yet.</Text>}
+        {allFinished && lane.recentOutcomes.length < lane.terminalCount && (
           <Text style={meta}>
             The last {lane.recentOutcomes.length} of {lane.terminalCount}{" "}
             finished.
           </Text>
         )}
-        {!lane.terminalCount && <Text style={meta}>No finished work yet.</Text>}
       </View>
     </View>
   );
 
-  const documentBody = () => {
+  const documentBox = () => {
     const current = doc.data;
+    const heading = (
+      <Text style={{ ...text, fontWeight: "600" }}>Document</Text>
+    );
     if (current === undefined && !doc.error)
-      return <Text style={meta}>Loading document…</Text>;
+      return (
+        <View style={box}>
+          {heading}
+          <Text style={meta}>Loading document…</Text>
+        </View>
+      );
     if (current === undefined)
       return (
         <View
           accessibilityRole="alert"
-          style={{ ...alertPanel, borderColor: r.danger }}
+          style={{ ...box, borderWidth: 1, borderColor: r.danger }}
         >
+          {heading}
           <Text style={text}>Couldn’t load the lane document: {doc.error}</Text>
           <Text style={meta}>No version is shown until it loads.</Text>
           <View style={row}>
@@ -593,40 +688,15 @@ export function LaneScreen({
           </View>
         </View>
       );
-    if (current === null)
-      return (
-        <View style={{ gap: space.xs }}>
-          {doc.error && (
-            <Text
-              accessibilityRole="alert"
-              style={{ ...text, color: r.warning }}
-            >
-              Refreshing failed: {doc.error}
-            </Text>
-          )}
-          <Text style={text}>No lane document yet.</Text>
-          {canEdit && (
-            <View style={row}>
-              <Button
-                small
-                c={c}
-                text="Write document"
-                label={`Write document for ${name}`}
-                disabled={busy}
-                onPress={startEdit}
-              />
-            </View>
-          )}
-        </View>
-      );
-    const preview = lanePreview(current.text);
     return (
-      <View style={{ gap: space.xs }}>
+      <View accessibilityLabel="Lane document" style={box}>
+        {heading}
         {doc.error && (
-          <View accessibilityRole="alert" style={alertPanel}>
-            <Text style={{ ...text, color: r.warning }}>
-              Showing version {current.version}. The latest could not be
-              refreshed: {doc.error}. It may be out of date.
+          <View accessibilityRole="alert" style={{ gap: space.xxs }}>
+            <Text style={{ ...meta, color: r.warning }}>
+              {current
+                ? `Showing version ${current.version}. The latest could not be refreshed: ${doc.error}. It may be out of date.`
+                : `Refreshing failed: ${doc.error}`}
             </Text>
             <View style={row}>
               <Button
@@ -639,52 +709,135 @@ export function LaneScreen({
             </View>
           </View>
         )}
-        <View accessibilityLabel="Lane document preview">
-          <Readable text={preview.text} c={c} />
-        </View>
-        {preview.truncated && <Text style={meta}>Preview only.</Text>}
-        {Boolean(draft) && (
-          <Text accessibilityRole="alert" style={{ ...meta, color: r.warning }}>
-            You have unsaved changes to this document. Edit to save or discard
-            them.
-          </Text>
+        {current ? (
+          <>
+            <Text style={{ ...text, color: r.muted }}>
+              {laneDocumentName(current.text)}
+            </Text>
+            <Text style={meta}>
+              Version {current.version} · edited{" "}
+              {decisionAge(current.createdAt)}
+            </Text>
+            {Boolean(draft) && (
+              <Text
+                accessibilityRole="alert"
+                style={{ ...meta, color: r.warning }}
+              >
+                You have unsaved changes to this document. Edit lane to save or
+                discard them.
+              </Text>
+            )}
+            <View style={row}>
+              <Button
+                small
+                c={c}
+                text="Open document"
+                label={`Read full document for ${name}`}
+                onPress={() => setMode("read")}
+              />
+            </View>
+          </>
+        ) : (
+          <>
+            <Text style={meta}>No lane document yet.</Text>
+            {canEdit && (
+              <View style={row}>
+                <Button
+                  small
+                  c={c}
+                  text="Write document"
+                  label={`Write document for ${name}`}
+                  disabled={busy}
+                  onPress={startEdit}
+                />
+              </View>
+            )}
+          </>
         )}
-        <View style={row}>
-          <Button
-            small
-            c={c}
-            text="Read full document"
-            label={`Read full document for ${name}`}
-            onPress={() => setMode("read")}
-          />
-          {canEdit && (
-            <Button
-              small
-              c={c}
-              text={draft ? "Continue editing" : "Edit"}
-              label={`${draft ? "Continue editing" : "Edit"} the ${name} document`}
-              disabled={busy}
-              onPress={startEdit}
-            />
-          )}
-        </View>
       </View>
     );
   };
 
-  const documentPreview = (
-    <View accessibilityLabel="Lane document" style={{ gap: space.xs }}>
-      <View style={{ ...row, justifyContent: "space-between" }}>
-        <Text accessibilityRole="header" style={{ ...text, fontWeight: "600" }}>
-          Document{latest ? ` · version ${latest.version}` : ""}
-        </Text>
-        {latest && (
-          <Text style={meta}>
-            {latest.author} · {formatLocalDateTime(latest.createdAt)}
-          </Text>
-        )}
-      </View>
-      <View style={panel}>{documentBody()}</View>
+  const glance = (label: string, value: string) => (
+    <View
+      key={label}
+      accessible
+      accessibilityLabel={`${label}: ${value}`}
+      style={{
+        flexDirection: "row",
+        justifyContent: "space-between",
+        gap: space.xs,
+      }}
+    >
+      <Text style={{ ...text, color: r.muted }}>{label}</Text>
+      <Text style={{ ...text, fontWeight: "500" }}>{value}</Text>
+    </View>
+  );
+  const atAGlance = (
+    <View accessibilityLabel="At a glance" style={box}>
+      <Text style={{ ...text, fontWeight: "600" }}>At a glance</Text>
+      {glance("Live tasks", String(liveTotal))}
+      {attention > 0 && glance("Need you", String(attention))}
+      {glance("Finished", lane.terminalCount.toLocaleString())}
+      {glance(
+        "Leads waiting",
+        leadItems === undefined ? "…" : String(leadItems.length),
+      )}
+      {glance(
+        "Papercuts waiting",
+        cutItems === undefined ? "…" : String(cutItems.length),
+      )}
+      {glance(
+        "Last activity",
+        lane.lastActivityAt ? decisionAge(lane.lastActivityAt) : "None yet",
+      )}
+    </View>
+  );
+  const plansBox = (
+    <View accessibilityLabel={`Plans ${name} is in`} style={box}>
+      <Text style={{ ...text, fontWeight: "600" }}>Plans it’s in</Text>
+      {!places.length && (
+        <Text style={meta}>No project lists this lane's repositories yet.</Text>
+      )}
+      {places.map((place) => {
+        const horizon = place.horizon
+          ? horizonTitle(place.horizon)
+          : "Not in the plan";
+        const content = (
+          <>
+            <Text style={{ ...text, color: r.muted, flexShrink: 1 }}>
+              {place.name}
+            </Text>
+            <Text style={{ ...text, fontWeight: "500" }}>{horizon}</Text>
+          </>
+        );
+        const frame = {
+          flexDirection: "row",
+          justifyContent: "space-between",
+          gap: space.xs,
+        } as const;
+        return onSelectProject && place.key !== context?.project ? (
+          <Pressable
+            key={place.key}
+            accessibilityRole="button"
+            accessibilityLabel={`Show the ${place.name} plan, ${horizon}`}
+            disabled={busy}
+            onPress={() => onSelectProject(place.key)}
+            style={frame}
+          >
+            {content}
+          </Pressable>
+        ) : (
+          <View
+            key={place.key}
+            accessible
+            accessibilityLabel={`${place.name}: ${horizon}`}
+            style={frame}
+          >
+            {content}
+          </View>
+        );
+      })}
     </View>
   );
 
@@ -906,121 +1059,194 @@ export function LaneScreen({
     </View>
   );
 
-  return (
-    <View accessibilityLabel={`Lane ${name}`} style={{ gap: space.md }}>
-      <View style={{ gap: space.xxs }}>
-        <Text style={meta}>Lane · {statusWord[lane.status]}</Text>
+  const header = (
+    <View
+      style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: space.md,
+      }}
+    >
+      <View style={{ gap: space.xs, flexShrink: 1, minWidth: 0 }}>
         <Text
           accessibilityRole="header"
           style={{
             color: r.foreground,
-            fontSize: type.section.fontSize,
-            lineHeight: type.section.lineHeight,
+            fontSize: type.page.fontSize,
+            lineHeight: type.page.lineHeight,
             fontWeight: "600",
           }}
         >
           {name}
         </Text>
-        {Boolean(lane.aim) && (
-          <Text selectable style={text}>
-            {lane.aim}
-          </Text>
-        )}
-        {/* The drained-lane row's Nucleus-raised provenance (nucleus#1515): the escalation it answers. */}
-        {lane.drain?.escalatedAt && (
-          <Text
-            accessibilityLabel={`Nucleus-raised: ${name} drained and escalated to you; the plan owner has not answered the close-out prompt`}
-            style={{ ...meta, color: r.warning }}
-          >
-            Nucleus-raised · drained, escalated to you{" "}
-            {decisionAge(lane.drain.escalatedAt)} · the plan owner has not
-            answered the close-out prompt
-          </Text>
-        )}
-      </View>
-      {shown === "preview" && (
-        <>
-          <LaneProjects
-            lane={lane}
-            projects={projects}
-            plans={plans}
-            selected={selected}
-            busy={busy}
-            onSelectProject={onSelectProject}
+        <View style={{ ...row, gap: space.xxs }}>
+          {context && (
+            <Pill tone="accent" text={horizonTitle(context.horizon)} c={c} />
+          )}
+          <Pill
+            tone={open ? "success" : "muted"}
+            text={
+              open ? (lane.status === "paused" ? "Paused" : "Open") : "Closed"
+            }
+            label={`Lane ${open ? (lane.status === "paused" ? "paused" : "open") : "closed"}`}
             c={c}
           />
-          <View
-            accessibilityLabel="Lane document and records"
-            style={{
-              flexDirection: compact ? "column" : "row",
-              flexWrap: "wrap",
-              gap: space.md,
-              alignItems: "flex-start",
-            }}
-          >
+          {others.map((place) => (
+            <Pill
+              key={place.key}
+              tone="muted"
+              text={`Also on ${place.name} (${horizonTitle(place.horizon!)})`}
+              c={c}
+            />
+          ))}
+        </View>
+      </View>
+      {shown === "preview" && (
+        <View style={row}>
+          {open && onSetStatus && (
+            <Button
+              small
+              c={c}
+              text="Close lane"
+              label={`Close lane ${name}`}
+              disabled={busy}
+              onPress={() => onSetStatus("done")}
+            />
+          )}
+          {canEdit && loaded && (
+            <Button
+              small
+              c={c}
+              text="Edit lane"
+              label={`Edit the ${name} document`}
+              disabled={busy}
+              onPress={startEdit}
+            />
+          )}
+        </View>
+      )}
+    </View>
+  );
+  const main = (
+    <View style={{ gap: space.lg }}>
+      <View accessibilityLabel="Finish line" style={{ gap: space.xs }}>
+        {sectionTitle("Finish line")}
+        <View style={box}>
+          <Text selectable style={text}>
+            {context?.doneWhen || "Not set"}
+          </Text>
+          {lane.keep && (
             <View
               style={{
-                flexGrow: 1,
-                flexShrink: 1,
-                minWidth: compact ? "100%" : 260,
-                maxWidth: "100%",
+                borderTopWidth: 1,
+                borderTopColor: r.border,
+                paddingTop: space.xs,
               }}
             >
-              {documentPreview}
+              <Text selectable style={{ ...text, color: r.muted }}>
+                <Text style={{ color: r.foreground, fontWeight: "500" }}>
+                  Why it’s still open:{" "}
+                </Text>
+                {lane.keep.reason}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+      {Boolean(context?.note) && (
+        <View accessibilityLabel="Latest status" style={{ gap: space.xs }}>
+          {sectionTitle("Latest status")}
+          <View style={box}>
+            <Text selectable style={text}>
+              {context!.note}
+            </Text>
+            {(context!.author || context!.savedAt) && (
+              <Text style={meta}>
+                {[
+                  context!.author,
+                  context!.savedAt ? decisionAge(context!.savedAt) : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+            )}
+          </View>
+        </View>
+      )}
+      {inFlight}
+      {waiting}
+      {finished}
+    </View>
+  );
+  const sideColumn = (
+    <View style={{ gap: space.sm }}>
+      {documentBox()}
+      {atAGlance}
+      {plansBox}
+    </View>
+  );
+
+  return (
+    <View
+      accessibilityLabel={`Lane ${name}`}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      style={{ gap: space.md }}
+    >
+      {header}
+      {/* The drained-lane row's Nucleus-raised provenance (nucleus#1515): the escalation it answers. */}
+      {lane.drain?.escalatedAt && (
+        <Text
+          accessibilityLabel={`Nucleus-raised: ${name} drained and escalated to you; the plan owner has not answered the close-out prompt`}
+          style={{ ...meta, color: r.warning }}
+        >
+          Nucleus-raised · drained, escalated to you{" "}
+          {decisionAge(lane.drain.escalatedAt)} · the plan owner has not
+          answered the close-out prompt
+        </Text>
+      )}
+      {shown === "preview" && (
+        <>
+          <View accessibilityLabel="Aim" style={box}>
+            <Text
+              style={{
+                ...meta,
+                textTransform: "uppercase",
+                letterSpacing: planningRead.eyebrowTracking,
+              }}
+            >
+              Aim
+            </Text>
+            <Text
+              selectable
+              style={{
+                color: r.foreground,
+                fontSize: type.section.fontSize,
+                lineHeight: type.section.lineHeight,
+              }}
+            >
+              {lane.aim}
+            </Text>
+          </View>
+          <View
+            accessibilityLabel="Lane sections"
+            style={{
+              flexDirection: side ? "row" : "column",
+              alignItems: "flex-start",
+              gap: space.lg,
+            }}
+          >
+            <View style={{ flex: side ? 1 : undefined, minWidth: 0, alignSelf: "stretch" }}>
+              {main}
             </View>
             <View
               style={{
-                flexGrow: 1,
-                flexShrink: 1,
-                minWidth: compact ? "100%" : 260,
-                maxWidth: "100%",
-                gap: space.xs,
+                width: side ? planningRead.side : undefined,
+                alignSelf: "stretch",
               }}
             >
-              <View style={row}>
-                {segment("work", "Work", liveTotal)}
-                {segment("leads", "Leads", leadItems?.length)}
-                {segment("papercuts", "Papercuts", cutItems?.length)}
-              </View>
-              <View style={panel}>
-                {section === "work" && workList}
-                {section === "leads" && (
-                  <RecordList
-                    read={leadRead}
-                    label="leads"
-                    empty="No open leads in this lane."
-                    describe={(lead) => lead.preview.slice(0, 120)}
-                    shown={listShown.leads}
-                    onShowMore={() =>
-                      setListShown((value) => ({
-                        ...value,
-                        leads: value.leads + LANE_LIST_PAGE,
-                      }))
-                    }
-                    onOpen={(lead) => onOpenLead(lead)}
-                    onRetry={onRetryLeads}
-                    c={c}
-                  />
-                )}
-                {section === "papercuts" && (
-                  <RecordList
-                    read={cutRead}
-                    label="papercuts"
-                    empty="No open papercuts in this lane."
-                    describe={(lead) => lead.papercutArea ?? "Papercut"}
-                    shown={listShown.papercuts}
-                    onShowMore={() =>
-                      setListShown((value) => ({
-                        ...value,
-                        papercuts: value.papercuts + LANE_LIST_PAGE,
-                      }))
-                    }
-                    onOpen={(lead) => onOpenLead(lead)}
-                    onRetry={onRetryLeads}
-                    c={c}
-                  />
-                )}
-              </View>
+              {sideColumn}
             </View>
           </View>
         </>
