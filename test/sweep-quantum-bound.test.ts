@@ -510,20 +510,17 @@ test("real catch-up sweep rotates past 25 permanently pending tasks to a later c
     ).sort((a, b) => a.task.id.localeCompare(b.task.id));
     const last = tasks.at(-1)!;
     f.agents.get(last.agentId)!.owned = true;
-    // After a service restart no finish is fresh: the slow cursor alone walks the
-    // finished history, one page per pass (Spec 069 §4).
+    // After a service restart no finish is fresh: the start-up backlog (owed
+    // cleanups, most recent first) and the slow cursor each take one page per pass
+    // (Spec 069 §4), so 25 pending tasks never hold the later candidate back for
+    // longer than the next pass.
     f.store.takeRecentlyFinishedHostTasks(f.hosts[0], tasks.length);
     assert.equal((await f.engine.auditPass(false)).fault, null);
-    assert.equal(
-      f.calls.includes(last.agentId),
-      false,
-      "the later candidate is outside the first page",
-    );
     assert.equal((await f.engine.auditPass(false)).fault, null);
     assert.deepEqual(
       f.calls,
       [last.agentId],
-      "the next page reaches the later owned thread",
+      "within two passes the later owned thread is reached, once",
     );
     assert.ok(f.store.getMeta(finishedThreadCleanupKey(last.task.id)));
     assert.equal(
