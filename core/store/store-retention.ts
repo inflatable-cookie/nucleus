@@ -519,6 +519,14 @@ export class StoreRetention {
       task.resolution.workspaceRetirement.state !== "archived"
     )
       return false;
+    // nucleus#1548: an owed branch deletion is a durable effect like any other; its
+    // task row is not history until the delete settles or is deliberately kept.
+    if (
+      task.resolution.branchCleanups.some(
+        (record) => record.state === "intent" || record.state === "wait",
+      )
+    )
+      return false;
     if (
       task.resolution.runtimeRetirements.some(
         (record) => record.state === "pending" || record.state === "failed",

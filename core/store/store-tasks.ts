@@ -730,6 +730,14 @@ export class StoreTasks {
         )
       )
         return true;
+      // nucleus#1548: a Nucleus-created branch closeout still owes, or whose delete
+      // it must observe first, keeps the finished task in the cleanup scan.
+      if (
+        task.resolution.branchCleanups.some(
+          (record) => record.state === "intent" || record.state === "wait",
+        )
+      )
+        return true;
       // Spec 017: a merged review-entry task's preserved external workspace owes
       // its catalog archive pass until every registration the last complete
       // inventory observed is settled. It is not a Queue-owned workspace archive,

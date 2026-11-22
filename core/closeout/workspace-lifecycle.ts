@@ -48,6 +48,7 @@ import { ArchiveScheduler } from "./archive-scheduler";
 import { runTerminalHooks } from "./terminal-hooks";
 import { missingOriginHasPlanner } from "../questions/origin";
 import { admissionOf } from "../host/admission";
+import { cleanupTerminalBranches } from "./branch-cleanup";
 
 export type LifecycleContext = Pick<
   Engine,
@@ -745,6 +746,14 @@ export class Lifecycle {
       await this.settleArchivedBuildOutput(task, workspace);
       task = this.store.task(task.id);
     }
+    // nucleus#1548: the merge made the Nucleus-created branch disposable, and the
+    // worktree that carried it is gone, so closeout deletes it here. The cleanup
+    // records its own intent, cause and retry; it never blocks the task's `done`.
+    await cleanupTerminalBranches(
+      { store: this.store, adapter: this.adapter },
+      task.id,
+      { retry: Boolean(retryWorkspaceId) },
+    );
   }
   async enqueuePass(scopedHost?: string): Promise<void> {
     return this.scheduler.enqueuePass(scopedHost);

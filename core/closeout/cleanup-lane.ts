@@ -142,9 +142,15 @@ export class CleanupLane {
     }
     const due =
       task.phase === "done" && !task.removedAt
-        ? task.resolution.workspaceArchiveRetries
-            .map((retry) => Date.parse(retry.nextAttemptAt))
-            .filter(Number.isFinite)
+        ? [
+            ...task.resolution.workspaceArchiveRetries.map((retry) =>
+              Date.parse(retry.nextAttemptAt),
+            ),
+            // nucleus#1548: an owed branch deletion wakes on its own deadline too.
+            ...task.resolution.branchCleanups.map((record) =>
+              record.nextAttemptAt ? Date.parse(record.nextAttemptAt) : Number.NaN,
+            ),
+          ].filter(Number.isFinite)
         : [];
     let follow = this.retryFollowUps.get(taskId);
     if (!due.length || this.stopped) {

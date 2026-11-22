@@ -721,7 +721,9 @@ lives in `operator-question.ts`. Delegates remain on Resolution; Engine keeps
 **Lifecycle** (`core/closeout/workspace-lifecycle.ts`). Workspace cleanup and post-merge
 workspace recovery, including terminal archive source, archive retries, and
 the consumer retention gate the engine calls. Enforces [Cleanup](#cleanup).
-Engine constructs it.
+Engine constructs it. The branch the same pass deletes is
+`core/closeout/branch-cleanup.ts`'s: it owns the record, the observation and
+the safety rules, and the Lifecycle gives it the store and adapter.
 
 **OriginRouting** (`core/questions/origin.ts`). Keeps the one task-owner field exact
 and records a missing origin while delivery is still owed, with planner notice
@@ -2757,6 +2759,16 @@ movement invalidates source approval and preserves the normal readiness gates.
   `pr`, merge, review and closeout absent. A matching unanswered
   report-disposition escalation is answered in the same transaction. Portable
   outcomes carry the artifact in `reason`.
+- Closeout cleans up the branch it created for the task once the worktree that
+  carried it is gone: the ordinary `ns-<task>` branch in the registered checkout
+  and on the forge, and a retained reviewer's local `ns-review-<run>` view
+  branch. It deletes only a branch whose every observed head the merged commit
+  contains, and never the default or integration branch, a branch with another
+  open PR, or one another task or worktree still uses; any other answer is
+  recorded as kept with its cause. Cancelled tasks keep their branches, because
+  their work may be the only copy. `core/closeout/branch-cleanup.ts` owns the
+  rule and [Terminal workspace cleanup](#terminal-workspace-cleanup) the pass it
+  runs in.
 
 ### Repository hooks
 
@@ -3378,6 +3390,14 @@ after the task finishes.
   only a running thread (active turn or pending permission) makes it wait. No
   unreleased task run may remain. Uncommitted files, unexpected or unpublished
   commits and changed Git ownership preserve it.
+- After that archive removes the worktree, the same pass deletes the task branch
+  ([Closeout and outcomes](#closeout-and-outcomes)). The deletion records its
+  intent before delivery and observes the branch before any retry, so an unknown
+  answer is never re-sent blindly. Its record carries the cause, attempt count
+  and next deadline, appears in the task's closeout facts, and leaves the task in
+  the cleanup scan until it settles; the existing `retry_effect` on a terminal
+  workspace bypasses the deadline and re-proves the same rules. A failed or
+  deliberately kept branch never blocks closeout or the task reaching `done`.
 - A finished task's active recovery episode does not outlive its runs. Once no
   recovery run is unreleased, the terminal cleanup pass closes the episode:
   `recoveryActive` clears, the episode and its incident resolve, the stop that

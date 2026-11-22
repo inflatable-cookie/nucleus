@@ -114,6 +114,33 @@ export function RunsCloseout({
                   : ""}
               </Text>
             ))}
+          {task.resolution.branchCleanups
+            .filter((record) => record.state !== "deleted")
+            .map((record) => (
+              <Text
+                key={`branch-${record.branch}`}
+                selectable
+                accessibilityLabel={record.detail}
+                style={
+                  record.state === "kept"
+                    ? muted(c)
+                    : {
+                        color: c.statusWarning,
+                        fontSize: typeScale.metadata.fontSize,
+                      }
+                }
+              >
+                Branch {record.branch}{" "}
+                {record.state === "kept" ? "kept" : "cleanup waiting"}:{" "}
+                {record.detail}
+                {record.state !== "kept"
+                  ? ` · attempts ${record.attempts}`
+                  : ""}
+                {record.nextAttemptAt
+                  ? ` · next retry ${new Date(record.nextAttemptAt).toLocaleString()}`
+                  : ""}
+              </Text>
+            ))}
           {task.resolution.runtimeRetirements
             .filter((record) => record.state === "failed")
             .map((record) => (
