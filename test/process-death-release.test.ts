@@ -7,9 +7,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
-import {
-  rememberParticipantProcessTable,
-} from "../core/machine/participant-process-observation";
+import { rememberParticipantProcessTable } from "../core/machine/participant-process-observation";
 import { processDeathProof } from "../core/recovery/process-death";
 import {
   runSchema,
@@ -117,7 +115,11 @@ function fixture() {
     runId: string,
     agentId: string,
     turnId: string | null,
-    process: { pid: number; startIdentity: string; seenAt: number | null } | null,
+    process: {
+      pid: number;
+      startIdentity: string;
+      seenAt: number | null;
+    } | null,
   ): ParticipantActivity => ({
     runId,
     agentId,
@@ -202,6 +204,7 @@ function fixture() {
     profiles: async () => [worker, reviewer, coordinator],
     validate: async () => base,
     createWorkspace: async () => ({ id: "workspace", directory: "/worktree" }),
+    verifyWorkspace: async (candidate: Task) => candidate.branch,
     findWorkspaces: async () => [],
     findAgents: async () => [],
     findRunAgents: async () => [],
@@ -320,7 +323,8 @@ test("a reviewer whose recorded process started before this boot is released and
       ),
     });
     assert.equal(
-      processDeathProof(f.store, f.current(), f.store.run("review-run"))?.evidence,
+      processDeathProof(f.store, f.current(), f.store.run("review-run"))
+        ?.evidence,
       "pre_boot",
       "the recorded process predates this boot",
     );
@@ -341,7 +345,11 @@ test("a reviewer whose recorded process started before this boot is released and
     );
 
     const launched = f.createdRuns.filter((run) => run.role === "reviewer");
-    assert.equal(launched.length, 1, "ordinary admission relaunches the reviewer");
+    assert.equal(
+      launched.length,
+      1,
+      "ordinary admission relaunches the reviewer",
+    );
     assert.notEqual(
       launched[0]!.agentId,
       "review-agent",
@@ -358,7 +366,11 @@ test("a reused PID with a different start identity is released", async () => {
   const f = fixture();
   try {
     const at = Date.now();
-    const process = { pid: 5151, startIdentity: "5151@boot-9:7", seenAt: at - 5_000 };
+    const process = {
+      pid: 5151,
+      startIdentity: "5151@boot-9:7",
+      seenAt: at - 5_000,
+    };
     f.store.putRun({
       ...f.store.run("review-run")!,
       participantActivity: f.participantActivity(
@@ -424,7 +436,11 @@ test("an unreadable process table keeps the run and records the stall", async ()
 
     await f.engine.wake();
 
-    assert.equal(f.store.run("review-run")!.released, false, "the run keeps its lease");
+    assert.equal(
+      f.store.run("review-run")!.released,
+      false,
+      "the run keeps its lease",
+    );
     assert.equal(f.events("participant_process_gone").length, 0);
     assert.equal(f.current().resolution.stop?.reason, "run_stalled");
     assert.equal(f.current().resolution.attention, true);
@@ -512,7 +528,11 @@ test("two writers: only the dead reviewer is released; the retained worker keeps
         "worker-run",
         "worker",
         "worker-turn-1",
-        { pid: 9494, startIdentity: "9494@boot-9:31", seenAt: Date.now() - 5_000 },
+        {
+          pid: 9494,
+          startIdentity: "9494@boot-9:31",
+          seenAt: Date.now() - 5_000,
+        },
       ),
     });
     rememberParticipantProcessTable(
@@ -536,12 +556,104 @@ test("two writers: only the dead reviewer is released; the retained worker keeps
 
     assert.equal(f.store.run("review-run")!.released, true);
     const after = f.current();
-    assert.equal(after.agentId, "worker", "the retained worker keeps its thread");
+    assert.equal(
+      after.agentId,
+      "worker",
+      "the retained worker keeps its thread",
+    );
     assert.equal(after.runId, "worker-run");
     assert.equal(
       f.events("participant_process_gone").length,
       1,
       "only the participant whose own process is gone is released",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a released worker returns to ordinary dispatch so the worker relaunches", async () => {
+  const f = fixture();
+  try {
+    // A working task whose own retained worker process predates this boot. The
+    // reviewer run is released first so only the worker is under observation.
+    f.store.putRun({
+      ...f.store.run("review-run")!,
+      released: true,
+      active: false,
+      status: "superseded",
+    });
+    const seenAt = Date.now() - uptime() * 1_000 - 60_000;
+    f.store.update(f.submitted.id, {
+      phase: "working",
+      completion: null,
+      prHead: null,
+      prUrl: null,
+      participantActivity: f.participantActivity(
+        "worker-run",
+        "worker",
+        "worker-turn-1",
+        {
+          pid: 4343,
+          startIdentity: `4343@${new Date(seenAt).toISOString()}`,
+          seenAt,
+        },
+      ),
+      resolution: {
+        ...f.current().resolution,
+        currentRunId: null,
+        reviewerAgentId: null,
+        reviewerProfile: null,
+      },
+    });
+    f.states.set("worker", {
+      id: "worker",
+      workspaceId: "workspace",
+      status: "running",
+      active: true,
+      permissions: false,
+      error: "",
+      provider: "test",
+      model: worker.model,
+      updatedAt: minutesAgo(40),
+      turnStartedAt: minutesAgo(41),
+      activeTurnId: "worker-turn-1",
+    });
+
+    await f.engine.wake();
+
+    const current = f.current();
+    const proof = f.events("participant_process_gone");
+    assert.equal(proof.length, 1, "the worker release records its proof");
+    assert.match(proof[0]!.detail, /"evidence":"pre_boot"/);
+    assert.equal(
+      current.resolution.stop?.reason === "run_stalled",
+      false,
+      "a released worker is not a stall stop",
+    );
+    // The dead binding is gone and the task is not left with nothing to run: the
+    // release returns it to ordinary dispatch, which admits a new worker.
+    assert.notEqual(
+      current.runId,
+      "worker-run",
+      "the released worker binding is cleared",
+    );
+    assert.equal(
+      current.agentId,
+      `agent-${f.submitted.id}`,
+      "ordinary dispatch admits a fresh worker after the release",
+    );
+    assert.equal(current.phase, "working");
+    assert.equal(
+      current.resolution.stop,
+      null,
+      "the task is running, not parked",
+    );
+    assert.match(current.reason, /Worker running/);
+    assert.equal(
+      f.events("worker_process_gone_redispatch").length,
+      1,
+      "the redispatch is recorded beside the proof",
     );
   } finally {
     await f.close();

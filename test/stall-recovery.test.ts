@@ -633,7 +633,8 @@ test("a pending stall that ends is settled only once before escalation", async (
   storePendingStallEpisode(f);
   assert.equal(f.store.task(f.task.id).resolution.recovery?.status, "pending");
   f.setObservation(running());
-  await f.engine.resolution.recovery.pass(f.task.id);  const settled = f.store.task(f.task.id);
+  await f.engine.resolution.recovery.pass(f.task.id);
+  const settled = f.store.task(f.task.id);
   assert.equal(settled.resolution.recovery?.status, "resolved");
   await f.engine.resolution.recovery.pass(f.task.id);
   await f.engine.resolution.recovery.pass(f.task.id);

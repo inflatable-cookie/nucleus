@@ -15,25 +15,37 @@ type ProcessTable = {
 let lastRead = { at: 0, table: null as ProcessTable | null };
 
 /** Keep the last answer from the existing local process reader, including unreadable answers. */
-export function rememberParticipantProcessTable(processes: readonly HostProcessFact[] | null, at: number, enumeratedPids?: ReadonlySet<number>): void {
+export function rememberParticipantProcessTable(
+  processes: readonly HostProcessFact[] | null,
+  at: number,
+  enumeratedPids?: ReadonlySet<number>,
+): void {
   if (at < lastRead.at) return;
   if (!processes) {
     lastRead = { at, table: null };
     return;
   }
-  const byPid = new Map(processes.map(process => [process.pid, process]));
+  const byPid = new Map(processes.map((process) => [process.pid, process]));
   const providers = new Map<string, ParticipantProcess | null>();
   for (const process of processes) {
     if (!process.command.includes("mcp-report.mjs")) continue;
     const args = commandArgv(process.command);
-    if (argvBase(args[0]) !== "node" || argvBase(args[1]) !== "mcp-report.mjs") continue;
+    if (argvBase(args[0]) !== "node" || argvBase(args[1]) !== "mcp-report.mjs")
+      continue;
     const runId = /^mcp-(.+)\.json$/.exec(argvBase(args[2]) ?? "")?.[1];
     if (!runId) continue;
     const provider = process.ppid ? byPid.get(process.ppid) : undefined;
     const identity = provider?.startIdentity;
-    providers.set(runId, !providers.has(runId) && provider && identity && startIdentityProves(identity) && !zombie(provider)
-      ? { pid: provider.pid, startIdentity: identity, seenAt: at }
-      : null);
+    providers.set(
+      runId,
+      !providers.has(runId) &&
+        provider &&
+        identity &&
+        startIdentityProves(identity) &&
+        !zombie(provider)
+        ? { pid: provider.pid, startIdentity: identity, seenAt: at }
+        : null,
+    );
   }
   lastRead = { at, table: { at, byPid, providers, enumeratedPids } };
 }
@@ -44,9 +56,14 @@ function zombie(process: HostProcessFact): boolean {
 
 const MAX_SAMPLE_AGE_MS = 60_000;
 
-export function observedParticipantProcess(runId: string, now = Date.now()): ParticipantProcess | null {
+export function observedParticipantProcess(
+  runId: string,
+  now = Date.now(),
+): ParticipantProcess | null {
   const table = lastRead.table;
-  return table && now - table.at < MAX_SAMPLE_AGE_MS ? table.providers.get(runId) ?? null : null;
+  return table && now - table.at < MAX_SAMPLE_AGE_MS
+    ? (table.providers.get(runId) ?? null)
+    : null;
 }
 
 /**
@@ -76,20 +93,28 @@ function processVerdict(
   if (!recorded) return { state: "unknown" };
   // The boot estimate and process start reads can have whole-second precision.
   const darwinStart = /@([0-9]{4}-[^@]+Z)$/.exec(recorded.startIdentity)?.[1];
-  const seenAt = recorded.seenAt ?? (darwinStart ? Date.parse(darwinStart) : null);
+  const seenAt =
+    recorded.seenAt ?? (darwinStart ? Date.parse(darwinStart) : null);
   if (seenAt !== null && seenAt < bootAt - 2_000)
     return { state: "gone", evidence: "pre_boot" };
-  if (!table || (seenAt !== null && table.at < seenAt)) return { state: "unknown" };
+  if (!table || (seenAt !== null && table.at < seenAt))
+    return { state: "unknown" };
   const observed = table.byPid.get(recorded.pid);
   if (!observed)
     return table.enumeratedPids?.has(recorded.pid)
       ? { state: "unknown" }
       : { state: "gone", evidence: "pid_absent" };
   if (zombie(observed)) return { state: "gone", evidence: "zombie" };
-  if (!startIdentityProves(observed.startIdentity) || !startIdentityProves(recorded.startIdentity)) return { state: "unknown" };
+  if (
+    !startIdentityProves(observed.startIdentity) ||
+    !startIdentityProves(recorded.startIdentity)
+  )
+    return { state: "unknown" };
   if (!startIdentityMatches(recorded.startIdentity, observed.startIdentity))
     return { state: "gone", evidence: "start_identity_changed" };
-  return now - table.at < MAX_SAMPLE_AGE_MS ? { state: "alive" } : { state: "unknown" };
+  return now - table.at < MAX_SAMPLE_AGE_MS
+    ? { state: "alive" }
+    : { state: "unknown" };
 }
 
 /** A process observed before this boot is gone even when the current table cannot be read. */

@@ -692,7 +692,9 @@ export class CoordinatorRoute {
         return null;
       }
       if (
-        (!mechanicalStallDue && !stalledTurnDue && !(await this.resolution.lease(t))) ||
+        (!mechanicalStallDue &&
+          !stalledTurnDue &&
+          !(await this.resolution.lease(t))) ||
         this.resolution.startsNoRuns()
       )
         return null;

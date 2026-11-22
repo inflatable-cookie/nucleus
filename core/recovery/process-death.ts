@@ -6,7 +6,11 @@ import {
 import { recordedRunProvider } from "../machine/run-process-hosts";
 import type { Store } from "../store/store";
 import { releasePlan } from "../verbs/explicit-resolution";
-import type { ParticipantActivity, ParticipantProcess } from "../../shared/schema/task-activity";
+import { prIdentity } from "../verbs/owner-facts";
+import type {
+  ParticipantActivity,
+  ParticipantProcess,
+} from "../../shared/schema/task-activity";
 import type { Run, Task } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import type { ExplicitResolution } from "../../shared/schema/task-control";
@@ -25,6 +29,12 @@ import type { ExplicitResolution } from "../../shared/schema/task-control";
  * unreadable process table, a sample older than the record, or an unprovable
  * start identity all prove nothing and leave the run leased. A run that already
  * reported is settled by its completion, never here.
+ *
+ * Releasing a run row (a reviewer, revision or coordinator) lets the role's own
+ * phase admission relaunch it. The initial worker is the task's own binding and
+ * has no such admission, so its release returns the task to ordinary dispatch on
+ * the retained worktree; a worker that already has PR identity instead records a
+ * wait naming its exit, because initial dispatch is not that task's next step.
  */
 
 /** The proof one release names, kept in the event that records it. */
@@ -39,15 +49,21 @@ export interface ProcessDeathProof {
   evidence: ProcessDeathEvidence;
 }
 
-export type ProcessDeathContext = Pick<Engine, "store" | "host" | "withHost">;
+export type ProcessDeathContext = Pick<
+  Engine,
+  "store" | "host" | "resolution" | "withHost"
+>;
 
 function boundActivity(
   activity: ParticipantActivity | null | undefined,
   runId: string | null | undefined,
   agentId: string | null | undefined,
 ): ParticipantActivity | null {
-  return activity && runId && agentId &&
-    activity.runId === runId && activity.agentId === agentId
+  return activity &&
+    runId &&
+    agentId &&
+    activity.runId === runId &&
+    activity.agentId === agentId
     ? activity
     : null;
 }
@@ -67,7 +83,9 @@ export function recordedParticipantProcess(
   const activity = run
     ? boundActivity(run.participantActivity, run.id, run.agentId)
     : boundActivity(task.participantActivity, task.runId, task.agentId);
-  return activity?.process ?? recordedRunProvider(store, { taskId: task.id, runId });
+  return (
+    activity?.process ?? recordedRunProvider(store, { taskId: task.id, runId })
+  );
 }
 
 /**
@@ -128,7 +146,8 @@ export async function releaseGoneProcess(
   if (dispatchBlocked(current)) return false;
   const target = run ? store.run(run.id) : null;
   if (run) {
-    if (!target || target.taskId !== current.id || target.released) return false;
+    if (!target || target.taskId !== current.id || target.released)
+      return false;
     // A run that already reported is settled by its completion, not by this rule.
     if (target.completion) return false;
   } else {
@@ -138,7 +157,8 @@ export async function releaseGoneProcess(
   const proof = processDeathProof(store, current, target);
   if (!proof) return false;
   const version = current.version;
-  const reason = `Nucleus released this run on proof of process death (Spec 068): ${processDeathDetail(proof)}. Ordinary admission relaunches the role.`;
+  const detail = processDeathDetail(proof);
+  const reason = `Nucleus released this run on proof of process death (Spec 068): ${detail}. Ordinary admission relaunches the role.`;
   const input: Extract<ExplicitResolution, { action: "run.release" }> = {
     taskId: current.id,
     version,
@@ -158,24 +178,53 @@ export async function releaseGoneProcess(
       if (latest.version !== version) return null;
       const release = releasePlan(engine, latest, input);
       const { patch } = release.apply();
-      store.update(latest.id, patch ?? {}, "owner_resolution", JSON.stringify({
-        command: "run.release",
-        arguments: { run: proof.runId },
-        caller: "queue",
-        source: "queue",
-        reason,
-        warnings: release.warnings.map((warning) => warning.id),
-        accepted: input.accept,
-        process: proof,
-      }));
+      const released = store.update(
+        latest.id,
+        patch ?? {},
+        "owner_resolution",
+        JSON.stringify({
+          command: "run.release",
+          arguments: { run: proof.runId },
+          caller: "queue",
+          source: "queue",
+          reason,
+          warnings: release.warnings.map((warning) => warning.id),
+          accepted: input.accept,
+          process: proof,
+        }),
+      );
       store.event(latest.id, "participant_process_gone", JSON.stringify(proof));
+      if (run) return release;
+      // The released run was this task's own worker binding, and no phase
+      // admission owns a `working` task with no worker. Continue the same way an
+      // owner restart of a worker with no live thread does: a task with no PR
+      // identity and no completion returns to ordinary dispatch on its retained
+      // worktree, and anything further along records the wait that names its exit.
+      if (!prIdentity(released) && !released.completion) {
+        engine.resolution.returnToDispatch(
+          released,
+          false,
+          `${detail}. The worker returned to ordinary dispatch on its retained worktree.`,
+          "worker_process_gone_redispatch",
+        );
+      } else {
+        engine.resolution.waiting(
+          released,
+          `${detail}. The worker run is released; restart role=worker continues this task's retained work.`,
+          "lifecycle",
+          { suggestedVerbs: ["restart"] },
+        );
+      }
       return release;
     });
   } catch (error) {
     store.event(
       current.id,
       "participant_process_release_refused",
-      `${proof.runId}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000),
+      `${proof.runId}: ${error instanceof Error ? error.message : String(error)}`.slice(
+        0,
+        4000,
+      ),
     );
     return false;
   }

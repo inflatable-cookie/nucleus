@@ -2021,10 +2021,15 @@ review or merge credit; live participants and unsettled effects remain fences.
   a different process now holds that PID and start identity, it is a zombie, or
   it started before the machine's last boot — Nucleus releases that run through
   the ordinary `run.release` plan, records `participant_process_gone` with the
-  proof, and ordinary admission relaunches the role (the retained worker thread
-  when it is reachable, a fresh thread for a reviewer). An unreadable or partial
-  process table, an unproven start identity and a live process prove nothing and
-  keep the run leased ([Spec 068](../specs/068-self-healing.md) §3).
+  proof, and ordinary admission continues. A released run row (reviewer,
+  revision, closeout) lets its own phase admission relaunch it: a revision on
+  the retained worker thread, a fresh reviewer thread. The initial worker is
+  the task's own binding and has no phase admission, so its release returns the
+  task to ordinary dispatch on its retained worktree (`phase=queued`, one
+  `worker_process_gone_redispatch` event); a worker that already has PR identity
+  instead records a wait naming `restart`. An unreadable or partial process
+  table, an unproven start identity and a live process prove nothing and keep
+  the run leased ([Spec 068](../specs/068-self-healing.md) §3).
 - A `run_stalled` stop names its own subject. That participant's idleness is not
   a precondition for the task's coordinator: stall detection recorded the stop
   after the stall window elapsed, so the coordinator is admitted while the host

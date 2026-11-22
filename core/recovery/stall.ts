@@ -1,5 +1,8 @@
 import { endsStopOnReason, stopClearedPatch } from "../../shared/task-stop";
-import { observeRunningTool, recordActivityTool } from "../telemetry/task-activity-observation";
+import {
+  observeRunningTool,
+  recordActivityTool,
+} from "../telemetry/task-activity-observation";
 import type { ParticipantActivity } from "../../shared/schema/task-activity";
 import type {
   TimelineEntry,
@@ -217,7 +220,13 @@ export class Stalls {
   /** Per-agent coalescing for timeline peeks; the cached verdict holds for the window so repeated observations agree. */
   private shellPeeks = new Map<
     string,
-    { at: number; notice: string | null; live: boolean; turnId: string | null; tool?: ParticipantActivity["tool"] }
+    {
+      at: number;
+      notice: string | null;
+      live: boolean;
+      turnId: string | null;
+      tool?: ParticipantActivity["tool"];
+    }
   >();
   /** How long one peek's verdict is reused; tests shorten it to drive successive peeks. */
   peekTtlMs = 60_000;
@@ -259,7 +268,14 @@ export class Stalls {
     if (!runId) return null;
     const peek = await this.shellNotice(current, role, state);
     if (peek.tool !== undefined && peek.turnId === (state.activeTurnId ?? null))
-      recordActivityTool(this.store, t.id, runId, state.id, peek.turnId, peek.tool);
+      recordActivityTool(
+        this.store,
+        t.id,
+        runId,
+        state.id,
+        peek.turnId,
+        peek.tool,
+      );
     const shellNotice = peek.notice;
     // No activity timestamp is no evidence of staleness; never judge without it.
     if (!state.updatedAt || !Number.isFinite(Date.parse(state.updatedAt)))
@@ -483,7 +499,12 @@ export class Stalls {
     t: Task,
     role: string,
     state: AgentObservation,
-  ): Promise<{ notice: string | null; live: boolean; turnId: string | null; tool?: ParticipantActivity["tool"] }> {
+  ): Promise<{
+    notice: string | null;
+    live: boolean;
+    turnId: string | null;
+    tool?: ParticipantActivity["tool"];
+  }> {
     const turnId = state.activeTurnId ?? null;
     const turnStartedAt = state.turnStartedAt
       ? Date.parse(state.turnStartedAt)
