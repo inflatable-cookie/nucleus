@@ -334,8 +334,15 @@ export async function resolveExplicitly(
   };
 }
 
+/**
+ * The engine ports the ordinary release plan needs: the store, the host surface
+ * and host routing. Narrow deliberately, so the same plan serves an owner
+ * `run.release` and the sweep's own proof-of-death release (Spec 068 §3).
+ */
+export type ReleasePlanContext = Pick<Engine, "store" | "host" | "withHost">;
+
 export function releasePlan(
-  engine: Engine,
+  engine: ReleasePlanContext,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.release" }>,
 ): Plan {

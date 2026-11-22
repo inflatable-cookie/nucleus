@@ -27,6 +27,7 @@ import {
   type IdentitySource,
 } from "../shared/host-kind";
 import { RecoverySettlement } from "./recovery/coordinator-settlement";
+import { releaseGoneProcess } from "./recovery/process-death";
 import { settleResponsibleFault } from "./recovery/responsible-fault";
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
@@ -1073,6 +1074,10 @@ export class Engine {
     this.resolution.recovery.setResponsibleFaultHandler((task) =>
       this.settleResponsibleFault(task),
     );
+    // Spec 068 §3: proof that a participant's own recorded process is gone
+    // releases its run through the ordinary `run.release` plan.
+    this.resolution.releaseGoneProcess = (task, run) =>
+      this.releaseGoneProcess(task, run);
     this.retirement = retirement ?? new RuntimeRetirementService(store);
     this.lifecycle = new Lifecycle(
       enginePorts(
@@ -1870,6 +1875,9 @@ export class Engine {
   }
   settleResponsibleFault(task: Task): Promise<boolean> {
     return settleResponsibleFault(this.recoverySettlement.engine, task);
+  }
+  releaseGoneProcess(task: Task, run: Run | null): Promise<boolean> {
+    return releaseGoneProcess(this, task, run);
   }
 
   completeTask(

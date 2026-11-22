@@ -49,6 +49,49 @@ export function observedParticipantProcess(runId: string, now = Date.now()): Par
   return table && now - table.at < MAX_SAMPLE_AGE_MS ? table.providers.get(runId) ?? null : null;
 }
 
+/**
+ * Positive proof that one recorded participant process is gone, or null when the
+ * facts do not prove it. An unreadable table, an unreadable start identity, a
+ * PID the table could not enumerate and a sample that predates the record are
+ * all no proof, never absence.
+ */
+export type ProcessDeathEvidence =
+  | "pre_boot"
+  | "pid_absent"
+  | "start_identity_changed"
+  | "zombie";
+
+type ProcessVerdict =
+  | { state: "gone"; evidence: ProcessDeathEvidence }
+  | { state: "alive" }
+  | { state: "unknown" };
+
+/** The one liveness verdict; both public reads below are views of it. */
+function processVerdict(
+  recorded: ParticipantProcess | null,
+  now: number,
+  bootAt: number,
+  table: ProcessTable | null,
+): ProcessVerdict {
+  if (!recorded) return { state: "unknown" };
+  // The boot estimate and process start reads can have whole-second precision.
+  const darwinStart = /@([0-9]{4}-[^@]+Z)$/.exec(recorded.startIdentity)?.[1];
+  const seenAt = recorded.seenAt ?? (darwinStart ? Date.parse(darwinStart) : null);
+  if (seenAt !== null && seenAt < bootAt - 2_000)
+    return { state: "gone", evidence: "pre_boot" };
+  if (!table || (seenAt !== null && table.at < seenAt)) return { state: "unknown" };
+  const observed = table.byPid.get(recorded.pid);
+  if (!observed)
+    return table.enumeratedPids?.has(recorded.pid)
+      ? { state: "unknown" }
+      : { state: "gone", evidence: "pid_absent" };
+  if (zombie(observed)) return { state: "gone", evidence: "zombie" };
+  if (!startIdentityProves(observed.startIdentity) || !startIdentityProves(recorded.startIdentity)) return { state: "unknown" };
+  if (!startIdentityMatches(recorded.startIdentity, observed.startIdentity))
+    return { state: "gone", evidence: "start_identity_changed" };
+  return now - table.at < MAX_SAMPLE_AGE_MS ? { state: "alive" } : { state: "unknown" };
+}
+
 /** A process observed before this boot is gone even when the current table cannot be read. */
 export function participantProcessLiveness(
   recorded: ParticipantProcess | null,
@@ -56,16 +99,16 @@ export function participantProcessLiveness(
   bootAt = now - uptime() * 1_000,
   table = lastRead.table,
 ): ProcessLiveness {
-  if (!recorded) return "unknown";
-  // The boot estimate and process start reads can have whole-second precision.
-  const darwinStart = /@([0-9]{4}-[^@]+Z)$/.exec(recorded.startIdentity)?.[1];
-  const seenAt = recorded.seenAt ?? (darwinStart ? Date.parse(darwinStart) : null);
-  if (seenAt !== null && seenAt < bootAt - 2_000) return "gone";
-  if (!table || (seenAt !== null && table.at < seenAt)) return "unknown";
-  const observed = table.byPid.get(recorded.pid);
-  if (!observed) return table.enumeratedPids?.has(recorded.pid) ? "unknown" : "gone";
-  if (zombie(observed)) return "gone";
-  if (!startIdentityProves(observed.startIdentity) || !startIdentityProves(recorded.startIdentity)) return "unknown";
-  if (!startIdentityMatches(recorded.startIdentity, observed.startIdentity)) return "gone";
-  return now - table.at < MAX_SAMPLE_AGE_MS ? "alive" : "unknown";
+  return processVerdict(recorded, now, bootAt, table).state;
+}
+
+/** Why this recorded process is gone, for the one event that names the proof. */
+export function participantProcessDeath(
+  recorded: ParticipantProcess | null,
+  now: number,
+  bootAt = now - uptime() * 1_000,
+  table = lastRead.table,
+): ProcessDeathEvidence | null {
+  const verdict = processVerdict(recorded, now, bootAt, table);
+  return verdict.state === "gone" ? verdict.evidence : null;
 }

@@ -264,6 +264,12 @@ export class CoordinatorRoute {
     // a coordinator can settle, so it never opens a coordinator episode.
     if (t.resolution.stop?.reason === "budget") return null;
     let mechanicalStallDue = false;
+    // Spec 068 §3 (nucleus#1552): a `run_stalled` stop names its own subject.
+    // That participant can never pass an idleness lease while its host still
+    // displays it as running, and its stall window elapsed before the stop was
+    // recorded, so the coordinator is admitted without waiting on it.
+    const stalledTurnDue =
+      t.resolution.stop?.reason === "run_stalled" && !t.failoverReason;
     if (t.resolution.stop && !t.resolution.stop.suggestedVerbs.length) {
       const stop = t.resolution.stop;
       const stallWindowMs =
@@ -686,7 +692,7 @@ export class CoordinatorRoute {
         return null;
       }
       if (
-        (!mechanicalStallDue && !(await this.resolution.lease(t))) ||
+        (!mechanicalStallDue && !stalledTurnDue && !(await this.resolution.lease(t))) ||
         this.resolution.startsNoRuns()
       )
         return null;

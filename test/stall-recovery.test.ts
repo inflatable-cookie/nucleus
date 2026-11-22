@@ -262,6 +262,12 @@ async function fixture(t: {
   const engine = new Engine(store, adapter, 0);
   engine.profiles.push(worker, coordinator, reviewer);
   engine.hooks.options.hostRuns = hostRuns;
+  // A coordinator admission leaves lane and host-run work behind it. Stop the
+  // engine and drain it before a test closes the store, so a late continuation
+  // reads no finalized statement.
+  t.after(async () => {
+    await engine.stop();
+  });
   return {
     root,
     repo,
@@ -321,12 +327,18 @@ test("a running agent with a stale activity timestamp goes to coordinator attent
   assert.match(current.reason, /looks stalled/);
   assert.equal(current.resolution.incident?.status, "reconciling");
   assert.equal(current.resolution.incident?.turnId, "worker-turn-1");
+  // Spec 068 §3 (nucleus#1552): the stalled participant is the subject of the
+  // stop, not an idleness barrier. The coordinator is admitted while Paseo
+  // still displays that worker as running.
   assert.equal(
     current.resolution.recovery?.status,
-    "pending",
-    "coordinator recovery waits on the live worker workspace lease",
+    "running",
+    "the coordinator is admitted without the live worker's idle lease",
   );
-  assert.equal(current.resolution.recovery?.runId, null);
+  assert.equal(
+    f.store.run(current.resolution.recovery!.runId!)?.role,
+    "recovery",
+  );
   // Repeated observations retain the same incident and do not retry the worker.
   const incidentId = current.resolution.incident?.id;
   f.setObservation(
@@ -335,23 +347,19 @@ test("a running agent with a stale activity timestamp goes to coordinator attent
   await f.engine.wake();
   assert.equal(f.store.task(f.task.id).resolution.incident?.id, incidentId);
   assert.equal(f.store.task(f.task.id).resolution.attention, true);
-  f.setObservation(
-    running({
-      active: false,
-      status: "idle",
-      updatedAt: new Date().toISOString(),
-    }),
-  );
-  await f.engine.resolution.recovery.route(f.store.task(f.task.id));
-  const recovered = f.store.task(f.task.id);
   assert.equal(
-    recovered.resolution.recovery?.status,
-    "running",
-    recovered.resolution.recovery?.summary,
+    f.store.task(f.task.id).resolution.recovery?.runId,
+    current.resolution.recovery?.runId,
+    "the same episode keeps its one coordinator run",
   );
+  // A resumed worker ends the episode instead of needing an owner verb.
+  f.setObservation(running());
+  await f.engine.resolution.recovery.pass(f.task.id);
+  const resumed = f.store.task(f.task.id);
   assert.equal(
-    f.store.run(recovered.resolution.recovery!.runId!)?.role,
-    "recovery",
+    resumed.resolution.incident?.id,
+    incidentId,
+    "the coordinator run still owns the one episode",
   );
 });
 
@@ -506,13 +514,89 @@ test("a live queued or running validation process does not mask a stale worker t
   assert.equal(current.resolution.incident?.cause, "stalled_turn");
 });
 
+/**
+ * A persisted pending stall episode, as an earlier pass leaves it when no
+ * coordinator has started: the recorded stop, its stalled-turn incident and the
+ * pending episode bound to it. Spec 068 §3 (nucleus#1552) admits the coordinator
+ * directly for a live run_stalled stop, so the pending-escalation rules below
+ * are exercised on this stored shape.
+ */
+function storePendingStallEpisode(
+  f: Fixture,
+  participant: {
+    role: "worker" | "reviewer";
+    runId: string;
+    agentId: string;
+    turnId: string;
+    phase: Task["phase"];
+  } = {
+    role: "worker",
+    runId: f.store.task(f.task.id).runId!,
+    agentId: "worker",
+    turnId: "worker-turn-1",
+    phase: "needs_attention",
+  },
+  since = minutesAgo(35),
+): void {
+  const current = f.store.task(f.task.id);
+  const incidentId = "stall-incident";
+  f.store.update(
+    f.task.id,
+    {
+      phase: participant.phase,
+      reason:
+        "The run looks stalled: no agent activity while Paseo still reports it running",
+      resolution: {
+        ...current.resolution,
+        attention: true,
+        stop: {
+          reason: "run_stalled",
+          detail:
+            "The run looks stalled: no agent activity while Paseo still reports it running",
+          since,
+          suggestedVerbs: ["restart"],
+        },
+        incident: {
+          id: incidentId,
+          role: participant.role,
+          runId: participant.runId,
+          turnId: participant.turnId,
+          fingerprint: "",
+          attempt: 0,
+          cause: "stalled_turn",
+          detail: "",
+          action: "",
+          status: "reconciling",
+          createdAt: since,
+          updatedAt: since,
+        },
+        recovery: {
+          id: "stall-episode",
+          key: "stalled-episode",
+          generation: current.coordinatorGeneration,
+          runId: null,
+          agentId: null,
+          status: "pending",
+          summary: "",
+          idleSince: null,
+          incidentId,
+          progress: null,
+        },
+      },
+    },
+    "recovery_pending",
+    "stalled turn recorded a pending recovery episode",
+  );
+}
+
 test("a stall escalation closes when the original run resumes before recovery acts", async (t) => {
   const f = await fixture(t);
   t.after(() => f.store.close());
+  storePendingStallEpisode(f);
+  // Still stalled while the bound runs out, so the episode escalates.
   f.setObservation(
     running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }),
   );
-  await f.engine.wake();
   (
     f.engine.resolution.recovery as unknown as { pendingBoundMs: number }
   ).pendingBoundMs = 0;
@@ -546,14 +630,10 @@ test("a stall escalation closes when the original run resumes before recovery ac
 test("a pending stall that ends is settled only once before escalation", async (t) => {
   const f = await fixture(t);
   t.after(() => f.store.close());
-  f.setObservation(
-    running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }),
-  );
-  await f.engine.wake();
+  storePendingStallEpisode(f);
   assert.equal(f.store.task(f.task.id).resolution.recovery?.status, "pending");
   f.setObservation(running());
-  await f.engine.resolution.recovery.pass(f.task.id);
-  const settled = f.store.task(f.task.id);
+  await f.engine.resolution.recovery.pass(f.task.id);  const settled = f.store.task(f.task.id);
   assert.equal(settled.resolution.recovery?.status, "resolved");
   await f.engine.resolution.recovery.pass(f.task.id);
   await f.engine.resolution.recovery.pass(f.task.id);
@@ -825,9 +905,14 @@ test("a revision stall escalation closes when that revision resumes", async (t) 
       turnStartedAt: minutesAgo(40),
     }),
   );
-  await f.engine.resolution.observe();
-  assert.equal(f.store.task(f.task.id).resolution.incident?.runId, runId);
-  await f.engine.resolution.recovery.route(f.store.task(f.task.id));
+  // A revision's stalled turn is worker work with the revision's own run identity.
+  storePendingStallEpisode(f, {
+    role: "worker",
+    runId,
+    agentId: "revision-worker",
+    turnId: "revision-turn-1",
+    phase: "changes_requested",
+  });
   (
     f.engine.resolution.recovery as unknown as { pendingBoundMs: number }
   ).pendingBoundMs = 0;

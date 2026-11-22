@@ -833,6 +833,7 @@ export class Resolution {
       "profiles",
       "recordStop",
       "recovery",
+      "releaseGoneProcess",
       "saveIncident",
       "store",
       "update",
@@ -3449,6 +3450,12 @@ export class Resolution {
   reapplyPendingReview(t: Task): Promise<"none" | "applied" | "blocked"> {
     return this.resultApplication.reapplyPendingReview(t);
   }
+  /**
+   * Engine-provided: release the participant whose own recorded process is
+   * provably gone, through the ordinary `run.release` plan (Spec 068 §3). A
+   * `Resolution` built without an engine reports no release.
+   */
+  releaseGoneProcess?: (task: Task, run: Run | null) => Promise<boolean>;
   gitTransientFailure?: (task: Task, error: unknown) => boolean;
   hostReadTransientFailure?: (
     task: Task,

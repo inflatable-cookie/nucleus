@@ -206,6 +206,7 @@ export type StallsContext = Pick<
   | "profiles"
   | "recordStop"
   | "recovery"
+  | "releaseGoneProcess"
   | "saveIncident"
   | "store"
   | "update"
@@ -268,6 +269,12 @@ export class Stalls {
       );
     const quietMs = Date.now() - Date.parse(state.updatedAt);
     if (quietMs < this.thresholdMs()) return shellNotice;
+    // Spec 068 §3 (nucleus#1552): a stalled turn whose recorded process is
+    // provably gone is death, not work. The release records its proof and lets
+    // ordinary admission relaunch the role. An unreadable process table or a
+    // live process proves nothing, so the run keeps its lease and the stall
+    // below still names it.
+    if (await this.resolution.releaseGoneProcess?.(current, run)) return null;
     const toolNotice =
       shellNotice ??
       (peek.live ? `${role} is waiting on a running tool` : null) ??

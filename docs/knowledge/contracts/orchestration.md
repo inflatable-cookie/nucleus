@@ -712,6 +712,12 @@ operator-authorized stop of one against a fresh observation. Enforces
 `runningShellCommand`, `liveToolIssue`, `noTurnLive`. Delegates remain on
 Resolution.
 
+**ProcessDeath** (`core/recovery/process-death.ts`). Answers whether one
+participant's recorded process is positively gone and, on that proof alone,
+releases that run through the ordinary `releasePlan`, recording
+`participant_process_gone`. Enforces [Liveness and
+reminders](#liveness-and-reminders). Pure: `processDeathProof`.
+
 **ProviderRefusals** (`core/recovery/provider-refusal.ts`). Proves a reviewer's
 provider refused its turn, then replaces the reviewer or records a finite
 blocker. Enforces [Routine faults](#routine-faults). Pures: `refusalGap`,
@@ -2010,10 +2016,25 @@ review or merge credit; live participants and unsettled effects remain fences.
   auto-approved or auto-denied. Nucleus doesn't interrupt it and the lease holds
   until it stops. A missing activity timestamp is never stale. Merge lease wait
   text names a pending permission or question when the identity matches.
-- A stalled turn stays attached to its exact identities until `restart`; Nucleus
-  rechecks identities and fences before cancelling, and starts nothing
-  automatically ([Spec 016](../specs/016-live-evidence-before-recovery.md) rule
-  7).
+- Process facts settle a stalled turn. When the participant's own recorded
+  process is positively gone — its PID is absent from a complete process table,
+  a different process now holds that PID and start identity, it is a zombie, or
+  it started before the machine's last boot — Nucleus releases that run through
+  the ordinary `run.release` plan, records `participant_process_gone` with the
+  proof, and ordinary admission relaunches the role (the retained worker thread
+  when it is reachable, a fresh thread for a reviewer). An unreadable or partial
+  process table, an unproven start identity and a live process prove nothing and
+  keep the run leased ([Spec 068](../specs/068-self-healing.md) §3).
+- A `run_stalled` stop names its own subject. That participant's idleness is not
+  a precondition for the task's coordinator: stall detection recorded the stop
+  after the stall window elapsed, so the coordinator is admitted while the host
+  still displays the participant as running. Every other participant keeps its
+  own lease and its pending effects keep their fences.
+- A stalled turn whose process is still alive stays attached to its exact
+  identities until `restart`; Nucleus rechecks identities and fences before
+  cancelling, and starts nothing automatically
+  ([Spec 016](../specs/016-live-evidence-before-recovery.md) rule 7). Only the
+  positive proof of process death above releases such a run on its own.
 - A shell command running over 15 minutes shows a notice on the task, recorded
   in the event ledger so it clears across restarts.
 - Owner `restart role=worker` may supersede a stopped unreleased revision whose
