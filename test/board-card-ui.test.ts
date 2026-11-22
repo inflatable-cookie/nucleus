@@ -1307,8 +1307,7 @@ test("a long papercut and a long lead render as three-line rows: kind and projec
   }
 });
 
-// Tom, 2026-11-07: Triage pages; on the inbox the Leads and Papercuts lists keep the pages of eight.
-test("Papercuts show a page of eight, an in-list row loads the rest, and the menu shows the real total", async () => {
+test("Papercuts load the next page near the end and keep the real total", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1323,33 +1322,28 @@ test("Papercuts show a page of eight, an in-list row loads the rest, and the men
     const tree = mounted;
     await settle(() => Boolean(tree.query("Papercuts, 10")));
     openView(tree, "Papercuts");
-    assert.equal(
-      tree.all(/^(?:Lead|Papercut): Papercut /).length,
-      8,
-      "the first page holds eight cards",
-    );
-    assert.ok(
-      tree.text().includes("…and 2 more"),
-      "the overflow row carries the rest of the total",
-    );
-    tree.press("Show 2 more papercuts");
-    await settle(
-      () => tree.raw.all(/^(?:Lead|Papercut): Papercut /).length === 10,
-    );
-    assert.equal(
-      tree.raw.query("Show 2 more papercuts"),
-      undefined,
-      "no overflow row once every card shows",
-    );
-    assert.ok(tree.query("Papercuts, 10"), "paging leaves the total alone");
-    assert.ok(tree.query("Leads, 0"), "the Leads entry counts only leads");
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 8);
+    assert.equal(tree.raw.text().includes("…and 2 more"), false);
+    const list = tree.raw.ofType("ScrollView").find((node) => node.props.onScroll);
+    assert.ok(list, "the list exposes its real scroll event");
+    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    list.props.onContentSizeChange(390, 1500);
+    list.props.onScroll({
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    });
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 10);
+    assert.ok(tree.query("Papercuts, 10"), "the header keeps the real total");
   } finally {
     mounted?.update(h("View", null));
     store.close();
   }
 });
 
-test("Leads show a page of eight, an in-list row loads the rest, and the menu counts every lead", async () => {
+test("Leads load the next page near the end and keep the real total", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1364,26 +1358,80 @@ test("Leads show a page of eight, an in-list row loads the rest, and the menu co
     const tree = mounted;
     await settle(() => Boolean(tree.query("Leads, 10")));
     openView(tree, "Leads");
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 8);
+    assert.equal(tree.raw.text().includes("…and 2 more"), false);
+    const list = tree.raw.ofType("ScrollView").find((node) => node.props.onScroll);
+    assert.ok(list, "the list exposes its real scroll event");
+    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    list.props.onContentSizeChange(390, 1500);
+    list.props.onScroll({
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    });
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 10);
+    assert.ok(tree.query("Leads, 10"), "the header keeps the real total");
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("Leads fill a tall pane, and changing the tag or view resets the page", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const leads = [
+      ...Array.from({ length: 10 }, (_, index) =>
+        triageLead(`idea-${index}`, `Idea ${index}`, { tags: ["idea"] }),
+      ),
+      ...Array.from({ length: 10 }, (_, index) =>
+        triageLead(`research-${index}`, `Research ${index}`, {
+          tags: ["research"],
+        }),
+      ),
+    ];
+    mounted = mountBoard(
+      invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Leads, 20")));
+    openView(tree, "Leads");
+    const list = tree.raw.ofType("ScrollView").find((node) => node.props.onScroll);
+    assert.ok(list, "the list exposes its layout and content-size events");
+    list.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
+    list.props.onContentSizeChange(390, 450);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): /).length, 16);
+    const filledList = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
+    assert.ok(filledList);
+    filledList.props.onContentSizeChange(390, 900);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): /).length, 20);
+
+    const listAfterFill = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
+    assert.ok(listAfterFill);
+    listAfterFill.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    tree.press("Filter leads by tag, All tags (20)");
+    tree.press("Filter leads by tag: idea (10)");
+    const filteredList = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
+    assert.ok(filteredList);
+    filteredList.props.onContentSizeChange(390, 900);
+    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Idea /).length === 8);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 8);
+    openView(tree, "Papercuts");
+    openView(tree, "Leads");
     assert.equal(
-      tree.all(/^(?:Lead|Papercut): Idea /).length,
+      tree.raw.all(/^(?:Lead|Papercut): Idea /).length,
       8,
-      "the first page holds eight leads",
-    );
-    assert.ok(
-      tree.text().includes("…and 2 more"),
-      "the overflow row carries the rest of the total",
-    );
-    tree.press("Show 2 more leads");
-    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Idea /).length === 10);
-    assert.equal(
-      tree.raw.query("Show 2 more leads"),
-      undefined,
-      "no overflow row once every lead shows",
-    );
-    assert.ok(tree.query("Leads, 10"), "paging leaves the total alone");
-    assert.ok(
-      tree.query("Papercuts, 0"),
-      "the Papercuts entry counts only papercuts",
+      "switching away and back starts the Leads list at one page",
     );
   } finally {
     mounted?.update(h("View", null));
@@ -1443,7 +1491,7 @@ test("the Leads tag filter sits in the list header row, beside the title and the
   }
 });
 
-test("the Leads tag filter narrows the leads and their paging; papercuts have no filter and the menu count stays the inbox total", async () => {
+test("the Leads tag filter narrows the list; papercuts have no filter and the menu count stays the inbox total", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1494,8 +1542,8 @@ test("the Leads tag filter narrows the leads and their paging; papercuts have no
   }
 });
 
-// #1042 review: the list's view state lives in the shell, so a visit to another view keeps it.
-test("the Leads tag, Papercuts page and open queued-more page survive a round trip to Planning", async () => {
+// #1042 review: filters and the queued page persist; triage pages reset on a view change.
+test("the Leads tag and queued-more page survive view changes while triage pages reset", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1519,10 +1567,20 @@ test("the Leads tag, Papercuts page and open queued-more page survive a round tr
         Boolean(tree.query("3 more queued in app")),
     );
     openView(tree, "Papercuts");
-    tree.press("Show 2 more papercuts");
-    await settle(
-      () => tree.raw.all(/^(?:Lead|Papercut): Papercut /).length === 10,
-    );
+    const papercutList = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
+    assert.ok(papercutList);
+    papercutList.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    papercutList.props.onContentSizeChange(390, 1500);
+    papercutList.props.onScroll({
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    });
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 10);
     openView(tree, "Queue");
     tree.press("3 more queued in app");
     await settle(() => Boolean(tree.raw.query("Previous")));
@@ -1531,12 +1589,12 @@ test("the Leads tag, Papercuts page and open queued-more page survive a round tr
     openView(tree, "Queue");
     await settle(() => Boolean(tree.raw.query("Queue list")));
     assert.ok(tree.raw.query("Previous"), "the open queued-more page is kept");
-    // The Papercuts view reopens on the page it was left on.
+    // Switching back to Papercuts starts at its first page.
     openView(tree, "Papercuts");
     assert.equal(
       tree.raw.all(/^(?:Lead|Papercut): Papercut /).length,
-      10,
-      "the expanded Papercuts page is kept",
+      8,
+      "the Papercuts page resets on a view change",
     );
     // The Leads filter is kept too.
     openView(tree, "Leads");

@@ -652,8 +652,12 @@ test("026-12a every inbox card renders through the shared board card, and the li
     1,
     "the list is one scroll",
   );
-  // Leads page their own window (Tom, 2026-11-07).
-  assert.match(list, /const visible = page \? page\.visible : section\.cards;/);
+  // Leads and Papercuts load their next page from real list layout and scroll events.
+  assert.match(list, /onLayout=\{\(event\) =>/);
+  assert.match(list, /onContentSizeChange=\{\(_width, height\) =>/);
+  assert.match(list, /onScroll=\{\(event\) =>/);
+  assert.doesNotMatch(list, /const visible = page \? page\.visible : section\.cards;/);
+  assert.doesNotMatch(list, /…and \$\{page\.hidden\} more/);
   // Swim-lane rows, kanban columns and their stubs are gone (Tom, 2026-11-08; 2026-11-21).
   assert.doesNotMatch(
     ui,
