@@ -26,12 +26,15 @@ import {
   runningOwnedTool,
   turnBoundTool,
   workspaceToolProcessIssue,
+  type ObservedTurnState,
+  type TimelineEntry,
 } from "../recovery/stall";
 import type { HostProcessFact } from "../host/types";
 import {
   PASS_PROCESS_READ_DEADLINE_MS,
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
+  type PassProcessRead,
 } from "../scheduling/pass-snapshot";
 
 /** The owned-tool events this proof reads and writes. */
@@ -80,23 +83,96 @@ export class OwnedTools {
   }
   private async readProcesses(
     hostId?: string | null,
-  ): Promise<HostProcessFact[] | null> {
+  ): Promise<PassProcessRead> {
     if (this.resolution.readPassProcesses) {
-      const read = await this.resolution.readPassProcesses(hostId);
-      return read.state === "listed" ? read.processes : null;
+      return this.resolution.readPassProcesses(hostId);
     }
+    const capturedAt = Date.now();
     if (this.adapter.hostProcessListing) {
       const read = await boundedRead(
         "host process listing",
         () => this.adapter.hostProcessListing!(),
         this.processDeadlineMs,
       ).catch(() => ({ state: "unknown" as const, reason: "failed" }));
-      return read.state === "ok" ? read.value : null;
+      return read.state === "ok" && read.value
+        ? {
+            state: "listed",
+            processes: read.value,
+            capturedAt,
+            fromPassSnapshot: false,
+          }
+        : {
+            state: "unknown",
+            reason:
+              read.state === "unknown"
+                ? read.reason
+                : "the host process listing is unreadable",
+            capturedAt,
+            fromPassSnapshot: false,
+          };
     }
     const listing = await readHostUidProcesses({
       deadlineMs: this.processDeadlineMs,
     });
-    return listing.state === "listed" ? listing.processes : null;
+    return { ...listing, capturedAt, fromPassSnapshot: false };
+  }
+
+  /**
+   * Whether a pass-scoped process snapshot predates the participant inactivity
+   * or tool evidence it is being asked to clear (Spec 068 §6).
+   *
+   * An inline read (`!fromPassSnapshot`) is taken after the tool and turn
+   * observations and always covers them. A pass snapshot taken during HostPass
+   * may clear a live tool hold ONLY if:
+   * - no observed tool entry timestamp is newer than `capturedAt`, AND
+   * - the host pass's pre-process observation already proved the participant
+   *   inactive (`noTurnLive`, `closed`, `gone`, or `archived`) BEFORE the
+   *   process table was captured, AND
+   * - the participant's `updatedAt` has not advanced past `capturedAt` or
+   *   changed since that pre-process observation.
+   */
+  private processSnapshotPredatesEvidence(
+    read: PassProcessRead,
+    hostId: string | null | undefined,
+    agentId: string,
+    turn?: ObservedTurnState | null,
+    entries?: TimelineEntry[],
+  ): string | null {
+    if (!read.fromPassSnapshot) return null;
+    if (entries) {
+      for (const entry of entries) {
+        const at = Date.parse(entry.timestamp);
+        if (Number.isFinite(at) && at > read.capturedAt) {
+          return "the pass process snapshot predates observed tool activity; waiting for the next host pass";
+        }
+      }
+    }
+    if (turn?.updatedAt) {
+      const updatedMs = Date.parse(turn.updatedAt);
+      if (Number.isFinite(updatedMs) && updatedMs > read.capturedAt) {
+        return "the pass process snapshot predates the participant's latest activity; waiting for the next host pass";
+      }
+    }
+    const prior =
+      this.resolution.passObservedBeforeProcesses?.(hostId, agentId) ?? null;
+    const priorInactive = Boolean(
+      prior &&
+        (noTurnLive(prior) ||
+          prior.status === "gone" ||
+          prior.status === "closed" ||
+          prior.archived === true),
+    );
+    if (!priorInactive) {
+      return "the pass process snapshot was captured before the participant was proven inactive; waiting for the next host pass";
+    }
+    if (
+      prior?.updatedAt &&
+      turn?.updatedAt &&
+      prior.updatedAt !== turn.updatedAt
+    ) {
+      return "the participant was active after the pass process snapshot; waiting for the next host pass";
+    }
+    return null;
   }
 
   /**
@@ -306,13 +382,11 @@ export class OwnedTools {
       const toolLabel = formatLiveToolIssue(processIssue);
       const boundRun = options.runId ? this.store.run(options.runId) : null;
       const task = this.store.task(options.taskId);
-      const processes = await this.readProcesses(
-        boundRun?.hostId ?? task.hostId,
-      );
-      const bbThread = bbThreadForAgent(
-        agentId,
-        boundRun?.hostId ?? task.hostId,
-      );
+      const processHostId = boundRun?.hostId ?? task.hostId;
+      const processRead = await this.readProcesses(processHostId);
+      const processes =
+        processRead.state === "listed" ? processRead.processes : null;
+      const bbThread = bbThreadForAgent(agentId, processHostId);
       const runtime = participantRuntime({
         dataHome: storeDataHome(this.store),
         tasks: [task],
@@ -323,15 +397,26 @@ export class OwnedTools {
         noTurnLive: true,
         runtime,
       });
+      const predates = this.processSnapshotPredatesEvidence(
+        processRead,
+        processHostId,
+        agentId,
+        turn,
+        read.entries,
+      );
       if (verdict.state === "empty") {
-        const heldRunId = options.runId ?? verdict.runId;
-        this.recordOwnedToolSettlement(
-          options.taskId,
-          heldRunId,
-          `run ${heldRunId}: stale non-turn-bound tool settled; agent helper run ${verdict.runId} proves provider pid ${verdict.providerPid} has no live descendants except Nucleus MCP report helper pid ${verdict.helperPid}`,
-          true,
-        );
-        hold = null;
+        if (predates) {
+          hold = `${toolLabel}; ${predates}`;
+        } else {
+          const heldRunId = options.runId ?? verdict.runId;
+          this.recordOwnedToolSettlement(
+            options.taskId,
+            heldRunId,
+            `run ${heldRunId}: stale non-turn-bound tool settled; agent helper run ${verdict.runId} proves provider pid ${verdict.providerPid} has no live descendants except Nucleus MCP report helper pid ${verdict.helperPid}`,
+            true,
+          );
+          hold = null;
+        }
       } else if (verdict.state === "live") {
         hold = `${toolLabel}; descendant pid ${verdict.pid} remains under provider pid ${verdict.providerPid}`;
       } else if (
@@ -339,29 +424,33 @@ export class OwnedTools {
         options.workspaceId &&
         this.adapter.noLiveWorkspaceProcesses
       ) {
-        const workspaceRead = await boundedRead(
-          "workspace process probe",
-          () =>
-            this.adapter.noLiveWorkspaceProcesses!(
-              options.workspaceId!,
-              runIds,
-              runtime,
-            ),
-          this.readDeadlineMs,
-        );
-        const workspaceIssue =
-          workspaceRead.state === "ok"
-            ? workspaceRead.value
-            : workspaceRead.reason;
-        if (!workspaceIssue) {
-          this.recordOwnedToolSettlement(
-            options.taskId,
-            runIds[0]!,
-            `run ids ${runIds.join(", ")}: stale non-turn-bound tool settled; no process carried an MCP ticket and the task workspace process tree was empty`,
-            true,
+        if (predates) {
+          hold = `${toolLabel}; ${predates}`;
+        } else {
+          const workspaceRead = await boundedRead(
+            "workspace process probe",
+            () =>
+              this.adapter.noLiveWorkspaceProcesses!(
+                options.workspaceId!,
+                runIds,
+                runtime,
+              ),
+            this.readDeadlineMs,
           );
-          hold = null;
-        } else hold = `${toolLabel}; ${workspaceIssue}`;
+          const workspaceIssue =
+            workspaceRead.state === "ok"
+              ? workspaceRead.value
+              : workspaceRead.reason;
+          if (!workspaceIssue) {
+            this.recordOwnedToolSettlement(
+              options.taskId,
+              runIds[0]!,
+              `run ids ${runIds.join(", ")}: stale non-turn-bound tool settled; no process carried an MCP ticket and the task workspace process tree was empty`,
+              true,
+            );
+            hold = null;
+          } else hold = `${toolLabel}; ${workspaceIssue}`;
+        }
       } else
         hold = `${toolLabel}; process tree is unreadable: ${verdict.reason}`;
     }
@@ -532,8 +621,17 @@ export class OwnedTools {
       return (
         workspaceIssue || "the workspace process probe returned no verdict"
       );
-    const processes = await this.readProcesses(boundRun?.hostId ?? task.hostId);
+    const processHostId = boundRun?.hostId ?? task.hostId;
+    const processRead = await this.readProcesses(processHostId);
+    const processes =
+      processRead.state === "listed" ? processRead.processes : null;
     if (!processes) return "the host process listing is unreadable";
+    const predates = this.processSnapshotPredatesEvidence(
+      processRead,
+      processHostId,
+      agentId,
+    );
+    if (predates) return predates;
     for (const directory of new Set(temporaryDirectories)) {
       const issue = workspaceToolProcessIssue(
         processes,

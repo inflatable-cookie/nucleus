@@ -975,7 +975,10 @@ function validCursor(
  * omitted fact is unknown, and `noTurnLive` never reads it as a negative.
  */
 export type ObservedTurnState = Partial<
-  Pick<AgentObservation, "status" | "active" | "activeTurnId" | "permissions">
+  Pick<
+    AgentObservation,
+    "status" | "active" | "activeTurnId" | "permissions" | "updatedAt"
+  >
 >;
 
 /**

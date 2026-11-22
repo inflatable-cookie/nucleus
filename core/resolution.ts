@@ -25,17 +25,25 @@ import { ProgressContinuation } from "./review/progress-continuation";
 import { proofWaitApplies } from "./qa/proof-wait";
 import { SchedulingLifecycle } from "./scheduling/lifecycle";
 import {
+  HOST_PASS_WARM_BUDGET_MS,
   PASS_PROCESS_READ_DEADLINE_MS,
   PassSnapshot,
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
   type BoundedReadResult,
+  type PassProcessRead,
+  type PassTimelinePageRead,
+  type ProvenTerminalSnapshot,
 } from "./scheduling/pass-snapshot";
 import {
   readHostUidProcesses,
   type HostProcessListRead,
 } from "./machine/host-process-listing";
-import type { HostTimelineEntry, HostTimelinePage } from "../shared/host";
+import type {
+  HostObservation,
+  HostTimelineEntry,
+  HostTimelinePage,
+} from "../shared/host";
 
 import { ContinuedPrs, type ContinuedPrBinding } from "./review/continued-pr";
 import { OrdinaryCustody } from "./review/ordinary-custody";
@@ -431,6 +439,8 @@ export class Resolution {
   quantumReadTimeoutMs = QUANTUM_READ_DEADLINE_MS;
   /** The read budget per host process-table snapshot; a miss returns unknown (tests shorten it). */
   passProcessReadTimeoutMs = PASS_PROCESS_READ_DEADLINE_MS;
+  /** Total per-host budget for timeline warming inside one host pass (tests shorten it). */
+  hostPassWarmBudgetMs = HOST_PASS_WARM_BUDGET_MS;
   private passSnapshot: PassSnapshot | null = null;
 
   /** Start one sweep pass's shared observation snapshot; any previous snapshot is expired. */
@@ -455,6 +465,38 @@ export class Resolution {
     return this.passSnapshot?.active ? this.passSnapshot : null;
   }
 
+  /** Record one host's pre-process observation inventory for freshness checks in this pass. */
+  recordPassHostInventory(
+    hostId: string,
+    inventory: ReadonlyMap<string, HostObservation> | null,
+  ): void {
+    this.currentPassSnapshot()?.recordHostInventory(
+      this.passHostKey(hostId),
+      inventory,
+    );
+  }
+
+  /** The pre-process observation captured for `agentId` on `hostId` in this pass, if any. */
+  passObservedBeforeProcesses(
+    hostId: string | null | undefined,
+    agentId: string,
+  ): HostObservation | null {
+    return (
+      this.currentPassSnapshot()?.observedBeforeProcessSnapshot(
+        this.passHostKey(hostId),
+        agentId,
+      ) ?? null
+    );
+  }
+
+  /** Mark one host's timeline warming budget spent for this pass. */
+  markPassTimelineBudgetExhausted(hostId: string, reason: string): void {
+    this.currentPassSnapshot()?.markTimelineBudgetExhausted(
+      this.passHostKey(hostId),
+      reason,
+    );
+  }
+
   /** Run one task-quantum read under its deadline; a timeout resolves as `{ state: "unknown", reason }`. */
   boundedQuantumRead<T>(
     label: string,
@@ -473,7 +515,7 @@ export class Resolution {
    * inside a sweep pass) or under a bounded deadline (outside a pass). A slow
    * or unreadable table resolves as `{ state: "unknown", reason }`, never a hang.
    */
-  readPassProcesses(hostId?: string | null): Promise<HostProcessListRead> {
+  readPassProcesses(hostId?: string | null): Promise<PassProcessRead> {
     const key = this.passHostKey(hostId);
     const deadlineMs = this.passProcessReadTimeoutMs;
     const read = async (): Promise<HostProcessListRead> => {
@@ -497,20 +539,28 @@ export class Resolution {
     };
     const snapshot = this.currentPassSnapshot();
     if (snapshot) return snapshot.processes(key, read, deadlineMs);
+    const capturedAt = Date.now();
     return boundedRead("host process listing", read, deadlineMs).then(
       (result) =>
         result.state === "ok"
-          ? result.value
-          : { state: "unknown", reason: result.reason },
+          ? { ...result.value, capturedAt, fromPassSnapshot: false }
+          : {
+              state: "unknown",
+              reason: result.reason,
+              capturedAt,
+              fromPassSnapshot: false,
+            },
       (error) => ({
         state: "unknown",
         reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+        capturedAt,
+        fromPassSnapshot: false,
       }),
     );
   }
 
   /** Pre-warm one host's process snapshot during its host pass. */
-  primePassProcesses(hostId: string): Promise<HostProcessListRead> {
+  primePassProcesses(hostId: string): Promise<PassProcessRead> {
     return this.readPassProcesses(hostId);
   }
 
@@ -542,8 +592,9 @@ export class Resolution {
     agentId: string,
     hostId: string,
     limit?: number,
+    deadlineMs: number = this.quantumReadTimeoutMs,
   ): Promise<BoundedReadResult<HostTimelineEntry[] | null>> {
-    return this.readPassTimeline(agentId, hostId, limit);
+    return this.readPassTimeline(agentId, hostId, limit, deadlineMs);
   }
 
   /**
@@ -555,13 +606,29 @@ export class Resolution {
     limit?: number,
     hostId?: string | null,
     deadlineMs: number = this.quantumReadTimeoutMs,
-  ): Promise<BoundedReadResult<HostTimelinePage | null>> {
+    options: { provenTerminal?: ProvenTerminalSnapshot } = {},
+  ): Promise<PassTimelinePageRead> {
     const key = this.passHostKey(hostId);
     const read = () => this.host.agentTimelinePage(agentId, limit);
     const snapshot = this.currentPassSnapshot();
     if (snapshot)
-      return snapshot.timelinePage(key, agentId, limit, read, deadlineMs);
-    return boundedRead("agent timeline page", read, deadlineMs);
+      return snapshot.timelinePage(
+        key,
+        agentId,
+        limit,
+        read,
+        deadlineMs,
+        options,
+      );
+    return boundedRead("agent timeline page", read, deadlineMs).then(
+      (result) => ({
+        ...result,
+        fromPassSnapshot: false,
+        ...(options.provenTerminal
+          ? { provenTerminal: options.provenTerminal }
+          : {}),
+      }),
+    );
   }
 
   /** Pre-warm one agent's timeline page snapshot during its host pass. */
@@ -569,8 +636,18 @@ export class Resolution {
     agentId: string,
     limit: number,
     hostId: string,
-  ): Promise<BoundedReadResult<HostTimelinePage | null>> {
-    return this.readPassTimelinePage(agentId, limit, hostId);
+    options: {
+      provenTerminal?: ProvenTerminalSnapshot;
+      deadlineMs?: number;
+    } = {},
+  ): Promise<PassTimelinePageRead> {
+    return this.readPassTimelinePage(
+      agentId,
+      limit,
+      hostId,
+      options.deadlineMs ?? this.quantumReadTimeoutMs,
+      options,
+    );
   }
 
   /** Only a routable or unverified candidate can be picked; `unroutable` never is. */
@@ -1397,6 +1474,8 @@ export class Resolution {
       "paused",
       "profiles",
       "progressEffectsPending",
+      "quantumReadTimeoutMs",
+      "readPassProcesses",
       "recordCriticalReviewFallback",
       "requiredRouteNote",
       "reserveLaunchRun",

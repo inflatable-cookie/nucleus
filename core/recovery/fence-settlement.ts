@@ -19,6 +19,10 @@ import {
 } from "../review/review-continuation";
 import { readToolTimeline } from "./stall";
 import { participantToolRunIds } from "./task-reasons";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+} from "../scheduling/pass-snapshot";
 
 /** What one fence settlement changed, for its audit event. */
 export interface SettledFences {
@@ -625,7 +629,16 @@ export class RunRelease {
       runIdentity = JSON.stringify(this.store.runs(taskId));
     let observed: Awaited<ReturnType<Adapter["observe"]>>;
     try {
-      observed = await this.engine.host.observe(run.agentId);
+      const deadlineMs =
+        this.engine.resolution?.quantumReadTimeoutMs ??
+        QUANTUM_READ_DEADLINE_MS;
+      const read = await boundedRead(
+        "retained reviewer observation",
+        () => this.engine.host.observe(run.agentId!),
+        deadlineMs,
+      );
+      if (read.state === "unknown") return;
+      observed = read.value;
     } catch {
       return;
     }
@@ -996,7 +1009,26 @@ export class RunRelease {
       if (!run.agentId || !this.adapter.agentTimelinePage) continue;
       let read: Awaited<ReturnType<typeof readToolTimeline>>;
       try {
-        read = await readToolTimeline(this.engine.host, run.agentId);
+        const deadlineMs =
+          this.engine.resolution?.quantumReadTimeoutMs ??
+          QUANTUM_READ_DEADLINE_MS;
+        const timelineHost = this.engine.resolution?.readPassTimelinePage
+          ? {
+              agentTimelinePage: async (id: string, limit?: number) => {
+                const pageRead =
+                  await this.engine.resolution.readPassTimelinePage(
+                    id,
+                    limit,
+                    run.hostId ?? this.store.task(taskId).hostId,
+                    deadlineMs,
+                  );
+                if (pageRead.state === "unknown")
+                  throw new Error(pageRead.reason);
+                return pageRead.value;
+              },
+            }
+          : this.engine.host;
+        read = await readToolTimeline(timelineHost, run.agentId, deadlineMs);
       } catch {
         continue;
       }

@@ -1,4 +1,8 @@
-import type { HostTimelineEntry, HostTimelinePage } from "../../shared/host";
+import type {
+  HostObservation,
+  HostTimelineEntry,
+  HostTimelinePage,
+} from "../../shared/host";
 import type { HostProcessListRead } from "../machine/host-process-listing";
 
 /**
@@ -15,10 +19,40 @@ export const PASS_PROCESS_READ_DEADLINE_MS = 15_000;
  */
 export const QUANTUM_READ_DEADLINE_MS = 10_000;
 
+/**
+ * Total per-host budget for warming timeline snapshots during one host pass.
+ * Keeps a slow host's backlog from delaying healthy hosts' task visits.
+ */
+export const HOST_PASS_WARM_BUDGET_MS = 10_000;
+
+/** Maximum number of timeline warming reads one host pass attempts per host. */
+export const HOST_PASS_WARM_CANDIDATE_CAP = 8;
+
 /** Typed result of one bounded read: either the observed value or `unknown` on timeout. */
 export type BoundedReadResult<T> =
   | { state: "ok"; value: T }
   | { state: "unknown"; reason: string };
+
+/** Process-table read annotated with capture time and snapshot provenance. */
+export type PassProcessRead = HostProcessListRead & {
+  /** Wall-clock ms when the underlying listing read began. */
+  capturedAt: number;
+  /** True when served from a shared pass snapshot rather than an inline read. */
+  fromPassSnapshot: boolean;
+};
+
+/** Proof that a cached timeline page was captured after the agent was terminal in its workspace. */
+export type ProvenTerminalSnapshot = {
+  archived: boolean;
+  workspaceId: string;
+};
+
+/** Timeline-page read annotated with snapshot provenance and terminal proof. */
+export type PassTimelinePageRead =
+  BoundedReadResult<HostTimelinePage | null> & {
+    fromPassSnapshot: boolean;
+    provenTerminal?: ProvenTerminalSnapshot;
+  };
 
 /**
  * Run `work()` under `deadlineMs`. A deadline miss resolves as `{ state: "unknown", reason }`
@@ -69,6 +103,12 @@ function hostKeyOf(hostId?: string | null): string {
   return hostId ?? "";
 }
 
+type CachedTimelinePageEntry = {
+  limit: number | undefined;
+  promise: Promise<PassTimelinePageRead>;
+  settled?: PassTimelinePageRead;
+};
+
 /**
  * One sweep pass's shared observation snapshot (Spec 068 §6, Spec 066 R1).
  *
@@ -79,18 +119,20 @@ function hostKeyOf(hostId?: string | null): string {
  */
 export class PassSnapshot {
   private isActive = true;
-  private readonly processReads = new Map<
+  private readonly hostInventories = new Map<
     string,
-    Promise<HostProcessListRead>
+    ReadonlyMap<string, HostObservation>
   >();
+  private readonly processReads = new Map<string, Promise<PassProcessRead>>();
   private readonly timelineReads = new Map<
     string,
     Promise<BoundedReadResult<HostTimelineEntry[] | null>>
   >();
   private readonly timelinePageReads = new Map<
     string,
-    Promise<BoundedReadResult<HostTimelinePage | null>>
+    CachedTimelinePageEntry[]
   >();
+  private readonly timelineBudgetExhausted = new Map<string, string>();
 
   /** True only while the owning sweep pass is still running. */
   get active(): boolean {
@@ -100,9 +142,49 @@ export class PassSnapshot {
   /** End this pass's validity window and drop all cached observations. */
   expire(): void {
     this.isActive = false;
+    this.hostInventories.clear();
     this.processReads.clear();
     this.timelineReads.clear();
     this.timelinePageReads.clear();
+    this.timelineBudgetExhausted.clear();
+  }
+
+  /**
+   * Record one host's pre-process observation inventory for this pass.
+   * Because `HostPass` reads `observationInventory` before `processSnapshot`,
+   * any agent already observed idle/closed/gone here was inactive before the
+   * process table was captured.
+   */
+  recordHostInventory(
+    hostId: string | null | undefined,
+    inventory: ReadonlyMap<string, HostObservation> | null,
+  ): void {
+    if (!this.isActive || !inventory) return;
+    this.hostInventories.set(hostKeyOf(hostId), inventory);
+  }
+
+  /** The pre-process observation for `agentId` on `hostId`, or null if none was captured. */
+  observedBeforeProcessSnapshot(
+    hostId: string | null | undefined,
+    agentId: string,
+  ): HostObservation | null {
+    if (!this.isActive) return null;
+    return this.hostInventories.get(hostKeyOf(hostId))?.get(agentId) ?? null;
+  }
+
+  /** Record that this host spent its timeline-warming budget for this pass. */
+  markTimelineBudgetExhausted(
+    hostId: string | null | undefined,
+    reason: string,
+  ): void {
+    if (!this.isActive) return;
+    this.timelineBudgetExhausted.set(hostKeyOf(hostId), reason);
+  }
+
+  /** Reason this host's timeline warming budget was spent in this pass, or null. */
+  timelineBudgetExhaustedReason(hostId?: string | null): string | null {
+    if (!this.isActive) return null;
+    return this.timelineBudgetExhausted.get(hostKeyOf(hostId)) ?? null;
   }
 
   /**
@@ -114,23 +196,32 @@ export class PassSnapshot {
     hostId: string | null | undefined,
     read: () => Promise<HostProcessListRead>,
     deadlineMs: number = PASS_PROCESS_READ_DEADLINE_MS,
-  ): Promise<HostProcessListRead> {
-    const run = (): Promise<HostProcessListRead> =>
-      boundedRead("host process listing", read, deadlineMs).then(
+  ): Promise<PassProcessRead> {
+    const run = (fromPassSnapshot: boolean): Promise<PassProcessRead> => {
+      const capturedAt = Date.now();
+      return boundedRead("host process listing", read, deadlineMs).then(
         (result) =>
           result.state === "ok"
-            ? result.value
-            : { state: "unknown", reason: result.reason },
+            ? { ...result.value, capturedAt, fromPassSnapshot }
+            : {
+                state: "unknown",
+                reason: result.reason,
+                capturedAt,
+                fromPassSnapshot,
+              },
         (error) => ({
           state: "unknown",
           reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+          capturedAt,
+          fromPassSnapshot,
         }),
       );
-    if (!this.isActive) return run();
+    };
+    if (!this.isActive) return run(false);
     const key = hostKeyOf(hostId);
     const existing = this.processReads.get(key);
     if (existing) return existing;
-    const promise = run();
+    const promise = run(true);
     this.processReads.set(key, promise);
     return promise;
   }
@@ -159,9 +250,13 @@ export class PassSnapshot {
   ): Promise<BoundedReadResult<HostTimelineEntry[] | null>> {
     const run = () => boundedRead("agent timeline", read, deadlineMs);
     if (!this.isActive) return run();
-    const key = `${hostKeyOf(hostId)}\0${agentId}\0${limit ?? ""}`;
+    const hostKey = hostKeyOf(hostId);
+    const key = `${hostKey}\0${agentId}\0${limit ?? ""}`;
     const existing = this.timelineReads.get(key);
     if (existing) return existing;
+    const exhausted = this.timelineBudgetExhausted.get(hostKey);
+    if (exhausted)
+      return Promise.resolve({ state: "unknown", reason: exhausted });
     const promise = run().catch((error) => {
       if (this.timelineReads.get(key) === promise)
         this.timelineReads.delete(key);
@@ -173,6 +268,9 @@ export class PassSnapshot {
 
   /**
    * Read or share one agent's bounded timeline page snapshot for this pass.
+   * A cached page for the same `(host, agentId)` covers a request when either
+   * its limit matches, its settled page is complete (`hasOlder === false`, no
+   * gap/reset/staleCursor), or its limit is at least as wide as requested.
    * Transport/refusal errors are evicted on rejection rather than cached.
    */
   timelinePage(
@@ -181,18 +279,78 @@ export class PassSnapshot {
     limit: number | undefined,
     read: () => Promise<HostTimelinePage | null>,
     deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
-  ): Promise<BoundedReadResult<HostTimelinePage | null>> {
-    const run = () => boundedRead("agent timeline page", read, deadlineMs);
-    if (!this.isActive) return run();
-    const key = `${hostKeyOf(hostId)}\0${agentId}\0${limit ?? ""}`;
-    const existing = this.timelinePageReads.get(key);
-    if (existing) return existing;
-    const promise = run().catch((error) => {
-      if (this.timelinePageReads.get(key) === promise)
-        this.timelinePageReads.delete(key);
-      throw error;
+    options: { provenTerminal?: ProvenTerminalSnapshot } = {},
+  ): Promise<PassTimelinePageRead> {
+    const run = (fromPassSnapshot: boolean): Promise<PassTimelinePageRead> =>
+      boundedRead("agent timeline page", read, deadlineMs).then((result) => ({
+        ...result,
+        fromPassSnapshot,
+        ...(options.provenTerminal
+          ? { provenTerminal: options.provenTerminal }
+          : {}),
+      }));
+    if (!this.isActive) return run(false);
+    const hostKey = hostKeyOf(hostId);
+    const agentKey = `${hostKey}\0${agentId}`;
+    const entries = this.timelinePageReads.get(agentKey) ?? [];
+    // Reuse a matching or wider/complete cached page for the same agent in this pass.
+    // When the caller supplies a terminal proof (e.g. HostPass warming after proving
+    // closure), only reuse an entry that already carries a terminal proof so we never
+    // mask a post-closure page behind an earlier pre-closure one.
+    const match = entries.find((entry) => {
+      if (options.provenTerminal && !entry.settled?.provenTerminal)
+        return false;
+      if (entry.limit === limit) return true;
+      if (
+        limit !== undefined &&
+        entry.limit !== undefined &&
+        entry.limit >= limit
+      )
+        return true;
+      const page =
+        entry.settled?.state === "ok" ? entry.settled.value : undefined;
+      return Boolean(
+        page &&
+          page.hasOlder === false &&
+          !page.gap &&
+          !page.staleCursor &&
+          !page.reset,
+      );
     });
-    this.timelinePageReads.set(key, promise);
+    if (match) return match.promise;
+    const exhausted = this.timelineBudgetExhausted.get(hostKey);
+    if (exhausted)
+      return Promise.resolve({
+        state: "unknown",
+        reason: exhausted,
+        fromPassSnapshot: true,
+      });
+    const entry: CachedTimelinePageEntry = {
+      limit,
+      promise: Promise.resolve({
+        state: "unknown",
+        reason: "pending",
+        fromPassSnapshot: true,
+      }),
+    };
+    const promise = run(true).then(
+      (settled) => {
+        entry.settled = settled;
+        return settled;
+      },
+      (error) => {
+        const list = this.timelinePageReads.get(agentKey);
+        if (list) {
+          const next = list.filter((item) => item !== entry);
+          if (next.length) this.timelinePageReads.set(agentKey, next);
+          else this.timelinePageReads.delete(agentKey);
+        }
+        throw error;
+      },
+    );
+    entry.promise = promise;
+    entries.push(entry);
+    this.timelinePageReads.set(agentKey, entries);
     return promise;
   }
 }

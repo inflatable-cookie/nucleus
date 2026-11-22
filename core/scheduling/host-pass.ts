@@ -17,7 +17,16 @@ import {
   observedHostEffectEvidence,
   releasedRunDeliveryEvidence,
 } from "../recovery/recovery-effects";
-import { SHELL_NOTICE_MS } from "../recovery/stall";
+import {
+  SHELL_NOTICE_MS,
+  TOOL_TIMELINE_LIMIT,
+  noTurnLive,
+} from "../recovery/stall";
+import {
+  HOST_PASS_WARM_BUDGET_MS,
+  HOST_PASS_WARM_CANDIDATE_CAP,
+  boundedRead,
+} from "./pass-snapshot";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { operationIdForKey, operationInputHash } from "../store/store";
 import {
@@ -71,7 +80,12 @@ export type HostPassContext = Pick<
     Partial<
       Pick<
         Resolution,
-        "primePassProcesses" | "primePassTimeline" | "primePassTimelinePage"
+        | "hostPassWarmBudgetMs"
+        | "markPassTimelineBudgetExhausted"
+        | "primePassProcesses"
+        | "primePassTimeline"
+        | "primePassTimelinePage"
+        | "recordPassHostInventory"
       >
     >;
 };
@@ -555,6 +569,10 @@ export class HostPass {
         observed = await this.context.host.observationInventory(inventoryIds);
       });
     }
+    // Record the pre-process inventory on the pass snapshot BEFORE capturing
+    // the process table so owned-tool proofs can verify whether a participant
+    // was already idle before the process snapshot was taken (Spec 068 §6).
+    this.context.resolution.recordPassHostInventory?.(host, observed);
     // Spec 068 §6 / Spec 066 R1: one shared process-table snapshot per host
     // pass, bounded by its deadline. Task quanta on this host read the pass's
     // snapshot instead of each spawning `ps`/`lsof`/env reads in the task lane.
@@ -574,14 +592,42 @@ export class HostPass {
       }
     }
     // Spec 068 §6: pre-read timelines needed by this host's tasks into the
-    // pass's shared snapshot so task quanta share one bounded reading instead
-    // of queueing per-task timeline RPCs on their exclusive lanes.
+    // pass's shared snapshot under a single bounded per-host budget and
+    // candidate cap so a slow host never stalls healthy hosts' task visits.
+    const warmBudgetMs =
+      this.context.resolution.hostPassWarmBudgetMs ?? HOST_PASS_WARM_BUDGET_MS;
+    const warmDeadlineAt = Date.now() + Math.max(0, warmBudgetMs);
+    let warmed = 0;
+    const budgetRemaining = (): number => {
+      const remaining = warmDeadlineAt - Date.now();
+      if (remaining <= 0) {
+        this.context.resolution.markPassTimelineBudgetExhausted?.(
+          host,
+          `host pass timeline warming budget (${warmBudgetMs} ms) exhausted`,
+        );
+        return 0;
+      }
+      return remaining;
+    };
+    const canWarmMore = (): boolean =>
+      !this.context.stopped &&
+      warmed < HOST_PASS_WARM_CANDIDATE_CAP &&
+      budgetRemaining() > 0;
+
     if (
       this.adapter.originAgent &&
       this.adapter.agentTimelinePage &&
-      this.context.resolution.primePassTimelinePage
+      this.context.resolution.primePassTimelinePage &&
+      canWarmMore()
     ) {
-      const deliveryAgents = new Set<string>();
+      // Delivery timelines are primed ONLY after proving the agent is already
+      // terminal (archived or closed) in its recorded workspace, preserving
+      // the pre-closure ordering required before settling a negative delivery.
+      const deliveryCandidates: Array<{
+        agentId: string;
+        workspaceId: string;
+      }> = [];
+      const seenDelivery = new Set<string>();
       for (const task of tasks) {
         if (task.removedAt) continue;
         for (const run of this.store.runs(task.id)) {
@@ -590,21 +636,140 @@ export class HostPass {
             run.status === "uncertain" &&
             run.agentId &&
             run.workspaceId &&
+            !seenDelivery.has(run.agentId) &&
             !releasedRunDeliveryEvidence(this.store, run)
-          )
-            deliveryAgents.add(run.agentId);
+          ) {
+            seenDelivery.add(run.agentId);
+            deliveryCandidates.push({
+              agentId: run.agentId,
+              workspaceId: run.workspaceId,
+            });
+          }
         }
       }
-      if (deliveryAgents.size) {
+      if (deliveryCandidates.length) {
         await this.step(host, "timelineDeliverySnapshot", async () => {
-          for (const agentId of deliveryAgents) {
+          for (const candidate of deliveryCandidates) {
             await yieldToLoop();
-            if (this.context.stopped) return;
-            await this.context.resolution.primePassTimelinePage!(
+            if (!canWarmMore()) return;
+            const originRemaining = budgetRemaining();
+            if (originRemaining <= 0) return;
+            const originRead = await boundedRead(
+              "origin agent observation",
+              () => this.context.host.originAgent(candidate.agentId),
+              originRemaining,
+            ).catch(() => ({
+              state: "unknown" as const,
+              reason: "origin read failed",
+            }));
+            if (originRead.state === "unknown") {
+              if (budgetRemaining() <= 0) return;
+              continue;
+            }
+            const origin = originRead.value;
+            if (!origin || origin.workspaceId !== candidate.workspaceId)
+              continue;
+            const archived = origin.archived === true;
+            if (!archived) {
+              const obsRemaining = budgetRemaining();
+              if (obsRemaining <= 0) return;
+              const obsRead = await boundedRead(
+                "participant observation",
+                () => this.context.host.observe(candidate.agentId),
+                obsRemaining,
+              ).catch(() => ({
+                state: "unknown" as const,
+                reason: "observe failed",
+              }));
+              if (obsRead.state === "unknown") {
+                if (budgetRemaining() <= 0) return;
+                continue;
+              }
+              const state = obsRead.value;
+              if (
+                state.id !== candidate.agentId ||
+                state.workspaceId !== candidate.workspaceId ||
+                state.status !== "closed" ||
+                state.active ||
+                state.activeTurnId ||
+                state.permissions
+              )
+                continue;
+            }
+            const pageRemaining = budgetRemaining();
+            if (pageRemaining <= 0) return;
+            warmed++;
+            const pageRead = await this.context.resolution
+              .primePassTimelinePage!(candidate.agentId, 100, host, {
+              provenTerminal: {
+                archived,
+                workspaceId: candidate.workspaceId,
+              },
+              deadlineMs: pageRemaining,
+            }).catch(() => null);
+            if (pageRead?.state === "unknown" && budgetRemaining() <= 0) return;
+          }
+        });
+      }
+    }
+    if (
+      this.adapter.agentTimelinePage &&
+      this.context.resolution.primePassTimelinePage &&
+      canWarmMore()
+    ) {
+      // Pre-warm tool timeline pages at TOOL_TIMELINE_LIMIT (200) for
+      // historical proof executor runs and settled non-terminal participants
+      // so owned-tool and proof-settlement reads hit the host pass snapshot.
+      const toolCandidates = new Set<string>();
+      const observedMap = observed as ReadonlyMap<
+        string,
+        AgentObservation
+      > | null;
+      for (const task of tasks) {
+        if (task.removedAt || ["done", "cancelled"].includes(task.phase))
+          continue;
+        const runs = this.store.runs(task.id);
+        for (const run of runs) {
+          if (
+            run.role === "executor" &&
+            run.proofExecution &&
+            run.agentId &&
+            (task.proofExecutions ?? []).some(
+              (item) => item.runId === run.id && item.status === "running",
+            )
+          )
+            toolCandidates.add(run.agentId);
+        }
+        if (observedMap) {
+          if (task.agentId) {
+            const state = observedMap.get(task.agentId);
+            if (state && noTurnLive(state)) toolCandidates.add(task.agentId);
+          }
+          for (const run of runs) {
+            if (!run.released && run.agentId) {
+              const state = observedMap.get(run.agentId);
+              if (state && noTurnLive(state)) toolCandidates.add(run.agentId);
+            }
+          }
+        }
+      }
+      if (toolCandidates.size) {
+        await this.step(host, "timelineToolSnapshot", async () => {
+          for (const agentId of toolCandidates) {
+            await yieldToLoop();
+            if (!canWarmMore()) return;
+            const remaining = budgetRemaining();
+            if (remaining <= 0) return;
+            warmed++;
+            const read = await this.context.resolution.primePassTimelinePage!(
               agentId,
-              100,
+              TOOL_TIMELINE_LIMIT,
               host,
-            ).catch(() => {});
+              {
+                deadlineMs: remaining,
+              },
+            ).catch(() => null);
+            if (read?.state === "unknown" && budgetRemaining() <= 0) return;
           }
         });
       }
@@ -612,7 +777,8 @@ export class HostPass {
     if (
       observed &&
       this.adapter.agentTimeline &&
-      this.context.resolution.primePassTimeline
+      this.context.resolution.primePassTimeline &&
+      canWarmMore()
     ) {
       const shellAgents: string[] = [];
       const nowMs = Date.now();
@@ -634,11 +800,17 @@ export class HostPass {
         await this.step(host, "timelineShellSnapshot", async () => {
           for (const agentId of shellAgents) {
             await yieldToLoop();
-            if (this.context.stopped) return;
-            await this.context.resolution.primePassTimeline!(
+            if (!canWarmMore()) return;
+            const remaining = budgetRemaining();
+            if (remaining <= 0) return;
+            warmed++;
+            const read = await this.context.resolution.primePassTimeline!(
               agentId,
               host,
-            ).catch(() => {});
+              undefined,
+              remaining,
+            ).catch(() => null);
+            if (read?.state === "unknown" && budgetRemaining() <= 0) return;
           }
         });
       }

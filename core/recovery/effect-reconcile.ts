@@ -10,6 +10,7 @@ import { now } from "../store/store";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
+  type PassTimelinePageRead,
 } from "../scheduling/pass-snapshot";
 
 /** Whether one timeline page holds this exact user message. Map bug 14: hasOlder is unknown without looking. */
@@ -207,18 +208,21 @@ export class EffectReconcile {
           `Reviewer dispatch ${run.id} remains uncertain; its agent is not proven closed or archived`,
         );
     }
-    const pageRead = this.resolution.readPassTimelinePage
+    const pageRead: PassTimelinePageRead = this.resolution.readPassTimelinePage
       ? await this.resolution.readPassTimelinePage(
           run.agentId,
           100,
           run.hostId ?? task.hostId,
           deadlineMs,
         )
-      : await boundedRead(
-          "agent timeline page",
-          () => this.resolution.host.agentTimelinePage(run.agentId!, 100),
-          deadlineMs,
-        );
+      : {
+          ...(await boundedRead(
+            "agent timeline page",
+            () => this.resolution.host.agentTimelinePage(run.agentId!, 100),
+            deadlineMs,
+          )),
+          fromPassSnapshot: false,
+        };
     if (pageRead.state === "unknown")
       throw new Error(
         `Reviewer dispatch ${run.id} remains uncertain; ${pageRead.reason}`,
@@ -246,6 +250,15 @@ export class EffectReconcile {
     )
       throw new Error(
         `Reviewer dispatch ${run.id} remains uncertain; timeline contains ${messageId}`,
+      );
+    // Spec 068 §6: never settle a negative delivery from a pass-snapshot page
+    // that was not captured after proving this agent terminal in its workspace.
+    if (
+      pageRead.fromPassSnapshot &&
+      pageRead.provenTerminal?.workspaceId !== run.workspaceId
+    )
+      throw new Error(
+        `Reviewer dispatch ${run.id} remains uncertain; cached timeline predates agent closure`,
       );
     const latestTask = this.store.task(taskId),
       latest = this.store.run(runId);
@@ -330,18 +343,21 @@ export class EffectReconcile {
           `Run ${runId} remains uncertain; its agent is not proven closed or archived`,
         );
     }
-    const pageRead = this.resolution.readPassTimelinePage
+    const pageRead: PassTimelinePageRead = this.resolution.readPassTimelinePage
       ? await this.resolution.readPassTimelinePage(
           run.agentId,
           100,
           run.hostId ?? task.hostId,
           deadlineMs,
         )
-      : await boundedRead(
-          "agent timeline page",
-          () => this.resolution.host.agentTimelinePage(run.agentId!, 100),
-          deadlineMs,
-        );
+      : {
+          ...(await boundedRead(
+            "agent timeline page",
+            () => this.resolution.host.agentTimelinePage(run.agentId!, 100),
+            deadlineMs,
+          )),
+          fromPassSnapshot: false,
+        };
     if (pageRead.state === "unknown")
       throw new Error(`Run ${runId} remains uncertain; ${pageRead.reason}`);
     const page = pageRead.value;
@@ -363,6 +379,18 @@ export class EffectReconcile {
           (entry.item as Record<string, unknown>).clientMessageId ===
             messageId),
     );
+    // Spec 068 §6: positive presence is monotonic, but a negative settlement
+    // (`run_delivery_not_delivered`) requires a page proven captured after
+    // agent closure/archive in this workspace so a message appended before
+    // closure is never permanently missed.
+    if (
+      !found &&
+      pageRead.fromPassSnapshot &&
+      pageRead.provenTerminal?.workspaceId !== run.workspaceId
+    )
+      throw new Error(
+        `Run ${runId} remains uncertain; cached timeline predates agent closure`,
+      );
     const latestTask = this.store.task(taskId),
       latestRun = this.store.run(runId);
     if (

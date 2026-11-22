@@ -61,7 +61,8 @@ export type LaunchThreadContext = Pick<
   | "update"
   | "usageCeilingNote"
   | "waiting"
->;
+> &
+  Partial<Pick<Resolution, "quantumReadTimeoutMs" | "readPassProcesses">>;
 export type LaunchReserveContext = Pick<
   Resolution,
   | "adapter"

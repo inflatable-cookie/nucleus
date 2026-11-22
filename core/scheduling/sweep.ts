@@ -102,6 +102,8 @@ export type SweepContext = Pick<
     | "deliverNotices"
     | "deliverQueuedMessages"
     | "endPassSnapshot"
+    | "hostPassWarmBudgetMs"
+    | "markPassTimelineBudgetExhausted"
     | "observationTargets"
     | "observe"
     | "origins"
@@ -109,6 +111,7 @@ export type SweepContext = Pick<
     | "primePassTimeline"
     | "primePassTimelinePage"
     | "raiseOperatorQuestions"
+    | "recordPassHostInventory"
     | "recovery"
     | "resumeAskQuestions"
     | "resumeResponsibleAnsweredQuestions"
@@ -137,10 +140,13 @@ export class Sweep {
           "store",
         ],
         [
+          "hostPassWarmBudgetMs",
+          "markPassTimelineBudgetExhausted",
           "observationTargets",
           "primePassProcesses",
           "primePassTimeline",
           "primePassTimelinePage",
+          "recordPassHostInventory",
         ],
       ),
     ));
