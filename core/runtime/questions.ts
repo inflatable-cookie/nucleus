@@ -20,7 +20,6 @@ export interface QuestionsContext {
       Engine["resolution"],
       | "answerDelegatedQuestionFromHost"
       | "delegatedQuestionForTask"
-      | "dispatchDecisionExplicitCommand"
       | "operatorDecisionAnswered"
     >;
   };
@@ -221,19 +220,6 @@ export class RuntimeQuestions {
     input: Parameters<Decisions["answer"]>[0],
     trustedT3 = false,
   ) {
-    const dispatched =
-      this.context.engine.resolution.dispatchDecisionExplicitCommand?.(
-        input,
-        trustedT3,
-      );
-    if (dispatched) {
-      return dispatched.then(() => {
-        void this.context.engine.wake().catch(() => {
-          /* a failed drain is recorded as engineError */
-        });
-        return this.context.decisions.get({ id: input.id });
-      });
-    }
     const view = this.context.decisions.answer(
       input,
       trustedT3 ? { trustedT3: true } : undefined,

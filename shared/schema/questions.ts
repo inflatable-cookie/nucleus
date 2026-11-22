@@ -1,14 +1,12 @@
 import { z } from "zod";
 import { identitySourceSchema } from "../host-kind";
-import { explicitCommandSchema, type ExplicitCommand } from "./task-control";
 
-/** Spec 058 & Spec 067: a delegated answer is a command from the recipient's calling thread. */
+/** Spec 058: a delegated answer is a command from the recipient's calling thread. */
 const questionAnswerFields = {
   questionId: z.string().trim().min(1).max(300),
   caller: z.string().trim().min(1).max(300),
   answer: z.string().trim().min(1).max(4000).optional(),
   choice: z.string().trim().min(1).max(400).optional(),
-  command: explicitCommandSchema.optional(),
   version: z.number().int().positive().optional(),
   reason: z
     .string()
@@ -21,49 +19,19 @@ const questionAnswerFields = {
   dryRun: z.boolean().optional(),
 };
 const answerShape = <
-  T extends {
-    answer?: string;
-    choice?: string;
-    decision?: string;
-    command?: ExplicitCommand;
-  },
+  T extends { answer?: string; choice?: string; decision?: string },
 >(
   value: T,
 ) =>
   Number(Boolean(value.answer)) +
     Number(Boolean(value.choice)) +
-    Number(Boolean(value.decision)) +
-    Number(Boolean(value.command)) ===
+    Number(Boolean(value.decision)) ===
   1;
-const commandVersionValid = <
-  T extends { version?: number; command?: ExplicitCommand },
->(
-  value: T,
-) =>
-  !value.command ||
-  value.version !== undefined ||
-  value.command.version !== undefined;
-const commandVersionsMatch = <
-  T extends { version?: number; command?: ExplicitCommand },
->(
-  value: T,
-) =>
-  value.version === undefined ||
-  value.command?.version === undefined ||
-  value.version === value.command.version;
 export const questionAnswerInputSchema = z
   .object(questionAnswerFields)
   .strict()
   .refine(answerShape, {
-    message: "Provide exactly one of answer, choice, decision or command",
-  })
-  .refine(commandVersionValid, {
-    path: ["version"],
-    message: "A command answer requires a task version",
-  })
-  .refine(commandVersionsMatch, {
-    path: ["version"],
-    message: "version and command.version must match",
+    message: "Provide exactly one of answer, choice or decision",
   });
 
 export const questionAnswerRequestSchema = z
@@ -77,15 +45,7 @@ export const questionAnswerRequestSchema = z
   })
   .strict()
   .refine(answerShape, {
-    message: "Provide exactly one of answer, choice, decision or command",
-  })
-  .refine(commandVersionValid, {
-    path: ["version"],
-    message: "A command answer requires a task version",
-  })
-  .refine(commandVersionsMatch, {
-    path: ["version"],
-    message: "version and command.version must match",
+    message: "Provide exactly one of answer, choice or decision",
   })
   .refine(
     (value) =>

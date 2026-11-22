@@ -748,20 +748,15 @@ export class AcpAgent {
       // the answer here, never an assumption: it is why the next offer may raise a new one.
       if (card?.requestId === requestId) session.cards.delete(key);
       if (result.action === "accept" && typeof content[fieldId] === "string")
-        this.record(
-          session,
-          question,
-          {
-            action: "accept",
-            answer: content[fieldId] as string,
-          },
-          send,
-        );
+        this.record(session, question, {
+          action: "accept",
+          answer: content[fieldId] as string,
+        });
       else if (result.action === "cancel" && live)
         // Only a card this turn raised can carry the operator's own dismissal. A card the
         // client settles after its turn ended is a settlement the host made from its own
         // read of T3, and recording it would spend the version's one re-offer.
-        this.record(session, question, { action: "cancel", requestId }, send);
+        this.record(session, question, { action: "cancel", requestId });
     });
     const field = question.choices.length
       ? {
@@ -804,24 +799,15 @@ export class AcpAgent {
     event:
       | { action: "accept"; answer: string }
       | { action: "cancel"; requestId: string },
-    send?: Send,
   ): void {
     const work = session.transport.answer!({
       ...session.caller,
       id: question.id,
       version: question.version,
       ...event,
-    }).catch((error) => {
+    }).catch(() => {
       // A failed answer has unknown delivery; the service's own decision state decides
-      // whether this version is offered again. Explicit-command refusals (warnings or
-      // stale version) are surfaced to the operator so they can retry with accept/version.
-      const detail = reasonOf(error);
-      if (
-        send &&
-        event.action === "accept" &&
-        detail.startsWith("Explicit command ")
-      )
-        this.emit(send, session.sessionId, detail, true);
+      // whether this version is offered again.
       this.options.log?.("could not record an elicitation response");
     });
     this.work.add(work);

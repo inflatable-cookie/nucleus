@@ -18,13 +18,7 @@ import {
   type ResponsibleThread,
 } from "./questions/responsible-thread-cache";
 import { observationTimeout } from "./recovery/observation-timeout";
-import type {
-  ExplicitCommand,
-  ExplicitResolution,
-  Project,
-  ProfileCapability,
-  TaskControlTask,
-} from "../shared/contracts";
+import type { Project, ProfileCapability } from "../shared/contracts";
 import { sameCallerIdentity } from "../shared/agent-identity";
 import { OrphanRuns } from "./recovery/orphan-runs";
 import { ProgressContinuation } from "./review/progress-continuation";
@@ -1498,7 +1492,6 @@ export class Resolution {
       questionId: string;
       answer?: string;
       choice?: string;
-      command?: ExplicitCommand;
       version?: number;
       reason: string;
       decision?: "operator";
@@ -1516,7 +1509,6 @@ export class Resolution {
       questionId: string;
       answer?: string;
       choice?: string;
-      command?: ExplicitCommand;
       version?: number;
       reason: string;
       decision?: "operator";
@@ -1535,7 +1527,6 @@ export class Resolution {
       questionId: string;
       answer?: string;
       choice?: string;
-      command?: ExplicitCommand;
       version?: number;
       reason: string;
       decision?: "operator";
@@ -2728,35 +2719,6 @@ export class Resolution {
       version,
     );
   }
-  settleExplicitEscalationCommand(
-    t: Task,
-    id: string,
-    command: ExplicitCommand,
-    reason: string,
-    who: string,
-    version?: number,
-  ) {
-    return this.escalationSettlement.settleExplicitEscalationCommand(
-      t,
-      id,
-      command,
-      reason,
-      who,
-      undefined,
-      version,
-    );
-  }
-  dispatchDecisionExplicitCommand(
-    input: Parameters<
-      EscalationSettlement["dispatchDecisionExplicitCommand"]
-    >[0],
-    trustedT3?: boolean,
-  ) {
-    return this.escalationSettlement.dispatchDecisionExplicitCommand(
-      input,
-      trustedT3,
-    );
-  }
   continueWorkerAfterLadder(
     t: Task,
     input: {
@@ -3301,10 +3263,6 @@ export class Resolution {
    * answer applies through the existing verbs, never through a new control.
    */
   applyOperatorControl?: (input: TaskControlInput) => Promise<unknown>;
-  applyExplicitResolution?: (
-    input: ExplicitResolution,
-  ) => Promise<TaskControlTask>;
-  describeExplicitNext?: (task: Task) => string;
   wakeDeferredDirection?: (taskId: string) => void;
   launch(
     t: Task,

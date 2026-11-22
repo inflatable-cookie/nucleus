@@ -1,15 +1,10 @@
 import {
-  explicitResolutionSchema,
-  OPERATOR_BOARD_CALLER,
   taskControlInputSchema,
   type DecisionView,
-  type ExplicitCommand,
   type Task,
   type TaskControlInput,
-  type TaskControlTask,
 } from "../../shared/contracts";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
-import { isT3OperatorIdentity } from "../../shared/operator-identity";
 import {
   appliedMergeVerdict,
   escalationOutlived,
@@ -22,7 +17,6 @@ import {
   decodeEscalationChoice,
   escalationAnswerControl,
   escalationContinuationInstruction,
-  escalationVerbChoices,
   extractDecisionIdCandidates,
   extractFirstIsoTimestamp,
   extractTaskReferenceCandidates,
@@ -32,11 +26,6 @@ import {
   type PlannerEscalation,
 } from "./ladder";
 import { closeEscalationFollowups } from "./ladder/continuation";
-import {
-  collectOwnerVerbFacts,
-  ownerPendingEffects,
-  ownerVerbViews,
-} from "../verbs/owner-verbs";
 import {
   HostReadRefusalError,
   ProvenPreSendRefusalError,
@@ -165,120 +154,9 @@ function retireEscalationSurfaces(
 }
 
 /**
- * Spec 067 batch 4: list the explicit resolution commands that resolve an
- * escalation's cause with their arguments filled. Choosing one runs the
- * command through its ordinary RPC instead of writing an escalation answer.
- */
-export function escalationExplicitCommandChoices(
-  store: Store,
-  task: Task,
-  escalationId: string,
-  events: LadderEvent[],
-  pendingEffectIds: readonly string[] = [],
-): EscalationVerbChoice[] {
-  const escalation = plannerEscalations(events).find(
-    (item) => item.id === escalationId,
-  );
-  const payload = escalationPayload(events, escalationId);
-  const options: EscalationVerbChoice[] = [];
-  const push = (label: string, command: ExplicitCommand) => {
-    options.push({
-      label,
-      verb: "explicit",
-      args: {},
-      command: { ...command, version: task.version },
-    });
-  };
-  if (payload?.reviewContinuation) {
-    const reader =
-      typeof payload.reader === "string" ? payload.reader : undefined;
-    push(
-      `Explicit command: run.start role=reviewer agent=fresh${reader ? ` replacing=${reader}` : ""}`,
-      {
-        action: "run.start",
-        role: "reviewer",
-        agent: "fresh",
-        ...(reader ? { replacing: reader } : {}),
-        accept: [],
-      },
-    );
-  }
-  if (
-    typeof payload?.commit === "string" &&
-    typeof payload?.head === "string"
-  ) {
-    push(`Explicit command: closeout.now mergedCommit=${payload.commit}`, {
-      action: "closeout.now",
-      mergedCommit: payload.commit,
-      accept: [],
-    });
-  }
-  const runIds = [
-    ...new Set(
-      [
-        escalation?.runId,
-        typeof payload?.reader === "string" ? payload.reader : null,
-        task.resolution.currentRunId,
-      ].filter((value): value is string => Boolean(value)),
-    ),
-  ];
-  for (const runId of runIds) {
-    const run = store.run(runId);
-    if (run && !run.released)
-      push(`Explicit command: run.release run=${runId}`, {
-        action: "run.release",
-        run: runId,
-        accept: [],
-      });
-  }
-  const incident = task.resolution.incident;
-  if (incident && incident.status !== "resolved")
-    push(`Explicit command: record.clear kind=incident id=${incident.id}`, {
-      action: "record.clear",
-      kind: "incident",
-      id: incident.id,
-      accept: [],
-    });
-  for (const effectId of new Set(pendingEffectIds))
-    push(`Explicit command: record.clear kind=effect id=${effectId}`, {
-      action: "record.clear",
-      kind: "effect",
-      id: effectId,
-      accept: [],
-    });
-  push(`Explicit command: record.clear kind=escalation id=${escalationId}`, {
-    action: "record.clear",
-    kind: "escalation",
-    id: escalationId,
-    accept: [],
-  });
-  return options;
-}
-
-/** Combine ordinary offered owner verbs and explicit command options for an escalation. */
-export function escalationOfferedChoices(
-  store: Store,
-  task: Task,
-  escalationId: string,
-  events: LadderEvent[],
-): EscalationVerbChoice[] {
-  const facts = collectOwnerVerbFacts(store, task);
-  return [
-    ...escalationVerbChoices(ownerVerbViews(facts)),
-    ...escalationExplicitCommandChoices(
-      store,
-      task,
-      escalationId,
-      events,
-      ownerPendingEffects(facts).map((effect) => effect.effect),
-    ),
-  ];
-}
-
-/**
- * Spec 067 batch 4: an open escalation closes itself when its recorded cause
- * clears. Each typed cause uses its own clearance condition and never falls
- * through to a generic run check.
+ * Spec 067 batch 4: an open escalation closes itself only when its own recorded
+ * cause clears. Each typed cause uses its own clearance condition and never
+ * falls through to a generic run or unrelated effect check.
  */
 export function escalationCauseClearedReason(
   store: Store,
@@ -376,8 +254,6 @@ export function escalationCauseClearedReason(
         if (clearedRunDelivery && !hasPendingDelivery)
           return "the escalated delivery effect was cleared";
       }
-      if (ownerPendingEffects(collectOwnerVerbFacts(store, task)).length === 0)
-        return "the escalated pending effect was cleared";
     }
   }
   if (
@@ -462,10 +338,6 @@ export function closeClearedEscalations(store: Store, task: Task): string[] {
   return closed;
 }
 
-export type EscalationExplicitOutcome = NonNullable<
-  TaskControlTask["explicitResolution"]
-> & { taskVersion: number };
-
 type Answerer =
   | { role: "planner" | "decider"; agentId: string }
   | { role: "operator" };
@@ -530,173 +402,6 @@ export class EscalationSettlement {
     };
     settlement.then(cleanup, cleanup);
     return settlement;
-  }
-  /**
-   * Spec 067 batch 4: apply an explicit resolution command carried inside an
-   * escalation answer through the batch 1 contract with the answerer's
-   * authority. Warnings and stale versions change nothing and return directly
-   * so the caller can repeat with `accept` or the current version.
-   */
-  async settleExplicitEscalationCommand(
-    t: Task,
-    id: string,
-    command: ExplicitCommand,
-    reason: string,
-    who: string,
-    answerer: Answerer = answererFromLabel(who),
-    version?: number,
-  ): Promise<EscalationExplicitOutcome> {
-    const current = this.store.task(t.id);
-    if (!escalationOutlived(current))
-      closeClearedEscalations(this.store, current);
-    if (
-      plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[]).find(
-        (item) => item.id === id,
-      )?.answered
-    )
-      throw Error(`Escalation ${id} is already settled; read next again`);
-    if (!this.resolution.applyExplicitResolution)
-      throw Error("No explicit resolution applier is bound");
-    const fresh = this.store.task(t.id);
-    const caller =
-      answerer.role === "operator" ? OPERATOR_BOARD_CALLER : answerer.agentId;
-    const { version: commandVersion, accept, ...commandArgs } = command;
-    const explicitInput = explicitResolutionSchema.parse({
-      ...commandArgs,
-      taskId: fresh.id,
-      version: version ?? commandVersion ?? fresh.version,
-      reason: reason.slice(0, 4000),
-      accept: accept ?? [],
-      caller,
-    });
-    const resolved =
-      await this.resolution.applyExplicitResolution(explicitInput);
-    const outcome = resolved.explicitResolution;
-    if (!outcome)
-      throw Error("Explicit resolution did not return a resolution outcome");
-    if (outcome.status === "applied") {
-      const oldNext = this.resolution.describeExplicitNext?.(resolved) ?? "";
-      const diagnosticPrefix =
-        oldNext && outcome.next.endsWith(oldNext)
-          ? outcome.next.slice(0, -oldNext.length).trim()
-          : "";
-      closeClearedEscalations(this.store, this.store.task(fresh.id));
-      const afterTask = this.store.task(fresh.id);
-      const updatedNext =
-        this.resolution.describeExplicitNext?.(afterTask) ?? outcome.next;
-      const next = [diagnosticPrefix, updatedNext].filter(Boolean).join(" ");
-      return { ...outcome, next, taskVersion: afterTask.version };
-    }
-    return { ...outcome, taskVersion: resolved.version };
-  }
-  /**
-   * Spec 067 batch 4: when a board or native-inbox decision answer chooses a
-   * listed explicit command option of a linked open escalation, dispatch the
-   * command through its ordinary RPC without persisting a decision answer.
-   */
-  dispatchDecisionExplicitCommand(
-    input: {
-      id: string;
-      version: number;
-      answer: string;
-      answeredBy: string;
-      relayed: boolean;
-      note?: string;
-    },
-    trustedT3 = false,
-  ): Promise<EscalationExplicitOutcome> | null {
-    let decision;
-    try {
-      decision = this.store.decision(input.id);
-    } catch {
-      return null;
-    }
-    if (decision.status !== "open") return null;
-    const answerText = input.answer.trim();
-    if (!answerText) return null;
-    for (const taskId of decision.links.tasks) {
-      const events = this.store.eventsAll(taskId) as LadderEvent[];
-      const linked = events.filter(
-        (event) =>
-          event.kind === "planner_escalation_decision_linked" &&
-          event.detail.includes(decision.id),
-      );
-      for (const link of linked) {
-        const escalationId = link.detail.slice(0, link.detail.indexOf(":"));
-        const escalation = plannerEscalations(events).find(
-          (item) => item.id === escalationId && !item.answered,
-        );
-        if (!escalation) continue;
-        const offerEvent = events.find(
-          (event) =>
-            event.kind === "planner_escalation_offered" &&
-            event.detail.startsWith(`${escalationId}: `),
-        );
-        if (!offerEvent) continue;
-        let offered: EscalationVerbChoice[];
-        try {
-          offered = JSON.parse(
-            offerEvent.detail.slice(escalationId.length + 2),
-          ) as EscalationVerbChoice[];
-        } catch {
-          continue;
-        }
-        const selected = decodeEscalationChoice(answerText, offered);
-        if (selected.kind !== "owner" || !selected.choice.command) continue;
-        if (isT3OperatorIdentity(input.answeredBy) && !trustedT3)
-          throw Error(
-            "T3 operator identity requires an authenticated T3 session",
-          );
-        const isOp =
-          input.answeredBy === "operator" ||
-          input.answeredBy === "operator (board)" ||
-          isT3OperatorIdentity(input.answeredBy);
-        if (input.relayed && isOp)
-          throw Error(
-            "A relayed answer names the relaying agent, not the operator",
-          );
-        if (!input.relayed && !isOp)
-          throw Error(
-            "Only the operator answers without a relay; set relayed true and name the relaying agent",
-          );
-        if (input.relayed && !input.note?.trim())
-          throw Error(
-            "A relayed answer requires a note quoting the operator's authorization",
-          );
-        if (decision.version !== input.version)
-          throw Error(
-            `Decision ${decision.id} is at version ${decision.version}, not ${input.version}`,
-          );
-        const answerer: Answerer = input.relayed
-          ? { role: "planner", agentId: input.answeredBy }
-          : { role: "operator" };
-        const command = selected.choice.command;
-        return this.settleExplicitEscalationCommand(
-          this.store.task(taskId),
-          escalationId,
-          command,
-          input.note?.trim() || selected.reason,
-          input.answeredBy,
-          answerer,
-        ).then((outcome) => {
-          if (outcome.status === "warnings") {
-            const ids = outcome.warnings.map((w) => w.id).join(", ");
-            const texts = outcome.warnings
-              .map((w) => `${w.id}: ${w.text}`)
-              .join("; ");
-            throw Error(
-              `Explicit command ${command.action} requires accepting warnings [${ids}] at version ${outcome.taskVersion}: ${texts}. ${outcome.next}`,
-            );
-          }
-          if (outcome.status === "stale")
-            throw Error(
-              `Explicit command ${command.action} is stale; task is at version ${outcome.taskVersion}. ${outcome.next}`,
-            );
-          return outcome;
-        });
-      }
-    }
-    return null;
   }
   /** Share a live route settlement with a duplicate receipt observer instead of declaring it uncertain. */
   async awaitDelegatedEscalationSettlement(
@@ -1093,24 +798,6 @@ export class EscalationSettlement {
       }
       if (selected.kind === "owner") {
         const choice = selected.choice;
-        if (choice.command) {
-          const outcome = await this.settleExplicitEscalationCommand(
-            current,
-            id,
-            choice.command,
-            reason,
-            who,
-            answerer,
-            version,
-          );
-          if (outcome.status === "applied") return null;
-          if (outcome.status === "warnings")
-            return (
-              outcome.warnings.map((warning) => warning.text).join(" ") ||
-              outcome.next
-            );
-          return outcome.next;
-        }
         const controlInput = taskControlInputSchema.parse({
           ...choice.args,
           taskId: current.id,

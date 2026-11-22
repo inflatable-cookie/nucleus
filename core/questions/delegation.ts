@@ -14,12 +14,7 @@ import {
   offeredChoice,
   parseNativeDelegatedReply,
 } from "./question-delegation";
-import {
-  decodeEscalationChoice,
-  plannerEscalations,
-  type EscalationVerbChoice,
-  type LadderEvent,
-} from "./ladder";
+import { plannerEscalations, type LadderEvent } from "./ladder";
 import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
 import { HostReadRefusalError } from "../host";
@@ -363,7 +358,6 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
-      command?: import("../../shared/contracts").ExplicitCommand;
       version?: number;
       reason: string;
       decision?: "operator";
@@ -455,7 +449,6 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
-      command?: import("../../shared/contracts").ExplicitCommand;
       version?: number;
       reason: string;
       decision?: "operator";
@@ -498,7 +491,6 @@ export class Delegation {
         questionId: input.questionId,
         answer: input.answer,
         choice: input.choice,
-        command: input.command,
         version: input.version,
         reason: input.reason,
         decision: input.decision,
@@ -513,7 +505,6 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
-      command?: import("../../shared/contracts").ExplicitCommand;
       version?: number;
       reason: string;
       decision?: "operator";
@@ -581,7 +572,6 @@ export class Delegation {
         questionId: string;
         caller: string;
         answer?: string;
-        command?: import("../../shared/contracts").ExplicitCommand;
         version?: number;
         reason: string;
         decision?: "operator";
@@ -617,9 +607,7 @@ export class Delegation {
           answer === receipt.answer &&
           input.reason?.trim() === receipt.reason &&
           input.decision === receipt.decision &&
-          input.version === receipt.version &&
-          JSON.stringify(input.command ?? null) ===
-            JSON.stringify(receipt.command ?? null)
+          input.version === receipt.version
         )
           return Promise.reject(
             Error(outcome.detail.slice(outcome.detail.indexOf(":") + 2)),
@@ -683,17 +671,13 @@ export class Delegation {
       throw Error("A one-line reason is required (up to 500 characters)");
     if (
       input.decision !== "operator" &&
-      !input.command &&
       (!answer || answer.length > 4000 || /[\r\n]/.test(answer))
     )
       throw Error(
         "An answer or choice is required (one line, up to 4000 characters)",
       );
-    if (input.command && !isEscalation)
-      throw Error("Explicit commands are only supported on escalation answers");
     if (
       input.decision !== "operator" &&
-      !input.command &&
       (input.choice ||
         (choices.length && input.questionId.startsWith("queue-delegate-"))) &&
       !choices.includes(
@@ -741,8 +725,7 @@ export class Delegation {
     const receipt = {
       questionId: input.questionId,
       caller,
-      ...(answer !== undefined ? { answer } : {}),
-      ...(input.command ? { command: input.command } : {}),
+      answer,
       ...(input.version !== undefined ? { version: input.version } : {}),
       reason,
       ...(input.decision ? { decision: input.decision } : {}),
@@ -751,31 +734,6 @@ export class Delegation {
         : {}),
     };
     if (input.dryRun) return { ...receipt, status: "validated" as const };
-    const explicitCommand =
-      input.command ??
-      (escalation && answer
-        ? this.offeredEscalationCommand(authority.taskId, escalationId, answer)
-        : undefined);
-    if (escalation && explicitCommand) {
-      const task = this.store.task(authority.taskId);
-      const role = authority.role === "decider" ? "decider" : "planner";
-      return this.resolution.escalationSettlement
-        .settleExplicitEscalationCommand(
-          task,
-          escalationId,
-          explicitCommand,
-          reason,
-          `${authority.role} ${caller}`,
-          { role, agentId: caller },
-          input.version,
-        )
-        .then((outcome) => ({
-          ...receipt,
-          version: outcome.taskVersion,
-          status: outcome.status,
-          explicitResolution: outcome,
-        }));
-    }
     this.store.event(key, "delegated_answer", JSON.stringify(receipt));
     const receiptEventId = this.store
       .eventsAll(key)
@@ -815,29 +773,6 @@ export class Delegation {
       );
     }
     return receipt;
-  }
-  private offeredEscalationCommand(
-    taskId: string,
-    escalationId: string,
-    answer: string,
-  ): import("../../shared/contracts").ExplicitCommand | undefined {
-    const offerEvent = this.store
-      .eventsAll(taskId)
-      .find(
-        (event) =>
-          event.kind === "planner_escalation_offered" &&
-          event.detail.startsWith(`${escalationId}: `),
-      );
-    if (!offerEvent) return undefined;
-    try {
-      const offered = JSON.parse(
-        offerEvent.detail.slice(escalationId.length + 2),
-      ) as EscalationVerbChoice[];
-      const selected = decodeEscalationChoice(answer, offered);
-      return selected.kind === "owner" ? selected.choice.command : undefined;
-    } catch {
-      return undefined;
-    }
   }
   private deferredEscalation(
     taskId: string,
@@ -1174,6 +1109,7 @@ export class Delegation {
         questionId: string;
         caller: string;
         answer?: string;
+        version?: number;
         reason: string;
         decision?: "operator";
         overtakes?: string[];
@@ -1212,8 +1148,6 @@ export class Delegation {
       if (receipt) {
         const value = JSON.parse(receipt.detail) as {
           answer?: string;
-          command?: import("../../shared/contracts").ExplicitCommand;
-          version?: number;
           reason: string;
           decision?: string;
           overtakes?: string[];
@@ -1242,10 +1176,6 @@ export class Delegation {
               {
                 questionId: id,
                 ...(value.answer ? { answer: value.answer } : {}),
-                ...(value.command ? { command: value.command } : {}),
-                ...(value.version !== undefined
-                  ? { version: value.version }
-                  : {}),
                 ...(value.decision === "operator"
                   ? { decision: "operator" as const }
                   : {}),

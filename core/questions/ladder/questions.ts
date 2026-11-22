@@ -1,9 +1,4 @@
-import type {
-  Completion,
-  ExplicitCommand,
-  Task,
-  TaskNextVerb,
-} from "../../../shared/contracts";
+import type { Completion, Task, TaskNextVerb } from "../../../shared/contracts";
 import { taskContextLines } from "../question-delegation";
 
 /**
@@ -36,12 +31,11 @@ export function plannerEscalationChoicesFor(task: {
   return PLANNER_ESCALATION_CHOICES;
 }
 
-/** A copy of a safe ordinary owner-verb offer, or an explicit Spec 067 command option. */
+/** A copy of a safe ordinary owner-verb offer, without force or source acceptance. */
 export type EscalationVerbChoice = {
   label: string;
   verb: string;
   args: Record<string, unknown>;
-  command?: ExplicitCommand;
 };
 
 export function escalationVerbChoices(

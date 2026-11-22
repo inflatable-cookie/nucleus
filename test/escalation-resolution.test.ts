@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Store, digest } from "../core/store/store";
 import { Engine } from "../core/engine";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   completionSchema,
   dispositionSchema,
@@ -138,16 +139,21 @@ test("restart no longer answers an escalation on a terminal task; record.clear c
     );
 
     // The explicit replacement clears the incident directly and preserves the escalation event.
-    const cleared = await f.engine.resolution.applyExplicitResolution!({
-      action: "record.clear",
-      taskId: f.taskId,
-      version: before.version,
-      kind: "incident",
-      id: before.resolution.incident!.id,
-      reason: "The landed review-skip refusal already answered this escalation",
-      accept: [],
-      caller: "operator (board)",
-    });
+    const cleared = await resolveExplicitly(
+      f.engine,
+      {
+        action: "record.clear",
+        taskId: f.taskId,
+        version: before.version,
+        kind: "incident",
+        id: before.resolution.incident!.id,
+        reason:
+          "The landed review-skip refusal already answered this escalation",
+        accept: [],
+        caller: "operator (board)",
+      },
+      () => "next",
+    );
 
     assert.equal(cleared.explicitResolution?.status, "applied");
     assert.equal(cleared.phase, "cancelled");

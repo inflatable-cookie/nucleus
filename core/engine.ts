@@ -87,8 +87,6 @@ import { stopThreads } from "../shared/contracts";
 import type { Submission } from "../shared/contracts";
 
 import { controlHasExternalEffect } from "./verbs/control-decisions";
-import { resolveExplicitly } from "./verbs/explicit-resolution";
-import { collectOwnerVerbFacts, ownerTaskNext } from "./verbs/owner-verbs";
 export { controlHasExternalEffect } from "./verbs/control-decisions";
 export { workspaceAdmissionGapMs } from "./workspaces/admission-decisions";
 export { queuedDispatchOrder } from "./dispatch/queue-order";
@@ -1045,25 +1043,6 @@ export class Engine {
     // through the ordinary owner controls, with that answer as the authority.
     this.resolution.applyOperatorControl = (input) =>
       this.performTaskControl(input);
-    const describeNext = (task: Task) => {
-      if (task.removedAt)
-        return "The scheduler leaves this removed task alone.";
-      const next = ownerTaskNext(collectOwnerVerbFacts(this.store, task));
-      if (next.paused) return "The scheduler waits for Nucleus to resume.";
-      if (next.stop)
-        return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
-      if (
-        ["awaiting_review", "reviewing"].includes(task.phase) &&
-        !next.activeRun
-      )
-        return "The scheduler rechecks reviewer admission at the recorded PR head.";
-      if (next.activeRun)
-        return `The scheduler checks the ${next.activeRun.role} run for progress.`;
-      return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
-    };
-    this.resolution.describeExplicitNext = describeNext;
-    this.resolution.applyExplicitResolution = (input) =>
-      resolveExplicitly(this, input, describeNext);
     this.resolution.wakeDeferredDirection = (taskId) => {
       void this.cleanContext(() => this.wakeTask(taskId));
     };

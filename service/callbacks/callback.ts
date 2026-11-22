@@ -15,7 +15,6 @@ import {
   bulkDispositionRequestSchema,
   completionSchema,
   dependencyIdsSchema,
-  explicitCommandSchema,
   taskControlRequestSchema,
 } from "../../shared/contracts";
 import { Reports, reportSchema } from "../../core/intake/report";
@@ -99,7 +98,6 @@ const helperAnswerSchema = z
     questionId: z.string().trim().min(1).max(300),
     answer: z.string().trim().min(1).max(4000).optional(),
     choice: z.string().trim().min(1).max(400).optional(),
-    command: explicitCommandSchema.optional(),
     version: z.number().int().positive().optional(),
     reason: z
       .string()
@@ -116,24 +114,9 @@ const helperAnswerSchema = z
     (value) =>
       Number(Boolean(value.answer)) +
         Number(Boolean(value.choice)) +
-        Number(Boolean(value.decision)) +
-        Number(Boolean(value.command)) ===
+        Number(Boolean(value.decision)) ===
       1,
-    { message: "Provide exactly one of answer, choice, decision or command" },
-  )
-  .refine(
-    (value) =>
-      !value.command ||
-      value.version !== undefined ||
-      value.command.version !== undefined,
-    { path: ["version"], message: "A command answer requires a task version" },
-  )
-  .refine(
-    (value) =>
-      value.version === undefined ||
-      value.command?.version === undefined ||
-      value.version === value.command.version,
-    { path: ["version"], message: "version and command.version must match" },
+    { message: "Provide exactly one of answer, choice or decision" },
   );
 
 // Spec 065: an ACP session names the task and session its minted binding carries.

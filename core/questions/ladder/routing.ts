@@ -14,9 +14,11 @@ import {
 import { delegateQuestion, plannerWindows } from "../planner-delegation";
 import { DelegatedHostUnavailable } from "../delegation";
 import { escalationOutlived } from "../../recovery/task-reasons";
+import { collectOwnerVerbFacts, ownerVerbViews } from "../../verbs/owner-verbs";
 import type { Ladder } from "./ladder";
 import { plannerEscalationSuggestedVerbs } from "./proof";
 import {
+  escalationVerbChoices,
   plannerEscalationChoicesFor,
   type EscalationVerbChoice,
 } from "./questions";
@@ -24,10 +26,7 @@ import { plannerEscalations, type LadderEvent } from "./records";
 import { parseEscalationReply } from "./replies";
 import { escalationWaitDetail } from "./waits";
 import { closeEscalationFollowups } from "./continuation";
-import {
-  closeClearedEscalations,
-  escalationOfferedChoices,
-} from "../escalation-settlement";
+import { closeClearedEscalations } from "../escalation-settlement";
 
 /**
  * Routing one recorded escalation: the durable intent and wait the caller records,
@@ -338,12 +337,15 @@ async function routeEscalationRound(
       event.kind === "planner_escalation_offered" &&
       event.detail.startsWith(`${id}: `),
   );
-  const offerTask = ladder.store.task(t.id);
+  const offerFacts = collectOwnerVerbFacts(
+    ladder.store,
+    ladder.store.task(t.id),
+  );
   const offered: EscalationVerbChoice[] = offerEvent
     ? (JSON.parse(
         offerEvent.detail.slice(id.length + 2),
       ) as EscalationVerbChoice[])
-    : escalationOfferedChoices(ladder.store, offerTask, id, events());
+    : escalationVerbChoices(ownerVerbViews(offerFacts));
   if (!offerEvent)
     ladder.store.event(
       t.id,
@@ -519,7 +521,6 @@ async function routeEscalationRound(
     closeEscalationFollowups(ladder.store, t.id, id);
     return;
   }
-  closeClearedEscalations(ladder.store, ladder.store.task(t.id));
   if (plannerEscalations(events()).find((item) => item.id === id)?.answered)
     return;
   if (!reply || !who) {
@@ -611,14 +612,13 @@ async function routeEscalationRound(
         })
       : null;
     const followupQuestionId = followupOffer?.questionId ?? refusalBaseId;
+    const followupFacts = collectOwnerVerbFacts(
+      ladder.store,
+      ladder.store.task(t.id),
+    );
     const currentOffers =
       followupOffer?.ownerChoices ??
-      escalationOfferedChoices(
-        ladder.store,
-        ladder.store.task(t.id),
-        id,
-        events(),
-      );
+      escalationVerbChoices(ownerVerbViews(followupFacts));
     const retryChoices = followupOffer?.choices ?? [
       ...plannerEscalationChoicesFor(ladder.store.task(t.id)),
       ...currentOffers.map((item) => item.label),
@@ -651,7 +651,7 @@ async function routeEscalationRound(
           prompt: nativeDelegationPrompt("planner", {
             question: `Your choice was refused: ${refusal}. Choose again for the same escalation.`,
             choices: retryChoices,
-            context: ladder.resolution.decisionContext(ladder.store.task(t.id)),
+            context: ladder.resolution.decisionContext(followupFacts.task),
           }),
           signal: new AbortController().signal,
           timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS,

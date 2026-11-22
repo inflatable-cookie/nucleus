@@ -107,28 +107,32 @@ const resolutionWarningId = z.enum([
   "unverified_merge",
   "no_verdict",
 ]);
-const resolutionAcceptField = z
-  .array(resolutionWarningId)
-  .max(resolutionWarningId.options.length)
-  .default([]);
 const resolutionFields = {
   taskId: resolutionId,
   version: z.number().int().positive(),
   reason: z.string().trim().min(1).max(4000),
-  accept: resolutionAcceptField,
+  accept: z
+    .array(resolutionWarningId)
+    .max(resolutionWarningId.options.length)
+    .default([]),
   caller: resolutionId.optional(),
 };
-const explicitCommandFields = {
-  version: z.number().int().positive().optional(),
-  accept: resolutionAcceptField,
-};
-const explicitCommandVariants = <T extends Record<string, z.ZodTypeAny>>(
-  base: T,
-) =>
+export const explicitResolutionSchema = z.preprocess(
+  (raw) => {
+    if (
+      !raw ||
+      typeof raw !== "object" ||
+      Array.isArray(raw) ||
+      !("reference" in raw)
+    )
+      return raw;
+    const { reference, ...input } = raw;
+    return "taskId" in input ? raw : { ...input, taskId: reference };
+  },
   z.discriminatedUnion("action", [
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("run.release"),
         run: resolutionId,
         archive: z.boolean().optional(),
@@ -136,7 +140,7 @@ const explicitCommandVariants = <T extends Record<string, z.ZodTypeAny>>(
       .strict(),
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("record.clear"),
         kind: z.enum([
           "stop",
@@ -154,7 +158,7 @@ const explicitCommandVariants = <T extends Record<string, z.ZodTypeAny>>(
       .strict(),
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("run.start"),
         role: z.enum(["worker", "reviewer", "coordinator"]),
         agent: z.enum(["retained", "fresh"]).optional(),
@@ -169,7 +173,7 @@ const explicitCommandVariants = <T extends Record<string, z.ZodTypeAny>>(
       .strict(),
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("phase.set"),
         to: z.enum([
           "working",
@@ -184,7 +188,7 @@ const explicitCommandVariants = <T extends Record<string, z.ZodTypeAny>>(
       .strict(),
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("message.send"),
         role: z.enum(["worker", "reviewer", "coordinator", "planner"]),
         text: z.string().trim().min(1).max(8000),
@@ -192,19 +196,19 @@ const explicitCommandVariants = <T extends Record<string, z.ZodTypeAny>>(
       .strict(),
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("turn.take"),
       })
       .strict(),
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("turn.release"),
       })
       .strict(),
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("merge.now"),
         head: z
           .string()
@@ -214,7 +218,7 @@ const explicitCommandVariants = <T extends Record<string, z.ZodTypeAny>>(
       .strict(),
     z
       .object({
-        ...base,
+        ...resolutionFields,
         action: z.literal("closeout.now"),
         mergedCommit: z
           .string()
@@ -223,26 +227,11 @@ const explicitCommandVariants = <T extends Record<string, z.ZodTypeAny>>(
           .optional(),
       })
       .strict(),
-  ]);
-/** Explicit command payload carried inside an escalation answer (Spec 067 batch 4). */
-export const explicitCommandSchema = explicitCommandVariants(
-  explicitCommandFields,
+  ]),
 );
-export type ExplicitCommand = z.infer<typeof explicitCommandSchema>;
-export const explicitResolutionSchema = z.preprocess((raw) => {
-  if (
-    !raw ||
-    typeof raw !== "object" ||
-    Array.isArray(raw) ||
-    !("reference" in raw)
-  )
-    return raw;
-  const { reference, ...input } = raw;
-  return "taskId" in input ? raw : { ...input, taskId: reference };
-}, explicitCommandVariants(resolutionFields));
 export type ExplicitResolution = z.infer<typeof explicitResolutionSchema>;
 export type ResolutionWarningId = z.infer<typeof resolutionWarningId>;
-export const resolutionResultSchema = z.object({
+const resolutionResultSchema = z.object({
   status: z.enum(["applied", "warnings", "stale"]),
   warnings: z.array(z.object({ id: resolutionWarningId, text: z.string() })),
   next: z.string(),

@@ -88,17 +88,12 @@ preserves its previous state in the audit history.
 
 Escalation answers bind to the task `version`, not a snapshot binding hash, and
 never refuse an offered verb solely because `next` no longer lists that offer.
-Escalations list the explicit commands that resolve their cause as options with
-their arguments filled. Choosing a command option (or passing `command` on
-`question.answer`) calls that command through its ordinary explicit-resolution
-RPC with the answerer's authority, without writing `planner_escalation_answered`
-or `delegated_answer` or changing decision persistence; warnings or stale
-versions return directly so the answerer retries the command itself. Open
-escalations close only through one durable auto-close path
-(`closeClearedEscalations`) once their recorded cause clears, retiring the
-escalation's stop, owned wait, followups and open linked decision in one
-transaction (with repair on maintenance if interrupted). `restart` no longer
-answers escalations; use the explicit command and `record.clear` instead.
+Open escalations close automatically only through one durable auto-close path
+(`closeClearedEscalations`) once their own recorded cause clears, retiring the
+escalation's stop, owned wait, followups, initial question windows, and open
+linked decision in one transaction (with repair on maintenance if interrupted).
+`restart` no longer answers escalations; use the explicit command and
+`record.clear` instead.
 
 
 ## Problem
