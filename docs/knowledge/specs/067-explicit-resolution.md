@@ -115,7 +115,9 @@ command. The task's coordinator (its recovery run): every command, including
 `merge.now` and `closeout.now` (Tom, 2026-11-21: "Coordinators should get merge
 and closeout"), except accepting `hold_owner`, `route_policy` or `two_writers`.
 The hard gates bind every caller. Workers and reviewers ask instead. A `critical` task: planner
-and operator only.
+and operator only. Authority comes from the authenticated caller matching the registered thread;
+host observation (`routable`, `unverified`) never gates it, and only decides where a message is
+delivered (Planner direction, 2026-11-22). The same rule holds for force's caller gate.
 
 ## Normal flow keeps working, and stops being a lever
 

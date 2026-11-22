@@ -1,8 +1,15 @@
 import type { Task } from "../../shared/contracts";
 
-/** Refusal wording shared by previews, applying controls and offline admission. */
-export const FORCE_CALLER_REFUSAL =
-  "Force requires the task project planner, Nucleus planner, operator, or this task authenticated worker, reviewer or recovery run; critical tasks prohibit self-force";
+/**
+ * Force's caller refusal, shared by previews, applying controls and offline
+ * admission. It names the reason this caller lacks authority, not a generic list.
+ */
+export function forceCallerRefusal(caller: string | undefined, critical?: boolean): string {
+  if (!caller) return "Force requires an authenticated caller; this control carried none";
+  if (critical)
+    return "Force is refused for this caller: a critical task allows only its live project planner, the Nucleus planner or the operator to force it";
+  return "Force is refused for this caller: it is not the task's live project planner, the Nucleus planner, the operator, or this task's authenticated worker, reviewer or recovery run";
+}
 export const FORCE_REASON_REFUSAL = "Force requires a reason";
 export const FORCE_ACTION_REFUSAL = "Force applies only to move";
 export const FORCE_MOVE_REFUSAL = "This task cannot be moved; read next";

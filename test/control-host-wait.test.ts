@@ -275,7 +275,7 @@ test('a forced control refuses on local facts before the wait, and a valid one s
     };
     // The caller gate is the dispatcher's own force refusal.
     await refused(control(f, { action: 'move', to: 'work', reason: 'Force the move', force: true, caller: 'unrelated-thread' }),
-      /Force requires the task project planner, Nucleus planner, operator, or this task authenticated worker, reviewer or recovery run/);
+      /Force is refused for this caller: it is not the task's live project planner, the Nucleus planner, the operator, or this task's authenticated worker, reviewer or recovery run/);
 
     // A forced move keeps the version, removal and merged-PR refusals.
     const stale = control(f, { action: 'move', to: 'work', reason: 'Force the move', force: true, caller: 'operator (board)' });

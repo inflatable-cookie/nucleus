@@ -1,7 +1,7 @@
 import {
   FORCE_ACTION_REFUSAL,
-  FORCE_CALLER_REFUSAL,
   FORCE_REASON_REFUSAL,
+  forceCallerRefusal,
 } from "./verb-refusal-text";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { taskNeverDispatched } from "../task-decision-rules";
@@ -222,7 +222,7 @@ export class TaskControlDispatcher {
         task.resolution.mergedCommit
       ) {
         if (!await this.engine.forceCallerAuthorized(task, input.caller))
-          throw new DurableFenceRefusal(FORCE_CALLER_REFUSAL);
+          throw new DurableFenceRefusal(forceCallerRefusal(input.caller, task.critical));
         return this.engine.applyTaskControlMove(
           { ...input, force: false },
           operated,

@@ -1,5 +1,5 @@
 import { proofActivationRefusal } from '../qa/proof-activation';
-import { FORCE_CALLER_REFUSAL, FORCE_REASON_REFUSAL, FORCE_ACTION_REFUSAL, FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL } from '../verbs/verb-refusal-text';
+import { forceCallerRefusal, FORCE_REASON_REFUSAL, FORCE_ACTION_REFUSAL, FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL } from '../verbs/verb-refusal-text';
 import { completeStateRefusal, moveStateRefusal, stopStateRefusal, routeStateRefusal } from '../verbs/control-refusals';
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL } from '../verbs/control-refusals';
 import { isDispositionActive, cancellationWithdrawalRefusal, holdsOf, type Task, type TaskControlInput } from "../../shared/contracts";
@@ -82,7 +82,7 @@ export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 're
  */
 async function forcedControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, task: Task, input: TaskControlInput): Promise<string | null> {
   if (!await engine.forceCallerAuthorized(task, input.caller))
-    return FORCE_CALLER_REFUSAL;
+    return forceCallerRefusal(input.caller, task.critical);
   if (!input.reason?.trim()) return FORCE_REASON_REFUSAL;
   if (input.action === "retry_effect") return "Use run.release or record.clear kind=effect for explicit settlement";
   if (input.action !== "move") return FORCE_ACTION_REFUSAL;
