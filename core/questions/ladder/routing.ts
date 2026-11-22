@@ -13,7 +13,6 @@ import {
 } from "../question-delegation";
 import { delegateQuestion, plannerWindows } from "../planner-delegation";
 import { DelegatedHostUnavailable } from "../delegation";
-import { escalationOutlived } from "../../recovery/task-reasons";
 import type { Ladder } from "./ladder";
 import { plannerEscalationSuggestedVerbs } from "./proof";
 import {
@@ -401,11 +400,13 @@ async function routeEscalationRound(
       ...(resolvedHolder ? { holderAgentId: resolvedHolder } : {}),
     });
   };
+  const isTerminalPhase = (task: Task): boolean =>
+    task.phase === "done" || task.phase === "cancelled";
   if (
     issue &&
     !planners.length &&
     !recoverable &&
-    !escalationOutlived(ladder.store.task(t.id))
+    !isTerminalPhase(ladder.store.task(t.id))
   ) {
     recordRoutingWait(
       phase === "return"
@@ -426,7 +427,7 @@ async function routeEscalationRound(
     retainDecider: true,
     current: () =>
       !plannerEscalations(events()).find((item) => item.id === id)?.answered,
-    canAdvance: () => !escalationOutlived(ladder.store.task(t.id)),
+    canAdvance: () => !isTerminalPhase(ladder.store.task(t.id)),
     onIntent: (role, agentId, rung) => {
       if (
         !recoverable &&
@@ -506,7 +507,7 @@ async function routeEscalationRound(
       );
     }
   };
-  if (!reply && escalationOutlived(ladder.store.task(t.id))) {
+  if (!reply && isTerminalPhase(ladder.store.task(t.id))) {
     ladder.store.event(
       t.id,
       "planner_escalation_answered",

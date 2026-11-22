@@ -5,7 +5,6 @@ import {
   type TaskControlInput,
 } from "../../shared/contracts";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
-import { escalationOutlived } from "../recovery/task-reasons";
 import { Decisions } from "../planning/decisions";
 import type { Resolution } from "../resolution";
 import type { Store } from "../store/store";
@@ -940,7 +939,11 @@ export class EscalationSettlement {
     if (deferred?.escalationId === id && deferred.questionId === questionId)
       return "pending";
     const control = intent.control;
-    if (!control && escalationOutlived(this.store.task(taskId))) {
+    const currentTask = this.store.task(taskId);
+    if (
+      !control &&
+      (currentTask.phase === "done" || currentTask.phase === "cancelled")
+    ) {
       this.store.event(
         taskId,
         "planner_escalation_answered",

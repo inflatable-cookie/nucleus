@@ -750,3 +750,144 @@ test("round 10: fresh escalations offer plain choices only (no route, restart, m
     await fx.close();
   }
 });
+
+test("round 11: a merge reserved during a live planner question timeout leaves the escalation open", async () => {
+  const fx = makeFixture();
+  try {
+    fx.engine.resolution.delegatedAnswerWaitMs = 20;
+    const escId = "esc-merge-timeout";
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation",
+      `${escId}: cause worker_error; run worker; question q; options ${PLANNER_ESCALATION_CHOICES.join(" | ")}`,
+    );
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_question",
+      `${escId}: Worker stopped; choose how it proceeds.`,
+    );
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_payload",
+      `${escId}: ${JSON.stringify({ id: escId, runId: null })}`,
+    );
+    const decisions = new Decisions(fx.store);
+    const linked = decisions.add({
+      headline: "Live question during pending merge",
+      question: "How should esc-merge-timeout proceed?",
+      choices: [
+        { label: "Stop and keep the work", consequence: "Parks task" },
+        {
+          label: "Return to the worker with a new approach",
+          consequence: "Continues worker",
+        },
+      ],
+      askedBy: PLANNER,
+      tasks: [fx.taskId],
+    });
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_decision_linked",
+      `${escId}: decision ${linked.id}`,
+    );
+
+    // Reserve a pending merge while the planner question is live and times out with no reply.
+    fx.store.update(
+      fx.taskId,
+      {
+        phase: "merging",
+        resolution: { ...fx.task().resolution, mergeIntent: true },
+      },
+      "merge_intent",
+      "merge reserved during live planner question",
+    );
+    await fx.engine.resolution.ladder.routePlannerEscalation(
+      fx.task(),
+      escId,
+      "Worker stopped; choose how it proceeds.",
+    );
+
+    const events = fx.store.eventsAll(fx.taskId);
+    assert.equal(
+      plannerEscalations(events).find((e) => e.id === escId)?.answered,
+      false,
+      "planner timeout during pending merge must not close the escalation",
+    );
+    assert.equal(
+      events.some(
+        (e) =>
+          e.kind === "planner_escalation_answered" &&
+          e.detail.startsWith(`${escId}:`),
+      ),
+      false,
+    );
+    assert.equal(
+      events.some(
+        (e) =>
+          e.kind === "planner_escalation_missed" &&
+          e.detail.startsWith(`${escId}:`),
+      ),
+      true,
+    );
+    assert.equal(fx.store.decision(linked.id).status, "open");
+  } finally {
+    await fx.close();
+  }
+});
+
+test("round 11: interrupted planner-receipt recovery during a pending merge leaves the escalation open", async () => {
+  const fx = makeFixture();
+  try {
+    const escId = "esc-receipt-merge";
+    const { questionId } = recordOpenEscalation(
+      fx.store,
+      fx.engine,
+      fx.taskId,
+      escId,
+    );
+    const receiptEventId = fx.store.eventsAll(fx.taskId).at(-1)?.id ?? 0;
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_answer_pending",
+      `${escId}: ${JSON.stringify({
+        questionId,
+        who: PLANNER,
+        answer: "Stop and keep the work",
+        control: null,
+      })}`,
+    );
+    fx.store.update(
+      fx.taskId,
+      {
+        phase: "merging",
+        resolution: { ...fx.task().resolution, mergeIntent: true },
+      },
+      "merge_intent",
+      "pending merge during interrupted receipt recovery",
+    );
+
+    const outcome =
+      fx.engine.resolution.escalationSettlement.reconcileDelegatedEscalationAnswer(
+        fx.taskId,
+        escId,
+        questionId,
+        receiptEventId,
+      );
+    assert.notEqual(outcome, "applied");
+    const events = fx.store.eventsAll(fx.taskId);
+    assert.equal(
+      plannerEscalations(events).find((e) => e.id === escId)?.answered,
+      false,
+    );
+    assert.equal(
+      events.some(
+        (e) =>
+          e.kind === "planner_escalation_answered" &&
+          e.detail.startsWith(`${escId}:`),
+      ),
+      false,
+    );
+  } finally {
+    await fx.close();
+  }
+});
