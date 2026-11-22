@@ -175,13 +175,12 @@ export async function resolveExplicitly(
     input.action === "message.send"
       ? await resolveMessageTarget(engine, before, input.role)
       : null;
-  if (
+  const runStartPreflight =
     input.action === "run.start" &&
     input.version === before.version &&
     !before.removedAt
-  ) {
-    await preflightExplicitRunStart(engine, before, input);
-  }
+      ? await preflightExplicitRunStart(engine, before, input)
+      : undefined;
   const result = store.transaction(() => {
     const task = store.task(id);
     const reply = (
@@ -202,20 +201,23 @@ export async function resolveExplicitly(
         "Only the live responsible planner or operator board can accept hold_owner, route_policy or two_writers",
       );
 
+    const inHost = <T>(fn: () => T): T =>
+      task.hostId ? engine.withHost(task.hostId, fn) : fn();
     const plan =
       input.action === "run.release"
         ? releasePlan(engine, task, input)
         : input.action === "record.clear"
           ? clearPlan(engine, task, input)
           : input.action === "run.start"
-            ? runStartPlan(engine, task, input)
+            ? inHost(() => runStartPlan(engine, task, input, runStartPreflight))
             : input.action === "phase.set"
               ? phaseSetPlan(engine, task, input)
               : messageSendPlan(engine, task, input, messageTarget!);
     if (plan.warnings.some((warning) => !input.accept.includes(warning.id)))
       return reply("warnings", plan.warnings);
 
-    const { patch, before } = plan.apply();
+    const { patch, before } =
+      input.action === "run.start" ? inHost(() => plan.apply()) : plan.apply();
     const {
       caller,
       accept,

@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { git } from "../core/git/index";
-import { readGitCheckout } from "../core/git/git-identity";
+import { readGitCheckout, readGitRef } from "../core/git/git-identity";
+import { hostCatalogSchema } from "../shared/host";
+import { composeBbAdapter } from "../service/bb-adapter";
+import { emptyBbThreadState } from "../hosts/bb";
 import { formatAgentId } from "../shared/agent-identity";
 import {
   OPERATOR_BOARD_CALLER,
@@ -1038,8 +1041,10 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
     accept: ["head_mismatch"],
   });
   assert.equal(started.explicitResolution?.status, "applied");
-  assert.equal(current().prHead, pushedSha);
+  // Unconfirmed caller head does not overwrite task.prHead; reviewer detaches at requested head.
+  assert.equal(current().prHead, firstSha);
   assert.equal(readGitCheckout(worktree).head, pushedSha);
+  assert.equal(readGitCheckout(worktree).branch, "");
 
   // Retained worker uses sendRun with a newly minted credential after prior credential was revoked.
   store.setCredential("old-rev", "revoked-secret");
@@ -1272,9 +1277,14 @@ test("review fixes: phase.set preserves stop, message.send warns on queue-only r
   assert.equal(current().workspaceId, "existing-ws");
 });
 
-test("review round 2: reviewer source custody refuses dirty checkout and live worker, handles #1508 remote push through callback intake", async (t) => {
+test("review round 2: reviewer source custody refuses dirty checkout, warns two_writers for live worker, handles #1508 forge-confirmed remote push through callback intake", async (t) => {
   let createdToken = "";
+  let forgeHead = "";
   const { root, store, current, command, runtime } = await fixture(t, {
+    verifyPrIdentity: async () => ({
+      head: forgeHead,
+      url: "https://github.com/example/repo/pull/42",
+    }),
     createRun: async (
       _task: unknown,
       r: { id: string; role: string; workspaceId: string },
@@ -1316,6 +1326,7 @@ test("review round 2: reviewer source custody refuses dirty checkout and live wo
   await git(pusher, "commit", "-m", "v2 remote");
   const remoteSha = await git(pusher, "rev-parse", "HEAD");
   await git(pusher, "push", "origin", branch);
+  forgeHead = remoteSha;
 
   store.update(current().id, {
     repoPath: repoDir,
@@ -1368,33 +1379,34 @@ test("review round 2: reviewer source custody refuses dirty checkout and live wo
   assert.equal(readGitCheckout(worktree).branch, branch);
   await git(worktree, "checkout", "--", "a.txt");
 
-  // Live worker refuses before apply().
+  // Live worker surfaces two_writers warning (never a hard refusal).
   store.update(current().id, { runId: "live-w", agentActive: true });
-  await assert.rejects(
-    command({
-      action: "run.start",
-      role: "reviewer",
-      agent: "fresh",
-      head: remoteSha,
-      accept: ["head_mismatch"],
-    }),
-    /worker is still live/i,
+  const liveProbe = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    head: remoteSha,
+  });
+  assert.equal(liveProbe.explicitResolution?.status, "warnings");
+  assert.ok(
+    liveProbe.explicitResolution?.warnings.some((w) => w.id === "two_writers"),
   );
   store.update(current().id, { runId: null, agentActive: false });
 
-  // Clean #1508 launch fetches remoteSha, updates branch, and accepts real sourceApproved callback intake.
+  // Clean #1508 launch fetches remoteSha, detaches at remoteSha without moving task branch, updates forge-confirmed prHead, and accepts callback intake.
   const started = await command({
     action: "run.start",
     role: "reviewer",
     agent: "fresh",
     head: remoteSha,
-    accept: ["head_mismatch"],
   });
   assert.equal(started.explicitResolution?.status, "applied");
   const revRunId = started.explicitResolution!.runId!;
   assert.equal(current().prHead, remoteSha);
-  assert.equal(readGitCheckout(worktree).head, remoteSha);
-  assert.equal(readGitCheckout(worktree).branch, branch);
+  const afterCheckout = readGitCheckout(worktree);
+  assert.equal(afterCheckout.head, remoteSha);
+  assert.equal(afterCheckout.branch, "");
+  assert.equal(readGitRef(afterCheckout, `refs/heads/${branch}`), firstSha);
 
   assert.ok(createdToken.length > 0);
   const accepted = await runtime.engine.complete(
@@ -1402,13 +1414,11 @@ test("review round 2: reviewer source custody refuses dirty checkout and live wo
       taskId: current().id,
       runId: revRunId,
       eventId: "evt-rev-1508",
-      status: "blocked",
+      status: "ready_to_merge",
       head: remoteSha,
-      sourceApproved: true,
-      reviewResponsibility: "environment",
-      awaitingProofs: [{ proof: "e2e", route: "external" }],
-      summary: "Source approved at remote head; awaiting external proof",
+      summary: "Approved at remote head",
       reviewText: "Looks good",
+      reviewId: 101,
     },
     createdToken,
   );
@@ -1740,4 +1750,312 @@ test("review round 2: message.send reports host steer disposition and blocks que
   );
   assert.equal(launchedProofOnly, true);
   assert.equal(current().resolution.stop, null);
+});
+
+test("review round 4: coordinator one-step replacement on real Git worktree, unpushed branch preserved, unconfirmed head not saved, missing checkout refused", async (t) => {
+  let forgeHead = "";
+  const { root, store, current, run, command, runtime } = await fixture(t, {
+    verifyPrIdentity: async () => ({
+      head: forgeHead,
+      url: "https://github.com/example/repo/pull/99",
+    }),
+  });
+  const remote = join(root, "remote.git");
+  const repoDir = join(root, "repo");
+  const worktree = join(root, "worktree");
+  await git(root, "init", "--bare", remote);
+  await git(root, "init", repoDir);
+  await git(repoDir, "config", "user.email", "test@example.com");
+  await git(repoDir, "config", "user.name", "Test");
+  await git(repoDir, "checkout", "-b", "main");
+  writeFileSync(join(repoDir, "a.txt"), "v1\n");
+  await git(repoDir, "add", "a.txt");
+  await git(repoDir, "commit", "-m", "v1");
+  await git(repoDir, "remote", "add", "origin", remote);
+  await git(repoDir, "push", "-u", "origin", "main");
+  const branch = current().branch;
+  await git(repoDir, "worktree", "add", "-b", branch, worktree, "main");
+  const publishedSha = await git(worktree, "rev-parse", "HEAD");
+  await git(worktree, "push", "-u", "origin", branch);
+  forgeHead = publishedSha;
+
+  // Worker has one unpushed local commit ahead of publishedSha.
+  writeFileSync(join(worktree, "a.txt"), "v2-unpushed\n");
+  await git(worktree, "add", "a.txt");
+  await git(worktree, "commit", "-m", "v2 unpushed");
+  const unpushedSha = await git(worktree, "rev-parse", "HEAD");
+
+  const coordRun = run("live-coord", "recovery", "coord-agent");
+  const stuckRev = run("stuck-rev", "reviewer", null);
+  store.putRun(coordRun);
+  store.putRun(stuckRev);
+  store.update(current().id, {
+    repoPath: repoDir,
+    directory: worktree,
+    workspaceId: "workspace",
+    workspaceIntent: true,
+    prUrl: "https://github.com/example/repo/pull/99",
+    prHead: publishedSha,
+    phase: "reviewing",
+    profile: profile("worker-a", "model-alpha"),
+    agentId: "worker-1",
+    agentActive: false,
+    coordinatorAgentId: "coord-agent",
+    resolution: {
+      ...current().resolution,
+      currentRunId: stuckRev.id,
+      recoveryActive: true,
+      recovery: {
+        id: "ep-1",
+        key: "k-1",
+        generation: 1,
+        runId: coordRun.id,
+        agentId: "coord-agent",
+        status: "running",
+        summary: "Stall",
+        idleSince: null,
+        incidentId: null,
+      },
+    },
+  });
+  runtime.engine.profiles = [
+    profile("worker-a", "model-alpha"),
+    profile("rev-b", "model-beta"),
+  ];
+  store.setMeta("pool", [
+    {
+      profileId: "rev-b",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+
+  // 1. Live coordinator replaces uncertain reviewer in one step on real Git checkout,
+  // detaching at publishedSha while leaving refs/heads/<branch> at unpushedSha.
+  const replaced = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    replacing: stuckRev.id,
+    caller: formatAgentId(host, "coord-agent"),
+    accept: ["duplicate_thread"],
+  });
+  assert.equal(replaced.explicitResolution?.status, "applied");
+  const after = readGitCheckout(worktree);
+  assert.equal(after.head, publishedSha);
+  assert.equal(after.branch, "");
+  assert.equal(readGitRef(after, `refs/heads/${branch}`), unpushedSha);
+
+  // 2. Caller-supplied head differing from forge warns head_mismatch and never writes it to prHead.
+  const mismatchProbe = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    head: unpushedSha,
+  });
+  assert.equal(mismatchProbe.explicitResolution?.status, "warnings");
+  assert.ok(
+    mismatchProbe.explicitResolution?.warnings.some(
+      (w) => w.id === "head_mismatch",
+    ),
+  );
+  const mismatchApplied = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    head: unpushedSha,
+    accept: ["head_mismatch", "duplicate_thread"],
+  });
+  assert.equal(mismatchApplied.explicitResolution?.status, "applied");
+  assert.equal(current().prHead, publishedSha);
+
+  // 3. Missing checkout is refused as unavailable rather than skipped.
+  store.update(current().id, { directory: join(root, "missing-worktree") });
+  await assert.rejects(
+    command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+      accept: ["duplicate_thread"],
+    }),
+    /checkout is unavailable/i,
+  );
+});
+
+test("review round 4: reviewer profile selection scopes to task host catalog; BB service adapter forwards allowQueuedFallback", async (t) => {
+  const secondaryHost = "t3code-secondary";
+  const workerA = profile("worker-a", "model-alpha", { provider: "codex" });
+  const primaryOnly = profile("primary-only-rev", "model-beta", {
+    provider: "claude",
+  });
+  const secondaryOnly = profile("secondary-only-rev", "model-gamma", {
+    provider: "codex",
+  });
+  const makeCatalog = (entries: Array<{ key: string; models: string[] }>) =>
+    hostCatalogSchema.parse({
+      providers: entries.map(({ key, models }) => ({
+        key,
+        label: key,
+        available: true,
+        problem: "",
+        models: models.map((id) => ({
+          id,
+          label: id,
+          aliases: [],
+          thinkingOptions: [{ id: "high", label: "high" }],
+          defaultThinkingOptionId: null,
+          modes: [{ id: "default", label: "default" }],
+          features: [],
+        })),
+      })),
+    });
+  const { root, adapter, store, current, runtime } = await fixture(t, {
+    catalog: async () =>
+      makeCatalog([
+        { key: "codex", models: ["model-alpha"] },
+        { key: "claude", models: ["model-beta"] },
+      ]),
+  });
+
+  // Register secondary host with its own catalog distinct from primary.
+  const secondaryAdapter = {
+    ...adapter,
+    hostId: secondaryHost,
+    catalog: async () =>
+      makeCatalog([{ key: "codex", models: ["model-gamma"] }]),
+  } as unknown as Adapter;
+  store.setProfiles(
+    [workerA, primaryOnly, secondaryOnly].map((p) => ({
+      id: p.id,
+      name: p.name,
+      provider: p.provider,
+      model: p.model,
+      notes: "",
+      modeId: p.modeId,
+      thinkingOptionId: p.thinkingOptionId,
+    })),
+  );
+  runtime.engine.hostIds = () => [host, secondaryHost];
+  runtime.engine.resolveHostAdapter = (id) =>
+    id === secondaryHost ? secondaryAdapter : id === host ? adapter : undefined;
+  runtime.engine.hostAvailable = () => true;
+  await runtime.engine.refresh();
+
+  store.setMeta("pool", [
+    {
+      profileId: primaryOnly.id,
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+    {
+      profileId: secondaryOnly.id,
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+  const secondaryTask = store.insert(
+    submissionSchema.parse({
+      submissionId: "secondary-host-task",
+      title: "Secondary host task",
+      repoPath: repo,
+      planningCommit: head,
+      handoffPath: "handoff.md",
+      originAgentId: "owner",
+    }),
+    secondaryHost,
+    "Handoff",
+    head,
+  );
+  store.update(secondaryTask.id, {
+    phase: "awaiting_review",
+    prHead: head,
+    workspaceId: "workspace",
+    profile: profile("worker-a", "model-alpha"),
+  });
+
+  const started = taskControlTaskSchema.parse(
+    await callCatalogueMethod(runtime, "queue.task", {
+      action: "run.start",
+      taskId: secondaryTask.id,
+      version: store.task(secondaryTask.id).version,
+      reason: "Start reviewer on secondary host",
+      caller: OPERATOR_BOARD_CALLER,
+      role: "reviewer",
+      agent: "fresh",
+    }),
+  );
+  assert.equal(started.explicitResolution?.status, "applied");
+  const created = store.run(started.explicitResolution!.runId!);
+  assert.equal(created?.profile?.id, secondaryOnly.id);
+
+  // BB service adapter forwards allowQueuedFallback=false and refuses instead of queueing.
+  const bbState = emptyBbThreadState();
+  bbState.agents["bb-thread-1"] = {
+    id: "bb-thread-1",
+    task: current().id,
+    run: "run-1",
+    role: "worker",
+    workspaceId: "ws-1",
+    parentThreadId: null,
+    labels: {},
+  };
+  store.setMeta("bbThreads", bbState);
+  const ops: Array<{ op: string; mode?: unknown }> = [];
+  const bbAdapter = composeBbAdapter({
+    hostId: "bb-test",
+    connected: () => true,
+    dataDir: join(root, "bb-data"),
+    store,
+    workspaces: {
+      createWorkspace: async () => ({ id: "ws-1", directory: root }),
+      findWorkspaces: async () => [],
+      workspaceAvailable: async () => true,
+      workspaceIdAccepted: () => true,
+      taskWorkspaceArchived: async () => false,
+      workspaceRef: () => ({
+        directory: root,
+        refresh: async () => true,
+        current: () => null,
+        archive: async () => ({
+          archivedAt: new Date().toISOString(),
+          error: null,
+        }),
+      }),
+      repositoryProject: async () => ({ workspaceRoot: root }),
+    },
+    records: () => ({}),
+    put: () => {},
+    notSent: (error) => error instanceof ProvenPreSendRefusalError,
+    operation: async (op, input) => {
+      const mode = (input as { mode?: unknown })?.mode;
+      ops.push({ op, mode });
+      if (op === "thread.send" && mode === "steer") {
+        throw new ProvenPreSendRefusalError("No active turn to steer");
+      }
+      return {
+        operation: op,
+        at: new Date().toISOString(),
+        calls: {},
+        value: {},
+      };
+    },
+  });
+
+  await assert.rejects(
+    bbAdapter.steerOrNotify!("bb-thread-1", "msg-1", "Hello", undefined, {
+      allowQueuedFallback: false,
+    }),
+    /queued fallback was not accepted/i,
+  );
+  // Only the steer attempt ran; no queued fallback send was dispatched.
+  assert.deepEqual(ops, [{ op: "thread.send", mode: "steer" }]);
 });

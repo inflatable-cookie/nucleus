@@ -1780,7 +1780,7 @@ the lookup unanswered.
 If the inventory's five live and archived pairs keep returning different
 sequences, the lookup retries once from fresh reads. Persistent churn surfaces
 as a read refusal. The
-[absent-creation contract](../contracts/orchestration.md#uncertain-creation-and-absence)
+[uncertain-creation contract](../contracts/orchestration.md#uncertain-creation-and-explicit-exits)
 owns the grace and producer checks that allow a replacement.
 
 ## Operator install route

@@ -29,6 +29,7 @@ import {
 } from "../dispatch/routing";
 import { usageGateBlocked } from "../dispatch/usage-gate";
 import type { Engine } from "../engine";
+import { taskPrNumber } from "../forge/index";
 import { git, queueCheckoutStatus } from "../git/index";
 import {
   commonDirMatchesTask,
@@ -37,15 +38,6 @@ import {
   readGitRef,
 } from "../git/git-identity";
 import type { Adapter } from "../host/adapter";
-import {
-  assertOrdinaryReviewIdentity,
-  ordinaryReviewSource,
-} from "../review/ordinary-review";
-import {
-  assertReviewEntryWriterYielded,
-  reviewEntryInputForTask,
-  type ReviewEntryAdapter,
-} from "../review/review-entry";
 import { digest, now } from "../store/store";
 import type {
   ExplicitFinishResult,
@@ -61,6 +53,11 @@ export type MessageTarget = {
   hasSteer: boolean;
   hasEnqueue: boolean;
   hasNotify: boolean;
+};
+
+export type ExplicitRunStartPreflight = {
+  forgeHead: string | null;
+  workerTurnActive: boolean;
 };
 
 async function detectDeliveryCapabilities(
@@ -427,11 +424,11 @@ function selectProfileForStart(
   };
 }
 
-function hasRealReviewWorktree(task: Task): boolean {
+function expectsReviewWorktree(task: Task): boolean {
   return Boolean(
     task.directory &&
       task.directory !== task.repoPath &&
-      existsSync(join(task.directory, ".git")),
+      task.entrypoint !== "proof",
   );
 }
 
@@ -439,6 +436,14 @@ function assertReviewWorktreeIdentity(task: Task): void {
   if (!task.directory || !task.branch || task.branch === task.baseBranch) {
     throw Error(
       `Reviewer source identity is incomplete: expected checkout directory and a task branch distinct from ${task.baseBranch}`,
+    );
+  }
+  if (
+    !existsSync(task.directory) ||
+    !existsSync(join(task.directory, ".git"))
+  ) {
+    throw Error(
+      `Reviewer checkout is unavailable at ${task.directory}; restore or recreate the worktree before starting review`,
     );
   }
   const checkout = readGitCheckout(task.directory);
@@ -464,47 +469,8 @@ function assertReviewWorktreeIdentity(task: Task): void {
   }
 }
 
-async function assertReviewerCustodyAndClean(
-  engine: Engine,
-  task: Task,
-  ignoreRunId: string | undefined,
-): Promise<void> {
-  if (!hasRealReviewWorktree(task)) return;
-  const runs = engine.store.runs(task.id);
-  const otherUnreleased = runs.find((r) => !r.released && r.id !== ignoreRunId);
-  if (otherUnreleased) {
-    throw Error(
-      `Cannot start reviewer while unreleased ${otherUnreleased.role} run ${otherUnreleased.id} owns the checkout`,
-    );
-  }
-  if (
-    task.runId &&
-    task.runId !== ignoreRunId &&
-    !task.completion &&
-    (task.agentActive !== false || task.agentIntent)
-  ) {
-    throw Error(
-      "Cannot start reviewer while the worker is still live in the shared checkout",
-    );
-  }
-  const hostWork = async () => {
-    if (task.reviewEntry) {
-      await assertReviewEntryWriterYielded(
-        reviewEntryInputForTask(task),
-        engine.adapter as Adapter & ReviewEntryAdapter,
-        task.id,
-      );
-    }
-    if (task.agentId && typeof engine.host?.observe === "function") {
-      const state = await engine.host.observe(task.agentId).catch(() => null);
-      if (state && (state.status === "running" || state.activeTurnId)) {
-        throw Error(
-          "Cannot start reviewer while the worker turn is active in the shared checkout",
-        );
-      }
-    }
-  };
-  await (task.hostId ? engine.withHost(task.hostId, hostWork) : hostWork());
+async function assertCleanReviewCheckout(task: Task): Promise<void> {
+  if (!expectsReviewWorktree(task)) return;
   assertReviewWorktreeIdentity(task);
   const dirty = await queueCheckoutStatus(
     task.directory!,
@@ -518,71 +484,113 @@ async function assertReviewerCustodyAndClean(
   }
 }
 
+function assertDetachedReviewHead(task: Task, head: string): void {
+  assertReviewWorktreeIdentity(task);
+  const checkout = readGitCheckout(task.directory!);
+  if (checkout.head !== head || checkout.branch !== "") {
+    throw Error(
+      `Reviewer checkout is not detached at ${head} (observed HEAD ${checkout.head}, branch ${checkout.branch || "(detached)"})`,
+    );
+  }
+}
+
 /**
- * Preflight reviewer source custody and cleanliness before the transaction
- * creates a run or updates `prHead`, so a dirty checkout or live writer
- * refuses cleanly without mutating the task or detaching the worktree.
+ * Preflight reviewer source availability, cleanliness, forge PR head and live
+ * writer observation before the transaction creates a run. Never refuses on
+ * control-actor recovery runs or live workers (live workers surface as the
+ * `two_writers` warning).
  */
 export async function preflightExplicitRunStart(
   engine: Engine,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.start" }>,
-): Promise<void> {
-  if (input.role !== "reviewer") return;
-  await assertReviewerCustodyAndClean(engine, task, input.replacing);
+): Promise<ExplicitRunStartPreflight> {
+  if (input.role !== "reviewer") {
+    return { forgeHead: null, workerTurnActive: false };
+  }
+  let forgeHead: string | null = null;
+  let workerTurnActive = false;
+  const probe = async () => {
+    let prNumber: number | null = null;
+    try {
+      prNumber = taskPrNumber(task);
+    } catch {
+      const match = task.prUrl?.match(/\/pull\/(\d+)/);
+      prNumber = match ? Number(match[1]) : null;
+    }
+    if (prNumber) {
+      if (typeof engine.adapter.verifyPrIdentity === "function") {
+        const pr = await engine.adapter
+          .verifyPrIdentity(task, prNumber)
+          .catch(() => null);
+        if (pr?.head) forgeHead = pr.head;
+      } else if (typeof engine.adapter.verifyPr === "function") {
+        const pr = await engine.adapter
+          .verifyPr(task, prNumber)
+          .catch(() => null);
+        if (pr?.head) forgeHead = pr.head;
+      }
+    }
+    if (task.agentId && typeof engine.host?.observe === "function") {
+      const state = await engine.host.observe(task.agentId).catch(() => null);
+      if (state && (state.status === "running" || state.activeTurnId)) {
+        workerTurnActive = true;
+      }
+    }
+  };
+  await (task.hostId ? engine.withHost(task.hostId, probe) : probe());
+  await assertCleanReviewCheckout(task);
+  return { forgeHead, workerTurnActive };
 }
 
+/**
+ * Prepare the reviewer's detached view at `run.head` without ever moving,
+ * resetting or force-updating `refs/heads/<task.branch>`.
+ */
 async function prepareReviewerCheckout(
   engine: Engine,
   task: Task,
   run: Run,
 ): Promise<void> {
-  if (!hasRealReviewWorktree(task)) return;
+  if (!expectsReviewWorktree(task)) return;
   if (run.ordinaryDetached) {
     await engine.resolution.ordinaryRoundCustody(task, run);
-  } else {
-    await assertReviewerCustodyAndClean(engine, task, run.id);
   }
+  await assertCleanReviewCheckout(task);
+  let fetchError: unknown = null;
   if (task.branch) {
-    await git(
-      task.directory!,
-      "fetch",
-      "origin",
-      `refs/heads/${task.branch}`,
-    ).catch(() => {});
-  }
-  await git(task.directory!, "rev-parse", "--verify", `${run.head}^{commit}`);
-  const checkout = readGitCheckout(task.directory!);
-  const branchRef = `refs/heads/${task.branch}`;
-  let branchTip: string | null = null;
-  try {
-    branchTip = readGitRef(checkout, branchRef);
-  } catch {
-    branchTip = null;
-  }
-  if (branchTip !== run.head) {
-    if (checkout.branch === task.branch) {
+    try {
       await git(
         task.directory!,
-        "checkout",
-        "--quiet",
-        "-B",
-        task.branch,
-        run.head,
+        "fetch",
+        "origin",
+        `refs/heads/${task.branch}`,
       );
-    } else {
-      await git(task.directory!, "branch", "-f", task.branch, run.head);
+    } catch (error) {
+      fetchError = error;
     }
   }
-  if (run.ordinaryDetached) {
-    await git(task.directory!, "checkout", "--quiet", "--detach", run.head);
-    await ordinaryReviewSource(task, run.head, true);
-  } else {
-    const after = readGitCheckout(task.directory!);
-    if (after.branch !== task.branch || after.head !== run.head) {
-      await git(task.directory!, "checkout", "--quiet", task.branch);
+  try {
+    await git(task.directory!, "rev-parse", "--verify", `${run.head}^{commit}`);
+  } catch (error) {
+    if (fetchError) {
+      throw Error(
+        `Reviewer commit ${run.head} is unavailable after fetch failure: ${String(fetchError).slice(0, 300)}`,
+      );
     }
-    await ordinaryReviewSource(task, run.head, false);
+    throw error;
+  }
+  await git(task.directory!, "checkout", "--quiet", "--detach", run.head);
+  assertDetachedReviewHead(task, run.head);
+  const dirty = await queueCheckoutStatus(
+    task.directory!,
+    "status",
+    "--porcelain",
+  );
+  if (dirty) {
+    throw Error(
+      `Reviewer checkout became dirty after detach: ${dirty.slice(0, 500)}`,
+    );
   }
 }
 
@@ -592,7 +600,7 @@ function priorFinishedReviewForDetached(
   runs: Run[],
   head: string,
 ): Run | null {
-  if (task.entrypoint === "proof" || !hasRealReviewWorktree(task)) return null;
+  if (task.entrypoint === "proof" || !expectsReviewWorktree(task)) return null;
   const prior = runs.findLast(
     (r) =>
       r.role === "reviewer" &&
@@ -603,6 +611,15 @@ function priorFinishedReviewForDetached(
   );
   if (!prior?.completion) return null;
   if (prior.head === head && !prior.completion.sourceApproved) return null;
+  // ordinaryDetached custody requires refs/heads/<branch> to equal run.head;
+  // if the worker branch is ahead (e.g. unpushed commit), keep ordinaryDetached unset
+  // so we never rewrite the worker branch or trip ordinaryRoundCustody.
+  try {
+    const checkout = readGitCheckout(task.directory!);
+    if (readGitRef(checkout, `refs/heads/${task.branch}`) !== head) return null;
+  } catch {
+    return null;
+  }
   const receipt = engine.store.db
     .prepare("SELECT response FROM receipts WHERE id=? AND task=? AND run=?")
     .get(prior.completion.eventId, task.id, prior.id) as
@@ -621,6 +638,7 @@ export function runStartPlan(
   engine: Engine,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.start" }>,
+  preflight?: ExplicitRunStartPreflight,
 ): ExplicitPlan {
   const store = engine.store;
   const runs = store.runs(task.id);
@@ -737,24 +755,27 @@ export function runStartPlan(
       `Another unreleased or uncertain ${input.role} run exists on this task.`,
     );
   }
+  const liveCheckoutWriters = runs.some(
+    (r) =>
+      (r.role === "revision" || r.role === "executor") &&
+      !r.released &&
+      (r.active !== false ||
+        ["running", "intent", "uncertain"].includes(r.status)),
+  );
   if (
-    input.role === "worker" &&
-    (unreleasedRoleRuns.some(
-      (r) =>
-        r.active !== false ||
-        ["running", "intent", "uncertain"].includes(r.status),
-    ) ||
-      liveInitialWorker)
+    (input.role === "worker" || input.role === "reviewer") &&
+    (liveCheckoutWriters || liveInitialWorker || preflight?.workerTurnActive)
   ) {
     warn(
       "two_writers",
-      "Another worker may still be live in this task's worktree.",
+      "Another worker or executor may still be live in this task's worktree.",
     );
   }
-  if (input.head && task.prHead && input.head !== task.prHead) {
+  const referencePrHead = preflight?.forgeHead ?? task.prHead ?? null;
+  if (input.head && referencePrHead && input.head !== referencePrHead) {
     warn(
       "head_mismatch",
-      `Requested head ${input.head.slice(0, 12)} differs from recorded PR head ${task.prHead.slice(0, 12)}.`,
+      `Requested head ${input.head.slice(0, 12)} differs from ${preflight?.forgeHead ? "forge PR head" : "recorded PR head"} ${referencePrHead.slice(0, 12)}.`,
     );
   }
   const budgetState = taskBudget(
@@ -794,7 +815,11 @@ export function runStartPlan(
       const basePatch = releaseChange?.patch ?? {};
       const resolution = { ...(basePatch.resolution ?? task.resolution) };
       const runId = randomUUID();
-      const head = input.head ?? task.prHead ?? task.planningCommit;
+      const head =
+        input.head ??
+        preflight?.forgeHead ??
+        task.prHead ??
+        task.planningCommit;
       const base = task.planningCommit;
       const generation =
         runRole === "recovery" ? task.coordinatorGeneration + 1 : 1;
@@ -841,8 +866,15 @@ export function runStartPlan(
       store.putRun(createdRun);
 
       const patch: Partial<Task> = { ...basePatch, resolution };
-      if (runRole === "reviewer" && input.head) {
-        patch.prHead = input.head;
+      // Only record a forge-confirmed PR head; never overwrite prHead with an
+      // unconfirmed caller-supplied head.
+      if (
+        runRole === "reviewer" &&
+        preflight?.forgeHead &&
+        (!input.head || input.head === preflight.forgeHead) &&
+        task.prHead !== preflight.forgeHead
+      ) {
+        patch.prHead = preflight.forgeHead;
       }
       if (runRole === "reviewer" || runRole === "revision") {
         resolution.currentRunId = runId;
@@ -908,27 +940,26 @@ export function runStartPlan(
       const sendGuard = {
         allowed: async () => {
           if (!isRunStillOwned()) return false;
-          if (runRole === "reviewer" && hasRealReviewWorktree(latestTask)) {
+          if (runRole === "reviewer" && expectsReviewWorktree(latestTask)) {
             const current = store.task(task.id);
             if (run.ordinaryDetached) {
               await engine.resolution.ordinaryRoundCustody(current, run);
             }
-            await ordinaryReviewSource(
-              current,
-              run.head,
-              Boolean(run.ordinaryDetached),
+            assertDetachedReviewHead(current, run.head);
+            const dirty = await queueCheckoutStatus(
+              current.directory!,
+              "status",
+              "--porcelain",
             );
+            if (dirty)
+              throw Error(`Reviewer checkout is dirty: ${dirty.slice(0, 500)}`);
           }
           return isRunStillOwned();
         },
         stillAllowed: () => {
           if (!isRunStillOwned()) return false;
-          if (runRole === "reviewer" && hasRealReviewWorktree(latestTask)) {
-            assertOrdinaryReviewIdentity(
-              store.task(task.id),
-              run.head,
-              Boolean(run.ordinaryDetached),
-            );
+          if (runRole === "reviewer" && expectsReviewWorktree(latestTask)) {
+            assertDetachedReviewHead(store.task(task.id), run.head);
           }
           return true;
         },
@@ -995,7 +1026,7 @@ export function runStartPlan(
           token,
           null,
           null,
-          runRole === "reviewer" && hasRealReviewWorktree(latestTask)
+          runRole === "reviewer" && expectsReviewWorktree(latestTask)
             ? sendGuard
             : undefined,
         );

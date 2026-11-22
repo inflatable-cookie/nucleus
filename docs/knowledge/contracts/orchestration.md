@@ -3121,7 +3121,7 @@ resulting state on its own cadence.
   transient wait supersedes its notice naming that reason, not with an empty
   error.
 - Agentless recovery follows the proof and release rules in
-  [Uncertain creation and absence](#uncertain-creation-and-absence).
+  [Uncertain creation and explicit exits](#uncertain-creation-and-explicit-exits).
 - A decision that escalates, spends a coordinator run or returns work verifies
   live the facts named in Spec 016 rule 4, once per attempt; a failed read is
   `unverified` and retries within a bounded grace

@@ -1,6 +1,10 @@
 import { isHostOperationTimeout } from "../core/host/errors";
 import { HostPolicies } from "../core/host/host-policies";
-import type { Adapter, HostPolicyConstructor, HostPolicyPort } from "../core/host";
+import type {
+  Adapter,
+  HostPolicyConstructor,
+  HostPolicyPort,
+} from "../core/host";
 import {
   ArchiveNotDeliveredError,
   ProvenPreSendRefusalError,
@@ -42,7 +46,9 @@ export interface BbWorkspaces
     | "workspaceIdAccepted"
     | "taskWorkspaceArchived"
   > {
-  createWorkspace(task: Pick<Task, "directory" | "repoPath" | "title">): Promise<{ id: string; directory: string }>;
+  createWorkspace(
+    task: Pick<Task, "directory" | "repoPath" | "title">,
+  ): Promise<{ id: string; directory: string }>;
   workspaceRef(id: string): HostWorkspaceRef;
   repositoryProject(
     root: string,
@@ -73,7 +79,9 @@ export function composeBbAdapter(input: {
       return {
         id: row.threadId,
         workspaceId: threads.workspaceFor(row, agent),
-        ...(includeWorkspaceDirectory ? { workspaceDirectory: row.environmentPath } : {}),
+        ...(includeWorkspaceDirectory
+          ? { workspaceDirectory: row.environmentPath }
+          : {}),
         labels: agent?.labels,
         archived: row.archivedAt !== null,
         status: row.archivedAt !== null ? "closed" : row.status,
@@ -201,11 +209,19 @@ export function composeBbAdapter(input: {
         const workspace = workspaces.workspaceRef(spec.workspaceId);
         await workspace.refresh();
         const current = workspace.current();
-        if (!task || workspace.directory !== task.directory || current?.projectRootPath !== task.repoPath)
-          throw new ProvenPreSendRefusalError("BB workspace is no longer attached to the task checkout");
+        if (
+          !task ||
+          workspace.directory !== task.directory ||
+          current?.projectRootPath !== task.repoPath
+        )
+          throw new ProvenPreSendRefusalError(
+            "BB workspace is no longer attached to the task checkout",
+          );
         const registered = await workspaces.createWorkspace(task);
         if (registered.id !== spec.workspaceId)
-          throw new ProvenPreSendRefusalError("BB workspace registration returned a different handle");
+          throw new ProvenPreSendRefusalError(
+            "BB workspace registration returned a different handle",
+          );
       }
       return threads.createAgent(spec);
     }
@@ -316,8 +332,14 @@ export function composeBbAdapter(input: {
       return threads.deliver(id, text, messageId);
     }
     /** A participant message steers a live turn; a proven not-sent steer falls back to one queued send. */
-    steerOrNotify(id: string, messageId: string, text: string) {
-      return threads.steerOrNotify(id, text, messageId);
+    steerOrNotify(
+      id: string,
+      messageId: string,
+      text: string,
+      _sourceAgentId?: string,
+      options?: { allowQueuedFallback?: boolean },
+    ) {
+      return threads.steerOrNotify(id, text, messageId, options);
     }
     pendingQuestions(id: string) {
       return threads.pendingQuestions(id);
