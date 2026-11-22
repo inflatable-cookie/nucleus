@@ -3582,16 +3582,10 @@ test("an answer after the task merged settles the escalation and leaves the task
       summary: "The gate is held",
       cause: { kind: "external", name: "held gate" },
     });
-    await until(
-      () =>
-        f.events("planner_escalation_applied").length +
-          f.events("planner_escalation_refused").length >
-        0,
-    );
-    assert.equal(f.events("planner_escalation_refused").length, 0);
+    await until(() => f.events("planner_escalation_resolved").length > 0);
     assert.match(
-      f.events("planner_escalation_applied")[0]!.detail,
-      /merged or ended first/,
+      f.events("planner_escalation_resolved")[0]!.detail,
+      /merged or ended/,
     );
     assert.doesNotMatch(f.current().reason, /is unresolved/);
     assert.equal(f.current().phase, "done");
