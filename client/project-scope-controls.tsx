@@ -29,7 +29,6 @@ import {
   ActionButton,
   Button,
   FocusRing,
-  InlineConfirm,
   noOutline,
   controlFrame,
   controlText,
@@ -135,8 +134,6 @@ function withinBoxes(boxes: React.RefObject<View | null>[], target: unknown) {
  * change is saved; a rejection shows in the row. Remove hands the project to the shared
  * removal dialog, which the board renders outside the picker. An absent action is left out of the menu. */
 export type ProjectSelectorActions = {
-  park?: (project: Project) => Promise<unknown>;
-  unpark?: (project: Project) => Promise<unknown>;
   rename?: (project: Project, name: string) => Promise<unknown>;
   remove?: (project: Project) => void;
 };
@@ -154,7 +151,7 @@ function finePointer(): boolean {
   }
 }
 
-type RowMenu = { key: string; view: "actions" | "park" | "rename" };
+type RowMenu = { key: string; view: "actions" | "rename" };
 
 /** The selection box's side, shared by the row, its rename editor and the note under it. */
 const CHECKBOX = 18;
@@ -346,7 +343,7 @@ function PanelAction({
  * the project search with Clear project selection beside Settings, so the rows get
  * the rest of the height.
  * Each row's disclosure chevron (nucleus#1430, #1432) opens a panel attached to the
- * row with Park or Unpark, Rename and Remove from Nucleus, inside the picker so no
+ * row with Rename and Remove from Nucleus, inside the picker so no
  * nested popover takes an outside press; Rename edits the name in its own slot. Project
  * settings live in Settings → Projects, which its settings icon opens (lane `nucleus-ui`,
  * task 946 build task 4). */
@@ -478,7 +475,6 @@ export function ProjectSelector({
   /** The row's control panel, attached under the row inside its frame, so the picker's outside-press check still sees it. */
   const renderPanel = (full: Project) => {
     const name = full.name;
-    const parked = full.visibility === "parked";
     const failure = actionError ? (
       <Text
         accessibilityRole="alert"
@@ -500,48 +496,9 @@ export function ProjectSelector({
       padding: space.xxs,
       gap: space.xxs / 2,
     };
-    if (menuState?.view === "park")
-      return (
-        <View accessibilityLabel={`Actions for ${name}`} style={frame}>
-          <View style={{ padding: space.xxs }}>
-            <InlineConfirm
-              c={c}
-              question={`Park ${name}? No new work starts.`}
-              confirmLabel="Park"
-              label={`project ${name}`}
-              busy={pending}
-              onConfirm={() => run(projectActions!.park!(full))}
-              onCancel={() => setMenu({ key: full.key, view: "actions" })}
-            />
-          </View>
-          {failure}
-        </View>
-      );
     const tall = compact || !fine;
     return (
       <View accessibilityLabel={`Actions for ${name}`} style={frame}>
-        {projectActions!.park && !parked && (
-          <PanelAction
-            c={c}
-            tall={tall}
-            icon={ACTION_ICONS.pause}
-            text="Park"
-            label={`Park ${name}`}
-            disabled={pending}
-            onPress={() => setMenu({ key: full.key, view: "park" })}
-          />
-        )}
-        {projectActions!.unpark && parked && (
-          <PanelAction
-            c={c}
-            tall={tall}
-            icon={ACTION_ICONS.resume}
-            text="Unpark"
-            label={`Unpark ${name}`}
-            disabled={pending}
-            onPress={() => run(projectActions!.unpark!(full))}
-          />
-        )}
         {projectActions!.rename && (
           <PanelAction
             c={c}
@@ -558,9 +515,7 @@ export function ProjectSelector({
         )}
         {projectActions!.remove && (
           <>
-            {(projectActions!.rename ||
-              projectActions!.park ||
-              projectActions!.unpark) && (
+            {projectActions!.rename && (
               <View
                 accessibilityElementsHidden
                 importantForAccessibility="no"
@@ -744,18 +699,7 @@ export function ProjectSelector({
       >
         {rows.map((project, index) => (
           <React.Fragment key={project.key}>
-            {project.visibility === "parked" &&
-              (index === 0 || rows[index - 1].visibility !== "parked") && (
-                <Text
-                  accessibilityRole="header"
-                  accessibilityLabel="Parked"
-                  style={{ color: c.foreground, fontWeight: "600" }}
-                >
-                  Parked
-                </Text>
-              )}
-            {project.visibility !== "parked" &&
-              project.dormant &&
+            {project.dormant &&
               (index === 0 || !rows[index - 1].dormant) && (
                 <Text
                   accessibilityRole="header"

@@ -29,7 +29,7 @@ const project = (
   key,
   name,
   version: 1,
-  visibility: "active",
+  
   repositories: repos,
   primary: repos[0],
   drain: null,
@@ -74,25 +74,18 @@ test("026-14b two selected projects scope every view to both; none means all", (
   assert.equal(selectionLabel(projects, both), "2 projects");
 });
 
-test("Spec 027 #11 selector Parked section and All projects view hide parked while a selected parked project remains reachable", () => {
-  const parked = { ...projectA, visibility: "parked" as const, version: 2 };
-  const all = [other, parked, consumer];
+test("Spec 027 #11 retired 2026-11-22: no project is hidden; a quiet one is Dormant and All projects includes it", () => {
+  const quiet = { ...projectA, version: 2 };
+  const all = [other, quiet, consumer];
   assert.deepEqual(
-    projectSelectorRows(all, [], "", [], []).map((row) => [
-      row.key,
-      row.visibility,
-    ]),
-    [
-      ["consumer-b-v2", "active"],
-      ["other", "active"],
-      ["project-a-accelerator", "parked"],
-    ],
+    projectSelectorRows(all, [], "", [], []).map((row) => row.key).sort(),
+    ["consumer-b-v2", "other", "project-a-accelerator"],
   );
   assert.deepEqual(
-    scopedProjects(all, []).map((project) => project.key),
-    ["consumer-b-v2", "other"],
+    scopedProjects(all, []).map((project) => project.key).sort(),
+    ["consumer-b-v2", "other", "project-a-accelerator"],
   );
-  assert.equal(scopeContains(all, [])("/project-a", "owner/project-a"), false);
+  assert.equal(scopeContains(all, [])("/project-a", "owner/project-a"), true);
   assert.equal(
     scopeContains(all, ["project-a-accelerator"])(
       "/project-a",
@@ -601,29 +594,23 @@ test("1529 the selector keeps active projects first, then Dormant, then Parked, 
   const mid = project("mid", "Mid", repo("mid"));
   const beta = project("beta", "Beta", repo("beta"));
   const gamma = project("gamma", "Gamma", repo("gamma"));
-  const parkedHigh = {
-    ...project("parked-high", "Parked high", repo("parked-high")),
-    visibility: "parked" as const,
-  };
-  const parkedLow = {
-    ...project("parked-low", "Parked low", repo("parked-low")),
-    visibility: "parked" as const,
-  };
+  const busy = project("busy", "Busy", repo("busy"));
+  const quiet = project("quiet", "Quiet", repo("quiet"));
   const tasks = [
     live("a1", "/alpha"),
     live("z1", "/zeta"),
     live("m1", "/mid"),
     live("m2", "/mid"),
     live("m3", "/mid"),
-    ...["p1", "p2", "p3", "p4", "p5"].map((id) => live(id, "/parked-high")),
+    ...["p1", "p2", "p3", "p4", "p5"].map((id) => live(id, "/busy")),
   ] as Parameters<typeof projectSelectorRows>[3];
   const activity = [
     seen("alpha", NOW - HOUR),
     seen("zeta", NOW - DAY),
-    seen("parked-high", NOW - HOUR),
+    seen("busy", NOW - HOUR),
   ] as Parameters<typeof projectSelectorRows>[6];
   const rows = projectSelectorRows(
-    [gamma, parkedLow, mid, zeta, beta, parkedHigh, alpha],
+    [gamma, quiet, mid, zeta, beta, busy, alpha],
     [],
     "",
     tasks,
@@ -635,17 +622,16 @@ test("1529 the selector keeps active projects first, then Dormant, then Parked, 
   assert.deepEqual(
     rows.map((row) => [row.key, row.tasks, row.dormant]),
     [
+      ["busy", 5, false],
       ["alpha", 1, false],
       ["zeta", 1, false],
       ["mid", 3, true],
       ["beta", 0, true],
       ["gamma", 0, true],
-      ["parked-high", 5, false],
-      ["parked-low", 0, false],
+      ["quiet", 0, true],
     ],
     "count decides inside a group, then newest activity, then name; " +
-      "a dormant project with more tasks still sorts below every active one, " +
-      "and parked projects stay last",
+      "a dormant project with more tasks still sorts below every active one",
   );
 });
 
@@ -685,22 +671,8 @@ test("1529 held-back queued tasks count toward the selector order", () => {
   );
 });
 
-test("1529 parked rows share one group whatever their dormancy flag, so count decides among them", () => {
-  const row = (
-    visibility: "active" | "parked",
-    dormant: boolean,
-  ): Parameters<typeof projectSelectorRowGroup>[0] => ({
-    visibility,
-    dormant,
-  });
-  assert.equal(projectSelectorRowGroup(row("active", false)), 0);
-  assert.equal(projectSelectorRowGroup(row("active", true)), 1);
-  assert.equal(projectSelectorRowGroup(row("parked", false)), 2);
-  assert.equal(
-    projectSelectorRowGroup(row("parked", true)),
-    projectSelectorRowGroup(row("parked", false)),
-    "a dormant flag on a parked row must not split the parked group: " +
-      "dormancy-first ordering would rank it below every other parked row " +
-      "whatever its task count",
-  );
+test("1529 the selector has two groups: active rows, then Dormant (parking is retired, 2026-11-22)", () => {
+  const row = (dormant: boolean): Parameters<typeof projectSelectorRowGroup>[0] => ({ dormant });
+  assert.equal(projectSelectorRowGroup(row(false)), 0);
+  assert.equal(projectSelectorRowGroup(row(true)), 1);
 });

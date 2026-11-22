@@ -228,24 +228,15 @@ function collectPipelineCards(input: PipelineScope): PipelineCard[] {
   const selection = effectiveSelection(projects, input.selection);
   const all = !selection.length;
   const selected = projects.filter((item) => selection.includes(item.key));
-  const owner = (origin: string, path: string) =>
-    projects.find((project) =>
-      project.repositories.some((repo) =>
+  const inScope = (origin: string, path: string) =>
+    all ||
+    selected.some((item) =>
+      item.repositories.some((repo) =>
         origin && repo.origin
           ? repo.origin === origin
           : Boolean(repo.path && repo.path === path),
       ),
     );
-  const inScope = (origin: string, path: string) =>
-    all
-      ? owner(origin, path)?.visibility !== "parked"
-      : selected.some((item) =>
-          item.repositories.some((repo) =>
-            origin && repo.origin
-              ? repo.origin === origin
-              : Boolean(repo.path && repo.path === path),
-          ),
-        );
   const cards: PipelineCard[] = [
     ...input.leads
       .filter(
@@ -343,18 +334,7 @@ function collectPipelineCards(input: PipelineScope): PipelineCard[] {
         (task) =>
           task.phase !== "done" &&
           task.phase !== "cancelled" &&
-          (inScope(task.repository ?? "", task.repoPath) ||
-            (owner(task.repository ?? "", task.repoPath)?.visibility ===
-              "parked" &&
-              (task.held ||
-                task.resolution?.attention ||
-                Boolean(task.originError || task.originLookupError) ||
-                [
-                  "blocked",
-                  "error",
-                  "needs_attention",
-                  "changes_requested",
-                ].includes(task.phase)))),
+          inScope(task.repository ?? "", task.repoPath),
       )
       .flatMap((value) => {
         const card: PipelineCard = {
@@ -367,23 +347,10 @@ function collectPipelineCards(input: PipelineScope): PipelineCard[] {
       }),
   );
   // Spec 041: a drained lane whose escalation timer passed is the plan owner's unanswered
-  // prompt; it joins the decisions view with the merge holds. Attention on a parked
-  // project stays visible, so its escalations do too. A drained board never joins:
+  // prompt; it joins the decisions view with the merge holds. A drained board never joins:
   // it is not an operator decision (Tom, 2026-10-15).
-  const laneOwner = (origin: string | null, path: string) =>
-    projects.find((project) =>
-      project.repositories.some((repo) =>
-        origin && repo.origin
-          ? repo.origin === origin
-          : Boolean(repo.path && repo.path === path),
-      ),
-    );
   const laneInScope = (lane: LaneView) =>
-    lane.repositories.some(
-      (repo) =>
-        inScope(repo.origin, repo.path) ||
-        laneOwner(repo.origin, repo.path)?.visibility === "parked",
-    );
+    lane.repositories.some((repo) => inScope(repo.origin, repo.path));
   cards.push(
     ...(input.lanes ?? [])
       .filter((lane) => lane.drain?.escalatedAt && laneInScope(lane))

@@ -79,7 +79,7 @@ function writeLegacyProject(
     key,
     name: key,
     version: 1,
-    visibility: "active",
+    
     repositories: [{ origin: null, path: `/${key}` }],
     primary: { origin: null, path: `/${key}` },
     ...(owner ? { owner, ownerCheckedAt: owner.assignedAt } : {}),

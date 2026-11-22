@@ -16,9 +16,7 @@ import type { ProjectSelectorActions } from "./project-scope-controls";
  */
 export function useProjectSelectorActions(refreshBoard: () => Promise<unknown>) {
   const queryClient = useQueryClient();
-  const parkRpc = useRpc(api.projectPark),
-    unparkRpc = useRpc(api.projectUnpark),
-    upsertRpc = useRpc(api.projectUpsert);
+  const upsertRpc = useRpc(api.projectUpsert);
   const previewRpc = useRpc(api.projectManagementPreview),
     removeRpc = useRpc(api.projectManage),
     cancelRpc = useRpc(api.bulkDisposition),
@@ -41,8 +39,6 @@ export function useProjectSelectorActions(refreshBoard: () => Promise<unknown>) 
   }
 
   const actions: ProjectSelectorActions = {
-    park: (project: Project) => run(() => parkRpc({ key: project.key, version: project.version })),
-    unpark: (project: Project) => run(() => unparkRpc({ key: project.key, version: project.version })),
     // Settings' rule: the name changes, the key, repositories and primary stay. Upsert takes no version.
     rename: (project: Project, name: string) => {
       const input: ProjectUpsertInput = {

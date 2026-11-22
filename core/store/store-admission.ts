@@ -408,6 +408,9 @@ export class StoreAdmission {
       // The retired per-repository validation policy and the By request pool fields are
       // stripped on every open, so rows written by an older build parse the current schema.
       this.hooks.migration.stripRetiredRepositoryPolicy();
+      // Parking is retired (Tom, 2026-11-22): stored projects lose their `visibility` field
+      // before any project row is parsed, so a parked row opens as an ordinary project.
+      this.hooks.migration.stripRetiredProjectVisibility();
       // nucleus#1261: rows registered before the external ownership field existed
       // are proved external from their own registration event on every open.
       this.hooks.migration.markRegisteredExternalWorkspaces();

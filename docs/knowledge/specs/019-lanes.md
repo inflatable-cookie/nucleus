@@ -108,7 +108,7 @@ per lane; the Pipeline view is where a lane's work is seen.
 - **Project scope on click** (Tom, 2026-09-27). If the project selector has no
   projects selected, clicking a row selects the lane's projects, so the Pipeline
   view opens scoped to that lane's work. A selector that already has projects
-  selected is left alone. Parked projects follow Spec 027.
+  selected is left alone. Parking is retired (Spec 027, 2026-11-22): every project is in scope.
 - **Lane detail** (full aim, status, note, recent outcomes) opens from an info
   control on the row, since clicking the row now navigates.
 

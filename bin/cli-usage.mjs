@@ -17,7 +17,7 @@ for {}. A heredoc avoids shell quoting:
 Methods without a dot are tried as queue.<method> first, for example:
   snapshot, detail, telemetry, service-state, outcome, outcome-search, task, next, operation-start,
   operation-status, capacity-state, lanes, lane.upsert, lane.status, projects, project.upsert,
-  project.get, project.settings, project.park, project.unpark, project.remove, project.removal-blockers, project.qa.get, project.qa.list, project.qa.request-status, repositories, repository.set, repository.get, repository.rekey-preview, repository.rekey, repository.rekey-receipt, papercut.add, papercut.list, papercut.get, papercut.edit, papercut.promote, papercut.promote-task,
+  project.get, project.settings, project.remove, project.removal-blockers, project.qa.get, project.qa.list, project.qa.request-status, repositories, repository.set, repository.get, repository.rekey-preview, repository.rekey, repository.rekey-receipt, papercut.add, papercut.list, papercut.get, papercut.edit, papercut.promote, papercut.promote-task,
   papercut.close, papercut.set-lanes, lead.add, lead.edit, lead.get, lead.version,
   lead.list, lead.set-lanes, lead.set-tags, lead.drop, lead.reopen, triage.get, triage.set, triage.apply, lead.promote, lead.check, lead.approve, lead.promote-task, lead.submit, lead.import,
   decision.add, decision.get, decision.list, decision.answer, decision.withdraw, decision.link, decision.supersede, queue.routing-grant, lane.document.get,

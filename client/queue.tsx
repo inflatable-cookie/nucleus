@@ -36,7 +36,7 @@ import {
 } from "../shared/inbox-board";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
-import { attention, projectName } from "./board/text";
+import { projectName } from "./board/text";
 import { BoardHeader } from "./board/header";
 import { InboxList, useInboxBoard, usePipelineState } from "./board/inbox-list";
 import { InboxMenu } from "./board/inbox-menu";
@@ -227,20 +227,8 @@ export function MainSurface({
     state?.projects.find((project) =>
       projectHasRepository(project, repoPath, origin),
     );
-  const parkedRepository = (repoPath: string, origin?: string | null) =>
-    projectForRepository(repoPath, origin)?.visibility === "parked";
-  const taskNeedsAttention = (task: TaskSummary) =>
-    task.held || task.phase === "changes_requested" || attention(task);
-  const attentionPaths = new Set(
-    liveTasks
-      .filter((task) => taskNeedsAttention(task))
-      .map((task) => task.repoPath),
-  );
-  const attentionBelongs = (repoPath: string, origin?: string | null) =>
-    belongs(repoPath, origin) ||
-    (parkedRepository(repoPath, origin) && attentionPaths.has(repoPath));
   const queuedCounts = (state?.queuedCounts ?? []).filter((item) =>
-    attentionBelongs(item.repoPath),
+    belongs(item.repoPath),
   );
   const queuedHidden = hiddenQueuedByProject(queuedCounts, state?.tasks ?? []);
   const hiddenQueued = queuedHidden.reduce((sum, item) => sum + item.hidden, 0);
@@ -688,7 +676,6 @@ export function MainSurface({
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}
                     queuedHidden={queuedHidden}
-                    parkedRepository={parkedRepository}
                     projectForRepository={projectForRepository}
                     selected={selected}
                     selectedLeadId={selectedLeadId}

@@ -23,14 +23,14 @@ import { projectSelectorRows } from '../shared/project-scope';
  * distinct recent work items within three days; a task and its linked leads are one item. Oracle: one
  * sweep task across lifecycle events and linked records stays Dormant, two items activate a project
  * without a planner, stale work with a planner stays Dormant, one of two items aging out restores
- * Dormant, plus the boundary, a never-used project, recent completion and parked precedence.
+ * Dormant, plus the boundary, a never-used project and recent completion (parking is retired).
  */
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-11-20T12:00:00.000Z');
 const iso = (ms: number) => new Date(ms).toISOString();
 const head = 'a'.repeat(40);
 const project = (key: string, path: string, extra: Partial<Project> = {}) => ({
-  key, name: key, version: 1, visibility: 'active', repositories: [{ origin: null, path }], primary: { origin: null, path }, drain: null, ...extra,
+  key, name: key, version: 1,  repositories: [{ origin: null, path }], primary: { origin: null, path }, drain: null, ...extra,
 }) as unknown as Project;
 const planner = { agentId: 'planner-1', setBy: 'operator', setAt: iso(NOW - 60 * DAY) };
 const item = (id: string, at: number, executing = false, repositories: ActivityRepository[] = [{ origin: null, path: '/app' }]): ActivityItemFact => ({ id, at: iso(at), executing, repositories });
@@ -44,16 +44,16 @@ test('two distinct recent items activate a project without a planner', () => {
   const app = project('app', '/app');
   const row = rowFor([app], facts(item('one', NOW - DAY), item('two', NOW - 2 * DAY)), 'app');
   assert.equal(projectActiveItemCount(row, NOW), 2);
-  assert.equal(projectDormantByActivity(app, row, NOW), false);
+  assert.equal(projectDormantByActivity(row, NOW), false);
 });
 
 test('one recent sweep item stays Dormant, including while it is executing', () => {
   const app = project('app', '/app');
   const recent = rowFor([app], facts(item('sweep', NOW - DAY)), 'app');
-  assert.equal(projectDormantByActivity(app, recent, NOW), true);
+  assert.equal(projectDormantByActivity(recent, NOW), true);
   const running = rowFor([app], facts(item('sweep', NOW - 30 * DAY, true)), 'app');
   assert.equal(projectActiveItemCount(running, NOW), 1, 'one executing item is still one item');
-  assert.equal(projectDormantByActivity(app, running, NOW), true);
+  assert.equal(projectDormantByActivity(running, NOW), true);
 });
 
 test('one executing item and one recent item activate a project', () => {
@@ -66,13 +66,13 @@ test('an item counts once: duplicate ids are one item', () => {
   const app = project('app', '/app');
   const row = rowFor([app], facts(item('same', NOW - DAY), item('same', NOW - 2 * DAY)), 'app');
   assert.equal(projectActiveItemCount(row, NOW), 1);
-  assert.equal(projectDormantByActivity(app, row, NOW), true);
+  assert.equal(projectDormantByActivity(row, NOW), true);
 });
 
 test('stale work with a registered planner stays Dormant', () => {
   const app = project('app', '/app', { planner } as Partial<Project>);
   const row = rowFor([app], facts(item('old-one', NOW - 6 * DAY), item('old-two', NOW - 10 * DAY)), 'app');
-  assert.equal(projectDormantByActivity(app, row, NOW), true);
+  assert.equal(projectDormantByActivity(row, NOW), true);
 });
 
 test('one of two items aging out restores Dormant', () => {
@@ -82,7 +82,7 @@ test('one of two items aging out restores Dormant', () => {
   assert.equal(projectActive(rowFor([app], both, 'app'), NOW + 2 * DAY), false, 'both items are past three days by then');
   const later = rowFor([app], facts(item('a', NOW - DAY), item('b', NOW - 2.5 * DAY)), 'app');
   assert.equal(projectActiveItemCount(later, NOW + DAY), 1, 'item b ages out and item a remains');
-  assert.equal(projectDormantByActivity(app, later, NOW + DAY), true);
+  assert.equal(projectDormantByActivity(later, NOW + DAY), true);
 });
 
 test('the three-day boundary is exclusive: just inside counts, exactly three days does not', () => {
@@ -101,18 +101,17 @@ test('a never-used project is dormant with no items', () => {
   const quiet = project('quiet', '/quiet');
   const row = rowFor([quiet], facts(item('elsewhere', NOW - DAY, false, [{ origin: null, path: '/app' }])), 'quiet');
   assert.deepEqual(row.items, []);
-  assert.equal(projectDormantByActivity(quiet, row, NOW), true);
-  assert.equal(projectDormantByActivity(quiet, undefined, NOW), true);
+  assert.equal(projectDormantByActivity(row, NOW), true);
+  assert.equal(projectDormantByActivity(undefined, NOW), true);
 });
 
-test('a parked project is never dormant, whatever its items', () => {
-  const parked = project('parked', '/app', { visibility: 'parked' } as Partial<Project>);
-  const row = rowFor([parked], facts(item('a', NOW - DAY), item('b', NOW - DAY)), 'parked');
-  assert.equal(projectDormantByActivity(parked, row, NOW), false);
-  assert.equal(projectDormantByActivity(parked, rowFor([parked], facts(), 'parked'), NOW), false);
-  const rows = projectSelectorRows([parked], [], '', [], [], [], [row], NOW);
-  assert.equal(rows[0].visibility, 'parked');
-  assert.equal(rows[0].dormant, false);
+test('parking is retired: a quiet project is Dormant like any other, and no row carries a visibility', () => {
+  const quiet = project('quiet', '/app');
+  const row = rowFor([quiet], facts(), 'quiet');
+  assert.equal(projectDormantByActivity(row, NOW), true);
+  const rows = projectSelectorRows([quiet], [], '', [], [], [], [row], NOW);
+  assert.equal(rows[0].dormant, true);
+  assert.equal('visibility' in rows[0], false);
 });
 
 test('repository membership uses origin when both sides know one, else the path', () => {

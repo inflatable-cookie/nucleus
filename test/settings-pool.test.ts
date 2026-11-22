@@ -373,7 +373,7 @@ test("the bundled dark Settings screen adds a project override from the picker a
     key: "project-a",
     name: "Project-A",
     version: 1,
-    visibility: "active",
+    
     repositories: [{ origin: "owner/project-a", path: "/project-a" }],
     primary: { origin: "owner/project-a", path: "/project-a" },
   };
@@ -381,7 +381,7 @@ test("the bundled dark Settings screen adds a project override from the picker a
     key: "project-d",
     name: "Project-D",
     version: 1,
-    visibility: "active",
+    
     repositories: [{ origin: "owner/project-d", path: "/project-d" }],
     primary: { origin: "owner/project-d", path: "/project-d" },
   };

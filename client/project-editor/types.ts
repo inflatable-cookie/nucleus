@@ -42,8 +42,6 @@ export type ProjectEditActions = {
     limit: number | null;
   }) => Promise<unknown>;
   setRepository: (input: RepositorySetInput) => Promise<unknown>;
-  park: (input: { key: string; version: number }) => Promise<Project>;
-  unpark: (input: { key: string; version: number }) => Promise<Project>;
   /** One member's removal blockers (`project.removal-blockers` with `repository`). */
   repositoryBlockers: (input: {
     key: string;

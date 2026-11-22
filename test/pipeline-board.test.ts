@@ -20,7 +20,7 @@ const project = {
   key: "app",
   name: "App",
   version: 1,
-  visibility: "active" as const,
+  
   repositories: [repo],
   primary: repo,
   drain: null,
@@ -206,8 +206,7 @@ test("the board is one set of columns: each card once whatever its lane count, l
   assert.deepEqual(Object.keys(view.counts), [...pipelineColumns]);
 });
 
-test("Spec 027 #11 All projects hides parked work but keeps attention visible", () => {
-  const parked = { ...project, visibility: "parked" as const };
+test("Spec 027 #11 retired 2026-11-22: All projects shows every project's work, with no parked exclusion", () => {
   const tasks = [
     task("running", ["first"], "working"),
     {
@@ -221,10 +220,10 @@ test("Spec 027 #11 All projects hides parked work but keeps attention visible", 
       resolution: { attention: false },
     },
   ] as Input["tasks"];
-  const everyone = board({ projects: [parked], selection: [], tasks });
+  const everyone = board({ projects: [project], selection: [], tasks });
   assert.deepEqual(
     everyone.cards.Working.map((card) => card.id),
-    [],
+    ["running"],
   );
   assert.deepEqual(
     everyone.cards.Attention.map((card) => card.id),
@@ -234,7 +233,7 @@ test("Spec 027 #11 All projects hides parked work but keeps attention visible", 
     everyone.cards.Queued.map((card) => card.id),
     ["held"],
   );
-  const selected = board({ projects: [parked], selection: ["app"], tasks });
+  const selected = board({ projects: [project], selection: ["app"], tasks });
   assert.deepEqual(
     selected.cards.Working.map((card) => card.id),
     ["running"],
@@ -264,7 +263,7 @@ test("026-14b two selected projects share one pipeline; none means all", () => {
     key: "other",
     name: "Other",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [otherRepo],
     primary: otherRepo,
     drain: null,
@@ -273,7 +272,7 @@ test("026-14b two selected projects share one pipeline; none means all", () => {
     key: "third-project",
     name: "Third",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [thirdRepo],
     primary: thirdRepo,
     drain: null,
@@ -455,7 +454,7 @@ test("papercut decision links scope through tagged lead facts", () => {
     key: "other",
     name: "Other",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [other],
     primary: other,
     drain: null,
@@ -493,7 +492,7 @@ test("032 decisions scope by their links, then by the asker's project, and answe
     key: "other",
     name: "Other",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [other],
     primary: other,
     drain: null,
@@ -547,7 +546,7 @@ test("032 General decisions stay visible under a project filter when linked task
     key: "project-d",
     name: "Project-D",
     version: 1,
-    visibility: "active" as const,
+    
     repositories: [other],
     primary: other,
     drain: null,

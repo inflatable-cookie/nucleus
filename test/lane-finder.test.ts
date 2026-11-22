@@ -20,15 +20,10 @@ const project = (
     key,
     name: key,
     version: 1,
-    visibility: "active",
     repositories: repos,
     primary: repos[0],
     drain: null,
   }) as unknown as Project;
-const parked = (
-  key: string,
-  ...repos: Array<{ origin: string; path: string }>
-) => ({ ...project(key, ...repos), visibility: "parked" }) as Project;
 const lane = (key: string, over: Partial<LaneView> = {}) =>
   ({
     key,
@@ -71,7 +66,6 @@ test("866-1 a lane lists its projects and each project orders it separately", ()
     {
       key: "alpha",
       name: "alpha",
-      parked: false,
       horizon: "now",
       position: 1,
       size: 2,
@@ -79,7 +73,6 @@ test("866-1 a lane lists its projects and each project orders it separately", ()
     {
       key: "beta",
       name: "beta",
-      parked: false,
       horizon: "later",
       position: 1,
       size: 1,
@@ -104,7 +97,6 @@ test("866-2 a project that lists the lane but has not planned it says so; an unl
       {
         key: "alpha",
         name: "alpha",
-        parked: false,
         horizon: null,
         position: null,
         size: null,
@@ -175,36 +167,36 @@ test("866-3 Find lanes lists every lane in scope, open lanes first, and matches 
   );
 });
 
-test("866-4 the scope is the chosen project, or all non-parked projects; a parked project is reached by choosing it", () => {
+test("866-4 the scope is the chosen project, or every project (parking is retired, 2026-11-22)", () => {
   const lanes = [
     lane("alpha-lane", { repositories: [repo("a")] }),
-    lane("parked-lane", { repositories: [repo("p")] }),
+    lane("extra-lane", { repositories: [repo("x")] }),
   ];
-  const withParked = [...projects, parked("parked-project", repo("p"))];
+  const withExtra = [...projects, project("extra-project", repo("x"))];
   assert.deepEqual(
     laneFinderRows({
       lanes,
-      projects: withParked,
+      projects: withExtra,
       plans: [],
       selection: ["alpha"],
     }).map((row) => row.key),
     ["alpha-lane"],
   );
   assert.deepEqual(
-    laneFinderRows({ lanes, projects: withParked, plans: [] }).map(
+    laneFinderRows({ lanes, projects: withExtra, plans: [] }).map(
       (row) => row.key,
     ),
-    ["alpha-lane"],
-    "All projects hides a parked-only lane",
+    ["alpha-lane", "extra-lane"],
+    "All projects lists every project's lanes",
   );
   assert.deepEqual(
     laneFinderRows({
       lanes,
-      projects: withParked,
+      projects: withExtra,
       plans: [],
-      selection: ["parked-project"],
+      selection: ["extra-project"],
     }).map((row) => row.key),
-    ["parked-lane"],
+    ["extra-lane"],
   );
   const shared = lane("shared-lane", { repositories: [repo("shared")] });
   assert.equal(
@@ -241,9 +233,9 @@ test("866-5 the count line names results of the whole lane record, never a first
   assert.equal(laneFinderCount(2, 9), "2 of 9 lanes");
 });
 
-test("866-6 the chooser lists active projects first and parked ones last", () => {
+test("866-6 the chooser lists projects by name", () => {
   const ordered = chooserProjects([
-    parked("zed", repo("z")),
+    project("zed", repo("z")),
     project("beta", repo("b")),
     project("alpha", repo("a")),
   ]);

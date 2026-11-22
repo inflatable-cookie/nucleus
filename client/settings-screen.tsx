@@ -70,9 +70,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const fetchProjectSettings = useRpc(api.projectSettings),
     upsertProject = useRpc(api.projectUpsert);
   const fetchOwnerCandidates = useRpc(api.projectOwnerCandidates),
-    setProjectPlanner = useRpc(api.projectSetPlanner),
-    parkProject = useRpc(api.projectPark),
-    unparkProject = useRpc(api.projectUnpark);
+    setProjectPlanner = useRpc(api.projectSetPlanner);
   const registerProjectAgent = useRpc(api.agentRegister),
     unregisterProjectAgent = useRpc(api.agentUnregister);
   const setProfile = useRpc(api.configureProfile),
@@ -476,8 +474,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 unregisterAgent: (input) => unregisterProjectAgent(input),
                 setSlots: (input) => setProjectLimit(input),
                 setRepository: (input) => setRepository(input),
-                park: (input) => parkProject(input),
-                unpark: (input) => unparkProject(input),
                 repositoryBlockers: (input) => repositoryBlockers(input),
                 removeRepository: (input) => removeProjectRepository(input),
                 mergeCheck: (input) => mergeCheck(input),

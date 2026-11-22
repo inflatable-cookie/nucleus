@@ -41,11 +41,7 @@ export function scopedProjects(
 ): Project[] {
   const keys = effectiveSelection(projects, selection);
   return projects
-    .filter((project) =>
-      keys.length
-        ? keys.includes(project.key)
-        : project.visibility !== "parked",
-    )
+    .filter((project) => !keys.length || keys.includes(project.key))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -68,13 +64,7 @@ export function scopeContains(
   selection: readonly string[],
 ): (repoPath: string, origin?: string | null) => boolean {
   const keys = effectiveSelection(projects, selection);
-  if (!keys.length)
-    return (repoPath, origin) =>
-      projects.every(
-        (project) =>
-          project.visibility !== "parked" ||
-          !projectHasRepository(project, repoPath, origin),
-      );
+  if (!keys.length) return () => true;
   const selected = projects.filter((project) => keys.includes(project.key));
   return (repoPath, origin) =>
     selected.some((project) => projectHasRepository(project, repoPath, origin));
@@ -143,13 +133,7 @@ export function selectionLabel(
   if (!keys.length) return "All projects";
   if (keys.length === 1)
     return projects.find((project) => project.key === keys[0])?.name ?? keys[0];
-  return keys.length ===
-    projects.filter((project) => project.visibility !== "parked").length &&
-    keys.every(
-      (key) =>
-        projects.find((project) => project.key === key)?.visibility !==
-        "parked",
-    )
+  return keys.length === projects.length
     ? `All ${keys.length} projects`
     : `${keys.length} projects`;
 }
@@ -161,21 +145,15 @@ export type ProjectSelectorRow = {
   tasks: number;
   leads: number;
   checked: boolean;
-  visibility: Project["visibility"];
   version: number;
   dormant: boolean;
 };
-/** The selector's three row groups (nucleus#1529): active rows first, then
- * Dormant, then one Parked group at the bottom. Dormancy only divides
- * unparked rows, so parked projects order purely by the count, activity and
- * name rule among themselves. */
-export function projectSelectorRowGroup(
-  row: Pick<ProjectSelectorRow, "visibility" | "dormant">,
-): number {
-  return row.visibility === "parked" ? 2 : row.dormant ? 1 : 0;
+/** The selector's two row groups: active rows first, then Dormant (nucleus#1529; parking is retired). */
+export function projectSelectorRowGroup(row: Pick<ProjectSelectorRow, "dormant">): number {
+  return row.dormant ? 1 : 0;
 }
 /** Selector popover rows: every project matching the filter box, with its primary repository and counts.
- * Active projects sort first, then the Dormant group, then Parked (nucleus#1529):
+ * Active projects sort first, then the Dormant group (nucleus#1529):
  * inside each group rows order by live-task total (highest first, including the
  * hidden queued portion), then by last activity (most recent first; a project
  * with no activity sorts after those with some), then by name, so the order is
@@ -195,7 +173,7 @@ export function projectSelectorRows(
   const hiddenQueued = hiddenQueuedByProject(queuedCounts, tasks);
   const activityByKey = new Map(activity.map((item) => [item.key, item]));
   const dormantOf = (project: Project) =>
-    projectDormantByActivity(project, activityByKey.get(project.key), nowMs);
+    projectDormantByActivity(activityByKey.get(project.key), nowMs);
   /** The newest item time in the store-wide activity read; null when the project has none. */
   const lastActivityOf = (project: Project): number | null => {
     let latest: number | null = null;
@@ -241,7 +219,6 @@ export function projectSelectorRows(
           ...counts,
           tasks: tasksByKey.get(project.key) ?? counts.tasks,
           checked: selection.includes(project.key),
-          visibility: project.visibility,
           version: project.version,
           dormant: dormantOf(project),
         },

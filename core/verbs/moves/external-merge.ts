@@ -48,7 +48,7 @@ export async function reconcileRetainedExternalMerge(engine: Engine, input: Exte
     throw new ExternalMergeRefusal('Accepting a descendant external merge requires qualification and the exact final head');
   const authority = engine.assertOwnerAuthority(input.caller, input.relayed, input.relayNote, 'External-merge source acceptance');
   const project = store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
-  if (!project || project.visibility !== 'active') throw new ExternalMergeRefusal('The task project is not active');
+  if (!project) throw new ExternalMergeRefusal('The task project is not registered');
   const runs = store.runs(task.id), projectIdentity = JSON.stringify(project), taskIdentity = JSON.stringify(task), runsIdentity = JSON.stringify(runs);
   const invocation = input.enclosing();
   if (!invocation) throw new ExternalMergeRefusal('An authenticated durable move operation is required');
@@ -150,8 +150,8 @@ export async function reconcileReviewEntryExternalMerge(engine: Engine, input: E
   // absent.
   const assertQuiet = async () => {
     const project = store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
-    if (!project || project.visibility !== 'active')
-      throw Error('The task project is not active; the external-merge source acceptance is refused');
+    if (!project)
+      throw Error('The task project is not registered; the external-merge source acceptance is refused');
     if (JSON.stringify(project) !== ownerIdentity) throw Error('Project changed during external merge proof');
     for (const [id, workspaceId] of executionParticipants(task, store.runs(task.id))) {
       engine.admission?.invalidate(id);

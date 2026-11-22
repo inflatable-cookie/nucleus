@@ -158,11 +158,7 @@ export function usePlanningData({
     scope.projects,
   ).length
     ? scopedProjects(state?.projects ?? [], scope.projects)
-    : [...(state?.projects ?? [])].sort(
-        (a, b) =>
-          Number(a.visibility === "parked") -
-            Number(b.visibility === "parked") || a.name.localeCompare(b.name),
-      );
+    : [...(state?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   // A lane whose projects leave the selection closes; the compact view returns to the plan.
   const planningInScope =
     state && planQuery.data

@@ -456,18 +456,6 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     mutating: true,
   },
   {
-    name: "project.park",
-    contract: contracts.projectPark,
-    method: "parkProject",
-    mutating: true,
-  },
-  {
-    name: "project.unpark",
-    contract: contracts.projectUnpark,
-    method: "unparkProject",
-    mutating: true,
-  },
-  {
     name: "project.set-planner",
     contract: contracts.projectSetPlanner,
     method: "setProjectPlanner",
