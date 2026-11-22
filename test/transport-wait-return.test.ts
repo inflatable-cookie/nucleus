@@ -119,7 +119,7 @@ test('a transport wait clears on the pass that observes the host answer, and the
   assert.equal(f.store.task(task.id).resolution.stop, null);
 });
 
-test('an inventory that loses the transport keeps the host wait, and the returning pass settles it', async t => {
+test('an inventory that loses the transport fails only its own step: the host stays connected and the task moves on', async t => {
   let connected = true;
   const f = fixture(t, undefined, async () => {
     if (!connected) throw transportCause(HOST_A);
@@ -129,23 +129,24 @@ test('an inventory that loses the transport keeps the host wait, and the returni
   f.engine.resolution.observationTargets = () => ['agent-1'];
   f.engine.resolution.transportDeferred(f.store.task(task.id), transportCause(HOST_A));
 
-  // The registry still claims the host, and the optional inventory is the pass's
-  // one host read: losing the transport there means this host did not answer, so
-  // its task keeps the host-scoped wait instead of being cleared as though it had.
+  // Spec 069 §2 (superseding Spec 066 R6): the registry still claims the host, so a
+  // lost inventory is one failed call. It fails only its own step and leaves the
+  // host up (degraded takes three failed passes in a row); the connected host settles
+  // the task's own wait and its owner's quantum retries the work.
   connected = false;
   await f.pass();
-  const waiting = f.store.task(task.id);
-  assert.equal(waiting.resolution.stop?.reason, 'host_unavailable', 'the lost inventory is the host not answering');
-  assert.ok(waiting.resolution.hostWait, 'the independent host wait is still recorded');
-  assert.deepEqual(f.visited, [], 'nothing is started for a host that owes its reading');
+  assert.equal(f.engine.hostHealth.read(HOST_A).state, 'up', 'one failed pass is not the host');
+  assert.equal(f.engine.hostOutages.current(HOST_A), null, 'and opens no outage');
+  const settled = f.store.task(task.id);
+  assert.equal(settled.resolution.stop, null, 'the connected host settles the transport wait');
+  assert.equal(settled.resolution.hostWait, null);
+  assert.deepEqual(f.visited, [task.id], 'and the task is visited by its own owner');
   assert.match(String(f.store.getMeta('hostPassError')), /observationInventory: Transport not connected/);
 
   connected = true;
   await f.pass();
-  const cleared = f.store.task(task.id);
-  assert.equal(cleared.resolution.stop, null, 'the returning pass settles the same wait');
-  assert.equal(cleared.resolution.hostWait, null);
-  assert.deepEqual(f.visited, [task.id], 'and visits the ready task in that pass');
+  assert.equal(f.engine.hostHealth.read(HOST_A).state, 'up', 'and a clean pass keeps it up');
+  assert.equal(f.store.task(task.id).resolution.stop, null);
 });
 
 test('a slow process reader and a still-failing host leave the returning host free to settle', async t => {

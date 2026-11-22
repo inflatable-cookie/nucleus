@@ -214,16 +214,38 @@ periodic chores and one host's steps belong to their own owners: **SweepMaintena
 the owner/lane passes on their own cadence, and **HostPass**
 (`core/scheduling/host-pass.ts`) runs one host's settlement, row-surfacing,
 inventory, retired-worker, title and finished-thread steps, recording a step that
-throws as `hostPassError` instead of dropping it. A host transport failure while
-entering a host pass opens that host's ordinary `host_unavailable` wait for its
-tasks and the fleet pass continues; it never becomes `engineError`. A step that
-fails at the transport boundary answers for that host alone: the pass reads the
-failure rather than the registry's connected claim, so only that host's tasks keep
-their host-scoped wait, and the same bounded reading covers a host read made during
-a task visit and the failover pass. The optional observation inventory is one of
-those steps: an inventory that cannot be read is only unavailable, so every
-identity takes the narrow read, while an inventory that loses the transport is
-that host not answering and keeps its tasks' host-scoped wait.
+throws as `hostPassError` instead of dropping it. A host step that hangs or fails
+at the transport fails only itself (Spec 069 §2): a hung call stops that host's
+remaining steps for the pass, the pass reports itself to **HostHealth** as a failed
+pass, and the fleet pass continues; it never becomes `engineError`, never marks the
+host down and writes nothing for its tasks. The optional observation inventory is
+one of those steps: an inventory that cannot be read is only unavailable, so every
+identity takes the narrow read, while one that loses the transport fails the pass.
+
+**HostHealth** (`core/scheduling/host-health.ts`). The one owner of each host's
+health, read from the connection alone: the registry claim, which the runtime
+retires when the socket closes (T3 closes it after two missed heartbeats, BB and
+Paseo through their own connection objects). States: `up`; `degraded`, connected
+but its last three host passes in a row each hung or failed at the transport (the
+first clean pass makes it `up`); `down`, the connection is lost; `unknown`, not yet
+seen connected since the service started (the runtime's startup grace is five
+minutes, then a host that never connected reads `down`). The runtime tick reads
+every registered host's health even while no host is connected, so `unknown`
+becomes `down` and a long-outage notice is raised on time; nothing is sent. A
+single call that fails (dispatch, observation, a fleet step, a task visit) never
+changes state: it is kept only as the reading's diagnostic `detail`. Errors that
+measure Nucleus's own queue (`HostCallAbandonedError`, `HostExecutorUnavailableError`)
+are not host faults. The durable outage record is written only on transitions into
+and out of `down`. One rule decides launches, read after the task's own gates: an
+`up` host admits every first dispatch, a `degraded` host one at a time (one launch
+in flight), and a `down` or `unknown` host none. Degraded touches nothing else:
+running and observed work, routing catalogs and owner controls treat it as
+connected. A first dispatch whose own host call fails skips that host for the rest
+of its dispatch pass, with no state change: the pass registers its skipped hosts
+with slot admission for its own duration, so neither that host's queued tasks nor
+reviews from it as origin hold a slot-order place until the pass ends. No call
+outcome, pass outcome or task record marks a host down. A host pass that failed on
+Nucleus's own queue errors is neutral: it neither advances nor resets the count.
 
 **ControlContext** (`core/verbs/control-context.ts`). Holds the hidden parameters of
 every verb (`selfForceRunId`, `coordinatorActionRunId`, `replayingDeferredVerb`)
@@ -1205,9 +1227,10 @@ request identities and stored committed-handoff rows are not rewritten.
   Admission stores no stop or wait on a never-started task: its card and `next`
   name a slot wait, prerequisites, its host (`host_unavailable` with the host's
   own outage start) or its review origin from one admission read. A host wait on
-  a queued row is ignored by the read and settled when the task is admitted; the
-  host-failure path still writes one when a host fails, which Spec 069 batch 2
-  removes.
+  a queued row (left by an older service) is ignored by the read and settled when
+  the task is admitted. No host-failure path writes one any more (Spec 069 §2): a
+  queued task's host wait, a degraded host's one-launch wait and an unread host's
+  start-up wait are all read from HostHealth.
 - The board carries up to five queued heads per repository and the total queued
   count. `queue.queued-page` reads the rest on demand. A completed mutation that
   advances the board revision publishes before its reply. The one-second tick
@@ -1379,11 +1402,23 @@ request identities and stored committed-handoff rows are not rewritten.
 ### Host outage
 
 - A task's host is part of its identity (Tom, 2026-11-14; T3 lane document v18,
-  host dropout option 1: wait). While its host is unavailable — the service
-  health `state` is not `online`, so the transport is not connected — the task
-  records its own durable wait (`resolution.hostWait`: the host and the time the
-  outage was first observed). The outage record is durable (`hostOutages` meta),
-  so a service restart during the outage keeps the same start.
+  host dropout option 1: wait). While its host is `down` in HostHealth (Spec 069
+  §2: the connection is lost) the task records its own durable wait
+  (`resolution.hostWait`: the host and the time HostHealth opened the outage). The
+  outage record is durable (`hostOutages` meta), so a service restart during the
+  outage keeps the same start, and HostHealth closes it on the host's first
+  connected reading.
+- A service start never parks tasks. Until HostHealth has seen a host connected
+  it is `unknown`: its tasks keep their state, nothing is written for them and
+  nothing is sent to the host. A queued task's card reads `Waiting for <host> to
+  connect after the service start`.
+- A connected host whose host passes keep hanging or failing at the transport is
+  `degraded`. Its running tasks keep going and their own owners retry their failed
+  steps; it takes one first dispatch at a time, and a never-started task waiting
+  behind that launch shows `Waiting for <host>: its calls are not answering, so it
+  takes one launch at a time` (never the call's error, which stays in the health
+  reading) and reserves no slot. Like every never-started wait it is read, never
+  stored, and only after the task's own gates.
 - A transport deferral of a task's own host is the same wait (Spec 066 batch 2,
   nucleus#1332). `transportDeferred` records the cause durably (one
   `transport_deferred` event per reading) and the host-scoped wait: a
@@ -1391,13 +1426,13 @@ request identities and stored committed-handoff rows are not rewritten.
   `resolution.hostWait` when an outage recorded one. The pass that observes the
   host answer settles both through one settlement (`clearHostWait`), recording one
   `host_wait_cleared` event, and the ready task is visited in that same pass.
-  Nothing is settled from the stop's text or a reason prefix (the #1321 rule is
-  retired), a host that did not answer settles nothing, a repeated pass adds no
+  The settlement reads HostHealth: a connected (`up` or `degraded`) host settles
+  the wait. Nothing is settled from the stop's text or a reason prefix (the #1321
+  rule is retired), a host that is down settles nothing, a repeated pass adds no
   event, send or notice, and an owner stop beside the wait keeps its question.
 - A thrown adapter fault carries its host identity into sweep steps, observation
-  and dispatch. It holds that host's tasks while the sweep continues to later
-  steps and healthy tasks. The diagnostic is a separate idempotent event, so repeated
-  refusals leave the outage wait unchanged. A review waiting on a different origin
+  and dispatch. It fails only the step that made the call: HostHealth takes it as
+  a sample and no other task on the host is written. A review waiting on a different origin
   host names that host and does not mark its execution host offline or reserve a
   slot. Queue scans continue past those waits; a recovered origin is proved before
   the review rejoins fair slot ordering. A fault outside a host still records `engineError`.

@@ -51,6 +51,8 @@ export type FirstDispatchContext = Pick<
   | "noteStepFailure"
   | "profileCatalogKnown"
   | "profilesFor"
+  | "hostLaunchWait"
+  | "hostHealth"
   | "firstDispatchTarget"
   | "targetHostWait"
   | "hostIds"
@@ -266,6 +268,12 @@ export class FirstDispatch {
     // of never-dispatched work; queuePriority orders requests globally within each tier.
     const capacity = this.resolution.slotAdmissionReason(task);
     if (dispatchGate({ capacity })) return;
+    // Spec 069 §2: the launch rule is HostHealth's, read after the task's own gates
+    // so a hold, prerequisite or capacity wait keeps its reason and stop. A degraded
+    // host takes one first dispatch at a time. Like every never-started wait
+    // (Spec 069 §1) it is not stored: the board and `next` read it from HostHealth.
+    if (this.context.hostLaunchWait(task.hostId!, task.id)) return;
+    this.context.hostHealth.launchStarted(task.hostId!, task.id);
     // Intake admission creates only the first independent reviewer. Once that
     // review requests changes, the task follows ordinary Queue revision and
     // retained-review rotation in its existing workspace.

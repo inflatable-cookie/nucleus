@@ -27,6 +27,10 @@ export interface DispatchAdmissionContext {
   targetHostWait(task: Task): string | null;
   /** Hosts online with a read catalog that could take a first worker. */
   workerHostIds(task: { hostId?: string | null }): string[];
+  /** Spec 069 §2: the host's health state, read from its connection. */
+  hostHealthState(id: string): string;
+  /** Spec 069 §2: why the host admits no first dispatch for this task now, or null. */
+  hostLaunchWait(id: string, taskId?: string): string | null;
 }
 
 /** The host-wait sentence a queued task reads with a `host_unavailable` stop. */
@@ -62,6 +66,7 @@ export class DispatchAdmission {
         id,
         this.context.withHost(id, () => this.context.hostAvailable(id)),
         this.context.hostOutageSince(id),
+        this.context.hostHealthState(id),
       ]);
     return JSON.stringify([
       this.context.profileCatalogKnown(),
@@ -113,10 +118,18 @@ export class DispatchAdmission {
     // The same reading admission uses, so the card and the admitter agree.
     if (!this.context.withHost(hostId, () => this.context.taskHostAvailable(task))) {
       const since = this.context.hostOutageSince(hostId);
-      return since
-        ? hostUnavailableDetail(hostId, since)
-        : `${QUEUED_HOST_WAIT_PREFIX}${hostId}`;
+      if (since) return hostUnavailableDetail(hostId, since);
+      // Not yet read since the service started (Spec 069 §2): a wait, not an outage.
+      if (this.context.hostHealthState(hostId) === "unknown")
+        return (
+          this.context.hostLaunchWait(hostId, task.id) ??
+          `${QUEUED_HOST_WAIT_PREFIX}${hostId}`
+        );
+      return `${QUEUED_HOST_WAIT_PREFIX}${hostId}`;
     }
+    // A degraded host takes one first dispatch at a time (Spec 069 §2).
+    const launchWait = this.context.hostLaunchWait(hostId, task.id);
+    if (launchWait) return launchWait;
     // A review entry also reads its origin host, as review-entry admission does.
     if (task.entrypoint !== "review") return "";
     const origin = task.originHostId;

@@ -209,6 +209,7 @@ import {
 } from "./recovery/effect-gates";
 import { Sweep } from "./scheduling/sweep";
 import { HostOutages } from "./scheduling/host-outage";
+import { HostHealth, healthWait } from "./scheduling/host-health";
 import { TaskWakes } from "./scheduling/task-wakes";
 import { CompletionFollowUps } from "./closeout/completion-follow-ups";
 import { DecisionNoticeDelivery } from "./questions/decision-notices";
@@ -225,6 +226,8 @@ export const STOPPED_BEFORE_DRAIN = () =>
 export class Engine {
   /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the durable host-outage record. */
   readonly hostOutages: HostOutages;
+  /** Spec 069 §2: each host's health, read from its connection alone. */
+  readonly hostHealth: HostHealth;
   /**
    * Spec 065: the ACP session surface. The runtime attaches it once the callback
    * socket exists (an ACP binding points the agent at that socket); a process
@@ -406,22 +409,27 @@ export class Engine {
   hostAvailable: (id: string) => boolean = () => true;
   /** Registered, online host suitable for authenticated ingress; may not be a work host. */
   hostIngressAvailable: (id: string) => boolean = () => true;
-  /** A transport that failed during this audit pass stays unavailable to its tasks until the next pass. */
-  private readonly auditUnavailableHosts = new Set<string>();
-  private readonly auditHostTimeouts = new Map<string, string>();
-  markAuditHostUnavailable(id: string, detail?: string): void {
-    this.auditUnavailableHosts.add(id);
-    if (detail) this.auditHostTimeouts.set(id, detail);
+  /**
+   * Spec 069 §2: the wait a never-started task shows while its host admits no new
+   * first dispatch (down or unknown, or degraded with a launch already in flight),
+   * or null when it may launch. The rule itself is HostHealth's.
+   */
+  hostLaunchWait(hostId: string, taskId?: string): string | null {
+    return this.hostHealth.launchWait(hostId, taskId);
   }
-  resetAuditHostAvailability(): void {
-    this.auditUnavailableHosts.clear();
-    this.auditHostTimeouts.clear();
+  /**
+   * The runtime tick's reading of every registered host, made even when no host
+   * is connected and the sweep does not run: `unknown` becomes `down` on time and a
+   * long outage raises its planner notice. Nothing is sent to any host.
+   */
+  observeHostHealth(): void {
+    for (const id of this.hostIds()) this.hostHealth.read(id);
+    this.hostOutages.raiseNotices();
   }
 
   taskHostAvailable(task: Task): boolean {
     return Boolean(
       task.hostId &&
-        !this.auditUnavailableHosts.has(task.hostId) &&
         (!this.activeHostId || this.activeHostId === task.hostId) &&
         this.hostAvailable(task.hostId) &&
         this.store
@@ -435,7 +443,8 @@ export class Engine {
   }
   /**
    * Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait). One task's host
-   * wait, recorded or cleared from the availability this call observes:
+   * wait, read from the host's health (Spec 069 §2) and recorded only while the
+   * host is down:
    *
    * - Every live task on an unavailable host records its own `resolution.hostWait`
    *   (nucleus#1198 review), independent of its stop. That is what pauses the
@@ -448,8 +457,13 @@ export class Engine {
    * - When the host is back the wait clears, and the ordinary observation pass
    *   re-proves every retained thread before the task sends anything again.
    *
-   * Returns the detail while waiting, or null when the task's host is online (or
-   * it has no host identity, which is a different, existing wait).
+   * - A host that is `unknown` (not yet read since the service started) writes
+   *   nothing: the task keeps its state and waits, unvisited, for the first reading.
+   * - A `degraded` host keeps its running tasks; only new launches wait on it
+   *   (`hostLaunchWait`).
+   *
+   * Returns the detail while waiting, or null when the task's host is up or
+   * degraded (or it has no host identity, which is a different, existing wait).
    */
   hostWait(task: Task): string | null {
     const hostId = task.hostId;
@@ -459,33 +473,26 @@ export class Engine {
     // preference cannot fence selection on another online host.
     if (
       this.firstWorkerUnbound(task) &&
-      this.hostIds().some(
-        (id) =>
-          id !== hostId &&
-          !this.auditUnavailableHosts.has(id) &&
-          this.profileCatalogKnownFor(id) &&
-          this.withHost(id, () => this.hostAvailable(id)),
-      )
+      this.hostIds().some((id) => id !== hostId && this.workerHostReady(id))
     ) {
       this.resolution.clearHostWait(task);
       return null;
     }
-    const online =
-      !this.auditUnavailableHosts.has(hostId) &&
-      this.withHost(hostId, () => this.hostAvailable(hostId));
-    const outage = this.hostOutages.observe(hostId, online);
-    if (!outage) {
+    const health = this.hostHealth.read(hostId);
+    if (health.state === "unknown") return healthWait(hostId, health);
+    if (health.state !== "down") {
       this.resolution.clearHostWait(task);
       return null;
     }
-    const timeout = this.auditHostTimeouts.get(hostId);
-    const detail = `${hostUnavailableDetail(hostId, outage.since)}${timeout ? `: ${timeout}` : ""}`;
+    // HostHealth opened the outage on its transition; its start dates the wait.
+    const since = this.hostOutages.current(hostId)?.since ?? health.since;
+    const detail = hostUnavailableDetail(hostId, since);
     let current = this.store.task(task.id);
     const wait = current.resolution.hostWait;
-    if (wait?.hostId !== hostId || wait.since !== outage.since) {
+    if (wait?.hostId !== hostId || wait.since !== since) {
       current = this.resolution.update(
         current,
-        { hostWait: { hostId, since: outage.since } },
+        { hostWait: { hostId, since } },
         {},
         "host_outage_wait",
       );
@@ -524,12 +531,12 @@ export class Engine {
           "flushPrerequisiteReleases",
           "host",
           "hostAvailable",
+          "hostHealth",
           "hostIds",
           "hostOutages",
           "hostWait",
           "inventoryHostMatches",
           "lifecycle",
-          "markAuditHostUnavailable",
           "maxSweepWindows",
           "migrateProjectOwnersToPlanners",
           "noteStepFailure",
@@ -539,7 +546,6 @@ export class Engine {
           "recoverExhaustedWorkers",
           "removeSiblings",
           "replaceExhaustedReviewers",
-          "resetAuditHostAvailability",
           "resumePausedStops",
           "retiredObservationKey",
           "retiredObservationPlan",
@@ -601,6 +607,8 @@ export class Engine {
     targetHostWait: (task) => this.targetHostWait(task),
     workerHostIds: (task) =>
       this.workerHostCatalogs(task).map((host) => host.hostId),
+    hostHealthState: (id) => this.hostHealth.read(id).state,
+    hostLaunchWait: (id, taskId) => this.hostLaunchWait(id, taskId),
   });
   private profilesValue: Profile[] = [];
   get profiles(): Profile[] {
@@ -940,6 +948,14 @@ export class Engine {
     hostRunStateDir?: string,
   ) {
     this.hostOutages = new HostOutages(store);
+    this.hostHealth = new HostHealth((id) => {
+      // A host whose context cannot even be bound has no live connection.
+      try {
+        return this.withHost(id, () => this.hostAvailable(id));
+      } catch {
+        return false;
+      }
+    }, this.hostOutages);
     this.primaryAdapter = adapter;
     if (!adapter.workspaceAllocationBridge) {
       adapter.workspaceAllocationBridge =
@@ -989,13 +1005,13 @@ export class Engine {
       taskAvailable: (task, run) =>
         this.taskHostAvailable(task) && (!run || run.hostId === task.hostId),
       outage: (id) => this.hostOutages.current(id),
+      launchWait: (id, taskId) => this.hostLaunchWait(id, taskId),
       workerProviderUnavailable: (task) => this.workerProviderUnavailable(task),
       withHost: (id, fn) => this.withHost(id, fn),
       online: (id) => this.hostOnline(id),
       ids: () => this.hostIds(),
       inventoryMatches: (id) => this.inventoryHostMatches(id),
-      originAvailable: (id) =>
-        !this.auditUnavailableHosts.has(id) && this.hostAvailable(id),
+      originAvailable: (id) => this.hostAvailable(id),
       // A host-dependent call arriving just after a roll waits out the runtime's
       // own bridge connection instead of refusing as unavailable (roll-recovery
       // contract): the poll is bounded and ends at once once the bridge answers.
@@ -1385,13 +1401,13 @@ export class Engine {
       .filter((id) => this.workerHostReady(id))
       .map((hostId) => ({ hostId, profiles: this.profilesFor(hostId) }));
   }
-  /** Online, not failed this audit pass, and its catalog read: the host can answer for profiles. */
+  /**
+   * Connected (up or degraded) with its catalog read: the host can answer for
+   * profiles. Degraded affects only first-dispatch admission (Spec 069 §2), which
+   * reads `hostLaunchWait` after selection.
+   */
   private workerHostReady(id: string): boolean {
-    return (
-      !this.auditUnavailableHosts.has(id) &&
-      this.withHost(id, () => this.hostAvailable(id)) &&
-      this.profileCatalogKnownFor(id)
-    );
+    return this.hostHealth.connectedNow(id) && this.profileCatalogKnownFor(id);
   }
   /**
    * The host kind a first worker dispatch must reach: the repository's explicit
@@ -1454,9 +1470,7 @@ export class Engine {
     ];
     return ids.filter(
       (id) =>
-        !this.auditUnavailableHosts.has(id) &&
-        this.withHost(id, () => this.hostAvailable(id)) &&
-        !this.profileCatalogKnownFor(id),
+        this.hostHealth.connectedNow(id) && !this.profileCatalogKnownFor(id),
     );
   }
   workerHostCatalogPending(task: { hostId?: string | null }): boolean {
@@ -1504,9 +1518,7 @@ export class Engine {
       ),
     ];
     return ids.map((hostId) => {
-      const online =
-        !this.auditUnavailableHosts.has(hostId) &&
-        this.withHost(hostId, () => this.hostAvailable(hostId));
+      const online = this.hostHealth.connectedNow(hostId);
       const known = this.profileCatalogKnownFor(hostId);
       const profiles = this.profilesFor(hostId);
       return {

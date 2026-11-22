@@ -33,11 +33,7 @@ import {
 } from "../../shared/session-fault";
 import type { Resolution } from "../resolution";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
-import {
-  HostTransportFault,
-  hostFaultHost,
-  recordHostFailure,
-} from "../host/adapter-routing";
+import { hostFaultHost, reportHostCallFailure } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
 import { readHostReadTransientEpisode } from "./host-read-transient";
 import { runsUnchangedSince } from "./observation-advance";
@@ -169,15 +165,12 @@ export class Observation {
             ),
           );
         } catch (error) {
+          // One failed host read fails only this host's observation step (Spec 069
+          // §2): its health takes the sample, no run on it is written, and the next
+          // pass observes them again.
           const failedHost = hostFaultHost(error);
           if (!failedHost) throw error;
-          if (recordHostFailure(this.adapter, failedHost, error)) continue;
-          for (const run of candidates)
-            if (run.hostId === failedHost)
-              this.resolution.transportDeferred(
-                this.store.task(run.taskId),
-                new HostTransportFault(failedHost, error),
-              );
+          reportHostCallFailure(this.adapter, failedHost, error);
         }
       }
       return;
@@ -662,21 +655,18 @@ export class Observation {
           await this.resolution.remindStoppedRun(this.store.task(task.id), run);
         }
       } catch (error) {
+        // A failed host read fails only this run's observation (Spec 069 §2): its
+        // host's health takes the sample, and the next pass observes the run again.
         const failedHost = hostFaultHost(error);
-        if (failedHost && recordHostFailure(this.adapter, failedHost, error))
+        if (failedHost) {
+          reportHostCallFailure(this.adapter, failedHost, error);
           continue;
+        }
         if (
           this.resolution.paused() ||
           dispatchBlocked(this.store.task(task.id))
         )
           continue;
-        if (failedHost) {
-          this.resolution.transportDeferred(
-            this.store.task(task.id),
-            new HostTransportFault(failedHost, error),
-          );
-          continue;
-        }
         if (error instanceof HostReadRefusalError) {
           if (this.resolution.hostReadTransientFailure) {
             this.resolution.hostReadTransientFailure(

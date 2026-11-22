@@ -33,7 +33,7 @@ import { WorkspacePressure } from "./workspace-pressure";
 import {
   HostTransportFault,
   hostFaultHost,
-  recordHostFailure,
+  reportHostCallFailure,
 } from "../host/adapter-routing";
 
 export {
@@ -66,6 +66,8 @@ export class Dispatch {
   private readonly first: FirstDispatch;
   private readonly reviewEntryAdmission: ReviewEntryAdmission;
   private readonly proofOnly: ProofOnlyLaunch;
+  /** A visited task's own host call failed; read once by the pass that visited it. */
+  private readonly dispatchHostFaults = new Map<string, string>();
   constructor(readonly engine: Engine) {
     this.pressure = new WorkspacePressure({
       store: engine.store,
@@ -158,9 +160,10 @@ export class Dispatch {
     );
     const limit =
       this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT;
+    // This pass's skipped hosts; slot admission reads them while the pass runs.
+    const failedHosts = new Set<string>();
     await this.resolution.withDispatchPass(async () => {
       const attempted = new Set<string>();
-      const failedHosts = new Set<string>();
       const visit = (candidate: Task) =>
         this.engine
           .scheduleLane(`task:${candidate.id}`, LANE_PRIORITY_TASK, () =>
@@ -170,7 +173,14 @@ export class Dispatch {
             const hostId = hostFaultHost(error);
             if (!hostId) throw error;
             failedHosts.add(hostId);
-            recordHostFailure(this.adapter, hostId, error);
+            reportHostCallFailure(this.adapter, hostId, error);
+          })
+          .then(() => {
+            // A visit whose own host call failed inside dispatchTask skips that
+            // host for the rest of this pass, and nothing more (Spec 069 §2).
+            const faulted = this.dispatchHostFaults.get(candidate.id);
+            this.dispatchHostFaults.delete(candidate.id);
+            if (faulted) failedHosts.add(faulted);
           });
       // Spec 069 §1: the admitter takes heads from the ordered ready index, with
       // the fair order, and admits as many as the free slots allow. A head that
@@ -216,7 +226,7 @@ export class Dispatch {
         const failed = results.find((result) => result.status === "rejected");
         if (failed) throw (failed as PromiseRejectedResult).reason;
       }
-    });
+    }, failedHosts);
   }
   /**
    * Whether a ready head could start on a host now, read live from host
@@ -239,21 +249,24 @@ export class Dispatch {
     const hosts = new Map<string, boolean>();
     const catalogs = new Map<string, boolean>();
     const targets = new Map<string, boolean>();
+    // Spec 069 §2: read from HostHealth. A review origin needs its host
+    // connected; a task's own host must admit a first dispatch (up, or degraded
+    // with no launch in flight).
+    const launches = new Map<string, boolean>();
     const hostReady = (id: string | null | undefined) =>
       Boolean(id) &&
       memo(
         hosts,
         id!,
-        () =>
-          !failedHosts.has(id!) &&
-          this.engine.withHost(id!, () =>
-            this.engine.resolution.originHostAvailable(id!),
-          ),
+        () => !failedHosts.has(id!) && this.engine.hostHealth.connectedNow(id!),
       );
+    const hostLaunches = (id: string | null | undefined) =>
+      hostReady(id) &&
+      memo(launches, id!, () => !this.engine.hostLaunchWait(id!));
     return (task) => {
       if (attempted.has(task.id)) return false;
       if (!queuedReviewOriginReady(task, hostReady)) return false;
-      if (!firstWorkerShape(task)) return hostReady(task.hostId);
+      if (!firstWorkerShape(task)) return hostLaunches(task.hostId);
       const hostKey = task.hostId ?? "";
       if (
         memo(targets, `${task.repoPath}\u0000${hostKey}`, () =>
@@ -265,8 +278,11 @@ export class Dispatch {
         memo(catalogs, hostKey, () =>
           this.engine
             .workerHostCatalogs(task)
-            .some((host) => !failedHosts.has(host.hostId)),
-        ) || hostReady(task.hostId)
+            .some(
+              (host) =>
+                !failedHosts.has(host.hostId) && hostLaunches(host.hostId),
+            ),
+        ) || hostLaunches(task.hostId)
       );
     };
   }
@@ -310,11 +326,16 @@ export class Dispatch {
   }
   /** Dispatch shares ownership with task controls and hook reconciliation. */
   async dispatchTask(taskId: string, dispatchHeld: boolean): Promise<void> {
+    // Only this dispatch's own fault is read by the pass that visits it.
+    this.dispatchHostFaults.delete(taskId);
     try {
       await this.first.dispatch(taskId, dispatchHeld);
     } catch (error) {
       if (!(error instanceof HostTransportFault)) throw error;
-      recordHostFailure(this.adapter, error.hostId, error);
+      // The failed call fails only this dispatch (Spec 069 §2); the pass that
+      // visited it skips that host for the rest of the pass, and nothing more.
+      reportHostCallFailure(this.adapter, error.hostId, error);
+      this.dispatchHostFaults.set(taskId, error.hostId);
       const task = this.store.task(taskId);
       if (task.hostId !== error.hostId && task.originHostId === error.hostId)
         this.engine.note(
@@ -323,6 +344,9 @@ export class Dispatch {
           "origin_busy",
         );
       return;
+    } finally {
+      // A first dispatch in flight ends here, launched or not (Spec 069 §2).
+      this.engine.hostHealth.launchSettled(taskId);
     }
   }
   /** Proof-only dispatch always enters its executor/release-GO route, never the worker launcher. */

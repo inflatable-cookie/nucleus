@@ -1,4 +1,3 @@
-import { isHostOperationTimeout } from "./errors";
 import {
   callerNativeId,
   foreignIdentityRefusal,
@@ -26,17 +25,21 @@ import {
 } from "./errors";
 import { createUnboundAdapter } from "./unbound-adapter";
 const faultHosts = new WeakMap<object, string>();
-const HOST_FAILURE = Symbol("host-failure");
+const HOST_CALL_FAILED = Symbol("host-call-failed");
 
-/** Record one host's outage through its engine, including queued tasks. */
-export function recordHostFailure(
+/**
+ * Report one failed host call to that host's health owner (Spec 069 §2). The call
+ * fails only its own step: a hung or transport-failed call on a connected host is
+ * a `degraded` sample, and no call outcome marks a host down or writes a task.
+ * Callers holding only the routed adapter reach the engine's HostHealth here.
+ */
+export function reportHostCallFailure(
   adapter: Adapter,
   hostId: string,
   error: unknown,
-): boolean {
-  const record = Reflect.get(adapter, HOST_FAILURE);
-  if (typeof record !== "function") return false;
-  return record(hostId, error) === true;
+): void {
+  const report = Reflect.get(adapter, HOST_CALL_FAILED);
+  if (typeof report === "function") report(hostId, error);
 }
 
 /** A transport failure attributed at the adapter boundary, before host context is lost. */
@@ -147,70 +150,12 @@ export function routeHostAdapter(
   const creating = new Set<string>();
   const proxy: Adapter = new Proxy(fallback, {
     get: (selectedFallback, property) => {
-      if (property === HOST_FAILURE)
-        return (hostId: string, error: unknown) => {
-          const engine = owner as unknown as Engine;
-          if (
-            !engine.markAuditHostUnavailable ||
-            !engine.hostOutages ||
-            !engine.hostWait ||
-            !engine.withHost ||
-            !engine.hostAvailable ||
-            !engine.noteStepFailure ||
-            !engine.store.tasks
-          )
-            return false;
-          // Host health comes from the connection, never from a task's own record
-          // (Tom, 2026-11-22). A failure recorded with no error means a visited
-          // task still carries an old host wait; while the host is connected that
-          // is not the host going away. Recording it parked every task on a
-          // healthy host and rewrote each one, on every submission's dispatch.
-          if (
-            error === undefined &&
-            owner.resolveHostAdapter(hostId) &&
-            engine.withHost(hostId, () => engine.hostAvailable(hostId))
-          )
-            return false;
-          const fault =
-            error === undefined
-              ? null
-              : error instanceof HostTransportFault
-                ? error
-                : new HostTransportFault(hostId, error);
-          const source =
-            error instanceof HostTransportFault ? error.cause : error;
-          engine.markAuditHostUnavailable(
+      if (property === HOST_CALL_FAILED)
+        return (hostId: string, error: unknown) =>
+          (owner as unknown as Partial<Engine>).hostHealth?.callFailed(
             hostId,
-            isHostOperationTimeout(source) && source instanceof Error
-              ? source.message
-              : undefined,
+            error,
           );
-          engine.hostOutages.observe(hostId, false);
-          for (const task of engine.store.tasks()) {
-            if (
-              task.hostId !== hostId ||
-              ["done", "cancelled"].includes(task.phase)
-            )
-              continue;
-            engine.hostWait(task);
-            if (!fault) continue;
-            if (
-              !engine.store
-                .events(task.id)
-                .some(
-                  (event) =>
-                    event.kind === "host_transport_fault" &&
-                    event.detail === fault.message,
-                )
-            )
-              engine.store.event(
-                task.id,
-                "host_transport_fault",
-                fault.message,
-              );
-          }
-          return true;
-        };
       const id = owner.activeHostId;
       const selected = id ? owner.resolveHostAdapter(id) : selectedFallback;
       if (!selected)

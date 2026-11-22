@@ -390,15 +390,19 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
   assert.equal(queuedNow.resolution.stop?.reason, "external_unavailable");
   assert.equal(engine.hostOutages.current(host.hostId), null);
 
-  // Real transport faults through the routed adapter MUST still mark the host unavailable.
+  // A real transport fault through the routed adapter on a connected host fails only
+  // its own call (Spec 069 §2): the host stays up (one call is not the host) and no
+  // task on it is written. Only a lost connection opens an outage.
   t3Adapter.observe = async () => {
     throw new T3RpcError("transport", "socket closed");
   };
   await engine.auditPass(true);
-  assert.notEqual(engine.hostOutages.current(host.hostId), null);
-  assert.ok(
+  assert.equal(engine.hostHealth.read(host.hostId).state, "up");
+  assert.equal(engine.hostOutages.current(host.hostId), null);
+  assert.equal(
     store
       .eventsAll(healthyT3Task.id)
       .some((e) => e.kind === "host_transport_fault"),
+    false,
   );
 });

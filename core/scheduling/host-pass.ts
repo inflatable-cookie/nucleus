@@ -72,13 +72,12 @@ export type HostPassResult = {
   /** Finished tasks whose thread cleanup is still owed, for the bounded task window. */
   finishedCatchUp: Map<string, Task>;
   /**
-   * This host's transport answered the whole pass (Spec 066 R1/R6, C2). A step that
-   * fails at the transport boundary means it did not: the registry can still claim
-   * a connection the socket does not honour, so the pass reads the failure, not the
-   * claim. The sweep shares this record with the same host's task visits, and a
-   * host that did not answer settles nothing while another host's tasks progress.
+   * The first step this pass that hung or failed at the transport, or null for a
+   * clean pass. It failed only its own step: the sweep hands it to HostHealth as a
+   * `degraded` sample (Spec 069 §2), and a clean pass is the healthy reading that
+   * clears one. Neither ever marks the host down or writes its tasks.
    */
-  transportAnswered: boolean;
+  callFault: unknown;
 };
 
 /**
@@ -100,11 +99,11 @@ export class HostPass {
     return this.context.adapter;
   }
   /**
-   * Hosts whose pass hit the transport boundary. One pass visits its hosts in
-   * order, and the entry is cleared when a host's pass begins, so a reading never
-   * outlives the pass that made it and never answers for another host.
+   * Each host's first hung or transport-failed step this pass. One pass visits its
+   * hosts in order and the entry is cleared when a host's pass begins, so a sample
+   * never outlives the pass that made it and never answers for another host.
    */
-  private readonly transportFailures = new Set<string>();
+  private readonly callFaults = new Map<string, unknown>();
 
   /**
    * The pass's rows: one per task this host presents, from the one attention
@@ -155,8 +154,8 @@ export class HostPass {
       try {
         await reconcile.call(this.adapter, task.id, attention);
       } catch (error) {
-        // A timeout or a transport-boundary failure is the host's own answer for
-        // this pass (Spec 066 R6): the step's own classification records it, so it
+        // A timeout or a transport-boundary failure is about the host, not this
+        // task's row: the step's own classification samples it for HostHealth, so it
         // must not be swallowed as one task's presentation warning.
         if (hostTimedOut(error)) throw error;
         if (isTransportFailure(error)) throw error;
@@ -184,25 +183,37 @@ export class HostPass {
     // a thread whose task is over is not read again, and every read this pass makes
     // is shared by its consumers. A host that does not present threads ignores it.
     const tasks = this.store.tasks().filter((task) => task.hostId === host);
-    this.transportFailures.delete(host);
-    await this.step(host, "beginHostPass", () =>
-      this.adapter.beginHostPass?.(tasks),
-    );
-    let passed: Omit<HostPassResult, "transportAnswered"> | null = null;
+    this.callFaults.delete(host);
+    let passed: Omit<HostPassResult, "callFault"> = {
+      inventory: null,
+      finishedCatchUp: new Map(),
+    };
     try {
-      passed = await this.hostPass(host, tasks);
-    } finally {
-      await this.step(host, "endHostPass", () => this.adapter.endHostPass?.());
+      await this.step(host, "beginHostPass", () =>
+        this.adapter.beginHostPass?.(tasks),
+      );
+      try {
+        passed = await this.hostPass(host, tasks);
+      } finally {
+        await this.step(host, "endHostPass", () =>
+          this.adapter.endHostPass?.(),
+        );
+      }
+    } catch (error) {
+      // A hung call stops this host's pass, and only it (Spec 069 §2): the rest of
+      // this host's steps would wait out the same deadline. The host is not down;
+      // its health reads the sample and its owners retry on the next pass.
+      if (!hostTimedOut(error)) throw error;
     }
-    return { ...passed!, transportAnswered: !this.transportFailures.has(host) };
+    return { ...passed, callFault: this.callFaults.get(host) ?? null };
   }
 
   /** The pass's steps, between a host's `beginHostPass` and its `endHostPass`. */
   private async hostPass(
     host: string,
     tasks: readonly Task[],
-  ): Promise<Omit<HostPassResult, "transportAnswered">> {
-    const result: Omit<HostPassResult, "transportAnswered"> = {
+  ): Promise<Omit<HostPassResult, "callFault">> {
+    const result: Omit<HostPassResult, "callFault"> = {
       inventory: null,
       finishedCatchUp: new Map(),
     };
@@ -526,8 +537,8 @@ export class HostPass {
       // The inventory is optional, so a list that cannot be read answers nothing
       // and every identity falls back to the narrow read. It is still a host read,
       // so its own failure is this pass's to classify (nucleus#1469): the step
-      // keeps an unavailable inventory distinct from transport loss, which is the
-      // host answering nothing for the pass, and reports both as `hostPassError`.
+      // keeps an unavailable inventory distinct from transport loss, which is a
+      // HostHealth sample, and reports both as `hostPassError`.
       // A timeout keeps stopping the pass, as every other host step's does.
       await this.step(host, "observationInventory", async () => {
         observed = await this.context.host.observationInventory(inventoryIds);
@@ -586,17 +597,18 @@ export class HostPass {
     try {
       await run();
     } catch (error) {
-      if (hostTimedOut(error)) throw error;
-      // A step that fails at the transport boundary is this host's own answer for
-      // the pass (Spec 066 R6): the client claims a connection the socket does not
-      // honour, so the host did not answer and its tasks keep their wait. Only this
-      // host's reading changes; another host's failure never reaches this record.
-      if (isTransportFailure(error)) this.transportFailures.add(host);
+      // A hung or transport-failed step fails only itself (Spec 069 §2). It is this
+      // host's sample for HostHealth, never a verdict on the host or its tasks.
+      const timedOut = hostTimedOut(error);
+      if ((timedOut || isTransportFailure(error)) && !this.callFaults.has(host))
+        this.callFaults.set(host, error);
       const detail = error instanceof Error ? error.message : String(error);
       this.store.setMeta(
         "hostPassError",
         `${host}/${name}: ${detail}`.slice(0, 2000),
       );
+      // A hung call stops the host's later steps; `run` ends the pass.
+      if (timedOut) throw error;
     }
   }
 }

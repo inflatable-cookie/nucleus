@@ -404,10 +404,9 @@ test("a row fault partway through the pass never publishes a partial running cou
       ? Promise.reject(new T3RpcError("transport", method))
       : readStream(method, payload, accept);
   const faultyPass = await runPass();
-  assert.equal(
-    faultyPass.transportAnswered,
-    false,
-    "the row step stopped at the transport boundary",
+  assert.ok(
+    faultyPass.callFault,
+    "the row step stopped at the transport boundary, a sample for the host's health",
   );
   assert.match(
     String(store.getMeta("hostPassError")),

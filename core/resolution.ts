@@ -1271,6 +1271,10 @@ export class Resolution {
   hostAvailable(task: Task, run?: Run): boolean {
     return this.hostPorts.taskAvailable(task, run);
   }
+  /** Spec 069 §2: why this host admits no new first dispatch now, or null. */
+  hostLaunchWait(hostId: string, taskId?: string): string | null {
+    return this.hostPorts.launchWait?.(hostId, taskId) ?? null;
+  }
   /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the open outage for a host, when one exists. */
   hostOutage(hostId: string): HostOutage | null {
     return this.hostPorts.outage(hostId);
@@ -2536,8 +2540,11 @@ export class Resolution {
   pauseForPrerequisiteWait(t: Task): boolean {
     return this.schedulingLifecycle.pauseForPrerequisiteWait(t);
   }
-  withDispatchPass<T>(pass: () => Promise<T>): Promise<T> {
-    return this.slotAdmission.withDispatchPass(pass);
+  withDispatchPass<T>(
+    pass: () => Promise<T>,
+    skippedHosts?: ReadonlySet<string>,
+  ): Promise<T> {
+    return this.slotAdmission.withDispatchPass(pass, skippedHosts);
   }
   passDependencyWait(task: Task): string {
     return this.slotAdmission.passDependencyWait(task);

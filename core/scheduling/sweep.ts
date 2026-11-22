@@ -15,11 +15,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
 import { HostPass } from "./host-pass";
 import { SweepMaintenance } from "./sweep-maintenance";
-import {
-  HostTransportFault,
-  hostFaultHost,
-  recordHostFailure,
-} from "../host/adapter-routing";
+import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
@@ -52,12 +48,12 @@ export type SweepContext = Pick<
   | "flushPrerequisiteReleases"
   | "host"
   | "hostAvailable"
+  | "hostHealth"
   | "hostIds"
   | "hostOutages"
   | "hostWait"
   | "inventoryHostMatches"
   | "lifecycle"
-  | "markAuditHostUnavailable"
   | "maxSweepWindows"
   | "migrateProjectOwnersToPlanners"
   | "noteStepFailure"
@@ -67,7 +63,6 @@ export type SweepContext = Pick<
   | "recoverExhaustedWorkers"
   | "removeSiblings"
   | "replaceExhaustedReviewers"
-  | "resetAuditHostAvailability"
   | "resumePausedStops"
   | "retiredObservationKey"
   | "retiredObservationPlan"
@@ -231,7 +226,7 @@ export class Sweep {
     lastPassAt: null as string | null,
   };
   constructor(readonly engine: SweepContext) {}
-  /** A failed host step is an outage for that host, never an engine fault. */
+  /** A failed host step fails only itself: a HostHealth sample, never an engine fault. */
   private async fleetStep(
     name: string,
     work: () => Promise<unknown>,
@@ -256,7 +251,7 @@ export class Sweep {
         error instanceof HostTransportFault
           ? error
           : new HostTransportFault(hostId, error);
-      recordHostFailure(this.engine.adapter, hostId, fault);
+      this.engine.hostHealth.callFailed(hostId, fault);
       this.engine.store.setMeta(
         "hostPassError",
         `${hostId}/${name}: ${fault.message}`.slice(0, 2000),
@@ -422,7 +417,6 @@ export class Sweep {
     visited: Set<string> = new Set(),
   ): Promise<{ fault: Error | null; covered: boolean; visited: Set<string> }> {
     try {
-      this.engine.resetAuditHostAvailability();
       this.engine.store.setMeta("engineError", "");
       // One diagnostic slot per pass for the per-host steps a fleet sweep must
       // not stall on: `HostPass` records a step that throws there.
@@ -472,13 +466,12 @@ export class Sweep {
         let passed: Awaited<ReturnType<HostPass["run"]>> | null;
         try {
           passed = await this.engine.withHost(host, async () => {
-            // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
-            // record of when this host went away, kept whether or not it has tasks.
-            this.engine.hostOutages.observe(
-              host,
-              this.engine.hostAvailable(host),
-            );
-            if (!this.engine.hostAvailable(host)) return null;
+            // Spec 069 §2: the host's health is its connection's. Reading it opens or
+            // closes the durable outage record on a `down` transition only; a host
+            // that is down or not yet read since the service started is not read.
+            const health = this.engine.hostHealth.read(host);
+            if (health.state === "down" || health.state === "unknown")
+              return null;
             return this.hostPass.run(host);
           });
         } catch (error) {
@@ -490,31 +483,32 @@ export class Sweep {
             continue;
           }
           if (!hostFaultHost(error)) throw error;
-          // A connected registry claim can still fail at the transport boundary.
-          // Keep this host's tasks on the existing outage wait for this pass, and
-          // continue the fleet sweep without turning the host loss into engineError.
-          recordHostFailure(this.engine.adapter, host, error);
-          unavailableHosts.add(host);
-          continue;
-        }
-        // Nothing is read from a host that is away: the wait itself is the stop.
-        if (!passed) {
-          recordHostFailure(this.engine.adapter, host, undefined);
-          unavailableHosts.add(host);
-          continue;
-        }
-        // Spec 066 R1/R6 (C2): the pass's reading of one host, shared with that
-        // host's task visits. A step that failed at the transport boundary means the
-        // host did not answer, even though the registry still claims the connection:
-        // the reading is the failure, not the claim. So this host's tasks keep their
-        // host-scoped wait for the pass, and no other host's visit sees it.
-        if (!passed.transportAnswered) {
-          unavailableHosts.add(host);
-          recordHostFailure(
-            this.engine.adapter,
-            host,
-            new Error(`Host ${host} did not answer its pass`),
+          // A failed host read fails only this host's pass (Spec 069 §2): it counts
+          // as one failed pass and the fleet sweep continues without an engineError.
+          this.engine.hostHealth.passFailed(host, error);
+          this.engine.store.setMeta(
+            "hostPassError",
+            `${host}/hostPass: ${error instanceof Error ? error.message : String(error)}`.slice(
+              0,
+              2000,
+            ),
           );
+          unavailableHosts.add(host);
+          continue;
+        }
+        // Nothing is read from a host that is away: its health is the whole wait.
+        if (!passed) {
+          unavailableHosts.add(host);
+          continue;
+        }
+        // A pass whose own step hung or failed at the transport counts towards
+        // `degraded` (three in a row); a clean pass resets it. Neither marks the
+        // host down. This is the only feed of HostHealth's state from host calls.
+        if (passed.callFault) {
+          unavailableHosts.add(host);
+          this.engine.hostHealth.passFailed(host, passed.callFault);
+        } else {
+          this.engine.hostHealth.answered(host);
         }
         if (passed.inventory) inventory = passed.inventory;
         for (const [id, task] of passed.finishedCatchUp)
@@ -727,23 +721,20 @@ export class Sweep {
           // task whose quantum this sweep cannot start at all. The host wait is
           // recorded first, so the pause is dated from the outage's own start.
           //
-          // The visit settles the task's host-scoped wait from this host's own
-          // reading (Spec 066 R1/R3/R6, C2): the one settlement (`clearHostWait`)
-          // clears an outage wait and a transport deferral together, and only when
-          // the host answered. A host that did not answer, or another host's
-          // failure, leaves this wait exactly as it is.
+          // The visit settles the task's host-scoped wait from its host's health
+          // (Spec 069 §2): the one settlement (`clearHostWait`) clears an outage wait
+          // and a transport deferral together once the host is connected. A host
+          // that is down keeps the wait, and one not yet read writes nothing.
           let hostWait: string | null;
           try {
             hostWait = this.engine.hostWait(task);
           } catch (error) {
-            // The host stopped answering between its pass and this visit. That is
-            // this task's own host going away, not the fleet's: hold this task and
-            // keep visiting the rest of the order (Spec 066 R6).
-            if (!hostFaultHost(error)) throw error;
-            if (task.hostId) {
-              this.engine.markAuditHostUnavailable(task.hostId);
-              this.engine.hostOutages.observe(task.hostId, false);
-            }
+            // A host read failed during this visit. It fails only this task's visit
+            // (Spec 069 §2): the host's health takes the sample and the rest of the
+            // order is still visited.
+            const failed = hostFaultHost(error);
+            if (!failed) throw error;
+            this.engine.hostHealth.callFailed(failed, error);
             reconciled.add(task.id);
             continue;
           }
