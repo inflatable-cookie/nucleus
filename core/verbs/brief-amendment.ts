@@ -49,10 +49,11 @@ function decodeIntent(detail: string): DeliveryIntent | null {
 
 /**
  * The delivery half of a brief amendment: a live worker or reviewer is told of
- * the amendment behind its current step. The intent is recorded durably before
- * any send, the attempt is recorded before the host call, and the delivered
- * marker after it — so an unknown delivery is never resent while an intent that
- * never reached the host is delivered by a later pass.
+ * the amendment (steered into its live turn when the host supports it,
+ * otherwise queued behind its current step). The intent is recorded durably
+ * before any send, the attempt is recorded before the host call, and the
+ * delivered marker after it — so an unknown delivery is never resent while an
+ * intent that never reached the host is delivered by a later pass.
  */
 export class BriefAmendmentDelivery {
   constructor(readonly engine: Engine) {}
@@ -67,7 +68,7 @@ export class BriefAmendmentDelivery {
     text: string;
     reason: string;
   }): string {
-    return `The operator amended this task's Nucleus-held brief to version ${next.version} (${next.digest}). Reason: ${next.reason}. This message is queued behind your current step; continue from the new brief. Earlier instructions that conflict with it no longer apply.\n\n${next.text}`;
+    return `The operator amended this task's Nucleus-held brief to version ${next.version} (${next.digest}). Reason: ${next.reason}. Continue from the new brief. Earlier instructions that conflict with it no longer apply.\n\n${next.text}`;
   }
 
   /** Durable send intent for each live worker and reviewer thread; unknown delivery is never resent. */
@@ -168,14 +169,17 @@ export class BriefAmendmentDelivery {
     const hostId = task.hostId ?? intent.hostId;
     if (!hostId || !this.engine.resolution.originHostAvailable(hostId)) return;
     await this.engine.resolution.withHost(hostId, async () => {
-      if (!this.engine.adapter.enqueueMessage) return;
+      const send =
+        this.engine.adapter.steerOrNotify ?? this.engine.adapter.enqueueMessage;
+      if (!send) return;
       this.store.event(
         task.id,
         ATTEMPT,
         `${intent.messageId}: ${JSON.stringify({ hostId, agentId: intent.agentId })}`,
       );
       try {
-        await this.engine.adapter.enqueueMessage(
+        await send.call(
+          this.engine.adapter,
           intent.agentId,
           intent.messageId,
           text,

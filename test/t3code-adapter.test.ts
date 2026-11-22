@@ -3876,3 +3876,126 @@ test("a native answer on a paged thread reads the retained question item, and a 
     { choice: ["Yes"] },
   );
 });
+
+test("brief amendment steers a running nested T3 worker without creating a second subagent item, and queues when idle", async (t) => {
+  const { host, server, workspace, directory, spec } = await fixture(t);
+  const store = new Store(join(directory, "queue.sqlite"));
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  store.setMeta("hostId", host.hostId);
+
+  const initialBrief = "Initial brief body.";
+  const task = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Brief amendment task",
+      repoPath: directory,
+      planningCommit: "a".repeat(40),
+      brief: { text: initialBrief, mediaType: "text/markdown" },
+      originAgentId: "origin",
+    }),
+    host.hostId,
+    initialBrief,
+    "a".repeat(40),
+  );
+  const launchSpec = spec("worker-launch-amend", "Work");
+  const worker = await host.createAgent({
+    ...launchSpec,
+    attempt: () => ({
+      ...launchSpec.attempt(false, false),
+      labels: storedT3Labels("worker", { taskId: task.id, runId: "initial" }),
+    }),
+  });
+  store.update(task.id, {
+    phase: "working",
+    agentId: worker.id,
+    runId: "initial",
+    workspaceId: workspace.id,
+    directory,
+  });
+
+  const parentId = host.state.read().parents?.[task.id]?.threadId;
+  assert.ok(parentId, "worker has a parent task thread");
+  const parent = server.threads.get(parentId)!;
+  const workerThread = server.threads.get(worker.id)!;
+  const subagentsBefore = parent.subagents.length;
+  const activeWorkerRunId = workerThread.runs.at(-1)!.id;
+
+  const t3 = createAdapter(
+    HostPolicies as unknown as HostPolicyConstructor,
+    host,
+  );
+  const engine = new Engine(store, t3 as unknown as Adapter, 0);
+  const v2Brief = "Amended brief v2.";
+  const amendedV2 = engine.amendBrief({
+    taskId: task.id,
+    version: store.task(task.id).version,
+    brief: v2Brief,
+    reason: "Clarify scope mid-run",
+  });
+  for (
+    let i = 0;
+    i < 50 &&
+    !store
+      .eventsAll(task.id)
+      .some(
+        (event) =>
+          event.kind === "brief_amendment_delivered" &&
+          event.detail.includes("-v2-worker:"),
+      );
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const v2Dispatch = server.commands.findLast(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === worker.id &&
+      typeof command.text === "string" &&
+      command.text.includes(v2Brief),
+  );
+  assert.ok(v2Dispatch, "v2 amendment dispatched to worker thread");
+  assert.deepEqual(v2Dispatch.dispatchMode, {
+    type: "steer_active",
+    targetRunId: activeWorkerRunId,
+  });
+  assert.equal(
+    parent.subagents.length,
+    subagentsBefore,
+    "steered brief amendment does not add a second subagent item to the parent task thread",
+  );
+
+  // When the worker thread has no live run, steerOrNotify falls back to queue_after_active
+  // so the amendment reaches its next turn.
+  workerThread.runs = [];
+  const v3Brief = "Amended brief v3.";
+  engine.amendBrief({
+    taskId: task.id,
+    version: amendedV2.version,
+    brief: v3Brief,
+    reason: "Follow-up while idle",
+  });
+  for (
+    let i = 0;
+    i < 50 &&
+    !store
+      .eventsAll(task.id)
+      .some(
+        (event) =>
+          event.kind === "brief_amendment_delivered" &&
+          event.detail.includes("-v3-worker:"),
+      );
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const v3Dispatch = server.commands.findLast(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === worker.id &&
+      typeof command.text === "string" &&
+      command.text.includes(v3Brief),
+  );
+  assert.ok(v3Dispatch, "v3 amendment dispatched to idle worker thread");
+  assert.deepEqual(v3Dispatch.dispatchMode, { type: "queue_after_active" });
+});
