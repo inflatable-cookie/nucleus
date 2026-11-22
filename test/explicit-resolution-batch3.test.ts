@@ -1733,4 +1733,83 @@ test("review round 5: forced move and stale merge lookup preserve newer explicit
   assert.equal(afterPoll.phase, "syncing", afterPoll.reason);
   assert.equal(afterPoll.resolution.mergedCommit, MERGED_COMMIT);
   assert.notEqual(afterPoll.resolution.integrationTurn, null);
+
+  // 6. An in-flight check poll that REJECTS (e.g. forge PR identity error) after merge.now succeeds
+  // must NOT rewrite the task to needs_attention; merge reconciliation still observes mergedCommit.
+  let rejectPollStarted!: () => void;
+  const rejectStarted = new Promise<void>((resolve) => {
+    rejectPollStarted = resolve;
+  });
+  let triggerPollReject!: () => void;
+  const rejectGate = new Promise<void>((resolve) => {
+    triggerPollReject = resolve;
+  });
+  let rejectMerged = false;
+  const rejectFx = await fixture(t, {
+    merge: async () => {},
+    merged: async () => ({
+      merged: rejectMerged,
+      commit: rejectMerged ? MERGED_COMMIT : null,
+      head: HEAD,
+      base: "main",
+      proof: {
+        proven: !rejectMerged,
+        detail: rejectMerged ? "merged" : "open",
+      },
+    }),
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "Required check ci is pending",
+      pendingCheck: true,
+    }),
+    requiredChecks: async () => {
+      rejectPollStarted();
+      await rejectGate;
+      throw new Error(
+        `PR #85 is not open (MERGED); expected open PR at ${HEAD}`,
+      );
+    },
+  });
+  const rejectTask = rejectFx.insertTask("in-flight-check-reject-merge", 85);
+  rejectFx.attachReadyReview(rejectTask.id, HEAD);
+  rejectFx.store.update(rejectTask.id, {
+    phase: "verifying",
+    resolution: {
+      ...rejectFx.store.task(rejectTask.id).resolution,
+      stop: {
+        reason: "lifecycle",
+        detail: "Required check ci is pending",
+        since: oldRequestedAt,
+        suggestedVerbs: [],
+      },
+    },
+  });
+  rejectFx.store.setMeta(requiredCheckPollMetaKey(rejectTask.id, HEAD), {
+    head: HEAD,
+    incidentId: null,
+    nextAt: Date.now() - 1_000,
+  });
+
+  const rejectQuantum = rejectFx.runtime.engine.scheduleTaskQuantum(
+    rejectTask.id,
+  );
+  await rejectStarted;
+
+  const mergedBeforeReject = await rejectFx.callExplicit(
+    rejectTask.id,
+    { action: "merge.now", head: HEAD, accept: ["checks"] },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(mergedBeforeReject.explicitResolution?.status, "applied");
+  assert.equal(mergedBeforeReject.phase, "merging");
+
+  rejectMerged = true;
+  triggerPollReject();
+  await rejectQuantum;
+
+  const afterReject = rejectFx.store.task(rejectTask.id);
+  assert.equal(afterReject.phase, "syncing", afterReject.reason);
+  assert.equal(afterReject.resolution.mergedCommit, MERGED_COMMIT);
+  assert.notEqual(afterReject.resolution.integrationTurn, null);
 });

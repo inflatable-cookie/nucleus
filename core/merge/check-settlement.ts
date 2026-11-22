@@ -143,7 +143,19 @@ export class CheckSettlement {
     t = this.store.task(t.id);
     if (!["verifying", "merging"].includes(t.phase)) return false;
     if (t.resolution.mergeIntent || t.resolution.mergedCommit) return false;
-    const gate = await this.ports.requiredChecks(t);
+    let gate: RequiredChecksResult;
+    try {
+      gate = await this.ports.requiredChecks(t);
+    } catch (error) {
+      if (this.ports.paused()) return true;
+      const current = this.store.task(t.id);
+      if (!["verifying", "merging"].includes(current.phase)) return false;
+      if (current.resolution.mergeIntent || current.resolution.mergedCommit)
+        return false;
+      const currentState = this.ports.pollState(current);
+      if (!currentState || currentState.head !== state.head) return false;
+      throw error;
+    }
     if (this.ports.paused()) return true;
     const current = this.store.task(t.id);
     if (!["verifying", "merging"].includes(current.phase)) return false;
