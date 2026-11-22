@@ -674,9 +674,7 @@ export class RuntimeBoard {
         ? this.context.store.resolveTaskId(input.taskId)
         : this.context.store.taskIdByNumber(input),
     );
-    const heavyRun = this.context
-      .cachedUiSnapshotFacts()
-      .summaries.find((task) => task.id === result.task.id)?.heavyRun;
+    const heavyRun = this.context.cachedUiSnapshotFacts.heavyRunFor(result.task);
     return heavyRun
       ? { ...result, task: { ...result.task, heavyRun } }
       : result;

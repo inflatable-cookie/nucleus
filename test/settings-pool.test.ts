@@ -188,7 +188,7 @@ function screenTree(
     if (method === "backup.list") return { snapshots: [], localError: null };
     if (method === "queue.pool" || method === "queue.profile") {
       onPool?.(input);
-      return { ok: true };
+      return method === "queue.profile" ? { ok: true, entry: input } : { ok: true };
     }
     return {};
   };

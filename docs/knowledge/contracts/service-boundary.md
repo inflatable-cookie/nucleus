@@ -1054,9 +1054,16 @@ read cannot repopulate across an invalidation.
 
 The executor serves every catalogue read on its one thread, so nothing running
 there may hold that thread unbounded. A board, `queue.snapshot`, `task.next` or
-`queue.detail` read takes the store and cached host views only: it awaits no
-live host call and no mutating operation, and a host call that outlives its
-admission deadline is abandoned rather than waited on. The removals that delete a
+`queue.detail` read takes the store and cached host views only. A host call
+that outlives its admission deadline is abandoned. Profile settings save with
+`queue.profile`: the service returns the stored entry after committing the
+entry and its board revision. Settings shows “Saved” once the entry matches
+the submitted values. A refusal, transport error or mismatched entry shows
+an error. The web save has a ten-second deadline, including the reply body.
+When the service cannot confirm delivery, the board shows the error and the
+operator can read back the stored settings before editing again.
+
+The removals that delete a
 whole populated checkout go through `removeTree`
 (`core/workspaces/tree-removal.ts`), which runs node's walk on libuv's pool:
 sibling worktrees, orphan checkouts and an archived owned worktree. The caller

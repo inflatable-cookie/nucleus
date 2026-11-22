@@ -8,7 +8,7 @@ export {
 } from "./settings-profile-helpers";
 import React, { useEffect, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { replaceEqualDeep, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRpc, type BoardSurfaceProps } from "./shell";
 import {
   ActionButton,
@@ -30,7 +30,7 @@ import {
 } from "./controls";
 import { control, space, type as typeScale, radius } from "./design";
 import { PopoverHost } from "./popover";
-import { useBoardState } from "./board-state";
+import { BOARD_STATE_KEY, useBoardState } from "./board-state";
 import * as api from "../shared/contracts";
 import {
   BACKUP_STALE_AFTER_MS,
@@ -171,6 +171,11 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     state?.backup?.localError ?? backupsQuery.data?.localError ?? null;
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState<{
+    profileId: string;
+    message: string;
+  } | null>(null);
+  const dismissibleError = error || profileSaveError?.message;
   const [pendingOverrideRemovals, setPendingOverrideRemovals] = useState<
     Record<string, PendingOverrideRemovalPhase>
   >({});
@@ -269,20 +274,23 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
           gap: space.md,
         }}
       >
-        {(error || stateQuery.error || state?.error) && (
+        {(dismissibleError || stateQuery.error || state?.error) && (
           <View style={{ ...row, flexWrap: "nowrap" }}>
             <Text
               accessibilityRole="alert"
               style={{ color: c.statusDanger, flex: 1 }}
             >
-              {error || String(stateQuery.error || state?.error)}
+              {dismissibleError || String(stateQuery.error || state?.error)}
             </Text>
-            {error && (
+            {dismissibleError && (
               <ActionButton
                 c={c}
                 action="close"
                 label="Dismiss error"
-                onPress={() => setError("")}
+                onPress={() => {
+                  if (error) setError("");
+                  else setProfileSaveError(null);
+                }}
               />
             )}
           </View>
@@ -340,21 +348,27 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                   : []
               }
               busy={busy}
-              savePool={(entry) =>
-                setProfile(entry)
-                  .then(async () => {
-                    await queryClient.invalidateQueries({
-                      queryKey: ["nucleus", "state"],
-                    });
-                    await queryClient.invalidateQueries({
-                      queryKey: ["nucleus", "profiles"],
-                    });
-                  })
-                  .catch((e) => {
-                    setError(errorText(e));
-                    throw e;
-                  })
-              }
+              savePool={async (entry) => {
+                try {
+                  const expected = api.poolSchema.parse({
+                    ...entry,
+                    group: entry.group.trim(),
+                  });
+                  const saved = await setProfile(expected);
+                  if (replaceEqualDeep(expected, saved.entry) !== expected)
+                    throw new Error("The service could not confirm the profile settings it stored.");
+                  setProfileSaveError((current) =>
+                    current?.profileId === entry.profileId ? null : current,
+                  );
+                  void queryClient.invalidateQueries({ queryKey: BOARD_STATE_KEY });
+                } catch (error) {
+                  setProfileSaveError({
+                    profileId: entry.profileId,
+                    message: `Profile settings could not be saved. ${errorText(error)}`,
+                  });
+                  throw error;
+                }
+              }}
               savePoolList={(entries) => act(() => setPool({ entries }))}
               saveAvailability={(value) => act(() => setAvailability(value))}
             />
