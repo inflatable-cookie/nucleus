@@ -60,6 +60,18 @@ async function fixture(
       directory: REPO,
     }),
     listAgents: async () => [],
+    agentTimelinePage: async () => ({
+      entries: [],
+      hasOlder: false,
+      hasNewer: false,
+      gap: false,
+      staleCursor: false,
+      reset: false,
+      epoch: "e1",
+      projection: "canonical",
+      startCursor: null,
+      endCursor: null,
+    }),
     stopAgentTurn: async () => {},
     archiveAgent: async () => {},
   } as unknown as Adapter;
@@ -90,11 +102,23 @@ async function fixture(
     string,
     unknown
   >;
+  resAdapter.agentTimelinePage = async () => ({
+    entries: [],
+    hasOlder: false,
+    hasNewer: false,
+    gap: false,
+    staleCursor: false,
+    reset: false,
+    epoch: "e1",
+    projection: "canonical",
+    startCursor: null,
+    endCursor: null,
+  });
   Object.assign(resAdapter, resolutionOverrides);
-  if (resolutionOverrides.syncMain) {
-    (adapter as unknown as Record<string, unknown>).syncMain =
-      resolutionOverrides.syncMain;
-  }
+  Object.assign(
+    adapter as unknown as Record<string, unknown>,
+    resolutionOverrides,
+  );
 
   let seq = 0;
   const insertTask = (title: string, prNumber: number): Task => {
@@ -929,5 +953,230 @@ test("review findings: exact-head gate ignores skipPRReview and pending proofs, 
   assert.equal(
     runtime.engine.resolution.holdsIntegrationTurn(store.task(c.id)),
     true,
+  );
+});
+
+test("review round 2: serialize verifier vs explicit merge, honor operator_source with pending proof, preserve unrelated recovery runs, reconcile accepted merge from attention, classify check timeout as warning", async (t) => {
+  let mergeCalls = 0;
+  let mergeShouldFail = false;
+  let mergedFlag = false;
+  let checksError: Error | null = null;
+  let resolveGateStarted!: () => void;
+  const gateStarted = new Promise<void>((resolve) => {
+    resolveGateStarted = resolve;
+  });
+  let releaseGate!: () => void;
+  const gateGate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+
+  const {
+    runtime,
+    store,
+    insertTask,
+    attachCoordinator,
+    attachReadyReview,
+    callExplicit,
+  } = await fixture(t, {
+    merge: async () => {
+      mergeCalls += 1;
+      if (mergeShouldFail) throw new Error("network timeout");
+    },
+    merged: async () => ({
+      merged: mergedFlag,
+      commit: mergedFlag ? MERGED_COMMIT : null,
+      head: HEAD,
+      base: "main",
+    }),
+    requiredChecks: async () => {
+      if (checksError) throw checksError;
+      return { head: HEAD, wait: "" };
+    },
+    mergeGate: async () => {
+      resolveGateStarted();
+      await gateGate;
+      return { head: HEAD, base: "main", wait: "" };
+    },
+  });
+
+  // 1. merge-request-serialization: ordinary verifier resumes after explicit merge.now recorded uncertain outcome and must NOT resend.
+  const ser = insertTask("serialize merge", 60);
+  attachReadyReview(ser.id, HEAD);
+  store.update(ser.id, { phase: "verifying" });
+  const verifyPromise = runtime.engine.withHost(HOST, () =>
+    runtime.engine.resolution.verification(store.task(ser.id), false),
+  );
+  await gateStarted;
+  mergeShouldFail = true;
+  const explicitRes = await callExplicit(ser.id, {
+    action: "merge.now",
+    head: HEAD,
+    accept: ["turn_held"],
+  });
+  assert.equal(explicitRes.explicitResolution?.status, "applied");
+  assert.equal(store.task(ser.id).resolution.mergeResponseOutcome, "uncertain");
+  assert.equal(mergeCalls, 1);
+  mergeShouldFail = false;
+  releaseGate();
+  await verifyPromise;
+  assert.equal(
+    mergeCalls,
+    1,
+    "ordinary verifier must not resend over uncertain explicit merge",
+  );
+  store.update(ser.id, {
+    phase: "done",
+    resolution: {
+      ...store.task(ser.id).resolution,
+      integrationTurn: null,
+      mergeIntent: false,
+    },
+  });
+
+  // 2. exact-head-evidence + check-warning-classification: operator_source passes even when sourceApproved has awaitingProofs, and check timeout is a checks warning.
+  const opTask = insertTask("operator acceptance with pending proof", 61);
+  store.update(opTask.id, {
+    phase: "verifying",
+    resolution: {
+      ...store.task(opTask.id).resolution,
+      review: {
+        taskId: opTask.id,
+        runId: "rev-pending",
+        eventId: "ev-pending",
+        status: "changes_required",
+        head: HEAD,
+        summary: "Source approved pending proof",
+        sourceApproved: true,
+        awaitingProofs: [{ proof: "Screenshot", route: "author" }],
+      },
+      ownerAcceptances: [
+        {
+          kind: "operator_source",
+          head: HEAD,
+          prNumber: 61,
+          review: null,
+          reason: "Operator accepted exact head",
+          qualification: HEAD,
+          actor: { agentId: OPERATOR_BOARD_CALLER, role: "operator" },
+          authority: { kind: "operator", note: null },
+          at: new Date().toISOString(),
+          missingEvidence: "Pending proof waived by operator",
+        },
+      ],
+    },
+  });
+  checksError = new Error("PR checks lookup timed out");
+  const checkWarned = await callExplicit(
+    opTask.id,
+    { action: "merge.now", head: HEAD },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(checkWarned.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    checkWarned.explicitResolution?.warnings.map((w) => w.id),
+    ["checks"],
+  );
+  const checkAccepted = await callExplicit(
+    opTask.id,
+    { action: "merge.now", head: HEAD, accept: ["checks"] },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(checkAccepted.explicitResolution?.status, "applied");
+  checksError = null;
+  store.update(opTask.id, {
+    phase: "done",
+    resolution: {
+      ...store.task(opTask.id).resolution,
+      integrationTurn: null,
+      mergeIntent: false,
+    },
+  });
+
+  // 3. coordinator-closeout-handoff: closeout.now releases only the episode's own recovery run and preserves an unrelated live recovery run.
+  const handoff = insertTask("scoped handoff", 62);
+  attachReadyReview(handoff.id, HEAD);
+  store.update(handoff.id, {
+    phase: "needs_attention",
+    resolution: {
+      ...store.task(handoff.id).resolution,
+      mergedCommit: MERGED_COMMIT,
+      mergeHead: HEAD,
+    },
+  });
+  const coordCaller = attachCoordinator(handoff.id, "coord-main");
+  const at = new Date().toISOString();
+  store.putRun(
+    runSchema.parse({
+      id: "unrelated-recovery-run",
+      taskId: handoff.id,
+      role: "recovery",
+      status: "running",
+      active: true,
+      released: false,
+      agentId: "coord-other",
+      hostId: HOST,
+      generation: store.task(handoff.id).coordinatorGeneration,
+      head: HEAD,
+      base: "main",
+      workspaceId: "ws-1",
+      profile: profile("coord", "test/coord"),
+      createdAt: at,
+      lastObservedAt: at,
+      idleSince: at,
+      completion: null,
+    }),
+  );
+  const handedOff = await callExplicit(
+    handoff.id,
+    { action: "closeout.now" },
+    coordCaller,
+  );
+  assert.equal(handedOff.explicitResolution?.status, "applied");
+  assert.equal(store.run(`coord-run-${handoff.id}`)?.released, true);
+  assert.equal(store.run("unrelated-recovery-run")?.released, false);
+  store.update(handoff.id, {
+    phase: "done",
+    resolution: { ...store.task(handoff.id).resolution, integrationTurn: null },
+  });
+
+  // 4. merge-attention-scheduler: accepted merge.now from needs_attention is reconciled by the scheduler without a second owner action.
+  const parkedMerge = insertTask("parked attention merge", 63);
+  attachReadyReview(parkedMerge.id, HEAD);
+  store.update(parkedMerge.id, {
+    phase: "needs_attention",
+    resolution: {
+      ...store.task(parkedMerge.id).resolution,
+      attention: true,
+      stop: {
+        reason: "escalated",
+        detail: "Parked in attention",
+        since: at,
+        suggestedVerbs: [],
+      },
+    },
+  });
+  mergedFlag = false;
+  const acceptedFromAttention = await callExplicit(parkedMerge.id, {
+    action: "merge.now",
+    head: HEAD,
+  });
+  assert.equal(acceptedFromAttention.explicitResolution?.status, "applied");
+  assert.equal(
+    store.task(parkedMerge.id).resolution.mergeResponseOutcome,
+    "accepted",
+  );
+
+  mergedFlag = true;
+  const restored = runtime.engine.resolution.restoreRecordedMergePhase(
+    store.task(parkedMerge.id),
+  );
+  assert.equal(restored.phase, "merging");
+  await runtime.engine.withHost(HOST, () =>
+    runtime.engine.resolution.advanceMerging(store.task(parkedMerge.id)),
+  );
+  assert.equal(
+    store.task(parkedMerge.id).resolution.mergedCommit,
+    MERGED_COMMIT,
+    store.task(parkedMerge.id).reason,
   );
 });

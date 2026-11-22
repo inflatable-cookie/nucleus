@@ -1,6 +1,7 @@
 import {
   holdsOf,
-  mergeReviewEvidenceAt,
+  operatorSourceAcceptance,
+  qualifiedOwnerAcceptance,
   type Task,
 } from "../../shared/contracts";
 import type {
@@ -38,8 +39,12 @@ export type ExplicitIntegrationPreflight = {
  * pending proofs.
  */
 function hasExplicitMergeEvidence(task: Task, head: string): boolean {
-  const evidence = mergeReviewEvidenceAt(task, head);
-  return Boolean(evidence && evidence.kind !== "source_approved");
+  const review = task.resolution.review;
+  if (review?.status === "ready_to_merge" && review.head === head) return true;
+  const atHead = { ...task, prHead: head };
+  if (qualifiedOwnerAcceptance(atHead)) return true;
+  if (operatorSourceAcceptance(atHead)) return true;
+  return false;
 }
 
 function currentTurnHolders(engine: Engine, task: Task): Task[] {
@@ -161,10 +166,7 @@ export async function preflightExplicitIntegration(
             checks.wait || "PR checks are pending or failed.";
         }
       } catch (error) {
-        const message = String(error);
-        if (/PR|base|branch|identity|canonical/i.test(message)) {
-          result.prIdentityError ??= message;
-        }
+        result.checksWarning = `PR checks could not be read: ${String(error).slice(0, 500)}`;
       }
     }
     return result;
@@ -540,6 +542,7 @@ export function mergeNowPlan(
             "merge_response_accepted",
             `GitHub accepted the guarded merge for ${input.head}`,
           );
+          engine.scheduleLifecycleFollowUp(task.id);
         } else {
           store.event(
             task.id,
@@ -659,22 +662,27 @@ export function closeoutNowPlan(
   return {
     warnings,
     apply() {
-      // Handoff from any active recovery episode / coordinator run so
-      // `advanceSyncing` and `advanceClosing` can proceed immediately.
-      const unreleasedRecoveryRuns = store
-        .runs(task.id)
-        .filter((run) => run.role === "recovery" && !run.released);
+      // Handoff only the active recovery episode's own run so `advanceSyncing`
+      // and `advanceClosing` can proceed without silently releasing unrelated
+      // runs on the task.
+      const episodeRunId = r.recovery?.runId ?? null;
+      const episodeRun = episodeRunId ? store.run(episodeRunId) : null;
       let clearedCurrentRunId = r.currentRunId;
-      for (const run of unreleasedRecoveryRuns) {
+      if (
+        episodeRun &&
+        episodeRun.taskId === task.id &&
+        episodeRun.role === "recovery" &&
+        !episodeRun.released
+      ) {
         store.putRun({
-          ...run,
+          ...episodeRun,
           active: false,
           released: true,
           explicitlyReleasedAt: now(),
-          status: run.completion ? "finished" : "superseded",
+          status: episodeRun.completion ? "finished" : "superseded",
         });
-        store.deleteCredential(run.id);
-        if (clearedCurrentRunId === run.id) clearedCurrentRunId = null;
+        store.deleteCredential(episodeRun.id);
+        if (clearedCurrentRunId === episodeRun.id) clearedCurrentRunId = null;
       }
       const settledRecovery =
         r.recovery && r.recovery.status !== "resolved"
