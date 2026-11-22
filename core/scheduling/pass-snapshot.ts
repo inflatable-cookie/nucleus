@@ -69,7 +69,14 @@ export async function boundedRead<T>(
   const boundMs = Math.max(0, deadlineMs);
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const pending = Promise.resolve().then(work);
+  // Invoke `work()` synchronously so caller stack frames stay intact and no
+  // extra microtask turn sits ahead of the underlying host/process call.
+  let pending: Promise<T>;
+  try {
+    pending = Promise.resolve(work());
+  } catch (error) {
+    return Promise.reject(error);
+  }
   // Prevent a late rejection after the deadline has already settled from
   // escaping as an unhandled rejection.
   pending.catch(() => {});
