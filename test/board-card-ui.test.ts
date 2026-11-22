@@ -1264,8 +1264,8 @@ test("a long papercut and a long lead render as three-line rows: kind and projec
       !text.includes("What happened"),
       "the body passage stays in the record",
     );
-    // Each row: the kind in words and the project on line 1, the title in up to two
-    // lines, then the one status line (nucleus#1515).
+    // Each row: the project on line 1 (a single-kind view drops the kind word),
+    // the title in up to two lines, then the one status line (nucleus#1515).
     for (const [title, view, kind, icon, status] of [
       [LONG_CUT, "Papercuts", "Papercut", "Scissors", "Open · board"],
       [LONG_TITLE, "Leads", "Lead", "Lightbulb", "Checked · awaiting approval"],
@@ -1276,9 +1276,25 @@ test("a long papercut and a long lead render as three-line rows: kind and projec
       const rowText = nodeText(rowNode);
       assert.match(
         rowText,
-        new RegExp(`^\\s*${kind}\\s+App\\s`),
-        "line 1 reads the kind, then the project",
+        /^\s*App\s/,
+        "line 1 starts with the project; the single-kind view drops the kind word",
       );
+      const lineTexts = (rowNode as HostNode).children.flatMap(function texts(
+        node: HostNode | string,
+      ): string[] {
+        if (typeof node === "string") return [node];
+        if (
+          node.type === "Text" &&
+          node.children.every((child) => typeof child === "string")
+        )
+          return [node.children.join("")];
+        return node.children.flatMap(texts);
+      });
+      assert.ok(
+        !lineTexts.includes(kind),
+        "the kind word stays in the accessible label, not the visible row",
+      );
+      assert.ok(lineTexts.includes("App"), "line 1 still names the project");
       assert.match(
         rowText,
         new RegExp(`${status.replace(" · ", "\\s+· ")}\\s*$`),
@@ -2240,7 +2256,7 @@ test("a host-waiting task keeps an owner-facing stop's detail in its one row lin
   }
 });
 
-test("lead and papercut rows name their kind once, on line 1, with no kind chip", async () => {
+test("single-kind views drop the kind word from line 1; mixed lists keep it", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -2259,15 +2275,54 @@ test("lead and papercut rows name their kind once, on line 1, with no kind chip"
     assert.ok(card, "the lead row is listed");
     assert.equal(
       nodeText(card).match(/\bLead\b/g)?.length,
-      1,
-      "the meta line names the kind once; the old kind chip is gone",
+      undefined,
+      "the Leads view drops the kind word; the label keeps it",
     );
+    assert.match(nodeText(card), /^\s*App\s/, "line 1 starts with the project");
     openView(tree, "Papercuts");
     const cut = tree.raw.query(
       /^Papercut: Tiny papercut, Status: /,
     ) as HostNode;
     assert.ok(cut, "the papercut row is listed");
-    assert.equal(nodeText(cut).match(/\bPapercut\b/g)?.length, 1);
+    assert.equal(nodeText(cut).match(/\bPapercut\b/g)?.length, undefined);
+    // A list that mixes kinds keeps the kind word: the shared row defaults to showing it.
+    const mixed = mount(
+      h(queue.TriageLeadCard as never, {
+        lead: leads[0],
+        c,
+        selected: false,
+        onSelectLead: () => {},
+        onSelectPapercut: () => {},
+      }),
+    );
+    try {
+      assert.ok(
+        mixed.ofType("Text").some((node) => node.children.join("") === "Lead"),
+        "a mixed list keeps the kind word on line 1",
+      );
+      const bare = mount(
+        h(queue.TriageLeadCard as never, {
+          lead: leads[0],
+          c,
+          selected: false,
+          onSelectLead: () => {},
+          onSelectPapercut: () => {},
+          showKindWord: false,
+        }),
+      );
+      try {
+        assert.ok(
+          !bare
+            .ofType("Text")
+            .some((node) => node.children.join("") === "Lead"),
+          "a single-kind list drops it",
+        );
+      } finally {
+        bare.update(h("View", null));
+      }
+    } finally {
+      mixed.update(h("View", null));
+    }
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -2798,7 +2853,7 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     );
     assert.match(
       nodeText(lead),
-      /^\s*Lead\s+AP\s+App\s+\d+d ago\s+Rechecked lead\s+Checks failed\s+· brief needs revising\s*$/,
+      /^\s*AP\s+App\s+\d+d ago\s+Rechecked lead\s+Checks failed\s+· brief needs revising\s*$/,
     );
 
     // A decision from a T3-matched repository draws that project's badge.

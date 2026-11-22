@@ -472,6 +472,9 @@ export function InboxList({
             selected={selectedLeadId === card.id || openPapercutId === card.id}
             onSelectLead={(id) => onSelectLead(id, null)}
             onSelectPapercut={onSelectPapercut}
+            // The Leads and Papercuts views list one kind, so line 1 starts
+            // with the project; mixed lists keep the kind word.
+            showKindWord={view !== "leads" && view !== "papercuts"}
           />
         );
       default:
