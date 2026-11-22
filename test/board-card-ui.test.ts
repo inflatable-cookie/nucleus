@@ -180,6 +180,96 @@ function seed(store: Store, id: string, patch: Partial<Task>) {
   });
 }
 
+/** The second project's repository and row, for a queue holding back tasks in two projects. */
+const otherRepo = { origin: "owner/other", path: "/other" };
+const otherProject = {
+  key: "other",
+  name: "Other",
+  repositories: [otherRepo],
+  primary: otherRepo,
+};
+
+/** One queued task's stored summary; whether the snapshot ships it or a page returns it is the test's choice. */
+function queuedTask(
+  store: Store,
+  title: string,
+  repoPath = "/app",
+): TaskSummary {
+  const task = seed(store, title.replace(/\s+/g, "-").toLowerCase(), {
+    title,
+    phase: "queued",
+    reason: "Waiting for dispatch",
+    repoPath,
+  });
+  return summarizeTask(store.task(task.id));
+}
+
+/**
+ * A real `queue.queued-page` answer: the project's queue in order, one page at a time,
+ * and each read logged so a test can prove there was no extra paging.
+ */
+function queuedPagesRead(
+  queues: Record<string, TaskSummary[]>,
+  log: Array<{ repoPath: string; offset: number }> = [],
+) {
+  return async (input: unknown) => {
+    const { repoPath, offset, limit } = input as {
+      repoPath: string;
+      offset: number;
+      limit: number;
+    };
+    log.push({ repoPath, offset });
+    const queue = queues[repoPath] ?? [];
+    const tasks = queue.slice(offset, offset + limit);
+    const next = offset + tasks.length;
+    return { tasks, nextOffset: next < queue.length ? next : null };
+  };
+}
+
+/**
+ * A `queue.queued-page` reader the test answers by hand and can fail, so a read on its
+ * way is observable: one page at a time, from the project's queue in order.
+ */
+function controlledQueuedPages(queue: TaskSummary[]) {
+  const log: Array<{ repoPath: string; offset: number }> = [];
+  const waiting: Array<{ answer: () => void; fail: () => void }> = [];
+  const read = async (input: unknown) => {
+    const { repoPath, offset, limit } = input as {
+      repoPath: string;
+      offset: number;
+      limit: number;
+    };
+    log.push({ repoPath, offset });
+    await new Promise<void>((resolve, reject) =>
+      waiting.push({
+        answer: resolve,
+        fail: () => reject(new Error("queue read failed")),
+      }),
+    );
+    const tasks = queue.slice(offset, offset + limit);
+    const next = offset + tasks.length;
+    return { tasks, nextOffset: next < queue.length ? next : null };
+  };
+  return {
+    log,
+    read,
+    answer: () => waiting.shift()?.answer(),
+    fail: () => waiting.shift()?.fail(),
+  };
+}
+
+/** The list's one ScrollView, whose layout, content-size and scroll events drive its paging. */
+function listScroll(tree: ReturnType<typeof mountBoard>) {
+  const list = tree.raw
+    .ofType("ScrollView")
+    .find((node) => node.props.onScroll);
+  assert.ok(
+    list,
+    "the list exposes its layout, content-size and scroll events",
+  );
+  return list;
+}
+
 /** Board fixtures: one card per state the card renders, all from real stored tasks and summaries. */
 function fixtures(store: Store) {
   const long = seed(store, "long-title", {
@@ -267,7 +357,7 @@ function fixtures(store: Store) {
 /** The shared invoke: every method the board reads, with the queued page supplied by the test. */
 function invokeWith(
   snapshot: unknown,
-  queuedPage: () => Promise<unknown>,
+  queuedPage: (input: unknown) => Promise<unknown>,
   leads: unknown[] = [],
   decisions: unknown[] = [],
 ) {
@@ -276,7 +366,7 @@ function invokeWith(
     if (method === "queue.service-state") return serviceState;
     if (method === "queue.detail") return undefined;
     if (method === "task.next") return null;
-    if (method === "queue.queued-page") return queuedPage();
+    if (method === "queue.queued-page") return queuedPage(input);
     if (method === "project.qa.list" || method === "host.run.list") return [];
     if (method === "host.run.board")
       return {
@@ -406,10 +496,15 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
       "the planning commit is not on the card",
     );
 
-    // Real totals and the in-column overflow card: the project's 12 queued tasks, three loaded.
+    // Real totals: the project's 12 queued tasks, three shipped here, stay the Queue count.
     assert.ok(
-      tree.text().includes("…and 9 more"),
-      "the overflow card carries the server total",
+      tree.query("Queue, 12"),
+      "the Queue count carries the server total",
+    );
+    assert.equal(
+      tree.raw.all("…and 9 more in app").length,
+      0,
+      "no expander row holds them back (nucleus#1532)",
     );
 
     // Long content: the full title stays in the accessible label, and the visible title is capped at two lines.
@@ -1130,37 +1225,47 @@ test("a long shell command card shows only its recorded elapsed time", async () 
   }
 });
 
-test("the overflow card shows loading, then an error, while its queued page loads", async () => {
+// nucleus#1532: the Queue list's own page read shows its loading and failure states in the list.
+test("the Queue list shows its held-back page loading, then a retry row when the read fails", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const f = fixtures(store);
-    const snapshot = board(
-      [f.held, f.heavy, f.queued],
-      [{ repoPath: "/app", count: 12 }],
-    );
+    const shipped = [f.held, f.heavy, f.queued];
+    const snapshot = board(shipped, [{ repoPath: "/app", count: 12 }]);
     // Loading: the page does not answer yet.
     mounted = mountBoard(
       invokeWith(snapshot, () => new Promise(() => undefined)),
     );
     let tree = mounted;
-    await settle(() => Boolean(tree.query("9 more queued in app")));
-    tree.press("9 more queued in app");
-    await settle(() => tree.text().includes("Loading queued tasks…"));
+    await settle(() => Boolean(tree.query("Queue, 12")));
+    openView(tree, "Queue");
+    const list = listScroll(tree);
+    list.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
+    list.props.onContentSizeChange(390, 200);
+    await settle(() => tree.raw.text().includes("Loading queued tasks…"));
     mounted.update(h("View", null));
 
-    // Error: the page refuses; the overflow says so.
+    // Error: the page refuses; the end of the list asks to try again.
     mounted = mountBoard(
       invokeWith(snapshot, async () => {
         throw new Error("queue unavailable");
       }),
     );
     tree = mounted;
-    await settle(() => Boolean(tree.query("9 more queued in app")));
-    tree.press("9 more queued in app");
+    await settle(() => Boolean(tree.query("Queue, 12")));
+    openView(tree, "Queue");
+    const failed = listScroll(tree);
+    failed.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
+    failed.props.onContentSizeChange(390, 200);
     await settle(() =>
-      tree.text().includes("Could not load queued tasks. Try again."),
+      Boolean(tree.raw.query("Could not load queued tasks. Try again.")),
+    );
+    assert.equal(
+      tree.raw.text().includes("Loading queued tasks…"),
+      false,
+      "a failed read stops asking and offers the retry row",
     );
   } finally {
     mounted?.update(h("View", null));
@@ -1612,8 +1717,8 @@ test("the Leads tag filter narrows the list; papercuts have no filter and the me
   }
 });
 
-// #1042 review: filters and the queued page persist; triage pages reset on a view change.
-test("the Leads tag and queued-more page survive view changes while triage pages reset", async () => {
+// #1042 review, nucleus#1532: the Leads filter and the Queue's held-back pages persist; triage pages reset.
+test("the Leads tag and the queue's held-back pages survive view changes while triage pages reset", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1623,24 +1728,22 @@ test("the Leads tag and queued-more page survive view changes while triage pages
       triageLead("idea-lead", "Idea lead", { tags: ["idea"] }),
       triageLead("plain-lead", "Plain lead", { tags: ["research"] }),
     ];
+    const shipped = [queuedTask(store, "Shipped one")];
+    const held = [queuedTask(store, "Held one"), queuedTask(store, "Held two")];
     mounted = mountBoard(
       invokeWith(
-        board([], [{ repoPath: "/app", count: 3 }]),
-        async () => ({ tasks: [], hasMore: false }),
+        board(shipped, [{ repoPath: "/app", count: 3 }]),
+        queuedPagesRead({ "/app": [...shipped, ...held] }),
         leads,
       ),
     );
     const tree = mounted;
     await settle(
       () =>
-        Boolean(tree.query("Papercuts, 10")) &&
-        Boolean(tree.query("3 more queued in app")),
+        Boolean(tree.query("Papercuts, 10")) && Boolean(tree.query("Queue, 3")),
     );
     openView(tree, "Papercuts");
-    const papercutList = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(papercutList);
+    const papercutList = listScroll(tree);
     papercutList.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
     papercutList.props.onContentSizeChange(390, 1500);
     papercutList.props.onScroll({
@@ -1651,14 +1754,20 @@ test("the Leads tag and queued-more page survive view changes while triage pages
       },
     });
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 10);
+    // A short queue in a tall pane fills itself, reading its one held-back page.
     openView(tree, "Queue");
-    tree.press("3 more queued in app");
-    await settle(() => Boolean(tree.raw.query("Previous")));
+    const queueList = listScroll(tree);
+    queueList.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
+    queueList.props.onContentSizeChange(390, 200);
+    await settle(() => tree.raw.text().includes("Held two"));
     openView(tree, "Planning");
     await settle(() => !tree.raw.query("Queue list"));
     openView(tree, "Queue");
     await settle(() => Boolean(tree.raw.query("Queue list")));
-    assert.ok(tree.raw.query("Previous"), "the open queued-more page is kept");
+    assert.ok(
+      tree.raw.text().includes("Held two"),
+      "the held-back queue cards are kept",
+    );
     // Switching back to Papercuts starts at its first page.
     openView(tree, "Papercuts");
     assert.equal(
@@ -1685,34 +1794,424 @@ test("the Leads tag and queued-more page survive view changes while triage pages
   }
 });
 
-// Per-project queue overflow stays in the Queue list.
-test("per-project Queued overflow rows render in narrow and wide board layouts", async () => {
+// nucleus#1532: held-back queued tasks are ordinary cards in the one list, at every layout.
+test("held-back queued tasks render as ordinary cards in compact and wide board layouts", async () => {
   await load();
   for (const compact of [true, false]) {
     const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
     try {
+      const shipped = [queuedTask(store, "Shipped one")];
+      const held = [
+        queuedTask(store, "Held one"),
+        queuedTask(store, "Held two"),
+      ];
       mounted = mountBoard(
-        invokeWith(board([], [{ repoPath: "/app", count: 3 }]), async () => ({
-          tasks: [],
-          hasMore: false,
-        })),
+        invokeWith(
+          board(shipped, [{ repoPath: "/app", count: 3 }]),
+          queuedPagesRead({ "/app": [...shipped, ...held] }),
+        ),
         compact,
       );
       const tree = mounted;
-      await settle(() => Boolean(tree.query("3 more queued in app")));
+      await settle(() => Boolean(tree.query("Queue, 3")));
+      openView(tree, "Queue");
+      // A tall pane fills itself, so the held-back cards show without a scroll.
+      const list = listScroll(tree);
+      list.props.onLayout({ nativeEvent: { layout: { height: 900 } } });
+      list.props.onContentSizeChange(390, 200);
+      await settle(() => tree.raw.text().includes("Held two"));
+      const label = compact ? "compact" : "wide";
       assert.ok(
-        tree.query("3 more queued in app"),
-        `${compact ? "narrow" : "wide"} layout renders the per-project overflow card`,
+        tree.raw.query(/^App, Held one, /),
+        `the ${label} layout lists a held-back task as an ordinary card`,
       );
       assert.ok(
         tree.query("Queue, 3"),
         "the Queue menu count retains the actual server total",
       );
+      assert.equal(
+        tree.raw.all("Previous").length,
+        0,
+        "no pager buttons remain",
+      );
     } finally {
       mounted?.update(h("View", null));
       store.close();
     }
+  }
+});
+
+// nucleus#1532: a project's held-back tasks follow its shipped queued cards, in queue order.
+test("the Queue appends each project's held-back tasks after its shipped cards, in queue order", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const shipped = [
+      queuedTask(store, "A one"),
+      queuedTask(store, "A two"),
+      queuedTask(store, "O one", "/other"),
+      queuedTask(store, "O two", "/other"),
+    ];
+    const queues = {
+      "/app": [
+        ...shipped.slice(0, 2),
+        queuedTask(store, "A three"),
+        queuedTask(store, "A four"),
+        queuedTask(store, "A five"),
+        queuedTask(store, "A six"),
+      ],
+      "/other": [
+        ...shipped.slice(2),
+        queuedTask(store, "O three", "/other"),
+        queuedTask(store, "O four", "/other"),
+      ],
+    };
+    const reads: Array<{ repoPath: string; offset: number }> = [];
+    const snapshot = {
+      ...board(shipped, [
+        { repoPath: "/app", count: 6 },
+        { repoPath: "/other", count: 4 },
+      ]),
+      projects: [project, otherProject],
+    };
+    mounted = mountBoard(invokeWith(snapshot, queuedPagesRead(queues, reads)));
+    const tree = mounted;
+    // Ten queued tasks in all: four shipped cards and six held back by the snapshot.
+    await settle(() => Boolean(tree.query("Queue, 10")));
+    openView(tree, "Queue");
+    // A list that scrolls waits for the scroll: the pane is shorter than its content.
+    const list = listScroll(tree);
+    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    list.props.onContentSizeChange(390, 1500);
+    assert.equal(
+      tree.raw.text().includes("A three"),
+      false,
+      "held-back tasks wait until the list nears its end",
+    );
+    assert.equal(tree.raw.text().includes("…and"), false, "no expander row");
+    assert.equal(tree.raw.all("Previous").length, 0, "no pager buttons");
+    list.props.onScroll({
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    });
+    await settle(
+      () =>
+        tree.raw.text().includes("A six") && tree.raw.text().includes("O four"),
+    );
+    const text = tree.raw.text();
+    const order = [
+      "A one",
+      "A two",
+      "A three",
+      "A four",
+      "A five",
+      "A six",
+      "O one",
+      "O two",
+      "O three",
+      "O four",
+    ];
+    const at = order.map((title) => text.indexOf(title));
+    assert.ok(
+      at.every((index) => index >= 0),
+      "every queued task shows as a card",
+    );
+    assert.deepEqual(
+      at,
+      [...at].sort((a, b) => a - b),
+      "each project's held-back cards follow its shipped ones, in queue order",
+    );
+    assert.deepEqual(
+      reads.map((read) => read.repoPath).sort(),
+      ["/app", "/other"],
+      "each project was read once, for its first page",
+    );
+    assert.deepEqual(
+      reads.map((read) => read.offset),
+      [0, 0],
+      "the reads start at the project queue's first page",
+    );
+    // The end of every project's queue asks for nothing more.
+    const before = reads.length;
+    const settled = listScroll(tree);
+    settled.props.onScroll({
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    });
+    settled.props.onContentSizeChange(390, 1500);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      reads.length,
+      before,
+      "the loaded end of the queue reads nothing",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+// nucleus#1532 review finding: a scroll while a page is on its way must not read again.
+test("a multi-page Queue waits while a page is on its way instead of reading it twice", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const queue = Array.from({ length: 30 }, (_, index) =>
+      queuedTask(store, `Task ${String(index + 1).padStart(2, "0")}`),
+    );
+    const shipped = queue.slice(0, 2);
+    const paging = controlledQueuedPages(queue);
+    mounted = mountBoard(
+      invokeWith(
+        board(shipped, [{ repoPath: "/app", count: 30 }]),
+        paging.read,
+      ),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Queue, 30")));
+    openView(tree, "Queue");
+    const nearEnd = {
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    };
+    // A tick, for the assertions that no further read started.
+    const quiet = () => new Promise((resolve) => setTimeout(resolve, 20));
+    const scroll = () => {
+      const list = listScroll(tree);
+      list.props.onScroll(nearEnd);
+      list.props.onScroll(nearEnd);
+      list.props.onContentSizeChange(390, 1500);
+      return list;
+    };
+    let list = listScroll(tree);
+    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    list.props.onContentSizeChange(390, 1500);
+    list.props.onScroll(nearEnd);
+    await settle(() => paging.log.length === 1);
+    // Repeated scrolls while the first page is on its way read nothing more.
+    scroll();
+    await quiet();
+    assert.deepEqual(
+      paging.log,
+      [{ repoPath: "/app", offset: 0 }],
+      "a page on its way is not read twice",
+    );
+    assert.ok(
+      tree.raw.text().includes("Task 01"),
+      "the shipped cards stay while the page reads",
+    );
+    paging.answer();
+    await settle(() => tree.raw.text().includes("Task 25"));
+    // The next page starts its read; further scrolls still wait for it.
+    scroll();
+    await settle(() => paging.log.length === 2);
+    scroll();
+    await quiet();
+    assert.equal(paging.log.length, 2, "the page on its way is asked for once");
+    paging.answer();
+    await settle(() => paging.log.length === 3);
+    assert.deepEqual(
+      paging.log[2],
+      { repoPath: "/app", offset: 25 },
+      "the last page is read at its own offset",
+    );
+    scroll();
+    await quiet();
+    assert.equal(
+      paging.log.length,
+      3,
+      "the last page on its way is asked for once",
+    );
+    paging.answer();
+    await settle(() => tree.raw.text().includes("Task 30"));
+    // The end of the queue reads nothing more.
+    scroll();
+    await quiet();
+    assert.equal(paging.log.length, 3, "the end of the queue reads nothing");
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+// nucleus#1532 review finding: a failed page keeps the cards read and waits at the retry row.
+test("a failed Queue page keeps the cards already read and stops reads at the retry row", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const queue = Array.from({ length: 30 }, (_, index) =>
+      queuedTask(store, `Task ${String(index + 1).padStart(2, "0")}`),
+    );
+    const shipped = queue.slice(0, 2);
+    const log: Array<{ repoPath: string; offset: number }> = [];
+    const waiting: Array<() => void> = [];
+    // The first read of a further page fails; the retry's own read is held, so the
+    // list's loading and retry rows can be read while that read is on its way.
+    let failures = 1;
+    mounted = mountBoard(
+      invokeWith(
+        board(shipped, [{ repoPath: "/app", count: 30 }]),
+        async (input) => {
+          const { repoPath, offset, limit } = input as {
+            repoPath: string;
+            offset: number;
+            limit: number;
+          };
+          log.push({ repoPath, offset });
+          if (offset > 0 && failures > 0) {
+            failures -= 1;
+            throw new Error("queue read failed");
+          }
+          if (offset > 0)
+            await new Promise<void>((resolve) => waiting.push(resolve));
+          const tasks = queue.slice(offset, offset + limit);
+          const next = offset + tasks.length;
+          return { tasks, nextOffset: next < queue.length ? next : null };
+        },
+      ),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Queue, 30")));
+    openView(tree, "Queue");
+    const nearEnd = {
+      nativeEvent: {
+        contentOffset: { y: 700 },
+        contentSize: { height: 1500, width: 390 },
+        layoutMeasurement: { height: 400, width: 390 },
+      },
+    };
+    const quiet = () => new Promise((resolve) => setTimeout(resolve, 20));
+    const list = listScroll(tree);
+    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+    list.props.onContentSizeChange(390, 1500);
+    list.props.onScroll(nearEnd);
+    await settle(() => tree.raw.text().includes("Task 25"));
+    // The second page's read fails: the cards read so far stay, and the list ends there.
+    listScroll(tree).props.onScroll(nearEnd);
+    await settle(() =>
+      Boolean(tree.raw.query("Could not load queued tasks. Try again.")),
+    );
+    assert.ok(
+      tree.raw.text().includes("Task 25"),
+      "a failed page keeps the cards already read",
+    );
+    assert.equal(
+      tree.raw.text().includes("Loading queued tasks…"),
+      false,
+      "the retry row stands alone",
+    );
+    const reads = log.length;
+    const failed = listScroll(tree);
+    failed.props.onScroll(nearEnd);
+    failed.props.onScroll(nearEnd);
+    failed.props.onContentSizeChange(390, 1500);
+    await quiet();
+    assert.equal(log.length, reads, "a failed read waits for the retry row");
+    // The retry reads the page again, and the queue reaches its end.
+    tree.raw.press("Could not load queued tasks. Try again.");
+    await settle(() => waiting.length === 1);
+    assert.equal(
+      tree.raw.query("Could not load queued tasks. Try again."),
+      undefined,
+      "the retry row hides while its own read is on its way",
+    );
+    assert.ok(
+      tree.raw.text().includes("Loading queued tasks…"),
+      "the loading row speaks for the retry's read",
+    );
+    waiting.shift()?.();
+    await settle(() => tree.raw.text().includes("Task 30"));
+    assert.equal(
+      tree.raw.query("Could not load queued tasks. Try again."),
+      undefined,
+      "the retry row clears once the page reads",
+    );
+    const ended = log.length;
+    const done = listScroll(tree);
+    done.props.onScroll(nearEnd);
+    done.props.onContentSizeChange(390, 1500);
+    await quiet();
+    assert.equal(log.length, ended, "the end of the queue reads nothing");
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+// nucleus#1532: a short queue fills a tall pane without a scroll, and a failed page read offers a retry.
+test("a short queue fills a tall pane and a failed page read ends it with a retry row", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const shipped = [queuedTask(store, "Shipped one")];
+    const held = [
+      queuedTask(store, "Held one"),
+      queuedTask(store, "Held two"),
+      queuedTask(store, "Held three"),
+    ];
+    const queue = [...shipped, ...held];
+    const reads: Array<{ repoPath: string; offset: number }> = [];
+    const read = queuedPagesRead({ "/app": queue }, reads);
+    let failing = true;
+    mounted = mountBoard(
+      invokeWith(board(shipped, [{ repoPath: "/app", count: 4 }]), (input) =>
+        failing ? Promise.reject(new Error("queue read failed")) : read(input),
+      ),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Queue, 4")));
+    openView(tree, "Queue");
+    const list = listScroll(tree);
+    list.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
+    list.props.onContentSizeChange(390, 200);
+    await settle(() =>
+      Boolean(tree.raw.query("Could not load queued tasks. Try again.")),
+    );
+    assert.equal(
+      tree.raw.text().includes("Held one"),
+      false,
+      "a failed page shows no held-back cards",
+    );
+    assert.equal(
+      tree.raw.all("Previous").length,
+      0,
+      "the failure never falls back to a pager",
+    );
+    failing = false;
+    tree.raw.press("Could not load queued tasks. Try again.");
+    await settle(() => tree.raw.text().includes("Held three"));
+    assert.equal(
+      tree.raw.query("Could not load queued tasks. Try again."),
+      undefined,
+      "the retry row clears once the page reads",
+    );
+    // The whole queue fits the tall pane, and its end asks for nothing more.
+    const before = reads.length;
+    const filled = listScroll(tree);
+    filled.props.onContentSizeChange(390, 900);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      reads.length,
+      before,
+      "the end of the queue reads nothing more",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
   }
 });
 
