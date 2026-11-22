@@ -513,7 +513,11 @@ test("026-14b one header selector scopes every view through the selection alone"
     /useInboxBoard\(\{\s*state,\s*selection,/,
     "the inbox projection receives the selection",
   );
-  assert.match(ui, /pipelineBoard\(\{[\s\S]{0,200}selection,/, "the one projection reads it");
+  assert.match(
+    ui,
+    /pipelineBoard\(\{[\s\S]{0,200}selection,/,
+    "the one projection reads it",
+  );
   assert.match(
     ui,
     /lanes=\{state\?\.lanes \?\? \[\]\}/,
@@ -616,7 +620,6 @@ test("1529 the selector keeps active projects first, then Dormant, then Parked, 
     seen("alpha", NOW - HOUR),
     seen("zeta", NOW - DAY),
     seen("parked-high", NOW - HOUR),
-    seen("parked-low", NOW - HOUR),
   ] as Parameters<typeof projectSelectorRows>[6];
   const rows = projectSelectorRows(
     [gamma, parkedLow, mid, zeta, beta, parkedHigh, alpha],
@@ -661,7 +664,16 @@ test("1529 held-back queued tasks count toward the selector order", () => {
       { id: `${item.key}-b`, at: iso(NOW - 1000), executing: false },
     ],
   })) as Parameters<typeof projectSelectorRows>[6];
-  const rows = projectSelectorRows([qb, qa], [], "", tasks, [], [{ repoPath: "/qa", count: 3 }], activity, NOW);
+  const rows = projectSelectorRows(
+    [qb, qa],
+    [],
+    "",
+    tasks,
+    [],
+    [{ repoPath: "/qa", count: 3 }],
+    activity,
+    NOW,
+  );
   assert.deepEqual(
     rows.map((row) => [row.key, row.tasks]),
     [

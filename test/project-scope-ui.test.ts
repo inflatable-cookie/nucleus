@@ -854,7 +854,11 @@ test("1529 rendered: the picker lists each group by task count, then last activi
       { id: `${key}-b`, at: iso(now - 1000), executing: false },
     ],
   }));
-  const order = ["Project other, 2 tasks", "Project consumer-b-v2, 1 tasks", "Project project-a-accelerator, 0 tasks"];
+  const order = [
+    "Project other, 2 tasks",
+    "Project consumer-b-v2, 1 tasks",
+    "Project project-a-accelerator, 0 tasks",
+  ];
   // The wide and medium headers share the popover; the narrow header opens the modal.
   for (const compact of [false, true]) {
     const ui = mount(
@@ -872,14 +876,20 @@ test("1529 rendered: the picker lists each group by task count, then last activi
     );
     ui.press(/^Projects, /);
     assert.ok(ui.get("Project selector"));
-    assert.equal(ui.ofType("Modal").length, compact ? 1 : 0, compact ? "a modal at the narrow size" : "a popover at the wide size");
+    assert.equal(
+      ui.ofType("Modal").length,
+      compact ? 1 : 0,
+      compact ? "a modal at the narrow size" : "a popover at the wide size",
+    );
     assert.deepEqual(
       ui
         .all(/^Project /)
         .filter((node) => node.props.accessibilityRole === "checkbox")
         .map((node) => node.props.accessibilityLabel),
       order,
-      compact ? "the modal keeps the row order" : "the popover keeps the row order",
+      compact
+        ? "the modal keeps the row order"
+        : "the popover keeps the row order",
     );
   }
 });
