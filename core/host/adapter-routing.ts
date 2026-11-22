@@ -158,6 +158,19 @@ export function routeHostAdapter(
             !engine.store.tasks
           )
             return false;
+          // Host health comes from the connection, never from a task's own
+          // record or a slow call (Tom, 2026-11-22). While the host's connection
+          // is up, a failure with no error (a visited task still carrying an old
+          // host wait) or a timed-out call is not the host going away: recording
+          // it would park every task on a healthy host and rewrite each one.
+          // A transport error on a claimed connection still counts (Spec 066 R6).
+          const cause =
+            error instanceof HostTransportFault ? error.cause : error;
+          if (
+            owner.resolveHostAdapter(hostId) &&
+            (error === undefined || isHostOperationTimeout(cause))
+          )
+            return false;
           const fault =
             error === undefined
               ? null
