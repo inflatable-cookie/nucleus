@@ -1,6 +1,6 @@
 # Spec 068 — Self-healing
 
-Status: proposed (planner, 2026-11-22). Awaiting Tom's approval and the policy answers under [Decisions](#decisions).
+Status: approved (Tom, 2026-11-22: "Sounds good, let's do it", accepting the design and the planner's recommended answers under [Decisions](#decisions)). Batches briefed.
 Builds on [Spec 066](066-one-reconciler.md) and [Spec 067](067-explicit-resolution.md).
 Audience: queue implementers, reviewers, planners and coordinators
 
@@ -112,8 +112,9 @@ instead of a stream of text lines:
 - **Messages.** These are only for things a person reads: a verdict summary, a
   question, the finish.
 
-The planner verifies how T3 renders `plan` and `tool_call` before batch 2 is
-briefed. If either fails, the fallback is one replaced status line.
+T3's ACP client carries the `plan`, `tool_call` and `tool_call_update` shapes.
+The planner checks how they render after batch 2 rolls. If either renders badly,
+the fallback is one replaced status line.
 
 ### 3. Facts that settle things
 
@@ -212,14 +213,16 @@ states, and no planner or operator action resolves a mechanical stall.
 
 ## Decisions
 
-Policy questions for Tom:
+Tom accepted the planner's recommendations on 2026-11-22 ("Sounds good, let's
+do it"):
 
-1. **Budgets.** Time while a host or the service is down never counts (today only
-   host outages pause the clock). Then: one automatic extension and ask on the
-   second, or always ask?
-2. **Round-3 question.** It was answered "Continue" 96% of the time. Continue
-   automatically up to the revision cap, with the planner told, or keep asking?
-3. **Hung tools.** Terminate a command after 30 minutes with no output (a
-   repository setting), or something else?
-4. **Permission prompts in task runs.** Deny automatically with a message so the
-   agent works around it, or raise it to the Inbox?
+1. **Budgets.** Time while a host or the service is down never counts; today
+   only host outages pause the clock. When a budget is spent, Nucleus extends it
+   automatically once, with an event. The second time, it asks through the Inbox.
+2. **Round-3 question.** Nucleus continues automatically up to the revision cap
+   and tells the task's planner. The cap itself stays a question.
+3. **Hung tools.** A command with no output for 30 minutes is terminated. The
+   limit is a repository setting.
+4. **Permission prompts in task runs.** Denied automatically, with a message
+   telling the agent to work around it. An event is recorded, and recurring
+   prompts show in the weekly repair line.
