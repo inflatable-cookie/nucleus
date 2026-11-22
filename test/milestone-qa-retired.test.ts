@@ -193,7 +193,7 @@ test("a standby refuses older unsettled QA even when the latest result is termin
     });
   } finally { compatible.close(); }
 
-  await refusal(new RegExp(`${active.id} still owns execution or checkout cleanup`));
+  await refusal(new RegExp(`${active.id} still owns execution`));
   const cleanup = new Store(path);
   const checkoutPath = join(evidence, active.id);
   try {
@@ -222,6 +222,42 @@ test("a standby refuses older unsettled QA even when the latest result is termin
     assert.ok(cleared && typeof cleared === "object" && "qa" in cleared);
     assert.ok(cleared.qa && typeof cleared.qa === "object" && "schedule" in cleared.qa);
     assert.equal(cleared.qa.schedule, null);
+  } finally {
+    await replacement.drain();
+  }
+});
+
+test("a standby takes over from finished QA whose stale records hold no live evidence", async t => {
+  const dataDir = await realpath(await mkdtemp(join(tmpdir(), "legacy-qa-")));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const path = join(dataDir, "queue.sqlite");
+  const store = new Store(path);
+  // A dead pid, a cleanup flag, a checkout on a volume that no longer exists and
+  // an escaped process that has exited: all record fields, none live custody.
+  const stale = run(randomUUID(), {
+    pid: 2_147_483_000,
+    checkoutCleanupPending: true,
+    checkoutPath: join(dataDir, "gone-volume", "project-qa", "0".repeat(24), randomUUID()),
+    escapedDescendants: [{ pid: 2_147_483_001, startIdentity: "2147483001@1" }],
+  });
+  const leftover = join(dataDir, "checkouts", randomUUID());
+  const held = run(randomUUID(), { checkoutPath: leftover });
+  seedLegacyQaRun(store, stale);
+  seedLegacyQaRun(store, held);
+  store.close();
+  await mkdir(leftover, { recursive: true });
+  const boot = (standbyFor?: number) => new PersistenceExecutor({
+    owner: { dataDir, timers: false, settings: { daemonUrl: "ws://127.0.0.1:0/ws" } },
+    ...(standbyFor ? { standbyFor } : {}),
+  });
+  const standby = boot(process.pid);
+  try { await assert.rejects(standby.boot(), new RegExp(`${held.id} still owns its checkout`)); }
+  finally { standby.terminate(); }
+  await rm(leftover, { recursive: true });
+  const replacement = boot();
+  try {
+    await replacement.boot();
+    assert.deepEqual(await replacement.rpc("project.qa.get", { id: stale.id }), stale);
   } finally {
     await replacement.drain();
   }
