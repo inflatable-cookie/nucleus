@@ -1,6 +1,6 @@
 import { Decisions } from "../planning/decisions";
 import type { AssignmentRole } from "../../shared/schema/state";
-import { StoreAuth } from "./store-auth";
+import { StoreAuth, VERDICT_ONLY_CREDENTIAL, type CompletionIdentity } from "./store-auth";
 import { StoreConfig } from "./store-config";
 import { digest, now, StoreCore } from "./store-core";
 import { StoreHostRuns } from "./store-host-runs";
@@ -967,7 +967,11 @@ export class Store {
         this.tasksStore.projectionUndo = null;
         for (const [runId, taskId] of this.pendingRunReportingCleanup) {
           try {
-            purgeReleasedRunTicket(dirname(this.path), taskId, runId);
+            const credential = this.db
+              .prepare("SELECT revoked FROM credentials WHERE run=?")
+              .get(runId);
+            if (credential?.revoked !== VERDICT_ONLY_CREDENTIAL)
+              purgeReleasedRunTicket(dirname(this.path), taskId, runId);
             this.pendingRunReportingCleanup.delete(runId);
           } catch {
             /* The credential row is already revoked; a later transaction retries file cleanup. */
@@ -1539,6 +1543,9 @@ export class Store {
   }
   authenticate(run: string, token: string) {
     return this.authStore.authenticate(run, token);
+  }
+  authenticateCompletion(run: string, token: string, input: CompletionIdentity) {
+    return this.authStore.authenticateCompletion(run, token, input);
   }
   credentialRunForToken(token: string): string | null {
     return this.authStore.credentialRunForToken(token);

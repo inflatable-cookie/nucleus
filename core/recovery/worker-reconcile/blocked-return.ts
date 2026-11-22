@@ -67,7 +67,7 @@ export function reconcileBlockedReturn(
   engine: WorkerReconcileContext,
   task: Task,
   current: Task,
-  state: Awaited<ReturnType<Adapter["observe"]>>,
+  state: Awaited<ReturnType<Adapter["observe"]>> | null,
 ): boolean {
   const { store } = engine;
   if (!current.completion || !['blocked', 'error'].includes(current.completion.status)) return false;
@@ -83,7 +83,7 @@ export function reconcileBlockedReturn(
   // falls through to the #575 non-delivery handling below.
   const unfinished = unfinishedContinuationEvents(events).find(item => item.runId === current.completion!.runId);
   // Task 676: an observed provider failure keeps its existing failover; the same-thread continuation never takes it.
-  const observedProviderFailure = recognisedExternalWording(String(state.error ?? ''));
+  const observedProviderFailure = recognisedExternalWording(String(state?.error ?? ''));
   const unfinishedForThisReturn = unfinished ? {
     unfinished: true,
     providerFailureWithoutImpediment: observedProviderFailure && unfinished.reason === 'no_impediment',

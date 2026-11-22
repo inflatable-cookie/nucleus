@@ -7,6 +7,7 @@ import {
   ProvenPreSendRefusalError,
   type ArchivedThread,
 } from "../../core/host";
+import { ThreadUnobservedError } from "../../core/host/errors";
 import {
   T3_THREAD_NOT_FOUND_PROJECTION_REASON,
   T3RpcError,
@@ -64,7 +65,7 @@ export interface T3Inventory {
  * full snapshot to read it on every sweep, and a caller that still asks is told so
  * instead of being handed a made-up state.
  */
-export class T3UnobservedThreadError extends Error {
+export class T3UnobservedThreadError extends ThreadUnobservedError {
   constructor(readonly threadId: string) {
     super(`T3Code thread ${threadId} is no longer observed`);
     this.name = "T3UnobservedThreadError";

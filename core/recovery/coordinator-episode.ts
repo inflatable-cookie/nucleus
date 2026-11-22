@@ -1,4 +1,9 @@
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
+import {
+  completedTurnCanRelease,
+  timestampCompletion,
+  type CompletionObservation,
+} from "./completed-run-observation";
 import { digest, latestRunCompletion, now, type Store } from "../store/store";
 import {
   isDispositionActive,
@@ -316,7 +321,6 @@ export class CoordinatorEpisode {
     const latest = this.store.run(run.id);
     if (
       !latest ||
-      latest.released ||
       current.resolution.recovery?.runId !== latest.id
     )
       return;
@@ -425,7 +429,6 @@ export class CoordinatorEpisode {
     const latest = this.store.run(run.id);
     if (
       !latest ||
-      latest.released ||
       current.resolution.recovery?.runId !== latest.id
     )
       return;
@@ -551,7 +554,7 @@ export class CoordinatorEpisode {
    */
   settleFinishedRun(t: Task, run: Run, notAppliedReason: string) {
     const latest = this.store.run(run.id);
-    if (!latest || latest.released || !latest.completion) return;
+    if (!latest?.completion || resultApplied(this.store, t.id, latest.id)) return;
     const current = this.store.task(t.id);
     const incident = current.resolution.recovery;
     // The owner verb is settling its own reporting coordinator. Its outcome is
@@ -562,12 +565,14 @@ export class CoordinatorEpisode {
       latest.completion.eventId,
     ]);
     if (recoveryApplicationsInFlight.has(applicationKey)) {
-      this.store.putRun({ ...latest, released: true, status: "finished" });
-      this.store.event(
-        t.id,
-        "run_released_from_recorded_completion",
-        `recovery ${latest.id}`,
-      );
+      if (!latest.released) {
+        this.store.putRun({ ...latest, released: true, status: "finished" });
+        this.store.event(
+          t.id,
+          "run_released_from_recorded_completion",
+          `recovery ${latest.id}`,
+        );
+      }
       return;
     }
     if (
@@ -586,11 +591,12 @@ export class CoordinatorEpisode {
       );
       return;
     }
-    this.store.event(
-      t.id,
-      "run_released_from_recorded_completion",
-      `recovery ${latest.id}`,
-    );
+    if (!latest.released)
+      this.store.event(
+        t.id,
+        "run_released_from_recorded_completion",
+        `recovery ${latest.id}`,
+      );
     if (latest.completion.status === "escalate") {
       // The escalation is the applied outcome, not a stale action: record it like
       // the reconciliation release path does so the episode does not read running
@@ -717,7 +723,8 @@ export class CoordinatorEpisode {
     if (this.resolution.startsNoRuns()) return false;
     const incident = t.resolution.recovery;
     const run = incident?.runId ? this.store.run(incident.runId) : null;
-    if (!incident || !run || run.released || !run.completion) return false;
+    if (!incident || !run?.completion || resultApplied(this.store, t.id, run.id))
+      return false;
     if (
       run.role !== "recovery" ||
       !run.agentId ||
@@ -727,26 +734,23 @@ export class CoordinatorEpisode {
       incident.agentId !== run.agentId
     )
       return false;
-    let state;
-    try {
-      state = await this.resolution.onTaskHost(run, () =>
-        this.resolution.host.observe(run.agentId!),
-      );
-    } catch {
-      return false;
+    const at = now();
+    let observation: CompletionObservation = { kind: "unobservable" };
+    if (!run.released) {
+      try {
+        observation = {
+          kind: "observed",
+          state: await this.resolution.onTaskHost(run, () =>
+            this.resolution.host.observe(run.agentId!),
+          ),
+        };
+      } catch (error) {
+        observation = { kind: "unobservable", error };
+      }
     }
     // The pause can land during the observation: re-check before writing, and
     // again inside the write transaction.
     if (this.resolution.startsNoRuns()) return false;
-    if (
-      !state ||
-      state.id !== run.agentId ||
-      state.workspaceId !== run.workspaceId ||
-      state.active ||
-      state.permissions ||
-      !["idle", "error", "closed"].includes(state.status)
-    )
-      return false;
     let settled = false;
     this.store.transaction(() => {
       if (this.resolution.startsNoRuns()) return;
@@ -757,7 +761,7 @@ export class CoordinatorEpisode {
       // replace it while observe awaits, even if the episode keeps its run ID.
       if (
         !latest ||
-        latest.released ||
+        JSON.stringify(latest) !== JSON.stringify(run) ||
         !latest.completion ||
         latest.role !== run.role ||
         latest.agentId !== run.agentId ||
@@ -774,6 +778,20 @@ export class CoordinatorEpisode {
         recovery.runId !== run.id ||
         recovery.generation !== run.generation ||
         recovery.agentId !== run.agentId
+      )
+        return;
+      const reported = timestampCompletion(this.store, latest, at);
+      if (reported !== latest) this.store.putRun(reported);
+      const state = observation.kind === "observed" ? observation.state : null;
+      const idle = state &&
+        state.id === run.agentId &&
+        state.workspaceId === run.workspaceId &&
+        !state.active && !state.activeTurnId && !state.permissions &&
+        ["idle", "error", "closed"].includes(state.status);
+      if (
+        !latest.released &&
+        !idle &&
+        !completedTurnCanRelease(reported, observation, at, this.resolution.graceMs)
       )
         return;
       this.settleFinishedRun(

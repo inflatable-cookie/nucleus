@@ -472,7 +472,7 @@ export function releaseRunFromRecordedCompletion(
 ): void {
   const latest = store.run(run.id);
   if (!latest || latest.released || !latest.completion) return;
-  store.putRun({ ...latest, status: "finished", released: true });
+  store.putRun({ ...latest, status: "finished", released: true, active: false });
   store.event(
     taskId,
     "run_released_from_recorded_completion",
@@ -529,6 +529,9 @@ export class RunRelease {
           run.completion &&
           run.role === "recovery" &&
           !run.mergeRetirement &&
+          (task.resolution.recovery?.runId !== run.id ||
+            (!run.completionReceivedAt &&
+              !this.store.receiptHash(run.completion.eventId, task.id, run.id))) &&
           run.completion.status === "escalate",
       );
     if (!runs.length) return;

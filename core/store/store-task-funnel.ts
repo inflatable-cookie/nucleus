@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { isReviewerVerdict, VERDICT_ONLY_CREDENTIAL } from "./store-auth";
 import {
   completionMembership,
   holdsOf,
@@ -45,7 +45,6 @@ import {
 } from "../dispatch/routing";
 import { submissionNeedsPermission } from "../../shared/pool";
 import { runBuildOutputIntent } from "../hooks/build-output-records";
-import { purgeReleasedRunTicket } from "../intake/reporting-files";
 import { initialBriefVersion } from "../planning/brief";
 import { laneSnapshot } from "../planning/lanes";
 import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
@@ -1174,30 +1173,42 @@ export class StoreTaskFunnel {
         "INSERT INTO runs VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
       )
       .run(run.id, run.taskId, JSON.stringify(run));
-    // A release revokes the run's callback credential: the released credential
-    // authenticates nothing — no exceptions (task 1005, review 5833000688) —
-    // and its ticket files go with it. The stored hash is kept, so re-binding
-    // the same run identity (a run re-bound after a restart) restores the same
-    // credential instead of minting one, and a re-issued credential (restart,
-    // continuation, recovery) replaces the hash and lifts any revocation.
+    // Release revokes general callback authority. A dispatched reviewer that
+    // has not reported keeps a verdict-only ticket for its own head. Once that
+    // ticket reports a verdict, it can still replay the receipt.
     if (run.released) {
+      const canReportVerdict =
+        run.role === "reviewer" &&
+        run.agentId &&
+        !run.exhaustionReason &&
+        !run.completion &&
+        ["running", "stopped", "superseded"].includes(run.status);
+      const canReplayVerdict =
+        run.role === "reviewer" &&
+        run.completion &&
+        isReviewerVerdict(run.completion.status);
       this.services.db
-        .prepare("UPDATE credentials SET revoked=1 WHERE run=?")
-        .run(run.id);
-      if (this.services.path !== ":memory:") {
-        if (this.services.db.isTransaction)
-          this.services.queueRunReportingCleanup(run.id, run.taskId);
-        else
-          purgeReleasedRunTicket(
-            dirname(this.services.path),
-            run.taskId,
-            run.id,
-          );
-      }
+        .prepare(
+          `UPDATE credentials SET revoked=CASE
+            WHEN ? AND revoked IN (0, ?) THEN ?
+            WHEN ? AND revoked=? THEN ?
+            ELSE 1 END WHERE run=?`,
+        )
+        .run(
+          Number(Boolean(canReportVerdict)),
+          VERDICT_ONLY_CREDENTIAL,
+          VERDICT_ONLY_CREDENTIAL,
+          Number(Boolean(canReplayVerdict)),
+          VERDICT_ONLY_CREDENTIAL,
+          VERDICT_ONLY_CREDENTIAL,
+          run.id,
+        );
+      if (this.services.path !== ":memory:")
+        this.services.queueRunReportingCleanup(run.id, run.taskId);
     }
     if (!run.released)
       this.services.db
-        .prepare("UPDATE credentials SET revoked=0 WHERE run=?")
+        .prepare("UPDATE credentials SET revoked=0 WHERE run=? AND revoked=1")
         .run(run.id);
     if (run.released || run.completion) this.services.queueRunCleanup(run);
     if (this.services.tasksStore.taskProjection) {

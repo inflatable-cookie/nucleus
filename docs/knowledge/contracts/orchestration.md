@@ -1092,15 +1092,15 @@ deduplicates native agent IDs. A thread created before Nucleus is still read
 through its recorded `northstar.*` labels wherever an archived or terminal
 record is inspected, and a split identity is refused rather than guessed.
 Callback environments carry only `NUCLEUS_*`; a ticket authenticates its run, and a helper refuses a report whose explicit task or run identity differs from that ticket. Worker readiness verifies the PR identity before recording a completion and refuses a foreign queue branch named in the report. A move to work clears an unbound result only when the forge positively identifies a different branch; unknown or unavailable evidence remains held, and the cleared event remains history.
-Agents report only through their own run's binding; they never read or use another ticket under the data home. A refused report is reported as blocked through the same binding, not bypassed through another ticket or route; if that also refuses, the agent states the refusal. Retained threads keep their original MCP binding path. Before a new run's continuation is sent, Nucleus atomically rebinds that path to the new run; releasing an earlier run deletes the path only while its contents still name that released run. A confirmed dispatched run whose stopped thread has a missing known local MCP binding records a named report failure after the reporting grace and follows the existing recovery path, without reading another ticket. Uncertain dispatches keep their existing hold. Historical events,
+Agents report only through their own run's binding; they never read or use another ticket under the data home. A refused report is reported as blocked through the same binding, not bypassed through another ticket or route; if that also refuses, the agent states the refusal. Retained threads keep their original MCP binding path. Before a new run's continuation is sent, Nucleus atomically rebinds that path to the new run. Release removes a path only while it still names the released run and the credential has no verdict-only use. A confirmed dispatched run whose stopped thread has a missing known local MCP binding records a named report failure after the reporting grace and follows the existing recovery path, without reading another ticket. Uncertain dispatches keep their existing hold. Historical events,
 request identities and stored committed-handoff rows are not rewritten.
 
 - Completion authentication binds task and run. One worker creation mints
   exactly one run identity, shared by the task, the callback credential and the
   reporting binding; a path that could mint a second fails closed.
-- A run whose live turn a verb cancelled is stopped, not replaced: its
-  credential is revoked and a late callback is stale. Released or superseded
-  runs stay immutable; late callbacks stay evidence without authority.
+- A run whose live turn a verb cancelled is stopped, with its credential
+  revoked. When a dispatched reviewer releases before reporting, its
+  credential can authenticate only a verdict for its original run and head.
 - Attention on a task with no live run owner lands in `needs_attention`, so a
   recovery control always applies.
 - The queue-owned worker branch is fixed before launch. A `ready_for_review`
@@ -2030,7 +2030,13 @@ review or merge credit; live participants and unsettled effects remain fences.
   callback. The task shows the wait, no incident or reminder is recorded, the
   reminder grace is extended, and no recovery run starts over it. Unreadable
   or inconclusive tool evidence is not liveness (papercut 6895edaa).
-- Observation releases a superseded or replaced run whose thread its host
+- A run with an authenticated completion releases when the host reports its
+  thread idle, closed, archived, gone or no longer observed. The reporting
+  grace also lets it release when the read is unavailable or the same turn is
+  still visible, provided there is no evidence of a newer turn. The completion
+  keeps its run binding through automatic and explicit `run.release`. Result
+  application checks the exact head and its own evidence and effect gates.
+- Observation releases a reportless superseded or replaced run whose thread its host
   reports archived or gone, using the same per-agent proof the archive path
   accepts. An unreadable read, a host without that answer or an inventory that
   does not mention the identity is unknown, never absence. The release records
@@ -2466,7 +2472,7 @@ reports, grants or spends that history.
   records a ready archive so observation can finish the replacement. An uncertain archive
   retains ownership until observation confirms the agent is archived or absent; it
   is never blindly resent. On T3 the fence is a stopped turn observed idle,
-  with the displaced run released and its late callbacks refused; the thread
+  with the displaced run released and eligible only for an exact-head verdict. The thread
   stays settled until closeout (T3 adapter spec, [thread
   lifecycle](../specs/t3code-host-adapter.md#thread-lifecycle)).
 - Other replacement paths allow a working reviewer to finish (Tom, 2026-10-19; planner ruling
@@ -2474,14 +2480,12 @@ reports, grants or spends that history.
   replaced (`replacedAt`) without releasing it or revoking its credential; its
   checkpoint still applies as saved progress, and its verdict is accepted if it
   is at the current head and no verdict for that head exists yet — the first
-  verdict at the head wins; a later reviewer's verdict ends the claim. The run
-  is released, and its credential and tickets revoked unconditionally, only
-  when the review settles: the replacement's verdict applies, a readopted
-  verdict applies, or the replaced run ends without a verdict; after release
-  nothing authenticates. A run already proven ended settles at replacement
-  instead. A host's own answer that the thread is archived or gone is that same
-  proven end, so observation releases the run and no relaunch names it again.
-  Provider-refusal and quota replacements are not marked.
+  verdict at the head wins and settles a replacement that has yet to report.
+  Release frees the run and leaves its verdict-only ticket when a dispatched
+  reviewer has yet to report. A late verdict uses that same re-adoption rule
+  and retains the original run's released state. The ticket can replay its
+  accepted receipt. Provider-refusal and quota replacements lose callback
+  authority.
 - A current reviewer whose own provider refused its dispatch turn (the canonical
   Cursor plan refusal or an attributed quota error in its own `ns-run-<runId>`
   turn) is replaced only after one read-only selection proves an eligible
@@ -2604,8 +2608,8 @@ movement invalidates source approval and preserves the normal readiness gates.
   active participant. An accepted verdict at an earlier head never qualifies a
   changed source, and an exhausted author allowance is the owner's disposition,
   never a reason for another review.
-- Reviewer threads are released after their verdict is verified and applied, and
-  the worker stays through revisions until closeout. A released support thread
+- A released reviewer's verdict is verified and applied through the ordinary
+  result path, and the worker stays through revisions until closeout. A released support thread
   (reviewer, recovery coordinator, executor) is archived at once on a host that
   cannot remove a thread; a host that can (T3Code) keeps it settled and bound so
   the next round or episode continues the same thread, and removes it at closeout
