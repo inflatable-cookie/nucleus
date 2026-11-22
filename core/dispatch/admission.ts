@@ -20,6 +20,8 @@ export interface DispatchAdmissionContext {
   /** The open outage the host's own record names, when one exists. */
   hostOutageSince(id: string): string | null;
   firstWorkerUnbound(task: Task): boolean;
+  /** A host's availability as the origin and admission reads take it, this pass's failures included. */
+  originHostAvailable(id: string): boolean;
   /** The engine's own reading of whether a task's host can take it now. */
   taskHostAvailable(task: Task): boolean;
   targetHostWait(task: Task): string | null;
@@ -31,6 +33,9 @@ export interface DispatchAdmissionContext {
 export const QUEUED_HOST_WAIT_PREFIX = "Waiting for host ";
 /** The wait a queued task with no proven host identity reads. */
 export const QUEUED_HOST_IDENTITY_WAIT = "Waiting for a proven host identity";
+/** The review-entry origin waits, worded as review-entry admission words them. */
+export const QUEUED_ORIGIN_IDENTITY_WAIT = "Waiting for a proven origin host";
+export const QUEUED_ORIGIN_WAIT_PREFIX = "Waiting for origin host ";
 
 export class DispatchAdmission {
   constructor(readonly context: DispatchAdmissionContext) {}
@@ -106,12 +111,24 @@ export class DispatchAdmission {
       return "Waiting for consistent run host identity";
     const hostId = task.hostId;
     // The same reading admission uses, so the card and the admitter agree.
-    if (this.context.withHost(hostId, () => this.context.taskHostAvailable(task)))
-      return "";
-    const since = this.context.hostOutageSince(hostId);
-    return since
-      ? hostUnavailableDetail(hostId, since)
-      : `${QUEUED_HOST_WAIT_PREFIX}${hostId}`;
+    if (!this.context.withHost(hostId, () => this.context.taskHostAvailable(task))) {
+      const since = this.context.hostOutageSince(hostId);
+      return since
+        ? hostUnavailableDetail(hostId, since)
+        : `${QUEUED_HOST_WAIT_PREFIX}${hostId}`;
+    }
+    // A review entry also reads its origin host, as review-entry admission does.
+    if (task.entrypoint !== "review") return "";
+    const origin = task.originHostId;
+    if (!origin) return QUEUED_ORIGIN_IDENTITY_WAIT;
+    if (
+      origin !== hostId &&
+      !this.context.withHost(origin, () =>
+        this.context.originHostAvailable(origin),
+      )
+    )
+      return `${QUEUED_ORIGIN_WAIT_PREFIX}${origin}`;
+    return "";
   }
   reviewContinuationLimit(): number {
     return reviewContinuationLimit(this.store);

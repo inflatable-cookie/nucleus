@@ -597,6 +597,7 @@ export class Engine {
     hostOutageSince: (id) => this.hostOutages.current(id)?.since ?? null,
     firstWorkerUnbound: (task) => this.firstWorkerUnbound(task),
     taskHostAvailable: (task) => this.taskHostAvailable(task),
+    originHostAvailable: (id) => this.resolution.originHostAvailable(id),
     targetHostWait: (task) => this.targetHostWait(task),
     workerHostIds: (task) =>
       this.workerHostCatalogs(task).map((host) => host.hostId),

@@ -846,7 +846,8 @@ export class Sweep {
         return { fault: null, covered, visited };
       }
       // Spec 069 §1: the admitter's once-per-pass safety net, which also admits
-      // heads whose host came back this pass. It walks queue heads, never the queue.
+      // heads whose host came back this pass. Heads that cannot start cost an
+      // in-memory check; visits stay within the free slots plus a margin.
       await this.fleetStep("dispatchQueued", () =>
         this.engine.dispatchQueued(),
       );

@@ -10,6 +10,7 @@ import { isStaleIntegrationBaseRefusal } from "../hooks/hooks";
 import { repositoryOrigin } from "./lanes";
 import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
 import { stageDeclarationFromBrief } from "../stages";
+import { LANE_PRIORITY_TASK } from "../scheduling/lane-priorities";
 
 /** Reject retired submission controls before accepting or executing intake. */
 export function assertSupportedSubmission(submission: Submission): void {
@@ -81,10 +82,16 @@ export class PlanningSubmission {
     const task = this.store.update(inserted.id, { originWorkspaceId: resolved?.origin?.workspaceId ?? null });
     // Spec 069 §1: the row is in the ready index and the queue is inert. Only a
     // question the operator must answer before any run (the Low usage level's
-    // approval, a required profile) opens from the task's own pass now; admission
-    // is signalled only while the task's pools have a free slot.
+    // approval, a required profile) opens now, on the task's own lane and through
+    // the one step that opens it; admission is signalled only when the task could
+    // start and its pools have a free slot.
     if (task.usageGate || task.requirePreferred || task.profileRequests?.worker?.required)
-      void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
+      void this.engine.cleanContext(() =>
+        this.engine.scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, async () => {
+          const current = this.store.taskOrNull(task.id);
+          if (current && !current.removedAt) this.engine.taskQuantumOwner.reconcileProfileAdmission(current);
+        }),
+      ).catch(() => this.engine.wakeTask(task.id));
     this.engine.dispatchOwner.admitSubmitted(task);
     return { taskId: task.id, taskVersion: task.version, phase: task.phase, number: task.number, reference: task.reference };
   }

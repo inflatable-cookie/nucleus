@@ -9,8 +9,12 @@ import {
   capacityLimitFor,
   dispatchBlocked,
   occupiesSlot,
+  QUEUED_VISIT_MARGIN,
+  queuedReviewOriginReady,
   queuedVisits,
 } from "./capacity";
+import { taskNeverDispatched } from "../task-decision-rules";
+import { usageGateBlocked } from "./usage-gate";
 import {
   PRE_DISPATCH_BASE_ADVANCE_LIMIT,
   queuedDispatchOrder,
@@ -36,6 +40,19 @@ export {
   dispatchGate,
   decideWorkspacePressureWait,
 } from "./dispatch-decisions";
+
+/**
+ * `Engine.firstWorkerUnbound` read from the task's own fields alone, so the head
+ * walk reads no runs. A queued row whose only trace of a dispatch is a released
+ * run reads as unbound here; its visit makes the exact check.
+ */
+const firstWorkerShape = (task: Task) =>
+  task.entrypoint !== "review" &&
+  task.entrypoint !== "proof" &&
+  task.phase === "queued" &&
+  task.hostSelection?.basis !== "worker_profile" &&
+  !task.profile &&
+  taskNeverDispatched(task, []);
 
 /**
  * The dispatch pass: read the queued order once, start the free slots together
@@ -157,13 +174,25 @@ export class Dispatch {
           });
       // Spec 069 §1: the admitter takes heads from the ordered ready index, with
       // the fair order, and admits as many as the free slots allow. A head that
-      // cannot start now (its host is away, or it already had its visit) is
-      // skipped in the index walk, so it takes no visit and hides nothing behind it.
-      for (;;) {
+      // cannot start now (its host or review origin is away, its target host kind
+      // is not ready, or it already had its visit) is skipped in the index walk,
+      // so it takes no visit and hides nothing behind it. A visit that starts
+      // nothing (a gate the walk cannot see) hands its place to the next head, up
+      // to a budget of the free slots plus a small margin, so one pass never
+      // walks the queue however its visits end.
+      const free = Math.max(
+        0,
+        limit -
+          this.store.activeCapacityTasks().filter((task) => occupiesSlot(task))
+            .length,
+      );
+      let budget = free + QUEUED_VISIT_MARGIN;
+      while (budget > 0) {
         const occupied = this.store
           .activeCapacityTasks()
           .filter((task) => occupiesSlot(task));
         const candidates = queuedDispatchOrder(
+          // Host readings are taken afresh each round: a visit can fail a host.
           this.store.readyQueueHeads(
             limit + 2,
             repoPath,
@@ -172,71 +201,81 @@ export class Dispatch {
           ),
           occupied,
         );
-        const { start } = queuedVisits(
+        const start = queuedVisits(
           candidates,
           occupied,
           this.store.projectDispatchLimitResolver(),
           this.store.papercutDispatchPolicy(),
           () => "none",
           limit,
-        );
+        ).start.slice(0, budget);
         if (!start.length) break;
+        budget -= start.length;
         for (const task of start) attempted.add(task.id);
-        const hostsBefore = failedHosts.size;
         const results = await Promise.allSettled(start.map(visit));
         const failed = results.find((result) => result.status === "rejected");
         if (failed) throw (failed as PromiseRejectedResult).reason;
-        // Another round only follows a round that settled something: a start, a
-        // recorded refusal or a host fault. A round whose heads all waited on a
-        // gate leaves nothing for the next head to gain.
-        const settled =
-          failedHosts.size > hostsBefore ||
-          start.some(
-            (task) => this.store.taskOrNull(task.id)?.version !== task.version,
-          );
-        if (!settled) break;
       }
     });
   }
   /**
    * Whether a ready head could start on a host now, read live from host
    * availability and never from a wait stored on the task (Spec 069 §1). A bound
-   * task needs its own host; an unbound first worker needs its target host kind,
-   * else any host whose catalog is read. Readings are memoised for one index walk.
+   * task needs its own host, and a review entry its origin host too; an unbound
+   * first worker needs its target host kind, else any host whose catalog is read.
+   *
+   * Every host and target-host reading is taken once per host or repository and
+   * memoised, and the first-worker shape is read from the task's own fields, so a
+   * skipped head costs an in-memory check and never a store or host read.
    */
   private startableHead(
     attempted: ReadonlySet<string>,
     failedHosts: ReadonlySet<string>,
   ): (task: Task) => boolean {
+    const memo = <T>(cache: Map<string, T>, key: string, read: () => T): T => {
+      if (!cache.has(key)) cache.set(key, read());
+      return cache.get(key)!;
+    };
+    const hosts = new Map<string, boolean>();
     const catalogs = new Map<string, boolean>();
-    const ownHost = (task: Task) =>
-      Boolean(
-        task.hostId &&
-          !failedHosts.has(task.hostId) &&
-          this.engine.withHost(task.hostId, () =>
-            this.engine.taskHostAvailable(task),
+    const targets = new Map<string, boolean>();
+    const hostReady = (id: string | null | undefined) =>
+      Boolean(id) &&
+      memo(
+        hosts,
+        id!,
+        () =>
+          !failedHosts.has(id!) &&
+          this.engine.withHost(id!, () =>
+            this.engine.resolution.originHostAvailable(id!),
           ),
       );
     return (task) => {
       if (attempted.has(task.id)) return false;
-      if (!this.engine.firstWorkerUnbound(task)) return ownHost(task);
-      if (this.engine.targetHostWait(task)) return false;
-      const key = task.hostId ?? "";
-      let ready = catalogs.get(key);
-      if (ready === undefined) {
-        ready = this.engine
-          .workerHostCatalogs(task)
-          .some((host) => !failedHosts.has(host.hostId));
-        catalogs.set(key, ready);
-      }
-      return ready || ownHost(task);
+      if (!queuedReviewOriginReady(task, hostReady)) return false;
+      if (!firstWorkerShape(task)) return hostReady(task.hostId);
+      const hostKey = task.hostId ?? "";
+      if (
+        memo(targets, `${task.repoPath}\u0000${hostKey}`, () =>
+          Boolean(this.engine.targetHostWait(task)),
+        )
+      )
+        return false;
+      return (
+        memo(catalogs, hostKey, () =>
+          this.engine
+            .workerHostCatalogs(task)
+            .some((host) => !failedHosts.has(host.hostId)),
+        ) || hostReady(task.hostId)
+      );
     };
   }
   /**
    * Spec 069 §1: a submission adds its row to the ready index and nothing else.
-   * It signals the admitter only when its own pools have a free slot now; with no
-   * free capacity the next freed slot, released prerequisite, returning host or
-   * lifted hold admits it. The check reads active work only, never the queue.
+   * It signals the admitter only when the task itself could start now (its host,
+   * or its target host kind, is ready) and its own pools have a free slot. Any
+   * other submission is admitted by the next freed slot, released prerequisite,
+   * returning host or lifted hold. The check reads active work only, never the queue.
    */
   admitSubmitted(task: Task): void {
     if (this.engine.stopped || this.store.getMeta<boolean>("paused")) return;
@@ -247,6 +286,8 @@ export class Dispatch {
     )
       return;
     if (task.dependsOn.length && this.store.dependencyWait(task)) return;
+    if (usageGateBlocked(task, this.store.usageLevel())) return;
+    if (!this.startableHead(new Set(), new Set())(task)) return;
     if (
       capacityLimitFor(
         task,

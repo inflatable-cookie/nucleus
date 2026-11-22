@@ -567,15 +567,45 @@ test("a refused BB origin holds only its review while Paseo and T3 use real admi
     assert.ok(originReads >= 1);
     assert.equal(store.task(review.id).resolution.stop?.reason, "origin_busy");
     assert.match(store.task(review.id).reason, /bb:origin/);
-    assert.ok(
-      extraReviews.every(
-        (item) => store.task(item.id).resolution.stop?.reason === "origin_busy",
-      ),
-    );
+    // Spec 069 §1: once the refused call has failed the origin host, the other
+    // reviews behind it are skipped without a visit or a write; their wait is read.
+    const read = (id: string) =>
+      taskWithCurrentWait(store, store.task(id), {}, (task) =>
+        engine.queuedExternalWait(task),
+      ).reason;
+    for (const item of extraReviews) {
+      assert.equal(store.task(item.id).resolution.stop, null);
+      assert.equal(read(item.id), "Waiting for origin host bb:origin");
+    }
     assert.equal(store.task(review.id).resolution.hostWait, null);
     assert.deepEqual(new Set(launches), new Set([paseo.id, t3.id]));
     assert.equal(engine.taskHostAvailable(store.task(paseo.id)), true);
     assert.equal(engine.taskHostAvailable(store.task(t3.id)), true);
+
+    // The origin host is reported away outright. Reviews from it are not
+    // startable heads, so they never stop the project's queue: freed slots go to
+    // the worker behind them, pass after pass.
+    engine.hostAvailable = (id) => id !== "bb:origin";
+    for (const done of [paseo, t3])
+      store.update(done.id, { phase: "done", agentActive: false });
+    const worker = store.insert(
+      submission({ title: "worker", repoPath: "/synthetic/review" }),
+      "paseo:primary",
+      "handoff",
+      "a".repeat(40),
+    );
+    const reviewVersions = [review, ...extraReviews].map(
+      (item) => store.task(item.id).version,
+    );
+    await engine.auditPass(true);
+    await engine.auditPass(true);
+    assert.ok(launches.includes(worker.id), "the worker behind the reviews starts");
+    assert.deepEqual(
+      [review, ...extraReviews].map((item) => store.task(item.id).version),
+      reviewVersions,
+      "a review whose origin is away is neither visited nor written",
+    );
+    assert.equal(read(extraReviews[0].id), "Waiting for origin host bb:origin");
   } finally {
     await engine.stop();
     store.close();

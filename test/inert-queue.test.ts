@@ -249,10 +249,16 @@ test("a freed slot admits exactly the next heads in fair order", async (t) => {
   assert.deepEqual([a1, b1, a2].map((task) => f.store.task(task.id).phase), ["queued", "queued", "queued"],
     "the global limit holds every head");
   f.dispatches.length = 0;
-  // The project-a worker finishes and gives its slot back.
-  f.store.update(running[0].id, { phase: "done", agentActive: false, finishedAt: new Date().toISOString() });
-  f.engine.wakeCapacityWaiter(running[0].id);
+  // The project-a worker's own task pass closes it out. That pass's real
+  // follow-up sees the slot freed and wakes the capacity waiter; nothing else does.
+  const internals = f.engine as unknown as { taskQuantum(id: string): Promise<void> };
+  internals.taskQuantum = async (id) => {
+    f.store.update(id, { phase: "done", agentActive: false, finishedAt: new Date().toISOString() });
+  };
+  f.passes.length = 0;
+  await f.engine.wakeTask(running[0].id);
   await f.settle();
+  assert.deepEqual(f.passes, [], "the freed slot wakes one waiter, not a dispatch pass");
   assert.deepEqual(f.dispatches, [a1.id], "only the oldest fair head was visited");
   assert.notEqual(f.store.task(a1.id).phase, "queued");
   assert.equal(f.store.task(b1.id).phase, "queued");
@@ -353,4 +359,90 @@ test("an in-flight request ahead keeps the queued head waiting, and its card cou
   const view = card(f, f.store.task(queued.id));
   assert.match(view.display.reason, /waiting behind 1 in-flight/);
   assert.equal(view.summary.activity?.detail, "Waiting for a project slot · 1 ahead");
+});
+
+/** A real Git-transient backoff: the head's visit starts nothing and writes nothing. */
+const backOff = (f: ReturnType<typeof fixture>, id: string) =>
+  f.store.setMeta(`gitTransient:${id}`, {
+    startedAt: Date.now(), attempts: 1, retryAt: Date.now() + 60_000, detail: "synthetic transient",
+  });
+
+test("a head refused for a non-host reason never starves the heads behind it", async (t) => {
+  const f = fixture(t, 16, 1);
+  // The oldest head requires a profile no host offers: its visit records the
+  // route refusal, and the slot it was in line for goes to the next head.
+  const refused = f.insert("/project-a", { preferredProfileId: "missing", requirePreferred: true });
+  const behind = f.insert("/project-a");
+  await f.engine.dispatchQueued();
+  await f.settle();
+  assert.equal(f.store.task(refused.id).phase, "queued");
+  assert.equal(f.store.task(refused.id).resolution.stop?.reason, "route_unavailable");
+  assert.notEqual(f.store.task(behind.id).phase, "queued", "the head behind it takes the slot");
+  assert.deepEqual(f.dispatches, [refused.id, behind.id], "one visit each, in order");
+});
+
+test("a head held back by a gate the walk cannot see keeps its place without widening the pass", async (t) => {
+  const f = fixture(t, 16, 1);
+  const blocked = f.insert("/project-a");
+  backOff(f, blocked.id);
+  const behind = f.insert("/project-a");
+  const version = f.store.task(blocked.id).version;
+  await f.engine.dispatchQueued();
+  await f.settle();
+  assert.equal(f.store.task(blocked.id).version, version, "the gated head is not written");
+  assert.equal(f.store.task(behind.id).phase, "queued", "the slot order keeps the gated head's place");
+  assert.ok(f.dispatches.length <= 1 + 2, "the pass stays within its visit budget");
+});
+
+test("one pass visits at most the free slots plus a small margin, whatever its visits end in", async (t) => {
+  const f = fixture(t, 1, 1);
+  for (let i = 0; i < 12; i++) backOff(f, f.insert("/project-a").id);
+  await f.engine.dispatchQueued();
+  await f.settle();
+  assert.ok(f.dispatches.length <= 3, `${f.dispatches.length} visits for one free slot`);
+});
+
+test("heads on an away host cost no store or host read per head", async (t) => {
+  const f = fixture(t);
+  let hostReads = 0;
+  f.engine.hostIds = () => ["host"];
+  f.engine.hostAvailable = () => {
+    hostReads++;
+    return false;
+  };
+  f.store.transaction(() => {
+    for (let i = 0; i < 200; i++) f.insert("/project-a");
+  });
+  const runs = f.store.runs.bind(f.store);
+  let runReads = 0;
+  f.store.runs = ((id?: string) => {
+    runReads++;
+    return runs(id);
+  }) as typeof f.store.runs;
+  hostReads = 0;
+  await f.engine.dispatchQueued();
+  assert.equal(runReads, 0, "no runs are read for a head that cannot start");
+  assert.ok(hostReads < 20, `${hostReads} host reads for 200 heads`);
+  assert.deepEqual(f.dispatches, []);
+});
+
+test("a Low-usage submission opens its approval question and runs no dispatch pass", { timeout: 30_000 }, async (t) => {
+  const f = fixture(t);
+  const { repo, head } = repository(f.root);
+  f.store.setMeta("usageLevel", { level: "low", until: null, setAt: "2026-11-22T00:00:00.000Z" });
+  const result = await f.engine.performSubmit(
+    submissionSchema.parse({ ...brief(head, repo, "Gated"), complexity: "high" }),
+    false,
+    undefined,
+    "host",
+  );
+  await f.settle();
+  const gated = f.store.task(result.taskId!);
+  assert.equal(gated.usageGate?.status, "pending");
+  assert.ok(gated.usageGate?.decisionId, "the approval question is open");
+  assert.equal(f.store.listDecisions({ status: "open", task: gated.id }).length, 1);
+  assert.ok(gated.holds.dispatch, "the gate holds the task");
+  assert.equal(gated.phase, "queued");
+  assert.deepEqual(f.passes, [], "no dispatch pass ran");
+  assert.deepEqual(f.quanta, [], "only the question's own step ran, not a task quantum");
 });

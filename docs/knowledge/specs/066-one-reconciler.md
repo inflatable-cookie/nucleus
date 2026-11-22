@@ -40,9 +40,10 @@ the current code. Tom approved the design on 2026-11-18; implementation follows 
    participant and any unresolved effect that could still conflict with the
    step. Keep a durable wake obligation until ordinary lifecycle admission
    sees it, so clearing the last blocker survives a crash or a lost wake.
-   Since [Spec 069](069-scheduler.md) §1 a never-started queued task has no
-   stale wait to settle: it stores none, its queued wait is derived when read,
-   and a host wait an older pass left on it is settled at admission.
+   Since [Spec 069](069-scheduler.md) §1 admission stores no wait on a
+   never-started queued task: its queued wait is derived when read, and a host
+   wait left on it (by an older pass, or the host-failure path until Spec 069
+   batch 2) is settled at admission.
 4. **R4 · Decide actions once.** Sweep, `next` and owner verb execution use the
    same decision for the same facts and caller. Offer a verb only when it has
    an admissible step after the listed owner inputs. Put a refusal, missing
