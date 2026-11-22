@@ -690,6 +690,12 @@ test("1536 rendered: finished lanes reopen with no confirmation", async () => {
   assert.ok(ui.get("Finished lanes, 2"), "the collapsed finished row");
   ui.press("Finished lanes, 2");
   assert.ok(ui.get("Open lane Title d-old, finished"));
+  ui.press("Reopen lane Title d-old help");
+  assert.match(
+    ui.text(),
+    /Returns the lane to its saved plan position/,
+    "the Reopen explanation lives in a help popover, not inline text",
+  );
   ui.press("Reopen lane Title d-old");
   assert.deepEqual(log.reopened, ["d-old"], "reopen writes active with no confirmation");
   ui.press("Reopen lane Title d-new");

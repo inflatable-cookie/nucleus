@@ -29,6 +29,7 @@ import { decisionAge } from "../shared/pipeline-board";
 import { formatLocalDateTime } from "../shared/date-time";
 import type { ProjectBadge } from "../shared/t3/project-badge";
 import { ActionButton, Button, row, type Colors } from "./controls";
+import { ReopenHelp } from "./lane-mark-done";
 import {
   cardRow,
   hoverSurface,
@@ -1149,10 +1150,10 @@ export function ProjectRoadmapView({
                         c={c}
                         text="Reopen"
                         label={`Reopen lane ${item.title}`}
-                        hint="Returns the lane to its saved plan position."
                         disabled={busy}
                         onPress={() => onReopenLane(item.lane)}
                       />
+                      <ReopenHelp c={c} laneTitle={item.title} />
                     </View>
                   )}
                 </View>

@@ -51,7 +51,7 @@ import {
   row,
   type Colors,
 } from "./controls";
-import { MarkDoneConfirm } from "./lane-mark-done";
+import { MarkDoneConfirm, ReopenHelp } from "./lane-mark-done";
 import {
   overlay,
   radius,
@@ -746,10 +746,10 @@ function PlanEditor({
                         c={c}
                         text="Reopen"
                         label={`Reopen lane ${item.title}`}
-                        hint="Returns the lane to its saved plan position."
                         disabled={busy}
                         onPress={() => onReopenLane(item.lane)}
                       />
+                      <ReopenHelp c={c} laneTitle={item.title} />
                     </View>
                   )}
                 </View>

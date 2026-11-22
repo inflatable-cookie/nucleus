@@ -681,6 +681,12 @@ test("the header names the horizon, open state and other plans; Mark done asks f
     "a closed lane has nothing to mark done",
   );
   assert.doesNotMatch(closed.text(), /Close lane/, "no Close lane control remains");
+  closed.press("Reopen lane Alpha lane help");
+  assert.match(
+    closed.text(),
+    /Returns the lane to its saved plan position/,
+    "the Reopen explanation lives in a help popover, not inline text",
+  );
   closed.press("Reopen lane Alpha lane");
   assert.deepEqual(closedStatus, ["active"], "reopen needs no confirmation");
   assert.match(textOf(closed.get("Finish line")), /Not set/);
