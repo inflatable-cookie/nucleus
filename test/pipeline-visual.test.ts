@@ -29,7 +29,7 @@ import {
   type ProjectQaRun,
 } from "../shared/contracts";
 import { CAPACITY_WAIT_PREFIX } from "../shared/wait-state";
-import { toneSurface } from "../client/design";
+import { planningRead, toneSurface } from "../client/design";
 import { createTaskDetailCache } from "../core/telemetry/task-detail";
 import { leadFromPapercut } from "../shared/papercut-lead";
 import type { Papercut } from "../shared/contracts";
@@ -736,6 +736,10 @@ function assertDarkTheme(ui: ReturnType<typeof mount>) {
   const palette: Set<string> = new Set([
     ...Object.values(dark),
     ...Object.values(dark).map((value) => toneSurface(value, value)),
+    // Planning's review segment and idle banner tint a role at their own token alphas (nucleus#1531).
+    ...[planningRead.reviewAlpha, planningRead.bannerAlpha, planningRead.bannerBorderAlpha].flatMap((alpha) =>
+      Object.values(dark).map((value) => toneSurface(value, value, alpha)),
+    ),
   ]);
   const visit = (node: HostNode) => {
     const styles = Array.isArray(node.props.style)
@@ -988,17 +992,17 @@ test("026-14/A2 the bundled Planning tab renders its roadmap in the dark theme",
     navigationButton(ui, "Planning").props.onPress();
     await settleUntil(
       ui,
-      () => ui.text().includes("Version 1"),
+      () => ui.query("Now column") !== undefined,
       `the bundled Planning tab did not render its roadmap: ${ui.text().slice(0, 600)}`,
     );
-    assert.ok(ui.get("Now band"));
-    assert.match(ui.text(), /Version 1/);
+    assert.ok(ui.get("Focus"));
+    assert.doesNotMatch(ui.text(), /Version 1/, "the read view never shows the version number");
     assert.doesNotMatch(
       ui.text(),
       /Loading plan/,
       "a saved version at the current plan version renders at once",
     );
-    assert.ok(ui.get("Open lane first"), "the roadmap lists its lanes");
+    assert.ok(ui.query(/^Open lane /), "the roadmap lists its lanes");
     for (const view of ui.ofType("View"))
       assert.equal(
         view.children.some((child) => typeof child === "string"),

@@ -135,8 +135,9 @@ export function roadmapBanner(plan: Pick<ProjectPlan, 'entries' | 'idle' | 'vers
 
 /** "Plan updated 3h ago by the Nucleus planner": never the version number. */
 export function planUpdatedLine(plan: Pick<ProjectPlan, 'author' | 'createdAt' | 'version'> | undefined, age: (at: string) => string): string {
-  if (!plan?.version || !plan.createdAt) return 'No plan saved yet';
-  return `Plan updated ${age(plan.createdAt)}${plan.author ? ` by ${plan.author}` : ''}`;
+  if (!plan?.version) return 'No plan saved yet';
+  const by = plan.author ? ` by ${plan.author}` : '';
+  return plan.createdAt ? `Plan updated ${age(plan.createdAt)}${by}` : `Plan saved${by}`;
 }
 
 /**

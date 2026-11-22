@@ -197,14 +197,14 @@ test("026-14c both surfaces hydrate one board projection: a surface mounting aft
   );
   // Both surfaces reach the planning projection: sections and plan reads work on each.
   second.press("Planning");
-  await settle(() => second.raw.text().includes("Plan · App"));
+  await settle(() => Boolean(second.raw.query("Plan for App")));
   first.press("Planning");
-  await settle(() => first.raw.text().includes("Plan · App"));
+  await settle(() => Boolean(first.raw.query("Plan for App")));
   // An unchanged refresh merges the bounded counters into the shared projection.
   await client.refetchQueries({ queryKey: ["nucleus", "state"] });
   assert.ok(ackFetches >= 1, "the refresh sent the observed revision");
   assert.ok(
-    second.raw.text().includes("Plan · App"),
+    Boolean(second.raw.query("Plan for App")),
     "planning survives the unchanged refresh",
   );
   assert.ok(

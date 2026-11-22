@@ -824,7 +824,8 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   the project's lanes that are blocked, in error or need attention. Selecting a row
   shows that project's roadmap; there are no accordions in the list.
 - **Roadmap (detail pane):** the project's badge and name, "Plan updated <age> by
-  <author>" (never the version number), and History and Edit plan. The banner is the
+  <author>" (never the version number), History, and Edit plan (the edit icon, as every
+  common action is). The banner is the
   **Focus**, the aim of the first Now lane; an idle plan shows "Idle on purpose" with its
   reason instead, and a dormant project with no Now lane says it is dormant. Now, Next
   and Later are columns, each with its count and a one-line hint, and they stack into one
@@ -837,7 +838,7 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
 - **Lane page:** opens in the detail pane from a lane card, with the breadcrumb
   Planning › Project › Lane. The header has the title and chips for its horizon in the
   plan it was opened from, open or closed, and the other plans that list it, with Close
-  lane and Edit lane (the lane document). Below are the aim in full; the finish line
+  lane and Edit lane (the edit icon; it edits the lane document). Below are the aim in full; the finish line
   (`doneWhen`) with "Why it's still open" from `lane.keep.reason`; the latest status
   (the plan entry's `note`, with the plan's author and age); what is in flight (live
   tasks as inbox rows with phase and detail, paged from the server total); what is

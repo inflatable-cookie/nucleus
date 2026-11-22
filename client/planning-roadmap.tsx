@@ -28,7 +28,7 @@ import {
 import { decisionAge } from "../shared/pipeline-board";
 import { formatLocalDateTime } from "../shared/date-time";
 import type { ProjectBadge } from "../shared/t3/project-badge";
-import { Button, row, type Colors } from "./controls";
+import { ActionButton, Button, row, type Colors } from "./controls";
 import {
   cardRow,
   hoverSurface,
@@ -761,10 +761,10 @@ export function ProjectRoadmapView({
               onPress={() => setHistory(!history)}
             />
             {onEditPlan && (
-              <Button
-                small
+              // Edit is a common action, so it is the edit icon with its name as the tooltip.
+              <ActionButton
                 c={c}
-                text="Edit plan"
+                action="edit"
                 label={`Edit ${name} plan`}
                 disabled={busy}
                 onPress={onEditPlan}

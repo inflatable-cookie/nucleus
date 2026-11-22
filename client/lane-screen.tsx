@@ -20,7 +20,7 @@ import {
   laneOpen,
   lanePlanContext,
 } from "../shared/planning-read";
-import { Button, row, type Colors } from "./controls";
+import { ActionButton, Button, row, type Colors } from "./controls";
 import { planningRead, radius, roles, space, type } from "./design";
 import {
   BoardCard,
@@ -1117,10 +1117,9 @@ export function LaneScreen({
             />
           )}
           {canEdit && loaded && (
-            <Button
-              small
+            <ActionButton
               c={c}
-              text="Edit lane"
+              action="edit"
               label={`Edit the ${name} document`}
               disabled={busy}
               onPress={startEdit}
