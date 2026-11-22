@@ -318,13 +318,20 @@ test("a row fault partway through the pass never publishes a partial running cou
   const runPass = () =>
     engine.withHost(host.hostId, () => pass.run(host.hostId));
 
-  const insertTask = (name: string, hostId = host.hostId) =>
-    store.insert(
+  // Each task holds the workspace its roles launch in, as a dispatch records it: a
+  // row belongs to a task that has a thread (Spec 069 §4), never to an inert queued one.
+  const insertTask = (name: string, hostId = host.hostId) => {
+    const task = store.insert(
       submission({ submissionId: name, title: name, repoPath: directory }),
       hostId,
       "handoff",
       "a".repeat(40),
     );
+    return store.update(task.id, {
+      workspaceIntent: true,
+      workspaceId: workspace.id,
+    });
+  };
   const taskA = insertTask("inbox-count-a");
   const taskB = insertTask("inbox-count-b");
   const taskC = insertTask("inbox-count-c");

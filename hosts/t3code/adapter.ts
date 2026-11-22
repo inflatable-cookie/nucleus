@@ -769,9 +769,10 @@ export class T3CodeHost implements Host {
    */
   async reconcileFinishedParents(
     tasks: readonly Task[],
+    lookup?: (taskId: string) => Task | null,
   ): Promise<readonly ParentArchiveWait[]> {
     if (!this.connected) return [];
-    return await this.nesting.archiveFinishedParents(tasks);
+    return await this.nesting.archiveFinishedParents(tasks, lookup);
   }
 
   async catalog(): Promise<HostCatalog> {

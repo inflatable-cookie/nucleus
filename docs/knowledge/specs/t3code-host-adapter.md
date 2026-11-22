@@ -1681,7 +1681,11 @@ of it. The step is now independent:
   `parents` record whose task the same pass reports as this host's and terminal
   (removed, done, or cancelled with no active disposition). The record is on disk,
   so the obligation survives a task workspace archive and a service roll, and
-  Inbox, decision-card, row and title faults cannot hide it.
+  Inbox, decision-card, row and title faults cannot hide it. The step walks the
+  host's own open bindings and resolves each task through the store's single-task
+  read (Spec 069 §4), so it costs one read per open binding, never one per finished
+  task, and a finish the batch did not reach, or one from before a service roll, is
+  still owed on the next pass.
 - **Bounded and rotating.** One pass visits at most `PARENT_ARCHIVE_BATCH` (four)
   entries, the one whose last attempt is oldest first, and records the attempt's
   timestamp on the binding, so a backlog drains over sweeps and no parent waits

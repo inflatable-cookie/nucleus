@@ -236,7 +236,32 @@ periodic chores and one host's steps belong to their own owners: **SweepMaintena
 the owner/lane passes on their own cadence, and **HostPass**
 (`core/scheduling/host-pass.ts`) runs one host's settlement, row-surfacing,
 inventory, retired-worker, title and finished-thread steps, recording a step that
-throws as `hostPassError` instead of dropping it. A host step that hangs or fails
+throws as `hostPassError` instead of dropping it. A pass's cost follows active work,
+not history (Spec 069 §4): it reads the store's indexed sets (`StoreHostIndex`:
+live tasks per host, finished tasks per host in identity order, fresh finishes and
+owner stops, maintained on every task write and rebuilt when the projection is),
+never `store.tasks()`. Observation reads the host's live set; rows, titles and
+hidden-row reads cover the host's active tasks (the ones that have a thread).
+The finished-parent archive is selected from the host's own open parent
+bindings, each resolved through the store's single-task read, so it never depends
+on which finished tasks a pass lists and survives a service roll. Other finished
+history goes to a slow cursor: each pass takes up to one page
+(`FINISHED_CATCH_UP_PAGE`) of fresh finishes, then one page from the cursor
+persisted in `finishedCatchUpCursor:<host>`, and only those reach finished rows,
+hidden-row clearing, title catch-up and the finished-thread cleanup selection. A
+finish seen since the last pass goes first; the start-up backlog (one read of
+every task still owing thread cleanup, most recent finish first) and retries queue
+behind it. Each keeps its place until its cleanup is no longer owed or it has had
+`FRESH_FINISH_ATTEMPTS` passes. The cursor advances, and hints are spent, only when
+the pass reaches its end, except that a page which aborted `PAGE_ABORT_LIMIT` passes
+in a row is skipped, so one hanging finished task cannot pin the cursor. After that, a failed thread
+cleanup on an older finished task is retried only when the cursor comes round again,
+about (finished tasks on the host ÷ page) passes later: roughly 40 passes, or 13
+minutes at the 20-second tick, for 1,000 finished tasks. The task's own closeout
+quantum remains the main cleanup path. The sweep runs that page's thread-cleanup catch-up in its
+own bounded step on each task's lane, outside the live window, so a page that
+changes every pass never resets the window's cursor. A host that is down or not
+yet read is not walked again in the same pass. A host step that hangs or fails
 at the transport fails only itself (Spec 069 §2): a hung call stops that host's
 remaining steps for the pass, the pass reports itself to **HostHealth** as a failed
 pass, and the fleet pass continues; it never becomes `engineError`, never marks the
@@ -1265,9 +1290,11 @@ request identities and stored committed-handoff rows are not rewritten.
   `next` and admission reads only `peek` host health, so a read never moves a
   host's state or writes its outage record; the runtime tick and the sweep do.
 - The 20-second safety sweep handles active work and queued lifecycle obligations;
-  it does not visit ordinary queued tasks. Its maintenance preflight still checks
-  retained terminal and exceptional queued records, so its cost grows with those
-  records; it is not a queue-position refresh. Origin routing observes each queued
+  it does not visit ordinary queued tasks, and its host steps read finished history
+  only through the slow catch-up cursor (Spec 069 §4). Its maintenance preflight and
+  the lifecycle selection still filter retained terminal and exceptional queued
+  records in memory (no copies, reads or host calls), so that part of its cost still
+  grows with those records; it is not a queue-position refresh. Origin routing observes each queued
   owner once and visits its tasks when the recorded workspace or origin changes.
 - `promote` gives a queued or parked unmerged task priority above every live
   task until completion or cancellation, and skips the workspace-creation load

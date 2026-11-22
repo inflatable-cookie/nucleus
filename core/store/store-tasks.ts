@@ -27,6 +27,7 @@ import {
 import { holdsOf } from "../../shared/holds";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import { boardVisible, StoreBoardIndex } from "./store-board-index";
+import { StoreHostIndex } from "./store-host-index";
 import { StoreQueueIndex } from "./store-queue-index";
 import {
   archiveIntentOutstanding,
@@ -196,6 +197,11 @@ export class StoreTasks {
       activeCapacityTasks: () => this.queue.activeCapacityTasks(),
       lastEventAtByTask: () => this.hooks.lastEventAtByTask(),
     });
+    this.hosts = new StoreHostIndex({
+      projection: () => this.taskProjection ?? new Map(),
+      sequence: (id) => this.taskSequence.get(id) ?? 0,
+      ensureProjection: () => this.ensureTaskProjection(),
+    });
   }
   private get db() {
     return this.core.db;
@@ -204,6 +210,8 @@ export class StoreTasks {
   readonly queue: StoreQueueIndex;
   /** The board-facing indexes over this projection. */
   readonly board: StoreBoardIndex;
+  /** The pass-facing indexes over this projection: live and finished tasks per host. */
+  readonly hosts: StoreHostIndex;
 
   taskProjection: Map<string, Task> | null = null;
   /** Task ids newest first, matching the historical `ORDER BY rowid DESC` lists. */
@@ -303,6 +311,7 @@ export class StoreTasks {
     this.newestSequence = 0;
     this.queue.reset();
     this.board.reset();
+    this.hosts.reset();
     this.runState = null;
     this.unreleasedByTask = null;
     this.pendingRunProjection = null;
@@ -341,6 +350,7 @@ export class StoreTasks {
     this.indexDependencies(task, true);
     this.queue.index(task);
     this.board.index(task);
+    this.hosts.index(task);
     if (
       !previous ||
       previous.phase !== task.phase ||
@@ -519,6 +529,7 @@ export class StoreTasks {
       this.indexDependencies(task, true);
       this.queue.index(task);
       this.board.index(task);
+      this.hosts.index(task);
     }
   }
   /** A caller-owned copy of one projected row; null when the id names no task. */

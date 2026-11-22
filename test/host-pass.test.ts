@@ -50,14 +50,29 @@ function fixture(
     store.close();
   });
   // The row step visits one task on the host; the other steps here are
-  // host-level calls.
-  if (options.task)
-    store.insert(
+  // host-level calls. A row belongs to a task that has a thread (Spec 069 §4), so
+  // the task is a launched one, with the worker a dispatch records, now idle.
+  if (options.task) {
+    const task = store.insert(
       submission({ submissionId: "row-host-pass", title: "Row step" }),
       HOST,
       "handoff",
       "a".repeat(40),
     );
+    store.update(
+      task.id,
+      {
+        phase: "working",
+        workspaceIntent: true,
+        agentIntent: true,
+        workspaceId: "workspace-row-host-pass",
+        agentId: "worker-row-host-pass",
+        agentActive: false,
+        runId: "initial",
+      },
+      "dispatched",
+    );
+  }
   const hostPass = new HostPass(
     enginePorts(
       engine,

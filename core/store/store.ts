@@ -1166,6 +1166,33 @@ export class Store {
   liveTasks(): Task[] {
     return this.tasksStore.liveTasks();
   }
+  /**
+   * Spec 069 §4: the pass-facing sets, maintained on write. A sweep or host pass
+   * reads these instead of `tasks()`, so its cost follows live work, not history.
+   */
+  taskHostIds(): string[] {
+    return this.tasksStore.hosts.hostIds();
+  }
+  /** One host's live (nonterminal, retained) tasks, newest first. */
+  liveHostTasks(hostId: string): Task[] {
+    return this.tasksStore.hosts.liveTasks(hostId);
+  }
+  /** Retained tasks carrying an owner stop, newest first. */
+  ownerStopTasks(): Task[] {
+    return this.tasksStore.hosts.ownerStopTasks();
+  }
+  /** One page of a host's finished tasks in identity order, for the slow catch-up cursor. */
+  finishedHostTaskPage(
+    hostId: string,
+    after: string | null,
+    limit: number,
+  ): { tasks: Task[]; next: string | null } {
+    return this.tasksStore.hosts.finishedPage(hostId, after, limit);
+  }
+  /** Take up to `limit` of a host's tasks that finished since the last take. */
+  takeRecentlyFinishedHostTasks(hostId: string, limit: number): Task[] {
+    return this.tasksStore.hosts.takeRecentlyFinished(hostId, limit);
+  }
   laneTaskPage(
     lane: string,
     offset: number,
@@ -2817,7 +2844,15 @@ export class Store {
     return this.threadEffects.retireScratch(taskId, agentId);
   }
   /** Finished tasks on this host whose threads still owe an archive or removal; `store-thread-effects.ts` owns the keys. */
-  finishedTasksOwingThreadCleanup(hostId: string, removal: boolean): Task[] {
-    return this.threadEffects.finishedTasksOwingCleanup(hostId, removal);
+  finishedTasksOwingThreadCleanup(
+    hostId: string,
+    removal: boolean,
+    taskIds?: readonly string[],
+  ): Task[] {
+    return this.threadEffects.finishedTasksOwingCleanup(
+      hostId,
+      removal,
+      taskIds,
+    );
   }
 }

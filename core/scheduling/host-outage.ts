@@ -102,7 +102,8 @@ export class HostOutages {
       for (const [hostId, outage] of due) {
         const current = latest[hostId];
         if (!current || current.since !== outage.since) continue;
-        const waiting = this.store.tasks().filter(task => task.hostId === hostId && isLive(task));
+        // Spec 069 §4: the host's live set, never a copy of every retained row.
+        const waiting = this.store.liveHostTasks(hostId).filter(isLive);
         let changed = false;
         for (const [projectKey, tasks] of this.groupByProject(waiting)) {
           if (current.notifiedProjects[projectKey]) continue;
