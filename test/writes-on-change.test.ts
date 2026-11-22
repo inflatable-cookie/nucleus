@@ -22,7 +22,12 @@ import { createTaskDetailCache } from "../core/telemetry/task-detail";
 import { RuntimeBoard } from "../core/runtime/board";
 import { hostOutageIntervals } from "../core/scheduling/host-outage";
 import { taskBudget } from "../shared/task-budget";
-import { TASK_PROGRESSING_REASON } from "../shared/task-stop";
+import {
+  endsStopOnReason,
+  stopClearedPatch,
+  TASK_PROGRESSING_REASON,
+} from "../shared/task-stop";
+import { DISPATCH_HELD_REASON } from "../core/dispatch/capacity";
 import { WebBoard, type WebBoardHost } from "../service/web/web-board";
 
 /**
@@ -376,6 +381,42 @@ test("a stop belongs to its writer: a reason-only write keeps it, and the writer
   f.engine.resolution.recordStop(f.store.task(task.id), "lifecycle", "Waiting once more");
   f.store.update(task.id, { phase: "working" });
   assert.equal(f.store.task(task.id).resolution.stop, null);
+
+  // So does an owner's lifecycle write to the phase the task is already in, when
+  // it moves the reason (an owner `move work` on a changes_requested task).
+  f.store.update(task.id, { phase: "changes_requested" });
+  f.engine.resolution.recordStop(f.store.task(task.id), "operator_needed", "Prompt delivery is uncertain");
+  f.store.update(task.id, {
+    phase: "changes_requested",
+    reason: "Owner moved the task to work",
+  });
+  assert.equal(
+    f.store.task(task.id).resolution.stop,
+    null,
+    "naming the same phase with a new reason ends the answered stop",
+  );
+  // Re-asserting the same phase and reason changes nothing.
+  const asserted = f.engine.resolution.recordStop(f.store.task(task.id), "lifecycle", "Waiting after the move");
+  f.store.update(task.id, { phase: asserted.phase, reason: asserted.reason, title: "Retitled" });
+  assert.equal(f.store.task(task.id).resolution.stop?.reason, "lifecycle");
+});
+
+test("a writer's explicit clear fires only when its reason really changes, so it never alternates with the stop's owner", (t) => {
+  const f = fixture(t);
+  const task = f.store.update(f.working[0]!.id, { phase: "dispatching" });
+  const stopped = f.engine.resolution.recordStop(task, "lifecycle", "Creating workspace: create worktree");
+  const versions = stopped.version;
+  // The same progress text again: no clear, no write of the stop.
+  f.engine.adapter.workspaceCreationProgress?.(task.id, "create_worktree", "started");
+  assert.equal(f.store.task(task.id).resolution.stop?.reason, "lifecycle");
+  assert.equal(f.store.task(task.id).version, versions, "re-asserting the same reason writes nothing");
+  assert.deepEqual(stopClearedPatch(f.store.task(task.id), stopped.reason), {});
+  assert.deepEqual(endsStopOnReason(f.store.task(task.id), stopped.reason), {});
+  assert.deepEqual(endsStopOnReason(f.store.task(task.id), "Something else"), { stop: null });
+  // A dispatch-held launch attempt is a note beside the hold's own stop.
+  f.engine.resolution.recordStop(f.store.task(task.id), "held", DISPATCH_HELD_REASON);
+  f.store.update(task.id, { reason: DISPATCH_HELD_REASON });
+  assert.equal(f.store.task(task.id).resolution.stop?.reason, "held");
 });
 
 test("a dependency change clears the stop it supersedes, explicitly", (t) => {

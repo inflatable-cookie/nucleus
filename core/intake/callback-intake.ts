@@ -738,6 +738,7 @@ export class CallbackIntake {
         eventId: input.eventId,
         checkpoint: { ordinal, budget: CHECKPOINT_BUDGET, continued: true },
       };
+      const progress = `Checkpoint ${ordinal}/${CHECKPOINT_BUDGET} accepted; continuing the retained worker`;
       this.store.update(
         current.id,
         {
@@ -745,8 +746,8 @@ export class CallbackIntake {
             records: [...current.checkpoints.records, record],
             intent,
           },
-          reason: `Checkpoint ${ordinal}/${CHECKPOINT_BUDGET} accepted; continuing the retained worker`,
-          ...stopClearedPatch(this.store.task(current.id)),
+          reason: progress,
+          ...stopClearedPatch(this.store.task(current.id), progress),
         },
         "progress_checkpoint",
         `${record.summary} @ ${record.head}`,
@@ -963,7 +964,10 @@ export class CallbackIntake {
       if (current.task.resolution.currentRunId === current.run.id)
         this.store.update(current.task.id, {
           reason: REVIEW_AUTHORIZATION_REQUIRED,
-          ...stopClearedPatch(this.store.task(current.task.id)),
+          ...stopClearedPatch(
+            this.store.task(current.task.id),
+            REVIEW_AUTHORIZATION_REQUIRED,
+          ),
         });
       this.store.event(
         current.task.id,
@@ -1041,7 +1045,7 @@ export class CallbackIntake {
       if (current.resolution.currentRunId === run.id)
         this.store.update(task.id, {
           reason: REVIEW_READER_EXHAUSTED,
-          ...stopClearedPatch(this.store.task(task.id)),
+          ...stopClearedPatch(this.store.task(task.id), REVIEW_READER_EXHAUSTED),
         });
       return receipt;
     });

@@ -1,3 +1,4 @@
+import { endsStopOnReason } from "../../shared/task-stop";
 import {
   taskControlInputSchema,
   type DecisionView,
@@ -186,7 +187,10 @@ export class EscalationSettlement {
             "Owner direction recorded; waiting for the worker turn to release",
           resolution: {
             ...current.resolution,
-            stop: null,
+            ...endsStopOnReason(
+              this.store.task(task.id),
+              "Owner direction recorded; waiting for the worker turn to release",
+            ),
             deferredVerb: {
               input: { ...rest, __workerAsk: marker },
               at: new Date().toISOString(),

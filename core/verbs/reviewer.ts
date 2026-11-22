@@ -1,3 +1,4 @@
+import { endsStopOnReason } from "../../shared/task-stop";
 import { archiveReplacedReviewer } from "../workspaces/thread-archive-replacement";
 import { threadArchivedOrGone } from "../workspaces/thread-archive-effect";
 import {
@@ -476,7 +477,10 @@ export class ReviewerControls {
                       "Reviewer replacement archive is not confirmed; waiting for observation",
                     resolution: {
                       ...this.store.task(taskId).resolution,
-                      stop: null,
+                      ...endsStopOnReason(
+                        this.store.task(taskId),
+                        "Reviewer replacement archive is not confirmed; waiting for observation",
+                      ),
                       pendingReviewReason: instruction,
                     },
                   },

@@ -120,7 +120,7 @@ export class EffectReconcile {
       if (current.reasonFact?.code === "review_delivery" && current.reasonFact.subject === deliveryId)
         this.store.update(
           current.id,
-          { reason, ...stopClearedPatch(this.store.task(current.id)) },
+          { reason, ...stopClearedPatch(this.store.task(current.id), reason) },
           `review_delivery_${status}`,
           `${deliveryId}: ${evidence.slice(0, 1200)}`,
         );

@@ -44,17 +44,27 @@ export const DISPATCH_WAIT_REASON = "Waiting for dispatch";
 /**
  * Spec 069 §3, one owner per field: the task funnel never clears a stop because a
  * write changed `reason` (two writers alternating made a stop oscillate on 22 Nov).
- * A writer whose write ends the task's stop says so with this patch, built from
- * the task as it stands now (read it in the same synchronous step) and merged over
- * any resolution the write already carries.
+ * A writer whose new reason ends the task's stop says so, with the task as it
+ * stands now (read it in the same synchronous step). It clears only when the
+ * reason really changes: re-asserting the same reason never clears, so it cannot
+ * alternate with the stop's owner recording that same text.
+ *
+ * `endsStopOnReason` is spread into a resolution literal the write already
+ * carries; `stopClearedPatch` is spread into a write that carries none.
  */
+export function endsStopOnReason(
+  current: { reason: string },
+  reason: string,
+): { stop?: null } {
+  return reason !== current.reason ? { stop: null } : {};
+}
 export function stopClearedPatch<R extends { stop: unknown }>(
-  current: { resolution: R },
-  change: { resolution?: R } = {},
-): { resolution: R } {
-  return {
-    resolution: { ...current.resolution, ...(change.resolution ?? {}), stop: null },
-  };
+  current: { reason: string; resolution: R },
+  reason: string,
+): { resolution?: R } {
+  return reason !== current.reason
+    ? { resolution: { ...current.resolution, stop: null } }
+    : {};
 }
 /**
  * The words a task with no stop or wait reads with. It is prose, not a fault: no

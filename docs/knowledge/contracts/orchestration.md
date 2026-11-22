@@ -58,14 +58,21 @@ and labelled.
   uncertain outcome; the caller reads current state and Nucleus never replays it
   ([Spec 013](../specs/013-standalone-queue-service.md)).
 - One owner per field (Spec 069 §3). A task's stop belongs to its writer, which
-  records and clears it explicitly (`Resolution.update` with `stop`, a resolution
-  that names `stop: null`, or `stopClearedPatch`). The store funnel ends a stop
-  only on a phase change; a write that changes only `reason` keeps it, so a
-  progress note can never erase another writer's stop and set the two writing in
-  turn. A writer whose write ends the stop it supersedes (workspace and worker
-  creation progress, a checkpoint, a settled check, a dependency change, an owner
-  route or move, a stalled-turn stop step) says so. A queued task's usage-gate and
-  target-host notes do not: their dispatch waits are worked out on read.
+  records and clears it explicitly. `Resolution.update` is the stop owner's own
+  write: it clears the stop when its write changes the reason or phase without
+  naming one, and that is its rule, not the funnel's. The store funnel ends a
+  stop only on a lifecycle write, one that names `phase` and moves the phase or
+  the reason (an owner move to the phase the task is already in included),
+  unless the write names a new stop. A write that changes only `reason` keeps it,
+  so a progress note can never erase another writer's stop and set the two
+  writing in turn. A reason-only writer whose new reason ends the stop it
+  supersedes (workspace and worker creation progress, a checkpoint, a settled
+  check, review delivery, a dependency change, a stalled-turn stop step) says so
+  with `stopClearedPatch` or `endsStopOnReason`, which clear only when the reason
+  really changes, so re-asserting the same text never alternates with the
+  stop's owner. Annotation writers do not clear: a dispatch-held launch attempt
+  (the hold owns the `held` stop) and a queued task's usage-gate and target-host
+  notes (their dispatch waits are worked out on read).
 - Writes happen only on change (Spec 069 §3). A meta write of the value already
   stored writes nothing (`Store.setMeta` compares first), so a pass that resets
   `engineError` or `hostPassError` writes only when they change.
@@ -102,8 +109,9 @@ Do not unify the two adapters.
 Event kinds, reason text, refusal text and typed refusal classes are control
 flow. They stay byte-identical. `test/control-strings.test.ts` pins the census.
 Do not normalise `store.update` against `Resolution.update` (the latter nulls
-`stop` on a reason or phase change; the store funnel nulls it only on a phase
-change, never on a write that changes only `reason`, Spec 069 §3), or
+`stop` on a reason or phase change; the store funnel nulls it only on a write
+that names `phase` and moves the phase or the reason, never on a write that
+changes only `reason`, Spec 069 §3), or
 `store.events` (newest 100) against `eventsAll` (all, oldest first).
 Do not rewrap the typed refusal classes that settle an operation.
 
@@ -1435,6 +1443,9 @@ request identities and stored committed-handoff rows are not rewritten.
   host's closed history (`hostOutageHistory`, newest 50). A `resolution.hostWait`
   or outage-text `host_unavailable` stop an older service stored is ignored by
   the read while the host is not down and settled by the next connected visit.
+  `record.clear host_wait` clears only such a stored wait; for a read wait it
+  refuses, naming that the wait ends when the host reconnects. A published review
+  verdict is not applied while the task's host has an open outage record.
 - A service start never parks tasks. Until HostHealth has seen a host connected
   it is `unknown`: its tasks keep their state, nothing is written for them and
   nothing is sent to the host. A queued task's card reads `Waiting for <host> to
@@ -3021,6 +3032,8 @@ movement invalidates source approval and preserves the normal readiness gates.
   A host outage opens no clock (Spec 069 §3): every budget reader passes the task
   host's outages from the host's own record (`hostOutageIntervals`) to
   `taskBudget`, which discounts them like a hold, so an outage writes nothing per task.
+  The read uses the task's current host, so a task moved to another host keeps no
+  discount for its old host's outages.
 - Any thread registers itself with `task.register` (Spec 058 slice 4): the worker
   is the calling thread, bound to its own live worktree, always responsible, with
   no planner, owner or coordinator. Identity comes from the authenticated thread,

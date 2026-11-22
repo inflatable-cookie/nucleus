@@ -49,7 +49,7 @@ export class CheckSettlement {
       if (!current.resolution.attention && current.reason !== detail)
         this.store.update(t.id, {
           reason: detail,
-          ...stopClearedPatch(this.store.task(t.id)),
+          ...stopClearedPatch(this.store.task(t.id), detail),
         });
       return;
     }
@@ -118,7 +118,7 @@ export class CheckSettlement {
     } else if (current.reason !== detail) {
       this.store.update(t.id, {
         reason: detail,
-        ...stopClearedPatch(this.store.task(t.id)),
+        ...stopClearedPatch(this.store.task(t.id), detail),
       });
     }
   }

@@ -37,9 +37,10 @@ export function applyReceiptAcceptance(engine: Engine, input: TaskControlInput, 
         if (!engine.store.notices(current.id).some(item => item.id === id)) engine.store.putNotice({ ...notice, id, status: 'pending', error: '', text });
       }
     }
-    return engine.store.update(current.id, { ...stopClearedPatch(current), proofReceiptAcceptance: acceptance,
+    const accepted = `Operator accepted receipt ${receipt.runId} as release evidence; original failed qualification remains in history`;
+    return engine.store.update(current.id, { ...stopClearedPatch(engine.store.task(current.id), accepted), proofReceiptAcceptance: acceptance,
       proofOnlyResult: { ...originalResult, status: 'passed', evidence: `Operator accepted receipt ${receipt.runId} as release evidence. ${receipt.evidence}`.slice(0, 4000) },
-      reason: `Operator accepted receipt ${receipt.runId} as release evidence; original failed qualification remains in history` },
+      reason: accepted },
       'proof_receipt_accepted', detail);
   });
 }

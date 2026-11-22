@@ -6,6 +6,12 @@ import type { Adapter } from '../core/host';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { submission } from './support/fakes';
 import { TASK_PROGRESSING_REASON } from '../shared/task-detail-summary';
+import type { Task } from '../shared/contracts';
+import { taskWaitStateContext, taskWithCurrentWait } from '../core/recovery/wait-context';
+
+/** The task as the board, `next` and task detail read it (Spec 069 §3). */
+const readView = (store: Store, engine: Engine, task: Task) =>
+  taskWithCurrentWait(store, task, taskWaitStateContext(store, task, null), candidate => engine.currentExternalWait(candidate));
 
 /**
  * Spec 066 C2 (papercut reproduction: nucleus#1318 and #1321).
@@ -98,7 +104,9 @@ test('a transport wait clears on the pass that observes the host answer, and the
   await f.pass();
   assert.equal(f.store.task(task.id).resolution.stop?.reason, 'host_unavailable', 'a host that did not answer holds its own wait');
   assert.deepEqual(f.visited, [], 'no quantum is started for an unavailable host');
-  assert.ok(f.store.task(task.id).resolution.hostWait, 'the task records its own host wait');
+  // Spec 069 §3: the outage's wait is read from the host, never stored on the task.
+  assert.equal(f.store.task(task.id).resolution.hostWait, null, 'the outage stores no host wait');
+  assert.ok(readView(f.store, f.engine, f.store.task(task.id)).resolution.hostWait, 'every read shows the task\'s host wait');
   assert.ok(f.kinds(task.id).includes('transport_deferred'), 'the transport cause stays in history');
 
   // The host is back: the same pass settles the wait and visits the ready task.
@@ -106,7 +114,7 @@ test('a transport wait clears on the pass that observes the host answer, and the
   await f.pass();
   const cleared = f.store.task(task.id);
   assert.equal(cleared.resolution.stop, null, 'the transport condition clears on return');
-  assert.equal(cleared.resolution.hostWait, null, 'and so does the independent host wait');
+  assert.equal(readView(f.store, f.engine, cleared).resolution.hostWait, null, 'and so does the read host wait');
   assert.equal(cleared.reason, TASK_PROGRESSING_REASON, 'the stale daemon text does not survive as the reason');
   assert.deepEqual(f.visited, [task.id], 'the ready task is visited in the returning pass');
   assert.equal(f.kinds(task.id).filter(kind => kind === 'host_wait_cleared').length, 1);
@@ -202,12 +210,13 @@ test('an owner stop beside the wait keeps its question when the host answers', a
   f.online[HOST_A] = false;
   await f.pass();
   assert.equal(f.store.task(task.id).resolution.stop?.reason, 'interactive', 'the host going away does not replace the owner stop');
-  assert.ok(f.store.task(task.id).resolution.hostWait, 'the independent host wait is still recorded');
+  assert.ok(readView(f.store, f.engine, f.store.task(task.id)).resolution.hostWait, 'the independent host wait still shows on every read');
+  assert.equal(readView(f.store, f.engine, f.store.task(task.id)).resolution.stop?.reason, 'interactive', 'and the read keeps the owner stop');
 
   f.online[HOST_A] = true;
   await f.pass();
   const after = f.store.task(task.id);
-  assert.equal(after.resolution.hostWait, null, 'the host wait clears when the host answers');
+  assert.equal(readView(f.store, f.engine, after).resolution.hostWait, null, 'the host wait clears when the host answers');
   assert.equal(after.resolution.stop?.reason, 'interactive', 'the owner stop stays visible');
   assert.equal(after.reason, reason);
   assert.deepEqual(f.visited, [task.id], 'the task is still visited while its owner stop stands');

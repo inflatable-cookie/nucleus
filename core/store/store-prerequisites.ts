@@ -130,7 +130,7 @@ export class StorePrerequisites {
       {
         dependsOn: normalized,
         reason,
-        ...stopClearedPatch(this.services.task(task.id)),
+        ...stopClearedPatch(this.services.task(task.id), reason),
       },
       "dependencies_changed",
       `${task.dependsOn.join(", ") || "none"} → ${normalized.join(", ") || "none"}; requested by ${actor}`,

@@ -488,7 +488,10 @@ export class ReviewContinuations {
           task.id,
           {
             reason: reviewDeliveryReason(deliveryId, "reserved"),
-            ...stopClearedPatch(this.store.task(task.id)),
+            ...stopClearedPatch(
+              this.store.task(task.id),
+              reviewDeliveryReason(deliveryId, "reserved"),
+            ),
           },
           "review_delivery_reserved",
           authorizationId,

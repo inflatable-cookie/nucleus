@@ -1,4 +1,4 @@
-import { stopClearedPatch } from "../../shared/task-stop";
+import { endsStopOnReason } from "../../shared/task-stop";
 import { measureRunPrompt, recordPromptSize } from "./prompt-text/measure";
 import { randomBytes, randomUUID } from "node:crypto";
 import { workerProfileIsExcluded } from "../../shared/contracts";
@@ -91,10 +91,7 @@ export class WorkerLauncher {
     if (startsNoRuns(this.store, this.engine.stopped)) return;
     task = this.store.task(task.id);
     if (dispatchBlocked(task)) {
-      this.store.update(task.id, {
-        reason: DISPATCH_HELD_REASON,
-        ...stopClearedPatch(this.store.task(task.id)),
-      });
+      this.store.update(task.id, { reason: DISPATCH_HELD_REASON });
       return;
     }
     // A dispatching task resumed after a restart reaches here without dispatchTask;
@@ -125,10 +122,7 @@ export class WorkerLauncher {
     task = structuredClone(this.store.task(task.id));
     if (!task.directory || !task.workspaceId || !task.profile) return;
     if (dispatchBlocked(task)) {
-      this.store.update(task.id, {
-        reason: DISPATCH_HELD_REASON,
-        ...stopClearedPatch(this.store.task(task.id)),
-      });
+      this.store.update(task.id, { reason: DISPATCH_HELD_REASON });
       return;
     }
     if (this.refuseExcludedWorker(task)) return;
@@ -190,10 +184,7 @@ export class WorkerLauncher {
       // snapshot (a new workspace, route or retired-worker set).
       if (this.refuseExcludedWorker(current)) return false;
       if (dispatchBlocked(current)) {
-        this.store.update(current.id, {
-          reason: DISPATCH_HELD_REASON,
-          ...stopClearedPatch(this.store.task(current.id)),
-        });
+        this.store.update(current.id, { reason: DISPATCH_HELD_REASON });
         return false;
       }
       if (startsNoRuns(this.store, this.engine.stopped)) return false;
@@ -265,7 +256,6 @@ export class WorkerLauncher {
           transientProviderRetry: undefined,
           agentIntent: true,
           reason: "Creating worker",
-          ...stopClearedPatch(this.store.task(task.id)),
           stashBaseline: stash ? { runId, entries: stash } : null,
           ...(brief
             ? {
@@ -292,7 +282,12 @@ export class WorkerLauncher {
               }
             : {}),
           laneDocumentIssues: [...references.unresolved, ...missingDocuments],
-          resolution: { ...current.resolution, restartSlotHold: null },
+          resolution: {
+            ...current.resolution,
+            // Creating the worker ends the wait the task was in (Spec 069 §3).
+            ...endsStopOnReason(current, "Creating worker"),
+            restartSlotHold: null,
+          },
         },
         "agent_intent",
         runId,

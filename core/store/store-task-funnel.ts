@@ -31,7 +31,11 @@ import {
   type QueueOperation,
 } from "../../shared/operations";
 import { telemetryStageForTask } from "../../shared/telemetry";
-import { DISPATCH_WAIT_REASON, taskDecisionFact } from "../../shared/task-stop";
+import {
+  DISPATCH_WAIT_REASON,
+  endsStopOnReason,
+  taskDecisionFact,
+} from "../../shared/task-stop";
 import { EMPTY_RUN_USAGE } from "../telemetry/run-usage";
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { restartSlotObsolete } from "../dispatch/capacity";
@@ -638,10 +642,15 @@ export class StoreTaskFunnel {
       throw new Error("Origin host cannot be changed by an ordinary update");
     // Spec 069 §3, one owner per field: a stop belongs to its writer, which
     // records and clears it explicitly. A write that changes only `reason` never
-    // clears it (two writers alternating made a stop oscillate on 22 Nov). A phase
-    // change still ends the stop's episode unless the write names a new stop.
-    const phaseChanged =
-      change.phase !== undefined && change.phase !== task.phase;
+    // clears it (two writers alternating made a stop oscillate on 22 Nov). A
+    // lifecycle write, one that names `phase`, still ends the stop's episode when
+    // it moves the phase or the reason (an owner move to the phase the task is
+    // already in included), unless it names a new stop. A write that re-asserts
+    // the same phase and reason changes nothing, as before.
+    const lifecycleChanged =
+      change.phase !== undefined &&
+      (change.phase !== task.phase ||
+        (change.reason !== undefined && change.reason !== task.reason));
     const hasExplicitStop =
       change.resolution !== undefined &&
       Object.prototype.hasOwnProperty.call(change.resolution, "stop");
@@ -650,7 +659,7 @@ export class StoreTaskFunnel {
       JSON.stringify(change.resolution!.stop) ===
         JSON.stringify(task.resolution.stop);
     if (
-      phaseChanged &&
+      lifecycleChanged &&
       kind !== "owner_resolution" &&
       (!hasExplicitStop || stopRepeatsCurrent)
     ) {
@@ -1358,6 +1367,9 @@ export class StoreTaskFunnel {
               new Date().toISOString(),
             )
           : settled.buildOutputCleanups;
+      const received = armed
+        ? "Completion received; the retained worker's own result superseded the pending replacement"
+        : "Completion received; waiting for the worker to release the workspace";
       this.update(
         task.id,
         {
@@ -1367,7 +1379,7 @@ export class StoreTaskFunnel {
           resolution: {
             ...settled,
             // The worker's result ends the stop the task was in.
-            stop: null,
+            ...endsStopOnReason(task, received),
             buildOutputCleanups,
             ...(armed ? { attention: false } : {}),
           },
@@ -1380,9 +1392,7 @@ export class StoreTaskFunnel {
                 replacementProfile: null,
               }
             : {}),
-          reason: armed
-            ? "Completion received; the retained worker's own result superseded the pending replacement"
-            : "Completion received; waiting for the worker to release the workspace",
+          reason: received,
         },
         "completion_received",
         input.summary,

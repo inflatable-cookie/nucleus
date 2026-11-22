@@ -1,4 +1,4 @@
-import { stopClearedPatch } from "../../shared/task-stop";
+import { endsStopOnReason, stopClearedPatch } from "../../shared/task-stop";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 
@@ -221,7 +221,7 @@ export class StalledTurnStops {
         const reason = `The stalled ${assigned.role} run ${input.runId} now has an active permission request. Stop was refused; resolve or inspect that request before deciding again.`;
         this.store.update(
           task.id,
-          { reason, ...stopClearedPatch(this.store.task(task.id)) },
+          { reason, ...stopClearedPatch(this.store.task(task.id), reason) },
           "stalled_turn_stop_refused",
           reason,
         );
@@ -302,15 +302,16 @@ export class StalledTurnStops {
           throw Error(
             "The assigned run changed before stop intent; no interruption was sent",
           );
+        const requested = `Operator stop requested for stalled ${assigned.role} run ${input.runId} turn ${intent.turnId}; waiting for observed inactivity. No replacement turn will start automatically`;
         return this.store.update(
           current.id,
           {
             resolution: {
               ...current.resolution,
-              stop: null,
+              ...endsStopOnReason(current, requested),
               stalledTurnStop: intent,
             },
-            reason: `Operator stop requested for stalled ${assigned.role} run ${input.runId} turn ${intent.turnId}; waiting for observed inactivity. No replacement turn will start automatically`,
+            reason: requested,
           },
           "stalled_turn_stop_intent",
           JSON.stringify(intent),
@@ -329,7 +330,7 @@ export class StalledTurnStops {
             {
               resolution: {
                 ...latest.resolution,
-                stop: null,
+                ...endsStopOnReason(latest, visible),
                 stalledTurnStop: null,
               },
               reason: visible,
@@ -489,7 +490,7 @@ export class StalledTurnStops {
         {
           resolution: {
             ...latest.resolution,
-            stop: null,
+            ...endsStopOnReason(latest, statusReason),
             stalledTurnStop: {
               ...latest.resolution.stalledTurnStop,
               status: "sent",

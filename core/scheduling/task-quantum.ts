@@ -282,7 +282,7 @@ export class TaskQuantum {
               task.id,
               {
                 reason,
-                ...stopClearedPatch(this.context.store.task(task.id)),
+                ...stopClearedPatch(this.context.store.task(task.id), reason),
               },
               "stalled_turn_binding_changed",
               reason,

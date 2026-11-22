@@ -974,13 +974,17 @@ export class Engine {
     // them. The dispatching task's reason line stays: it is the board-visible progress.
     this.adapter.workspaceCreationProgress = (taskId, step, status) => {
       try {
+        const current = this.store.task(taskId);
+        const reason = `Creating workspace: ${step.replaceAll("_", " ")}`;
+        // Spec 069 §3: the same step reported again writes nothing.
         if (
           status === "started" &&
-          this.store.task(taskId).phase === "dispatching"
+          current.phase === "dispatching" &&
+          current.reason !== reason
         )
           this.store.update(taskId, {
-            reason: `Creating workspace: ${step.replaceAll("_", " ")}`,
-            ...stopClearedPatch(this.store.task(taskId)),
+            reason,
+            ...stopClearedPatch(current, reason),
           });
       } catch {
         /* Progress reporting must not change workspace creation behavior. */

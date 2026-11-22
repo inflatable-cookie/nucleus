@@ -96,6 +96,7 @@ import { settlementHeld } from "../closeout/queue-drain";
 import { reviewInProgress } from "../review/review-continuation";
 import { settleProofExecution, type ProofOutcome } from "./proof-settlement";
 import { settleReportReady } from "./report-ready";
+import { openHostOutage } from "../scheduling/host-outage";
 
 /** Publication may add an ID after the authenticated callback was received. */
 function authenticatedReviewResult(
@@ -402,10 +403,13 @@ export function publishedReviewDecision(
     );
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
     return blocked("The prerequisite wait owner must release the task");
-  if (task.resolution.hostWait)
-    return blocked(
-      `The host observer must settle the wait for ${task.resolution.hostWait.hostId}`,
-    );
+  // Spec 069 §3: the host wait is read from the host's open outage record; a
+  // wait an older service stored on the row still holds until it is settled.
+  const waitingHost =
+    task.resolution.hostWait?.hostId ??
+    (task.hostId && openHostOutage(store, task.hostId) ? task.hostId : null);
+  if (waitingHost)
+    return blocked(`The host observer must settle the wait for ${waitingHost}`);
   const ladder = reviewLadderWait(store, task);
   if (ladder.refusal) return blocked(ladder.refusal);
 
