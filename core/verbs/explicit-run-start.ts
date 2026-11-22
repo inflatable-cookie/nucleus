@@ -526,18 +526,18 @@ export async function preflightExplicitRunStart(
       const match = task.prUrl?.match(/\/pull\/(\d+)/);
       prNumber = match ? Number(match[1]) : null;
     }
-    if (prNumber) {
-      try {
-        if (typeof engine.adapter.verifyPrIdentity === "function") {
+    if (task.entrypoint !== "proof") {
+      if (prNumber && typeof engine.adapter.verifyPrIdentity === "function") {
+        try {
           const pr = await engine.adapter.verifyPrIdentity(task, prNumber);
           if (pr?.head) forgeHead = pr.head;
           else forgeReadFailed = true;
-        } else if (typeof engine.adapter.verifyPr === "function") {
-          const pr = await engine.adapter.verifyPr(task, prNumber);
-          if (pr?.head) forgeHead = pr.head;
-          else forgeReadFailed = true;
+        } catch {
+          forgeReadFailed = true;
         }
-      } catch {
+      } else {
+        // Missing PR number/URL or no forge-only verifier counts as an unreadable forge head.
+        // Never fall back to verifyPr here because legacy verifyPr can mutate the checkout.
         forgeReadFailed = true;
       }
     }

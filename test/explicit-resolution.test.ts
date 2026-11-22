@@ -84,6 +84,7 @@ async function attachGitCheckout(
     directory: worktree,
     workspaceId: "workspace",
     workspaceIntent: true,
+    prUrl: "https://github.com/example/repo/pull/1",
     prHead: initialSha,
   });
   return { remote, repoDir, worktree, initialSha };
@@ -125,6 +126,13 @@ async function fixture(
     archiveAgent: async (id: string) => {
       calls.push(`archive ${id}`);
     },
+    verifyPrIdentity: async (tObj: {
+      prHead?: string | null;
+      prUrl?: string | null;
+    }) => ({
+      head: tObj.prHead ?? head,
+      url: tObj.prUrl ?? "https://github.com/example/repo/pull/1",
+    }),
     createRun: async (
       _task: unknown,
       r: { id: string; role: string; head: string; workspaceId: string },
@@ -2313,11 +2321,12 @@ test("review round 8: run.start makes no Git writes; #1508 passes ordinary resul
     },
   ]);
 
-  // 1. run.start makes no Git writes, confirms forgeHead === localHead, updates task.prHead, and launches reviewer in task.workspaceId.
+  // 1. run.start with head=<pushed> makes no Git writes, confirms forgeHead === localHead, updates task.prHead, and launches reviewer in task.workspaceId.
   const started = await command({
     action: "run.start",
     role: "reviewer",
     agent: "fresh",
+    head: pushedSha,
   });
   assert.equal(started.explicitResolution?.status, "applied");
   const revRunId = started.explicitResolution!.runId!;
@@ -2409,6 +2418,36 @@ process.stdout.write(JSON.stringify(entry.body));
     writeFileSync(
       fakeGhConfig,
       JSON.stringify({
+        "pr view": {
+          body: {
+            number: 77,
+            url: "https://github.com/example/repo/pull/77",
+            state: "OPEN",
+            isDraft: false,
+            headRefName: branch,
+            baseRefName: "main",
+            headRefOid: pushedSha,
+            headRepository: { name: "repo" },
+            headRepositoryOwner: { login: "example" },
+            isCrossRepository: false,
+          },
+        },
+        "repos/example/repo/pulls/77": {
+          body: {
+            html_url: "https://github.com/example/repo/pull/77",
+            state: "open",
+            draft: false,
+            head: {
+              ref: branch,
+              sha: pushedSha,
+              repo: { full_name: "example/repo" },
+            },
+            base: {
+              ref: "main",
+              repo: { full_name: "example/repo" },
+            },
+          },
+        },
         graphql: {
           body: {
             data: {
@@ -2491,7 +2530,7 @@ process.stdout.write(JSON.stringify(entry.body));
     assert.equal(current().resolution.review?.status, "ready_to_merge");
     assert.equal(current().resolution.review?.reviewId, reviewId);
 
-    // First real mergeGate passes on the task checkout.
+    // First real mergeGate passes using the production verifyPr verifier (no injected verifyPr override).
     const gate = await mergeGate(
       current(),
       undefined,
@@ -2499,10 +2538,6 @@ process.stdout.write(JSON.stringify(entry.body));
       "all",
       {
         readToken: async () => "fake-token",
-        verifyPr: async () => ({
-          head: pushedSha,
-          url: "https://github.com/example/repo/pull/77",
-        }),
         runGh: async (_t, endpoint) => {
           const reviewObj = {
             id: reviewId,
@@ -2588,4 +2623,75 @@ process.stdout.write(JSON.stringify(entry.body));
     unpushedSha,
   );
   assert.equal(current().prHead, pushedSha);
+
+  // 5. Missing PR number/URL counts as unreadable forge head -> head_mismatch.
+  failForgeRead = false;
+  store.update(current().id, { prUrl: null, resumePrNumber: null });
+  const missingPrProbe = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    accept: ["duplicate_thread", "budget"],
+  });
+  assert.equal(missingPrProbe.explicitResolution?.status, "warnings");
+  assert.ok(
+    missingPrProbe.explicitResolution?.warnings.some(
+      (w) => w.id === "head_mismatch",
+    ),
+  );
+});
+
+test("review round 9: run.start never calls legacy verifyPr when verifyPrIdentity is absent and returns head_mismatch", async (t) => {
+  let verifyPrCalled = 0;
+  const { root, store, current, command, runtime } = await fixture(t, {
+    verifyPrIdentity: undefined,
+    verifyPr: async () => {
+      verifyPrCalled += 1;
+      return {
+        head: "f".repeat(40),
+        url: "https://github.com/example/repo/pull/99",
+      };
+    },
+  });
+  const { initialSha } = await attachGitCheckout(
+    root,
+    store,
+    current().id,
+    "round9-git",
+  );
+  store.update(current().id, {
+    repository: "example/repo",
+    prUrl: "https://github.com/example/repo/pull/99",
+    prHead: initialSha,
+    resumePrNumber: 99,
+    phase: "awaiting_review",
+    profile: profile("worker-a", "model-alpha"),
+    agentId: "worker-1",
+    agentActive: false,
+  });
+  runtime.engine.profiles = [
+    profile("worker-a", "model-alpha"),
+    profile("rev-b", "model-beta"),
+  ];
+  store.setMeta("pool", [
+    {
+      profileId: "rev-b",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+
+  const probe = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+  });
+  assert.equal(verifyPrCalled, 0);
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  assert.ok(
+    probe.explicitResolution?.warnings.some((w) => w.id === "head_mismatch"),
+  );
 });
