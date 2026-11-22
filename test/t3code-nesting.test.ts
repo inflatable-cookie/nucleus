@@ -1145,8 +1145,8 @@ test("a nested role refuses a missing model on a settled provider before creatin
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
 });
 
-test("decisionParent routes an archived parent to the Inbox and keeps a disconnected host unknown", async (t) => {
-  const { host, server, spec } = await fixture(t);
+test("a decision linked to a task with a live parent still belongs to the Inbox (nucleus#1538)", async (t) => {
+  const { host, spec } = await fixture(t);
   const taskId = "synthetic-task";
   const fakeStore = {
     taskOrNull: (id: string) =>
@@ -1159,41 +1159,24 @@ test("decisionParent routes an archived parent to the Inbox and keeps a disconne
     version: 1,
     links: { tasks: [taskId] },
   } as unknown as import("../shared/contracts").Decision;
-  const lookup = (_hostId: string, id: string) => host.decisionParent(id);
 
-  assert.deepEqual(host.decisionParent(taskId), { state: "absent" });
-  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId), {
     kind: "inbox",
     hostId: host.hostId,
   });
 
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
-  assert.deepEqual(host.decisionParent(taskId), {
-    state: "parent",
-    sessionId: parent.sessionId,
-  });
-  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
-    kind: "task",
-    taskId,
-    hostId: host.hostId,
-    sessionId: parent.sessionId,
-  });
-
-  finishChildren(host, server);
-  await host.reconcileFinishedParents([
-    { id: taskId, hostId: host.hostId, phase: "done" } as Task,
-  ]);
-  assert.notEqual(parentOf(host)?.archivedAt, undefined);
-  assert.deepEqual(host.decisionParent(taskId), { state: "absent" });
-  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+  assert.ok(parent, "the task records its parent thread");
+  assert.equal(parent.taskId, taskId);
+  // The live parent changes nothing: the card is the Inbox's, never the task thread's.
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId), {
     kind: "inbox",
     hostId: host.hostId,
   });
 
   host.close();
-  assert.deepEqual(host.decisionParent(taskId), { state: "unknown" });
-  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId), {
     kind: "inbox",
     hostId: host.hostId,
   });

@@ -1638,7 +1638,7 @@ test("unconfirmed role launches snooze the verified parent and stay out of the I
     directory: inboxDir,
     bindingPath: join(inboxDir, "binding"),
   });
-  acp.surface.pendingDecisionKey = (id) =>
+  acp.surface.openDecisionKey = (id) =>
     pendingDecision && id === task.id ? pendingDecision : null;
   const runPass = () =>
     engine.withHost(host.hostId, () => pass.run(host.hostId));

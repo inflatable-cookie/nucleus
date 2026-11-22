@@ -400,16 +400,6 @@ export class T3CodeHost implements Host {
       await writeFile(this.modelCapturePath, capture + "\n", { mode: 0o600 });
     }
   }
-  /** Only this host's durable parent record can identify a task's ACP row. */
-  decisionParent(
-    taskId: string,
-  ): import("../../core/acp/decisions").ParentStatus {
-    if (!this.connected) return { state: "unknown" };
-    const parent = this.state.read().parents?.[taskId];
-    return !parent || parent.archivedAt
-      ? { state: "absent" }
-      : { state: "parent", sessionId: parent.sessionId };
-  }
   capabilities() {
     return {
       reportingViaMcp: false,
@@ -671,7 +661,7 @@ export class T3CodeHost implements Host {
     attention: TaskAttention,
   ): Promise<void> {
     if (!this.connected) return;
-    const pending = this.acp()?.pendingDecisionKey?.(taskId);
+    const pending = this.acp()?.openDecisionKey?.(taskId);
     const shown = pending
       ? { state: "attention" as const, cause: "Decision needs an operator" }
       : attention;
@@ -687,7 +677,7 @@ export class T3CodeHost implements Host {
     const acp = this.acp();
     return rows.filter(
       ({ task, attention }) =>
-        attention.state === "active" && !acp?.pendingDecisionKey?.(task.id),
+        attention.state === "active" && !acp?.openDecisionKey?.(task.id),
     ).length;
   }
   /**
@@ -743,16 +733,15 @@ export class T3CodeHost implements Host {
         // and the served-`ui` record: the offer, the card and the hold are untouched.
         await this.inbox.serveQueuedUi();
       }
+      // A task thread keeps no decision card (Spec 032): this read only settles a card
+      // an earlier owner left there, so the decision reaches the Inbox instead.
       for (const parent of Object.values(state.parents ?? {})) {
-        if (!parent.archivedAt) {
-          const cards = await this.decisionCards.reconcile(
+        if (!parent.archivedAt)
+          await this.decisionCards.reconcile(
             parent.threadId,
             parent.workspaceId,
             { taskId: parent.taskId, sessionId: parent.sessionId },
           );
-          if (cards && this.acp()?.pendingDecisionKey?.(parent.taskId))
-            await this.decisionHold.reconcile(parent.threadId);
-        }
       }
     } catch (error) {
       if (isHostOperationTimeout(error))

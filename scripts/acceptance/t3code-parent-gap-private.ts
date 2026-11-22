@@ -696,26 +696,13 @@ async function main() {
       ],
     })) as { id: string }
   ).id;
-  // The host observes the parent's scope with no card present, so the next held poll raises it.
+  // The host observes the parent's scope with no card present: the next held poll would
+  // raise an offerable version, and must raise none for a decision the Inbox owns.
   await service.debug({
     target: "acp",
     method: "observedCards",
     args: [{ taskId: task.id }, []],
   });
-  const cardFor = (view: Projection | null) => {
-    if (!view) return null;
-    const pending = view.runtimeRequests.find(
-      (row) => row.kind === "user_input" && row.status === "pending",
-    );
-    if (!pending) return null;
-    const item = view.turnItems.find(
-      (row) =>
-        row.type === "user_input_request" && row.requestId === pending.id,
-    );
-    return item?.questions?.[0]?.id === `nucleus_${decisionId}_1`
-      ? pending.id
-      : null;
-  };
   const postedCards = (view: Projection | null) =>
     view
       ? view.turnItems.filter(
@@ -724,20 +711,16 @@ async function main() {
             row.questions?.[0]?.id === `nucleus_${decisionId}_1`,
         ).length
       : -1;
-  const card = await until(
-    async () => {
-      const view = await project(parent.threadId);
-      return cardFor(view) ? { requestId: cardFor(view)!, view } : null;
-    },
-    "the parent to raise the decision as a card",
-    120_000,
+  // A decision linked to the task never becomes a card on the task's thread: the
+  // pinned Inbox owns it, so a held parent poll raises nothing (Spec 032, nucleus#1538).
+  await delay(8_000);
+  const beforeRoll = await project(parent.threadId);
+  assert.ok(beforeRoll, "the parent projection is readable");
+  assert.equal(
+    postedCards(beforeRoll),
+    0,
+    "the task's parent raises no decision card",
   );
-  const postedBefore = postedCards(card.view);
-  note("parent-card-offered", {
-    decision: decisionId,
-    requestId: card.requestId,
-    parentRun: parentRun.id,
-  });
   await restartService(4_000);
   await delay(8_000);
   const afterGap = await project(parent.threadId);
@@ -745,17 +728,12 @@ async function main() {
   const parentRunAfter = afterGap.runs.find((row) => row.id === parentRun.id);
   assert.ok(
     parentRunAfter && activeStatuses.has(parentRunAfter.status as never),
-    "the parent's run stays live with the card open",
-  );
-  assert.equal(
-    cardFor(afterGap),
-    card.requestId,
-    "the same card stays live through the roll",
+    "the parent's run stays live with its decision open in the Inbox",
   );
   assert.equal(
     postedCards(afterGap),
-    postedBefore,
-    "the roll posts no further card",
+    0,
+    "the roll posts no decision card on the task's parent",
   );
   assert.equal(
     await decisionStatusOf(service, decisionId),
@@ -765,13 +743,12 @@ async function main() {
   assert.equal(
     sha256(bindingPath),
     binding,
-    "the same binding remains through the card's gap",
+    "the same binding remains through the decision's gap",
   );
-  note("parent-open-decision-roll", {
+  note("parent-decision-roll", {
     decision: decisionId,
-    requestId: card.requestId,
     parentRun: parentRun.id,
-    postedCards: postedBefore,
+    postedCards: postedCards(afterGap),
   });
 
   // The parent's binding and session never changed, and its one run stayed the held run.

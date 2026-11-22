@@ -1052,42 +1052,43 @@ expiry is not evidence that the original answer was never delivered.
 
 ## Operator decisions on T3
 
-An open decision linked to a T3 task goes to its recorded ACP parent when one is
-available; when its host confirms no eligible parent exists (before a parent is
-created or after a recorded parent is archived) it goes to that host's single
-pinned **Nucleus** inbox; and when a parent lookup answers `unknown` (for
-example, a disconnected host, an unreadable parent, or a different registered T3
-session) it falls back to the connected T3 host's pinned **Nucleus** inbox
-rather than pinning the unavailable host or leaving the decision offered nowhere
-(nucleus#1516). Other operator decisions also go to the inbox. No parent is
-created to ask a question. Opening, withdrawing or
-superseding a decision wakes the reconciliation sweep so the inbox refreshes its title and
-raises or settles cards without waiting for an unrelated wake. The
+Every open operator decision belongs to one host's pinned **Nucleus** inbox
+(Spec 032, Tom 2026-11-22). A task thread never shows a decision card and never
+holds its turn for one. A linked T3 task's host picks the Inbox, so a planner
+sign-off about that task reaches the host that owns the work; a decision that
+links no such T3 task belongs to the connected host's pinned **Nucleus** inbox.
+No parent is created to ask a question. A version bound to a task thread before
+this ruling moves to its Inbox on its next offer, and the sweep's read of the task
+thread settles and cancels the card left there; answered and withdrawn decisions
+are untouched. An Inbox card for a task-linked decision is titled with that
+task's reference and title, as the board's task link is. Opening, withdrawing or
+superseding a decision wakes the reconciliation sweep so the inbox refreshes its
+title and raises or settles cards without waiting for an unrelated wake. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,
 but cannot send a task message, report a run or exercise task controls. Re-minting
 replaces the authority record and revokes the previous credential. The inbox is
 not a role thread and retention and task archiving never select it.
 
-The service durably binds a decision version to the exact scope of its first offer
-before returning the form. A later parent does not move an Inbox offer, and a
-restart keeps the same owner. Fresh reads of the offering inbox and any known
-linked parent precede a first offer; a legacy pending card is adopted from
-positive T3 evidence before a competing scope can offer it, while a transient
-`unknown` parent status does not block an observed Inbox from offering and
-binding the version. An unknown card read never proves a card absent, and a
-bound version is re-offered only after its own scope is read again. Offer, count,
-callback authorization and card settlement use the same owner. An Inbox sign-off
-uses the ordinary authenticated T3 operator answer route and leaves independent
-task holds intact (nucleus#1433).
+The service durably binds a decision version to the exact Inbox of its first offer
+before returning the form. A later link change does not move an Inbox offer, and a
+restart keeps the same owner. A fresh read of the offering Inbox precedes a first
+offer, and a legacy pending card on that Inbox is adopted from positive T3
+evidence before anything else can offer the version. An unknown card read never
+proves a card absent, and a bound version is re-offered only after its own scope
+is read again. Offer, count, callback authorization and card settlement use the
+same owner. An Inbox sign-off uses the ordinary authenticated T3 operator answer
+route and leaves independent task holds intact (nucleus#1433).
 
-Each open decision version becomes its own `elicitation/create` form. The field id
-carries the decision id and version; its title, question and labelled options are
-shown by T3. Multiple cards can remain pending on one held turn. An accepted
-answer goes through the existing decision answer route as the authenticated T3
-operator; it is not a planner relay. A task with an open decision needs a person,
-so its row is unsnoozed and its parent is held or re-entered. Once the answer is
-recorded, ordinary attention projection decides whether the row snoozes again.
+Each open decision version becomes its own `elicitation/create` form on the Inbox
+thread. The field id carries the decision id and version; its title names the
+linked task, and the question and labelled options are shown by T3. Multiple cards
+can remain pending on one held turn. An accepted answer goes through the existing
+decision answer route as the authenticated T3 operator; it is not a planner relay.
+A task with an open decision needs a person, so its row stays unsnoozed and names
+the decision while the Inbox holds the card; the task's own thread is never held
+for it. Once the answer is recorded, ordinary attention projection decides whether
+the row snoozes again.
 
 The adapter reads each pending runtime request before settlement. An answer from
 another surface is sent to the same request as `runtime-request.respond` with the
@@ -1105,10 +1106,11 @@ What is offered is the service's reading of two facts, never an assumption:
 - the host's own read of T3. Each sweep reads the thread's pending runtime
   requests, settles the cards whose run or capability is gone, and records the
   ones still pending with their decision id and version
-  (`observedCards`, per inbox or per task parent). The offer names the open
-  versions whose cards that read confirms absent, so a lost card comes back on
-  the next held turn in the same inbox, binding and session. Offers and re-entry
-  wait for a successful observation when the thread's pending cards are unknown.
+  (`observedCards`). The offer names the open versions whose cards that read
+  confirms absent, so a lost card comes back on the next held turn in the same
+  inbox, binding and session. Offers and re-entry wait for a successful observation
+  when the thread's pending cards are unknown. A task thread's own read is used
+  only to settle a card an earlier owner left there.
   A card older than the thread's window is read from the full transcript so the
   sweep can settle a card that survives a T3 restart;
 - the operator's own dismissals. A cancel is the operator's only when it arrives
@@ -1118,8 +1120,8 @@ What is offered is the service's reading of two facts, never an assumption:
   that limit is not reset. A card the client settles after its turn ended (across
   a callback-socket replacement, say) is a settlement the host made from its read,
   records nothing, and so never spends the version's re-offer. A version whose
-  re-offer is spent no longer holds a task parent or names the inbox, because the
-  offer key applies the same rule everywhere.
+  re-offer is spent no longer names the inbox, and no longer marks its task's row
+  as waiting on a decision, because the offer key applies the same rule everywhere.
 
 An answer whose delivery is unknown is never resent. The decision stays open, the
 version is offered again on the next held turn, and the operator's next answer is
@@ -1371,11 +1373,11 @@ Those runs predate the proof's agent-stderr capture and its bounded fault-count 
 so their cause is not confirmed. The window now lets a late-landing line count, and a
 failure prints the parent's runs, messages and the agent's stderr. Three consecutive runs
 at `8afefd567` passed, and the agent log of a passing run shows one fault line per outage
-with the turn held. The same proof also covers the parent's own open decision: a task-scoped
-decision the held parent raises as a card stays the same card, on the same running run,
-through a roll, with one card posted and the decision still open. The proof raises it by
-marking the parent's scope observed through the service's own ACP surface, since the
-service's adapter runs in another process.
+with the turn held. The same proof also covers a decision linked to the task: the held
+parent posts no card for it (the Inbox owns it, Spec 032), the parent's run stays live and
+the decision stays open through a roll, and the binding is unchanged. The proof marks the
+parent's scope observed and confirms no card is posted, since the service's adapter runs
+in another process.
 
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
