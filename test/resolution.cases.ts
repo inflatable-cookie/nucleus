@@ -1670,7 +1670,7 @@ test("applied ordinary review retains its reader across the next exact-head roun
     await f.report("changes_required");
     assert.deepEqual(calls, []);
     assert.equal(f.current().resolution.reviewerAgentId, first.agentId);
-    assert.equal(f.current().resolution.reviewerProfile?.id, "reviewer");
+    assert.equal(f.current().resolution.reviewerProfile?.id, "coordinator", "at High the first reviewer runs one bracket below the worker");
     assert.equal(f.current().agentId, "worker");
     await f.engine.wake();
     assert.equal(f.run().role, "revision");
@@ -2360,36 +2360,43 @@ test("re-review replaces a retained reviewer whose profile or subscription becam
           scopes: ["general"],
         },
       ]);
+      // At High the retained reviewer runs on the Mechanical bracket, so the
+      // outage covers its own profile, not the Worker reviewer profile.
+      const retainedId = old.profile?.id ?? "reviewer";
       if (unavailable === "disabled")
         f.store.setMeta(
           "pool",
           f.store
             .pool()
             .map((p) =>
-              p.profileId === "reviewer" ? { ...p, enabled: false } : p,
+              p.profileId === retainedId ? { ...p, enabled: false } : p,
             ),
         );
       if (unavailable === "catalog")
-        f.engine.profiles[1] = {
-          ...f.engine.profiles[1],
-          available: false,
-          problem: "provider disabled",
-        };
-      if (unavailable === "subscription")
+        f.engine.profiles = f.engine.profiles.map((p) =>
+          p.id === retainedId
+            ? { ...p, available: false, problem: "provider disabled" }
+            : p,
+        );
+      if (unavailable === "subscription") {
+        const group =
+          f.store.pool().find((p) => p.profileId === retainedId)?.group ??
+          "review";
         f.store.db.prepare("INSERT INTO availability VALUES(?,?)").run(
-          "review",
+          group,
           JSON.stringify({
-            group: "review",
+            group,
             unavailable: true,
             reason: "credit exhausted",
             retryAt: null,
           }),
         );
+      }
       f.setHead("d".repeat(40));
       await f.report("ready_for_review");
       await f.engine.wake();
       assert.equal(f.run().role, "reviewer");
-      assert.equal(f.run().profile?.id, "coordinator", "at High the replacement reviewer runs one bracket below the worker");
+      assert.equal(f.run().profile?.id, backup.id);
       assert.notEqual(f.run().agentId, old.agentId);
       assert.equal(f.run().workspaceId, old.workspaceId);
       assert.equal(f.current().resolution.roleReplacements, 1);
@@ -2457,10 +2464,12 @@ test("a stopped callback-free reviewer is replaced when its stored subscription 
         scopes: ["general"],
       },
     ]);
+    // At High the retained reviewer runs on the Mechanical bracket, so the pause
+    // covers the coordinator group its run charged, not the Worker reviewer group.
     f.store.db.prepare("INSERT INTO availability VALUES(?,?)").run(
-      "review",
+      "coordinate",
       JSON.stringify({
-        group: "review",
+        group: "coordinate",
         unavailable: true,
         reason: "disabled by operator",
         retryAt: null,
@@ -2474,7 +2483,7 @@ test("a stopped callback-free reviewer is replaced when its stored subscription 
     assert.equal(f.current().resolution.reviewerAgentId, null);
     await f.engine.wake();
     assert.equal(f.run().role, "reviewer");
-    assert.equal(f.run().profile?.id, "coordinator", "at High the replacement reviewer runs one bracket below the worker");
+    assert.equal(f.run().profile?.id, backup.id, "with the Mechanical bracket paused, the nearest permitted bracket above serves");
     assert.equal(f.run().workspaceId, old.workspaceId);
     assert.equal(f.run().head, old.head);
     assert.equal(f.current().resolution.roleReplacements, 1);
@@ -8123,7 +8132,7 @@ test("reviewer quota failure replaces only the reviewer, keeps workspace and rej
     });
     await f.engine.wake();
     assert.equal(f.store.run(old.id)?.status, "superseded");
-    assert.equal(f.run().profile?.id, "coordinator", "at High the replacement reviewer runs one bracket below the worker");
+    assert.equal(f.run().profile?.id, backup.id);
     assert.equal(f.run().workspaceId, old.workspaceId);
     assert.equal(f.current().agentId, "worker");
     assert.equal(f.current().resolution.roleReplacements, 1);

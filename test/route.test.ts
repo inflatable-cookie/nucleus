@@ -811,7 +811,7 @@ test("a workerless review entry honours the owner-routed reviewer on a declared 
         } as never,
         "reviewer",
       )?.profile.id,
-      "luna",
+      "coord",
       "an optional request never waives the current author model",
     );
     // A real Queue author whose current model was never recorded is unknown, so no
@@ -1601,7 +1601,7 @@ for (const supplied of [false, true])
       const review = f.creates.find((run) => run.role === "reviewer");
       assert.ok(review);
       assert.equal(review.head, publishedHead);
-      assert.equal(review.profile?.id, "luna");
+      assert.equal(review.profile?.id, "coord");
       assert.notEqual(review.profile?.model, replacement.profile?.model);
       assert.ok(verified.every((number) => number === 1));
       assert.equal(f.events("pr_identity_repaired").length, 0);
