@@ -241,9 +241,9 @@ export function useInboxBoard({
         group: api.RESERVED_LEAD_TAGS[tag] ? "Reserved" : "Tags",
       })),
   ];
-  // Planning's count is the open lanes in scope, not cards: every active lane
-  // a selected project lists, counted once (nucleus#1546). The tag filter
-  // never narrows it, like the rest of the menu counts.
+  // The open-lane count is not cards: every active lane a selected project
+  // lists, counted once (nucleus#1546). The tag filter never narrows it,
+  // like the rest of the menu counts.
   const planning = useMemo(
     () =>
       openScopeLanes(state?.projects ?? [], state?.lanes ?? [], selection)
