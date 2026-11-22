@@ -241,6 +241,13 @@ export class RuntimePlanning {
   promoteLead(input: Parameters<Leads["promote"]>[0]) {
     return this.context.leads.promote(input);
   }
+  /** Nucleus#1543: parked leads leave the to-do list until a recheck time or an explicit unpark. */
+  parkLead(input: Parameters<Leads["park"]>[0]) {
+    return this.context.leads.park(input);
+  }
+  unparkLead(input: Parameters<Leads["unpark"]>[0]) {
+    return this.context.leads.unpark(input);
+  }
   async checkLead(
     input: {
       id: string;

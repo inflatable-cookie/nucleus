@@ -35,5 +35,7 @@ export function papercutFromLead(lead: Lead): Papercut {
     filedBy: lead.author, filedAt: lead.createdAt, state: lead.state, taskId: target?.reference ?? null,
     closedReason: lead.closure?.reason ?? null, draftId: lead.papercut.draftId,
     note: lead.closure?.note ?? null, closedAt: lead.closedAt, source: lead.papercut.source, lanes: lead.lanes,
+    // Present only while parked or due, so an ordinary papercut's record and digest stay as they were.
+    ...(lead.parked ? { parked: lead.parked } : {}), ...(lead.recheck ? { recheck: lead.recheck } : {}),
   });
 }

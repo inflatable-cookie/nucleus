@@ -527,6 +527,7 @@ export class Notices {
       if (
         n.kind !== "lane_drain" &&
         n.kind !== "next_aim" &&
+        n.kind !== "lead_recheck" &&
         n.kind !== "triage"
       )
         continue;
@@ -535,6 +536,8 @@ export class Notices {
       const episodeLive = () => {
         try {
           // A triage prompt is live while its batch is the project's outstanding batch.
+          // A recheck prompt is one-shot: the unpark that made it is already committed (Nucleus#1543).
+          if (n.kind === "lead_recheck") return true;
           if (n.kind === "triage")
             return Boolean(triageNoticeProject(this.store, n));
           if (scope === "lane-drain")
@@ -592,7 +595,7 @@ export class Notices {
       }
       if (n.status === "pending" && n.kind !== "triage") {
         const project =
-          n.kind === "next_aim"
+          n.kind === "next_aim" || n.kind === "lead_recheck"
             ? this.store.projectByKey(key)
             : this.store.projects().find((candidate) => {
                 try {
@@ -681,14 +684,14 @@ export class Notices {
           .pendingNotices()
           .filter(
             (n) =>
-              !["host_outage", "lane_drain", "next_aim", "qa"].includes(n.kind),
+              !["host_outage", "lane_drain", "next_aim", "lead_recheck", "qa"].includes(n.kind),
           )
           .map((n) => this.store.task(n.taskId)),
       ];
       for (const n of this.store.pendingNotices()) {
         if (
           n.status !== "pending" ||
-          ["host_outage", "lane_drain", "next_aim", "qa"].includes(n.kind)
+          ["host_outage", "lane_drain", "next_aim", "lead_recheck", "qa"].includes(n.kind)
         )
           continue;
         if (
@@ -710,7 +713,7 @@ export class Notices {
       for (const n of this.store.pendingNotices()) {
         if (
           n.status !== "pending" ||
-          ["host_outage", "lane_drain", "next_aim", "qa"].includes(n.kind)
+          ["host_outage", "lane_drain", "next_aim", "lead_recheck", "qa"].includes(n.kind)
         )
           continue;
         if (
@@ -834,6 +837,7 @@ export class Notices {
         n.kind === "host_outage" ||
         n.kind === "lane_drain" ||
         n.kind === "next_aim" ||
+        n.kind === "lead_recheck" ||
         n.kind === "qa"
       )
         continue;

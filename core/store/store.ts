@@ -1088,8 +1088,8 @@ export class Store {
   ): Papercut[] {
     return this.planningStore.listPapercuts(query);
   }
-  updatePapercut(record: Papercut): Papercut {
-    return this.planningStore.updatePapercut(record);
+  updatePapercut(record: Papercut, options?: { unpark?: boolean }): Papercut {
+    return this.planningStore.updatePapercut(record, options);
   }
   /**
    * One task's stored parts. Brief versions and reviews come from their own tables; the
@@ -1843,6 +1843,10 @@ export class Store {
   }
   openLeads(): Lead[] {
     return this.planningStore.openLeads();
+  }
+  /** Nucleus#1543: the open leads parked now. */
+  parkedLeads(): Lead[] {
+    return this.planningStore.parkedLeads();
   }
   updateLead(lead: Lead, author?: string): Lead {
     return this.planningStore.updateLead(lead, author);

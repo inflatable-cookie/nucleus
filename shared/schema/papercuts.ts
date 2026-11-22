@@ -1,3 +1,4 @@
+import { leadParkSchema, leadRecheckSchema } from "./parking";
 import { z } from "zod";
 import { laneKeyListSchema } from "../schema/task-primitives";
 import { papercutRepositorySchema, repositoryIdentityInputSchema } from "./repository-identity";
@@ -14,6 +15,9 @@ export const papercutSchema = z.object({
   note: z.string().nullable(), closedAt: z.string().nullable(),
   source: z.object({ file: z.string(), line: z.number().int().positive(), contentKey: z.string() }).strict().nullable(),
   lanes: laneKeyListSchema.default([]),
+  // Nucleus#1543: a parked papercut's park, present only while it is parked or its recheck is due.
+  parked: leadParkSchema.nullable().optional(),
+  recheck: leadRecheckSchema.nullable().optional(),
 }).strict();
 
 export type Papercut = z.infer<typeof papercutSchema>;

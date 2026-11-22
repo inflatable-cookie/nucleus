@@ -36,6 +36,23 @@ export const leadDrop = defineRpc({ name: "lead.drop", input: z.object({ id: z.s
 /** Undoes one mistaken drop in place: identity, content version, saved versions, checks and approval history are untouched, and the reopen plus the prior drop's disposition enter durable history. */
 export const leadReopen = defineRpc({ name: "lead.reopen", input: z.object({ id: z.string().min(1), reason: z.string().trim().min(1).max(4000), author: z.string().min(1) }).strict(), output: leadSchema });
 
+/**
+ * Nucleus#1543: take an open lead off the to-do list with a reason and an optional recheck time. The
+ * version is the one the caller read, so a stale park is refused. Papercuts park like leads.
+ */
+export const leadPark = defineRpc({ name: "lead.park", input: z.object({
+  id: z.string().min(1), version: z.number().int().positive(), reason: z.string().trim().min(1).max(4000),
+  revisitAt: z.preprocess((value) => (value === "" ? null : value), z.string().trim().nullable().optional()
+    .refine((value) => value == null || Number.isFinite(Date.parse(value)), "revisitAt must be an ISO date")
+    .transform((value) => (value == null ? null : new Date(value).toISOString()))),
+  author: z.string().min(1).default("operator"),
+}).strict(), output: leadSchema });
+
+/** Nucleus#1543: return a parked lead to the to-do list now. The version guard is the same as lead.park. */
+export const leadUnpark = defineRpc({ name: "lead.unpark", input: z.object({
+  id: z.string().min(1), version: z.number().int().positive(),
+}).strict(), output: leadSchema });
+
 /** Hand promotion to a question or knowledge change; task and draft targets arrive with one-step promotion. */
 export const leadPromote = defineRpc({ name: "lead.promote", input: z.object({ id: z.string().min(1), kind: z.enum(["question", "knowledge"]), reference: z.string().trim().min(1).max(4000) }).strict(), output: leadSchema });
 

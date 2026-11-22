@@ -120,12 +120,11 @@ export function triageDigest(lead: Lead): string {
   return createHash("sha256").update(JSON.stringify([lead.version, lead.title, lead.body, [...lead.lanes].sort(), [...lead.tags].sort(), lead.state, lead.baseBranch])).digest("hex");
 }
 
-/** A held record is never triaged automatically: a tag named `hold` is an intentional hold. */
-const isHeld = (lead: Lead) => lead.tags.includes("hold");
 const isPapercut = (lead: Lead) => Boolean(lead.papercut) || lead.tags.includes("papercut");
 
 export function triageEligible(lead: Lead, record: TriageRecordLedger | undefined, at: number): boolean {
-  if (lead.state !== "open" || isHeld(lead)) return false;
+  // A parked record is off the to-do list until its recheck time (Nucleus#1543).
+  if (lead.state !== "open" || lead.parked) return false;
   if (!record) return true;
   if (record.digest !== triageDigest(lead)) return true;
   const { current } = record;
@@ -324,6 +323,10 @@ export class TriageService {
           const note = closureNote(decision);
           if (isPapercut(lead)) this.cuts.close({ id: lead.id, reason: decision.closure === "duplicate" ? "deprecated" : "completed", note });
           else this.leads.dropWithin({ id: lead.id, reason: note });
+          item.outcome = this.outcome(input.by, decision, stamp, "applied", decision.reason, null);
+        } else if (decision.disposition === "defer") {
+          // Defer is a park with its recheck time (Nucleus#1543): the record leaves the to-do list until it comes due.
+          this.leads.parkWithin({ id: lead.id, reason: decision.reason, revisitAt: decision.revisitAt, author: input.by });
           item.outcome = this.outcome(input.by, decision, stamp, "applied", decision.reason, null);
         } else {
           item.outcome = this.outcome(input.by, decision, stamp, "applied", decision.reason, null);

@@ -43,6 +43,8 @@ async function mountScreen(over: {
     onPromote: async origin => { log.calls.push(`promote:${origin}`); return "Promoted as nucleus#900"; },
     onDrop: async reason => { log.calls.push(`drop:${reason}`); return "Dropped."; },
     onReopen: async reason => { log.calls.push(`reopen:${reason}`); return "Reopened."; },
+    onPark: async (reason, revisitAt) => { log.calls.push(`park:${reason}:${revisitAt ?? "none"}`); return "Parked."; },
+    onUnpark: async () => { log.calls.push("unpark"); return "Back on the to-do list."; },
     onPromoteTo: async (kind, reference) => { log.calls.push(`${kind}:${reference}`); return kind === "question" ? "Recorded as a question." : "Recorded as a knowledge change."; },
     ...over.actions,
   };

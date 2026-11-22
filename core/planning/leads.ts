@@ -66,8 +66,9 @@ export class Leads {
       const body = input.body ?? current.body;
       const baseBranch = input.baseBranch ?? current.baseBranch;
       if (title === current.title && body === current.body && baseBranch === current.baseBranch) return current;
+      // An edit is what the parked lead was waiting for, so it returns to the to-do list (Nucleus#1543).
       return this.store.updateLead({ ...current, title, body, baseBranch, version: current.version + 1,
-        digest: undefined, check: null, checkOperationId: null, approval: null, updatedAt: now() }, input.author);
+        digest: undefined, check: null, checkOperationId: null, approval: null, parked: null, recheck: null, updatedAt: now() }, input.author);
     });
   }
   get(input: { id: string }): Lead & { versions: LeadVersion[] } {
@@ -147,7 +148,39 @@ export class Leads {
     if (current.papercut) throw new Error("Use papercut.close for papercuts");
     if (current.state !== "open") throw new Error(`Only open leads can be dropped; this lead is ${current.state}`);
     const stamp = now();
-    return this.store.updateLead({ ...current, state: "dropped", dropReason: input.reason, updatedAt: stamp, closedAt: stamp });
+    return this.store.updateLead({ ...current, state: "dropped", dropReason: input.reason, parked: null, recheck: null, updatedAt: stamp, closedAt: stamp });
+  }
+  /**
+   * Nucleus#1543: takes an open lead or papercut off the to-do list with its reason and an optional
+   * recheck time. The version the caller read guards the write. Parking changes no content, so the
+   * content version, check and approval stay as they were; a re-park replaces the record.
+   */
+  park(input: { id: string; version: number; reason: string; revisitAt?: string | null; author: string }): Lead {
+    return this.store.transaction(() => {
+      const current = this.store.lead(input.id);
+      if (current.version !== input.version) throw new Error(`Lead changed to version ${current.version}; reload before parking`);
+      return this.parkWithin(input);
+    });
+  }
+  /** The park rule without its own transaction, for a caller that holds one (triage's defer disposition). */
+  parkWithin(input: { id: string; reason: string; revisitAt?: string | null; author: string }): Lead {
+    const current = this.store.lead(input.id);
+    if (current.state !== "open") throw new Error(`Only open leads can be parked; this lead is ${current.state}`);
+    const reason = input.reason.trim();
+    if (!reason) throw new Error("Parking needs a reason");
+    const revisitAt = input.revisitAt ?? null;
+    if (revisitAt !== null && !(Date.parse(revisitAt) > Date.now())) throw new Error("revisitAt must be a future ISO time");
+    const stamp = now();
+    return this.store.updateLead({ ...current, parked: { reason, revisitAt, by: input.author, at: stamp }, recheck: null, updatedAt: stamp });
+  }
+  /** Nucleus#1543: returns a parked lead to the to-do list now, under the same version guard as park. */
+  unpark(input: { id: string; version: number }): Lead {
+    return this.store.transaction(() => {
+      const current = this.store.lead(input.id);
+      if (current.version !== input.version) throw new Error(`Lead changed to version ${current.version}; reload before unparking`);
+      if (!current.parked) throw new Error("This lead is not parked");
+      return this.store.updateLead({ ...current, parked: null, recheck: null, updatedAt: now() });
+    });
   }
   /**
    * Restores one dropped lead to open in place, so a mistaken drop needs no new lead, content edit,
@@ -177,7 +210,7 @@ export class Leads {
       if (current.state === "dropped") throw new Error("Dropped leads cannot be promoted");
       if (current.targets.some(target => target.kind === input.kind && target.reference === input.reference)) return current;
       const stamp = now();
-      return this.store.updateLead({ ...current, state: "promoted", targets: [...current.targets, { kind: input.kind, repository: null, reference: input.reference, at: stamp }],
+      return this.store.updateLead({ ...current, state: "promoted", parked: null, recheck: null, targets: [...current.targets, { kind: input.kind, repository: null, reference: input.reference, at: stamp }],
         updatedAt: stamp, closedAt: current.closedAt ?? stamp });
     });
   }

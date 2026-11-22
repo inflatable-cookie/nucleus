@@ -8,6 +8,7 @@ import { type CapabilityLevel, type Papercut } from "../../shared/contracts";
 import { operationStateLabel } from "../../shared/operations";
 import { DetailField, RecordNotice, type BoardAct, type RecordNoticeValue } from "../task/parts";
 import { ModalAction, RecordModal } from "./record-modal";
+import { ParkPanel } from "../park-controls";
 import { type as typeScale, space } from "../design";
 
 const papercutPromoteReason = (cut: Papercut) => cut.state === "open" ? undefined : cut.state === "promoted" ? "Already promoted" : "Papercut is closed";
@@ -16,6 +17,7 @@ const papercutCloseReason = (cut: Papercut) => cut.state === "closed" ? "Already
 /** The papercut detail dialog. It owns its edit form, chosen complexity and close note. */
 export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordNotice, setRecordNotice, laneName, onClose, c, inline = false }: { inline?: boolean; id: string; compact: boolean; busy: boolean; act: BoardAct; recordNotice: RecordNoticeValue | null; setRecordNotice: (notice: RecordNoticeValue | null) => void; laneName: (key: string) => string; onClose: () => void; c: Colors }) {
   const fetchPapercut = useRpc(api.papercutGet), editPapercut = useRpc(api.papercutEdit), promotePapercut = useRpc(api.papercutPromoteTask), closePapercut = useRpc(api.papercutClose);
+  const parkLead = useRpc(api.leadPark), unparkLead = useRpc(api.leadUnpark);
   const [closeNote,setCloseNote] = useState("");
   // Spec 053: a promoted papercut names its complexity; nothing is preselected.
   const [papercutComplexity, setPapercutComplexity] = useState<CapabilityLevel | null>(null);
@@ -268,6 +270,31 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                             kind: "ok",
                             text: `Promoted as ${result.reference}`,
                           });
+                      }, "record")
+                    }
+                  />
+                </View>
+                {/* Nucleus#1543: a papercut parks like a lead; an open one can park, and a parked one unparks. */}
+                <View style={{ gap: space.xs, paddingTop: space.xxs }}>
+                  <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Parking</Text>
+                  <ParkPanel
+                    c={c}
+                    busy={busy}
+                    parked={papercutDetail.parked ?? null}
+                    recheck={papercutDetail.recheck ?? null}
+                    canPark={papercutDetail.state === "open"}
+                    parkReason={papercutDetail.state === "open" ? null : "Only open papercuts can be parked"}
+                    unparkReason={null}
+                    onPark={(reason, revisitAt) =>
+                      void act(async () => {
+                        await parkLead({ id: papercutDetail.id, version: papercutDetail.version, reason, revisitAt, author: "operator (board)" });
+                        setRecordNotice({ kind: "ok", text: revisitAt ? "Parked; it returns to the list for its recheck." : "Parked." });
+                      }, "record")
+                    }
+                    onUnpark={() =>
+                      void act(async () => {
+                        await unparkLead({ id: papercutDetail.id, version: papercutDetail.version });
+                        setRecordNotice({ kind: "ok", text: "Back on the to-do list." });
                       }, "record")
                     }
                   />

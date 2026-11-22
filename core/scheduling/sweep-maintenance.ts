@@ -10,6 +10,7 @@ import {
 } from "../store/store";
 import { runThreadRetention } from "../workspaces/thread-retention";
 import { evaluateTriage } from "../planning/triage";
+import { unparkDueLeads } from "../planning/parking";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -191,6 +192,13 @@ export class SweepMaintenance {
     // Nucleus#1420: opted-in projects triage their open leads and papercuts; at most a minute apart, one batch per project.
     if (!paused && at - (this.store.getMeta<number>("lastTriageAt") ?? 0) >= 60_000) {
       this.store.setMeta("lastTriageAt", at);
+      // Nucleus#1543: a parked lead whose recheck is due returns to the to-do list before triage reads it.
+      try {
+        unparkDueLeads(this.store, at);
+        this.store.setMeta("parkingError", "");
+      } catch (error) {
+        this.store.setMeta("parkingError", String(error));
+      }
       try {
         evaluateTriage(this.store, at);
         this.store.setMeta("triageError", "");

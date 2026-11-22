@@ -16,7 +16,7 @@ export interface SourcePromotionServices {
   leadVersionDigestsBeforeLatest(id: string): string[];
   papercut(id: string): Papercut;
   updateLead(lead: Lead): Lead;
-  updatePapercut(record: Papercut): Papercut;
+  updatePapercut(record: Papercut, options?: { unpark?: boolean }): Papercut;
   outcome(taskId: string): Outcome | null;
   numberedTask(data: string): Task;
   existing(input: Submission): Task | null;
@@ -100,7 +100,7 @@ export class StoreSourcePromotion {
           throw new Error("Lead approval or check changed before promotion");
         const task = this.services.insert(submission, hostId, lead.body, planningBase, { ...initial, papercutTask: lead.tags.includes("papercut") }, undefined, origin);
         const stamp = now();
-        this.services.updateLead({ ...lead, state: "promoted", targets: [...lead.targets,
+        this.services.updateLead({ ...lead, state: "promoted", parked: null, recheck: null, targets: [...lead.targets,
           { kind: "task", repository, reference: task.id, at: stamp }], updatedAt: stamp, closedAt: lead.closedAt ?? stamp });
         return task;
       }
@@ -109,7 +109,7 @@ export class StoreSourcePromotion {
       if (cut.state !== "open" || `sha256:${digest(submission.brief!.text)}` !== approvedDigest)
         throw new Error("Papercut changed before promotion");
       const task = this.services.insert(submission, hostId, submission.brief!.text, planningBase, initial, undefined, origin);
-      this.services.updatePapercut({ ...cut, state: "promoted", taskId: task.id, draftId: null });
+      this.services.updatePapercut({ ...cut, state: "promoted", taskId: task.id, draftId: null }, { unpark: true });
       return task;
     });
   }
@@ -151,7 +151,7 @@ export class StoreSourcePromotion {
       this.services.update(taskId, { papercutTask: true }, "papercut_source_claimed", input.planningSource!.id);
     const source = input.planningSource!, lead = this.services.lead(source.id), stamp = now();
     const repository = lead.repositories.find(matches => matches.path === input.repoPath)!.origin;
-    this.services.updateLead({ ...lead, state:"promoted", targets:[...lead.targets,
+    this.services.updateLead({ ...lead, state:"promoted", parked: null, recheck: null, targets:[...lead.targets,
       {kind:"task",repository,reference:taskId,at:stamp}], updatedAt:stamp, closedAt:lead.closedAt ?? stamp });
   }
 

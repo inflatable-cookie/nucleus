@@ -1746,6 +1746,12 @@ export class QueueRuntime {
   promoteLead(input: Parameters<Leads["promote"]>[0]) {
     return this.planning.promoteLead(input);
   }
+  parkLead(input: Parameters<Leads["park"]>[0]) {
+    return this.planning.parkLead(input);
+  }
+  unparkLead(input: Parameters<Leads["unpark"]>[0]) {
+    return this.planning.unparkLead(input);
+  }
   async checkLead(
     input: {
       id: string;

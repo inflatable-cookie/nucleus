@@ -8,6 +8,8 @@ import { formatLocalDateTime } from "../shared/date-time";
 import { Button, Disclosure, Field, row, type Colors } from "./controls";
 import { radius, roles, space, type } from "./design";
 import { Readable } from "./readable-text";
+import { ParkFields, ParkedNote } from "./park-controls";
+import { defaultRecheckDate, recheckIsoFromDate } from "../shared/parking";
 
 /** The lead record as read. `data` is undefined until the first read completes, so loading never looks empty. */
 export type LeadRead = { data?: LeadDetail; error?: string };
@@ -55,6 +57,9 @@ export type LeadActions = {
   onPromote: (origin: string) => Promise<string>;
   onDrop: (reason: string) => Promise<string>;
   onReopen: (reason: string) => Promise<string>;
+  /** Nucleus#1543: `revisitAt` is null for a park with no recheck day. */
+  onPark: (reason: string, revisitAt: string | null) => Promise<string>;
+  onUnpark: () => Promise<string>;
   onPromoteTo: (kind: "question" | "knowledge", reference: string) => Promise<string>;
 };
 const unloaded: LeadActions = {
@@ -63,6 +68,8 @@ const unloaded: LeadActions = {
   onPromote: async () => { throw new Error("The lead has not loaded yet"); },
   onDrop: async () => { throw new Error("The lead has not loaded yet"); },
   onReopen: async () => { throw new Error("The lead has not loaded yet"); },
+  onPark: async () => { throw new Error("The lead has not loaded yet"); },
+  onUnpark: async () => { throw new Error("The lead has not loaded yet"); },
   onPromoteTo: async () => { throw new Error("The lead has not loaded yet"); },
 };
 
@@ -92,6 +99,8 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
   const [details, setDetails] = useState(false);
   const [shownVersions, setShownVersions] = useState(LEAD_VERSION_PAGE);
   const [drop, setDrop] = useState(""), [reopen, setReopen] = useState(""), [reference, setReference] = useState("");
+  // Nucleus#1543: the park reason and the day to check again, which starts two weeks out.
+  const [parkNote, setParkNote] = useState(""), [parkDay, setParkDay] = useState(() => defaultRecheckDate());
   // The checked version's own brief, read on demand: earlier versions arrive as metadata only.
   const [checkedRead, setCheckedRead] = useState<{ version: number; text?: string; error?: string } | null>(null);
   const lead = read.data;
@@ -141,8 +150,8 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
   </View>;
 
   const checkView = leadCheckView(lead), approvalView = leadApprovalView(lead), brief = briefParts(lead.body);
-  const { onCheck, onApprove, onPromote, onDrop, onReopen, onPromoteTo } = actions ?? unloaded;
-  const { check: checkReason, approve: approveReason, drop: dropReason, reopen: reopenReason, promoteTo: promoteToReason } = lead.actions;
+  const { onCheck, onApprove, onPromote, onDrop, onReopen, onPark, onUnpark, onPromoteTo } = actions ?? unloaded;
+  const { check: checkReason, approve: approveReason, drop: dropReason, reopen: reopenReason, promoteTo: promoteToReason, park: parkReason, unpark: unparkReason } = lead.actions;
 
   const checkBody = () => {
     if (checkView.kind === "pending") return <Text style={text}>A check is running. Its result replaces this text when it lands.</Text>;
@@ -196,6 +205,13 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
         {checkView.kind === "pending" ? "Check running" : checkView.kind === "none" ? "Not checked" : checkView.kind === "stale" ? `Check stale · version ${checkView.version}` : checkView.check.ok ? `Current check passed · version ${lead.version}` : `Current check failed · version ${lead.version}`}
         {" · "}{approvalView.kind === "none" ? "Not approved" : approvalView.kind === "stale" ? `Approval stale · version ${approvalView.approval.version}` : `Approved · version ${approvalView.approval.version}`}
       </Text>
+      {(lead.parked || lead.recheck) && <View style={{ gap: space.xxs }}>
+        <ParkedNote c={c} parked={lead.parked ?? null} recheck={lead.recheck ?? null} />
+        {lead.parked && <View style={row}>
+          <Button small c={c} text={running === "unpark" ? "Returning…" : "Unpark"} label="Return the lead to the to-do list" disabled={blocked || Boolean(unparkReason)} hint={unparkReason ?? undefined} onPress={() => void run("unpark", onUnpark)} />
+        </View>}
+        <NoticeLine notice={notices.unpark} label="Unpark" c={c} />
+      </View>}
       <View style={row}>
         <Button small c={c} text={running === "check" ? "Checking…" : "Check brief"} label="Check the brief" disabled={blocked || Boolean(checkReason)} hint={checkReason ?? undefined} onPress={() => void run("check", onCheck)} />
         <Button small c={c} text={running === "approve" ? "Approving…" : "Approve"} label="Approve the checked version" disabled={blocked || Boolean(approveReason)} hint={approveReason ?? undefined} onPress={() => void run("approve", onApprove)} />
@@ -243,6 +259,17 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
     <View accessibilityLabel={`More actions for ${lead.title}`}>
       <Disclosure c={c} label="More actions" expanded={more} onToggle={() => setMore(!more)} />
       {more && <View style={{ gap: space.sm, paddingTop: space.xs }}>
+        <View style={{ gap: space.xxs }}>
+          <ParkFields c={c} reason={parkNote} onReasonChange={setParkNote} date={parkDay} onDateChange={setParkDay} disabled={blocked || Boolean(parkReason)} />
+          <View style={row}>
+            <Button small c={c} text={running === "park" ? "Parking…" : "Park lead"} label="Park the lead"
+              disabled={blocked || Boolean(parkReason) || !parkNote.trim() || (Boolean(parkDay.trim()) && !recheckIsoFromDate(parkDay))}
+              hint={parkReason ?? (parkDay.trim() && !recheckIsoFromDate(parkDay) ? "Check again on needs a day after today, as YYYY-MM-DD, or blank" : undefined)}
+              onPress={() => void run("park", () => onPark(parkNote, parkDay.trim() ? recheckIsoFromDate(parkDay) : null))} />
+          </View>
+          {parkReason && <Text style={meta}>{parkReason}</Text>}
+          <NoticeLine notice={notices.park} label="Park" c={c} />
+        </View>
         <View style={{ gap: space.xxs }}>
           <Field c={c} label="Drop reason" value={drop} onChange={setDrop} disabled={blocked || Boolean(dropReason)} />
           <View style={row}>

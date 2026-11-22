@@ -34,8 +34,9 @@ export class Papercuts {
       const lead = this.store.lead(current.id);
       const body = papercutBody({ area, happened, impact, fix });
       this.store.preservePapercutVersion(lead, papercutBody(current));
+      // An edit returns a parked papercut to the to-do list (Nucleus#1543).
       this.store.updateLead({ ...lead, title, body,
-        papercut: { ...lead.papercut!, area, happened, impact, fix }, version: current.version + 1, updatedAt: new Date().toISOString() },
+        papercut: { ...lead.papercut!, area, happened, impact, fix }, version: current.version + 1, parked: null, recheck: null, updatedAt: new Date().toISOString() },
       input.author ?? "operator");
       return this.store.papercut(current.id);
     });
@@ -48,7 +49,7 @@ export class Papercuts {
     return this.store.transaction(() => {
       if (this.store.db.prepare("SELECT 1 FROM tasks WHERE id=?").get(taskId))
         this.store.update(taskId, { papercutTask: true }, "papercut_linked", current.id);
-      return this.store.updatePapercut({ ...current, state: "promoted", taskId });
+      return this.store.updatePapercut({ ...current, state: "promoted", taskId }, { unpark: true });
     });
   }
   /** Spec 026: the full lane list, checked whole against the papercut's repository. */
@@ -62,6 +63,6 @@ export class Papercuts {
   close(input: { id: string; reason: "completed" | "deprecated"; note: string }): Papercut {
     const current = this.store.papercut(input.id);
     if (current.state === "closed") throw new Error("Papercut already closed");
-    return this.store.updatePapercut({ ...current, state: "closed", closedReason: input.reason, note: input.note, closedAt: new Date().toISOString() });
+    return this.store.updatePapercut({ ...current, state: "closed", closedReason: input.reason, note: input.note, closedAt: new Date().toISOString() }, { unpark: true });
   }
 }

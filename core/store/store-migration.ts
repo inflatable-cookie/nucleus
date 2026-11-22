@@ -21,6 +21,8 @@ export const PROFILE_OPTION_MIGRATION_KEY = "profileOptionMigration";
 
 /** The record of the capability bracket migration's first run and of every run that changed something (nucleus#1385). */
 export const CAPABILITY_BRACKET_MIGRATION_KEY = "capabilityBracketMigration";
+/** The record of the hold-tag migration: each lead that became a park, and when (nucleus#1543). */
+export const LEAD_PARKING_MIGRATION_KEY = "leadParkingMigration";
 
 /** The archive-key facts a migration reads and prunes; retention owns them. */
 export interface MigrationHooks {
@@ -237,6 +239,52 @@ export class StoreMigration {
           AND (json_extract(data,'$.error') LIKE 'delivery failed:%' OR EXISTS (
             SELECT 1 FROM events WHERE events.taskId=task_messages.fromTaskId AND events.kind='agent_message_sent'
               AND instr(events.detail,task_messages.id || ':')=1 AND events.detail LIKE '%; delivered'))`);
+    });
+  }
+
+  /**
+   * Nucleus#1543 (Tom, 2026-11-22): a park replaces the `hold` tag. Each lead still tagged `hold`
+   * becomes parked with the reason "Held before parking existed" and no recheck date, and loses
+   * the tag. Idempotent on every open: a clean store is scanned and left as it was, and the record
+   * lists each lead the migration changed.
+   */
+  migrateHoldTagsToParked(): void {
+    const rows = this.db
+      .prepare(
+        "SELECT id, data FROM leads WHERE EXISTS (SELECT 1 FROM json_each(leads.data,'$.tags') WHERE value='hold')",
+      )
+      .all();
+    if (!rows.length) return;
+    const at = new Date().toISOString();
+    const update = this.db.prepare("UPDATE leads SET data=? WHERE id=?");
+    const changes: Array<{ id: string; title: string }> = [];
+    for (const row of rows) {
+      // The raw record is rewritten as it is stored, so a stripped body stays stripped.
+      const lead = JSON.parse(String(row.data)) as {
+        title: string;
+        tags: string[];
+        parked?: unknown;
+      };
+      const next = {
+        ...lead,
+        tags: lead.tags.filter((tag) => tag !== "hold"),
+        parked: lead.parked ?? {
+          reason: "Held before parking existed",
+          revisitAt: null,
+          by: "migration",
+          at,
+        },
+      };
+      update.run(JSON.stringify(next), String(row.id));
+      changes.push({ id: String(row.id), title: lead.title });
+    }
+    this.core.advanceLeadRevision();
+    const previous = this.core.getMeta<{ at: string; changes: typeof changes }>(
+      LEAD_PARKING_MIGRATION_KEY,
+    );
+    this.core.setMeta(LEAD_PARKING_MIGRATION_KEY, {
+      at,
+      changes: [...(previous?.changes ?? []), ...changes],
     });
   }
 

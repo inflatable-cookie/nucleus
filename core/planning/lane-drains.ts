@@ -60,7 +60,8 @@ export class LaneDrainPass {
       const tasks = this.store.uiTasks();
       const views = this.store.laneViews();
       const byKey = new Map(views.map(view => [view.key, view]));
-      const leads = this.store.openLeads();
+      // A parked lead is off the to-do list, so it does not keep its lane from draining (Nucleus#1543).
+      const leads = this.store.openLeads().filter(lead => !lead.parked);
       const laneInputs: LaneDrainInput[] = [];
       const projectInputs: ProjectDrainInput[] = [];
       const claimed = new Set<string>();

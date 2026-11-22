@@ -26,6 +26,12 @@ function leadDropReason(lead: LeadStatusFacts): string | undefined {
   if (lead.papercut) return "Close a papercut from its own record";
   if (lead.state !== "open") return `Only open leads can be dropped; this lead is ${lead.state.toLowerCase()}`;
 }
+function leadParkReason(lead: LeadStatusFacts): string | undefined {
+  if (lead.state !== "open") return `Only open leads can be parked; this lead is ${lead.state.toLowerCase()}`;
+}
+function leadUnparkReason(lead: LeadStatusFacts): string | undefined {
+  if (!lead.parked) return "This lead is not parked";
+}
 function leadReopenReason(lead: LeadStatusFacts): string | undefined {
   if (lead.state !== "dropped") return "Only a dropped lead can be reopened";
   if (lead.papercut) return "A papercut is never reopened by this action";
@@ -42,6 +48,8 @@ export function leadActions(lead: LeadStatusFacts) {
     approve: leadApproveReason(lead) ?? null,
     drop: leadDropReason(lead) ?? null,
     reopen: leadReopenReason(lead) ?? null,
+    park: leadParkReason(lead) ?? null,
+    unpark: leadUnparkReason(lead) ?? null,
     promoteTo: leadPromoteToReason(lead) ?? null,
     promote: lead.repositories.map(repo => ({ origin: repo.origin, reason: leadPromoteReason(lead, repo.origin) ?? null })),
   };

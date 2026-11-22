@@ -114,7 +114,7 @@ export function roadmapView(input: { entries: PlanEntry[]; unplanned: PlanEntry[
       lane: entry.lane, title: lane?.title ?? entry.lane, aim: lane?.aim ?? '', note: entry.note, horizon: entry.horizon, doneWhen: entry.doneWhen ?? '',
       doneWhenMissing: entry.horizon !== 'later' && !entry.doneWhen?.trim(),
       tasksDone: lane?.terminalCount ?? 0, tasksLive: lane ? Object.values(lane.liveByPhase).reduce((sum, count) => sum + count, 0) : 0,
-      openLeads: input.leads.filter(lead => lead.state === 'open' && lead.lanes.includes(entry.lane)).length,
+      openLeads: input.leads.filter(lead => lead.state === 'open' && !lead.parked && lead.lanes.includes(entry.lane)).length,
       lastActivityAt: lane?.lastActivityAt ?? null, drained: lane?.drain ? { since: lane.drain.since } : null,
     };
   };

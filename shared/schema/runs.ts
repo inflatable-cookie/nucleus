@@ -317,6 +317,7 @@ export const noticeSchema = z.object({
       "hold_release",
       "host_outage",
       "lane_drain",
+      "lead_recheck",
       "next_aim",
       "owner_change",
       "prerequisite",
