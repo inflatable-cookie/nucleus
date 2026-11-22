@@ -146,6 +146,7 @@ export function TriageLeadCard({
   c,
   onSelectLead,
   onSelectPapercut,
+  showKindWord = true,
 }: {
   lead: BoardLead;
   projectForRepository?: (
@@ -157,6 +158,11 @@ export function TriageLeadCard({
   c: Colors;
   onSelectLead: (id: string) => void;
   onSelectPapercut: (id: string) => void;
+  /**
+   * Single-kind lists (Leads, Papercuts) drop the kind word, so line 1 starts
+   * with the project; lists that mix kinds keep it. Task references stay either way.
+   */
+  showKindWord?: boolean;
 }) {
   const kind = triageKind(lead);
   const status = triageStatus(lead);
@@ -166,7 +172,7 @@ export function TriageLeadCard({
       label={`${kindWord}: ${lead.title}, ${statusLabel(status)}`}
       c={c}
       kind={kind}
-      meta={kindWord}
+      meta={showKindWord ? kindWord : null}
       project={
         <LeadProjectEyebrow
           repositories={lead.repositories}

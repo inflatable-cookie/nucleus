@@ -656,7 +656,10 @@ test("026-12a every inbox card renders through the shared board card, and the li
   assert.match(list, /onLayout=\{\(event\) =>/);
   assert.match(list, /onContentSizeChange=\{\(_width, height\) =>/);
   assert.match(list, /onScroll=\{\(event\) =>/);
-  assert.doesNotMatch(list, /const visible = page \? page\.visible : section\.cards;/);
+  assert.doesNotMatch(
+    list,
+    /const visible = page \? page\.visible : section\.cards;/,
+  );
   assert.doesNotMatch(list, /…and \$\{page\.hidden\} more/);
   // Swim-lane rows, kanban columns and their stubs are gone (Tom, 2026-11-08; 2026-11-21).
   assert.doesNotMatch(
@@ -988,12 +991,16 @@ test("Triage cards: one state line per lead or papercut, operator order, and pag
   assert.equal(line(card("no-area", { tags: ["papercut"] })), "Open");
   assert.equal(triageKind(cut as never), "papercut");
   assert.equal(triageKind(idle as never), "lead");
-  const many = Array.from({ length: 10 }, (_, index) =>
+  const many = Array.from({ length: 30 }, (_, index) =>
     card(`cut-${index}`, { tags: ["papercut"] }),
   );
   const page = triagePage(many, triagePageSize);
-  assert.equal(page.visible.length, 8, "the first page holds eight cards");
-  assert.equal(page.hidden, 2, 'the rest wait behind the "…and N more" card');
+  assert.equal(
+    page.visible.length,
+    25,
+    "the first page holds twenty-five cards",
+  );
+  assert.equal(page.hidden, 5, 'the rest wait behind the "…and N more" card');
   assert.equal(
     triagePage(many, triagePageSize * 2).hidden,
     0,

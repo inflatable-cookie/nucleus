@@ -278,7 +278,14 @@ export function InboxList({
     0,
   );
   useEffect(() => {
-    listMeasurements.current = { view, viewportHeight: 0, contentHeight: null };
+    // Switching views keeps the measured viewport height: the ScrollView does
+    // not resize, so its layout event never refires and only a content-size
+    // change can fill a short list. Only the content height resets.
+    listMeasurements.current = {
+      view,
+      viewportHeight: listMeasurements.current.viewportHeight,
+      contentHeight: null,
+    };
     loadedPage.current = { view, count: triagePageSize };
     setTriageShown(triagePageSize);
     setPapercutShown(triagePageSize);
@@ -472,6 +479,9 @@ export function InboxList({
             selected={selectedLeadId === card.id || openPapercutId === card.id}
             onSelectLead={(id) => onSelectLead(id, null)}
             onSelectPapercut={onSelectPapercut}
+            // The Leads and Papercuts views list one kind, so line 1 starts
+            // with the project; mixed lists keep the kind word.
+            showKindWord={view !== "leads" && view !== "papercuts"}
           />
         );
       default:

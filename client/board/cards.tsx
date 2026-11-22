@@ -228,8 +228,8 @@ export function StatusLine({ status, c }: { status: CardStatus; c: Colors }) {
       >
         <Text
           style={{
-            color: status.tone === "muted" ? c.foreground : color,
-            fontWeight: "600",
+            color,
+            fontWeight: "400",
           }}
         >
           {plainCardText(status.state)}
@@ -313,10 +313,10 @@ export const BoardCard = React.memo(function BoardCard({
             <Text
               numberOfLines={1}
               style={{
-                color: c.foreground,
+                color: c.foregroundMuted,
                 fontSize: typeScale.metadata.fontSize,
                 lineHeight: typeScale.metadata.lineHeight,
-                fontWeight: "600",
+                fontWeight: "400",
                 flexShrink: 0,
                 marginRight: space.xxs,
               }}

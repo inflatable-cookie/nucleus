@@ -1227,12 +1227,11 @@ const triageLead = (
   ...patch,
 });
 const triagePapercuts = (count: number) =>
-  Array.from({ length: count }, (_, index) => {
-    const letter = "abcdefghijklmnop"[index];
-    return triageLead(`cut-${letter}`, `Papercut ${letter}`, {
+  Array.from({ length: count }, (_, index) =>
+    triageLead(`cut-${index}`, `Papercut ${index}`, {
       tags: ["papercut"],
-    });
-  });
+    }),
+  );
 
 test("a long papercut and a long lead render as three-line rows: kind and project, a two-line title, one status line", async () => {
   await load();
@@ -1264,8 +1263,8 @@ test("a long papercut and a long lead render as three-line rows: kind and projec
       !text.includes("What happened"),
       "the body passage stays in the record",
     );
-    // Each row: the kind in words and the project on line 1, the title in up to two
-    // lines, then the one status line (nucleus#1515).
+    // Each row: the project on line 1 (a single-kind view drops the kind word),
+    // the title in up to two lines, then the one status line (nucleus#1515).
     for (const [title, view, kind, icon, status] of [
       [LONG_CUT, "Papercuts", "Papercut", "Scissors", "Open · board"],
       [LONG_TITLE, "Leads", "Lead", "Lightbulb", "Checked · awaiting approval"],
@@ -1276,9 +1275,25 @@ test("a long papercut and a long lead render as three-line rows: kind and projec
       const rowText = nodeText(rowNode);
       assert.match(
         rowText,
-        new RegExp(`^\\s*${kind}\\s+App\\s`),
-        "line 1 reads the kind, then the project",
+        /^\s*App\s/,
+        "line 1 starts with the project; the single-kind view drops the kind word",
       );
+      const lineTexts = (rowNode as HostNode).children.flatMap(function texts(
+        node: HostNode | string,
+      ): string[] {
+        if (typeof node === "string") return [node];
+        if (
+          node.type === "Text" &&
+          node.children.every((child) => typeof child === "string")
+        )
+          return [node.children.join("")];
+        return node.children.flatMap(texts);
+      });
+      assert.ok(
+        !lineTexts.includes(kind),
+        "the kind word stays in the accessible label, not the visible row",
+      );
+      assert.ok(lineTexts.includes("App"), "line 1 still names the project");
       assert.match(
         rowText,
         new RegExp(`${status.replace(" · ", "\\s+· ")}\\s*$`),
@@ -1316,14 +1331,14 @@ test("Papercuts load the next page near the end and keep the real total", async 
       invokeWith(
         board([]),
         async () => ({ tasks: [], hasMore: false }),
-        triagePapercuts(10),
+        triagePapercuts(30),
       ),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Papercuts, 10")));
+    await settle(() => Boolean(tree.query("Papercuts, 30")));
     openView(tree, "Papercuts");
-    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 8);
-    assert.equal(tree.raw.text().includes("…and 2 more"), false);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 25);
+    assert.equal(tree.raw.text().includes("…and 5 more"), false);
     const list = tree.raw
       .ofType("ScrollView")
       .find((node) => node.props.onScroll);
@@ -1337,8 +1352,8 @@ test("Papercuts load the next page near the end and keep the real total", async 
         layoutMeasurement: { height: 400, width: 390 },
       },
     });
-    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 10);
-    assert.ok(tree.query("Papercuts, 10"), "the header keeps the real total");
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 30);
+    assert.ok(tree.query("Papercuts, 30"), "the header keeps the real total");
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -1350,18 +1365,17 @@ test("Leads load the next page near the end and keep the real total", async () =
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const leads = Array.from({ length: 10 }, (_, index) => {
-      const letter = "abcdefghijklmnop"[index];
-      return triageLead(`idea-${letter}`, `Idea ${letter}`, { tags: ["idea"] });
-    });
+    const leads = Array.from({ length: 30 }, (_, index) =>
+      triageLead(`idea-${index}`, `Idea ${index}`, { tags: ["idea"] }),
+    );
     mounted = mountBoard(
       invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Leads, 10")));
+    await settle(() => Boolean(tree.query("Leads, 30")));
     openView(tree, "Leads");
-    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 8);
-    assert.equal(tree.raw.text().includes("…and 2 more"), false);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 25);
+    assert.equal(tree.raw.text().includes("…and 5 more"), false);
     const list = tree.raw
       .ofType("ScrollView")
       .find((node) => node.props.onScroll);
@@ -1375,8 +1389,8 @@ test("Leads load the next page near the end and keep the real total", async () =
         layoutMeasurement: { height: 400, width: 390 },
       },
     });
-    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 10);
-    assert.ok(tree.query("Leads, 10"), "the header keeps the real total");
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 30);
+    assert.ok(tree.query("Leads, 30"), "the header keeps the real total");
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -1389,10 +1403,10 @@ test("Leads fill a tall pane, and changing the tag or view resets the page", asy
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
-      ...Array.from({ length: 10 }, (_, index) =>
+      ...Array.from({ length: 30 }, (_, index) =>
         triageLead(`idea-${index}`, `Idea ${index}`, { tags: ["idea"] }),
       ),
-      ...Array.from({ length: 10 }, (_, index) =>
+      ...Array.from({ length: 30 }, (_, index) =>
         triageLead(`research-${index}`, `Research ${index}`, {
           tags: ["research"],
         }),
@@ -1402,42 +1416,92 @@ test("Leads fill a tall pane, and changing the tag or view resets the page", asy
       invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Leads, 20")));
+    await settle(() => Boolean(tree.query("Leads, 60")));
     openView(tree, "Leads");
+    assert.equal(
+      tree.raw.all(/^(?:Lead|Papercut): /).length,
+      25,
+      "the Leads list starts at one page",
+    );
     const list = tree.raw
       .ofType("ScrollView")
       .find((node) => node.props.onScroll);
     assert.ok(list, "the list exposes its layout and content-size events");
     list.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
     list.props.onContentSizeChange(390, 450);
-    assert.equal(tree.raw.all(/^(?:Lead|Papercut): /).length, 16);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): /).length, 50);
     const filledList = tree.raw
       .ofType("ScrollView")
       .find((node) => node.props.onScroll);
     assert.ok(filledList);
     filledList.props.onContentSizeChange(390, 900);
-    assert.equal(tree.raw.all(/^(?:Lead|Papercut): /).length, 20);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): /).length, 60);
 
     const listAfterFill = tree.raw
       .ofType("ScrollView")
       .find((node) => node.props.onScroll);
     assert.ok(listAfterFill);
     listAfterFill.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-    tree.press("Filter leads by tag, All tags (20)");
-    tree.press("Filter leads by tag: idea (10)");
+    tree.press("Filter leads by tag, All tags (60)");
+    tree.press("Filter leads by tag: idea (30)");
     const filteredList = tree.raw
       .ofType("ScrollView")
       .find((node) => node.props.onScroll);
     assert.ok(filteredList);
     filteredList.props.onContentSizeChange(390, 900);
-    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Idea /).length === 8);
-    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 8);
+    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Idea /).length === 25);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 25);
     openView(tree, "Papercuts");
     openView(tree, "Leads");
     assert.equal(
       tree.raw.all(/^(?:Lead|Papercut): Idea /).length,
-      8,
+      25,
       "switching away and back starts the Leads list at one page",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("switching views at a tall viewport fills a short list without a new layout", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const leads = [
+      ...triagePapercuts(10),
+      ...Array.from({ length: 30 }, (_, index) =>
+        triageLead(`idea-${index}`, `Idea ${index}`, { tags: ["idea"] }),
+      ),
+    ];
+    mounted = mountBoard(
+      invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Leads, 30")));
+    // A tall pane measured on Papercuts: the whole short list fits at once.
+    openView(tree, "Papercuts");
+    const papercutList = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
+    assert.ok(papercutList);
+    papercutList.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
+    papercutList.props.onContentSizeChange(390, 400);
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 10);
+    // Switching views does not resize the ScrollView, so no layout event fires.
+    // The Leads list starts at one page; its content size alone must fill it.
+    openView(tree, "Leads");
+    assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 25);
+    const leadsList = tree.raw
+      .ofType("ScrollView")
+      .find((node) => node.props.onScroll);
+    assert.ok(leadsList);
+    leadsList.props.onContentSizeChange(390, 900);
+    assert.equal(
+      tree.raw.all(/^(?:Lead|Papercut): Idea /).length,
+      30,
+      "the kept viewport height fills the short list on its content size",
     );
   } finally {
     mounted?.update(h("View", null));
@@ -1539,8 +1603,8 @@ test("the Leads tag filter narrows the list; papercuts have no filter and the me
     );
     assert.equal(
       tree.all(/^(?:Lead|Papercut): Papercut /).length,
-      8,
-      "the first page of papercuts shows eight",
+      10,
+      "ten papercuts fit on the one page of twenty-five",
     );
   } finally {
     mounted?.update(h("View", null));
@@ -1599,7 +1663,7 @@ test("the Leads tag and queued-more page survive view changes while triage pages
     openView(tree, "Papercuts");
     assert.equal(
       tree.raw.all(/^(?:Lead|Papercut): Papercut /).length,
-      8,
+      10,
       "the Papercuts page resets on a view change",
     );
     // The Leads filter is kept too.
@@ -2240,7 +2304,7 @@ test("a host-waiting task keeps an owner-facing stop's detail in its one row lin
   }
 });
 
-test("lead and papercut rows name their kind once, on line 1, with no kind chip", async () => {
+test("single-kind views drop the kind word from line 1; mixed lists keep it", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -2259,15 +2323,54 @@ test("lead and papercut rows name their kind once, on line 1, with no kind chip"
     assert.ok(card, "the lead row is listed");
     assert.equal(
       nodeText(card).match(/\bLead\b/g)?.length,
-      1,
-      "the meta line names the kind once; the old kind chip is gone",
+      undefined,
+      "the Leads view drops the kind word; the label keeps it",
     );
+    assert.match(nodeText(card), /^\s*App\s/, "line 1 starts with the project");
     openView(tree, "Papercuts");
     const cut = tree.raw.query(
       /^Papercut: Tiny papercut, Status: /,
     ) as HostNode;
     assert.ok(cut, "the papercut row is listed");
-    assert.equal(nodeText(cut).match(/\bPapercut\b/g)?.length, 1);
+    assert.equal(nodeText(cut).match(/\bPapercut\b/g)?.length, undefined);
+    // A list that mixes kinds keeps the kind word: the shared row defaults to showing it.
+    const mixed = mount(
+      h(queue.TriageLeadCard as never, {
+        lead: leads[0],
+        c,
+        selected: false,
+        onSelectLead: () => {},
+        onSelectPapercut: () => {},
+      }),
+    );
+    try {
+      assert.ok(
+        mixed.ofType("Text").some((node) => node.children.join("") === "Lead"),
+        "a mixed list keeps the kind word on line 1",
+      );
+      const bare = mount(
+        h(queue.TriageLeadCard as never, {
+          lead: leads[0],
+          c,
+          selected: false,
+          onSelectLead: () => {},
+          onSelectPapercut: () => {},
+          showKindWord: false,
+        }),
+      );
+      try {
+        assert.ok(
+          !bare
+            .ofType("Text")
+            .some((node) => node.children.join("") === "Lead"),
+          "a single-kind list drops it",
+        );
+      } finally {
+        bare.update(h("View", null));
+      }
+    } finally {
+      mixed.update(h("View", null));
+    }
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -2798,7 +2901,7 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     );
     assert.match(
       nodeText(lead),
-      /^\s*Lead\s+AP\s+App\s+\d+d ago\s+Rechecked lead\s+Checks failed\s+· brief needs revising\s*$/,
+      /^\s*AP\s+App\s+\d+d ago\s+Rechecked lead\s+Checks failed\s+· brief needs revising\s*$/,
     );
 
     // A decision from a T3-matched repository draws that project's badge.

@@ -172,6 +172,76 @@ for (const [name, c] of [
   });
 }
 
+for (const [name, c] of [
+  ["dark", dark],
+  ["light", light],
+] as const) {
+  test(`a ${name} row keeps the title the only bold line`, async () => {
+    await load();
+    const ui = mount(
+      h(cards.BoardCardVariantContext.Provider, {
+        value: "row",
+        children: h(cards.BoardCard as never, {
+          ...rowProps(c, false),
+          status: { tone: "muted", state: "Open", detail: "board" },
+        }),
+      }),
+    );
+    try {
+      const texts = ui.ofType("Text");
+      const meta = texts.find((node) => node.children.join("") === "T-1");
+      assert.ok(meta, "line 1 names the reference");
+      assert.equal(meta.props.style.fontWeight, "400");
+      assert.equal(
+        meta.props.style.color,
+        (c as { foregroundMuted: string }).foregroundMuted,
+        "the line 1 label reads muted, like the project",
+      );
+      const title = texts.find(
+        (node) => node.children.join("") === "An inbox row",
+      );
+      assert.ok(title, "line 2 is the title");
+      assert.equal(title.props.style.fontWeight, "600");
+      assert.equal(
+        title.props.style.color,
+        (c as { foreground: string }).foreground,
+        "the title stays the bold white line",
+      );
+      const state = texts.find((node) => node.children.join("") === "Open");
+      assert.ok(state, "line 3 names the state");
+      assert.equal(state.props.style.fontWeight, "400");
+      assert.equal(
+        state.props.style.color,
+        (c as { foregroundMuted: string }).foregroundMuted,
+        "a neutral state reads muted, not white",
+      );
+    } finally {
+      ui.update(h("View", null));
+    }
+    // A toned state reads in its dot's tone, still at normal weight.
+    const toned = mount(
+      h(cards.BoardCardVariantContext.Provider, {
+        value: "row",
+        children: h(cards.BoardCard as never, rowProps(c, false)),
+      }),
+    );
+    try {
+      const state = toned
+        .ofType("Text")
+        .find((node) => node.children.join("") === "Working");
+      assert.ok(state, "line 3 names the state");
+      assert.equal(state.props.style.fontWeight, "400");
+      assert.equal(
+        state.props.style.color,
+        design.roles(c as never).accent,
+        "the state word carries its tone",
+      );
+    } finally {
+      toned.update(h("View", null));
+    }
+  });
+}
+
 test("the queue expander row rests without dividers too", async () => {
   await load();
   const ui = mount(
