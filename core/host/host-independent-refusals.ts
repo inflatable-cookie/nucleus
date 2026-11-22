@@ -1,8 +1,32 @@
-import { proofActivationRefusal } from '../qa/proof-activation';
-import { forceCallerRefusal, FORCE_REASON_REFUSAL, FORCE_ACTION_REFUSAL, FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL } from '../verbs/verb-refusal-text';
-import { completeStateRefusal, moveStateRefusal, stopStateRefusal, routeStateRefusal } from '../verbs/control-refusals';
-import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL } from '../verbs/control-refusals';
-import { isDispositionActive, cancellationWithdrawalRefusal, holdsOf, type Task, type TaskControlInput } from "../../shared/contracts";
+import { proofActivationRefusal } from "../qa/proof-activation";
+import {
+  forceCallerRefusal,
+  FORCE_REASON_REFUSAL,
+  FORCE_ACTION_REFUSAL,
+  FORCE_MOVE_REFUSAL,
+  FORCE_MERGED_REFUSAL,
+  FORCE_PAUSED_REFUSAL,
+  FORCE_MERGE_UNAVAILABLE_REFUSAL,
+  FORCE_HOLD_REFUSAL,
+  FORCE_MERGE_OBSERVATION_REFUSAL,
+} from "../verbs/verb-refusal-text";
+import {
+  completeStateRefusal,
+  moveStateRefusal,
+  stopStateRefusal,
+  routeStateRefusal,
+} from "../verbs/control-refusals";
+import {
+  DISPOSITION_CONTROL_REFUSAL,
+  REMOVED_TASK_REFUSAL,
+} from "../verbs/control-refusals";
+import {
+  isDispositionActive,
+  cancellationWithdrawalRefusal,
+  holdsOf,
+  type Task,
+  type TaskControlInput,
+} from "../../shared/contracts";
 import type { Engine } from "../engine";
 import { verifyAcceptedEnclosingOperation } from "../planning/enclosing-operation";
 import { observationAdvanceSince } from "../recovery/observation-advance";
@@ -14,7 +38,7 @@ import { ownerStopPendingRefusal } from "../verbs/owner-stop";
  * after it has proved the merge at the forge.
  */
 export const OUTSIDE_CLOSEOUT_BOUNDARY =
-  'An operator source acceptance in a closeout applies only to a never-dispatched review-entry task at its boundary or a dispatched task with a retained worker, workspace and recorded PR source; this task is outside that boundary';
+  "An operator source acceptance in a closeout applies only to a never-dispatched review-entry task at its boundary or a dispatched task with a retained worker, workspace and recorded PR source; this task is outside that boundary";
 
 /**
  * Which controls owe the version gate. A cancellation or supersession replayed
@@ -24,7 +48,15 @@ export const OUTSIDE_CLOSEOUT_BOUNDARY =
  * version is not a refusal of that verb.
  */
 const VERSION_REFUSES: ReadonlySet<TaskControlInput["action"]> = new Set([
-  "move", "restart", "route", "retry_effect", "complete", "proof", "withdraw_cancel", "amend_brief", "stop",
+  "move",
+  "restart",
+  "route",
+  "retry_effect",
+  "complete",
+  "proof",
+  "withdraw_cancel",
+  "amend_brief",
+  "stop",
 ]);
 
 /**
@@ -42,7 +74,14 @@ const VERSION_REFUSES: ReadonlySet<TaskControlInput["action"]> = new Set([
  * The wording is each verb's own, so an offline refusal and the verb's later
  * refusal say the same thing about the same fact.
  */
-export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, input: TaskControlInput, operationId?: string): string | null | Promise<string | null> {
+export function hostIndependentControlRefusal(
+  engine: Pick<
+    Engine,
+    "store" | "resolution" | "forceCallerAuthorized" | "selfForceRole"
+  >,
+  input: TaskControlInput,
+  operationId?: string,
+): string | null | Promise<string | null> {
   const store = engine.store;
   // An unknown task refuses here: no host could ever answer for it.
   const task = store.task(input.taskId);
@@ -55,23 +94,40 @@ export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 're
   // own idempotent answer (`completeTask` returns it before any gate), so it owes
   // no version or terminal refusal here; the acceptances themselves are compared
   // by the verb.
-  if (input.action === "complete" && task.phase === "done" && task.reportAcceptance?.taskVersion === input.version) return null;
-  if (input.action === "stop" && operationId && task.resolution.ownerStop?.operationId === operationId) return null;
+  if (
+    input.action === "complete" &&
+    task.phase === "done" &&
+    task.reportAcceptance?.taskVersion === input.version
+  )
+    return null;
+  if (
+    input.action === "stop" &&
+    operationId &&
+    task.resolution.ownerStop?.operationId === operationId
+  )
+    return null;
   const version = versionRefusal(task, input);
   if (version) return version;
   if (input.action === "move") {
-    const refusal = moveStateRefusal(task, input.to ?? 'work');
+    const refusal = moveStateRefusal(task, input.to ?? "work");
     if (refusal) return refusal;
   } else if (input.action === "stop") {
-    if (task.resolution.ownerStop) return ownerStopPendingRefusal(task.resolution.ownerStop);
+    if (task.resolution.ownerStop)
+      return ownerStopPendingRefusal(task.resolution.ownerStop);
     return stopStateRefusal(task);
-  }
-  else if (input.action === "route") return routeStateRefusal(task);
-  else if (input.action === "complete") return completeStateRefusal(task, store.runs(task.id));
-  else if (input.action === "proof") return proofActivationRefusal(task, [], "disposition") ?? proofActivationRefusal(task, [], "terminal");
+  } else if (input.action === "route") return routeStateRefusal(task);
+  else if (input.action === "complete")
+    return completeStateRefusal(task, store.runs(task.id));
+  else if (input.action === "proof")
+    return (
+      proofActivationRefusal(task, [], "disposition") ??
+      proofActivationRefusal(task, [], "terminal")
+    );
   else {
-    if (input.action === "restart" && isDispositionActive(task)) return DISPOSITION_CONTROL_REFUSAL;
-    if (input.action === "withdraw_cancel") return cancellationWithdrawalRefusal(task);
+    if (input.action === "restart" && isDispositionActive(task))
+      return DISPOSITION_CONTROL_REFUSAL;
+    if (input.action === "withdraw_cancel")
+      return cancellationWithdrawalRefusal(task);
   }
   return closeoutBoundaryRefusal(engine, task, input, operationId);
 }
@@ -80,11 +136,19 @@ export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 're
  * A forced move checks the same authority, reason and stored move facts here
  * as it does at execution. Adapter availability is a capability check.
  */
-async function forcedControlRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, task: Task, input: TaskControlInput): Promise<string | null> {
-  if (!await engine.forceCallerAuthorized(task, input.caller))
+async function forcedControlRefusal(
+  engine: Pick<
+    Engine,
+    "store" | "resolution" | "forceCallerAuthorized" | "selfForceRole"
+  >,
+  task: Task,
+  input: TaskControlInput,
+): Promise<string | null> {
+  if (!(await engine.forceCallerAuthorized(task, input.caller)))
     return forceCallerRefusal(input.caller, task.critical);
   if (!input.reason?.trim()) return FORCE_REASON_REFUSAL;
-  if (input.action === "retry_effect") return "Use run.release or record.clear kind=effect for explicit settlement";
+  if (input.action === "retry_effect")
+    return "Use run.release or record.clear kind=effect for explicit settlement";
   if (input.action !== "move") return FORCE_ACTION_REFUSAL;
   const version = versionRefusal(task, input);
   if (version) return version;
@@ -93,11 +157,14 @@ async function forcedControlRefusal(engine: Pick<Engine, 'store' | 'resolution' 
     return FORCE_MERGED_REFUSAL;
   if (input.to === "merge" && engine.store.getMeta("paused") === true)
     return FORCE_PAUSED_REFUSAL;
-  if (input.to === "merge" && !adapterGate(engine, 'merge'))
+  if (input.to === "merge" && !adapterGate(engine, "merge"))
     return FORCE_MERGE_UNAVAILABLE_REFUSAL;
-  if (engine.selfForceRole(task) && (Object.keys(holdsOf(task)).length > 0 || task.disposition))
+  if (
+    engine.selfForceRole(task) &&
+    (Object.keys(holdsOf(task)).length > 0 || task.disposition)
+  )
     return FORCE_HOLD_REFUSAL;
-  if (input.to === "closeout" && !adapterGate(engine, 'merged'))
+  if (input.to === "closeout" && !adapterGate(engine, "merged"))
     return FORCE_MERGE_OBSERVATION_REFUSAL;
   return null;
 }
@@ -108,9 +175,18 @@ async function forcedControlRefusal(engine: Pick<Engine, 'store' | 'resolution' 
  * into a transport error: only a proven absence refuses, and an unreadable one
  * leaves the control to the wait.
  */
-function adapterGate(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, method: 'merge' | 'merged'): boolean {
-  try { return Boolean(engine.resolution.adapter[method]); }
-  catch { return true; }
+function adapterGate(
+  engine: Pick<
+    Engine,
+    "store" | "resolution" | "forceCallerAuthorized" | "selfForceRole"
+  >,
+  method: "merge" | "merged",
+): boolean {
+  try {
+    return Boolean(engine.resolution.adapter[method]);
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -121,7 +197,11 @@ function adapterGate(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerA
  * instead of resending the stale payload.
  */
 function versionRefusal(task: Task, input: TaskControlInput): string | null {
-  if (!VERSION_REFUSES.has(input.action) || observationAdvanceSince(task, input.version)) return null;
+  if (
+    !VERSION_REFUSES.has(input.action) ||
+    observationAdvanceSince(task, input.version)
+  )
+    return null;
   return `Task changed; refresh before retrying (the task is now version ${task.version}; read next again and reassess before retrying)`;
 }
 
@@ -133,19 +213,41 @@ function versionRefusal(task: Task, input: TaskControlInput): string | null {
  * invocation and that shape nothing could accept the merge once the host
  * returned, so the control refuses now instead of waiting for one.
  */
-function closeoutBoundaryRefusal(engine: Pick<Engine, 'store' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>, task: Task, input: TaskControlInput, operationId?: string): string | null {
-  if (input.action !== "move" || input.to !== "closeout" || input.qualification === undefined) return null;
+function closeoutBoundaryRefusal(
+  engine: Pick<
+    Engine,
+    "store" | "resolution" | "forceCallerAuthorized" | "selfForceRole"
+  >,
+  task: Task,
+  input: TaskControlInput,
+  operationId?: string,
+): string | null {
+  if (
+    input.action !== "move" ||
+    input.to !== "closeout" ||
+    input.qualification === undefined
+  )
+    return null;
   const store = engine.store;
   // The never-dispatched review-entry boundary, proved from the operation the
   // lane accepted for this exact control: this operation is the invocation, not
   // a competing writer against itself.
   const enclosing = verifyAcceptedEnclosingOperation(store, input, operationId);
-  if (enclosing && store.reviewEntryUnrunBeforeFirstRun(task, enclosing)) return null;
+  if (enclosing && store.reviewEntryUnrunBeforeFirstRun(task, enclosing))
+    return null;
   // The ordinary descendant-acceptance route: a task past its first dispatch
   // with the retained worker, workspace and recorded PR source its proofs read.
   // A queued or dispatching task is refused even with those fields recorded,
   // which is the same gate `reconcileRetainedExternalMerge` makes.
-  if (!["queued", "dispatching"].includes(task.phase)
-    && task.agentId && task.runId && task.workspaceId && task.directory && task.prHead && task.prUrl) return null;
+  if (
+    !["queued", "dispatching"].includes(task.phase) &&
+    task.agentId &&
+    task.runId &&
+    task.workspaceId &&
+    task.directory &&
+    task.prHead &&
+    task.prUrl
+  )
+    return null;
   return OUTSIDE_CLOSEOUT_BOUNDARY;
 }

@@ -4,8 +4,12 @@ import type { Task } from "../../shared/contracts";
  * Force's caller refusal, shared by previews, applying controls and offline
  * admission. It names the reason this caller lacks authority, not a generic list.
  */
-export function forceCallerRefusal(caller: string | undefined, critical?: boolean): string {
-  if (!caller) return "Force requires an authenticated caller; this control carried none";
+export function forceCallerRefusal(
+  caller: string | undefined,
+  critical?: boolean,
+): string {
+  if (!caller)
+    return "Force requires an authenticated caller; this control carried none";
   if (critical)
     return "Force is refused for this caller: a critical task allows only its live project planner, the Nucleus planner or the operator to force it";
   return "Force is refused for this caller: it is not the task's live project planner, the Nucleus planner, the operator, or this task's authenticated worker, reviewer or recovery run";

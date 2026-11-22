@@ -4,9 +4,16 @@ import { Engine } from "../core/engine";
 import { Store } from "../core/store/store";
 import type { Adapter } from "../core/host";
 import { formatAgentId } from "../shared/agent-identity";
-import { submissionSchema, type Task } from "../shared/contracts";
+import {
+  submissionSchema,
+  taskControlInputSchema,
+  type Task,
+} from "../shared/contracts";
 import { explicitResolutionSchema } from "../shared/schema/task-control";
-import { livePlannerMatches, resolveExplicitly } from "../core/verbs/explicit-resolution";
+import {
+  livePlannerMatches,
+  resolveExplicitly,
+} from "../core/verbs/explicit-resolution";
 import { forceCallerRefusal } from "../core/verbs/verb-refusal-text";
 
 // Planner authority comes from the registered thread and the caller's identity.
@@ -24,21 +31,57 @@ function fixture() {
   const adapter = {
     hostId: host,
     listLiveAgents: async () => [
-      { id: "own", title: "own", workspaceId: null, directory: repo, updatedAt: "2098-01-01T00:00:00Z" },
-      { id: "other", title: "other", workspaceId: null, directory: repo, updatedAt: "2099-01-02T00:00:00Z" },
+      {
+        id: "own",
+        title: "own",
+        workspaceId: null,
+        directory: repo,
+        updatedAt: "2098-01-01T00:00:00Z",
+      },
+      {
+        id: "other",
+        title: "other",
+        workspaceId: null,
+        directory: repo,
+        updatedAt: "2099-01-02T00:00:00Z",
+      },
     ],
-    originAgent: async (id: string) => ({ id, title: id, workspaceId: null, archived: false }),
-    observe: async (id: string) => ({ id, workspaceId: null, status: "idle", active: false, permissions: false, error: "", archived: false }),
+    originAgent: async (id: string) => ({
+      id,
+      title: id,
+      workspaceId: null,
+      archived: false,
+    }),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: null,
+      status: "idle",
+      active: false,
+      permissions: false,
+      error: "",
+      archived: false,
+    }),
   } as unknown as Adapter;
   const engine = new Engine(store, adapter, 0);
   engine.identifyOriginHost = async () => host;
   // The registered planner's host is not yet proven after a roll: unverified, never gone.
   engine.resolution.plannerPresence.threadRoute = async (id) =>
     id === planner
-      ? { kind: "unverified", detail: "waiting for the planner's proven host to be available" }
+      ? {
+          kind: "unverified",
+          detail: "waiting for the planner's proven host to be available",
+        }
       : { kind: "routable" };
-  store.upsertProject({ key: "example", name: "Example", repositories: [{ origin: null, path: repo }] });
-  store.setProjectPlanner({ key: "example", agentId: planner, setBy: "operator" });
+  store.upsertProject({
+    key: "example",
+    name: "Example",
+    repositories: [{ origin: null, path: repo }],
+  });
+  store.setProjectPlanner({
+    key: "example",
+    agentId: planner,
+    setBy: "operator",
+  });
   const inserted = store.insert(
     submissionSchema.parse({
       submissionId: "authority-fixture",
@@ -73,7 +116,9 @@ function fixture() {
 test("an authenticated registered planner keeps authority while its host observation is unverified", async () => {
   const f = fixture();
   try {
-    const observed = await f.engine.resolution.responsibleThread(f.store.projectByKey("example")!);
+    const observed = await f.engine.resolution.responsibleThread(
+      f.store.projectByKey("example")!,
+    );
     assert.equal(observed.thread?.agentId, planner);
     assert.equal(observed.shortlist[0]?.observation?.state, "unverified");
 
@@ -88,11 +133,41 @@ test("an authenticated registered planner keeps authority while its host observa
   }
 });
 
+test("an authenticated registered planner force-moves its task while its host observation is unverified", async () => {
+  const f = fixture();
+  try {
+    // Operations stay queued: the test asserts the control's own gate and write.
+    (
+      f.engine as unknown as { scheduleOperation(id: string): void }
+    ).scheduleOperation = () => {};
+    f.store.setMeta("paused", false);
+    f.store.update(f.task().id, { phase: "needs_attention" });
+    const forced = await f.engine.performTaskControl(
+      taskControlInputSchema.parse({
+        taskId: f.task().id,
+        version: f.task().version,
+        action: "move",
+        to: "work",
+        reason: "Planner forces the stuck move after the roll",
+        force: true,
+        caller: planner,
+      }),
+    );
+    assert.equal(forced.phase, "changes_requested");
+    assert.equal(f.task().phase, "changes_requested");
+  } finally {
+    f.store.close();
+  }
+});
+
 test("an unregistered or unauthenticated caller is refused, and the refusal names why", async () => {
   const f = fixture();
   try {
     assert.equal(await livePlannerMatches(f.engine, f.task(), stranger), false);
-    assert.equal(await f.engine.forceCallerAuthorized(f.task(), stranger), false);
+    assert.equal(
+      await f.engine.forceCallerAuthorized(f.task(), stranger),
+      false,
+    );
 
     await assert.rejects(
       f.command({ caller: stranger }),
@@ -102,10 +177,20 @@ test("an unregistered or unauthenticated caller is refused, and the refusal name
       f.command({}),
       /Explicit resolution requires this task's coordinator, its live responsible planner or the operator board; no authenticated caller was given/,
     );
-    assert.equal(f.task().phase, "awaiting_review", "a refused command writes nothing");
+    assert.equal(
+      f.task().phase,
+      "awaiting_review",
+      "a refused command writes nothing",
+    );
 
-    assert.match(forceCallerRefusal(stranger, false), /it is not the task's live project planner, the Nucleus planner, the operator/);
-    assert.match(forceCallerRefusal(undefined, false), /Force requires an authenticated caller/);
+    assert.match(
+      forceCallerRefusal(stranger, false),
+      /it is not the task's live project planner, the Nucleus planner, the operator/,
+    );
+    assert.match(
+      forceCallerRefusal(undefined, false),
+      /Force requires an authenticated caller/,
+    );
   } finally {
     f.store.close();
   }
@@ -119,7 +204,10 @@ test("a critical task names its narrower authority when a non-planner caller is 
       f.command({ caller: stranger }),
       /A critical task requires its live responsible planner or the operator board; this caller is not one of them/,
     );
-    assert.match(forceCallerRefusal(stranger, true), /critical task allows only its live project planner/);
+    assert.match(
+      forceCallerRefusal(stranger, true),
+      /critical task allows only its live project planner/,
+    );
     const applied = await f.command({ caller: planner });
     assert.equal(applied.explicitResolution?.status, "applied");
   } finally {

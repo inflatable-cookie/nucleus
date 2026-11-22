@@ -437,7 +437,9 @@ export class ForceVerbs {
         ? "operator_board"
         : input.caller && (await this.forcePlannerSource(task, input.caller));
     if (!source)
-      throw new DurableFenceRefusal(forceCallerRefusal(input.caller, task.critical));
+      throw new DurableFenceRefusal(
+        forceCallerRefusal(input.caller, task.critical),
+      );
     this.engine.requireOwnerControlCurrent(
       task,
       input.version,
