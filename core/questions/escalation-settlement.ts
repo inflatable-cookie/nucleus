@@ -182,7 +182,12 @@ export function escalationExplicitCommandChoices(
   const payload = escalationPayload(events, escalationId);
   const options: EscalationVerbChoice[] = [];
   const push = (label: string, command: ExplicitCommand) => {
-    options.push({ label, verb: "explicit", args: {}, command });
+    options.push({
+      label,
+      verb: "explicit",
+      args: {},
+      command: { ...command, version: task.version },
+    });
   };
   if (payload?.reviewContinuation) {
     const reader =
@@ -349,6 +354,15 @@ export function escalationCauseClearedReason(
     if (clearedEffects.length > 0) {
       if (escalation.runId) {
         const run = store.run(escalation.runId);
+        if (
+          run &&
+          !["intent", "uncertain"].includes(run.status) &&
+          clearedEffects.some(
+            (effectId) =>
+              effectId.replace(/^run-delivery\./, "") === escalation.runId,
+          )
+        )
+          return "the escalated run-delivery effect was cleared";
         const deliveries = run?.reviewDeliveries ?? [];
         const hasPendingDelivery = deliveries.some(
           (d) => d.status === "reserved" || d.status === "uncertain",
@@ -550,7 +564,7 @@ export class EscalationSettlement {
     const explicitInput = explicitResolutionSchema.parse({
       ...commandArgs,
       taskId: fresh.id,
-      version: commandVersion ?? version ?? fresh.version,
+      version: version ?? commandVersion ?? fresh.version,
       reason: reason.slice(0, 4000),
       accept: accept ?? [],
       caller,

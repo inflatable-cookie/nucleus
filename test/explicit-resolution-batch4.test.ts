@@ -181,6 +181,14 @@ function recordOpenEscalation(
     "planner_escalation_payload",
     `${id}: ${JSON.stringify({ cause, runId: options.runId ?? null, question: "How should this stuck task proceed?", ...(options.payload ?? {}) })}`,
   );
+  engine.resolution.waiting(
+    store.task(taskId),
+    `Waiting with the planner: blocker escalation ${id} is open`,
+    "escalated",
+    {
+      fact: { code: "escalation", subject: id },
+    },
+  );
   const offered =
     options.offered ??
     escalationExplicitCommandChoices(
@@ -193,14 +201,6 @@ function recordOpenEscalation(
     taskId,
     "planner_escalation_offered",
     `${id}: ${JSON.stringify(offered)}`,
-  );
-  engine.resolution.waiting(
-    store.task(taskId),
-    `Waiting with the planner: blocker escalation ${id} is open`,
-    "escalated",
-    {
-      fact: { code: "escalation", subject: id },
-    },
   );
   const questionId = `ns-escalation-${id}`;
   const choices = [
@@ -563,6 +563,44 @@ test("underlay#046 shape: real owner guard runs without 'no longer available' lo
     assert.equal(cleared.explicitResolution?.status, "applied");
     assert.deepEqual(closeClearedEscalations(fx.store, fx.task()), ["esc-046"]);
     assert.equal(fx.task().resolution.stop, null);
+
+    // Clearing an exact uncertain run-delivery effect closes its escalation in maintenance even when an unrelated pending effect remains.
+    const launchRunId = "run-uncertain-launch-046";
+    fx.store.putRun(
+      makeRun(fx.taskId, {
+        id: launchRunId,
+        role: "reviewer",
+        attempt: 3,
+        status: "uncertain",
+        active: false,
+      }),
+    );
+    recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-launch-046", {
+      runId: launchRunId,
+    });
+    const clearedLaunch = await resolveExplicitly(
+      fx.engine,
+      {
+        taskId: fx.taskId,
+        version: fx.task().version,
+        action: "record.clear",
+        kind: "effect",
+        id: `run-delivery.${launchRunId}`,
+        accept: ["effect_may_land"],
+        reason: "Clear exact uncertain run-delivery effect",
+        caller: OPERATOR_BOARD_CALLER,
+      },
+      () => "next",
+    );
+    assert.equal(clearedLaunch.explicitResolution?.status, "applied");
+    await fx.engine.resolution.ladder.resumeEscalationWaits(fx.task());
+    assert.equal(
+      plannerEscalations(fx.store.eventsAll(fx.taskId)).find(
+        (e) => e.id === "esc-launch-046",
+      )?.answered,
+      true,
+    );
+    assert.equal(fx.task().resolution.stop, null);
   } finally {
     await fx.close();
   }
@@ -738,6 +776,48 @@ test("board/inbox command dispatch enforces caller/relay checks and schema, and 
     const parsedView = decisionAnswer.output.parse(boardApplied);
     assert.equal(parsedView.status, "withdrawn");
     assert.equal(fx.task().resolution.stop, null);
+
+    // An older board choice is refused as stale once the task version advances after the offer.
+    recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-board-stale");
+    const dStale = decisions.add({
+      headline: "Stale board command",
+      question: "Clear esc-board-stale?",
+      choices: [
+        {
+          label:
+            "Explicit command: record.clear kind=escalation id=esc-board-stale",
+          consequence: "Clears escalation",
+        },
+        { label: "Stop and keep the work", consequence: "Stops task" },
+      ],
+      askedBy: PLANNER,
+      tasks: [fx.taskId],
+    });
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_decision_linked",
+      `esc-board-stale: decision ${dStale.id}`,
+    );
+    fx.store.update(
+      fx.taskId,
+      { prHead: HEAD_B },
+      "pr_head_updated",
+      "task version advanced after offer",
+    );
+    await assert.rejects(
+      async () =>
+        await runtimeQuestions.answerDecision({
+          id: dStale.id,
+          version: dStale.version,
+          answer:
+            "Explicit command: record.clear kind=escalation id=esc-board-stale",
+          answeredBy: OPERATOR_BOARD_CALLER,
+          relayed: false,
+          note: "Older board choice",
+        }),
+      /stale; task is at version/,
+    );
+    assert.equal(fx.store.decision(dStale.id).status, "open");
 
     // Unreviewed external merge is NOT closed by an uncertain reviewer launch.
     recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-ext-merge", {
