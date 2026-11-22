@@ -154,8 +154,21 @@ export function routeHostAdapter(
             !engine.markAuditHostUnavailable ||
             !engine.hostOutages ||
             !engine.hostWait ||
+            !engine.withHost ||
+            !engine.hostAvailable ||
             !engine.noteStepFailure ||
             !engine.store.tasks
+          )
+            return false;
+          // Host health comes from the connection, never from a task's own record
+          // (Tom, 2026-11-22). A failure recorded with no error means a visited
+          // task still carries an old host wait; while the host is connected that
+          // is not the host going away. Recording it parked every task on a
+          // healthy host and rewrote each one, on every submission's dispatch.
+          if (
+            error === undefined &&
+            owner.resolveHostAdapter(hostId) &&
+            engine.withHost(hostId, () => engine.hostAvailable(hostId))
           )
             return false;
           const fault =

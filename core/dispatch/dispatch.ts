@@ -152,9 +152,14 @@ export class Dispatch {
           })
           .then(() => {
             // FirstDispatch can record the transport wait itself before returning.
+            // A wait left on the task is not evidence by itself: only a host that
+            // is down or failed this pass widens it (Tom, 2026-11-22).
             const task = this.store.task(candidate.id);
             if (
               task.hostId &&
+              !this.engine.withHost(task.hostId, () =>
+                this.engine.taskHostAvailable(task),
+              ) &&
               (task.resolution.hostWait ||
                 task.resolution.stop?.reason === "host_unavailable")
             ) {
