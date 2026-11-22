@@ -33,7 +33,7 @@ import { taskPrNumber } from "../forge/index";
 import { queueCheckoutStatus } from "../git/index";
 import {
   reattachRefusal,
-  reattachTaskCheckout,
+  reattachStoredTaskCheckout,
 } from "../git/checkout-reattach";
 import {
   commonDirMatchesTask,
@@ -459,18 +459,28 @@ function assertReviewSourceAvailable(task: Task): void {
 }
 
 /**
- * Preflight reviewer source availability, forge PR head, checkout HEAD and live
- * writer observation before the transaction creates a run. Its one Git write is
- * the reattach step: a checkout a review round left detached returns to its task
- * branch when that moves no commit, so a run can start on it. If the forge head
- * differs from the checkout HEAD or cannot be read, `runStartPlan` returns
- * `head_mismatch` and accepting starts the run on the checkout as it is.
+ * Preflight a `run.start`: its one Git write is the reattach step, which runs
+ * for every role, so any run starts on the task branch rather than on a checkout
+ * a review round left detached. A reviewer start then proves its source
+ * availability, forge PR head, checkout HEAD and live writer observation before
+ * the transaction creates a run. If the forge head differs from the checkout HEAD
+ * or cannot be read, `runStartPlan` returns `head_mismatch` and accepting starts
+ * the run on the checkout as it is.
  */
 export async function preflightExplicitRunStart(
   engine: Engine,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.start" }>,
 ): Promise<ExplicitRunStartPreflight> {
+  // Spec 068 §4: every run.start launches into the task checkout, so the one
+  // reattach step runs first. It moves no commit and names its refusal instead
+  // of leaving a detached checkout unexplained.
+  const reattach = await reattachStoredTaskCheckout(engine.store, task.id);
+  const reattachRefused = reattachRefusal(reattach);
+  if (reattachRefused)
+    throw Error(
+      `The task checkout was not returned to ${task.branch}: ${reattachRefused}`,
+    );
   if (input.role !== "reviewer") {
     return {
       forgeHead: null,
@@ -480,16 +490,6 @@ export async function preflightExplicitRunStart(
     };
   }
   assertReviewSourceAvailable(task);
-  // Spec 068 §4: one reattach step runs here too, so a reviewer starts on a
-  // checkout a round left detached at the tip. It names its refusal instead.
-  const reattach = await reattachTaskCheckout(task, engine.store.runs(task.id), {
-    record: (event, detail) => engine.store.event(task.id, event, detail),
-  });
-  const reattachRefused = reattachRefusal(reattach);
-  if (reattachRefused)
-    throw Error(
-      `The task checkout was not returned to ${task.branch}: ${reattachRefused}`,
-    );
   let localHead: string | null = null;
   if (task.entrypoint !== "proof" && task.directory) {
     const dirty = await queueCheckoutStatus(
@@ -548,7 +548,7 @@ export async function preflightExplicitRunStart(
 async function verifyReviewerCheckout(task: Task, run: Run): Promise<void> {
   if (task.entrypoint === "proof" || !task.directory) return;
   assertReviewSourceAvailable(task);
-  await ordinaryReviewSource(task, run.head, false);
+  await ordinaryReviewSource(task, run.head);
 }
 
 export function runStartPlan(
@@ -876,14 +876,14 @@ export function runStartPlan(
         allowed: async () => {
           if (!isRunStillOwned()) return false;
           if (runRole === "reviewer" && latestTask.entrypoint !== "proof") {
-            await ordinaryReviewSource(store.task(task.id), run.head, false);
+            await ordinaryReviewSource(store.task(task.id), run.head);
           }
           return isRunStillOwned();
         },
         stillAllowed: () => {
           if (!isRunStillOwned()) return false;
           if (runRole === "reviewer" && latestTask.entrypoint !== "proof") {
-            assertOrdinaryReviewIdentity(store.task(task.id), run.head, false);
+            assertOrdinaryReviewIdentity(store.task(task.id), run.head);
           }
           return true;
         },

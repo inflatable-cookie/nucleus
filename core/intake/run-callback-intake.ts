@@ -404,10 +404,12 @@ export class RunCallbackIntake {
     // carries structured judgments without a merge verdict.
     const sourceRefusal = sourceApprovalRefusal(input, run);
     if (sourceRefusal) throw Error(sourceRefusal);
-    if (run.ordinaryDetached)
-      assertOrdinaryReviewIdentity(task, run.head, true);
-    else if (input.sourceApproved)
-      assertOrdinaryReviewIdentity(task, run.head, false);
+    // A report is served only on the attached task branch at the exact head. A
+    // checkout an earlier round left detached reaches here after the one reattach
+    // step (`run.release` reattaches; `run.start` then starts the round again),
+    // and this refusal names that (Spec 068 §4).
+    if (run.ordinaryDetached || input.sourceApproved)
+      assertOrdinaryReviewIdentity(task, run.head);
     assertReviewResponsibility(input, run);
     const response = { accepted: true as const, eventId: input.eventId };
     // A completion is that run's own result, never proof of WHICH delivery

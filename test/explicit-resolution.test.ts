@@ -2721,6 +2721,46 @@ test("068: run.start reviewer fresh returns a clean checkout detached at the bra
   );
 });
 
+test("068: run.start worker returns a checkout detached at the branch tip to its branch", async (t) => {
+  const f = await fixture(t);
+  const { worktree, initialSha } = await attachGitCheckout(
+    f.root,
+    f.store,
+    f.current().id,
+  );
+  f.store.update(f.current().id, {
+    phase: "changes_requested",
+    agentId: "worker-1",
+    runId: "initial-worker",
+    agentActive: false,
+    profile: profile("worker-prof"),
+  });
+  await git(worktree, "checkout", "--quiet", "--detach", initialSha);
+  assert.equal(await git(worktree, "branch", "--show-current"), "");
+  // The reattach step runs for every run.start role, not only reviewers.
+  const applied = await f.command({
+    action: "run.start",
+    role: "worker",
+    agent: "retained",
+    instruction: "Apply the review fix",
+  });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(
+    await git(worktree, "branch", "--show-current"),
+    f.current().branch,
+  );
+  assert.equal(await git(worktree, "rev-parse", "HEAD"), initialSha);
+  assert.ok(
+    f.store
+      .eventsAll(f.current().id)
+      .some(
+        (event) =>
+          event.kind === "task_checkout_reattached" &&
+          event.detail.includes(initialSha),
+      ),
+  );
+});
+
 test("068: run.start reviewer fresh leaves a dirty detached checkout alone and names the refusal", async (t) => {
   const f = await reviewStartFixture(t);
   const { worktree, initialSha } = f;

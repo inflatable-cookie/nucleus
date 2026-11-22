@@ -110,14 +110,12 @@ export class RunLaunchDeliver {
    * pause, dispatch hold, task version, run ownership and effect fence. A retained
    * send and a fresh creation share it. `false` and a thrown ProvenPreSendRefusalError
    * are proven refusals; a blocking effect throws its typed fence so the launch waits.
-   * `detached` is the checkout shape the caller proves: a retained send always
-   * proves the detached identity, a creation proves the run's own shape.
+   * Every ordinary round proves the attached task branch at the reviewed head.
    */
   private reviewAdmission(
     fresh: Task,
     savedRun: Run,
     run: Run,
-    detached: boolean,
   ): ReviewAdmissionGuard {
     const version = fresh.version,
       snapshot = this.resolution.ordinaryReviewRuns(fresh.id);
@@ -139,7 +137,7 @@ export class RunLaunchDeliver {
         snapshot !== this.resolution.ordinaryReviewRuns(fresh.id)
       )
         return false;
-      assertOrdinaryReviewIdentity(latest, run.head, detached);
+      assertOrdinaryReviewIdentity(latest, run.head);
       if (matchesBinding)
         this.resolution.assertReviewProfileIndependent(latest, savedRun);
       const effects = blockingRecoveryEffects(this.store, latest, {
@@ -164,11 +162,7 @@ export class RunLaunchDeliver {
             this.adapter as Adapter & ReviewEntryAdapter,
             fresh.id,
           );
-        await ordinaryReviewSource(
-          this.store.task(fresh.id),
-          run.head,
-          Boolean(run.ordinaryDetached),
-        );
+        await ordinaryReviewSource(this.store.task(fresh.id), run.head);
         return stillAllowed();
       },
       stillAllowed,
@@ -213,11 +207,11 @@ export class RunLaunchDeliver {
       // itself reads the branch.
       if (run.ordinaryDetached) {
         await this.resolution.ordinaryRoundCustody(t, run);
-        await ordinaryReviewSource(t, run.head, true);
+        await ordinaryReviewSource(t, run.head);
         await git(t.directory!, "fetch", "origin", `refs/heads/${t.branch}`);
         await this.machine.verifyPr(t, taskPrNumber(t));
         await this.resolution.ordinaryRoundCustody(t, run);
-        await ordinaryReviewSource(t, run.head, true);
+        await ordinaryReviewSource(t, run.head);
       }
       // Ordinary review takes custody of a detached exact-head checkout only
       // after reservation. Recheck its dependencies after that final source
@@ -298,7 +292,7 @@ export class RunLaunchDeliver {
         const guardedReviewEntry = role === "reviewer" && fresh.reviewEntry;
         const sendGuard =
           run.ordinaryDetached || guardedReviewEntry
-            ? this.reviewAdmission(fresh, savedRun, run, true)
+            ? this.reviewAdmission(fresh, savedRun, run)
             : undefined;
         dispatchInvoked = true;
         await this.adapter.sendRun!(
@@ -359,7 +353,7 @@ export class RunLaunchDeliver {
               this.adapter as Adapter & ReviewEntryAdapter,
               t.id,
             );
-          await ordinaryReviewSource(t, run.head, true);
+          await ordinaryReviewSource(t, run.head);
         }
         if (role === "reviewer" && t.reviewEntry && !run.ordinaryDetached) {
           const pr = await this.machine.verifyPrIdentity!(t, taskPrNumber(t));
@@ -383,7 +377,7 @@ export class RunLaunchDeliver {
             throw Error(
               "Review-entry handover changed before reviewer creation",
             );
-          await ordinaryReviewSource(latest, run.head, false);
+          await ordinaryReviewSource(latest, run.head);
         }
         const fresh = this.store.task(t.id),
           savedRun = this.store.run(run.id)!;
@@ -392,12 +386,7 @@ export class RunLaunchDeliver {
         // proves the same admission a retained send does, at the native boundary.
         const launchGuard =
           role === "reviewer" && (fresh.reviewEntry || run.ordinaryDetached)
-            ? this.reviewAdmission(
-                fresh,
-                savedRun,
-                run,
-                Boolean(run.ordinaryDetached),
-              )
+            ? this.reviewAdmission(fresh, savedRun, run)
             : undefined;
         const created = await this.adapter.createRun!(
           fresh,

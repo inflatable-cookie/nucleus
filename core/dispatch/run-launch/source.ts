@@ -4,7 +4,7 @@ import type { LaunchMachinePorts } from "./machine";
 import { unreviewedMergeRoute } from "../../../shared/task-view";
 import {
   reattachRefusal,
-  reattachTaskCheckout,
+  reattachStoredTaskCheckout,
 } from "../../git/checkout-reattach";
 import { chooseProfile, reviewerFiltersWorker } from "../routing";
 import {
@@ -107,9 +107,7 @@ export class RunLaunchSource {
     // and HEAD already equals the branch tip. Otherwise the launch carries the
     // step's own reason instead of leaving a detached checkout unexplained.
     if (t.directory) {
-      const reattach = await reattachTaskCheckout(t, this.store.runs(t.id), {
-        record: (event, detail) => this.store.event(t.id, event, detail),
-      });
+      const reattach = await reattachStoredTaskCheckout(this.store, t.id);
       const refusal = reattachRefusal(reattach);
       if (refusal)
         throw Error(

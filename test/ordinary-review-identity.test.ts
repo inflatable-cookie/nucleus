@@ -8,6 +8,7 @@ import { submissionSchema } from '../shared/contracts';
 import {
   assertOrdinaryReviewIdentity, ordinaryReviewSource,
 } from '../core/review/ordinary-review';
+import { reattachTaskCheckout } from '../core/git/checkout-reattach';
 
 /**
  * Boundary tests for the ordinary reviewer's checkout identity: the exact
@@ -28,20 +29,20 @@ test('ordinary reviewer identity refuses each distinct missing or foreign fact b
   const f = fixture();
   try {
     const task = f.task;
-    assertOrdinaryReviewIdentity(task, f.oldHead, false);
-    assert.doesNotThrow(() => assertOrdinaryReviewIdentity(task, f.oldHead, false));
-    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, workspaceIntent: false }, f.oldHead, false),
+    assertOrdinaryReviewIdentity(task, f.oldHead);
+    assert.doesNotThrow(() => assertOrdinaryReviewIdentity(task, f.oldHead));
+    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, workspaceIntent: false }, f.oldHead),
       /identity is incomplete: .*missing or invalid workspace intent/);
 
     // A directory that is not a usable checkout root is the Queue-owned-root
     // refusal, not an unreadable-identity one; the typed Git fault decides it.
     const plain = join(f.root, 'not-a-checkout');
     mkdirSync(plain);
-    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, directory: plain }, f.oldHead, false),
+    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, directory: plain }, f.oldHead),
       /Ordinary reviewer requires its recorded Queue-owned checkout root/);
 
     // The same directory for source and checkout is not a separate round.
-    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, directory: f.repo }, f.oldHead, false),
+    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, directory: f.repo }, f.oldHead),
       /Ordinary reviewer requires its recorded Queue-owned checkout root/);
 
     // A foreign checkout shares neither common dir nor origin.
@@ -52,20 +53,23 @@ test('ordinary reviewer identity refuses each distinct missing or foreign fact b
     writeFileSync(join(other, 'README.md'), 'other\n');
     runGit(other, 'add', '.');
     runGit(other, 'commit', '-m', 'other');
-    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, repoPath: other }, f.oldHead, false),
+    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, repoPath: other }, f.oldHead),
       /repository identity changed/);
 
-    assert.throws(() => assertOrdinaryReviewIdentity(task, 'f'.repeat(40), false),
+    assert.throws(() => assertOrdinaryReviewIdentity(task, 'f'.repeat(40)),
       /checkout identity mismatch: expected HEAD f{40}/);
-    // A follow-up round reads either shape: its own launch never detaches the
-    // checkout, and a checkout an earlier round left detached reads the same
-    // commit. A normal round requires the branch and names the detached state.
+    // No round reads a detached checkout: the guard requires the attached task
+    // branch, and the single reattach step is what returns a checkout an earlier
+    // round left detached (it moves no commit).
     runGit(f.workspace, 'checkout', '--quiet', '--detach', f.oldHead);
-    assert.doesNotThrow(() => assertOrdinaryReviewIdentity(task, f.oldHead, true));
-    assert.throws(() => assertOrdinaryReviewIdentity(task, f.oldHead, false),
-      /observed .*branch \(detached\); the task checkout is detached and the reattach step refused or has not run/);
-    runGit(f.workspace, 'checkout', '--quiet', 'feature/external');
-    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, branch: 'feature/other' }, f.oldHead, false),
+    assert.throws(() => assertOrdinaryReviewIdentity(task, f.oldHead),
+      /observed .*branch \(detached\); a detached task checkout is returned to its branch by the reattach step \(run.release, then run.start\)/);
+    assert.deepEqual(
+      await reattachTaskCheckout(task, [], {}),
+      { kind: 'reattached', branch: 'feature/external', head: f.oldHead },
+    );
+    assert.doesNotThrow(() => assertOrdinaryReviewIdentity(task, f.oldHead));
+    assert.throws(() => assertOrdinaryReviewIdentity({ ...task, branch: 'feature/other' }, f.oldHead),
       /branch ref refs\/heads\/feature\/other could not be read: GitIdentityError: Missing ref/);
   } finally { f.close(); }
 });
@@ -73,8 +77,8 @@ test('ordinary reviewer identity refuses each distinct missing or foreign fact b
 test('ordinary reviewer source proof adds the clean-tree walk at the send boundary', async () => {
   const f = fixture();
   try {
-    await ordinaryReviewSource(f.task, f.oldHead, false);
+    await ordinaryReviewSource(f.task, f.oldHead);
     writeFileSync(join(f.workspace, 'dirty.txt'), 'uncommitted\n');
-    await assert.rejects(() => ordinaryReviewSource(f.task, f.oldHead, false), /checkout is dirty/);
+    await assert.rejects(() => ordinaryReviewSource(f.task, f.oldHead), /checkout is dirty/);
   } finally { f.close(); }
 });

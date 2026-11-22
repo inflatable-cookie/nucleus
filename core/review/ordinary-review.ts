@@ -39,14 +39,14 @@ function boundDeltaSection(text: string, label: string, budget = REVIEW_PROMPT_S
  * Exact-head and repository identity from the filesystem. Safe inside a
  * transaction or a stillAllowed send guard: no git spawn, no tree walk.
  *
- * `followUpRound` names the round that reads this head, never the checkout
- * shape: a follow-up round reads either shape because its own launch never
- * detaches the checkout, and a checkout an earlier round left detached still
- * reads this exact commit. One reattach step (`core/git/checkout-reattach.ts`)
- * returns such a checkout to its branch before the next launch, in `run.start`
- * and in `run.release`. Every other reader requires the branch attached.
+ * Every ordinary round, first or follow-up, reads its exact head in the task
+ * checkout on the attached task branch (planner ruling, 2026-11-22): the branch
+ * tip must equal that head, so no round detaches the checkout and no checkout
+ * shape but the task branch is accepted. A checkout an earlier round left
+ * detached reaches this guard only after the one reattach step
+ * (`core/git/checkout-reattach.ts`) has returned it to the branch.
  */
-export function assertOrdinaryReviewIdentity(task: Task, head: string, followUpRound: boolean) {
+export function assertOrdinaryReviewIdentity(task: Task, head: string) {
   if (!task.workspaceIntent || !task.directory || !task.branch || task.branch === task.baseBranch) {
     const missing = [!task.workspaceIntent ? 'workspace intent' : '', !task.directory ? 'checkout directory' : '', !task.branch ? 'branch' : '', task.branch === task.baseBranch ? 'distinct task branch' : ''].filter(Boolean);
     throw Error(`Ordinary reviewer source identity is incomplete: expected workspace intent, checkout directory and a task branch distinct from ${task.baseBranch}; missing or invalid ${missing.join(', ') || 'identity fields'}`);
@@ -74,10 +74,8 @@ export function assertOrdinaryReviewIdentity(task: Task, head: string, followUpR
   let branchTip: string;
   try { branchTip = readGitRef(checkout, `refs/heads/${task.branch}`); }
   catch (error) { throw Error(`Ordinary reviewer branch ref refs/heads/${task.branch} could not be read: ${String(error)}; expected ${head}`); }
-  const attachedOrFollowUp =
-    checkout.branch === task.branch || (followUpRound && checkout.branch === '');
-  if (checkout.head !== head || branchTip !== head || !attachedOrFollowUp)
-    throw Error(`Ordinary reviewer checkout identity mismatch: expected HEAD ${head} and branch tip ${head} on ${task.branch}${followUpRound ? ' (or a detached HEAD at the same commit)' : ''}; observed HEAD ${checkout.head}, branch tip ${branchTip}, and branch ${checkout.branch || '(detached)'}${checkout.branch === '' && !followUpRound ? `; the task checkout is detached and the reattach step refused or has not run, see its own task_checkout_reattach_refused event for the reason` : ''}`);
+  if (checkout.head !== head || branchTip !== head || checkout.branch !== task.branch)
+    throw Error(`Ordinary reviewer checkout identity mismatch: expected HEAD ${head} and branch tip ${head} on ${task.branch}; observed HEAD ${checkout.head}, branch tip ${branchTip}, and branch ${checkout.branch || '(detached)'}${checkout.branch === '' ? '; a detached task checkout is returned to its branch by the reattach step (run.release, then run.start)' : ''}`);
 }
 
 /**
@@ -86,8 +84,8 @@ export function assertOrdinaryReviewIdentity(task: Task, head: string, followUpR
  * before a transaction or as the last await before send; re-check identity
  * cheaply inside the guard or transaction.
  */
-export async function ordinaryReviewSource(task: Task, head: string, followUpRound: boolean) {
-  assertOrdinaryReviewIdentity(task, head, followUpRound);
+export async function ordinaryReviewSource(task: Task, head: string) {
+  assertOrdinaryReviewIdentity(task, head);
   const status = await queueCheckoutStatus(task.directory!, 'status', '--porcelain');
   if (status) throw Error(`Ordinary reviewer checkout is dirty: expected an empty porcelain status; observed ${status.slice(0, 1000)}`);
 }

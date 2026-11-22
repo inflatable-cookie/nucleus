@@ -145,8 +145,12 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
 
 - **Reattach.** Before a launch, and in `run.start` and `run.release`: when no
   unreleased detached run owns the checkout, the tree is clean and HEAD equals the
-  branch tip, check out the branch. Follow-up review rounds get their own
-  detached worktree instead of detaching the task's checkout.
+  branch tip, check out the branch. The commit never moves; every other state is
+  left alone with the reason reported. A follow-up review round reads its exact
+  head in the shared checkout on the attached task branch, so no round leaves the
+  checkout detached (planner ruling, 2026-11-22: a per-round worktree would break
+  Spec 057's task-workspace identity and start without `node_modules`). When the
+  branch tip is not the reviewed head it refuses by name and never detaches.
 - **Orphan phase.** A non-terminal phase with no live run and no stop returns to
   ordinary admission for its role, or records a typed stop.
 - **Hung tool.** Past the tool limit with no output, Nucleus terminates that
@@ -206,7 +210,7 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 3a | nucleus#1555 | Creation lookup for every role, and single-thread T3 lookup. | 1, Spec 067 batch 5 (nucleus#1523) |
 | 3b | nucleus#1552 | Process-death release, and `run_stalled` admits the coordinator. | 1 |
 | 4a | nucleus#1551 | A completion releases its run, `run.release` keeps a reported verdict, and the verdict-only credential. | — |
-| 4b | nucleus#1550 | Per-round reviewer worktrees and reattach. | — |
+| 4b | nucleus#1550 | Branch-attached follow-up review reads, and one reattach step for detached task checkouts. | — |
 | 5a | nucleus#1553 | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. | 1 |
 | 5b | nucleus#1556 | Hung-tool limit, permission policy and orphan-phase readmission. | 1, 3b |
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |

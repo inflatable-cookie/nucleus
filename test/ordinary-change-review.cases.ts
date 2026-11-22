@@ -184,7 +184,7 @@ function fixture() {
     continueReviewer: async (t, run, _id, _text, allowed, stillAllowed) => {
       assert.equal(await allowed(), true);
       assert.equal(stillAllowed(), true);
-      await ordinaryReviewSource(t, run.head, true);
+      await ordinaryReviewSource(t, run.head);
       sends.push(run);
       return { sent: true };
     },
@@ -257,7 +257,7 @@ function fixture() {
       }
       assert.equal(await guard.allowed(), true);
       assert.equal(guard.stillAllowed(), true);
-      await ordinaryReviewSource(t, run.head, true);
+      await ordinaryReviewSource(t, run.head);
       f.tokens.set(run.id, token);
       sends.push(run);
       f.states.set(run.agentId!, {
@@ -1883,7 +1883,7 @@ test("ordinary checkout refuses dirty source and detects a pure rebase from actu
       base: f.planningCommit,
       completion: { summary: "Read source" },
     } as Run;
-    await ordinaryReviewSource(f.store.task(f.task.id), f.oldHead, false);
+    await ordinaryReviewSource(f.store.task(f.task.id), f.oldHead);
     writeFileSync(join(f.repo, "base-change.txt"), "base movement\n");
     runGit(f.repo, "add", ".");
     runGit(f.repo, "commit", "-m", "move base");
@@ -1896,7 +1896,7 @@ test("ordinary checkout refuses dirty source and detects a pure rebase from actu
     );
     writeFileSync(join(f.workspace, "feature.txt"), "dirty");
     await assert.rejects(
-      () => ordinaryReviewSource(f.store.task(f.task.id), head, false),
+      () => ordinaryReviewSource(f.store.task(f.task.id), head),
       /dirty/,
     );
   } finally {

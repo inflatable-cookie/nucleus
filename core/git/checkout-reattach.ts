@@ -200,3 +200,29 @@ export async function reattachTaskCheckout(
 export function reattachRefusal(result: CheckoutReattach): string | null {
   return result.kind === "refused" ? result.reason : null;
 }
+
+/** The store facts the reattach step reads and the record it writes. */
+export interface ReattachStore {
+  task(id: string): Task;
+  runs(id: string): readonly Run[];
+  event(taskId: string, kind: string, detail: string): unknown;
+}
+
+/**
+ * The same step for a task read from the store: its runs decide ownership and
+ * its events carry the outcome, so every caller records it the same way. Callers
+ * serving one run's own round pass `settlingRunId`: that run is settling the
+ * checkout, not a foreign owner of it.
+ */
+export async function reattachStoredTaskCheckout(
+  store: ReattachStore,
+  taskId: string,
+  settlingRunId?: string,
+): Promise<CheckoutReattach> {
+  return reattachTaskCheckout(store.task(taskId), store.runs(taskId), {
+    ...(settlingRunId ? { settlingRunId } : {}),
+    record: (event, detail) => {
+      store.event(taskId, event, detail);
+    },
+  });
+}

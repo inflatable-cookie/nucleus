@@ -41,7 +41,7 @@ import {
   ReviewPublicationTransientError,
 } from "../forge/forge-health";
 import { WorkerSourceRefusal } from "../git/index";
-import { reattachTaskCheckout } from "../git/checkout-reattach";
+import { reattachStoredTaskCheckout } from "../git/checkout-reattach";
 import { hookHoldReason } from "../hooks/hooks";
 import {
   consecutiveNonDeliveries,
@@ -674,17 +674,14 @@ export class ResultApplication {
         );
     }
     if (run.ordinaryDetached) {
-      await ordinaryReviewSource(t, run.head, true);
+      await ordinaryReviewSource(t, run.head);
       const custody = recheck();
       if ("refusal" in custody) return blocked(custody.refusal);
       // One reattach step returns a checkout an earlier round left detached to
       // its task branch, and never blocks a verdict about the head that round
       // read: the commit does not move either way.
-      await reattachTaskCheckout(t, this.store.runs(t.id), {
-        settlingRunId: run.id,
-        record: (event, detail) => this.store.event(t.id, event, detail),
-      });
-      assertOrdinaryReviewIdentity(this.store.task(t.id), run.head, true);
+      await reattachStoredTaskCheckout(this.store, t.id, run.id);
+      assertOrdinaryReviewIdentity(this.store.task(t.id), run.head);
     }
     return this.commitReviewerVerdict(t, run, completion, true, () => {
       const boundary = recheck();
@@ -903,12 +900,9 @@ export class ResultApplication {
     let c = run.completion;
     if (run.ordinaryDetached) {
       await this.resolution.ordinaryRoundCustody(t, run, true);
-      await ordinaryReviewSource(t, run.head, true);
-      await reattachTaskCheckout(t, this.store.runs(t.id), {
-        settlingRunId: run.id,
-        record: (event, detail) => this.store.event(t.id, event, detail),
-      });
-      assertOrdinaryReviewIdentity(t, run.head, true);
+      await ordinaryReviewSource(t, run.head);
+      await reattachStoredTaskCheckout(this.store, t.id, run.id);
+      assertOrdinaryReviewIdentity(t, run.head);
     }
     // A pass that read this reviewer as current before another pass settled it
     // has nothing left to do, and must not clear whichever run is current now.
