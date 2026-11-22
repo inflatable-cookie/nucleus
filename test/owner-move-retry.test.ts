@@ -2042,38 +2042,23 @@ for (const followup of [false, true]) {
             task.hostId!,
           );
         openQuestion(questionId, legacyOffer);
-        const staleVersion = f.task().version;
         if (drift === "changed head")
           f.store.update(task.id, { prHead: "c".repeat(40) });
         if (drift === "changed run")
           f.store.update(task.id, { runId: "replacement-run" });
-        const answer = (question: string, version?: number) =>
+        const answer = (question: string) =>
           Promise.resolve().then(() =>
             f.engine.resolution.answerDelegatedQuestion(
               {
                 questionId: question,
                 choice: "Move to review",
                 reason: "Resume review",
-                ...(version !== undefined ? { version } : {}),
               },
               "planner",
             ),
           );
-        if (drift !== "unchanged") {
-          await assert.rejects(
-            answer(questionId, staleVersion),
-            new RegExp(`Task is now at version ${f.task().version}`),
-          );
-          assert.equal(f.events("owner_control").length, 0);
-        }
-        assert.equal(
-          (await answer(questionId, f.task().version)).answer,
-          legacyOffer.label,
-        );
-        assert.equal(
-          (await answer(questionId, f.task().version)).answer,
-          legacyOffer.label,
-        );
+        assert.equal((await answer(questionId)).answer, legacyOffer.label);
+        assert.equal((await answer(questionId)).answer, legacyOffer.label);
         assert.equal(f.events("owner_control").length, 1);
         assert.equal(f.events("planner_escalation_applied").length, 1);
       } finally {

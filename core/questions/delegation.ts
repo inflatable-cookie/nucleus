@@ -358,7 +358,6 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
-      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -449,7 +448,6 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
-      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -491,7 +489,6 @@ export class Delegation {
         questionId: input.questionId,
         answer: input.answer,
         choice: input.choice,
-        version: input.version,
         reason: input.reason,
         decision: input.decision,
         overtakes: input.overtakes,
@@ -505,7 +502,6 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
-      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -572,7 +568,6 @@ export class Delegation {
         questionId: string;
         caller: string;
         answer?: string;
-        version?: number;
         reason: string;
         decision?: "operator";
         overtakes?: string[];
@@ -606,8 +601,7 @@ export class Delegation {
         if (
           answer === receipt.answer &&
           input.reason?.trim() === receipt.reason &&
-          input.decision === receipt.decision &&
-          input.version === receipt.version
+          input.decision === receipt.decision
         )
           return Promise.reject(
             Error(outcome.detail.slice(outcome.detail.indexOf(":") + 2)),
@@ -617,7 +611,10 @@ export class Delegation {
         correctingRefusal = true;
       } else {
         if (!isEscalation) return receipt;
-        if (answer !== receipt.answer || input.decision !== receipt.decision)
+        if (
+          answer !== receipt.answer ||
+          input.decision !== receipt.decision
+        )
           throw Error(
             "This question already has a recorded answer awaiting application",
           );
@@ -726,7 +723,6 @@ export class Delegation {
       questionId: input.questionId,
       caller,
       answer,
-      ...(input.version !== undefined ? { version: input.version } : {}),
       reason,
       ...(input.decision ? { decision: input.decision } : {}),
       ...(authority.role === "planner" && input.overtakes?.length
@@ -801,7 +797,6 @@ export class Delegation {
       questionId: string;
       caller: string;
       answer?: string;
-      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -936,7 +931,6 @@ export class Delegation {
           ? { choice: receipt.answer }
           : { answer: receipt.answer }
         : {}),
-      ...(receipt.version !== undefined ? { version: receipt.version } : {}),
       reason: receipt.reason,
       ...(receipt.decision ? { decision: receipt.decision } : {}),
       ...(receipt.overtakes ? { overtakes: receipt.overtakes } : {}),
@@ -970,7 +964,6 @@ export class Delegation {
       questionId: string;
       answer?: string;
       choice?: string;
-      version?: number;
       decision?: "operator";
     },
     caller: string,
@@ -1000,7 +993,6 @@ export class Delegation {
             input.questionId,
             answer,
             `${role} ${caller}`,
-            input.version,
           );
         if (refusal) throw Error(refusal);
       }
@@ -1109,7 +1101,6 @@ export class Delegation {
         questionId: string;
         caller: string;
         answer?: string;
-        version?: number;
         reason: string;
         decision?: "operator";
         overtakes?: string[];
@@ -1550,8 +1541,9 @@ export class Delegation {
     // Spec 058: a registered planner whose thread is missing or archived is gone
     // for routing. The project row is cleared by the observing pass
     // (`refreshResponsibleThreads`), never by this read.
-    const assigned =
-      await this.resolution.plannerPresence.observeProjectPlanner(project);
+    const assigned = await this.resolution.plannerPresence.observeProjectPlanner(
+      project,
+    );
     // A planner the observing pass cleared for a missing or archived thread leaves
     // the episode on the project, so routing still treats the rung as failed.
     const clearedForGone =
@@ -1566,11 +1558,13 @@ export class Delegation {
             .plannerThreadGone(named)
             .catch(() => false)
         : false;
-    const gone = assigned?.state.kind === "gone" || clearedForGone || namedGone;
+    const gone =
+      assigned?.state.kind === "gone" || clearedForGone || namedGone;
     const queue = this.store.queueProject();
     // A gone or cleared project planner falls back to the Queue planner, the
     // Nucleus planner the planner chain names.
-    const target = gone && queue && queue.key !== project.key ? queue : project;
+    const target =
+      gone && queue && queue.key !== project.key ? queue : project;
     const { thread } = await this.resolution.responsibleThread(target);
     // A responsible thread names its host; a planner on this task's own host is
     // recorded by its native identity, as the planner rung itself is.

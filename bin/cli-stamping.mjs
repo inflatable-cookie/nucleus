@@ -242,7 +242,7 @@ async function answerQuestion(input, context) {
     throw new Error('CLI question.answer with a run ticket takes {questionId, answer or choice, reason}');
   const payload = {
     taskId: ticket.taskId, runId: ticket.runId, questionId: input.questionId,
-    answer: input.answer, choice: input.choice, version: input.version, reason: input.reason,
+    answer: input.answer, choice: input.choice, reason: input.reason,
     decision: input.decision, overtakes: input.overtakes, dryRun: input.dryRun,
   };
   for (const key of Object.keys(payload)) if (payload[key] === undefined) delete payload[key];

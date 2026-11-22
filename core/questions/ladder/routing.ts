@@ -69,10 +69,24 @@ export function openPlannerEscalation(
       "planner_escalation_question",
       `${id}: ${input.question}`.slice(0, 12000),
     );
+    const payloadRecord = input.payload as Record<string, unknown>;
+    const raisingRun = input.runId ? ladder.store.run(input.runId) : null;
+    const pendingDelivery = raisingRun?.reviewDeliveries?.findLast(
+      (d) => d.status === "reserved" || d.status === "uncertain",
+    );
+    const derivedEffectId =
+      typeof payloadRecord.effectId === "string" ||
+      typeof payloadRecord.deliveryId === "string"
+        ? undefined
+        : raisingRun && ["intent", "uncertain"].includes(raisingRun.status)
+          ? `run-delivery.${raisingRun.id}`
+          : pendingDelivery
+            ? `review-delivery.${pendingDelivery.deliveryId}`
+            : undefined;
     ladder.store.event(
       t.id,
       "planner_escalation_payload",
-      `${id}: ${JSON.stringify({ ...input.payload, id, runId: input.runId })}`,
+      `${id}: ${JSON.stringify({ ...input.payload, id, runId: input.runId, ...(derivedEffectId ? { effectId: derivedEffectId } : {}) })}`,
     );
   };
   // A caller inside an open transaction (the review application) joins it.

@@ -162,6 +162,7 @@ export class Ladder {
   }
   /** Withdraw any still-open legacy placeholder ladder decisions and return their occurrence to the planner. */
   reconcileLegacyPlaceholderDecisions(t: Task): void {
+    closeClearedEscalations(this.store, t);
     return reconcileLegacyPlaceholderDecisions(this, t);
   }
   /** Classify an escalation: concrete operator choices reach Tom; bare classifications return to the planner. */

@@ -7,7 +7,6 @@ const questionAnswerFields = {
   caller: z.string().trim().min(1).max(300),
   answer: z.string().trim().min(1).max(4000).optional(),
   choice: z.string().trim().min(1).max(400).optional(),
-  version: z.number().int().positive().optional(),
   reason: z
     .string()
     .trim()

@@ -86,14 +86,15 @@ or resolve a critical task; only the operator board may accept
 `unverified_merge`. Explicit resolution updates only the named record and
 preserves its previous state in the audit history.
 
-Escalation answers bind to the task `version`, not a snapshot binding hash, and
-never refuse an offered verb solely because `next` no longer lists that offer.
-Open escalations close automatically only through one durable auto-close path
-(`closeClearedEscalations`) once their own recorded cause clears, retiring the
-escalation's stop, owned wait, followups, initial question windows, and open
-linked decision in one transaction (with repair on maintenance if interrupted).
-`restart` no longer answers escalations; use the explicit command and
-`record.clear` instead.
+Plain-choice escalation answers apply at the current task version without a
+snapshot binding-hash or staleness refusal, and never refuse an offered verb
+solely because `next` no longer lists that offer; they refuse only once the
+escalation has already closed. Open escalations close automatically only through
+one durable auto-close path (`closeClearedEscalations`) once their own recorded
+cause clears, retiring the escalation's stop, owned wait, followups, initial
+question windows, and open linked decision in one transaction (with repair on
+maintenance if interrupted). `restart` no longer answers escalations; use the
+explicit command and `record.clear` instead.
 
 
 ## Problem

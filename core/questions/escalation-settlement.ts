@@ -229,9 +229,40 @@ export function escalationCauseClearedReason(
         return [];
       }
     });
-    if (clearedEffects.length > 0) {
-      if (escalation.runId) {
-        const run = store.run(escalation.runId);
+    if (clearedEffects.length > 0 && escalation.runId) {
+      const run = store.run(escalation.runId);
+      const deliveries = run?.reviewDeliveries ?? [];
+      const recordedEffect =
+        typeof payload?.effectId === "string"
+          ? payload.effectId
+          : typeof payload?.deliveryId === "string"
+            ? payload.deliveryId
+            : null;
+      if (recordedEffect) {
+        const recordedId = recordedEffect.replace(
+          /^(?:review-delivery|run-delivery)\./,
+          "",
+        );
+        const matchedClear = clearedEffects.some(
+          (effectId) =>
+            effectId.replace(/^(?:review-delivery|run-delivery)\./, "") ===
+            recordedId,
+        );
+        if (matchedClear) {
+          if (
+            recordedId === escalation.runId &&
+            run &&
+            !["intent", "uncertain"].includes(run.status)
+          )
+            return "the escalated run-delivery effect was cleared";
+          if (
+            deliveries.some(
+              (d) => d.deliveryId === recordedId && d.status === "refused",
+            )
+          )
+            return "the escalated delivery effect was cleared";
+        }
+      } else {
         if (
           run &&
           !["intent", "uncertain"].includes(run.status) &&
@@ -241,7 +272,6 @@ export function escalationCauseClearedReason(
           )
         )
           return "the escalated run-delivery effect was cleared";
-        const deliveries = run?.reviewDeliveries ?? [];
         const hasPendingDelivery = deliveries.some(
           (d) => d.status === "reserved" || d.status === "uncertain",
         );
@@ -371,7 +401,6 @@ export class EscalationSettlement {
     offered: EscalationVerbChoice[] = [],
     questionId = `ns-escalation-${id}`,
     answerer: Answerer = answererFromLabel(who),
-    version?: number,
   ): Promise<string | null> {
     const key = `${t.id}:${id}`;
     const existing = this.escalationSettlements.get(key);
@@ -384,7 +413,6 @@ export class EscalationSettlement {
       offered,
       questionId,
       answerer,
-      version,
     ).then((result) => {
       if (
         !result &&
@@ -536,12 +564,9 @@ export class EscalationSettlement {
     offered: EscalationVerbChoice[],
     questionId: string,
     answerer: Answerer,
-    version?: number,
   ): Promise<string | null> {
     const delegatedAnswer = answerer.role !== "operator";
-    const latestTask = this.store.task(t.id);
-    if (!escalationOutlived(latestTask))
-      closeClearedEscalations(this.store, latestTask);
+    closeClearedEscalations(this.store, this.store.task(t.id));
     if (
       plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[]).find(
         (item) => item.id === id,
@@ -549,24 +574,6 @@ export class EscalationSettlement {
     ) {
       if (delegatedAnswer)
         throw Error(`Escalation ${id} is already settled; read next again`);
-      return null;
-    }
-    if (escalationOutlived(this.store.task(t.id))) {
-      this.store.event(
-        t.id,
-        "planner_escalation_answer_pending",
-        `${id}: ${JSON.stringify({ questionId, who, answer, control: null })}`,
-      );
-      this.store.event(
-        t.id,
-        "planner_escalation_answered",
-        `${id}: answered by ${who}: ${answer.slice(0, 4000)}`,
-      );
-      this.store.event(
-        t.id,
-        "planner_escalation_applied",
-        `${id}: nothing to apply; the task merged or ended first`,
-      );
       return null;
     }
     const control = escalationAnswerControl(answer);
@@ -588,15 +595,6 @@ export class EscalationSettlement {
           ),
         };
     try {
-      if (version !== undefined && version !== current.version) {
-        const staleMessage = `Task is now at version ${current.version}. Repeat with that version.`;
-        this.store.event(
-          current.id,
-          "planner_escalation_refused",
-          `${id}: ${staleMessage}`,
-        );
-        return staleMessage;
-      }
       if (!this.resolution.applyOperatorControl)
         throw Error("No control applier is bound");
       const escalation = plannerEscalations(this.store.eventsAll(t.id)).find(
@@ -1060,7 +1058,6 @@ export class EscalationSettlement {
     questionId: string,
     answer: string,
     who: string,
-    version?: number,
   ): Promise<string | null> {
     const task = this.store.task(taskId);
     const events = this.store.eventsAll(taskId);
@@ -1106,7 +1103,6 @@ export class EscalationSettlement {
       offered,
       questionId,
       answererFromLabel(who),
-      version,
     );
   }
 

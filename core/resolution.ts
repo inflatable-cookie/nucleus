@@ -1492,7 +1492,6 @@ export class Resolution {
       questionId: string;
       answer?: string;
       choice?: string;
-      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -1509,7 +1508,6 @@ export class Resolution {
       questionId: string;
       answer?: string;
       choice?: string;
-      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -1527,7 +1525,6 @@ export class Resolution {
       questionId: string;
       answer?: string;
       choice?: string;
-      version?: number;
       reason: string;
       decision?: "operator";
       overtakes?: string[];
@@ -2706,7 +2703,6 @@ export class Resolution {
     who: string,
     offered?: EscalationVerbChoice[],
     questionId?: string,
-    version?: number,
   ): Promise<string | null> {
     return this.escalationSettlement.settlePlannerEscalation(
       t,
@@ -2715,8 +2711,6 @@ export class Resolution {
       who,
       offered,
       questionId,
-      undefined,
-      version,
     );
   }
   continueWorkerAfterLadder(
