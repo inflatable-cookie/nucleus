@@ -18,7 +18,16 @@ escalations are the only durable attention signal.
 
 An agent records a question that needs the operator as a **decision** in Nucleus.
 The board shows all open decisions. The operator can also answer in the Paseo
-composer pill or in T3. In T3, operator questions for T3-hosted tasks appear
+composer pill or in T3.
+
+**Ruling (Tom, 2026-11-22):** every operator decision appears in the host's pinned
+Nucleus Inbox, including decisions linked to a T3 task: "We need to get the inbox
+working consistently". A routing sign-off for nucleus#1537 went only to the task's
+own thread, so the operator never saw it. Task threads no longer receive decision
+cards. nucleus#1538 implements this; until it lands, the rule below still describes
+shipped behaviour.
+
+In T3, operator questions for T3-hosted tasks appear
 on their parent threads when a live parent exists; when a linked T3 task has no
 eligible parent yet (or its parent is archived) it goes to that host's pinned
 Nucleus inbox, and when the parent lookup answers `unknown` (for example, a
