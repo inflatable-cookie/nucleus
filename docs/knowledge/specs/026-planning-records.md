@@ -631,7 +631,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     link that opens the pull request without opening the task; on the web board it is a
     real anchor, so the keyboard opens it too. A normal task shows none.
   - **Buttons** only where the row is the action: the hold prompt's Release and Keep
-    (with its reason) and the drained lane's Close lane and Keep. They and the flags
+    (with its reason) and the drained lane's Mark done (which always asks first) and
+    Keep. They and the flags
     sit inside the row's frame, below its content and outside its press target, so a
     press on a control or the PR link never opens the record too, and no control is
     nested inside the row's button. Pressing a drained lane's row opens that lane
@@ -846,7 +847,7 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   clamped to three lines, a bar of live tasks by phase with the counts in words and the
   finished count (done, cancelled and superseded alike, so it says "finished", not
   "done"), and "Done when". An empty column says "Nothing here". Finished lanes sit
-  in a collapsed row at the bottom. History reads each save exactly as stored with
+  in a collapsed row at the bottom, each with Reopen. History reads each save exactly as stored with
   `plan.get` (the latest included, never the live projection of lanes that joined or
   closed since), opening on the latest and paging back through every earlier version. A
   version shows who saved it and when, its idle mark, and its Now, Next and Later lanes
@@ -856,8 +857,11 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   the plan editor unchanged ([Spec 041](041-planning-roadmap.md)).
 - **Lane page:** opens in the detail pane from a lane card, with the breadcrumb
   Planning › Project › Lane. The header has the title and chips for its horizon in the
-  plan it was opened from, open or closed, and the other plans that list it, with Close
-  lane and Edit lane (the edit icon; it edits the lane document). Below are the aim in full; the finish line
+  plan it was opened from, open or closed, and the other plans that list it, with Mark
+  done (which always asks first, naming every plan that lists the lane and its live
+  tasks) or, on a closed lane, Reopen (which returns it to its saved plan position),
+  and Edit lane (the edit icon; it edits the lane document). "Close" only ever dismisses
+  a panel or modal, never marks a lane done. Below are the aim in full; the finish line
   (`doneWhen`) with "Why it's still open" from `lane.keep.reason`; the latest status
   (the plan entry's `note`, with the plan's author and age); what is in flight (live
   tasks as inbox rows with phase and detail, paged from the server total); what is

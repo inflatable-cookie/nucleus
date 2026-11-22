@@ -130,6 +130,7 @@ async function mountTab(over: MountOver = {}) {
   const log = {
     saves: [] as Array<[string, PlanEdit]>,
     closed: [] as string[],
+    reopened: [] as string[],
   };
   function Harness() {
     const [edits, setEdits] = useState<Record<string, PlanEdit>>({});
@@ -150,6 +151,7 @@ async function mountTab(over: MountOver = {}) {
       onSave: (p: string, edit: PlanEdit) => log.saves.push([p, edit]),
       onCancel: () => setEdits({}),
       onCloseLane: (l: string) => log.closed.push(l),
+      onReopenLane: (l: string) => log.reopened.push(l),
       c,
       projectActivity: recentProjectActivity(projects),
       ...over,
@@ -660,7 +662,19 @@ test("041-3 rendered: Next to Now writes a new plan version through Save; unplan
     "doneWhen survives a move",
   );
   ui.press("1 unplanned lanes");
-  ui.press("Close lane unplanned");
+  ui.press("Mark done Title unplanned");
+  assert.ok(
+    ui.get("Mark Title unplanned done"),
+    "marking done asks first",
+  );
+  assert.match(ui.text(), /No plan lists this lane yet/);
+  assert.match(ui.text(), /1 live task/);
+  assert.deepEqual(log.closed, [], "the confirmation writes nothing until it is confirmed");
+  ui.press("Cancel marking Title unplanned done");
+  assert.equal(ui.query("Mark Title unplanned done"), undefined);
+  assert.deepEqual(log.closed, [], "cancel writes nothing");
+  ui.press("Mark done Title unplanned");
+  ui.press("Mark Title unplanned done");
   assert.deepEqual(log.closed, ["unplanned"]);
   ui.press("Add unplanned to alpha plan");
   assert.equal(
@@ -669,6 +683,17 @@ test("041-3 rendered: Next to Now writes a new plan version through Save; unplan
     "added lanes leave the unplanned list",
   );
   assert.ok(ui.get("Later step unplanned"), "and join Later");
+});
+
+test("1536 rendered: finished lanes reopen with no confirmation", async () => {
+  const { ui, log } = await mountTab();
+  assert.ok(ui.get("Finished lanes, 2"), "the collapsed finished row");
+  ui.press("Finished lanes, 2");
+  assert.ok(ui.get("Open lane Title d-old, finished"));
+  ui.press("Reopen lane Title d-old");
+  assert.deepEqual(log.reopened, ["d-old"], "reopen writes active with no confirmation");
+  ui.press("Reopen lane Title d-new");
+  assert.deepEqual(log.reopened, ["d-old", "d-new"]);
 });
 
 test("041-4 rendered: a now or next step without doneWhen is marked; later is not", async () => {

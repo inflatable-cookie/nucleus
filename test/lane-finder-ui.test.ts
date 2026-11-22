@@ -217,7 +217,12 @@ test("a board without a detail pane keeps the plan and opens the open lane in a 
   assert.equal(ui.ofType("Modal").length, 1, "the lane opens in a modal");
   assert.ok(ui.get("Lane detail"));
   assert.match(ui.text(), /LANE PANEL SENTINEL/);
-  ui.press("Close lane");
+  assert.equal(
+    ui.query("Close lane"),
+    undefined,
+    "dismissing the lane modal never says Close lane",
+  );
+  ui.press("Close");
   assert.deepEqual(
     log.steps,
     ["plan"],
