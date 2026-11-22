@@ -83,7 +83,9 @@ async function startBoard(options: { limit?: number; stallMs?: number } = {}) {
   });
   const port = await web.listen();
   const link = web.issueLink(5);
-  const token = new URLSearchParams(new URL(link.url).hash.slice(1)).get("token");
+  const token = new URLSearchParams(new URL(link.url).hash.slice(1)).get(
+    "token",
+  );
   assert.ok(token, "the link fragment carries the token");
   const cookie = await pair(port, token);
   return { web, port, cookie, publish: exec.publish };
@@ -109,7 +111,10 @@ function send(
       (response) => {
         response.resume();
         response.on("end", () =>
-          resolve({ status: response.statusCode ?? 0, headers: response.headers }),
+          resolve({
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+          }),
         );
       },
     );
@@ -119,7 +124,12 @@ function send(
 }
 
 async function pair(port: number, token: string): Promise<string> {
-  const paired = await send(port, "/api/pair", { authorization: `Bearer ${token}` }, "POST");
+  const paired = await send(
+    port,
+    "/api/pair",
+    { authorization: `Bearer ${token}` },
+    "POST",
+  );
   assert.equal(paired.status, 200);
   const cookie = String(paired.headers["set-cookie"]?.[0] ?? "").split(";")[0];
   assert.match(cookie, /^nucleus_session=[A-Za-z0-9_-]{43}$/);
@@ -176,25 +186,33 @@ function openEvents(port: number, cookie: string): Promise<Events> {
 async function waitFor(check: () => boolean, label: string, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    if (Date.now() > deadline)
+      throw new Error(`timed out waiting for ${label}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
 
 const boardIds = (text: string) =>
-  [...text.matchAll(/id: (\d+)\nevent: board\n/g)].map((match) => Number(match[1]));
+  [...text.matchAll(/id: (\d+)\nevent: board\n/g)].map((match) =>
+    Number(match[1]),
+  );
 
 const turn = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const backlogged = (fixture: Fixture) =>
-  fixture.web.liveStreamBacklog().every((stream) => stream.bufferedBytes > LIMIT);
+  fixture.web
+    .liveStreamBacklog()
+    .every((stream) => stream.bufferedBytes > LIMIT);
 
 /**
  * Publish until every stream's socket holds more than the bound and stays so. The loop
  * yields between revisions: the kernel absorbs a few megabytes per socket before it stops
  * accepting, and only then does the service's own queue hold the rest.
  */
-async function publishUntilBacklogged(fixture: Fixture, from: number): Promise<number> {
+async function publishUntilBacklogged(
+  fixture: Fixture,
+  from: number,
+): Promise<number> {
   for (let revision = from; revision < from + 500; revision++) {
     fixture.publish(board(revision));
     await turn(5);
@@ -211,12 +229,21 @@ test("a client that never reads keeps its stream's buffered bytes under the boun
   const stalled = await openEvents(fixture.port, fixture.cookie);
   try {
     assert.equal(stalled.status, 200);
-    await waitFor(() => fixture.web.liveStreamBacklog().length === 1, "the stream to register");
+    await waitFor(
+      () => fixture.web.liveStreamBacklog().length === 1,
+      "the stream to register",
+    );
     const backlogRevision = await publishUntilBacklogged(fixture, 2);
-    const frameBytes = Buffer.byteLength(JSON.stringify(board(backlogRevision)));
+    const frameBytes = Buffer.byteLength(
+      JSON.stringify(board(backlogRevision)),
+    );
 
     let peak = 0;
-    for (let revision = backlogRevision + 1; revision <= backlogRevision + 40; revision++) {
+    for (
+      let revision = backlogRevision + 1;
+      revision <= backlogRevision + 40;
+      revision++
+    ) {
       fixture.publish(board(revision));
       peak = Math.max(peak, fixture.web.liveStreamBacklog()[0].bufferedBytes);
     }
@@ -230,7 +257,11 @@ test("a client that never reads keeps its stream's buffered bytes under the boun
       true,
       "a backlogged stream is armed for the stall timeout",
     );
-    assert.equal(stalled.closed(), false, "the stream stays open until the stall timeout");
+    assert.equal(
+      stalled.closed(),
+      false,
+      "the stream stays open until the stall timeout",
+    );
   } finally {
     stalled.req.destroy();
     await fixture.web.close();
@@ -242,22 +273,36 @@ test("a stalled stream that drains receives the latest revision, not the ones it
   const stalled = await openEvents(fixture.port, fixture.cookie);
   try {
     assert.equal(stalled.status, 200);
-    await waitFor(() => fixture.web.liveStreamBacklog().length === 1, "the stream to register");
+    await waitFor(
+      () => fixture.web.liveStreamBacklog().length === 1,
+      "the stream to register",
+    );
     const backlogRevision = await publishUntilBacklogged(fixture, 2);
     const latest = backlogRevision + 20;
     for (let revision = backlogRevision + 1; revision <= latest; revision++)
       fixture.publish(board(revision));
 
     stalled.resume();
-    await waitFor(() => boardIds(stalled.text()).includes(latest), "the latest revision");
+    await waitFor(
+      () => boardIds(stalled.text()).includes(latest),
+      "the latest revision",
+    );
 
     const delivered = boardIds(stalled.text());
-    assert.equal(delivered.at(-1), latest, "the drained stream ends on the latest revision");
+    assert.equal(
+      delivered.at(-1),
+      latest,
+      "the drained stream ends on the latest revision",
+    );
     assert.ok(
       delivered.length < latest - 1,
       `the skipped revisions were not replayed: delivered ${delivered.length} of ${latest}`,
     );
-    assert.equal(fixture.web.liveStreamBacklog()[0].stalled, false, "a drained stream disarms its stall timer");
+    assert.equal(
+      fixture.web.liveStreamBacklog()[0].stalled,
+      false,
+      "a drained stream disarms its stall timer",
+    );
     assert.equal(stalled.closed(), false, "a drained stream stays open");
   } finally {
     stalled.req.destroy();
@@ -274,7 +319,10 @@ test("a stream that stays backlogged past the stall timeout is closed, freeing i
       assert.equal(client.status, 200);
       clients.push(client);
     }
-    await waitFor(() => fixture.web.liveStreamBacklog().length === 8, "eight streams to register");
+    await waitFor(
+      () => fixture.web.liveStreamBacklog().length === 8,
+      "eight streams to register",
+    );
 
     await publishUntilBacklogged(fixture, 2);
     assert.ok(
@@ -284,15 +332,30 @@ test("a stream that stays backlogged past the stall timeout is closed, freeing i
 
     const refused = await openEvents(fixture.port, fixture.cookie);
     refused.res.resume();
-    assert.equal(refused.status, 503, "all eight slots are held while the stalled streams wait");
+    assert.equal(
+      refused.status,
+      503,
+      "all eight slots are held while the stalled streams wait",
+    );
 
-    await waitFor(() => fixture.web.liveStreamBacklog().length === 0, "the stalled streams to close", 5_000);
+    await waitFor(
+      () => fixture.web.liveStreamBacklog().length === 0,
+      "the stalled streams to close",
+      5_000,
+    );
     // The server has closed the sockets; a client that never reads sees the close only once it reads.
     for (const client of clients) client.resume();
-    await waitFor(() => clients.every((client) => client.closed()), "the clients to see their close");
+    await waitFor(
+      () => clients.every((client) => client.closed()),
+      "the clients to see their close",
+    );
 
     const reopened = await openEvents(fixture.port, fixture.cookie);
-    assert.equal(reopened.status, 200, "the freed slot takes a new live stream");
+    assert.equal(
+      reopened.status,
+      200,
+      "the freed slot takes a new live stream",
+    );
     reopened.req.destroy();
   } finally {
     for (const client of clients) client.req.destroy();

@@ -271,7 +271,8 @@ export class WebBoard {
   constructor(private readonly options: WebBoardOptions) {
     this.tokens = new WebTokens(options.now);
     this.now = options.now ?? Date.now;
-    this.bufferLimit = options.streamBufferLimitBytes ?? STREAM_BUFFER_LIMIT_BYTES;
+    this.bufferLimit =
+      options.streamBufferLimitBytes ?? STREAM_BUFFER_LIMIT_BYTES;
     this.stallMs = options.streamStallMs ?? STREAM_STALL_MS;
   }
 
@@ -981,9 +982,7 @@ function writeEvent(
 ): void {
   if (response.writableEnded) return;
   const idLine = id === undefined ? "" : `id: ${id}\n`;
-  response.write(
-    `${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-  );
+  response.write(`${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 /** Map a thrown catalogue error to the HTTP status and typed code the web board answers with. */
