@@ -2026,10 +2026,14 @@ review or merge credit; live participants and unsettled effects remain fences.
   the retained worker thread, a fresh reviewer thread. The initial worker is
   the task's own binding and has no phase admission, so its release returns the
   task to ordinary dispatch on its retained worktree (`phase=queued`, one
-  `worker_process_gone_redispatch` event); a worker that already has PR identity
-  instead records a wait naming `restart`. An unreadable or partial process
-  table, an unproven start identity and a live process prove nothing and keep
-  the run leased ([Spec 068](../specs/068-self-healing.md) §3).
+  `worker_process_gone_redispatch` event). A worker that already has PR identity
+  records an `operator_needed` wait naming `move to=work` or `run.start worker`
+  instead, because initial dispatch is not that task's next step, and the worker
+  observation never overwrites it with a display claim once no worker is bound.
+  A coordinator run or recovery episode owns the task's next move, so nothing is
+  released under it. An unreadable or partial process table, an unproven start
+  identity and a live process prove nothing and keep the run leased
+  ([Spec 068](../specs/068-self-healing.md) §3).
 - A `run_stalled` stop names its own subject. That participant's idleness is not
   a precondition for the task's coordinator: stall detection recorded the stop
   after the stall window elapsed, so the coordinator is admitted while the host

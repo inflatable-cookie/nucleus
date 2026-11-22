@@ -150,6 +150,10 @@ export async function reconcileObservation(engine: WorkerReconcileContext, task:
     // An attention reason the stall check (or any other fault) just recorded owns
     // the visible cause; "Worker running" must never overwrite it mid-turn.
     if (after.phase === "needs_attention" || after.resolution.attention) return null;
+    // The check may have released this worker on proof of process death (Spec
+    // 068 §3). No worker is bound any more, so the observation describes a stale
+    // display, not a running turn: its own recorded cause and exit stay.
+    if (!after.agentId) return null;
     engine.note(task.id, state.permissions ? permissionWait(current.hostId) : current.completion ? "Completion received; worker is still active" : shellNotice ?? "Worker running", 'lifecycle');
     return null;
   }

@@ -128,6 +128,21 @@ export function processDeathDetail(proof: ProcessDeathProof): string {
   return `${proof.role} run ${proof.runId} (process pid ${proof.pid}, start identity ${proof.startIdentity}) is gone: ${why}`;
 }
 
+/** The proof is the only authority this path asks for; a coordinator has its own. */
+function coordinatorOwnsTask(store: Store, task: Task): boolean {
+  const recovery = task.resolution.recovery;
+  if (recovery && recovery.status !== "resolved") return true;
+  return store
+    .runs(task.id)
+    .some(
+      (run) =>
+        !run.released &&
+        (run.role === "recovery" ||
+          run.role === "verification" ||
+          run.role === "closeout"),
+    );
+}
+
 /**
  * Release the participant whose recorded process is provably gone, through the
  * same `releasePlan` an owner `run.release` applies, and record the proof.
@@ -144,6 +159,11 @@ export async function releaseGoneProcess(
   // An operator hold owns the task until it is lifted; a release would answer a
   // stop the operator did not make.
   if (dispatchBlocked(current)) return false;
+  // One owner at a time: a coordinator run or a recovery episode owns this
+  // task's next move. Releasing a participant under it would settle the
+  // episode's bookkeeping while leaving its own run unreleased, so the
+  // coordinator settles the fault it was started for instead.
+  if (coordinatorOwnsTask(store, current)) return false;
   const target = run ? store.run(run.id) : null;
   if (run) {
     if (!target || target.taskId !== current.id || target.released)
@@ -208,11 +228,15 @@ export async function releaseGoneProcess(
           "worker_process_gone_redispatch",
         );
       } else {
+        // The worker already has PR identity, so initial dispatch is not this
+        // task's next step: record the wait a person answers, naming the two
+        // routes that continue the retained PR. `next` filters the listed verbs
+        // to the ones this task's shape actually admits.
         engine.resolution.waiting(
           released,
-          `${detail}. The worker run is released; restart role=worker continues this task's retained work.`,
-          "lifecycle",
-          { suggestedVerbs: ["restart"] },
+          `${detail}. The worker run is released and no worker is bound; move to=work continues the retained PR, or run.start worker fresh starts a new worker.`,
+          "operator_needed",
+          { suggestedVerbs: ["restart", "route", "move"] },
         );
       }
       return release;

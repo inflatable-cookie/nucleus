@@ -12,9 +12,14 @@ import { processDeathProof } from "../core/recovery/process-death";
 import {
   runSchema,
   submissionSchema,
+  taskNextSchema,
   type Run,
   type Task,
 } from "../shared/contracts";
+import {
+  collectOwnerVerbFacts,
+  ownerTaskNext,
+} from "../core/verbs/owner-verbs";
 import type { ParticipantActivity } from "../shared/schema/task-activity";
 import type { Adapter, AgentObservation } from "../core/host";
 
@@ -655,6 +660,208 @@ test("a released worker returns to ordinary dispatch so the worker relaunches", 
       1,
       "the redispatch is recorded beside the proof",
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a released worker with PR identity keeps a visible wait across passes", async () => {
+  const f = fixture();
+  try {
+    // The worker already opened a PR, so initial dispatch is not its next step.
+    f.store.putRun({
+      ...f.store.run("review-run")!,
+      released: true,
+      active: false,
+      status: "superseded",
+    });
+    const seenAt = Date.now() - uptime() * 1_000 - 60_000;
+    f.store.update(f.submitted.id, {
+      phase: "working",
+      completion: null,
+      participantActivity: f.participantActivity(
+        "worker-run",
+        "worker",
+        "worker-turn-1",
+        {
+          pid: 4444,
+          startIdentity: `4444@${new Date(seenAt).toISOString()}`,
+          seenAt,
+        },
+      ),
+      resolution: {
+        ...f.current().resolution,
+        currentRunId: null,
+        reviewerAgentId: null,
+        reviewerProfile: null,
+      },
+    });
+    f.states.set("worker", {
+      id: "worker",
+      workspaceId: "workspace",
+      status: "running",
+      active: true,
+      permissions: false,
+      error: "",
+      provider: "test",
+      model: worker.model,
+      updatedAt: minutesAgo(40),
+      turnStartedAt: minutesAgo(41),
+      activeTurnId: "worker-turn-1",
+    });
+
+    await f.engine.wake();
+
+    const current = f.current();
+    assert.equal(f.events("participant_process_gone").length, 1);
+    assert.equal(current.agentId, null, "the dead worker is not bound again");
+    assert.equal(current.phase, "working");
+    assert.equal(
+      current.resolution.stop?.reason,
+      "operator_needed",
+      "a worker with PR identity waits on its owner, not on a stale display",
+    );
+    assert.match(current.reason, /move to=work/);
+    assert.match(current.reason, /is gone/);
+    assert.equal(
+      current.resolution.attention,
+      false,
+      "the wait is recorded without opening an attention fault",
+    );
+
+    // A second pass observes the same stale display; the recorded wait and its
+    // cause must survive the worker observation.
+    await f.engine.wake();
+    const after = f.current();
+    assert.equal(after.resolution.stop?.reason, "operator_needed");
+    assert.equal(after.reason, current.reason);
+    assert.equal(f.events("participant_process_gone").length, 1);
+
+    const next = taskNextSchema.parse(
+      ownerTaskNext(collectOwnerVerbFacts(f.store, after)),
+    );
+    const offered = next.verbs
+      .filter((view) => view.available)
+      .map((view) => view.verb);
+    assert.ok(
+      offered.includes("move"),
+      `the wait names an exit the task admits: ${offered.join(", ")}`,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a worker release never orphans a coordinator that owns the task", async () => {
+  const f = fixture();
+  try {
+    f.store.putRun({
+      ...f.store.run("review-run")!,
+      released: true,
+      active: false,
+      status: "superseded",
+    });
+    // A live coordinator run and its episode own this task's next move.
+    const recoveryRun = runSchema.parse({
+      id: "recovery-run",
+      taskId: f.submitted.id,
+      role: "recovery",
+      generation: 1,
+      head,
+      base,
+      agentId: "coord-agent",
+      workspaceId: "workspace",
+      profile: coordinator,
+      status: "running",
+      createdAt: minutesAgo(2),
+      lastObservedAt: minutesAgo(1),
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    });
+    f.store.putRun(recoveryRun);
+    f.states.set("coord-agent", {
+      id: "coord-agent",
+      workspaceId: "workspace",
+      status: "running",
+      active: true,
+      permissions: false,
+      error: "",
+      provider: "test",
+      model: coordinator.model,
+      updatedAt: minutesAgo(1),
+      turnStartedAt: minutesAgo(2),
+      activeTurnId: "coord-turn",
+    });
+    const seenAt = Date.now() - uptime() * 1_000 - 60_000;
+    f.store.update(f.submitted.id, {
+      phase: "working",
+      completion: null,
+      prHead: null,
+      prUrl: null,
+      participantActivity: f.participantActivity(
+        "worker-run",
+        "worker",
+        "worker-turn-1",
+        {
+          pid: 4545,
+          startIdentity: `4545@${new Date(seenAt).toISOString()}`,
+          seenAt,
+        },
+      ),
+      resolution: {
+        ...f.current().resolution,
+        currentRunId: null,
+        reviewerAgentId: null,
+        reviewerProfile: null,
+        recovery: {
+          id: "episode-1",
+          key: "episode-key",
+          generation: 1,
+          runId: recoveryRun.id,
+          agentId: "coord-agent",
+          status: "running",
+          summary: "",
+          idleSince: null,
+          incidentId: null,
+          progress: null,
+        },
+      },
+    });
+    f.states.set("worker", {
+      id: "worker",
+      workspaceId: "workspace",
+      status: "running",
+      active: true,
+      permissions: false,
+      error: "",
+      provider: "test",
+      model: worker.model,
+      updatedAt: minutesAgo(40),
+      turnStartedAt: minutesAgo(41),
+      activeTurnId: "worker-turn-1",
+    });
+
+    await f.engine.wake();
+
+    const current = f.current();
+    assert.equal(
+      f.events("participant_process_gone").length,
+      0,
+      "the coordinator owns the task's next move, so nothing is released under it",
+    );
+    assert.equal(
+      f.store.run(recoveryRun.id)?.released,
+      false,
+      "the coordinator run is never left unreleased behind a cleared episode",
+    );
+    assert.equal(
+      current.resolution.recovery?.runId,
+      recoveryRun.id,
+      "the episode keeps its run",
+    );
+    assert.equal(current.resolution.stop?.reason, "run_stalled");
   } finally {
     await f.close();
   }
