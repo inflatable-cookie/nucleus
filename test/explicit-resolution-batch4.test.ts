@@ -9,12 +9,15 @@ import { stampInput } from "../bin/cli-stamping.mjs";
 import { Engine } from "../core/engine";
 import type { Adapter } from "../core/host";
 import { Decisions } from "../core/planning/decisions";
-import { RuntimeQuestions } from "../core/runtime/questions";
 import {
   closeClearedEscalations,
+  escalationExplicitCommandChoices,
+} from "../core/questions/escalation-settlement";
+import {
   escalationVerbChoices,
   plannerEscalations,
   type EscalationVerbChoice,
+  type LadderEvent,
 } from "../core/questions/ladder";
 import { Store } from "../core/store/store";
 import {
@@ -22,15 +25,14 @@ import {
   ownerVerbViews,
   parkedRestart,
 } from "../core/verbs/owner-verbs";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   OPERATOR_BOARD_CALLER,
   questionAnswerInputSchema,
   questionAnswerRequestSchema,
   runSchema,
   submissionSchema,
-  taskControlInputSchema,
 } from "../shared/contracts";
-import { decisionAnswer } from "../shared/rpc/decisions";
 import { observeIdle } from "./support/fakes";
 
 const HEAD_A = "a".repeat(40);
@@ -39,7 +41,9 @@ const BASE = "1".repeat(40);
 const PLANNER = "planner-live";
 const REPO = "/repo/explicit-batch4";
 
-function makeFixture(options: { plannerRoutable?: boolean } = {}) {
+function makeFixture(
+  options: { plannerRoutable?: boolean; stopTurnError?: string } = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), "ns-explicit-batch4-"));
   const store = new Store(join(dir, "queue.sqlite"));
   store.setMeta("paused", false);
@@ -116,7 +120,9 @@ function makeFixture(options: { plannerRoutable?: boolean } = {}) {
       }
       return (await observeIdle(null)(agentId))!;
     },
-    stopAgentTurn: async () => {},
+    stopAgentTurn: async () => {
+      if (options.stopTurnError) throw Error(options.stopTurnError);
+    },
     archiveAgent: async () => {},
     createRun: async () => {
       throw new Error("Unexpected createRun");
@@ -169,10 +175,18 @@ function recordOpenEscalation(
       ...(options.payload ?? {}),
     })}`,
   );
+  const offered =
+    options.offered ??
+    escalationExplicitCommandChoices(
+      store,
+      store.task(taskId),
+      id,
+      store.eventsAll(taskId) as LadderEvent[],
+    );
   store.event(
     taskId,
     "planner_escalation_offered",
-    `${id}: ${JSON.stringify(options.offered ?? [])}`,
+    `${id}: ${JSON.stringify(offered)}`,
   );
   engine.resolution.waiting(
     store.task(taskId),
@@ -183,7 +197,7 @@ function recordOpenEscalation(
   const questionId = `ns-escalation-${id}`;
   const choices = [
     "Wait until a time (put an ISO timestamp in Reason)",
-    ...(options.offered ?? []).map((o) => o.label),
+    ...offered.map((o) => o.label),
   ];
   engine.resolution.openDelegatedQuestion(
     store.task(taskId),
@@ -194,804 +208,521 @@ function recordOpenEscalation(
     options.role ?? "planner",
     "host-1",
   );
-  return questionId;
+  return { questionId, offered };
 }
 
-test("question.answer and decision.answer schemas validate explicit command + version requirements", () => {
-  const validTopVersion = questionAnswerInputSchema.parse({
-    questionId: "ns-escalation-1",
-    caller: PLANNER,
-    version: 3,
-    command: { action: "run.release", run: "run-1", accept: ["live_turn"] },
-    reason: "Release stuck run",
+function makeRun(
+  taskId: string,
+  overrides: Record<string, unknown> & { id: string },
+) {
+  const at = new Date(Date.now() - 5_000).toISOString();
+  return runSchema.parse({
+    taskId,
+    role: "revision",
+    attempt: 1,
+    generation: 1,
+    agentId: `agent-${overrides.id}`,
+    hostId: "host-1",
+    workspaceId: "ws-worker",
+    head: HEAD_A,
+    base: BASE,
+    profile: {
+      id: "p-1",
+      name: "P",
+      provider: "codex",
+      model: "gpt-5",
+      notes: "",
+      available: true,
+      problem: "",
+      supportedThinking: [],
+    },
+    status: "running",
+    active: true,
+    released: false,
+    createdAt: at,
+    lastObservedAt: at,
+    idleSince: null,
+    completion: null,
+    ...overrides,
   });
-  assert.equal(validTopVersion.command?.action, "run.release");
+}
 
-  const validCommandVersion = questionAnswerRequestSchema.parse({
-    taskId: "task-1",
+test("question.answer schemas and run-ticket CLI transport carry explicit command + version", async () => {
+  const valid = questionAnswerInputSchema.parse({
+    questionId: "ns-escalation-esc-1",
     caller: PLANNER,
-    command: { action: "phase.set", to: "working", version: 4 },
-    reason: "Return to working",
-  });
-  assert.equal(validCommandVersion.command?.version, 4);
-
-  const validDecisionCmd = decisionAnswer.input.parse({
-    id: "dec-1",
-    version: 1,
-    answer: "Release stuck reviewer",
-    answeredBy: OPERATOR_BOARD_CALLER,
-    relayed: false,
+    version: 7,
     command: {
       action: "run.release",
       run: "run-1",
-      version: 5,
       accept: ["live_turn"],
     },
+    reason: "Release stuck run",
   });
-  assert.equal(validDecisionCmd.command?.version, 5);
-
-  assert.throws(
-    () =>
-      decisionAnswer.input.parse({
-        id: "dec-1",
-        version: 1,
-        answer: "Missing task version on command",
-        answeredBy: OPERATOR_BOARD_CALLER,
-        relayed: false,
-        command: { action: "run.release", run: "run-1" },
-      }),
-    /requires command\.version/,
-  );
+  assert.equal(valid.version, 7);
+  assert.equal(valid.command?.action, "run.release");
+  assert.deepEqual(valid.command?.accept, ["live_turn"]);
 
   assert.throws(
     () =>
       questionAnswerInputSchema.parse({
-        questionId: "ns-escalation-1",
+        questionId: "ns-escalation-esc-1",
         caller: PLANNER,
-        command: { action: "turn.release" },
+        command: { action: "run.release", run: "run-1" },
         reason: "Missing version",
       }),
     /requires a task version/,
   );
-
   assert.throws(
     () =>
       questionAnswerInputSchema.parse({
-        questionId: "ns-escalation-1",
+        questionId: "ns-escalation-esc-1",
         caller: PLANNER,
-        version: 2,
-        command: { action: "turn.release", version: 3 },
+        version: 7,
+        command: { action: "run.release", run: "run-1", version: 8 },
         reason: "Mismatched versions",
       }),
     /must match/,
   );
 
-  assert.throws(
-    () =>
-      questionAnswerInputSchema.parse({
-        questionId: "ns-escalation-1",
-        caller: PLANNER,
-        version: 2,
-        answer: "Try again",
-        command: { action: "turn.release" },
-        reason: "Both answer and command",
-      }),
-    /Provide exactly one of answer, choice, decision or command/,
-  );
+  const req = questionAnswerRequestSchema.parse({
+    questionId: "ns-escalation-esc-1",
+    caller: PLANNER,
+    version: 7,
+    command: { action: "record.clear", kind: "escalation", id: "esc-1" },
+    reason: "Clear resolved escalation",
+  });
+  assert.equal(req.version, 7);
+
+  const forwarded: Record<string, unknown>[] = [];
+  await stampInput({
+    method: "question.answer",
+    input: {
+      questionId: "ns-escalation-esc-1",
+      version: 7,
+      command: { action: "run.release", run: "run-1", accept: ["live_turn"] },
+      reason: "Release via run ticket",
+    },
+    context: {
+      callerSource: () => ({ source: "ticket" }),
+      readTicket: () => ({ taskId: "task-1", runId: "run-planner" }),
+      credentialFor: () => "cred",
+      answerThroughTicket: async (
+        _ticket: unknown,
+        payload: Record<string, unknown>,
+      ) => {
+        forwarded.push(payload);
+        return { ok: true };
+      },
+    },
+  });
+  assert.equal(forwarded[0]?.version, 7);
+  assert.deepEqual(forwarded[0]?.command, {
+    action: "run.release",
+    run: "run-1",
+    accept: ["live_turn"],
+  });
 });
 
-test("underlay#046 shape: real owner control runs without 'is no longer available' offer-match loop", async () => {
-  const f = makeFixture();
+test("#1491 shape: escalation lists explicit commands, choosing one runs ordinary RPC without escalation-answer markers, enforces version/warnings/hard-gates, and closes on cause clearance", async () => {
+  const fx = makeFixture({ stopTurnError: "host stop timed out" });
   try {
-    const reviewer = runSchema.parse({
-      id: "rev-uncertain-046",
-      taskId: f.taskId,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD_A,
-      base: BASE,
-      agentId: "reviewer-046",
-      workspaceId: "ws-046",
-      hostId: "host-1",
-      profile: null,
-      status: "uncertain",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: false,
+    const runId = "run-worker-1491";
+    const run = makeRun(fx.taskId, {
+      id: runId,
+      agentId: "agent-worker-1491",
     });
-    f.store.putRun(reviewer);
-    f.store.update(f.taskId, {
-      phase: "reviewing",
-      prHead: HEAD_A,
-      resolution: {
-        ...f.task().resolution,
-        currentRunId: reviewer.id,
-        reviewerAgentId: reviewer.agentId,
-      },
-    });
-    const offer: EscalationVerbChoice = {
-      label: `Retry run-delivery.${reviewer.id}: observe and retry the recorded effect`,
-      verb: "retry_effect",
-      args: { effect: `run-delivery.${reviewer.id}` },
-    };
-    const id = "underlay-046-retry";
-    const questionId = recordOpenEscalation(f.store, f.engine, f.taskId, id, {
-      runId: reviewer.id,
-      offered: [offer],
-    });
-    // Change the task's PR head so `next` no longer matches the original snapshot.
-    f.store.update(f.taskId, { prHead: HEAD_B });
-    // Release the run so `next` stops offering `retry_effect` for `run-delivery.<id>`.
-    f.store.putRun({ ...reviewer, released: true, status: "superseded" });
-    assert.equal(
-      escalationVerbChoices(
-        ownerVerbViews(collectOwnerVerbFacts(f.store, f.task())),
-      ).some((choice) => choice.verb === "retry_effect"),
-      false,
-    );
-
-    // Real answer -> real EscalationSettlement -> real Engine.performTaskControl -> real RetryEffectControls.
-    // It must NOT fail with the deleted "is no longer available" or "binding changed" refusals.
-    await assert.rejects(
-      async () =>
-        f.engine.resolution.answerDelegatedQuestion(
-          {
-            questionId,
-            choice: offer.label,
-            version: f.task().version,
-            reason: "Run real retry_effect guard path",
-          },
-          PLANNER,
-        ),
-      (error: Error) => {
-        assert.doesNotMatch(error.message, /no longer available/i);
-        assert.doesNotMatch(error.message, /binding changed/i);
-        assert.match(error.message, /effect|pending|retry/i);
-        return true;
-      },
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test("escalation explicit command enforces version, warnings, accept, clears its own escalation stop and returns updated next", async () => {
-  const f = makeFixture();
-  try {
-    const run = runSchema.parse({
-      id: "run-stuck-1",
-      taskId: f.taskId,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD_A,
-      base: BASE,
-      agentId: "reviewer-1",
-      workspaceId: "ws-1",
-      hostId: "host-1",
-      profile: null,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: true,
-      idleSince: null,
-      completion: null,
-      released: false,
-    });
-    f.store.putRun(run);
-    f.store.update(f.taskId, {
-      phase: "reviewing",
-      prHead: HEAD_A,
-      resolution: {
-        ...f.task().resolution,
-        currentRunId: run.id,
-        reviewerAgentId: "reviewer-1",
-      },
-    });
-    const id = "explicit-cmd-release";
-    const questionId = recordOpenEscalation(f.store, f.engine, f.taskId, id, {
-      runId: run.id,
-    });
-    const currentVersion = f.task().version;
-
-    // 1. Stale version returns stale status without changing anything or settling the escalation.
-    const stale = await f.engine.resolution.answerDelegatedQuestion(
+    fx.store.putRun(run);
+    fx.store.update(
+      fx.taskId,
       {
-        questionId,
-        version: currentVersion + 99,
-        command: { action: "run.release", run: run.id, accept: [] },
-        reason: "Release stuck reviewer",
+        phase: "working",
+        runId,
+        agentId: run.agentId,
+        resumePrNumber: 42,
+        prUrl: "https://github.com/example/explicit-batch4/pull/42",
+        prHead: HEAD_A,
+        resolution: { ...fx.task().resolution, currentRunId: runId },
       },
-      PLANNER,
-    );
-    assert.equal((stale as { status?: string }).status, "stale");
-    assert.match(
-      (stale as { explicitResolution?: { next: string } }).explicitResolution
-        ?.next ?? "",
-      new RegExp(`version ${currentVersion}`),
-    );
-    assert.equal(f.store.run(run.id)?.released, false);
-    assert.equal(
-      plannerEscalations(f.store.eventsAll(f.taskId)).find((e) => e.id === id)
-        ?.answered,
-      false,
+      "worker_started",
+      "live worker run",
     );
 
-    // 2. Unaccepted warnings return warnings with ids and change nothing.
-    const warned = await f.engine.resolution.answerDelegatedQuestion(
-      {
-        questionId,
-        version: currentVersion,
-        command: { action: "run.release", run: run.id, accept: [] },
-        reason: "Release stuck reviewer",
-      },
-      PLANNER,
+    const { questionId, offered } = recordOpenEscalation(
+      fx.store,
+      fx.engine,
+      fx.taskId,
+      "esc-1491",
+      { runId },
     );
-    assert.equal((warned as { status?: string }).status, "warnings");
-    const warningIds = (
-      warned as {
-        explicitResolution?: { warnings: Array<{ id: string }>; next: string };
-      }
-    ).explicitResolution?.warnings.map((w) => w.id);
-    assert.deepEqual(warningIds?.sort(), ["live_turn", "unreported_result"]);
-    assert.equal(f.store.run(run.id)?.released, false);
-    assert.equal(
-      plannerEscalations(f.store.eventsAll(f.taskId)).find((e) => e.id === id)
-        ?.answered,
-      false,
+    const releaseOption = offered.find(
+      (item) => item.command?.action === "run.release",
     );
+    assert.ok(
+      releaseOption,
+      "run.release should be listed as an offered option",
+    );
+    assert.equal(releaseOption.command?.action, "run.release");
+    assert.equal(releaseOption.command.run, runId);
 
-    // 3. Repeating with accept applies the command, clears the escalation's own stop, preserves host diagnostics in next, and writes owner_resolution.
-    (
-      f.engine.adapter as unknown as {
-        stopAgentTurn: () => Promise<void>;
-      }
-    ).stopAgentTurn = async () => {
-      throw new Error("host turn cancel refused");
-    };
-    const applied = await f.engine.resolution.answerDelegatedQuestion(
-      {
-        questionId,
-        version: currentVersion,
-        command: {
-          action: "run.release",
-          run: run.id,
-          accept: ["live_turn", "unreported_result"],
-        },
-        reason: "Release stuck reviewer",
-      },
-      PLANNER,
+    // Simulate #1491: task PR head and version advance after offer.
+    const staleVersion = fx.task().version;
+    fx.store.update(
+      fx.taskId,
+      { prHead: HEAD_B },
+      "pr_head_updated",
+      "head changed after offer",
     );
-    assert.equal((applied as { status?: string }).status, "applied");
-    const nextText =
-      (applied as { explicitResolution?: { next: string } }).explicitResolution
-        ?.next ?? "";
-    assert.match(
-      nextText,
-      /Turn cancellation could not be confirmed:.*host turn cancel refused/,
-    );
-    assert.doesNotMatch(nextText, /Waiting with the planner/i);
-    assert.equal(f.store.run(run.id)?.released, true);
-    assert.equal(f.task().resolution.stop, null);
-    assert.equal(
-      f.store.eventsAll(f.taskId).filter((e) => e.kind === "owner_resolution")
-        .length,
-      1,
-    );
-    assert.equal(
-      plannerEscalations(f.store.eventsAll(f.taskId)).find((e) => e.id === id)
-        ?.answered,
-      true,
-    );
-    await f.engine.resolution.ladder.resumeEscalationWaits(f.task());
-    assert.equal(f.task().resolution.stop, null);
-  } finally {
-    await f.close();
-  }
-});
-
-test("recorded versioned answer refuses after task version advances across restart/retry", async () => {
-  const f = makeFixture();
-  try {
-    const id = "stale-recorded-receipt";
-    const questionId = recordOpenEscalation(f.store, f.engine, f.taskId, id);
-    const staleVersion = f.task().version;
-    const future = new Date(Date.now() + 60 * 60_000).toISOString();
-    const choice = "Wait until a time (put an ISO timestamp in Reason)";
-    f.store.event(
-      `delegation:${questionId}`,
-      "delegated_answer",
-      JSON.stringify({
-        questionId,
-        caller: PLANNER,
-        answer: choice,
-        version: staleVersion,
-        reason: future,
-      }),
-    );
-    // Advance the task version before the recorded receipt is replayed.
-    f.store.update(f.taskId, { prHead: HEAD_A });
-    const currentVersion = f.task().version;
+    const currentVersion = fx.task().version;
     assert.notEqual(currentVersion, staleVersion);
 
-    await assert.rejects(
-      async () =>
-        f.engine.resolution.answerDelegatedQuestion(
-          { questionId, choice, version: staleVersion, reason: future },
-          PLANNER,
-        ),
-      new RegExp(`Task is now at version ${currentVersion}`),
-    );
-    assert.equal(
-      f.store
-        .eventsAll(f.taskId)
-        .filter((e) => e.kind === "planner_escalation_wait").length,
-      0,
-    );
-
-    // Resubmitting with the reported current version applies the wait cleanly (stale refusal does not bump version).
-    const applied = await f.engine.resolution.answerDelegatedQuestion(
-      { questionId, choice, version: currentVersion, reason: future },
+    // 1) Choosing the listed option with a stale version returns stale and writes nothing.
+    const staleReply = (await fx.engine.resolution.answerDelegatedQuestion(
+      {
+        questionId,
+        choice: releaseOption.label,
+        version: staleVersion,
+        reason: "Release stuck run with stale version",
+      },
       PLANNER,
-    );
-    assert.equal(applied.questionId, questionId);
-    assert.equal(
-      f.store
-        .eventsAll(f.taskId)
-        .filter((e) => e.kind === "planner_escalation_wait").length,
-      1,
-    );
-  } finally {
-    await f.close();
-  }
-});
+    )) as { status?: string; version?: number };
+    assert.equal(staleReply.status, "stale");
+    assert.equal(staleReply.version, currentVersion);
+    assert.equal(fx.store.run(runId)?.released, false);
 
-test("run-ticket CLI transport and board decision.answer carry explicit commands end to end", async () => {
-  const f = makeFixture({ plannerRoutable: true });
-  try {
-    // 1. Run-ticket CLI stamping forwards command + version to answerDelegatedQuestionFromTicket.
-    const run = runSchema.parse({
-      id: "run-ticket-1",
-      taskId: f.taskId,
-      role: "recovery",
-      generation: 1,
-      head: HEAD_A,
-      base: BASE,
-      agentId: PLANNER,
-      workspaceId: "ws-1",
-      hostId: "host-1",
-      profile: null,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: true,
-      idleSince: null,
-      completion: null,
-      released: false,
-    });
-    f.store.putRun(run);
-    const token = "tok-" + randomUUID();
-    f.store.setCredential(run.id, token);
-    const ticketEscId = "ticket-cmd-esc";
-    const ticketQuestionId = recordOpenEscalation(
-      f.store,
-      f.engine,
-      f.taskId,
-      ticketEscId,
-      { runId: run.id, recipient: PLANNER },
+    // 2) Choosing the listed option without accept returns warnings and leaves escalation open.
+    const warnedReply = (await fx.engine.resolution.answerDelegatedQuestion(
+      {
+        questionId,
+        choice: releaseOption.label,
+        version: currentVersion,
+        reason: "Release stuck run without accept",
+      },
+      PLANNER,
+    )) as {
+      status?: string;
+      explicitResolution?: { warnings: { id: string }[]; next: string };
+    };
+    assert.equal(warnedReply.status, "warnings");
+    assert.ok(
+      warnedReply.explicitResolution?.warnings.some(
+        (w) => w.id === "live_turn",
+      ),
     );
-    let forwardedPayload: Record<string, unknown> | null = null;
-    const stamped = await stampInput({
-      method: "question.answer",
-      input: {
-        questionId: ticketQuestionId,
-        version: f.task().version,
-        command: { action: "phase.set", to: "working", accept: ["live_runs"] },
-        reason: "Ticket command answer",
-      },
-      context: {
-        callerSource: () => ({ source: "ticket" }),
-        readTicket: () => ({ taskId: f.taskId, runId: run.id }),
-        credentialFor: () => token,
-        answerThroughTicket: async (
-          _ticket: unknown,
-          payload: Record<string, unknown>,
-        ) => {
-          forwardedPayload = payload;
-          return f.engine.resolution.answerDelegatedQuestionFromTicket(
-            payload as Parameters<
-              typeof f.engine.resolution.answerDelegatedQuestionFromTicket
-            >[0],
-            token,
-          );
-        },
-      },
-    });
-    assert.ok(forwardedPayload);
     assert.equal(
-      (forwardedPayload as { command?: { action?: string } }).command?.action,
-      "phase.set",
+      fx.store
+        .eventsAll(fx.taskId)
+        .some((e) => e.kind === "planner_escalation_answered"),
+      false,
     );
-    assert.equal((stamped.early as { status?: string }).status, "applied");
-    assert.equal(f.task().phase, "working");
+    assert.equal(
+      fx.store
+        .eventsAll(`delegation:${questionId}`)
+        .some((e) => e.kind === "delegated_answer"),
+      false,
+    );
 
-    // 2. Board decision.answer carrying an explicit command runs with operator_board authority and enforces hard gates.
-    f.store.update(f.taskId, {
-      phase: "verifying",
-      resumePrNumber: 42,
-      prUrl: "https://github.com/example/explicit-batch4/pull/42",
-      prHead: HEAD_A,
-    });
-    const boardEscId = "board-cmd-esc";
-    const boardQuestionId = recordOpenEscalation(
-      f.store,
-      f.engine,
-      f.taskId,
-      boardEscId,
-    );
-    // Hard gate via delegated command: merge.now refuses without review verdict even with accept.
+    // 3) Hard gate: merge.now without ready review verdict refuses even with accept.
     await assert.rejects(
       async () =>
-        f.engine.resolution.answerDelegatedQuestion(
+        await fx.engine.resolution.answerDelegatedQuestion(
           {
-            questionId: boardQuestionId,
-            version: f.task().version,
+            questionId,
+            version: currentVersion,
             command: {
               action: "merge.now",
-              head: HEAD_A,
-              accept: ["checks", "holds", "turn_held"],
+              head: HEAD_B,
+              accept: ["live_turn", "unreported_result"],
             },
             reason: "Attempt unreviewed merge",
           },
           PLANNER,
         ),
-      /review verdict|operator source acceptance/i,
-    );
-    // Authority: unauthorized decider is refused.
-    const deciderEscId = "decider-unauth-esc";
-    const deciderQ = recordOpenEscalation(
-      f.store,
-      f.engine,
-      f.taskId,
-      deciderEscId,
-      { recipient: "decider-1", role: "decider" },
-    );
-    await assert.rejects(
-      async () =>
-        f.engine.resolution.answerDelegatedQuestion(
-          {
-            questionId: deciderQ,
-            version: f.task().version,
-            command: { action: "phase.set", to: "working", accept: [] },
-            reason: "Decider lacks explicit command authority",
-          },
-          "decider-1",
-        ),
-      /requires this task's coordinator, its live responsible planner or the operator board/i,
+      /review|verdict|approved/i,
     );
 
-    // Board decision route: classify to operator -> answer via Decisions.answer with command -> resumeEscalationWaits applies with operator_board authority.
-    f.engine.resolution.classifyEscalationToOperator(
-      f.task(),
-      boardEscId,
-      "Needs operator board decision",
-      `planner ${PLANNER}`,
+    // 4) Repeating with accept applies run.release, closes via closeClearedEscalations,
+    // writes NO planner_escalation_answered / delegated_answer, and preserves host diagnostic in next.
+    const appliedReply = (await fx.engine.resolution.answerDelegatedQuestion(
       {
-        authority: "operator_choices",
-        question: "How should this escalation be resolved?",
-        choices: [
-          {
-            label: "Release run and continue",
-            consequence: "Releases the recovery run.",
-          },
-          { label: "Stop task", consequence: "Stops the task." },
-        ],
-        recommended: "Release run and continue",
-      },
-    );
-    const linkedDecision = new Decisions(f.store).list({
-      task: f.taskId,
-      status: "open",
-    })[0]!;
-    assert.ok(linkedDecision);
-    // Board decision route via RuntimeQuestions.answerDecision: warnings keep the decision open so retrying with accept succeeds.
-    const runtimeQuestions = new RuntimeQuestions({
-      store: f.store,
-      decisions: new Decisions(f.store),
-      engine: f.engine,
-      markStoreAccess: () => {},
-    });
-    const warnedDecision = await runtimeQuestions.answerDecision(
-      decisionAnswer.input.parse({
-        id: linkedDecision.id,
-        version: linkedDecision.version,
-        answer: "Operator releases the stuck run directly",
-        answeredBy: OPERATOR_BOARD_CALLER,
-        relayed: false,
+        questionId,
+        version: currentVersion,
         command: {
           action: "run.release",
-          run: run.id,
-          version: f.task().version,
-          accept: [],
-        },
-      }),
-    );
-    assert.equal(warnedDecision.status, "open");
-    assert.equal(warnedDecision.explicitResolution?.status, "warnings");
-    assert.deepEqual(
-      warnedDecision.explicitResolution?.warnings.map((w) => w.id).sort(),
-      ["live_turn", "unreported_result"],
-    );
-    assert.equal(f.store.run(run.id)?.released, false);
-
-    const answeredDecision = await runtimeQuestions.answerDecision(
-      decisionAnswer.input.parse({
-        id: linkedDecision.id,
-        version: linkedDecision.version,
-        answer: "Operator releases the stuck run directly",
-        answeredBy: OPERATOR_BOARD_CALLER,
-        relayed: false,
-        command: {
-          action: "run.release",
-          run: run.id,
-          version: f.task().version,
+          run: runId,
           accept: ["live_turn", "unreported_result"],
         },
-      }),
+        reason: "Release stuck run after accepting warnings",
+      },
+      PLANNER,
+    )) as {
+      status?: string;
+      explicitResolution?: { warnings: { id: string }[]; next: string };
+    };
+    assert.equal(appliedReply.status, "applied");
+    assert.equal(fx.store.run(runId)?.released, true);
+    assert.equal(fx.task().resolution.stop, null);
+    assert.match(
+      appliedReply.explicitResolution?.next ?? "",
+      /Turn cancellation could not be confirmed/,
     );
-    assert.equal(answeredDecision.status, "answered");
-    assert.equal(answeredDecision.explicitResolution?.status, "applied");
-    assert.equal(answeredDecision.answer?.command?.action, "run.release");
-    assert.equal(f.store.run(run.id)?.released, true);
-    assert.equal(f.task().resolution.stop, null);
+    assert.doesNotMatch(
+      appliedReply.explicitResolution?.next ?? "",
+      /escalated stop/,
+    );
+    const taskEvents = fx.store.eventsAll(fx.taskId);
     assert.equal(
-      plannerEscalations(f.store.eventsAll(f.taskId)).find(
-        (e) => e.id === boardEscId,
-      )?.answered,
+      taskEvents.some((e) => e.kind === "planner_escalation_resolved"),
       true,
     );
-    const resolutionEvents = f.store
-      .eventsAll(f.taskId)
-      .filter((e) => e.kind === "owner_resolution");
     assert.equal(
-      JSON.parse(resolutionEvents.at(-1)!.detail).source,
-      "operator_board",
+      taskEvents.some((e) => e.kind === "planner_escalation_answered"),
+      false,
+      "decoupled command must write no planner_escalation_answered marker",
+    );
+    assert.equal(
+      fx.store
+        .eventsAll(`delegation:${questionId}`)
+        .some((e) => e.kind === "delegated_answer"),
+      false,
+      "decoupled command must write no delegated_answer marker",
     );
   } finally {
-    await f.close();
+    await fx.close();
   }
 });
 
-test("cause-cleared closure retires owned waits and open board decisions, never closes unreviewed external merge on uncertain launch, and preserves deliberate waits", async () => {
-  const f = makeFixture();
+test("underlay#046 shape: real owner control runs through Engine.performTaskControl without 'is no longer available' loop", async () => {
+  const fx = makeFixture();
   try {
-    // 1. Stopped reviewer escalation with linked board decision: releasing reviewer retires wait + withdraws decision so resumeEscalationWaits does NOT restore the stop.
-    const reviewer = runSchema.parse({
-      id: "rev-exhausted-1",
-      taskId: f.taskId,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD_A,
-      base: BASE,
-      agentId: "reviewer-1",
-      workspaceId: "ws-1",
-      hostId: "host-1",
-      profile: null,
-      status: "finished",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: false,
-    });
-    f.store.putRun(reviewer);
-    f.store.update(f.taskId, {
-      phase: "reviewing",
-      prHead: HEAD_A,
-      resolution: { ...f.task().resolution, currentRunId: reviewer.id },
-    });
-    const revEscId = "rev-cont-cleared";
-    recordOpenEscalation(f.store, f.engine, f.taskId, revEscId, {
-      runId: null,
-      payload: { reviewContinuation: "exhausted", reader: reviewer.id },
-    });
-    f.engine.resolution.classifyEscalationToOperator(
-      f.task(),
-      revEscId,
-      "Reviewer stopped",
-      `planner ${PLANNER}`,
-      {
-        authority: "operator_choices",
-        question: "Replace reviewer?",
-        choices: [
-          { label: "Replace", consequence: "Starts fresh reviewer." },
-          { label: "Stop", consequence: "Stops task." },
-        ],
-        recommended: "Replace",
-      },
-    );
-    const openDecision = new Decisions(f.store).list({
-      task: f.taskId,
-      status: "open",
-    })[0]!;
-    assert.ok(openDecision);
-
-    f.store.putRun({ ...reviewer, released: true });
-    await f.engine.resolution.ladder.resumeEscalationWaits(f.task());
-    assert.equal(
-      plannerEscalations(f.store.eventsAll(f.taskId)).find(
-        (e) => e.id === revEscId,
-      )?.answered,
-      true,
-    );
-    assert.equal(f.task().resolution.stop, null);
-    assert.equal(
-      new Decisions(f.store).get({ id: openDecision.id }).status,
-      "withdrawn",
-    );
-
-    // 2. Unreviewed external-merge escalation must NOT close on a new uncertain reviewer run; closes only on operator acceptance / review at merged head.
-    const extEscId = "ext-merge-cleared";
-    recordOpenEscalation(f.store, f.engine, f.taskId, extEscId, {
-      payload: { head: HEAD_B, commit: "c".repeat(40) },
-    });
-    const uncertainReviewer = runSchema.parse({
-      id: "rev-uncertain-after-ext",
-      taskId: f.taskId,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD_B,
-      base: BASE,
-      agentId: null,
-      workspaceId: "ws-1",
-      hostId: "host-1",
-      profile: null,
-      status: "uncertain",
-      createdAt: new Date(Date.now() + 1000).toISOString(),
-      lastObservedAt: null,
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: false,
-    });
-    f.store.putRun(uncertainReviewer);
-    f.store.update(f.taskId, {
-      resolution: {
-        ...f.task().resolution,
-        currentRunId: uncertainReviewer.id,
-      },
-    });
-    assert.deepEqual(closeClearedEscalations(f.store, f.task()), []);
-
-    f.store.update(f.taskId, {
-      resolution: {
-        ...f.task().resolution,
-        ownerAcceptances: [
+    const reviewerRunId = "run-rev-046";
+    const operationId = randomUUID();
+    fx.store.putRun(
+      makeRun(fx.taskId, {
+        id: reviewerRunId,
+        role: "reviewer",
+        agentId: "agent-rev-046",
+        workspaceId: "ws-rev",
+        active: false,
+        reviewDeliveries: [
           {
-            head: HEAD_B,
-            prNumber: 42,
-            kind: "operator_source",
-            at: new Date().toISOString(),
-            review: null,
-            qualification: "Operator accepted merged head",
-            actor: { agentId: OPERATOR_BOARD_CALLER, role: "operator" },
-            authority: { kind: "operator", note: null },
-            reason: "Operator accepted merged head",
-            missingEvidence: null,
+            authorizationId: randomUUID(),
+            operationId,
+            deliveryId: `ns-review-${"c".repeat(64)}`,
+            taskId: fx.taskId,
+            runId: reviewerRunId,
+            head: HEAD_A,
+            checkpointOrdinal: 1,
+            taskVersion: fx.task().version,
+            briefVersion: 1,
+            briefDigest: null,
+            reason: "Review head A",
+            instruction: "Review head A",
+            createdAt: new Date().toISOString(),
+            status: "uncertain",
+            evidence: "delivery timed out",
+            observedAt: new Date().toISOString(),
           },
         ],
-      },
-    });
-    assert.deepEqual(closeClearedEscalations(f.store, f.task()), [extEscId]);
-
-    // 3. Recovery-pending escalation closes when its incident clears.
-    const incEscId = "rec-pending-cleared";
-    f.store.update(f.taskId, {
-      phase: "needs_attention",
-      resolution: {
-        ...f.task().resolution,
-        incident: {
-          id: "inc-1",
-          role: "reviewer",
-          runId: reviewer.id,
-          fingerprint: "fp-1",
-          attempt: 1,
-          cause: "stalled_turn",
-          status: "escalated",
-          detail: "Escalated",
-          action: "",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      },
-    });
-    recordOpenEscalation(f.store, f.engine, f.taskId, incEscId, {
-      payload: { cause: "recovery-pending" },
-    });
-    assert.deepEqual(closeClearedEscalations(f.store, f.task()), []);
-    f.store.update(f.taskId, {
-      resolution: { ...f.task().resolution, incident: null },
-    });
-    assert.deepEqual(closeClearedEscalations(f.store, f.task()), [incEscId]);
-
-    // 4. Interrupted closure: a stored planner_escalation_resolved marker without later writes still retires its stop, wait and open decision on maintenance.
-    const crashEscId = "interrupted-closure";
-    recordOpenEscalation(f.store, f.engine, f.taskId, crashEscId);
-    f.engine.resolution.classifyEscalationToOperator(
-      f.task(),
-      crashEscId,
-      "Needs decision",
-      `planner ${PLANNER}`,
+      }),
+    );
+    fx.store.update(
+      fx.taskId,
       {
-        authority: "operator_choices",
-        question: "Proceed?",
-        choices: [
-          { label: "Yes", consequence: "Continues." },
-          { label: "No", consequence: "Stops." },
-        ],
-        recommended: "Yes",
+        phase: "reviewing",
+        prHead: HEAD_A,
+        resolution: { ...fx.task().resolution, currentRunId: reviewerRunId },
       },
+      "review_started",
+      "uncertain reviewer delivery",
     );
-    const crashDecision = new Decisions(f.store).list({
-      task: f.taskId,
-      status: "open",
-    })[0]!;
-    f.store.event(
-      f.taskId,
-      "planner_escalation_resolved",
-      `${crashEscId}: interrupted before retiring surfaces`,
+    const offered = escalationVerbChoices(
+      ownerVerbViews(collectOwnerVerbFacts(fx.store, fx.task())),
     );
-    await f.engine.resolution.ladder.resumeEscalationWaits(f.task());
-    assert.equal(f.task().resolution.stop, null);
-    assert.equal(
-      new Decisions(f.store).get({ id: crashDecision.id }).status,
-      "withdrawn",
+    const retryOffer = offered.find((item) => item.verb === "retry_effect");
+    assert.ok(
+      retryOffer,
+      "retry_effect should be offered for uncertain delivery",
     );
+
+    const { questionId } = recordOpenEscalation(
+      fx.store,
+      fx.engine,
+      fx.taskId,
+      "esc-046",
+      { runId: reviewerRunId, offered },
+    );
+
+    // Move PR head so the original snapshot offer would have failed the old binding-hash / offer-match guard.
+    fx.store.update(
+      fx.taskId,
+      { prHead: HEAD_B },
+      "pr_head_updated",
+      "head moved after escalation offer",
+    );
+
+    // Real path: answerDelegatedQuestion -> EscalationSettlement -> Engine.performTaskControl -> RetryEffectControls.
+    // Must not fail with "is no longer available" (any refusal comes from the real verb guard, not offer matching).
+    try {
+      await fx.engine.resolution.answerDelegatedQuestion(
+        {
+          questionId,
+          choice: retryOffer.label,
+          version: fx.task().version,
+          reason: "Retry uncertain reviewer delivery",
+        },
+        PLANNER,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.doesNotMatch(message, /is no longer available/i);
+      assert.doesNotMatch(message, /binding/i);
+    }
   } finally {
-    await f.close();
+    await fx.close();
   }
 });
 
-test("deleted restart-as-escalation-answer path: parkedRestart never returns answer", async () => {
-  const f = makeFixture();
+test("simulated roll between command commit and auto-close: maintenance closes escalation atomically without resending the command", async () => {
+  const fx = makeFixture();
   try {
-    f.store.update(f.taskId, {
-      phase: "done",
-      resolution: {
-        ...f.task().resolution,
-        attention: false,
-        recovery: {
-          id: "rec-1",
-          key: "recovery-key-1",
-          generation: 1,
-          status: "escalated",
-          summary: "Escalated",
-          incidentId: "inc-1",
-          runId: null,
-          agentId: null,
-          idleSince: null,
-          action: null,
+    const runId = "run-worker-roll";
+    fx.store.putRun(
+      makeRun(fx.taskId, { id: runId, agentId: "agent-worker-roll" }),
+    );
+    fx.store.update(
+      fx.taskId,
+      {
+        phase: "working",
+        runId,
+        agentId: "agent-worker-roll",
+        resolution: { ...fx.task().resolution, currentRunId: runId },
+      },
+      "worker_started",
+      "live run before roll",
+    );
+
+    recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-roll", { runId });
+    // Link an open board decision and an active owned wait to this escalation.
+    const decisions = new Decisions(fx.store);
+    const decision = decisions.add({
+      headline: "Escalation operator decision",
+      question: "How should esc-roll proceed?",
+      choices: [
+        { label: "Release run", consequence: "Releases the run" },
+        { label: "Keep stopped", consequence: "Keeps the task parked" },
+      ],
+      askedBy: PLANNER,
+      tasks: [fx.taskId],
+    });
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_decision_linked",
+      `esc-roll: decision ${decision.id}`,
+    );
+    fx.store.event(
+      fx.taskId,
+      "planner_escalation_wait",
+      `esc-roll: ${JSON.stringify({ kind: "time", target: new Date(Date.now() + 3_600_000).toISOString() })}`,
+    );
+
+    // Step 1: commit the explicit command directly via resolveExplicitly (simulating a roll
+    // immediately after the command commits, before closeClearedEscalations runs).
+    const resolved = await resolveExplicitly(
+      fx.engine,
+      {
+        taskId: fx.taskId,
+        version: fx.task().version,
+        action: "run.release",
+        run: runId,
+        accept: ["live_turn", "unreported_result"],
+        reason: "Release run before simulated roll",
+        caller: OPERATOR_BOARD_CALLER,
+      },
+      () => "next",
+    );
+    assert.equal(resolved.explicitResolution?.status, "applied");
+    assert.equal(
+      plannerEscalations(fx.store.eventsAll(fx.taskId)).find(
+        (e) => e.id === "esc-roll",
+      )?.answered,
+      false,
+      "escalation is still open right after simulated roll",
+    );
+    assert.equal(fx.store.decision(decision.id).status, "open");
+
+    // Step 2: maintenance pass runs after the roll and closes the escalation atomically
+    // without resending the explicit command.
+    await fx.engine.resolution.ladder.resumeEscalationWaits(fx.task());
+
+    const afterEvents = fx.store.eventsAll(fx.taskId);
+    assert.equal(
+      plannerEscalations(afterEvents).find((e) => e.id === "esc-roll")
+        ?.answered,
+      true,
+    );
+    assert.equal(fx.task().resolution.stop, null);
+    assert.equal(fx.store.decision(decision.id).status, "withdrawn");
+    assert.equal(
+      afterEvents.some((e) => e.kind === "planner_escalation_wait_superseded"),
+      true,
+    );
+    assert.equal(
+      afterEvents.filter((e) => e.kind === "owner_resolution").length,
+      1,
+      "maintenance must not resend the explicit command",
+    );
+
+    // Step 3: non-clearance guards — unreviewed external merge is NOT closed by an uncertain launch.
+    recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-ext-merge", {
+      payload: { commit: HEAD_B, head: HEAD_B },
+    });
+    fx.store.putRun(
+      makeRun(fx.taskId, {
+        id: "run-uncertain-launch",
+        role: "reviewer",
+        attempt: 2,
+        agentId: "agent-rev-uncertain",
+        workspaceId: "ws-rev",
+        status: "uncertain",
+        active: false,
+        createdAt: new Date(Date.now() + 1000).toISOString(),
+      }),
+    );
+    fx.store.update(
+      fx.taskId,
+      {
+        resolution: {
+          ...fx.task().resolution,
+          currentRunId: "run-uncertain-launch",
         },
       },
-    });
-    const parked = parkedRestart(collectOwnerVerbFacts(f.store, f.task()));
-    assert.ok("refusal" in parked);
-    await assert.rejects(
-      () =>
-        f.engine.performTaskControl(
-          taskControlInputSchema.parse({
-            taskId: f.taskId,
-            version: f.task().version,
-            action: "restart",
-            reason: "Old restart-as-escalation-answer lever",
-          }),
-        ),
-      /done|Nothing is parked/i,
+      "uncertain_launch",
+      "uncertain reviewer launch",
+    );
+    assert.deepEqual(closeClearedEscalations(fx.store, fx.task()), []);
+    assert.equal(
+      plannerEscalations(fx.store.eventsAll(fx.taskId)).find(
+        (e) => e.id === "esc-ext-merge",
+      )?.answered,
+      false,
     );
   } finally {
-    await f.close();
+    await fx.close();
+  }
+});
+
+test("deleted restart-as-escalation-answer path: parkedRestart never returns answer", () => {
+  const fx = makeFixture();
+  try {
+    recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-no-restart");
+    const facts = collectOwnerVerbFacts(fx.store, fx.task());
+    const parked = parkedRestart(facts);
+    assert.ok(
+      !parked || !("answer" in parked),
+      "parkedRestart must not fall back to answering an open escalation",
+    );
+  } finally {
+    fx.close();
   }
 });

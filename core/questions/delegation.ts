@@ -14,7 +14,12 @@ import {
   offeredChoice,
   parseNativeDelegatedReply,
 } from "./question-delegation";
-import { plannerEscalations, type LadderEvent } from "./ladder";
+import {
+  decodeEscalationChoice,
+  plannerEscalations,
+  type EscalationVerbChoice,
+  type LadderEvent,
+} from "./ladder";
 import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
 import { HostReadRefusalError } from "../host";
@@ -746,44 +751,30 @@ export class Delegation {
         : {}),
     };
     if (input.dryRun) return { ...receipt, status: "validated" as const };
-    if (escalation && input.command) {
+    const explicitCommand =
+      input.command ??
+      (escalation && answer
+        ? this.offeredEscalationCommand(authority.taskId, escalationId, answer)
+        : undefined);
+    if (escalation && explicitCommand) {
       const task = this.store.task(authority.taskId);
       const role = authority.role === "decider" ? "decider" : "planner";
       return this.resolution.escalationSettlement
         .settleExplicitEscalationCommand(
           task,
           escalationId,
-          input.command,
+          explicitCommand,
           reason,
           `${authority.role} ${caller}`,
           { role, agentId: caller },
           input.version,
         )
-        .then((outcome) => {
-          if (outcome.status !== "applied")
-            return {
-              ...receipt,
-              version: outcome.taskVersion,
-              status: outcome.status,
-              explicitResolution: outcome,
-            };
-          this.store.event(key, "delegated_answer", JSON.stringify(receipt));
-          const appliedReceiptId = this.store
-            .eventsAll(key)
-            .findLast((event) => event.kind === "delegated_answer")!.id;
-          this.store.event(
-            authority.taskId,
-            "delegated_command_answered",
-            `${input.questionId}: ${caller}`,
-          );
-          this.recordCommandApplied(key, escalationId, appliedReceiptId);
-          return {
-            ...receipt,
-            version: outcome.taskVersion,
-            status: "applied" as const,
-            explicitResolution: outcome,
-          };
-        });
+        .then((outcome) => ({
+          ...receipt,
+          version: outcome.taskVersion,
+          status: outcome.status,
+          explicitResolution: outcome,
+        }));
     }
     this.store.event(key, "delegated_answer", JSON.stringify(receipt));
     const receiptEventId = this.store
@@ -824,6 +815,29 @@ export class Delegation {
       );
     }
     return receipt;
+  }
+  private offeredEscalationCommand(
+    taskId: string,
+    escalationId: string,
+    answer: string,
+  ): import("../../shared/contracts").ExplicitCommand | undefined {
+    const offerEvent = this.store
+      .eventsAll(taskId)
+      .find(
+        (event) =>
+          event.kind === "planner_escalation_offered" &&
+          event.detail.startsWith(`${escalationId}: `),
+      );
+    if (!offerEvent) return undefined;
+    try {
+      const offered = JSON.parse(
+        offerEvent.detail.slice(escalationId.length + 2),
+      ) as EscalationVerbChoice[];
+      const selected = decodeEscalationChoice(answer, offered);
+      return selected.kind === "owner" ? selected.choice.command : undefined;
+    } catch {
+      return undefined;
+    }
   }
   private deferredEscalation(
     taskId: string,

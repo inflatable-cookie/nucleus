@@ -703,10 +703,12 @@ registered on Engine.
 **Ladder** (`core/questions/ladder/`). A blocked worker gets
 one reviewer consult per cause, then one planner escalation, which a planner or
 decider settles or classifies to the operator. Escalation answers bind to the
-task version rather than a snapshot binding hash, may carry an explicit
-resolution command applied with the answerer's authority, and open escalations
-close themselves when their recorded cause clears (`closeClearedEscalations` in
-`escalation-settlement.ts`). Also settles open escalations
+task version rather than a snapshot binding hash; escalations list the explicit
+commands that resolve their cause as options, choosing a command option calls
+its ordinary explicit-resolution RPC directly (writing no escalation-answer
+marker), and open escalations close only through the one durable auto-close
+(`closeClearedEscalations` in `escalation-settlement.ts`) once their recorded
+cause clears. Also settles open escalations
 when an ordinary control moves the task. Enforces
 [Non-converging review ladder](#non-converging-review-ladder-spec-058-cutover-3)
 and [Responsible tasks](#responsible-tasks-spec-058-cutover-1). The folder splits the

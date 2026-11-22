@@ -14,7 +14,11 @@ import {
 import { delegateQuestion, plannerWindows } from "../planner-delegation";
 import { DelegatedHostUnavailable } from "../delegation";
 import { escalationOutlived } from "../../recovery/task-reasons";
-import { collectOwnerVerbFacts, ownerVerbViews } from "../../verbs/owner-verbs";
+import {
+  collectOwnerVerbFacts,
+  ownerPendingEffects,
+  ownerVerbViews,
+} from "../../verbs/owner-verbs";
 import type { Ladder } from "./ladder";
 import { plannerEscalationSuggestedVerbs } from "./proof";
 import {
@@ -26,7 +30,10 @@ import { plannerEscalations, type LadderEvent } from "./records";
 import { parseEscalationReply } from "./replies";
 import { escalationWaitDetail } from "./waits";
 import { closeEscalationFollowups } from "./continuation";
-import { closeClearedEscalations } from "../escalation-settlement";
+import {
+  closeClearedEscalations,
+  escalationExplicitCommandChoices,
+} from "../escalation-settlement";
 
 /**
  * Routing one recorded escalation: the durable intent and wait the caller records,
@@ -337,15 +344,22 @@ async function routeEscalationRound(
       event.kind === "planner_escalation_offered" &&
       event.detail.startsWith(`${id}: `),
   );
-  const offerFacts = collectOwnerVerbFacts(
-    ladder.store,
-    ladder.store.task(t.id),
-  );
+  const offerTask = ladder.store.task(t.id);
+  const offerFacts = collectOwnerVerbFacts(ladder.store, offerTask);
   const offered: EscalationVerbChoice[] = offerEvent
     ? (JSON.parse(
         offerEvent.detail.slice(id.length + 2),
       ) as EscalationVerbChoice[])
-    : escalationVerbChoices(ownerVerbViews(offerFacts));
+    : [
+        ...escalationVerbChoices(ownerVerbViews(offerFacts)),
+        ...escalationExplicitCommandChoices(
+          ladder.store,
+          offerTask,
+          id,
+          events(),
+          ownerPendingEffects(offerFacts).map((effect) => effect.effect),
+        ),
+      ];
   if (!offerEvent)
     ladder.store.event(
       t.id,

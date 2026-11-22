@@ -1,172 +1,84 @@
-import type { DecisionView, Task } from "../../../shared/contracts";
-import { taskControlInputSchema } from "../../../shared/contracts";
-import { Decisions } from "../../planning/decisions";
-import { DelegatedHostUnavailable } from "../delegation";
-import { threadRunningReason } from "../../intake/thread-waits";
-import {
-  liveWorkingParticipant,
-  type LiveParticipant,
-} from "../../recovery/live-noop";
-import {
-  collectOwnerVerbFacts,
-  ownerVerbViews,
-  restartShape,
-} from "../../verbs/owner-verbs";
-import { NO_RESOLUTION_RUN_REFUSAL } from "../../verbs/verb-refusal-text";
-import { closeClearedEscalations } from "../escalation-settlement";
-import {
-  escalationWaitState,
-  establishEscalationWait,
-  type EscalationWait,
-} from "./hold";
-import type { Ladder } from "./ladder";
-import { consultRecovery, escalationRecovery } from "./pass";
-import { reconcileLegacyPlaceholderDecisions } from "./operator";
-import {
-  plannerEscalations,
-  reviewerConsults,
-  type LadderEvent,
-} from "./records";
-import {
-  routePlannerEscalation,
-  routePlannerEscalationReturn,
-} from "./routing";
-import { escalationWaitDetail } from "./waits";
+import type { DecisionView, Task } from '../../../shared/contracts';
+import { taskControlInputSchema } from '../../../shared/contracts';
+import { Decisions } from '../../planning/decisions';
+import { DelegatedHostUnavailable } from '../delegation';
+import { threadRunningReason } from '../../intake/thread-waits';
+import { liveWorkingParticipant, type LiveParticipant } from '../../recovery/live-noop';
+import { collectOwnerVerbFacts, ownerVerbViews, restartShape } from '../../verbs/owner-verbs';
+import { NO_RESOLUTION_RUN_REFUSAL } from '../../verbs/verb-refusal-text';
+import { escalationWaitState, establishEscalationWait, type EscalationWait } from './hold';
+import type { Ladder } from './ladder';
+import { consultRecovery, escalationRecovery } from './pass';
+import { reconcileLegacyPlaceholderDecisions } from './operator';
+import { plannerEscalations, reviewerConsults, type LadderEvent } from './records';
+import { routePlannerEscalation, routePlannerEscalationReturn } from './routing';
+import { escalationWaitDetail } from './waits';
 
 /** Owner verbs that resume parked work. stop and route do not. */
-const ORDINARY_RESUME_VERBS = new Set(["restart", "move", "retry_effect"]);
+const ORDINARY_RESUME_VERBS = new Set(['restart', 'move', 'retry_effect']);
 
 /** The run that raised this escalation is missing or already released. */
 function raisingRunReleased(ladder: Ladder, task: Task, id: string): boolean {
-  const escalation = plannerEscalations(ladder.store.eventsAll(task.id)).find(
-    (item) => item.id === id,
-  );
+  const escalation = plannerEscalations(ladder.store.eventsAll(task.id)).find(item => item.id === id);
   if (!escalation?.runId) return true;
   const run = ladder.store.run(escalation.runId);
   return !run || Boolean(run.released);
 }
 
-function restoreLiveWait(
-  ladder: Ladder,
-  task: Task,
-  live: LiveParticipant,
-  id: string,
-  wait: { kind: string; target: string },
-): void {
+function restoreLiveWait(ladder: Ladder, task: Task, live: LiveParticipant, id: string, wait: { kind: string; target: string }): void {
   const current = ladder.store.task(task.id);
   const recovery = current.resolution.recovery;
-  const phase = ["blocked", "error", "needs_attention"].includes(current.phase)
-    ? live.role === "reviewer"
-      ? "reviewing"
-      : live.role === "revision"
-        ? "changes_requested"
-        : "working"
+  const phase = ['blocked', 'error', 'needs_attention'].includes(current.phase)
+    ? live.role === 'reviewer' ? 'reviewing' : live.role === 'revision' ? 'changes_requested' : 'working'
     : undefined;
-  ladder.resolution.update(
-    current,
-    {
-      stop: null,
-      attention: false,
-      ...(recovery && recovery.status !== "resolved"
-        ? {
-            recovery: {
-              ...recovery,
-              status: "resolved" as const,
-              summary: `Escalation ${id} wait ended; ${live.role} is live`,
-            },
-            recoveryActive: false,
-          }
-        : {}),
-    },
-    { ...(phase ? { phase } : {}) },
-    "planner_escalation_wake",
-    `${id}: ordinary next`,
-  );
-  ladder.resolution.waiting(
-    ladder.store.task(task.id),
-    threadRunningReason(live.role),
-    "lifecycle",
-  );
-  ladder.store.event(
-    task.id,
-    "planner_escalation_woke",
-    `${id}: ${wait.kind} ${wait.target} settled; ordinary next; ${live.role} is live`,
-  );
+  ladder.resolution.update(current, {
+    stop: null,
+    attention: false,
+    ...(recovery && recovery.status !== 'resolved' ? {
+      recovery: { ...recovery, status: 'resolved' as const, summary: `Escalation ${id} wait ended; ${live.role} is live` },
+      recoveryActive: false,
+    } : {}),
+  }, { ...(phase ? { phase } : {}) }, 'planner_escalation_wake', `${id}: ordinary next`);
+  ladder.resolution.waiting(ladder.store.task(task.id), threadRunningReason(live.role), 'lifecycle');
+  ladder.store.event(task.id, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; ordinary next; ${live.role} is live`);
 }
 
 async function recoverAfterEscalationWait(
-  ladder: Ladder,
-  task: Task,
-  id: string,
-  wait: { kind: string; target: string },
+  ladder: Ladder, task: Task, id: string, wait: { kind: string; target: string },
   refusal?: string,
 ): Promise<void> {
   const current = ladder.store.task(task.id);
   const clipped = refusal?.slice(0, 1200);
-  const detail = clipped
-    ? `Escalation ${id} wait ended; ${clipped}`
-    : `Escalation ${id} wait ended; no parked step to resume`;
+  const detail = clipped ? `Escalation ${id} wait ended; ${clipped}` : `Escalation ${id} wait ended; no parked step to resume`;
   // Resume through recovery's existing observation and delivery gates. Old runs
   // remain history; no reviewer is silently replaced by an expired wait.
-  ladder.resolution.update(
-    current,
-    { recovery: null, recoveryActive: false, stop: null, attention: true },
-    { reason: detail },
-    "planner_escalation_wake",
-    `${id}: wait ended; resuming recovery`,
-  );
+  ladder.resolution.update(current, { recovery: null, recoveryActive: false, stop: null, attention: true },
+    { reason: detail }, 'planner_escalation_wake', `${id}: wait ended; resuming recovery`);
   await ladder.resolution.recovery.route(ladder.store.task(task.id));
-  ladder.store.event(
-    task.id,
-    "planner_escalation_woke",
-    `${id}: ${wait.kind} ${wait.target} settled; ordinary recovery${clipped ? `; ${clipped}` : ""}`.slice(
-      0,
-      4000,
-    ),
-  );
+  ladder.store.event(task.id, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; ordinary recovery${clipped ? `; ${clipped}` : ''}`.slice(0, 4000));
 }
 
 async function applyOrdinaryResume(
-  ladder: Ladder,
-  taskId: string,
-  id: string,
-  wait: { kind: string; target: string },
-  extra: Record<string, unknown>,
-  verbLabel: string,
+  ladder: Ladder, taskId: string, id: string, wait: { kind: string; target: string },
+  extra: Record<string, unknown>, verbLabel: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (!ladder.resolution.applyOperatorControl)
-    return { ok: false, message: "No control applier is bound" };
+  if (!ladder.resolution.applyOperatorControl) return { ok: false, message: 'No control applier is bound' };
   const current = ladder.store.task(taskId);
   try {
-    await ladder.resolution.applyOperatorControl(
-      taskControlInputSchema.parse({
-        ...extra,
-        taskId: current.id,
-        version: current.version,
-        reason: `Escalation ${id}: ${wait.kind} ${wait.target} settled`,
-      }),
-    );
-    ladder.store.event(
-      taskId,
-      "planner_escalation_woke",
-      `${id}: ${wait.kind} ${wait.target} settled; ordinary ${verbLabel}`,
-    );
+    await ladder.resolution.applyOperatorControl(taskControlInputSchema.parse({
+      ...extra,
+      taskId: current.id, version: current.version,
+      reason: `Escalation ${id}: ${wait.kind} ${wait.target} settled`,
+    }));
+    ladder.store.event(taskId, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; ordinary ${verbLabel}`);
     return { ok: true };
   } catch (error) {
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 }
 
 /** Wake into a live wait, `next`'s first resume verb, or recovery. Never a dead wake-refused stop, never a silent fresh reviewer, and never event text for an action that did not run. */
-async function wakeIntoOrdinaryNext(
-  ladder: Ladder,
-  task: Task,
-  id: string,
-  wait: { kind: string; target: string },
-): Promise<void> {
+async function wakeIntoOrdinaryNext(ladder: Ladder, task: Task, id: string, wait: { kind: string; target: string }): Promise<void> {
   const current = ladder.store.task(task.id);
   const live = liveWorkingParticipant(current, ladder.store.runs(current.id));
   if (live) {
@@ -174,65 +86,27 @@ async function wakeIntoOrdinaryNext(
     return;
   }
   const facts = collectOwnerVerbFacts(ladder.store, current);
-  const view = ownerVerbViews(facts).find(
-    (item) =>
-      item.available &&
-      ORDINARY_RESUME_VERBS.has(item.verb) &&
-      item.args &&
-      (item.fill ?? []).every((field) => field === "reason") &&
-      item.args.fresh !== true,
-  );
+  const view = ownerVerbViews(facts)
+    .find(item => item.available && ORDINARY_RESUME_VERBS.has(item.verb) && item.args
+      && (item.fill ?? []).every(field => field === 'reason')
+      && item.args.fresh !== true);
   if (view?.args) {
-    const attempt = await applyOrdinaryResume(
-      ladder,
-      current.id,
-      id,
-      wait,
-      view.args,
-      view.verb,
-    );
+    const attempt = await applyOrdinaryResume(ladder, current.id, id, wait, view.args, view.verb);
     if (attempt.ok) return;
     // #1217: default restart is the worker parked step, which refuses with
     // "No resolution run to resume" when the last non-recovery run has no
     // completion. Ordinary next is retained restart of that released reviewer.
     // Any other refusal stays visible; the wake never retries as fresh.
     if (!attempt.message.includes(NO_RESOLUTION_RUN_REFUSAL)) {
-      await recoverAfterEscalationWait(
-        ladder,
-        current,
-        id,
-        wait,
-        attempt.message,
-      );
+      await recoverAfterEscalationWait(ladder, current, id, wait, attempt.message);
       return;
     }
   }
-  const reviewerShape = restartShape(
-    current,
-    facts.runs,
-    "reviewer",
-    facts.events,
-  );
-  if (
-    reviewerShape === "stopped_reviewer" ||
-    reviewerShape === "checkpoint_reviewer"
-  ) {
-    const attempt = await applyOrdinaryResume(
-      ladder,
-      current.id,
-      id,
-      wait,
-      { action: "restart", role: "reviewer" },
-      "restart",
-    );
+  const reviewerShape = restartShape(current, facts.runs, 'reviewer', facts.events);
+  if (reviewerShape === 'stopped_reviewer' || reviewerShape === 'checkpoint_reviewer') {
+    const attempt = await applyOrdinaryResume(ladder, current.id, id, wait, { action: 'restart', role: 'reviewer' }, 'restart');
     if (attempt.ok) return;
-    await recoverAfterEscalationWait(
-      ladder,
-      current,
-      id,
-      wait,
-      attempt.message,
-    );
+    await recoverAfterEscalationWait(ladder, current, id, wait, attempt.message);
     return;
   }
   await recoverAfterEscalationWait(ladder, current, id, wait);
@@ -247,56 +121,26 @@ async function wakeIntoOrdinaryNext(
 
 /** Resume the consults and escalations a restart left recorded, in the order they were made. */
 export function resumeDelegations(ladder: Ladder, task: Task): void {
-  closeClearedEscalations(ladder.store, task);
   const events = ladder.store.eventsAll(task.id);
   // Spec 058 slice 17: durable consult and escalation intents survive a restart.
   // A recorded delivery resumes its original answer window or consumes its receipt.
   // Without that journal evidence, an unobserved send remains unknown and is never
   // repeated. Settled answers and operator classifications remain terminal.
   for (const consult of reviewerConsults(events)) {
-    if (
-      consultRecovery({
-        answered: consult.answered,
-        unknown: consult.unknown,
-        recoverable: consult.unknown
-          ? ladder.resolution.recoverableDelegation([
-              `ns-reviewer-consult-${consult.id}`,
-            ])
-          : false,
-        question: consult.question,
-        hasAdapter: consult.reviewer
-          ? Boolean(ladder.adapter.askReviewer)
-          : Boolean(
-              ladder.adapter.createConsultReviewer &&
-                ladder.adapter.askReviewer,
-            ),
-        inFlight: ladder.resolution.routingConsults.has(consult.id),
-      }).kind === "skip" ||
-      !consult.question
-    )
-      continue;
+    if (consultRecovery({
+      answered: consult.answered,
+      unknown: consult.unknown,
+      recoverable: consult.unknown ? ladder.resolution.recoverableDelegation([`ns-reviewer-consult-${consult.id}`]) : false,
+      question: consult.question,
+      hasAdapter: consult.reviewer ? Boolean(ladder.adapter.askReviewer) : Boolean(ladder.adapter.createConsultReviewer && ladder.adapter.askReviewer),
+      inFlight: ladder.resolution.routingConsults.has(consult.id),
+    }).kind === 'skip' || !consult.question) continue;
     ladder.resolution.routingConsults.add(consult.id);
-    void ladder.resolution
-      .runReviewerConsult(task, {
-        id: consult.id,
-        reviewer: consult.reviewer,
-        question: consult.question,
-      })
-      .catch((error) => {
-        if (
-          ladder.resolution.stopped() ||
-          !ladder.resolution.consultStillOwnsWait(task.id, consult.id)
-        )
-          return;
+    void ladder.resolution.runReviewerConsult(task, { id: consult.id, reviewer: consult.reviewer, question: consult.question })
+      .catch(error => {
+        if (ladder.resolution.stopped() || !ladder.resolution.consultStillOwnsWait(task.id, consult.id)) return;
         if (error instanceof DelegatedHostUnavailable) return;
-        ladder.store.event(
-          task.id,
-          "reviewer_consult_unknown",
-          `${consult.id}: ${error instanceof Error ? error.message : String(error)}`.slice(
-            0,
-            4000,
-          ),
-        );
+        ladder.store.event(task.id, 'reviewer_consult_unknown', `${consult.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
         ladder.resolution.escalateConsultedBlocker(task, { id: consult.id });
       })
       .finally(() => ladder.resolution.routingConsults.delete(consult.id));
@@ -304,356 +148,141 @@ export function resumeDelegations(ladder: Ladder, task: Task): void {
   for (const escalation of plannerEscalations(events)) {
     const isReturn = Boolean(escalation.returned);
     const returnedEvent = isReturn
-      ? events.findLast(
-          (event) =>
-            event.kind === "planner_escalation_returned" &&
-            event.detail.startsWith(`${escalation.id}:`),
-        )
+      ? events.findLast(event => event.kind === 'planner_escalation_returned' && event.detail.startsWith(`${escalation.id}:`))
       : undefined;
     const phaseAfter = returnedEvent?.id ?? 0;
     const windows = isReturn
-      ? [
-          `ns-escalation-return-${escalation.id}`,
-          `ns-escalation-return-${escalation.id}-project`,
-        ]
-      : [
-          `ns-escalation-${escalation.id}`,
-          `ns-escalation-${escalation.id}-project`,
-          `ns-decider-${escalation.id}`,
-        ];
+      ? [`ns-escalation-return-${escalation.id}`, `ns-escalation-return-${escalation.id}-project`]
+      : [`ns-escalation-${escalation.id}`, `ns-escalation-${escalation.id}-project`, `ns-decider-${escalation.id}`];
     const inFlightKey = isReturn ? `return:${escalation.id}` : escalation.id;
-    if (
-      escalationRecovery({
-        missedNoAnswer: events.some(
-          (event) =>
-            event.kind === "planner_escalation_missed" &&
-            event.id > phaseAfter &&
-            event.detail.startsWith(
-              `${escalation.id}: no delegated answer was produced;`,
-            ),
-        ),
-        answered: escalation.answered,
-        unknown: escalation.unknown,
-        observing: escalation.unknown
-          ? ladder.resolution.recoverableDelegation(windows, false)
-          : false,
-        missed: escalation.missed,
-        recoverable: escalation.missed
-          ? ladder.resolution.recoverableDelegation(windows)
-          : false,
-        decisionId: escalation.decisionId,
-        question: escalation.question,
-        inFlight:
-          ladder.routingEscalations.has(escalation.id) ||
-          ladder.routingEscalations.has(`return:${escalation.id}`),
-        returnExhausted: escalation.returnExhausted,
-      }).kind === "skip" ||
-      !escalation.question
-    )
-      continue;
+    if (escalationRecovery({
+      missedNoAnswer: events.some(event => event.kind === 'planner_escalation_missed' && event.id > phaseAfter && event.detail.startsWith(`${escalation.id}: no delegated answer was produced;`)),
+      answered: escalation.answered,
+      unknown: escalation.unknown,
+      observing: escalation.unknown ? ladder.resolution.recoverableDelegation(windows, false) : false,
+      missed: escalation.missed,
+      recoverable: escalation.missed ? ladder.resolution.recoverableDelegation(windows) : false,
+      decisionId: escalation.decisionId,
+      question: escalation.question,
+      inFlight: ladder.routingEscalations.has(escalation.id) || ladder.routingEscalations.has(`return:${escalation.id}`),
+      returnExhausted: escalation.returnExhausted,
+    }).kind === 'skip' || !escalation.question) continue;
     ladder.routingEscalations.add(inFlightKey);
     const drive = isReturn
       ? routePlannerEscalationReturn(ladder, task, escalation.id)
-      : routePlannerEscalation(
-          ladder,
-          task,
-          escalation.id,
-          escalation.question,
-        );
+      : routePlannerEscalation(ladder, task, escalation.id, escalation.question);
     void drive
-      .catch((error) => {
+      .catch(error => {
         if (ladder.resolution.stopped()) return;
-        ladder.store.event(
-          task.id,
-          "planner_escalation_unknown",
-          `${escalation.id}: ${error instanceof Error ? error.message : String(error)}`.slice(
-            0,
-            4000,
-          ),
-        );
-        ladder.resolution.waiting(
-          ladder.store.task(task.id),
-          escalationWaitDetail.unknown(escalation.id),
-          "escalated",
-        );
+        ladder.store.event(task.id, 'planner_escalation_unknown', `${escalation.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+        ladder.resolution.waiting(ladder.store.task(task.id), escalationWaitDetail.unknown(escalation.id), 'escalated');
       })
       .finally(() => ladder.routingEscalations.delete(inFlightKey));
   }
 }
 
 /** Re-assert every recorded escalation wait, and wake the ones whose target settled. */
-export async function resumeEscalationWaits(
-  ladder: Ladder,
-  task: Task,
-): Promise<void> {
-  closeClearedEscalations(ladder.store, task);
+export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise<void> {
   reconcileLegacyPlaceholderDecisions(ladder, task);
   const events = ladder.store.eventsAll(task.id);
-  for (const event of events.filter(
-    (item) => item.kind === "planner_escalation_wait",
-  )) {
-    const id = event.detail.split(":", 1)[0]!;
-    if (
-      events.some(
-        (item) =>
-          item.kind === "planner_escalation_wait_superseded" &&
-          item.id > event.id &&
-          item.detail.startsWith(`${id}:`),
-      )
-    )
-      continue;
-    const intent = events.some(
-      (item) =>
-        item.kind === "planner_escalation_wake_intent" &&
-        item.detail.startsWith(`${id}:`),
-    );
+  for (const event of events.filter(item => item.kind === 'planner_escalation_wait')) {
+    const id = event.detail.split(':', 1)[0]!;
+    if (events.some(item => item.kind === 'planner_escalation_wait_superseded' && item.id > event.id && item.detail.startsWith(`${id}:`))) continue;
+    const intent = events.some(item => item.kind === 'planner_escalation_wake_intent' && item.detail.startsWith(`${id}:`));
     if (intent) {
-      const finished = events.some(
-        (item) =>
-          [
-            "planner_escalation_woke",
-            "planner_escalation_wake_refused",
-          ].includes(item.kind) && item.detail.startsWith(`${id}:`),
-      );
-      if (!finished && !ladder.resolution.wakingEscalations.has(id))
-        ladder.resolution.waiting(
-          ladder.store.task(task.id),
-          `Escalation ${id} wake outcome is unknown; inspect before retrying`,
-          "escalated",
-        );
+      const finished = events.some(item => ['planner_escalation_woke', 'planner_escalation_wake_refused'].includes(item.kind) && item.detail.startsWith(`${id}:`));
+      if (!finished && !ladder.resolution.wakingEscalations.has(id)) ladder.resolution.waiting(ladder.store.task(task.id), `Escalation ${id} wake outcome is unknown; inspect before retrying`, 'escalated');
       continue;
     }
     const wait = JSON.parse(event.detail.slice(id.length + 2)) as {
-      kind: "task" | "time" | "decision";
+      kind: 'task' | 'time' | 'decision';
       target: string;
       waitId?: string;
       stopDetail?: string;
-      stopReason?: "lifecycle" | "escalated";
+      stopReason?: 'lifecycle' | 'escalated';
     };
-    if (
-      events.some(
-        (item) =>
-          item.id > event.id &&
-          item.kind === "operator_control" &&
-          item.detail !== "note",
-      )
-    ) {
-      ladder.store.event(
-        task.id,
-        "planner_escalation_wait_superseded",
-        `${id}: a later owner control changed the task`,
-      );
+    if (events.some(item => item.id > event.id && item.kind === 'operator_control' && item.detail !== 'note')) {
+      ladder.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: a later owner control changed the task`);
       continue;
     }
     let current = ladder.store.task(task.id);
-    if (
-      wait.kind === "task" &&
-      current.prerequisiteWait &&
-      current.prerequisiteWait.id === wait.waitId &&
-      !current.prerequisiteWait.releasedAt
-    ) {
+    if (wait.kind === 'task' && current.prerequisiteWait && current.prerequisiteWait.id === wait.waitId && !current.prerequisiteWait.releasedAt) {
       ladder.store.reconcilePrerequisiteWait(current.id);
       current = ladder.store.task(task.id);
     }
-    if (wait.kind === "task" && current.prerequisiteWait?.id !== wait.waitId) {
-      ladder.store.event(
-        task.id,
-        "planner_escalation_wait_superseded",
-        `${id}: prerequisite wait changed`,
-      );
+    if (wait.kind === 'task' && current.prerequisiteWait?.id !== wait.waitId) {
+      ladder.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: prerequisite wait changed`);
       continue;
     }
-    if (wait.kind !== "task") {
-      const waitControl: EscalationWait = {
-        kind: wait.kind as "time" | "decision",
-        target: wait.target,
-        stopDetail: wait.stopDetail,
-        stopReason: wait.stopReason,
-      };
+    if (wait.kind !== 'task') {
+      const waitControl: EscalationWait = { kind: wait.kind as 'time' | 'decision', target: wait.target,
+        stopDetail: wait.stopDetail, stopReason: wait.stopReason };
       const expected = escalationWaitState(id, waitControl);
-      if (
-        current.resolution.stop?.reason !== expected.stopReason ||
-        current.resolution.stop.fact?.subject !== id
-      ) {
-        const pending = events.findLast(
-          (item) =>
-            item.kind === "planner_escalation_answer_pending" &&
-            item.detail.startsWith(`${id}:`) &&
-            item.id < event.id &&
-            (() => {
-              try {
-                const answer = JSON.parse(
-                  item.detail.slice(id.length + 1).trim(),
-                ) as { control?: { kind?: string; target?: string } };
-                return (
-                  answer.control?.kind === waitControl.kind &&
-                  answer.control.target === waitControl.target
-                );
-              } catch {
-                return false;
-              }
-            })(),
-        );
-        const linkedClassification =
-          waitControl.kind === "decision" &&
-          expected.stopDetail ===
-            escalationWaitDetail.operator(id, waitControl.target) &&
-          events.some(
-            (item) =>
-              item.kind === "planner_escalation_decision_linked" &&
-              item.detail === `${id}: decision ${waitControl.target}`,
-          );
-        const repaired =
-          (pending || linkedClassification) &&
-          establishEscalationWait(
-            ladder,
-            task.id,
-            id,
-            waitControl,
-            pending?.id ?? 0,
-          );
+      if (current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.fact?.subject !== id) {
+        const pending = events.findLast(item => item.kind === 'planner_escalation_answer_pending' && item.detail.startsWith(`${id}:`)
+          && item.id < event.id && (() => {
+            try {
+              const answer = JSON.parse(item.detail.slice(id.length + 1).trim()) as { control?: { kind?: string; target?: string } };
+              return answer.control?.kind === waitControl.kind && answer.control.target === waitControl.target;
+            } catch { return false; }
+          })());
+        const linkedClassification = waitControl.kind === 'decision'
+          && expected.stopDetail === escalationWaitDetail.operator(id, waitControl.target)
+          && events.some(item => item.kind === 'planner_escalation_decision_linked' && item.detail === `${id}: decision ${waitControl.target}`);
+        const repaired = (pending || linkedClassification)
+          && establishEscalationWait(ladder, task.id, id, waitControl, pending?.id ?? 0);
         current = ladder.store.task(task.id);
-        if (
-          !repaired ||
-          current.resolution.stop?.reason !== expected.stopReason ||
-          current.resolution.stop.fact?.subject !== id
-        ) {
-          ladder.store.event(
-            task.id,
-            "planner_escalation_wait_superseded",
-            `${id}: task stop changed and the recorded wait could not be restored`,
-          );
+        if (!repaired || current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.fact?.subject !== id) {
+          ladder.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: task stop changed and the recorded wait could not be restored`);
           continue;
         }
       }
     }
-    if (wait.kind === "task" && !current.prerequisiteWait?.releasedAt) continue;
-    if (wait.kind === "time" && Date.parse(wait.target) > Date.now()) continue;
+    if (wait.kind === 'task' && !current.prerequisiteWait?.releasedAt) continue;
+    if (wait.kind === 'time' && Date.parse(wait.target) > Date.now()) continue;
     let decision: DecisionView | null = null;
-    if (wait.kind === "decision") {
-      try {
-        decision = new Decisions(ladder.store).get({ id: wait.target });
-      } catch {
-        continue;
-      }
-      if (decision.status !== "answered" || !decision.answer) continue;
+    if (wait.kind === 'decision') {
+      try { decision = new Decisions(ladder.store).get({ id: wait.target }); } catch { continue; }
+      if (decision.status !== 'answered' || !decision.answer) continue;
     }
     ladder.store.transaction(() => {
-      ladder.store.event(
-        task.id,
-        "planner_escalation_wake_intent",
-        `${id}: ${wait.kind} ${wait.target}`,
-      );
+      ladder.store.event(task.id, 'planner_escalation_wake_intent', `${id}: ${wait.kind} ${wait.target}`);
       // The planner already chose to resume when this prerequisite finished.
       // Retire that owned wait before any continuation or recovery admission.
-      if (wait.kind === "task") {
-        ladder.store.update(
-          task.id,
-          { prerequisiteWait: null },
-          "prerequisite_wait_resumed",
-          `Escalation ${id}: prerequisite wait ended`,
-        );
+      if (wait.kind === 'task') {
+        ladder.store.update(task.id, { prerequisiteWait: null }, 'prerequisite_wait_resumed',
+          `Escalation ${id}: prerequisite wait ended`);
       }
     });
     current = ladder.store.task(task.id);
     ladder.resolution.wakingEscalations.add(id);
     if (decision?.answer) {
-      if (decision.answer.command) {
-        try {
-          const outcome =
-            await ladder.resolution.escalationSettlement.settleExplicitEscalationCommand(
-              current,
-              id,
-              decision.answer.command,
-              decision.answer.text,
-              decision.answer.answeredBy,
-              decision.answer.relayed
-                ? { role: "planner", agentId: decision.answer.answeredBy }
-                : { role: "operator" },
-              decision.answer.command.version,
-            );
-          if (outcome.status === "applied")
-            ladder.store.event(
-              task.id,
-              "planner_escalation_woke",
-              `${id}: operator decision ${wait.target} applied ${decision.answer.command.action}`,
-            );
-          else
-            ladder.store.event(
-              task.id,
-              "planner_escalation_wake_refused",
-              `${id}: ${outcome.status}: ${outcome.next}`,
-            );
-        } catch (error) {
-          ladder.store.event(
-            task.id,
-            "planner_escalation_wake_refused",
-            `${id}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      } else {
-        const refusal = await ladder.resolution.settlePlannerEscalation(
-          current,
-          id,
-          decision.answer.text,
-          decision.answer.answeredBy,
-        );
-        if (refusal)
-          ladder.store.event(
-            task.id,
-            "planner_escalation_wake_refused",
-            `${id}: ${refusal}`,
-          );
-        else
-          ladder.store.event(
-            task.id,
-            "planner_escalation_woke",
-            `${id}: operator decision ${wait.target} applied`,
-          );
-      }
+      const refusal = await ladder.resolution.settlePlannerEscalation(current, id, decision.answer.text, decision.answer.answeredBy);
+      if (refusal) ladder.store.event(task.id, 'planner_escalation_wake_refused', `${id}: ${refusal}`);
+      else ladder.store.event(task.id, 'planner_escalation_woke', `${id}: operator decision ${wait.target} applied`);
       ladder.resolution.wakingEscalations.delete(id);
       continue;
     }
     try {
-      if (!ladder.resolution.applyOperatorControl)
-        throw Error("No control applier is bound");
+      if (!ladder.resolution.applyOperatorControl) throw Error('No control applier is bound');
       if (raisingRunReleased(ladder, current, id)) {
         await wakeIntoOrdinaryNext(ladder, current, id, wait);
       } else {
         // Restart is the ordinary owner verb for resuming the parked step while
         // the raising run still owns it. It rechecks the saved task and all
         // delivery and exact-head gates.
-        await ladder.resolution.applyOperatorControl(
-          taskControlInputSchema.parse({
-            taskId: current.id,
-            version: current.version,
-            action: "restart",
-            reason: `Escalation ${id}: ${wait.kind} ${wait.target} settled`,
-          }),
-        );
-        ladder.store.event(
-          task.id,
-          "planner_escalation_woke",
-          `${id}: ${wait.kind} ${wait.target} settled; restarted the parked step`,
-        );
+        await ladder.resolution.applyOperatorControl(taskControlInputSchema.parse({ taskId: current.id, version: current.version,
+          action: 'restart', reason: `Escalation ${id}: ${wait.kind} ${wait.target} settled` }));
+        ladder.store.event(task.id, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; restarted the parked step`);
       }
     } catch {
       // A refused restart is not a settled wake. Re-read next for every
       // refusal, including a raising run whose release is still pending;
       // ordinary continuation/recovery keeps its own delivery gates.
-      try {
-        await wakeIntoOrdinaryNext(ladder, current, id, wait);
-      } catch (inner) {
-        await recoverAfterEscalationWait(
-          ladder,
-          current,
-          id,
-          wait,
-          inner instanceof Error ? inner.message : String(inner),
-        );
+      try { await wakeIntoOrdinaryNext(ladder, current, id, wait); }
+      catch (inner) {
+        await recoverAfterEscalationWait(ladder, current, id, wait, inner instanceof Error ? inner.message : String(inner));
       }
-    } finally {
-      ladder.resolution.wakingEscalations.delete(id);
-    }
+    } finally { ladder.resolution.wakingEscalations.delete(id); }
   }
 }

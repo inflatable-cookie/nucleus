@@ -141,6 +141,92 @@ function retireEscalationSurfaces(
 }
 
 /**
+ * Spec 067 batch 4: list the explicit resolution commands that resolve an
+ * escalation's cause with their arguments filled. Choosing one runs the
+ * command through its ordinary RPC instead of writing an escalation answer.
+ */
+export function escalationExplicitCommandChoices(
+  store: Store,
+  task: Task,
+  escalationId: string,
+  events: LadderEvent[],
+  pendingEffectIds: readonly string[] = [],
+): EscalationVerbChoice[] {
+  const escalation = plannerEscalations(events).find(
+    (item) => item.id === escalationId,
+  );
+  const payload = escalationPayload(events, escalationId);
+  const options: EscalationVerbChoice[] = [];
+  const push = (label: string, command: ExplicitCommand) => {
+    options.push({ label, verb: "explicit", args: {}, command });
+  };
+  if (payload?.reviewContinuation) {
+    const reader =
+      typeof payload.reader === "string" ? payload.reader : undefined;
+    push(
+      `Explicit command: run.start role=reviewer agent=fresh${reader ? ` replacing=${reader}` : ""}`,
+      {
+        action: "run.start",
+        role: "reviewer",
+        agent: "fresh",
+        ...(reader ? { replacing: reader } : {}),
+        accept: [],
+      },
+    );
+  }
+  if (
+    typeof payload?.commit === "string" &&
+    typeof payload?.head === "string"
+  ) {
+    push(`Explicit command: closeout.now mergedCommit=${payload.commit}`, {
+      action: "closeout.now",
+      mergedCommit: payload.commit,
+      accept: [],
+    });
+  }
+  const runIds = [
+    ...new Set(
+      [
+        escalation?.runId,
+        typeof payload?.reader === "string" ? payload.reader : null,
+        task.resolution.currentRunId,
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  for (const runId of runIds) {
+    const run = store.run(runId);
+    if (run && !run.released)
+      push(`Explicit command: run.release run=${runId}`, {
+        action: "run.release",
+        run: runId,
+        accept: [],
+      });
+  }
+  const incident = task.resolution.incident;
+  if (incident && incident.status !== "resolved")
+    push(`Explicit command: record.clear kind=incident id=${incident.id}`, {
+      action: "record.clear",
+      kind: "incident",
+      id: incident.id,
+      accept: [],
+    });
+  for (const effectId of new Set(pendingEffectIds))
+    push(`Explicit command: record.clear kind=effect id=${effectId}`, {
+      action: "record.clear",
+      kind: "effect",
+      id: effectId,
+      accept: [],
+    });
+  push(`Explicit command: record.clear kind=escalation id=${escalationId}`, {
+    action: "record.clear",
+    kind: "escalation",
+    id: escalationId,
+    accept: [],
+  });
+  return options;
+}
+
+/**
  * Spec 067 batch 4: an open escalation closes itself when its recorded cause
  * clears. Each typed cause uses its own clearance condition and never falls
  * through to a generic run check.
@@ -188,6 +274,16 @@ export function escalationCauseClearedReason(
       task.resolution.incident.status === "resolved"
       ? "the escalated incident cleared"
       : null;
+  if (escalation.runId) {
+    const raisingRun = store.run(escalation.runId);
+    if (
+      raisingRun?.explicitlyReleasedAt &&
+      (!intentEvent ||
+        Date.parse(raisingRun.explicitlyReleasedAt) >=
+          Date.parse(intentEvent.at))
+    )
+      return `the raising ${raisingRun.role} run (${raisingRun.id}) was explicitly released`;
+  }
   if (
     intentEvent &&
     (payload?.source === "worker" || payload?.source === "revision") &&
@@ -227,7 +323,7 @@ export function closeClearedEscalations(store: Store, task: Task): string[] {
     if (escalation.answered) {
       // Durability: if a process crashed after writing `planner_escalation_resolved`
       // but before retiring the escalation's stop, owned wait or open decision,
-      // finish retiring those surfaces on the next maintenance pass.
+      // finish retiring those surfaces atomically on the next maintenance pass.
       const resolvedEvent = events.findLast(
         (event) =>
           event.kind === "planner_escalation_resolved" &&
@@ -237,9 +333,12 @@ export function closeClearedEscalations(store: Store, task: Task): string[] {
         const detail = resolvedEvent.detail
           .slice(escalation.id.length + 1)
           .trim();
-        retireEscalationSurfaces(store, current.id, escalation.id, detail, {
-          withdrawDecision: true,
-        });
+        const repair = () =>
+          retireEscalationSurfaces(store, current.id, escalation.id, detail, {
+            withdrawDecision: true,
+          });
+        if (store.db.isTransaction) repair();
+        else store.transaction(repair);
       }
       continue;
     }
@@ -374,53 +473,25 @@ export class EscalationSettlement {
       accept: accept ?? [],
       caller,
     });
-    try {
-      const resolved =
-        await this.resolution.applyExplicitResolution(explicitInput);
-      const outcome = resolved.explicitResolution;
-      if (!outcome)
-        throw Error("Explicit resolution did not return a resolution outcome");
-      if (outcome.status === "applied") {
-        const oldNext = this.resolution.describeExplicitNext?.(resolved) ?? "";
-        const diagnosticPrefix =
-          oldNext && outcome.next.endsWith(oldNext)
-            ? outcome.next.slice(0, -oldNext.length).trim()
-            : "";
-        this.store.event(
-          fresh.id,
-          "planner_escalation_answered",
-          `${id}: answered by ${who}: ${command.action} — ${reason}`.slice(
-            0,
-            4000,
-          ),
-        );
-        this.store.event(
-          fresh.id,
-          "planner_escalation_applied",
-          `${id}: ${command.action}`,
-        );
-        retireEscalationSurfaces(
-          this.store,
-          fresh.id,
-          id,
-          `answered by ${who}: ${command.action}`,
-        );
-        const afterTask = this.store.task(fresh.id);
-        const updatedNext =
-          this.resolution.describeExplicitNext?.(afterTask) ?? outcome.next;
-        const next = [diagnosticPrefix, updatedNext].filter(Boolean).join(" ");
-        return { ...outcome, next, taskVersion: afterTask.version };
-      }
-      return { ...outcome, taskVersion: resolved.version };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.store.event(
-        fresh.id,
-        "planner_escalation_refused",
-        `${id}: ${message}`.slice(0, 4000),
-      );
-      throw error;
+    const resolved =
+      await this.resolution.applyExplicitResolution(explicitInput);
+    const outcome = resolved.explicitResolution;
+    if (!outcome)
+      throw Error("Explicit resolution did not return a resolution outcome");
+    if (outcome.status === "applied") {
+      const oldNext = this.resolution.describeExplicitNext?.(resolved) ?? "";
+      const diagnosticPrefix =
+        oldNext && outcome.next.endsWith(oldNext)
+          ? outcome.next.slice(0, -oldNext.length).trim()
+          : "";
+      closeClearedEscalations(this.store, this.store.task(fresh.id));
+      const afterTask = this.store.task(fresh.id);
+      const updatedNext =
+        this.resolution.describeExplicitNext?.(afterTask) ?? outcome.next;
+      const next = [diagnosticPrefix, updatedNext].filter(Boolean).join(" ");
+      return { ...outcome, next, taskVersion: afterTask.version };
     }
+    return { ...outcome, taskVersion: resolved.version };
   }
   /** Share a live route settlement with a duplicate receipt observer instead of declaring it uncertain. */
   async awaitDelegatedEscalationSettlement(
@@ -817,6 +888,24 @@ export class EscalationSettlement {
       }
       if (selected.kind === "owner") {
         const choice = selected.choice;
+        if (choice.command) {
+          const outcome = await this.settleExplicitEscalationCommand(
+            current,
+            id,
+            choice.command,
+            reason,
+            who,
+            answerer,
+            version,
+          );
+          if (outcome.status === "applied") return null;
+          if (outcome.status === "warnings")
+            return (
+              outcome.warnings.map((warning) => warning.text).join(" ") ||
+              outcome.next
+            );
+          return outcome.next;
+        }
         const controlInput = taskControlInputSchema.parse({
           ...choice.args,
           taskId: current.id,
