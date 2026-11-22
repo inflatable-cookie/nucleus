@@ -21,7 +21,6 @@ import {
   recordHostFailure,
 } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
-import { isHostOperationTimeout } from "../host/errors";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 
@@ -54,7 +53,6 @@ export type SweepContext = Pick<
   | "host"
   | "hostAvailable"
   | "hostIds"
-  | "hostOnline"
   | "hostOutages"
   | "hostWait"
   | "inventoryHostMatches"
@@ -495,16 +493,6 @@ export class Sweep {
           // A connected registry claim can still fail at the transport boundary.
           // Keep this host's tasks on the existing outage wait for this pass, and
           // continue the fleet sweep without turning the host loss into engineError.
-          // A timed-out call on a host whose connection is still up is that call's
-          // failure, never an outage (Tom, 2026-11-22): note it and read the host
-          // afresh next pass.
-          if (isHostOperationTimeout(error) && this.engine.hostOnline(host)) {
-            this.engine.store.setMeta(
-              "hostPassError",
-              `${host}/hostPass: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000),
-            );
-            continue;
-          }
           recordHostFailure(this.engine.adapter, host, error);
           unavailableHosts.add(host);
           continue;

@@ -10,7 +10,7 @@ import { T3RpcError } from '../hosts/t3code/rpc';
 
 /**
  * Tom, 2026-11-22: host health comes from the host's connection, never from a
- * task's own record or a slow call. On 22 November a stale host wait on one
+ * task's own record. On 22 November a stale host wait on one
  * visited task, re-asserted by every submission's dispatch pass, kept a connected
  * T3 host "unavailable" for 47 minutes and rewrote every task's stop each time.
  */
@@ -54,16 +54,6 @@ test('a failure with no error on a connected host is not an outage and rewrites 
   assert.equal(engine.hostOutages.current(HOST), null, 'no outage is opened');
   assert.deepEqual(stopReasons(store, queued.id, working.id), [null, null], 'no task gets a host wait');
   assert.equal(store.eventsAll(working.id).some(event => event.kind === 'host_outage_wait'), false);
-});
-
-test('a timed-out call on a connected host is that call\'s failure, not an outage', t => {
-  const { store, engine, queued, working } = fixture(t);
-  const timeout = new T3RpcError('timeout', 'orchestration.subscribeShell');
-  assert.equal(recordHostFailure(engine.adapter, HOST, timeout), false);
-  assert.equal(recordHostFailure(engine.adapter, HOST, new HostTransportFault(HOST, timeout)), false,
-    'a timeout attributed at the adapter boundary is declined the same way');
-  assert.equal(engine.hostOutages.current(HOST), null);
-  assert.deepEqual(stopReasons(store, queued.id, working.id), [null, null]);
 });
 
 test('a lost connection still parks the host\'s tasks', t => {

@@ -525,7 +525,6 @@ export class Engine {
           "host",
           "hostAvailable",
           "hostIds",
-          "hostOnline",
           "hostOutages",
           "hostWait",
           "inventoryHostMatches",
