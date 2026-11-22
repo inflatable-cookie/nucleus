@@ -209,13 +209,24 @@ export class MergeIntent {
   }
   /** Verify a durable merge intent, then allow at most one SHA-guarded re-issue after continuous proof. */
   async reconcileMergeIntent(t: Task) {
+    const expectedRequestAt = t.resolution.mergeRequestedAt;
+    const expectedHead = t.resolution.mergeHead;
+    const expectedRetryAt = t.resolution.mergeRetryAt;
+    const matchesObservedRequest = (candidate: Task) =>
+      candidate.resolution.mergeIntent &&
+      !candidate.resolution.mergedCommit &&
+      candidate.resolution.mergeRequestedAt === expectedRequestAt &&
+      candidate.resolution.mergeHead === expectedHead &&
+      candidate.resolution.mergeRetryAt === expectedRetryAt;
     let result: Awaited<ReturnType<NonNullable<ResolutionAdapter["merged"]>>>;
     try {
       result = await this.adapter.merged!(t);
     } catch (error) {
       if (this.paused()) return;
+      const current = this.store.task(t.id);
+      if (!matchesObservedRequest(current)) return;
       t = this.resetMergeProof(
-        t,
+        current,
         `GitHub merge observation unavailable: ${String(error)}`,
       );
       if (error instanceof ForgeOutageError) {
@@ -320,6 +331,9 @@ export class MergeIntent {
       });
       return;
     }
+    const latestBeforeReconcile = this.store.task(t.id);
+    if (!matchesObservedRequest(latestBeforeReconcile)) return;
+    t = latestBeforeReconcile;
     if (t.resolution.mergeResponseOutcome === "pending") {
       const detail =
         "Nucleus restarted before recording the guarded merge response; treating delivery as uncertain";
@@ -420,9 +434,6 @@ export class MergeIntent {
       Date.now(),
     );
     if (decision === "gate_then_reissue") {
-      // Capture the exact merge request this proof belongs to before any await.
-      const expectedRequestAt = t.resolution.mergeRequestedAt;
-      const expectedHead = t.resolution.mergeHead;
       // A proven non-merge effect is re-issued only under the current policy and
       // the exact head's current requirements. A gate that holds or refuses
       // leaves the recorded intent and retry fences untouched.
@@ -447,16 +458,18 @@ export class MergeIntent {
         fresh = await this.mergeGateEvidence(t);
       } catch (error) {
         if (this.paused()) return;
+        const currentAfterError = this.store.task(t.id);
+        if (!matchesObservedRequest(currentAfterError)) return;
         if (error instanceof ForgeOutageError) {
-          if (!this.gitTransientFailure?.(this.store.task(t.id), error))
+          if (!this.gitTransientFailure?.(currentAfterError, error))
             this.waiting(
-              this.store.task(t.id),
+              currentAfterError,
               error.message,
               "external_unavailable",
             );
         } else
           holdForGate(
-            this.store.task(t.id),
+            currentAfterError,
             `the gate observation failed: ${String(error).slice(0, 400)}`,
           );
         return;

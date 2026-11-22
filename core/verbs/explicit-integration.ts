@@ -1,4 +1,3 @@
-import { sameCallerIdentity } from "../../shared/agent-identity";
 import {
   holdsOf,
   operatorSourceAcceptance,
@@ -671,9 +670,10 @@ export function closeoutNowPlan(
     });
   }
 
-  // Ruling 2: closeout.now never silently releases or revokes another run.
-  // If a live coordinator/recovery run is bound and belongs to another caller,
-  // return `live_runs` and route accepted release through `run.release`.
+  // Ruling 2: closeout.now never directly releases or revokes a live run.
+  // Whenever a live coordinator/recovery run is bound (even for the calling
+  // coordinator itself), return `live_runs` and route accepted release through
+  // `run.release`.
   const episodeRunId = r.recovery?.runId ?? null;
   const episodeRun = episodeRunId ? store.run(episodeRunId) : null;
   const liveEpisodeRun =
@@ -683,27 +683,17 @@ export function closeoutNowPlan(
     !episodeRun.released
       ? episodeRun
       : null;
-  const isSelfCoordinator = Boolean(
-    liveEpisodeRun &&
-      sameCallerIdentity(
-        liveEpisodeRun.agentId,
-        input.caller,
-        liveEpisodeRun.hostId ?? task.hostId,
-        engine.legacyPaseoHostId(),
-      ),
-  );
-  const boundRelease =
-    liveEpisodeRun && !isSelfCoordinator
-      ? releasePlan(engine, task, {
-          action: "run.release",
-          taskId: task.id,
-          version: task.version,
-          reason: input.reason,
-          accept: input.accept,
-          caller: input.caller,
-          run: liveEpisodeRun.id,
-        })
-      : null;
+  const boundRelease = liveEpisodeRun
+    ? releasePlan(engine, task, {
+        action: "run.release",
+        taskId: task.id,
+        version: task.version,
+        reason: input.reason,
+        accept: input.accept,
+        caller: input.caller,
+        run: liveEpisodeRun.id,
+      })
+    : null;
   if (boundRelease) {
     warnings.push({
       id: "live_runs",
@@ -714,20 +704,9 @@ export function closeoutNowPlan(
   return {
     warnings,
     apply() {
-      let releasePatch: Partial<Task> = {};
-      if (boundRelease) {
-        releasePatch = boundRelease.apply().patch ?? {};
-      } else if (liveEpisodeRun && isSelfCoordinator) {
-        // The calling coordinator is handing off its own episode to closeout.
-        store.putRun({
-          ...liveEpisodeRun,
-          active: false,
-          released: true,
-          explicitlyReleasedAt: now(),
-          status: liveEpisodeRun.completion ? "finished" : "superseded",
-        });
-        store.deleteCredential(liveEpisodeRun.id);
-      }
+      const releasePatch: Partial<Task> = boundRelease
+        ? (boundRelease.apply().patch ?? {})
+        : {};
       const baseResolution = releasePatch.resolution ?? r;
       const clearedCurrentRunId =
         liveEpisodeRun && baseResolution.currentRunId === liveEpisodeRun.id

@@ -12,6 +12,7 @@ import {
   type Task,
 } from "../shared/contracts";
 import type { Adapter } from "../core/host";
+import { requiredCheckPollMetaKey } from "../core/forge/index";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
@@ -458,6 +459,14 @@ test("merge.now enforces both hard gates even with accept, warns on turn_held/ch
     attachReadyReview,
     callExplicit,
   } = await fixture(t, {
+    verifyPr: async (task: Task) => ({
+      number: task.resumePrNumber ?? 80,
+      url: task.prUrl ?? "https://github.com/example/repo/pull/80",
+      head: HEAD,
+      base: "main",
+      state: "OPEN",
+      merged: false,
+    }),
     merge: async () => {
       mergeCalls += 1;
     },
@@ -650,9 +659,19 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
     },
   });
   const coordinator = attachCoordinator(parked.id);
-  const closed = await callExplicit(
+  const warnedClose = await callExplicit(
     parked.id,
     { action: "closeout.now" },
+    coordinator,
+  );
+  assert.equal(warnedClose.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    warnedClose.explicitResolution?.warnings.map((w) => w.id),
+    ["live_runs"],
+  );
+  const closed = await callExplicit(
+    parked.id,
+    { action: "closeout.now", accept: ["live_runs"] },
     coordinator,
   );
   assert.equal(closed.explicitResolution?.status, "applied");
@@ -979,6 +998,14 @@ test("review round 2: serialize verifier vs explicit merge, honor operator_sourc
     attachReadyReview,
     callExplicit,
   } = await fixture(t, {
+    verifyPr: async (task: Task) => ({
+      number: task.resumePrNumber ?? 80,
+      url: task.prUrl ?? "https://github.com/example/repo/pull/80",
+      head: HEAD,
+      base: "main",
+      state: "OPEN",
+      merged: false,
+    }),
     merge: async () => {
       mergeCalls += 1;
       if (mergeShouldFail) throw new Error("network timeout");
@@ -1127,9 +1154,22 @@ test("review round 2: serialize verifier vs explicit merge, honor operator_sourc
       completion: null,
     }),
   );
-  const handedOff = await callExplicit(
+  const handoffWarned = await callExplicit(
     handoff.id,
     { action: "closeout.now" },
+    coordCaller,
+  );
+  assert.equal(handoffWarned.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    handoffWarned.explicitResolution?.warnings.map((w) => w.id),
+    ["live_runs"],
+  );
+  assert.equal(store.run(`coord-run-${handoff.id}`)?.released, false);
+  assert.equal(store.run("unrelated-recovery-run")?.released, false);
+
+  const handedOff = await callExplicit(
+    handoff.id,
+    { action: "closeout.now", accept: ["live_runs"] },
     coordCaller,
   );
   assert.equal(handedOff.explicitResolution?.status, "applied");
@@ -1201,6 +1241,14 @@ test("planner rulings round 4: auto-retry stops when superseded by merge.now; cl
     attachReadyReview,
     callExplicit,
   } = await fixture(t, {
+    verifyPr: async (task: Task) => ({
+      number: task.resumePrNumber ?? 80,
+      url: task.prUrl ?? "https://github.com/example/repo/pull/80",
+      head: HEAD,
+      base: "main",
+      state: "OPEN",
+      merged: false,
+    }),
     merge: async () => {
       mergeCalls += 1;
       if (mergeShouldFail) throw new Error("explicit merge timeout");
@@ -1315,4 +1363,284 @@ test("planner rulings round 4: auto-retry stops when superseded by merge.now; cl
   assert.equal(accepted.explicitResolution?.status, "applied");
   assert.equal(store.run(`coord-run-${liveCoordTask.id}`)?.released, true);
   assert.deepEqual(stoppedAgents, ["coord-live"]);
+});
+
+test("review round 5: forced move and stale merge lookup preserve newer explicit accepted outcome; retained check poll does not block sent merge", async (t) => {
+  // 1. Forced move paused in flight + merge.now returns accepted -> late forced timeout preserves accepted.
+  let forcedMergeStarted!: () => void;
+  const forcedStarted = new Promise<void>((resolve) => {
+    forcedMergeStarted = resolve;
+  });
+  let finishForcedMerge!: () => void;
+  const forcedGate = new Promise<void>((resolve) => {
+    finishForcedMerge = resolve;
+  });
+  let mergeAttempt = 0;
+
+  let mergedLookupStarted!: () => void;
+  const lookupStarted = new Promise<void>((resolve) => {
+    mergedLookupStarted = resolve;
+  });
+  let finishMergedLookup!: () => void;
+  const lookupGate = new Promise<void>((resolve) => {
+    finishMergedLookup = resolve;
+  });
+  let pauseFirstLookup = false;
+  let mergedFlag = false;
+  let checkWaitCalls = 0;
+  let checksPending = false;
+  const stoppedAgents: string[] = [];
+
+  const {
+    runtime,
+    store,
+    insertTask,
+    attachCoordinator,
+    attachReadyReview,
+    callExplicit,
+  } = await fixture(t, {
+    verifyPr: async (task: Task) => ({
+      number: task.resumePrNumber ?? 80,
+      url: task.prUrl ?? "https://github.com/example/repo/pull/80",
+      head: HEAD,
+      base: "main",
+      state: "OPEN",
+      merged: false,
+    }),
+    merge: async () => {
+      mergeAttempt += 1;
+      if (mergeAttempt === 1) {
+        forcedMergeStarted();
+        await forcedGate;
+        throw new Error("forced merge timed out");
+      }
+    },
+    merged: async () => {
+      if (pauseFirstLookup) {
+        pauseFirstLookup = false;
+        mergedLookupStarted();
+        await lookupGate;
+        return {
+          merged: false,
+          commit: null,
+          head: HEAD,
+          base: "main",
+          proof: { proven: false, detail: "stale unmerged lookup" },
+        };
+      }
+      return {
+        merged: mergedFlag,
+        commit: mergedFlag ? MERGED_COMMIT : null,
+        head: HEAD,
+        base: "main",
+        proof: { proven: !mergedFlag, detail: mergedFlag ? "merged" : "open" },
+      };
+    },
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: checksPending ? "Required check ci is pending" : "",
+      pendingCheck: checksPending,
+    }),
+    requiredChecks: async () => {
+      checkWaitCalls += 1;
+      return {
+        head: HEAD,
+        wait: checksPending ? "Required check ci is pending" : "",
+        pendingCheck: checksPending,
+      };
+    },
+    stopAgentTurn: async (id: string) => {
+      stoppedAgents.push(id);
+    },
+  });
+
+  const forcedTask = insertTask("forced-vs-explicit", 80);
+  attachReadyReview(forcedTask.id, HEAD);
+  const forcedPromise = callCatalogueMethod(runtime, "queue.task", {
+    taskId: forcedTask.id,
+    action: "move",
+    to: "merge",
+    force: true,
+    version: store.task(forcedTask.id).version,
+    caller: OPERATOR_BOARD_CALLER,
+    reason: "Operator forced merge",
+  });
+  await forcedStarted;
+
+  const explicitAfterForced = await callExplicit(
+    forcedTask.id,
+    { action: "merge.now", head: HEAD },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(explicitAfterForced.explicitResolution?.status, "applied");
+  assert.equal(
+    store.task(forcedTask.id).resolution.mergeResponseOutcome,
+    "accepted",
+  );
+  const explicitRequestedAt = store.task(forcedTask.id).resolution
+    .mergeRequestedAt;
+
+  finishForcedMerge();
+  await forcedPromise;
+  assert.equal(
+    store.task(forcedTask.id).resolution.mergeRequestedAt,
+    explicitRequestedAt,
+  );
+  assert.equal(
+    store.task(forcedTask.id).resolution.mergeResponseOutcome,
+    "accepted",
+    "late forced timeout must not overwrite newer explicit accepted outcome",
+  );
+  store.update(forcedTask.id, {
+    phase: "done",
+    resolution: {
+      ...store.task(forcedTask.id).resolution,
+      integrationTurn: null,
+      mergeIntent: false,
+    },
+  });
+
+  // 2. Stale reconciliation lookup paused while newer explicit merge returns accepted.
+  const staleLookupTask = insertTask("stale-lookup-vs-explicit", 81);
+  attachReadyReview(staleLookupTask.id, HEAD);
+  const oldRequestedAt = new Date(Date.now() - 60_000).toISOString();
+  store.update(staleLookupTask.id, {
+    phase: "merging",
+    resolution: {
+      ...store.task(staleLookupTask.id).resolution,
+      integrationTurn: { sequence: 1, acceptedAt: oldRequestedAt },
+      mergeIntent: true,
+      mergeHead: HEAD,
+      mergeBase: "main",
+      mergeRequestedAt: oldRequestedAt,
+      mergeResponseOutcome: "pending",
+    },
+  });
+  pauseFirstLookup = true;
+  const quantumPromise = runtime.engine.scheduleTaskQuantum(staleLookupTask.id);
+  await lookupStarted;
+
+  const explicitDuringLookup = await callExplicit(
+    staleLookupTask.id,
+    { action: "merge.now", head: HEAD },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(explicitDuringLookup.explicitResolution?.status, "applied");
+  assert.equal(
+    store.task(staleLookupTask.id).resolution.mergeResponseOutcome,
+    "accepted",
+  );
+  const newerRequestedAt = store.task(staleLookupTask.id).resolution
+    .mergeRequestedAt;
+
+  finishMergedLookup();
+  await quantumPromise;
+  assert.equal(
+    store.task(staleLookupTask.id).resolution.mergeRequestedAt,
+    newerRequestedAt,
+  );
+  assert.equal(
+    store.task(staleLookupTask.id).resolution.mergeResponseOutcome,
+    "accepted",
+    "stale unmerged lookup must not overwrite newer explicit accepted outcome",
+  );
+  store.update(staleLookupTask.id, {
+    phase: "done",
+    resolution: {
+      ...store.task(staleLookupTask.id).resolution,
+      integrationTurn: null,
+      mergeIntent: false,
+    },
+  });
+
+  // 3. Bound coordinator calling closeout.now on its own live run gets live_runs warning and cancels via run.release.
+  const selfCoordTask = insertTask("self-coord-closeout", 82);
+  attachReadyReview(selfCoordTask.id, HEAD);
+  store.update(selfCoordTask.id, {
+    phase: "needs_attention",
+    resolution: {
+      ...store.task(selfCoordTask.id).resolution,
+      mergedCommit: MERGED_COMMIT,
+      mergeHead: HEAD,
+    },
+  });
+  const selfCoordCaller = attachCoordinator(selfCoordTask.id, "coord-self");
+  const selfWarned = await callExplicit(
+    selfCoordTask.id,
+    { action: "closeout.now" },
+    selfCoordCaller,
+  );
+  assert.equal(selfWarned.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    selfWarned.explicitResolution?.warnings.map((w) => w.id),
+    ["live_runs"],
+  );
+  assert.equal(store.run(`coord-run-${selfCoordTask.id}`)?.released, false);
+  assert.equal(stoppedAgents.length, 0);
+
+  const selfAccepted = await callExplicit(
+    selfCoordTask.id,
+    { action: "closeout.now", accept: ["live_runs"] },
+    selfCoordCaller,
+  );
+  assert.equal(selfAccepted.explicitResolution?.status, "applied");
+  assert.equal(store.run(`coord-run-${selfCoordTask.id}`)?.released, true);
+  assert.deepEqual(stoppedAgents, ["coord-self"]);
+  store.update(selfCoordTask.id, {
+    phase: "done",
+    resolution: {
+      ...store.task(selfCoordTask.id).resolution,
+      integrationTurn: null,
+    },
+  });
+
+  // 4. Retained check poll must not block ordinary quantum from observing an already-sent merge.
+  const checkPollTask = insertTask("retained-check-poll-merge", 83);
+  attachReadyReview(checkPollTask.id, HEAD);
+  store.update(checkPollTask.id, {
+    phase: "verifying",
+    resolution: {
+      ...store.task(checkPollTask.id).resolution,
+      stop: {
+        reason: "lifecycle",
+        detail: "Required check ci is pending",
+        since: oldRequestedAt,
+        suggestedVerbs: [],
+      },
+    },
+  });
+  store.setMeta(requiredCheckPollMetaKey(checkPollTask.id, HEAD), {
+    head: HEAD,
+    incidentId: null,
+    nextAt: Date.now() + 60_000,
+  });
+  checksPending = true;
+  mergedFlag = false;
+  const acceptedChecksMerge = await callExplicit(
+    checkPollTask.id,
+    { action: "merge.now", head: HEAD, accept: ["checks"] },
+    OPERATOR_BOARD_CALLER,
+  );
+  assert.equal(acceptedChecksMerge.explicitResolution?.status, "applied");
+  assert.equal(acceptedChecksMerge.phase, "merging");
+  assert.equal(
+    store.task(checkPollTask.id).resolution.mergeResponseOutcome,
+    "accepted",
+  );
+
+  mergedFlag = true;
+  checkWaitCalls = 0;
+  await runtime.engine.scheduleTaskQuantum(checkPollTask.id);
+  assert.equal(
+    checkWaitCalls,
+    0,
+    "pre-merge check poll must not run after merge was sent",
+  );
+  assert.equal(
+    store.task(checkPollTask.id).resolution.mergedCommit,
+    MERGED_COMMIT,
+    store.task(checkPollTask.id).reason,
+  );
+  assert.equal(store.task(checkPollTask.id).phase, "syncing");
 });
