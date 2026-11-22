@@ -299,14 +299,6 @@ archives retired errored agents so a Paseo workspace stops reporting Failed. An
 unreadable read or a refused archive records a thread-archive wait instead of
 being dropped. `Engine.archiveRetiredErroredAgents` delegates to it.
 
-**CreationRecovery** (`core/recovery/absent-creation/creation.ts`). Recovers a
-proven-absent worker and an unowned workspace creation, including proof-only
-dispatch recovery. Enforces [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create)
-and [Parked dispatch and workspace repair](#parked-dispatch-and-workspace-repair).
-Pures (`absent-creation/decisions.ts`): `workspaceReplayAllowed`,
-`absentWorkerStep`. Control-flow strings: `ABSENT_WORKER_REASON`,
-`PRE_AGENT_LAUNCH_FAILURE_REASON`. Delegates remain on Engine.
-
 **CallbackIntake** (`core/intake/callback-intake.ts`). Authenticates, validates and
 records one worker report. `CallbackIntake` holds Engine's source gates and the
 checkpoint and review-progress receipts. **RunCallbackIntake**
@@ -680,16 +672,6 @@ replacement worker resumes, retry, worker resume, and the stopped-revision
 restart. Enforces the restart arms in [Verbs](#verbs). Pures: `retryRoute`,
 `resumeRoute`, `blockedRetryRoute`, `revisionRoute`. Delegates remain on
 Resolution, including `retry` so instance overrides still fire.
-
-**AbsentRestarts** (`core/recovery/absent-creation/restarts.ts`). Recreates
-uncertain creations: the worker sweep retains an intent while its producer might
-still deliver, and a resolution-role reservation is replaced only from the
-sweep's exact absence proof, whichever stored shape (`intent` or `uncertain`)
-the roll left behind. Owner-control and resolution-run cutover remain follow-up
-work; the one-replacement creation budget, whose record shape and reader are
-`absent-creation/budget.ts`. Enforces
-[Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
-Delegates remain on Resolution.
 
 **Recovery** (`core/recovery/recovery.ts`). The coordinator surface Resolution
 constructs: it wires the stages together and keeps the method shape its callers
@@ -1946,89 +1928,36 @@ review or merge credit; live participants and unsettled effects remain fences.
 - When a retained thread blocks dispatch, the reason names its pending
   permission or question, active turn or non-resumable status.
 
-### Uncertain creation and absence
+### Uncertain creation and explicit exits
 
 - Each fresh agent reservation records the service process and creation attempt
   in the same transaction. The native creation call records its return or throw
   against that attempt. An admission deadline leaves a pending native call owned.
-- The recovery sweep and coordinator restart require a complete exact lookup on
-  the recorded host and workspace to release an agentless recovery. A zero
-  result clears its run, credential and episode binding together when the lookup
-  started after grace and the attempt had settled or belonged to a previous
-  service process. A legacy reservation without a producer record stays unknown.
-- A single exact match binds in the sweep. An incomplete, unavailable or
-  ambiguous reading holds the reservation. Release keeps the original task stop
-  and recovery allowance. Ordinary admission gives any later launch a fresh run.
-- Worker restart, immediate routing and an armed worker failover use the
-  recorded producer and the same exact lookup. One exact match binds to the
-  original run and credential. Pending, incomplete or ambiguous observations
-  keep the intent owned. After proven absence, release revokes the old
-  credential and returns the existing work to ordinary dispatch. The live
-  route and its sign-off, capacity and availability determine admission.
-- An authorized worker restart keeps its direction on the deferred verb while
-  creation or another run is settling. An exact match keeps the original run and
-  callback credential. Ordinary admission and an idle observation allow one
-  delivery to that worker. If notifications are unavailable, the host operator
-  can restore support and the sweep rechecks admission. After an uncertain send,
-  only exact receipt evidence settles delivery. Proven creation absence transfers
-  the direction to the fresh dispatch.
-- Restart and immediate route can replace an agentless resolution run after
-  the exact lookup proves absence following producer termination. Release
-  revokes its credential and re-enters the role's ordinary admission on a fresh
-  run ID at the recorded head. An agentless recovery also settles its bound
-  episode. One durable creation state answers both stored shapes: a reservation
-  whose native call never settled stays `intent` across a service roll, and a
-  send that threw stays `uncertain`; `agentlessCreation` names it, so a proved
-  absence recorded on either shape is offered by `next` and applied by the same
-  restart or route. The preview is a store read, so an applied control re-runs
-  the observation and source check; a fresh bound, partial or unreadable lookup
-  keeps the reservation instead of starting a second agent.
-- One observation answers an agentless resolution-role creation: the recorded
-  producer, the creation attempt and the complete exact lookup on the recorded
-  host and workspace. Its answers are `bound` (one exact in-workspace match
-  binds the original run), `absent` (no agent, and the producer that could still
-  deliver belonged to a previous service process), `partial` (a match it cannot
-  bind, because it is ambiguous, misplaced or host-unconfirmed) and `wait` (no
-  answer yet). The sweep records the result for `next`. Restart and immediate
-  route repeat the same observation and verify the exact source before
-  replacement. A fresh ambiguous lookup on restart withdraws the earlier
-  absence proof and keeps the occurrence owned.
+- Uncertain worker and resolution-role creations never require a proven-absence
+  gate before recovery. When an uncertain creation or other mechanical stall
+  persists past its grace window, Nucleus launches the task's coordinator (within
+  the existing loop breaker) and `next` names the explicit command that resolves
+  it (`run.start <role> fresh replacing=<run>` with `duplicate_thread` accepted,
+  or `run.release <run>`). Normal-flow `restart` and `route` stay for ordinary
+  progress and point at those explicit commands instead of waiting for proven
+  absence.
+- For an agentless recovery (coordinator) run, the recovery sweep still uses a
+  complete exact lookup on the recorded host and workspace: a single exact match
+  binds in the sweep, while a zero result after grace (when the attempt settled
+  or belonged to a previous service process) clears its run, credential and
+  episode binding together, keeping the original task stop and recovery
+  allowance. An incomplete, unavailable or ambiguous lookup holds the
+  reservation until observed or released explicitly with `run.release`.
 - On T3 Code, a local launch record with a confirmed missing native thread
-  contributes no match to the exact lookup. A thread still held by T3 counts,
-  including when archived or placed outside the retained workspace. An
-  unreadable answer, including inventory churn beyond the lookup's retry
-  budget, keeps the occurrence waiting. See the
+  contributes no match to that exact lookup. A thread still held by T3 counts,
+  including when archived or placed outside the retained workspace. See the
   [T3 Code adapter spec](../specs/t3code-host-adapter.md#run-creation-lookup).
-- Only `absent` is a proof, and only the owner acts on it: the sweep records
-  `absentProvenAt`, resolves the incident and names `route`/`restart` as the
-  exits, while the one replacement stays the owner's deliberate route or
-  restart from the current route. A call that settled or threw inside this
-  service process is an observation, not a proof: it may still reach the host,
-  so its empty lookup keeps the run and credential owned and states that a
-  service roll answers it. `partial` is attention bound to the exact run and
-  attempt, never a second agent. Repeating the pass converges with no extra
-  event, launch or release.
-- A PR-anchored author revision whose own launch was refused before send (its
-  `creation_refused_before_send` names a released, superseded revision run with
-  no agent or completion, and no other run is live) is a proven refusal. Its
-  leftover worker-creation intent is obsolete. `move to=work` offers the
-  continuation and retires the intent in the same transaction, keeping the PR,
-  head, pending instruction and review. An uncertain send, another refused run
-  or a live recovery run is not proof and keeps the intent owned.
-- A reviewer report request resends one delivered review occurrence, so it must
-  name one: a delivered continuation turn or the run's accepted dispatch at the
-  exact head. A creation its exact lookup bound is not proof the dispatch
-  arrived; the request inspects that exact `ns-run-<runId>` message first. A
-  present message is positive delivery and is recorded, a complete readable
-  page without it proves the dispatch never arrived and names the deliberate
-  replacement instead of a resend, and an unreadable or incomplete page keeps
-  the request visibly waiting. "Already asked to resend" names that occurrence,
-  never a bare run.
-- `move to=work` on an uncertain worker creation names the observation restart
-  is waiting for, with the same text, and never points at restart while restart is
-  refused. Once proved absence makes restart available, the move refusal names
-  restart as the route. An archived host parent that cannot be restored refuses the
-  restart before any release, so the uncertain occurrence keeps its run and credential.
+- An unreported retained reviewer whose callback has not arrived is resolved
+  explicitly: `message.send reviewer` asks the bound thread to resend its report
+  without starting a new run, `run.start reviewer retained` starts a new review
+  turn on the retained thread, or `run.start reviewer fresh replacing=<run>`
+  replaces it in one step. No review-dispatch timeline proof is required before
+  asking or replacing.
 - A host-unavailable transport wait is re-evaluated by the first pass that sees
   the host back.
 
@@ -3193,7 +3122,7 @@ resulting state on its own cadence.
   transient wait supersedes its notice naming that reason, not with an empty
   error.
 - Agentless recovery follows the proof and release rules in
-  [Uncertain creation and absence](#uncertain-creation-and-absence).
+  [Uncertain creation and explicit exits](#uncertain-creation-and-explicit-exits).
 - A decision that escalates, spends a coordinator run or returns work verifies
   live the facts named in Spec 016 rule 4, once per attempt; a failed read is
   `unverified` and retries within a bounded grace

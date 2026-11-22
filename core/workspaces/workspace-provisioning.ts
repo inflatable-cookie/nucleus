@@ -23,8 +23,14 @@ import {
   canonicalLinkRoot,
   provisionWorktreeLinks,
   worktreeLinksDue,
+  worktreeLinksForBinding,
   worktreeLinksSummary,
 } from "./worktree-links";
+import {
+  retainNodeModules,
+  workspaceCreationRefusal,
+} from "./workspace-allocation";
+import { startsNoRuns } from "../closeout/queue-drain";
 
 /**
  * What a task's checkout gets beside it before its worker runs: sibling
@@ -453,6 +459,152 @@ export class WorkspaceProvisioning {
       return (await this.adapter.readStash?.(directory)) ?? null;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Positive binding of an already-created workspace after an interrupted
+   * creation (including proof-only provisioning), without proven-absence replay.
+   */
+  async recoverExistingWorkspace(task: Task): Promise<boolean> {
+    if (task.entrypoint === "proof" && task.proofOnly) {
+      await this.recoverProofOnlyWorkspace(task);
+      return true;
+    }
+    if (task.workspaceId) return false;
+    await this.adapter.preflightWorkspaceStorage?.(task);
+    const found = await this.adapter.findWorkspaces(task);
+    if (found.length > 1) {
+      this.engine.note(
+        task.id,
+        "Ambiguous workspace identity; no new resource created",
+        "workspace_unavailable",
+        "needs_attention",
+      );
+      return true;
+    }
+    if (found.length === 1) {
+      this.store.update(
+        task.id,
+        {
+          workspaceId: found[0]!.id,
+          directory: found[0]!.directory,
+          phase: "dispatching",
+          ...worktreeLinksForBinding(this.store.task(task.id), {
+            workspaceId: found[0]!.id,
+            directory: found[0]!.directory,
+          }),
+        },
+        "workspace_recovered",
+        found[0]!.id,
+      );
+      if (!startsNoRuns(this.store, this.engine.stopped)) {
+        await this.engine.launchAgent(this.store.task(task.id));
+      }
+      return true;
+    }
+    const classified = this.adapter.inspectWorkspaceCreation
+      ? await this.adapter.inspectWorkspaceCreation(task)
+      : null;
+    if (classified?.kind === "found_done") {
+      if (startsNoRuns(this.store, this.engine.stopped)) return true;
+      const workspace = await this.adapter.createWorkspace(task);
+      this.store.update(
+        task.id,
+        {
+          workspaceId: workspace.id,
+          directory: workspace.directory,
+          phase: "dispatching",
+          ...worktreeLinksForBinding(this.store.task(task.id), {
+            workspaceId: workspace.id,
+            directory: workspace.directory,
+          }),
+        },
+        "workspace_recovered",
+        workspace.id,
+      );
+      if (!startsNoRuns(this.store, this.engine.stopped)) {
+        await this.engine.launchAgent(this.store.task(task.id));
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private async recoverProofOnlyWorkspace(task: Task): Promise<void> {
+    let workspace =
+      task.workspaceId && task.directory
+        ? { id: task.workspaceId, directory: task.directory }
+        : null;
+    if (workspace && task.proofOnly && this.adapter.populateTaskWorktree) {
+      const checkout = await this.adapter.populateTaskWorktree(task);
+      if (checkout.directory !== workspace.directory) {
+        throw new Error(
+          `The recorded proof-only workspace is ${workspace.directory}, but its checkout is ${checkout.directory}`,
+        );
+      }
+    }
+    if (!workspace) {
+      if (task.proofOnly && this.adapter.populateTaskWorktree) {
+        await this.adapter.populateTaskWorktree(task);
+      }
+      const found = await this.adapter.findWorkspaces(task);
+      if (found.length > 1) {
+        this.engine.note(
+          task.id,
+          "Ambiguous workspace identity; no new resource created",
+          "workspace_unavailable",
+          "needs_attention",
+        );
+        return;
+      }
+      if (found.length === 1) {
+        workspace = found[0]!;
+      } else {
+        const state = this.adapter.inspectWorkspaceCreation
+          ? await this.adapter.inspectWorkspaceCreation(task)
+          : null;
+        if (state && state.kind !== "absent" && state.kind !== "found_done") {
+          this.engine.note(
+            task.id,
+            workspaceCreationRefusal(state),
+            "operator_needed",
+            "needs_attention",
+          );
+          return;
+        }
+        if (startsNoRuns(this.store, this.engine.stopped)) return;
+        if (state?.kind === "absent" && this.adapter.populateTaskWorktree) {
+          await this.adapter.populateTaskWorktree(task);
+        }
+        if (!this.adapter.createWorkspace) {
+          throw new Error("Proof-only workspace provisioning is unavailable");
+        }
+        workspace = await this.adapter.createWorkspace(
+          this.store.task(task.id),
+        );
+      }
+      const current = this.store.task(task.id);
+      this.store.update(
+        task.id,
+        {
+          workspaceId: workspace.id,
+          directory: workspace.directory,
+          phase: "dispatching",
+          ...worktreeLinksForBinding(current, {
+            workspaceId: workspace.id,
+            directory: workspace.directory,
+          }),
+        },
+        "workspace_recovered",
+        workspace.id,
+      );
+    }
+    if (task.proofOnly && workspace) {
+      retainNodeModules(task.repoPath, workspace.directory);
+    }
+    if (!startsNoRuns(this.store, this.engine.stopped)) {
+      await this.engine.launchProofOnly(this.store.task(task.id));
     }
   }
 }

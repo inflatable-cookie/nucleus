@@ -648,7 +648,11 @@ export class StoreTaskFunnel {
       hasExplicitStop &&
       JSON.stringify(change.resolution!.stop) ===
         JSON.stringify(task.resolution.stop);
-    if (lifecycleChanged && (!hasExplicitStop || stopRepeatsCurrent)) {
+    if (
+      lifecycleChanged &&
+      kind !== "owner_resolution" &&
+      (!hasExplicitStop || stopRepeatsCurrent)
+    ) {
       change = {
         ...change,
         resolution: {
@@ -686,8 +690,11 @@ export class StoreTaskFunnel {
     let next = {
       ...task,
       ...change,
-      ...(change.reason !== undefined && change.reason !== task.reason && change.reasonFact === undefined
-        ? { reasonFact: taskDecisionFact(change.reason) } : {}),
+      ...(change.reason !== undefined &&
+      change.reason !== task.reason &&
+      change.reasonFact === undefined
+        ? { reasonFact: taskDecisionFact(change.reason) }
+        : {}),
       ...(terminal ? { queuePriority: 0 } : {}),
       finishedAt,
       id: task.id,
@@ -798,12 +805,17 @@ export class StoreTaskFunnel {
       if (
         next.phase === "queued" &&
         change.reason === undefined &&
-        (task.resolution.stop?.reason === "held" || next.reasonFact?.code === "dispatch_hold")
+        (task.resolution.stop?.reason === "held" ||
+          next.reasonFact?.code === "dispatch_hold")
       )
         next = {
           ...next,
           reason: this.services.dependencyWait(next) || DISPATCH_WAIT_REASON,
-          reasonFact: { code: this.services.dependencyWait(next) ? "prerequisite" : "dispatch" },
+          reasonFact: {
+            code: this.services.dependencyWait(next)
+              ? "prerequisite"
+              : "dispatch",
+          },
         };
     }
     const restartSlot = task.resolution.restartSlotHold;

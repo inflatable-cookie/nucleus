@@ -285,35 +285,20 @@ test("recovery clears a proven orphan from its own parked stop and replays creat
     };
     await f.engine.wake();
     const current = f.store.task(submitted.id);
-    assert.equal(
-      current.phase,
-      "working",
-      "the replayed creation dispatched a worker",
-    );
-    assert.equal(removed, 1);
-    assert.equal(f.calls.workspaces, 1);
-    assert.equal(f.calls.agents, 1);
+    // Spec 067 batch 2 deletes proven-absence auto-replay; wake() leaves the
+    // parked orphan stop intact for explicit retry_effect or coordinator action.
+    assert.equal(current.phase, "needs_attention");
+    assert.equal(removed, 0);
+    assert.equal(f.calls.workspaces, 0);
+    assert.equal(f.calls.agents, 0);
     assert.equal(
       f.store
         .eventsAll(submitted.id)
         .filter((event) => event.kind === "workspace_creation_auto_replay")
         .length,
-      1,
+      0,
     );
-    assert.equal(
-      f.store
-        .eventsAll(submitted.id)
-        .some((event) => event.kind === "orphan_workspace_removed"),
-      true,
-    );
-    assert.equal(
-      current.resolution.stop,
-      null,
-      "the parked stop is settled by the replay",
-    );
-    await f.engine.wake();
-    assert.equal(removed, 1, "one automatic replay, not a loop");
-    assert.equal(f.calls.workspaces, 1);
+    assert.equal(current.resolution.stop?.reason, "operator_needed");
   } finally {
     await f.close();
   }
@@ -686,7 +671,7 @@ test("the replay refuses once a worker creation is in flight", async () => {
           action: "restart",
           reason: "Replay the pre-dispatch validation",
         }),
-      /Worker creation recovery requires a retained run, host, workspace and route/,
+      /Worker creation is uncertain; use run\.start worker fresh or run\.release/,
     );
     assert.equal(f.store.task(task.id).workspaceIntent, true);
   } finally {
@@ -1132,27 +1117,16 @@ test("sweep replays one proven empty creation and refuses conflicting evidence",
       };
       await f.engine.wake();
       const current = f.store.task(task.id);
-      if (kind === "conflicting") {
-        assert.equal(current.workspaceIntent, true);
-        assert.equal(
-          f.store
-            .eventsAll(task.id)
-            .some((event) => event.kind === "workspace_creation_auto_replay"),
-          false,
-        );
-        assert.equal(removed, 0);
-      } else {
-        assert.equal(current.phase, "working");
-        assert.equal(f.calls.workspaces, 1);
-        assert.equal(removed, kind === "partial" ? 1 : 0);
-        assert.equal(
-          f.store
-            .eventsAll(task.id)
-            .filter((event) => event.kind === "workspace_creation_auto_replay")
-            .length,
-          1,
-        );
-      }
+      // Spec 067 batch 2 deletes proven-absence sweep auto-replay: wake() never
+      // auto-replays uncertain workspace creations regardless of inspection kind.
+      assert.equal(current.workspaceIntent, true);
+      assert.equal(
+        f.store
+          .eventsAll(task.id)
+          .some((event) => event.kind === "workspace_creation_auto_replay"),
+        false,
+      );
+      assert.equal(removed, 0);
     } finally {
       await f.close();
     }

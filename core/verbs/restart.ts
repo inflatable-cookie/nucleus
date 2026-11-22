@@ -1,4 +1,3 @@
-import { workerCreationRestartWait } from "../recovery/absent-creation/stale-worker";
 import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { restartTerminalRefusal } from "./verb-refusal-text";
 import {
@@ -257,7 +256,13 @@ export class RestartControls {
     })();
   }
 
-  private async restartBlockedWorkerWithPr(task: Task, input: TaskControlInput, reason: string, fresh: boolean, operationId?: string): Promise<Task> {
+  private async restartBlockedWorkerWithPr(
+    task: Task,
+    input: TaskControlInput,
+    reason: string,
+    fresh: boolean,
+    operationId?: string,
+  ): Promise<Task> {
     const shape = "blocked_with_pr" as const;
     const unobserved = workerRestartRefusal(
       collectOwnerVerbFacts(this.store, task),
@@ -293,11 +298,25 @@ export class RestartControls {
       reason,
       instruction: input.instruction,
       caller: input.caller,
-      ...(fresh ? { parentRestart: {
-        before: () => this.engine.workerRestarts.restoreParent({ task, input, operationId }),
-        commit: (result: Task, restored: boolean) => this.engine.workerRestarts.recordRestoredRestart(result, operationId, restored),
-        restoreRetained: true,
-      } } : {}),
+      ...(fresh
+        ? {
+            parentRestart: {
+              before: () =>
+                this.engine.workerRestarts.restoreParent({
+                  task,
+                  input,
+                  operationId,
+                }),
+              commit: (result: Task, restored: boolean) =>
+                this.engine.workerRestarts.recordRestoredRestart(
+                  result,
+                  operationId,
+                  restored,
+                ),
+              restoreRetained: true,
+            },
+          }
+        : {}),
       restart: this.engine.workerRestartArm(task, {
         reason,
         instruction: input.instruction,
@@ -306,14 +325,19 @@ export class RestartControls {
         note: input.note,
         fresh,
         observedWorker: observed,
-        supersedeNonDelivery:
-          !fresh && task.resolution.nonDeliveryRoutePending,
+        supersedeNonDelivery: !fresh && task.resolution.nonDeliveryRoutePending,
       }),
     });
   }
 
   /** Recheck and commit the escalated worker's existing admission. */
-  private applyEscalatedWorkerRestart(task: Task, input: TaskControlInput, reason: string, operationId?: string, restored = false): Task | null {
+  private applyEscalatedWorkerRestart(
+    task: Task,
+    input: TaskControlInput,
+    reason: string,
+    operationId?: string,
+    restored = false,
+  ): Task | null {
     return this.store.transaction(() => {
       const current = this.store.task(task.id);
       this.engine.requireOwnerControlCurrent(
@@ -343,30 +367,96 @@ export class RestartControls {
         `Restart requested: ${reason}`,
         "restart_requested",
       );
-      return this.engine.workerRestarts.recordRestoredRestart(restarted, operationId, restored);
+      return this.engine.workerRestarts.recordRestoredRestart(
+        restarted,
+        operationId,
+        restored,
+      );
     });
   }
 
   /** Resume only the admitted worker branch after observing its exact restore. */
-  async resumeRestoredWorker(input: TaskControlInput, operationId: string): Promise<Task> {
+  async resumeRestoredWorker(
+    input: TaskControlInput,
+    operationId: string,
+  ): Promise<Task> {
     const task = this.store.task(input.taskId);
-    this.engine.requireOwnerControlCurrent(task, input.version, "Task changed during parent restore; read next again");
-    if (!verifyEnclosingOperation(this.store, input, operationId) || task.removedAt ||
-        isDispositionActive(task) || ["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit)
+    this.engine.requireOwnerControlCurrent(
+      task,
+      input.version,
+      "Task changed during parent restore; read next again",
+    );
+    if (
+      !verifyEnclosingOperation(this.store, input, operationId) ||
+      task.removedAt ||
+      isDispositionActive(task) ||
+      ["done", "cancelled"].includes(task.phase) ||
+      task.resolution.mergedCommit
+    )
       throw new RestartRefusal("The original restart is no longer admitted");
-    const role = (input.role as RestartRole | undefined) ?? deriveRestartRole(task, this.store.runs(task.id));
-    if (role !== "worker") throw new RestartRefusal("The restored operation no longer names a worker restart");
+    const role =
+      (input.role as RestartRole | undefined) ??
+      deriveRestartRole(task, this.store.runs(task.id));
+    if (role !== "worker")
+      throw new RestartRefusal(
+        "The restored operation no longer names a worker restart",
+      );
     const reason = (input.reason ?? "").trim();
     if (!reason) throw new RestartRefusal("restart requires a reason");
-    const plan = escalatedWorkerRestart(collectOwnerVerbFacts(this.store, task), verifyEnclosingOperation(this.store, input, operationId));
-    if (plan && !("refusal" in plan)) return this.applyEscalatedWorkerRestart(task, input, reason, operationId, true)!;
-    const shape = restartShape(task, this.store.runs(task.id), role, this.store.eventsAll(task.id));
-    if (shape === "blocked_with_pr" && input.role === "worker" && input.fresh === true)
-      return this.restartBlockedWorkerWithPr(task, input, reason, true, operationId);
-    if (shape !== "absent_worker" && shape !== "pre_dispatch" &&
-        !(input.fresh && (shape === "blocked_worker" || shape === "retained_worker" || shape === "stopped_revision"))) throw new RestartRefusal("The original worker restart is no longer admissible after parent restoration");
-    return this.engine.restartWorker({ task, input, role, shape, reason, operationId,
-      instruction: input.instruction?.trim() || "Continue the existing task under its current approved instruction source and within its approved scope." });
+    const plan = escalatedWorkerRestart(
+      collectOwnerVerbFacts(this.store, task),
+      verifyEnclosingOperation(this.store, input, operationId),
+    );
+    if (plan && !("refusal" in plan))
+      return this.applyEscalatedWorkerRestart(
+        task,
+        input,
+        reason,
+        operationId,
+        true,
+      )!;
+    const shape = restartShape(
+      task,
+      this.store.runs(task.id),
+      role,
+      this.store.eventsAll(task.id),
+    );
+    if (
+      shape === "blocked_with_pr" &&
+      input.role === "worker" &&
+      input.fresh === true
+    )
+      return this.restartBlockedWorkerWithPr(
+        task,
+        input,
+        reason,
+        true,
+        operationId,
+      );
+    if (
+      shape !== "absent_worker" &&
+      shape !== "pre_dispatch" &&
+      !(
+        input.fresh &&
+        (shape === "blocked_worker" ||
+          shape === "retained_worker" ||
+          shape === "stopped_revision")
+      )
+    )
+      throw new RestartRefusal(
+        "The original worker restart is no longer admissible after parent restoration",
+      );
+    return this.engine.restartWorker({
+      task,
+      input,
+      role,
+      shape,
+      reason,
+      operationId,
+      instruction:
+        input.instruction?.trim() ||
+        "Continue the existing task under its current approved instruction source and within its approved scope.",
+    });
   }
 
   /**
@@ -460,16 +550,23 @@ export class RestartControls {
         verifyEnclosingOperation(this.store, input, operationId),
       );
       let restored = false;
-      if (preview && !('refusal' in preview)) {
+      if (preview && !("refusal" in preview)) {
         // The same task lane and the same plan are checked again at commit.
-        restored = await this.engine.workerRestarts.restoreParent({ task, input, operationId });
+        restored = await this.engine.workerRestarts.restoreParent({
+          task,
+          input,
+          operationId,
+        });
       }
-      const escalated = this.applyEscalatedWorkerRestart(task, input, reason, operationId, restored);
+      const escalated = this.applyEscalatedWorkerRestart(
+        task,
+        input,
+        reason,
+        operationId,
+        restored,
+      );
       if (escalated) return escalated;
     }
-    const pending =
-      role === "worker" ? workerCreationRestartWait(this.store, task) : null;
-    if (pending) throw new RestartRefusal(pending);
     const runs = this.store.runs(task.id);
     const shape =
       role === "reviewer" && exhaustedReviewer(task, runs)
@@ -667,10 +764,16 @@ export class RestartControls {
     // resume closed to this shape; a restart without a role still resumes into
     // review below. The worker refusals run first with a fresh observation.
     if (shape === "blocked_with_pr" && input.role === "worker")
-      return this.restartBlockedWorkerWithPr(task, input, reason, fresh, operationId);
+      return this.restartBlockedWorkerWithPr(
+        task,
+        input,
+        reason,
+        fresh,
+        operationId,
+      );
     if (shape === "coordinator" && fresh)
       throw Error(
-        "Coordinator restart retries the existing resolution; fresh is unsupported here. Use route role=coordinator with now to replace its agent",
+        "Coordinator restart retries the existing resolution; fresh is unsupported here. Use run.start coordinator fresh replacing=<run> to replace its agent",
       );
     const instruction =
       input.instruction?.trim() ||

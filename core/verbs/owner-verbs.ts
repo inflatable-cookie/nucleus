@@ -1,11 +1,6 @@
 import { exhaustedReviewer, exhaustedReviewerRefusal } from "./reviewer-report";
 import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { ownerStopPendingRefusal } from "./owner-stop";
-import {
-  workerCreationWait,
-  workerLookupWait,
-  workerProducerStopped,
-} from "../recovery/absent-creation/stale-worker";
 /** Owner verb registry; read-side admission lives under verbs/. */
 import { readyReviewAtHead } from "../recovery/task-reasons";
 import {
@@ -44,7 +39,11 @@ import { buildOutputDisclosure } from "../../shared/build-output-disclosure";
 import { routeRoles, verbInput, applyMapped } from "./owner-shared";
 import type { RouteRole, OwnerVerb } from "./owner-shared";
 import { replacementAllowanceNote, durableRunFence } from "./owner-facts";
-import { effectiveDefaultHostKind, hostKindOf, type HostKind } from "../../shared/host-kind";
+import {
+  effectiveDefaultHostKind,
+  hostKindOf,
+  type HostKind,
+} from "../../shared/host-kind";
 import type { OwnerVerbFacts } from "./owner-facts";
 import { assembleOwnerTaskNext } from "./task-next";
 import { restart } from "./owner-restart";
@@ -120,7 +119,9 @@ function workerHostRouteView(
   if (eligibleOtherHosts.length > 0) {
     const preferredKinds = [
       facts.store.repositoryFor(task.repoPath)?.hostKind,
-      effectiveDefaultHostKind(facts.store.getMeta<HostKind | null>("operatorDefaultHostKind")),
+      effectiveDefaultHostKind(
+        facts.store.getMeta<HostKind | null>("operatorDefaultHostKind"),
+      ),
     ];
     const targetHost =
       preferredKinds.flatMap((kind) =>
@@ -173,17 +174,11 @@ function routeViews(facts: OwnerVerbFacts): TaskNextVerb[] {
       unsettledControlRefusal(facts.store, task) ??
       (exhausted
         ? exhaustedReviewerRefusal(facts.store, task, exhausted)
-        : null) ??
-      (role === "worker" && task.agentIntent && !task.agentId
-        ? (workerLookupWait(task) ??
-          (workerProducerStopped(facts.store, task, facts.creationGraceMs ?? 0)
-            ? null
-            : workerCreationWait))
         : null);
     const retainedReviewer = exhausted
-      ? "The retained reviewer cannot finish. Add now to replace it after Nucleus verifies the exact PR head and observes it idle."
+      ? "The retained reviewer cannot finish. Use run.start reviewer fresh replacing=<run> or add now to replace it."
       : role === "reviewer" && task.resolution.reviewerAgentId
-        ? "Immediate replacement requires proof that the retained reviewer is gone or ineligible."
+        ? `To replace the retained reviewer directly, use run.start reviewer fresh${task.resolution.currentRunId ? ` replacing=${task.resolution.currentRunId}` : ""}.`
         : null;
     const note = [
       role === "worker" ? workerNote : null,

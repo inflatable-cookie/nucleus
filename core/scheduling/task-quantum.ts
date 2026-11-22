@@ -1,7 +1,3 @@
-import {
-  deferredWorkerCreationRestart,
-  staleWorkerIntent,
-} from "../recovery/absent-creation/stale-worker";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import {
@@ -65,7 +61,7 @@ export type TaskQuantumContext = Pick<
   | "reconcile"
   | "reconcileBlockedEffects"
   | "reconcileClosedRetainedReviewer"
-  | "recover"
+  | "recoverExistingWorkspace"
   | "routeTask"
   | "scheduleLane"
   | "settleFinishedRuns"
@@ -436,9 +432,6 @@ export class TaskQuantum {
           } satisfies HostReadTransientEpisode);
         }
       }
-      // The sweep owns discovery for an accepted worker creation restart.
-      if (staleWorkerIntent(task) && deferredWorkerCreationRestart(task))
-        return;
       // Project-a #1837: a restart can leave the flag cleared on a recorded pre-attention
       // state. Restore it so the ordinary resolution path advances instead of idling.
       const resumed = this.context.resolution.resumeClearedAttention(task);
@@ -515,7 +508,10 @@ export class TaskQuantum {
         const restored = this.context.resolution.update(
           this.context.store.task(task.id),
           { stop: null, attention: false },
-          { phase: "queued", reason: "Fresh host observation recovered; requeued" },
+          {
+            phase: "queued",
+            reason: "Fresh host observation recovered; requeued",
+          },
           "host_read_transient_phase_restored",
           "queued",
         );
@@ -527,9 +523,29 @@ export class TaskQuantum {
       if (
         (task.workspaceIntent && !task.workspaceId) ||
         (task.agentIntent && !task.agentId)
-      )
-        await this.context.recover(task);
-      else if (
+      ) {
+        const bound =
+          (task.workspaceIntent && !task.workspaceId) ||
+          (task.entrypoint === "proof" && task.proofOnly)
+            ? await this.context.recoverExistingWorkspace(task)
+            : false;
+        const latest = this.context.store.task(task.id);
+        if (!bound && !latest.resolution.stop) {
+          this.context.resolution.waiting(
+            latest,
+            latest.agentIntent && !latest.agentId
+              ? `Worker creation is uncertain; use run.start worker fresh${latest.runId ? ` replacing=${latest.runId}` : ""} or run.release`
+              : "Workspace creation is uncertain; inspect the host and resolve explicitly",
+            "lifecycle",
+            {
+              fact: {
+                code: "worker_lookup",
+                ...(latest.runId ? { subject: latest.runId } : {}),
+              },
+            },
+          );
+        }
+      } else if (
         task.agentId &&
         (["working", "needs_attention", "dispatching"].includes(task.phase) ||
           (!task.completion && ["blocked", "error"].includes(task.phase)))
@@ -602,7 +618,9 @@ export class TaskQuantum {
           // Only Queue's own origin error text is classified. A task reason can
           // be an agent's report, and reading a wait out of it invents one.
           const detail =
-            current.originError || current.reason || UNKNOWN_TASK_ATTENTION_REASON;
+            current.originError ||
+            current.reason ||
+            UNKNOWN_TASK_ATTENTION_REASON;
           const classification = current.originError
             ? taskStopClassification(detail)
             : {

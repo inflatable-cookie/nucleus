@@ -19,7 +19,6 @@ import {
   HOST_WAIT_PRESERVED_STOPS,
   hostUnavailableDetail,
 } from "../shared/host-outage";
-import { CreationRecovery } from "./recovery/absent-creation";
 import type { GitTransientEpisode } from "./git/git-transient-backoff";
 
 import { type WorkspaceDiscard } from "./workspaces/orphan-worktree";
@@ -301,7 +300,7 @@ export class Engine {
         "reconcile",
         "reconcileBlockedEffects",
         "reconcileClosedRetainedReviewer",
-        "recover",
+        "recoverExistingWorkspace",
         "routeTask",
         "scheduleLane",
         "settleFinishedRuns",
@@ -901,7 +900,6 @@ export class Engine {
   private readonly taskRemoval: TaskRemoval;
   private readonly workspaceProvisioning: WorkspaceProvisioning;
   private readonly workerLauncher: WorkerLauncher;
-  private readonly creationRecovery: CreationRecovery;
   private readonly briefControls: BriefControls;
   private readonly settingsControls: SettingsControls;
   readonly ownerStop: OwnerStop;
@@ -1096,28 +1094,6 @@ export class Engine {
     this.taskRemoval = new TaskRemoval(this);
     this.workspaceProvisioning = new WorkspaceProvisioning(this);
     this.workerLauncher = new WorkerLauncher(this);
-    this.creationRecovery = new CreationRecovery(
-      enginePorts(
-        this,
-        [
-          "adapter",
-          "idleGraceMs",
-          "launchAgent",
-          "launchProofOnly",
-          "note",
-          "reconcileAbsentWorker",
-          "recoverProofOnlyDispatch",
-          "stopped",
-          "store",
-        ],
-        [
-          "ensureIncident",
-          "resolveIncident",
-          "returnToDispatch",
-          "saveIncident",
-        ],
-      ),
-    );
     this.briefControls = new BriefControls(this);
     this.settingsControls = new SettingsControls(this);
     this.ownerStop = new OwnerStop(this);
@@ -1930,7 +1906,10 @@ export class Engine {
       operationId,
     );
   }
-  forceCallerAuthorized(task: Task, caller: string | undefined): Promise<boolean> {
+  forceCallerAuthorized(
+    task: Task,
+    caller: string | undefined,
+  ): Promise<boolean> {
     return this.forceVerbs.forceCallerAuthorized(task, caller);
   }
   selfForceRole(task: Task): "worker" | "reviewer" | "recovery" | null {
@@ -2068,7 +2047,11 @@ export class Engine {
     operated: <T>(result: T) => T,
     planner = false,
   ): Task {
-    return this.settingsControls.applyTaskControlSetRouting(input, operated, planner);
+    return this.settingsControls.applyTaskControlSetRouting(
+      input,
+      operated,
+      planner,
+    );
   }
   applyTaskControlExcludeWorker(
     input: TaskControlInput,
@@ -3281,14 +3264,8 @@ export class Engine {
   recoverExhaustedWorkers(): Promise<void> {
     return this.workerFailover.recoverExhaustedWorkers();
   }
-  recover(task: Task) {
-    return this.creationRecovery.recover(task);
-  }
-  recoverProofOnlyDispatch(task: Task): Promise<void> {
-    return this.creationRecovery.recoverProofOnlyDispatch(task);
-  }
-  reconcileAbsentWorker(t: Task, matches: number) {
-    return this.creationRecovery.reconcileAbsentWorker(t, matches);
+  recoverExistingWorkspace(task: Task): Promise<boolean> {
+    return this.workspaceProvisioning.recoverExistingWorkspace(task);
   }
   ensureSiblings(task: Task): Promise<Task> {
     return this.workspaceProvisioning.ensureSiblings(task);

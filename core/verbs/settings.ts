@@ -103,10 +103,7 @@ export class SettingsControls {
         "Task changed; refresh before retrying",
       );
       if (input.critical !== undefined) {
-        if (
-          !planner &&
-          input.caller !== OPERATOR_BOARD_CALLER
-        )
+        if (!planner && input.caller !== OPERATOR_BOARD_CALLER)
           throw Error("Only the planner or operator may change critical");
         const other = [
           "scope",
@@ -132,7 +129,7 @@ export class SettingsControls {
       }
       if (task.agentIntent || task.agentId)
         throw Error(
-          "Worker dispatch already started; use restart (fresh: true to replace the worker)",
+          "Worker dispatch already started; use run.start worker retained or run.start worker fresh",
         );
       if (!["queued", "needs_attention"].includes(task.phase))
         throw Error(

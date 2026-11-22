@@ -1,12 +1,3 @@
-import {
-  bindWorkerCreation,
-  deferredWorkerCreationRestart,
-  observeWorkerCreation,
-  releaseStaleWorkerIntent,
-  sameWorkerCreation,
-  staleWorkerIntent,
-  workerCreationRefusal,
-} from "../recovery/absent-creation/stale-worker";
 import type { Resolution } from "../resolution";
 import type { Profile, Run, Task } from "../../shared/contracts";
 import {
@@ -571,43 +562,6 @@ export class WorkerFailover {
   get resolution() {
     return this.engine.resolution;
   }
-  /** A route over an unbound creation waits until its original occurrence settles. */
-  private async settleStaleWorkerIntent(task: Task): Promise<void> {
-    await this.engine.control(async () => {
-      const current = this.store.task(task.id);
-      if (
-        current.version !== task.version ||
-        workerCreationRefusal(this.store, current)
-      )
-        return;
-      const observed = await observeWorkerCreation(
-        this.store,
-        this.adapter,
-        current,
-        this.resolution.graceMs,
-      );
-      this.store.transaction(() => {
-        const latest = this.store.task(task.id);
-        if (
-          latest.version !== current.version ||
-          workerCreationRefusal(this.store, latest) ||
-          !sameWorkerCreation(this.store, latest, observed)
-        )
-          return;
-        if (observed.kind === "absent")
-          releaseStaleWorkerIntent(this.store, latest, observed.proof);
-        else if (observed.kind === "bound")
-          bindWorkerCreation(this.store, latest, observed.agentId);
-        else if (
-          !latest.resolution.stop ||
-          ["lifecycle", "operator_needed"].includes(
-            latest.resolution.stop.reason,
-          )
-        )
-          this.resolution.waiting(latest, observed.detail, "lifecycle");
-      });
-    }, `task:${task.id}`);
-  }
 
   async recoverExhaustedWorkers(scopedHost?: string): Promise<void> {
     if (!scopedHost) {
@@ -629,15 +583,6 @@ export class WorkerFailover {
       // The host is back: a host-unavailable wait recorded by an earlier pass is re-evaluated here, not kept as a stale reason.
       const current = this.store.task(original.id);
       this.resolution.clearTransportWait(current);
-      // A route-armed replacement over a stale creation intent cannot be consumed until an exact lookup settles that intent.
-      if (
-        staleWorkerIntent(original) &&
-        (original.failoverReason || deferredWorkerCreationRestart(original)) &&
-        original.phase !== "queued"
-      ) {
-        await this.settleStaleWorkerIntent(this.store.task(original.id));
-        continue;
-      }
       // An owner `move to=work` for a gone author is a replacement with no old
       // agent: nothing runs, so there is nothing to observe or retire.
       const absentAuthor =

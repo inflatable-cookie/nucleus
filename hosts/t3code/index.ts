@@ -376,8 +376,20 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     enqueueMessage(id: string, messageId: string, text: string) {
       return this.native.enqueueMessage(id, { messageId, text });
     }
-    steerOrNotify(id: string, messageId: string, text: string) {
-      return this.native.steerOrNotify(id, { messageId, text });
+    steerOrNotify(
+      id: string,
+      messageId: string,
+      text: string,
+      _sourceAgentId?: string,
+      options?: { allowQueuedFallback?: boolean },
+    ) {
+      return this.native.steerOrNotify(id, {
+        messageId,
+        text,
+        ...(options?.allowQueuedFallback !== undefined
+          ? { allowQueuedFallback: options.allowQueuedFallback }
+          : {}),
+      });
     }
     interruptAndContinue(id: string, messageId: string, text: string) {
       return this.native.interruptAndContinue(id, messageId, text);

@@ -12,9 +12,11 @@ import {
   type Run,
   type Task,
   type TaskNext,
+  type TaskNextExplicitCommand,
   type TaskNextReviewOutcome,
   type TaskNextVerb,
 } from "../../shared/contracts";
+import { unreportedReviewer } from "./reviewer-report";
 import { isAcceptedReview } from "../recovery/task-reasons";
 import {
   latestAuthorResult,
@@ -527,6 +529,9 @@ export function assembleOwnerTaskNext(
         : {}),
     },
     verbs,
+    ...(explicitCommandsFor(facts, stop).length
+      ? { explicitCommands: explicitCommandsFor(facts, stop) }
+      : {}),
     // Task 645: the durable owner no-automatic-retry rule stays visible until an
     // owner control lifts it. Task detail carries the same fields on resolution.
     ...(task.resolution.noAutomaticRetry
@@ -593,6 +598,170 @@ function taskNextReplacementView(
     ceiling: WORKER_REPLACEMENT_CEILING,
     ceilingReached: task.retiredWorkers.length >= WORKER_REPLACEMENT_CEILING,
   };
+}
+
+function explicitCommandsFor(
+  facts: OwnerVerbFacts,
+  stop: TaskNext["stop"],
+): TaskNextExplicitCommand[] {
+  const { task, runs } = facts;
+  if (task.removedAt || ["done", "cancelled"].includes(task.phase)) return [];
+  const base = { taskId: task.id, version: task.version };
+  const commands: TaskNextExplicitCommand[] = [];
+  const push = (command: TaskNextExplicitCommand) => {
+    const sig = `${command.action}:${JSON.stringify(command.args)}`;
+    if (
+      !commands.some((c) => `${c.action}:${JSON.stringify(c.args)}` === sig)
+    ) {
+      commands.push(command);
+    }
+  };
+
+  const startRoleFor = (
+    runRole: Run["role"],
+  ): "worker" | "reviewer" | "coordinator" | null =>
+    runRole === "revision"
+      ? "worker"
+      : runRole === "reviewer"
+        ? "reviewer"
+        : runRole === "recovery"
+          ? "coordinator"
+          : null;
+
+  for (const run of runs) {
+    if (run.released || run.completion || run.agentId) continue;
+    if (!["intent", "uncertain"].includes(run.status)) continue;
+    const role = startRoleFor(run.role);
+    if (role) {
+      push({
+        action: "run.start",
+        args: {
+          action: "run.start",
+          ...base,
+          role,
+          agent: "fresh",
+          replacing: run.id,
+        },
+        fill: ["reason"],
+        note: `Replace uncertain ${role} run ${run.id} with a fresh run in one step.`,
+      });
+    }
+    push({
+      action: "run.release",
+      args: { action: "run.release", ...base, run: run.id },
+      fill: ["reason"],
+      note: `Release uncertain ${role ?? run.role} run ${run.id} without starting a replacement.`,
+    });
+  }
+
+  if (task.agentIntent && !task.agentId) {
+    push({
+      action: "run.start",
+      args: {
+        action: "run.start",
+        ...base,
+        role: "worker",
+        agent: "fresh",
+        ...(task.runId ? { replacing: task.runId } : {}),
+      },
+      fill: ["reason"],
+      note: "Replace the uncertain initial worker creation explicitly.",
+    });
+  }
+
+  if (stop?.reason === "run_stalled" || task.resolution.stalledTurnStop) {
+    const stalledRunId =
+      task.resolution.stalledTurnStop?.runId ??
+      task.resolution.currentRunId ??
+      task.runId;
+    if (stalledRunId) {
+      const stored = runs.find((r) => r.id === stalledRunId);
+      const role = stored ? startRoleFor(stored.role) : "worker";
+      const label = role ?? stored?.role ?? "worker";
+      push({
+        action: "run.release",
+        args: { action: "run.release", ...base, run: stalledRunId },
+        fill: ["reason"],
+        note: `Release stalled ${label} run ${stalledRunId}.`,
+      });
+      if (role) {
+        push({
+          action: "run.start",
+          args: {
+            action: "run.start",
+            ...base,
+            role,
+            agent: "fresh",
+            replacing: stalledRunId,
+          },
+          fill: ["reason"],
+          note: `Replace stalled ${role} run ${stalledRunId} with a fresh run.`,
+        });
+      }
+    }
+  }
+
+  const unreported = unreportedReviewer(task, runs);
+  if (unreported) {
+    push({
+      action: "message.send",
+      args: { action: "message.send", ...base, role: "reviewer" },
+      fill: ["text", "reason"],
+      note: `Ask retained reviewer ${unreported.agentId} to resend its report without starting a new run.`,
+    });
+    push({
+      action: "run.start",
+      args: {
+        action: "run.start",
+        ...base,
+        role: "reviewer",
+        agent: "retained",
+      },
+      fill: ["reason"],
+      note: `Start a new review turn on retained reviewer ${unreported.agentId}.`,
+    });
+    push({
+      action: "run.start",
+      args: {
+        action: "run.start",
+        ...base,
+        role: "reviewer",
+        agent: "fresh",
+        replacing: unreported.id,
+      },
+      fill: ["reason"],
+      note: `Replace reviewer run ${unreported.id} with a fresh reviewer.`,
+    });
+  }
+
+  if (
+    task.phase === "changes_requested" &&
+    task.agentId &&
+    !runs.some((r) => r.role === "revision" && !r.released && !r.completion)
+  ) {
+    push({
+      action: "run.start",
+      args: { action: "run.start", ...base, role: "worker", agent: "retained" },
+      fill: ["reason"],
+      note: "Start a revision run on the retained worker thread.",
+    });
+  }
+
+  if (task.resolution.stop) {
+    push({
+      action: "record.clear",
+      args: {
+        action: "record.clear",
+        ...base,
+        kind: "stop",
+        id: task.resolution.stop.since,
+      },
+      fill: ["reason"],
+      note: `Clear the ${task.resolution.stop.reason} stop record.`,
+    });
+  }
+
+  return commands;
 }
 
 /**

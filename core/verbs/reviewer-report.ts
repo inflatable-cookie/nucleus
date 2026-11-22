@@ -132,35 +132,8 @@ export async function requireReviewerReplacement(
           "Original reviewer model is not independent of actual task authors"
       )
         return null;
-      // Missing or unreadable identity is not proof of a model collision.
     }
   }
-  const state = await engine.onTaskHost(task, () =>
-    engine.host.observe(agentId),
-  );
-  let archived = state.status === "closed";
-  if (!archived && !state.active && !state.activeTurnId && !state.permissions) {
-    try {
-      const origin = await engine.onTaskHost(task, () =>
-        engine.host.originAgent(agentId),
-      );
-      archived = !origin || origin.archived === true;
-    } catch {
-      /* An unreadable archive is not proof of absence. */
-    }
-  }
-  recheck();
-  if (
-    state.id !== agentId ||
-    state.workspaceId !== (prior?.workspaceId ?? task.workspaceId) ||
-    !archived ||
-    state.active ||
-    state.activeTurnId ||
-    state.permissions
-  )
-    throw Error(
-      "The retained reviewer is still live or its absence is unproven; continue that reviewer instead",
-    );
   return null;
 }
 
@@ -261,7 +234,7 @@ export function reviewerReportOccurrence(
   if (undelivered)
     return {
       kind: "missing",
-      refusal: `The review dispatch for run ${run.id} at head ${run.head} was never delivered (${undelivered.detail}), so no report can come from it and none is requested; restart role=reviewer fresh or route role=reviewer with now replaces that reader at the same head`,
+      refusal: `The review dispatch for run ${run.id} at head ${run.head} was never delivered (${undelivered.detail}), so no report can come from it and none is requested; use run.start reviewer fresh replacing=${run.id}`,
     };
   const turn = latestDeliveredReviewTurn(run);
   if (turn)
@@ -396,38 +369,9 @@ export async function requestReviewerReport(
     );
   if (JSON.stringify(store.run(run.id)) !== JSON.stringify(run))
     throw Error("The reviewer run changed during observation");
-  // A report resends one delivered occurrence's result. When the retained
-  // dispatch itself is unproved, the exact creation message decides it: a
-  // present message is positive delivery, a complete readable page without it
-  // proves the reviewer never received the review, and an unreadable or
-  // incomplete page stays a named wait. Nothing is sent on an unproved dispatch.
   const occurrence = reviewerReportOccurrence(run, store.eventsAll(task.id));
   if (occurrence.kind === "missing")
     throw new ProvenPreSendRefusalError(occurrence.refusal);
-  if (occurrence.kind === "unproven") {
-    let page = null;
-    try {
-      page = engine.adapter.agentTimelinePage
-        ? await engine.onTaskHost(task, () =>
-            engine.host.agentTimelinePage(run.agentId!, 100),
-          )
-        : null;
-    } catch {
-      page = null;
-    }
-    const delivery = timelineMessage(page, `ns-run-${run.id}`);
-    if (delivery !== "present")
-      throw new ProvenPreSendRefusalError(
-        delivery === "absent"
-          ? `The reviewer dispatch for run ${run.id} was never delivered: a complete readable timeline has no ns-run-${run.id}, so no report can come from it and none was requested; restart role=reviewer fresh or route role=reviewer with now replaces that reader at the same head`
-          : `The reviewer dispatch for run ${run.id} is not yet proved: ${occurrence.detail}, and its retained timeline is unavailable or incomplete, so no report was requested until it answers`,
-      );
-    store.event(
-      task.id,
-      "run_delivery_reconciled",
-      `${run.id}: exact creation message observed before the retained report request`,
-    );
-  }
   if (engine.dispatchWaitsFor(store.task(task.id), engine.isOwnerCall(), true))
     throw new ProvenPreSendRefusalError(
       "Dispatch is held; no reviewer report request was sent",

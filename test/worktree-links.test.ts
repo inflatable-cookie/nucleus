@@ -1643,63 +1643,6 @@ test(
   },
 );
 
-const recover = (engine: Engine, task: Task) =>
-  (engine as unknown as { recover(task: Task): Promise<void> }).recover(task);
-
-test(
-  "a crash between a new intent and its binding keeps eligibility through recovery by find or by found_done, and provisions once",
-  { timeout: HOOK_TEST_TIMEOUT_MS },
-  async (t) => {
-    for (const route of ["find", "found_done"] as const)
-      await t.test(route, async (t) => {
-        const { f, store, engine, adapter } = await engineFixture(t);
-        const queued = submit(store, f.primary);
-        const directory = await f.checkout(queued.id, queued.branch);
-        // The durable state a crash after dispatch_intent and before workspace_created leaves under this code.
-        const crashed = store.update(
-          queued.id,
-          {
-            phase: "dispatching",
-            profile,
-            workspaceIntent: true,
-            worktreeLinks: { state: "eligible" },
-          },
-          "dispatch_intent",
-          profile.name,
-        );
-        if (route === "find")
-          adapter.findWorkspaces = async () => [{ id: "ws-found", directory }];
-        else {
-          adapter.findWorkspaces = async () => [];
-          adapter.inspectWorkspaceCreation = async () => ({
-            kind: "found_done",
-            directory,
-          });
-        }
-        await recover(engine, crashed);
-        const current = store.task(queued.id);
-        const workspaceId = route === "find" ? "ws-found" : `ws-${queued.id}`;
-        assert.equal(current.workspaceId, workspaceId);
-        assert.ok(
-          store
-            .events(queued.id)
-            .some((event) => event.kind === "workspace_recovered"),
-        );
-        assert.equal(current.worktreeLinks?.state, "prepared");
-        assert.equal(
-          current.worktreeLinks?.state === "prepared" &&
-            current.worktreeLinks.workspaceId,
-          workspaceId,
-        );
-        assert.equal(
-          await readlink(join(f.root, "project-j")),
-          await realpath(f.projectJ),
-        );
-        assert.equal(preparedEvents(store, queued.id).length, 1);
-      });
-  },
-);
-
 test(
   "an intent recorded before this code gets no links when it binds after the upgrade, by creation or recovery",
   { timeout: HOOK_TEST_TIMEOUT_MS },
@@ -1738,22 +1681,6 @@ test(
         undefined,
         "a recorded intent without eligibility is never armed",
       );
-      assert.equal(existsSync(join(f.root, "project-j")), false);
-    });
-    await t.test("recovered by find", async (t) => {
-      const { f, store, engine, adapter } = await engineFixture(t);
-      const legacy = submit(store, f.primary, "Legacy recovery");
-      const directory = await f.checkout(legacy.id, legacy.branch);
-      const crashed = store.update(
-        legacy.id,
-        { phase: "dispatching", profile, workspaceIntent: true },
-        "dispatch_intent",
-        "pre-upgrade",
-      );
-      adapter.findWorkspaces = async () => [{ id: "ws-legacy", directory }];
-      await recover(engine, crashed);
-      assert.equal(store.task(legacy.id).workspaceId, "ws-legacy");
-      assert.equal(store.task(legacy.id).worktreeLinks, undefined);
       assert.equal(existsSync(join(f.root, "project-j")), false);
     });
   },

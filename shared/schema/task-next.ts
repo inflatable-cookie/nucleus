@@ -231,6 +231,25 @@ const taskNextReplacementSchema = z
   })
   .strict();
 
+const taskNextExplicitCommandSchema = z
+  .object({
+    action: z.enum([
+      "run.start",
+      "run.release",
+      "record.clear",
+      "phase.set",
+      "message.send",
+    ]),
+    args: z.record(z.string(), z.unknown()),
+    fill: z.array(z.string()),
+    note: z.string(),
+  })
+  .strict();
+
+export type TaskNextExplicitCommand = z.infer<
+  typeof taskNextExplicitCommandSchema
+>;
+
 export const taskNextSchema = z
   .object({
     critical: z.boolean().default(false),
@@ -265,6 +284,8 @@ export const taskNextSchema = z
       })
       .strict(),
     verbs: z.array(taskNextVerbSchema),
+    /** Spec 067: machine-readable explicit resolution commands for current stalls or stuck records. */
+    explicitCommands: z.array(taskNextExplicitCommandSchema).optional(),
     /** Spec 052: the usage policy for the profiles this task's routing names, read fresh. */
     routingPolicy: routingPolicySchema.optional(),
     /** Durable worker exclusions, lifted by an owner route to the profile. */

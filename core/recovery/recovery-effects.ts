@@ -16,7 +16,6 @@ import {
   type Store,
 } from "../store/store";
 import { readCreationAttempt } from "../store/store-task-funnel";
-import { provenAbsentCreation } from "./absent-creation/decisions";
 import { isHostReadExhaustedReason } from "./host-read-transient";
 
 /**
@@ -302,7 +301,7 @@ export function recoveryEffects(
     if (
       include("run-delivery") &&
       run.status === "uncertain" &&
-      !provenAbsentCreation(run)
+      !run.absentProvenAt
     ) {
       const checkpoint = run.reviewCheckpoints?.at(-1);
       const creationProven =
@@ -584,9 +583,15 @@ function releasedAfterArchivedCompletion(
   events: ReturnType<Store["eventsAll"]>,
   boundary: number,
 ): boolean {
-  if (!run.agentId || run.status !== "finished" || !authenticatedCompletion(store, run))
+  if (
+    !run.agentId ||
+    run.status !== "finished" ||
+    !authenticatedCompletion(store, run)
+  )
     return false;
-  if (store.threadArchiveEffect(run.agentId, task.hostId)?.status !== "archived")
+  if (
+    store.threadArchiveEffect(run.agentId, task.hostId)?.status !== "archived"
+  )
     return false;
   return events.some(
     (event) =>
@@ -1005,7 +1010,11 @@ export function blockingTaskOperations(
 }
 
 export const reviewEffectWaitKey = (effects: readonly RecoveryEffect[]) =>
-  digest(JSON.stringify(effects.map(({ kind, identity, state }) => [kind, identity, state])));
+  digest(
+    JSON.stringify(
+      effects.map(({ kind, identity, state }) => [kind, identity, state]),
+    ),
+  );
 
 /**
  * The review-dispatch wait this task still records: the first moment it was
@@ -1034,7 +1043,10 @@ export function reviewEffectWait(
  * `RunLaunchDeliver`; decoding its sentence here is what keeps the reader from
  * rebuilding the writer's words.
  */
-export function matchesReviewEffectWait(task: Task, effects: readonly RecoveryEffect[]): boolean {
+export function matchesReviewEffectWait(
+  task: Task,
+  effects: readonly RecoveryEffect[],
+): boolean {
   if (!reviewEffectWait(task)) return false;
   const key = task.resolution.stop?.fact?.subject;
   return key === undefined || key === reviewEffectWaitKey(effects);

@@ -32,7 +32,6 @@ import {
 } from "../../shared/session-fault";
 import type { Resolution } from "../resolution";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
-import { provenAbsentCreation } from "./absent-creation/decisions";
 import {
   HostTransportFault,
   hostFaultHost,
@@ -40,10 +39,6 @@ import {
 } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
 import { readHostReadTransientEpisode } from "./host-read-transient";
-import {
-  observeResolutionCreation,
-  recordResolutionCreationBinding,
-} from "./absent-creation/restarts";
 import { runsUnchangedSince } from "./observation-advance";
 
 export type ObservationContext = Pick<
@@ -63,7 +58,6 @@ export type ObservationContext = Pick<
   | "onTaskHost"
   | "orphanRuns"
   | "paused"
-  | "reconcileAbsentCreation"
   | "reconcileStalledTurnStop"
   | "recoverRefusedReviewer"
   | "remindStoppedRun"
@@ -209,68 +203,17 @@ export class Observation {
             run.released
           )
             continue;
-          // Proven absent: settled, never looked up again or re-escalated.
-          if (provenAbsentCreation(run)) continue;
-          // One observation of the original delivery evidence: the exact lookup
-          // and the recorded producer together decide whether this creation is
-          // bound, proved absent or still unknown. The owner preview and the
-          // applying verb read the same answer.
-          const creation = await observeResolutionCreation(
-            this.store,
-            this.adapter,
-            run,
-            this.resolution.graceMs,
-          );
           const current = this.store.task(task.id);
-          const latest = this.store.run(run.id);
-          if (
-            dispatchBlocked(current) ||
-            !latest ||
-            !runsUnchangedSince([run], [latest]) ||
-            current.hostId !== run.hostId ||
-            current.workspaceId !== run.workspaceId ||
-            (run.role === "reviewer" &&
-              (current.prHead !== run.head ||
-                current.resolution.currentRunId !== run.id))
-          )
-            continue;
-          if (creation.kind === "bound") {
-            run = { ...latest, agentId: creation.agentId, status: "running" };
-            // The identity is proved; the dispatch it was created for is not.
-            // Record which fact the occurrence still owes so a report request
-            // inspects that exact message instead of assuming it arrived.
-            this.store.transaction(() => {
-              this.store.putRun(run);
-              recordResolutionCreationBinding(
-                this.store,
-                run,
-                creation.agentId,
-              );
-            });
-            if (run.role === "reviewer")
-              this.resolution.update(current, {
-                reviewerAgentId: run.agentId,
-                reviewerProfile: run.profile,
-              });
-            if (
-              coordinative(run) &&
-              current.coordinatorGeneration === run.generation &&
-              !current.coordinatorAgentId
-            )
-              this.store.update(
-                task.id,
-                { coordinatorAgentId: run.agentId! },
-                "coordinator_assigned",
-                run.agentId!,
-              );
-            this.resolution.resolveIncident(
-              task,
-              run.id,
-              `Exact lookup bound the created ${run.role} run`,
+          if (!current.resolution.stop) {
+            const roleLabel =
+              run.role === "recovery" ? "coordinator" : run.role;
+            this.resolution.waiting(
+              current,
+              `Uncertain ${run.role} creation ${run.id}; use run.start ${roleLabel} fresh replacing=${run.id} or run.release run=${run.id}`,
+              "lifecycle",
+              { fact: { code: "creation_lookup", subject: run.id } },
             );
-            continue;
           }
-          await this.resolution.reconcileAbsentCreation(current, run, creation);
           continue;
         }
         const observationStartedAt = now();
@@ -312,7 +255,10 @@ export class Observation {
           this.resolution.update(
             taskStop,
             { stop: null },
-            { phase: transientBeforeClear.resumePhase, reason: "Fresh host observation recovered; resuming task" },
+            {
+              phase: transientBeforeClear.resumePhase,
+              reason: "Fresh host observation recovered; resuming task",
+            },
             "host_read_transient_phase_restored",
             transientBeforeClear.resumePhase,
           );

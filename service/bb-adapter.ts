@@ -354,8 +354,14 @@ export function composeBbAdapter(input: {
       return threads.enqueueMessage(id, text, messageId);
     }
     /** A participant message steers a live turn; a proven not-sent steer falls back to one queued send. */
-    steerOrNotify(id: string, messageId: string, text: string) {
-      return threads.steerOrNotify(id, text, messageId);
+    steerOrNotify(
+      id: string,
+      messageId: string,
+      text: string,
+      _sourceAgentId?: string,
+      options?: { allowQueuedFallback?: boolean },
+    ) {
+      return threads.steerOrNotify(id, text, messageId, options);
     }
     interruptAndContinue(id: string, messageId: string, text: string) {
       return threads.interruptAndContinue(id, text, messageId);

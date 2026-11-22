@@ -2252,82 +2252,6 @@ test("a checkpointed review: restart role=reviewer continues it; Queue derives t
   }
 });
 
-test("an unsettled retained reviewer is not replaced by a fresh review", async () => {
-  for (const fence of ["result", "run"] as const) {
-    const f = fixture();
-    try {
-      const review = reviewing(f);
-      assert.equal((await review.report()).accepted, true);
-      f.store.setMeta("paused", true);
-      const before = f.store.run(review.runId)!;
-      const result = completionSchema.parse({
-        taskId: f.taskId,
-        runId: review.runId,
-        eventId: "review-environment-block",
-        status: "blocked",
-        summary: "No findings; review environment unavailable",
-        head,
-        reviewResponsibility: "environment",
-      });
-      if (fence === "result")
-        f.store.update(f.taskId, {
-          resolution: { ...f.task().resolution, review: result },
-        });
-      else {
-        f.store.putRun({
-          ...before,
-          id: "other-review-run",
-          agentId: "other-review-agent",
-          reviewCheckpoints: [],
-        });
-        f.observations.set("other-review-agent", {
-          id: "other-review-agent",
-          workspaceId: "workspace",
-          status: "idle",
-          active: false,
-          permissions: false,
-          error: "",
-        });
-      }
-      const fresh = f
-        .next()
-        .verbs.find(
-          (verb) =>
-            verb.available &&
-            verb.args?.to === "review" &&
-            verb.args?.fresh === true,
-        );
-      assert.equal(
-        fresh,
-        undefined,
-        `${fence}: next does not offer a replacement`,
-      );
-      await assert.rejects(
-        f.engine.performTaskControl(
-          taskControlInputSchema.parse({
-            action: "move",
-            to: "review",
-            fresh: true,
-            taskId: f.taskId,
-            version: f.task().version,
-            reason: "Replace the retained reviewer",
-            caller: CALLER,
-          }),
-        ),
-        /retained reviewer/,
-      );
-      assert.deepEqual(
-        f.store.run(review.runId)!.reviewCheckpoints,
-        before.reviewCheckpoints,
-      );
-      assert.equal(f.store.run(review.runId)!.released, false);
-      assert.equal(review.deliveries.length, 0);
-    } finally {
-      await f.close();
-    }
-  }
-});
-
 test("an aged queue checkpoint wait suggests available exits while holds and unknown effects keep their fences", async () => {
   const f = fixture();
   try {
@@ -2925,62 +2849,6 @@ test("a changed workerless review-entry head refuses; a same-head review move re
       f.task().resolution.deferredVerb,
       null,
       `a same-head move is never deferred: ${applied instanceof Error ? applied.message : applied.phase}`,
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test("an uncertain worker creation with no agent (#151): restart re-creates in the retained workspace", async () => {
-  const f = fixture();
-  try {
-    const task = f.store.update(
-      f.taskId,
-      {
-        phase: "needs_attention",
-        workspaceIntent: true,
-        agentIntent: true,
-        workspaceId: "workspace",
-        directory: "/worktree",
-        agentId: null,
-        runId: "uncertain-run",
-        profile: workerProfile,
-        workerModel: workerProfile.model,
-        reason: ABSENT_WORKER_REASON,
-        resolution: { ...f.task().resolution, attention: true },
-      },
-      "agent_intent",
-      "uncertain-run",
-    );
-    const attempt = readCreationAttempt(f.store, {
-      id: task.runId!,
-      taskId: task.id,
-      hostId: task.hostId,
-      workspaceId: task.workspaceId,
-      role: "worker",
-    })!;
-    settleCreationAttempt(f.store, attempt, "threw");
-    const verb = f.view("restart");
-    assert.equal(verb.available, true, JSON.stringify(verb));
-    const resumed = await f.engine.performTaskControl(
-      taskControlInputSchema.parse({
-        ...verb.args,
-        reason: "The creation was refused before send",
-        instruction:
-          "Paseo refused the malformed workspace before send; create the worker now",
-        caller: CALLER,
-      }),
-    );
-    assert.equal(resumed.phase, "queued");
-    assert.equal(resumed.runId, null);
-    assert.equal(
-      resumed.agentIntent,
-      false,
-      "the old uncertain creation intent is revoked before the new one",
-    );
-    assert.equal(
-      JSON.parse(f.events("owner_control").at(-1)!.detail).verb,
-      "restart",
     );
   } finally {
     await f.close();
@@ -3878,7 +3746,10 @@ test("qualified owner verb callers keep planner force authority scoped to the sa
   const f = fixture();
   try {
     f.store.setMeta("hostRegistry", [{ id: "host", endpoint: "synthetic" }]);
-    Object.assign(f.engine.adapter, { hostId: "host", isConnected: () => true });
+    Object.assign(f.engine.adapter, {
+      hostId: "host",
+      isConnected: () => true,
+    });
     f.store.upsertProject({
       key: "caller-project",
       name: "Caller project",
@@ -3889,8 +3760,20 @@ test("qualified owner verb callers keep planner force authority scoped to the sa
       agentId: "planner",
       setBy: "operator (board)",
     });
-    f.engine.adapter.listLiveAgents = async () => [{ id: "planner", title: "Planner", workspaceId: null, directory: "/repo" }];
-    f.engine.adapter.originAgent = async id => ({ id, title: id, workspaceId: null, archived: false });
+    f.engine.adapter.listLiveAgents = async () => [
+      {
+        id: "planner",
+        title: "Planner",
+        workspaceId: null,
+        directory: "/repo",
+      },
+    ];
+    f.engine.adapter.originAgent = async (id) => ({
+      id,
+      title: id,
+      workspaceId: null,
+      archived: false,
+    });
     assert.equal(
       await f.engine.forceCallerAuthorized(
         f.task(),

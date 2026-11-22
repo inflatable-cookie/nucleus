@@ -44,23 +44,33 @@ another identity. Callback authentication remains separate and unchanged.
 ## Explicit resolution
 
 [Spec 067](067-explicit-resolution.md) defines the explicit command contract.
-Send `run.release` or `record.clear` as `action` on `queue.task`, or run
-`nucleus run.release -` or `nucleus record.clear -` with JSON on stdin. Each
+Send `run.start`, `run.release`, `record.clear`, `phase.set` or `message.send` as
+`action` on `queue.task`, or run `nucleus <command> -` with JSON on stdin. Each
 call carries `taskId` or `reference`, the task `version`, a `reason` and
 optional `accept` listing the warning IDs. The updated task includes
 `explicitResolution` with the result, warnings and what the scheduler does next.
 
+`run.start` takes `role` (`worker`, `reviewer` or `coordinator`), optional
+`agent` (`retained` or `fresh`), `head`, `instruction` and `replacing` (which
+releases that run first) and leaves the task phase unchanged. Its warnings are
+`duplicate_thread`, `two_writers`, `head_mismatch`, `budget` and `route_policy`.
 `run.release` takes `run` and optional `archive`. `record.clear` takes `kind`
 and `id`. Use the stop's `since` for a stop or stop-backed wait, the retained
 prerequisite wait ID for a retained wait, `dispatch` or `merge` for a hold,
 the escalation or incident ID for those records, and the named effect key
 for an effect. A host wait uses its host ID, an owner stop uses its operation
 ID or `recordedAt` when it has none, and a deferred verb uses its `at`.
+`phase.set` takes `to` (`working`, `changes_requested`, `awaiting_review`,
+`reviewing`, `verifying`, `needs_attention` or `blocked`) and writes phase and
+reason only (`live_runs` warning when unreleased runs exist). `message.send`
+takes `role` (`worker`, `reviewer`, `coordinator` or `planner`) and `text`,
+delivers immediately without changing task state, and reports `delivered`,
+`queued` or `unknown` (`queued`, `no_thread` warnings).
 
 The board, the task's live responsible project planner and its coordinator
-may use the explicit commands. Only the board or planner may override
-another owner's hold or resolve a critical task. Explicit resolution updates
-the named record and preserves its previous state in the audit history.
+may use the explicit commands. Only the board or planner may accept `hold_owner`,
+`route_policy` or `two_writers`, or resolve a critical task. Explicit resolution
+updates only the named record and preserves its previous state in the audit history.
 
 
 ## Problem
@@ -304,7 +314,7 @@ preferences while stripping the route-only independence marker. A deferred
 coordinator replacement keeps the live run's generation until release, then
 advances the task and replacement run generation together at reservation.
 
-For worker restarts, including blocked workers, stopped revisions and retained workers between runs, `fresh: false` continues the retained agent and `fresh: true` replaces it on the current worker route. Stopped reviewers follow the same choice, except a plain-handover reader without a checkpoint cannot carry its run-bound view to a new run: a default restart refuses and `next` offers the deliberate `fresh: true` replacement. A checkpointed reader continues on its existing run and view when its ordinary gates permit it. This Nucleus owner mechanism preserves Tom's 2026-10-27 preserve-or-refuse decision: a default never silently replaces the reader. Both worker choices retain workspace, branch and PR; a fresh handover reviewer has its own view. Absent creation has no retained agent. Stalled workers and reviewers apply the same agent choice after the durable stop observes inactivity. The sweep and `restart role=coordinator` share the [agentless recovery release rule](../contracts/orchestration.md#uncertain-creation-and-absence). A successful coordinator restart rearms recovery through ordinary admission. Coordinator resolution retry does not support `fresh: true` and refuses it before changing state; use `route role=coordinator` with `now` to replace the coordinator agent.
+For worker restarts, including blocked workers, stopped revisions and retained workers between runs, `fresh: false` continues the retained agent and `fresh: true` replaces it on the current worker route. Stopped reviewers follow the same choice, except a plain-handover reader without a checkpoint cannot carry its run-bound view to a new run: a default restart refuses and `next` offers the deliberate `fresh: true` replacement. A checkpointed reader continues on its existing run and view when its ordinary gates permit it. This Nucleus owner mechanism preserves Tom's 2026-10-27 preserve-or-refuse decision: a default never silently replaces the reader. Both worker choices retain workspace, branch and PR; a fresh handover reviewer has its own view. Absent creation has no retained agent. Stalled workers and reviewers apply the same agent choice after the durable stop observes inactivity. The sweep and `restart role=coordinator` share the [agentless recovery release rule](../contracts/orchestration.md#uncertain-creation-and-explicit-exits). A successful coordinator restart rearms recovery through ordinary admission. Coordinator resolution retry does not support `fresh: true` and refuses it before changing state; use `route role=coordinator` with `now` to replace the coordinator agent.
 
 A restart's `reason` is audit text. It records why the owner acted, in the settlement detail and the replacement route reason, and it never becomes the worker's instruction: only the `instruction` field (or the existing pending or neutral continuation) reaches `run.instruction`. A continuation with no review findings is told the action and the latest authenticated blocked result, and never that a review defect exists (Tom, 2026-10-23: a worker restart must preserve its own context without inventing review findings).
 

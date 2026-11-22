@@ -777,10 +777,12 @@ Planned briefs run the responsible lifecycle. Explicit `queue.responsible: false
 `next` is the read-before-steer call. Run it first, then call what it lists.
 
 **When a run or record is stuck:** the task's coordinator, responsible planner
-or operator can use `nucleus run.release -` or `nucleus record.clear -`. Use the
-task version from `next` and include a reason. Repeat a warning response with
-the warning IDs you accept. Critical tasks require a planner or the operator.
-Workers and reviewers ask one of those roles to release or clear.
+or operator can use `nucleus run.start -`, `nucleus run.release -`,
+`nucleus record.clear -`, `nucleus phase.set -` or `nucleus message.send -`.
+Use the task version from `next` and include a reason. Repeat a warning response
+with the warning IDs you accept. Only a planner or operator may accept
+`hold_owner`, `route_policy` or `two_writers`, or resolve a critical task.
+Workers and reviewers ask one of those roles to act.
 
 An authenticated task worker, reviewer or recovery run can still use `move`
 with `force: true` on its own task. Critical tasks, owner holds and active

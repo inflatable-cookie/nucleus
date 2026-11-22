@@ -547,7 +547,7 @@ const restartRows: Row[] = [
         profile: worker,
       });
     },
-    refusal: /requires a retained run/,
+    refusal: /run\.start worker fresh/,
   },
   {
     name: "unobservable",
@@ -734,8 +734,7 @@ const restartRows: Row[] = [
           { id: "y", workspaceId: "workspace" },
         ] as never;
     },
-    refusal:
-      /creation lookup for run absent-review is partial or ambiguous \(2 matching agents\)/,
+    refusal: /run\.start reviewer fresh replacing=absent-review/,
   },
   {
     name: "fresh",

@@ -18,7 +18,24 @@ import {
   creationTermination,
   readCreationAttempt,
 } from "../store/store-task-funnel";
-import { creationLookup } from "./absent-creation/restarts";
+function creationLookup(
+  found: { id: string; workspaceId: string | null; hostConfirmed?: boolean }[],
+  workspaceId: string | null,
+):
+  | { kind: "absent" }
+  | { kind: "bound"; agentId: string }
+  | { kind: "unknown" } {
+  if (found.length === 0) return { kind: "absent" };
+  if (
+    found.length === 1 &&
+    workspaceId &&
+    found[0]!.workspaceId === workspaceId &&
+    found[0]!.hostConfirmed !== false &&
+    found[0]!.id
+  )
+    return { kind: "bound", agentId: found[0]!.id };
+  return { kind: "unknown" };
+}
 import { CREATION_REFUSED_BEFORE_SEND, refusedRunIds } from "./refused-launch";
 import { unwrapCoordinatorRouteWrapper } from "./host-read-transient";
 import {
@@ -83,7 +100,10 @@ export const needsAttention = (t: Task, store: Store) =>
   Boolean(t.originError && !missingOriginHasPlanner(store, t)) ||
   ["blocked", "error", "needs_attention"].includes(t.phase) ||
   t.resolution.attention ||
-  Boolean(t.resolution.roleReplacements && t.reasonFact?.code === "profile_unavailable");
+  Boolean(
+    t.resolution.roleReplacements &&
+      t.reasonFact?.code === "profile_unavailable",
+  );
 export const cause = (t: Task, runs: Run[]) => {
   const c = ["blocked", "error", "needs_attention"].includes(t.phase)
     ? (latestRunCompletion(runs, ["blocked", "error"]) ??

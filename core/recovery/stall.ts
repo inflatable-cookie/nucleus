@@ -277,7 +277,7 @@ export class Stalls {
         ? `pending ${pending.kind === "question" ? "question" : "permission"} ${pending.id}${pending.firstLine ? `: ${pending.firstLine}` : ""}`
         : "a pending permission with no agent activity"
       : `no agent activity while ${HOST_KIND_LABELS[hostKindOf(current.hostId)]} still reports it running`;
-    const reason = `The ${role.toLowerCase()} run ${runId} (agent ${state.id}${turn}) looks stalled: ${stalled}. It still owns this task; the owner may use restart for this exact run after checking its retained identity`;
+    const reason = `The ${role.toLowerCase()} run ${runId} (agent ${state.id}${turn}) looks stalled: ${stalled}. It still owns this task; use run.release run=${runId} or run.start ${role.toLowerCase()} fresh replacing=${runId} after checking its retained identity`;
     this.resolution.attention(
       this.store.task(current.id),
       reason,

@@ -458,45 +458,6 @@ test("owner restart re-detaches a retained checkout left at the base tip and adm
   }
 });
 
-test("recovery re-provisions a bound checkout left at the base tip and admits its executor", async () => {
-  const f = fixture();
-  try {
-    leaveCheckoutAtBaseTip(f);
-    f.store.update(
-      f.task().id,
-      {
-        phase: "dispatching",
-        reason: "Recovering dispatch",
-        workspaceIntent: true,
-      },
-      "dispatch_intent",
-    );
-    const recover = (
-      f.engine as unknown as {
-        recoverProofOnlyDispatch(task: Task): Promise<void>;
-      }
-    ).recoverProofOnlyDispatch.bind(f.engine);
-    await recover(f.task());
-    assert.equal(f.task().workspaceId, "proof-workspace");
-    assert.equal(
-      runGit(f.directory, "rev-parse", "HEAD"),
-      f.head,
-      "recovery leaves the checkout at the proof commit",
-    );
-    assert.equal(runGit(f.directory, "branch", "--show-current"), "");
-    const executor = f.store
-      .runs(f.task().id)
-      .find((run) => run.role === "executor");
-    assert.ok(
-      executor,
-      `executor admitted after recovery: ${f.task().phase}: ${f.task().reason}`,
-    );
-    assert.equal(executor!.head, f.head);
-  } finally {
-    await f.close();
-  }
-});
-
 test("every task checkout-target call site resolves through taskCheckoutTarget", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const sources = new Map<string, string>();
@@ -611,69 +572,6 @@ test("every task checkout-target call site resolves through taskCheckoutTarget",
     planningHandling > proofTarget,
     "the proof-only resolution must precede the planning-base handling",
   );
-});
-
-test("proof-only provisioning retries a transport interruption and launches only its executor route", async () => {
-  const f = fixture();
-  try {
-    mkdirSync(join(f.repo, "node_modules", "proof-fixture"), {
-      recursive: true,
-    });
-    writeFileSync(join(f.repo, ".git", "info", "exclude"), "node_modules/\n");
-    writeFileSync(
-      join(f.repo, "node_modules", "proof-fixture", "index.js"),
-      "proof dependencies present\n",
-    );
-    f.store.update(
-      f.task().id,
-      {
-        workspaceId: null,
-        directory: null,
-        workspaceIntent: true,
-        phase: "dispatching",
-      },
-      "dispatch_intent",
-    );
-    f.failProvisioningOnce();
-    const recover = (
-      f.engine as unknown as {
-        recoverProofOnlyDispatch(task: Task): Promise<void>;
-      }
-    ).recoverProofOnlyDispatch.bind(f.engine);
-    await assert.rejects(recover(f.task()), /Transport not connected/);
-    assert.equal(
-      f.store.runs(f.task().id).length,
-      0,
-      "a transport failure during provisioning must not launch a worker or coordinator",
-    );
-    await recover(f.task());
-    assert.equal(f.task().workspaceId, "proof-workspace");
-    assert.equal(f.task().directory, f.directory);
-    assert.equal(runGit(f.directory, "rev-parse", "HEAD"), f.head);
-    assert.equal(
-      lstatSync(join(f.directory, "node_modules")).isSymbolicLink(),
-      true,
-    );
-    assert.equal(
-      readFileSync(
-        join(f.directory, "node_modules", "proof-fixture", "index.js"),
-        "utf8",
-      ),
-      "proof dependencies present\n",
-    );
-    assert.equal(
-      runGit(f.directory, "branch", "--show-current"),
-      "",
-      "the proof checkout remains detached",
-    );
-    assert.deepEqual(
-      f.created.map((run) => run.role),
-      ["executor"],
-    );
-    assert.equal(f.created[0]!.head, f.head);
-  } finally {
-    await f.close();
-  }
 });
 
 test("a proof-only qualification runs once at a detached merged commit and closes on retained reviewer pass", async () => {

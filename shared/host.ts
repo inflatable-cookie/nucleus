@@ -135,7 +135,10 @@ export interface Host {
    * mid-turn, else sends as `sendMessage` does. Hosts without steering deliver
    * as `sendMessage`.
    */
-  steerOrNotify(id: AgentId, input: HostMessage): Promise<void>;
+  steerOrNotify(
+    id: AgentId,
+    input: HostMessage,
+  ): Promise<HostMessageDisposition | void>;
   /**
    * A send guarded by Queue fences. The host checks the agent and workspace it
    * refreshes against `expectedWorkspaceId`, awaits `guard.allowed` where the
@@ -507,10 +510,14 @@ export interface HostRetainedAgentRef {
   send(text: string, options: { messageId: string }): Promise<void>;
 }
 
+export type HostMessageDisposition = "delivered" | "queued";
+
 export interface HostMessage {
   messageId: RequestId;
   text: string;
   sourceAgentId?: AgentId;
+  /** When false, a steer that cannot enter the active turn refuses instead of falling back to a queued send. */
+  allowQueuedFallback?: boolean;
 }
 
 /**

@@ -1,10 +1,10 @@
-import { MISSING_CALLBACK_CAUSE } from '../../shared/incident';
-import { digest, } from '../store/store';
-import type { Task } from '../../shared/contracts';
-import { taskControlInputSchema } from '../../shared/contracts';
-import { reviewContinuationState } from '../review/review-continuation';
-import { restartShape } from '../verbs/owner-verbs';
-import type { RecoverySettlementContext } from './coordinator-settlement';
+import { MISSING_CALLBACK_CAUSE } from "../../shared/incident";
+import { digest } from "../store/store";
+import type { Task } from "../../shared/contracts";
+import { taskControlInputSchema } from "../../shared/contracts";
+import { reviewContinuationState } from "../review/review-continuation";
+import { restartShape } from "../verbs/owner-verbs";
+import type { RecoverySettlementContext } from "./coordinator-settlement";
 
 /**
  * Spec 058 slice 2: a responsible task's mechanical faults are settled by code
@@ -15,18 +15,45 @@ import type { RecoverySettlementContext } from './coordinator-settlement';
  * retained recovery thread. A reviewer whose saved checkpoint Queue can still
  * continue itself is left to that continuation: a checkpoint is not a crash.
  */
-export async function settleResponsibleFault(engine: RecoverySettlementContext, task: Task): Promise<boolean> {
+export async function settleResponsibleFault(
+  engine: RecoverySettlementContext,
+  task: Task,
+): Promise<boolean> {
   const current = engine.store.task(task.id);
   if (current.removedAt) return false;
-  if (!["reviewing", "awaiting_review", "needs_attention", "blocked", "error"].includes(current.phase)) return false;
-  const shape = restartShape(current, engine.store.runs(current.id), "reviewer", engine.store.eventsAll(current.id));
-  if (shape !== "stopped_reviewer" && shape !== "checkpoint_reviewer") return false;
+  if (
+    ![
+      "reviewing",
+      "awaiting_review",
+      "needs_attention",
+      "blocked",
+      "error",
+    ].includes(current.phase)
+  )
+    return false;
+  const shape = restartShape(
+    current,
+    engine.store.runs(current.id),
+    "reviewer",
+    engine.store.eventsAll(current.id),
+  );
+  if (shape !== "stopped_reviewer" && shape !== "checkpoint_reviewer")
+    return false;
   // Queue continues an awaiting or delivered checkpoint itself; only a closed
   // agent (or a reviewer with no checkpoint) leaves an impossible continuation.
   const continuation = reviewContinuationState(current, engine.store);
   if (continuation !== null && continuation !== "closed") return false;
-  const run = current.resolution.currentRunId ? engine.store.run(current.resolution.currentRunId) : null;
-  if (!run || run.role !== "reviewer" || run.completion || run.released || run.active === true) return false;
+  const run = current.resolution.currentRunId
+    ? engine.store.run(current.resolution.currentRunId)
+    : null;
+  if (
+    !run ||
+    run.role !== "reviewer" ||
+    run.completion ||
+    run.released ||
+    run.active === true
+  )
+    return false;
   // A paused-stop marker owns the thread until its unpause resume settles: a
   // deliberate operator stop is not a crash, and the closed-session check
   // below must not race the resume (Queue #650).
@@ -35,32 +62,63 @@ export async function settleResponsibleFault(engine: RecoverySettlementContext, 
   // its own operator question or permission is a wait, not a fault, so the
   // recorded stop or incident must name the reviewer stopping without a result.
   const incident = current.resolution.incident;
-  const stoppedWithoutResult = Boolean(run.retainedAgentClosedAt)
-    || (current.reasonFact?.subject === "reviewer" &&
-      ["callback_missing", "callback_expired", "callback_attention", "callback_stopped"].includes(current.reasonFact.code))
-    || Boolean(incident && incident.role === "reviewer" && incident.status !== "resolved"
-      && (incident.cause === MISSING_CALLBACK_CAUSE || incident.cause === "stalled_turn"));
+  const stoppedWithoutResult =
+    Boolean(run.retainedAgentClosedAt) ||
+    (current.reasonFact?.subject === "reviewer" &&
+      [
+        "callback_missing",
+        "callback_expired",
+        "callback_attention",
+        "callback_stopped",
+      ].includes(current.reasonFact.code)) ||
+    Boolean(
+      incident &&
+        incident.role === "reviewer" &&
+        incident.status !== "resolved" &&
+        (incident.cause === MISSING_CALLBACK_CAUSE ||
+          incident.cause === "stalled_turn"),
+    );
   if (!stoppedWithoutResult) return false;
-  const identity = digest(`responsible-fault:${current.id}:${run.head}:${shape}`);
-  if (engine.store.eventsAll(current.id).some(event => event.kind === "responsible_fault_restart" && event.detail === identity)) return false;
+  const identity = digest(
+    `responsible-fault:${current.id}:${run.head}:${shape}`,
+  );
+  if (
+    engine.store
+      .eventsAll(current.id)
+      .some(
+        (event) =>
+          event.kind === "responsible_fault_restart" &&
+          event.detail === identity,
+      )
+  )
+    return false;
   // The event is the durable intent, written before the control and outside the
   // task row, so even a refused restart leaves one recorded decision.
   engine.store.event(current.id, "responsible_fault_restart", identity);
   try {
+    const fresh =
+      Boolean(run.retainedAgentClosedAt) || shape === "checkpoint_reviewer";
     const request = {
-      taskId: current.id, version: current.version, action: "restart", role: "reviewer", fresh: true, caller: "queue",
-      reason: "Responsible task: the reviewer stopped without a result; Nucleus restarts it at the same exact head (Spec 058). "
-        + (shape === "checkpoint_reviewer" ? "Its saved checkpoint cannot receive a same-agent continuation because the agent is closed." : "Recover the retained reviewer on the same task."),
+      taskId: current.id,
+      version: current.version,
+      action: "restart",
+      role: "reviewer",
+      fresh,
+      caller: "queue",
+      reason:
+        "Responsible task: the reviewer stopped without a result; Nucleus restarts it at the same exact head (Spec 058). " +
+        (shape === "checkpoint_reviewer"
+          ? "Its saved checkpoint cannot receive a same-agent continuation because the agent is closed."
+          : "Recover the retained reviewer on the same task."),
     };
-    try {
-      await engine.performTaskControl(taskControlInputSchema.parse(request));
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('The retained reviewer is still live or its absence is unproven')) throw error;
-      await engine.performTaskControl(taskControlInputSchema.parse({ ...request, fresh: false }));
-    }
+    await engine.performTaskControl(taskControlInputSchema.parse(request));
     return true;
   } catch (error) {
-    engine.store.event(current.id, "responsible_fault_restart_refused", `${identity}: ${error instanceof Error ? error.message : String(error)}`);
+    engine.store.event(
+      current.id,
+      "responsible_fault_restart_refused",
+      `${identity}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return false;
   }
 }

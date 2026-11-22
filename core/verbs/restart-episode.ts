@@ -1,8 +1,3 @@
-import { readCreationAttempt } from "../store/store-task-funnel";
-import {
-  observeResolutionCreation,
-  recordResolutionCreationBinding,
-} from "../recovery/absent-creation/restarts";
 import { TaskChangedRefusal } from "../../shared/task-version";
 import {
   COORDINATOR_LOOP_LIMIT,
@@ -384,175 +379,21 @@ export class EpisodeRestarts {
           ...(input.settleFences.displacedRunIds ?? []),
         ]
       : [];
-    const admitLocal = () => {
-      const current = check();
-      if (!occupiesSlot(current, this.store.runs(task.id))) {
-        const capacity = capacityFor(
-          current,
-          this.store.activeCapacityTasks(),
-          this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
-          this.store.projectDispatchLimitFor(current),
-          this.store.papercutDispatchPolicy(),
-        );
-        if (capacity) throw Error(capacity);
-      }
-      const run = this.resolution.absentResolutionRun(current);
-      if (!run || !run.hostId || run.hostId !== current.hostId)
-        throw Error(
-          "Absent resolution-run recovery requires an agentless reviewer, coordinator or escalated recovery creation whose delivery is unanswered",
-        );
-      if (
-        this.resolution.recovery.busy(current) &&
-        !settling.includes(current.resolution.recovery?.runId ?? "")
-      )
-        throw Error(
-          "Wait for coordinator recovery to finish before replacing the absent run",
-        );
-      return this.resolution.admitAbsentResolution(current, run.id, settling);
-    };
-    const run = admitLocal();
-    if (
-      this.adapter.workspaceAvailable &&
-      !(await this.adapter.workspaceAvailable(task.workspaceId!))
-    )
-      throw Error(
-        "Absent resolution-run recovery requires the retained task workspace",
+    const run = this.store
+      .runs(task.id)
+      .find(
+        (candidate) =>
+          !candidate.released &&
+          !candidate.agentId &&
+          !candidate.completion &&
+          ["intent", "uncertain"].includes(candidate.status),
       );
-    if (!this.resolution.adapter.findRunAgents)
-      throw Error("Run identity lookup is unavailable");
-    const observation = await observeResolutionCreation(
-      this.store,
-      this.resolution.adapter,
-      run,
-      this.resolution.graceMs,
+    const roleLabel =
+      run?.role === "recovery" ? "coordinator" : (run?.role ?? "reviewer");
+    throw Error(
+      run
+        ? `Resolution creation ${run.id} is uncertain; use run.start ${roleLabel} fresh replacing=${run.id} or run.release run=${run.id}`
+        : "No uncertain resolution run belongs to this task; use run.start to launch a new run explicitly",
     );
-    if (observation.kind === "wait") {
-      const current = check();
-      if (
-        !current.resolution.stop ||
-        current.resolution.stop.reason === "lifecycle"
-      )
-        this.resolution.waiting(current, observation.detail, "lifecycle");
-      return this.store.task(task.id);
-    }
-    if (observation.kind === "partial") {
-      const current = check();
-      // A fresh contradiction invalidates the saved proof that next offered.
-      if (run.absentProvenAt) {
-        this.store.transaction(() => {
-          this.store.putRun({ ...run, absentProvenAt: undefined });
-          this.resolution.attention(
-            current,
-            observation.detail,
-            "uncertain_delivery",
-          );
-        });
-      }
-      throw new DurableFenceRefusal(observation.detail);
-    }
-    // A fresh run needs creation capability; refuse before anything is settled.
-    if (
-      restart &&
-      observation.kind === "absent" &&
-      !this.resolution.adapter.createRun
-    )
-      throw Error(
-        "Agent creation is unavailable; uncertain run restart refused",
-      );
-    if (restart && observation.kind === "absent") {
-      const latest = this.store.task(task.id),
-        wait = this.engine.dispatchWaitsFor(latest);
-      // A newly placed hold defers intent, never carries this inventory read
-      // forward as authority. Replay derives the subject and admits it afresh.
-      if (wait)
-        return this.engine.deferOwnerVerb(latest, restart.input, wait, {
-          runId: run.id,
-        });
-    }
-    if (!restart && observation.kind === "bound")
-      throw Error(
-        "Resolution run creation is no longer proven absent; inspect the matching agent before retrying",
-      );
-    if (run.role === "closeout") {
-      if (!this.adapter.verifyCleanQueueWorktree)
-        throw Error("Workspace verification is unavailable");
-      await this.adapter.verifyCleanQueueWorktree(task);
-    } else {
-      const pr = await this.adapter.verifyPr(task, taskPrNumber(task));
-      if (
-        pr.url !== task.prUrl ||
-        pr.head !== task.prHead ||
-        pr.head !== run.head
-      )
-        throw Error(
-          "PR head changed; inspect it before replacing the absent run",
-        );
-    }
-    admitLocal();
-    if (restart && observation.kind === "absent") {
-      const wait = this.engine.dispatchWaitsFor(check());
-      if (wait)
-        return this.engine.deferOwnerVerb(check(), restart.input, wait, {
-          runId: run.id,
-        });
-    }
-    return async () => {
-      const current = check();
-      admitLocal();
-      if (
-        (readCreationAttempt(this.store, run)?.attemptId ?? null) !==
-        observation.attemptId
-      )
-        throw new TaskChangedRefusal(
-          "Run creation changed during restart",
-          input.version,
-          current.version,
-        );
-      if (restart && observation.kind === "bound") {
-        return this.store.transaction(() => {
-          if (input.settleFences)
-            this.engine.settleVerbFences(task.id, input.settleFences);
-          const latest = this.store.run(run.id)!,
-            settledTask = this.store.task(task.id),
-            agentId = observation.agentId;
-          this.store.putRun({
-            ...latest,
-            agentId,
-            status: "running",
-            absentProvenAt: undefined,
-          });
-          const patch: Partial<Task> = {};
-          if (latest.role === "reviewer")
-            patch.resolution = {
-              ...settledTask.resolution,
-              reviewerAgentId: agentId,
-              reviewerProfile: latest.profile,
-              attention: false,
-            };
-          if (
-            ["recovery", "closeout"].includes(latest.role) &&
-            settledTask.coordinatorGeneration === latest.generation &&
-            !settledTask.coordinatorAgentId
-          )
-            patch.coordinatorAgentId = agentId;
-          recordResolutionCreationBinding(this.store, latest, agentId);
-          return this.store.update(task.id, patch, "restart_creation_bound");
-        });
-      }
-      if (restart) {
-        const wait = this.engine.dispatchWaitsFor(current);
-        if (wait)
-          return this.engine.deferOwnerVerb(current, restart.input, wait, {
-            runId: run.id,
-          });
-        return this.resolution.replaceAbsentRunFromRoute(
-          current,
-          run.id,
-          restart.instruction,
-          input.settleFences,
-        );
-      }
-      throw Error("Restart authorization is required");
-    };
   }
 }

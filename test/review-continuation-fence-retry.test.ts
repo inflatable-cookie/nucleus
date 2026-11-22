@@ -121,30 +121,6 @@ test("an idle reviewer with a delivered checkpoint can redeliver its report on t
   }
 });
 
-test("a missing task-level binding does not allow replacing its current reviewer", async () => {
-  const f = fixture();
-  try {
-    const task = f.current();
-    f.store.update(task.id, {
-      resolution: { ...task.resolution, reviewerAgentId: null },
-    });
-    await assert.rejects(
-      f.engine.performTaskControl({
-        action: "move",
-        to: "review",
-        fresh: true,
-        taskId: task.id,
-        version: f.current().version,
-        reason: "Replace the reviewer",
-      }),
-      /retained reviewer/,
-    );
-    assert.equal(f.createdRuns.length, 0);
-  } finally {
-    await f.close();
-  }
-});
-
 test("an owner restarts an exhausted checkpoint through the retained reviewer", async () => {
   const f = fixture();
   try {
@@ -210,60 +186,6 @@ test("a prior result fence does not force a fresh reviewer when the retained rea
     assert.equal(f.createdRuns.length, 0);
   } finally {
     await f.close();
-  }
-});
-
-test("checkpoint fences do not authorize replacing an available reviewer", async () => {
-  for (const shape of ["result", "run"] as const) {
-    const f = fixture();
-    try {
-      await f.report(
-        { covered: ["Diff"], remaining: ["Tests"] },
-        `fresh-${shape}`,
-      );
-      f.store.setMeta("paused", true);
-      if (shape === "result")
-        f.store.update(f.submitted.id, {
-          resolution: {
-            ...f.current().resolution,
-            review: {
-              eventId: "saved-block",
-              taskId: f.submitted.id,
-              runId: f.runId,
-              status: "blocked",
-              summary: "No findings; environment unavailable",
-              head: f.run().head,
-              reviewResponsibility: "environment",
-            },
-          },
-        });
-      else
-        f.store.putRun({
-          ...f.run(),
-          id: "other-reader",
-          agentId: "other-reader",
-          reviewCheckpoints: [],
-        });
-      await assert.rejects(
-        f.engine.performTaskControl({
-          action: "move",
-          to: "review",
-          fresh: true,
-          taskId: f.submitted.id,
-          version: f.current().version,
-          reason: "Start a fresh independent review at this head",
-        }),
-        /retained reviewer/,
-      );
-      assert.equal(f.current().resolution.currentRunId, f.runId, shape);
-      assert.equal(f.run().released, false);
-      assert.equal(f.createdRuns.length, 0);
-      assert.equal(f.reviewerDeliveries.length, 0);
-      assert.equal(f.run().reviewCheckpoints?.length, 1);
-      assert.deepEqual(f.counts(), { merges: 0, syncs: 0 });
-    } finally {
-      await f.close();
-    }
   }
 });
 
@@ -620,114 +542,6 @@ function undeliveredReportCase(f: ReturnType<typeof fixture>) {
     `${f.runId}: exact lookup bound agent review-agent in workspace; its dispatch delivery is not yet observed`,
   );
 }
-
-test("a report request inspects the retained dispatch and names the proved no-send", async () => {
-  const f = fixture();
-  try {
-    await f.report({ covered: ["Diff"], remaining: ["Tests"] }, "no-dispatch");
-    undeliveredReportCase(f);
-    const sent: string[] = [];
-    f.adapter.notify = async (_agent, _id, text) => {
-      sent.push(text);
-    };
-    await assert.rejects(
-      f.engine.performTaskControl({
-        action: "move",
-        to: "review",
-        taskId: f.submitted.id,
-        version: f.current().version,
-        reason: "Recover the retained report",
-      }),
-      /was never delivered[\s\S]*restart role=reviewer fresh/,
-    );
-    assert.equal(
-      sent.length,
-      0,
-      "no report was requested for a dispatch that never arrived",
-    );
-    assert.equal(
-      f.createdRuns.length,
-      0,
-      "the refusal replaces no reader and creates none",
-    );
-    assert.equal(f.current().resolution.currentRunId, f.runId);
-    assert.equal(f.run().released, false);
-
-    // The exact creation message answers the same occurrence: the dispatch is
-    // delivered, so the request names it and sends once.
-    f.reviewerTimeline.push({
-      timestamp: new Date().toISOString(),
-      item: {
-        type: "user_message",
-        messageId: `ns-run-${f.runId}`,
-        text: "Review this change",
-      },
-    });
-    await f.engine.performTaskControl({
-      action: "move",
-      to: "review",
-      taskId: f.submitted.id,
-      version: f.current().version,
-      reason: "Recover the retained report",
-    });
-    assert.equal(sent.length, 1);
-    assert.ok(
-      f.store
-        .eventsAll(f.submitted.id)
-        .some(
-          (event) =>
-            event.kind === "run_delivery_reconciled" &&
-            event.detail.startsWith(`${f.runId}:`),
-        ),
-      "the observed dispatch is recorded once, before the send",
-    );
-    await assert.rejects(
-      f.engine.performTaskControl({
-        action: "move",
-        to: "review",
-        taskId: f.submitted.id,
-        version: f.current().version,
-        reason: "Recover the retained report again",
-      }),
-      /already asked to resend its report for the observed dispatch/,
-    );
-    assert.equal(
-      sent.length,
-      1,
-      "the same occurrence is inspected, never resent",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test("an incomplete retained timeline keeps the report request visibly waiting", async () => {
-  const f = fixture();
-  try {
-    await f.report({ covered: ["Diff"], remaining: ["Tests"] }, "partial");
-    undeliveredReportCase(f);
-    f.adapter.agentTimelinePage = async () =>
-      toolTimelinePage([], { hasOlder: true });
-    const sent: string[] = [];
-    f.adapter.notify = async (_agent, _id, text) => {
-      sent.push(text);
-    };
-    await assert.rejects(
-      f.engine.performTaskControl({
-        action: "move",
-        to: "review",
-        taskId: f.submitted.id,
-        version: f.current().version,
-        reason: "Recover the retained report",
-      }),
-      /not yet proved[\s\S]*unavailable or incomplete/,
-    );
-    assert.equal(sent.length, 0);
-    assert.equal(f.run().released, false);
-  } finally {
-    await f.close();
-  }
-});
 
 test("the already-asked refusal names the delivered continuation it waits on", async () => {
   const f = fixture();
