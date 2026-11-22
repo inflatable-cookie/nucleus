@@ -1,49 +1,50 @@
-import React from "react";
+import React, { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { inboxViews, type InboxView } from "../../shared/inbox-board";
 import { Icon } from "../shell";
+import { useFocusVisible } from "../focus-modality";
 import { muted, type Colors } from "../controls";
-import { radius, space, type as typeScale } from "../design";
+import { hoverSurface, radius, space, type as typeScale } from "../design";
 
 export type InboxMenuCounts = Record<Exclude<InboxView, "planning">, number>;
 
 /**
- * The board menu (Tom, 2026-11-21): Needs you, a divider, Planning, Leads,
- * Papercuts, Queue, a divider, then Working, In review and Closing. Counts are
- * real totals; only Needs you is highlighted, because only it asks the operator
- * to act. A count is hidden until the board loads. An entry whose count is 0
- * renders dimmed but stays selectable; the selected entry keeps its styling.
+ * One menu entry (nucleus#1528): the same sidebar hover as a list row — a dimmed
+ * background on hover and keyboard focus, the selected surface when selected.
+ * Hover over the selected entry keeps it; a dimmed zero-count entry still hovers.
  */
-export function InboxMenu({
+function MenuEntry({
   c,
-  view,
-  counts,
+  label,
+  on,
+  value,
   loaded,
-  onSelect,
+  onPress,
+  options,
 }: {
   c: Colors;
-  view: InboxView;
-  counts: InboxMenuCounts;
+  label: string;
+  on: boolean;
+  value: number | null;
   loaded: boolean;
-  onSelect: (view: InboxView) => void;
+  onPress: () => void;
+  options: { icon?: string; hot?: boolean; dimmed?: boolean };
 }) {
-  const count = (id: InboxView) => (id === "planning" ? null : counts[id]);
-  const item = (
-    key: string,
-    label: string,
-    on: boolean,
-    value: number | null,
-    onPress: () => void,
-    options: { icon?: string; hot?: boolean; dimmed?: boolean } = {},
-  ) => (
+  const [hovered, setHovered] = useState(false);
+  const focus = useFocusVisible();
+  const highlighted = hovered || focus.visible;
+  return (
     <Pressable
-      key={key}
       accessibilityRole="tab"
       accessibilityState={{ selected: on }}
       accessibilityLabel={
         value === null || !loaded ? label : `${label}, ${value}`
       }
       onPress={onPress}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      onFocus={focus.onFocus}
+      onBlur={focus.onBlur}
       style={{
         flexDirection: "row",
         alignItems: "center",
@@ -51,7 +52,11 @@ export function InboxMenu({
         minHeight: 36,
         paddingHorizontal: space.sm,
         borderRadius: radius.control,
-        backgroundColor: on ? c.surface2 : "transparent",
+        backgroundColor: on
+          ? c.surface2
+          : highlighted
+            ? hoverSurface(c)
+            : "transparent",
         // A zero-count entry reads quieter without leaving the muted token; the
         // selected entry keeps its full styling.
         opacity: options.dimmed && !on ? 0.55 : 1,
@@ -103,6 +108,50 @@ export function InboxMenu({
           </Text>
         ))}
     </Pressable>
+  );
+}
+
+/**
+ * The board menu (Tom, 2026-11-21): Needs you, a divider, Planning, Leads,
+ * Papercuts, Queue, a divider, then Working, In review and Closing. Counts are
+ * real totals; only Needs you is highlighted, because only it asks the operator
+ * to act. A count is hidden until the board loads. An entry whose count is 0
+ * renders dimmed but stays selectable; the selected entry keeps its styling.
+ * Hover and keyboard focus dim an entry like a list row; hovering the selected
+ * entry keeps it.
+ */
+export function InboxMenu({
+  c,
+  view,
+  counts,
+  loaded,
+  onSelect,
+}: {
+  c: Colors;
+  view: InboxView;
+  counts: InboxMenuCounts;
+  loaded: boolean;
+  onSelect: (view: InboxView) => void;
+}) {
+  const count = (id: InboxView) => (id === "planning" ? null : counts[id]);
+  const item = (
+    key: string,
+    label: string,
+    on: boolean,
+    value: number | null,
+    onPress: () => void,
+    options: { icon?: string; hot?: boolean; dimmed?: boolean } = {},
+  ) => (
+    <MenuEntry
+      key={key}
+      c={c}
+      label={label}
+      on={on}
+      value={value}
+      loaded={loaded}
+      onPress={onPress}
+      options={options}
+    />
   );
   // The dimmer dividers read at half the border's contrast against the menu
   // background: the same border token, drawn translucent.
