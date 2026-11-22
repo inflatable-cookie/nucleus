@@ -60,7 +60,7 @@ import {
   type T3IntentLedger,
 } from "./intents";
 import { canonical, type T3State, type T3StateFile } from "./state";
-import { labelTask } from "./one-row";
+import { labelRole, labelTask } from "./one-row";
 
 /**
  * The provider instance an operator registers in T3's settings, the model the Nucleus
@@ -198,7 +198,12 @@ export interface NestedCreateInput {
   /** The role's own provider entry and model from the launch's config read. */
   roleProvider: ConfigProvider;
   roleModel: ConfigModel | undefined;
-  workspace: { id: string; projectId: string; directory: string };
+  workspace: {
+    id: string;
+    projectId: string;
+    directory: string;
+    worktreeSlug?: string;
+  };
   /** The launch's one `server.getConfig` read. */
   observed: z.infer<typeof config>;
   /** The child's title, already numbered by the host. */
@@ -298,26 +303,80 @@ export class T3Nesting {
       input.roleProvider,
       input.profile,
     );
-    const existing = this.parentOf(taskId);
+    let existing = this.parentOf(taskId);
     let existingSharedProjection: Projection | undefined;
     // A binding stored before its launch was sent (nucleus#1458) is resumed, not
     // treated as a parent that already ran.
     let prepared: ParentThread | undefined;
+    const isRecoveredCloseoutWorkspace =
+      labelRole(input.attempt.labels) === "closeout" &&
+      input.workspace.worktreeSlug === `ns-closeout-${taskId}`;
+    const recoveredCloseoutScope = isRecoveredCloseoutWorkspace
+      ? input.workspace.id
+      : undefined;
+    let replacePriorParentId: string | undefined;
     if (existing) {
       // A child with no workspace strategy inherits the parent's checkout, and one
       // with a strategy never starts outside T3's own MCP handler. A role whose run
       // needs another checkout therefore cannot be a child, and there is no
       // top-level fallback any more: the task waits visibly instead.
-      if (existing.workspaceId !== input.workspace.id)
-        return this.unavailable(
-          taskId,
-          `the task's parent thread is bound to another checkout (${existing.workspaceId}, this run uses ${input.workspace.id}); move the task to another host or restart it on a new workspace`,
-        );
+      // Exception: a recovered closeout workspace (`ns-closeout-<taskId>`) on the
+      // same project retires the lost-checkout parent and binds a replacement parent
+      // on the recovered closeout worktree so the closeout child runs in it.
+      if (existing.workspaceId !== input.workspace.id) {
+        const isRecoveredCloseout =
+          isRecoveredCloseoutWorkspace &&
+          existing.projectId === input.workspace.projectId;
+        if (!isRecoveredCloseout)
+          return this.unavailable(
+            taskId,
+            `the task's parent thread is bound to another checkout (${existing.workspaceId}, this run uses ${input.workspace.id}); move the task to another host or restart it on a new workspace`,
+          );
+        const prior = await this.classifyParent(existing, true);
+        if (prior.kind === "mismatched")
+          return this.unavailable(
+            taskId,
+            "the task's parent thread no longer matches its recorded project and checkout; inspect the binding before restarting",
+          );
+        if (prior.kind === "live") {
+          acp.release(existing.sessionId, "closeout workspace recovered");
+          const archiveKey = identity("archive", existing.threadId);
+          const priorArchive = this.core.state.read().intents[archiveKey];
+          await this.core.intents.effect(
+            archiveKey,
+            "orchestration.dispatchCommand",
+            {
+              type: "thread.archive",
+              commandId: archiveKey,
+              threadId: existing.threadId,
+            },
+            undefined,
+            undefined,
+            priorArchive?.status === "unknown"
+              ? { resendUnknownAfterRead: true }
+              : priorArchive?.status === "refused"
+                ? { retryRefusedBeforeSend: true }
+                : {},
+          );
+          const after = await this.classifyParent(existing, true);
+          if (after.kind !== "archived" && after.kind !== "deleted")
+            return this.unavailable(
+              taskId,
+              "the prior parent thread is not yet archived after closeout workspace recovery; retry once archive settles",
+            );
+        }
+        // Keep the archived/deleted prior parent binding until launchParent
+        // atomically replaces it after the replacement ACP bind succeeds.
+        replacePriorParentId = existing.threadId;
+        existing = undefined;
+      }
+    }
+    if (existing) {
       // Old markers did not distinguish archive from deletion. Re-read the exact
       // binding before acting on either an old marker or a new observation,
       // sharing its narrow projection with the held-turn check below.
       const observation = await this.classifyParent(existing, true);
-      if (this.preparedParent(taskId, observation)) {
+      if (this.preparedParent(taskId, observation, existing.launchCommandId)) {
         // Prepared: absent from the complete inventory with no launch intent. Resume
         // its launch under the same identity; a checkout or project that no longer
         // matches the binding is refused instead.
@@ -366,7 +425,14 @@ export class T3Nesting {
     const parent =
       existing && !prepared
         ? existing
-        : await this.launchParent(input, provider, acp, prepared);
+        : await this.launchParent(
+            input,
+            provider,
+            acp,
+            prepared,
+            recoveredCloseoutScope,
+            replacePriorParentId,
+          );
     if (!parent)
       return this.unavailable(
         taskId,
@@ -502,7 +568,8 @@ export class T3Nesting {
     // parent to restore, and the worker's create launches the same parent.
     const observe = async () => {
       const classified = await this.classifyParent(parent, true);
-      if (this.preparedParent(task.id, classified)) return null;
+      if (this.preparedParent(task.id, classified, parent.launchCommandId))
+        return null;
       if (classified.kind === "deleted")
         throw new ProvenPreSendRefusalError(
           "the task's parent thread is deleted; inspect its recovery before restarting",
@@ -1015,15 +1082,27 @@ export class T3Nesting {
   }
 
   /** The deterministic command id of one task's parent launch. */
-  private parentLaunchId(taskId: string): string {
-    return identity("parent-launch", canonical([this.core.hostId(), taskId]));
+  private parentLaunchId(taskId: string, workspaceScope?: string): string {
+    return identity(
+      "parent-launch",
+      canonical(
+        workspaceScope
+          ? [this.core.hostId(), taskId, workspaceScope]
+          : [this.core.hostId(), taskId],
+      ),
+    );
   }
 
   /** Whether this task's parent launch was ever reserved for a send (nucleus#1458). */
-  private parentLaunchReserved(taskId: string): boolean {
-    return (
-      this.core.state.read().intents[this.parentLaunchId(taskId)] !== undefined
-    );
+  private parentLaunchReserved(
+    taskId: string,
+    launchCommandId?: string,
+  ): boolean {
+    const commandId =
+      launchCommandId ??
+      this.parentOf(taskId)?.launchCommandId ??
+      this.parentLaunchId(taskId);
+    return this.core.state.read().intents[commandId] !== undefined;
   }
 
   /**
@@ -1043,15 +1122,29 @@ export class T3Nesting {
     },
     acp: AcpSessionSurface,
     bound?: ParentThread,
+    workspaceScope?: string,
+    replacePriorParentId?: string,
   ): Promise<ParentThread | null> {
     const taskId = labelTask(input.attempt.labels)!;
-    const threadId = identity(
-      "thread",
-      canonical([this.core.hostId(), taskId, "parent"]),
-    );
+    const threadId =
+      bound?.threadId ??
+      identity(
+        "thread",
+        canonical(
+          workspaceScope
+            ? [this.core.hostId(), taskId, "parent", workspaceScope]
+            : [this.core.hostId(), taskId, "parent"],
+        ),
+      );
+    const commandId =
+      bound?.launchCommandId ?? this.parentLaunchId(taskId, workspaceScope);
     const binding = bound
       ? { sessionId: bound.sessionId, bindingPath: bound.bindingPath }
-      : acp.bind({ taskId, ...parentPromptRules() });
+      : acp.bind({
+          taskId,
+          directory: input.workspace.directory,
+          ...parentPromptRules(),
+        });
     const record: ParentThread = {
       taskId,
       threadId,
@@ -1061,29 +1154,47 @@ export class T3Nesting {
       workspaceId: input.workspace.id,
       projectId: input.workspace.projectId,
       directory: input.workspace.directory,
+      ...(workspaceScope || bound?.launchCommandId
+        ? { launchCommandId: commandId }
+        : {}),
       createdAt: bound?.createdAt ?? new Date().toISOString(),
       title: input.title,
     };
     // Durable before the send: a lost reply leaves an owned parent, never an orphan.
     this.core.state.update((state) => {
       const old = state.parents?.[taskId];
+      const replacingPrior =
+        replacePriorParentId !== undefined &&
+        old?.threadId === replacePriorParentId;
       if (
         old &&
+        !replacingPrior &&
         (old.threadId !== threadId || old.sessionId !== binding.sessionId)
       )
         throw new ProvenPreSendRefusalError(
           "T3Code parent thread identity changed",
         );
-      state.parents = { ...state.parents, [taskId]: old ?? record };
+      state.parents = {
+        ...state.parents,
+        [taskId]: replacingPrior ? record : (old ?? record),
+      };
       state.nesting = {
         state: "nested",
         reason: "",
         at: new Date().toISOString(),
       };
     });
-    const known = await this.knownParentThread(taskId, threadId);
+    const known = await this.knownParentThread(taskId, threadId, commandId);
     if (known) {
-      if (known.deletedAt) return null;
+      if (
+        known.deletedAt ||
+        known.archivedAt ||
+        known.projectId !== input.workspace.projectId ||
+        known.worktreePath !== input.workspace.directory ||
+        known.providerInstanceId !== PARENT_PROVIDER ||
+        known.modelSelection.instanceId !== PARENT_PROVIDER
+      )
+        return null;
       this.core.state.update((state) => {
         const current = state.parents?.[taskId];
         if (current) state.parents![taskId] = { ...current, ...record };
@@ -1095,7 +1206,6 @@ export class T3Nesting {
       offered.length === 0 || offered.includes("full-access")
         ? "full-access"
         : "approval-required";
-    const commandId = this.parentLaunchId(taskId);
     const payload = {
       commandId,
       threadId,
@@ -1383,14 +1493,18 @@ export class T3Nesting {
    * read cannot prove absence, so the complete inventory answers it (nucleus#1460);
    * an unreadable inventory keeps the refusal. Child adoption keeps `knownThread`.
    */
-  private async knownParentThread(taskId: string, threadId: string) {
+  private async knownParentThread(
+    taskId: string,
+    threadId: string,
+    launchCommandId?: string,
+  ) {
     try {
       return await this.knownThread(threadId);
     } catch (error) {
       // Only a prepared launch (nothing reserved for a send) is settled by inventory.
       if (
         !(error instanceof T3TransientReadError) ||
-        this.parentLaunchReserved(taskId)
+        this.parentLaunchReserved(taskId, launchCommandId)
       )
         throw error;
       const [row] = await this.inventoryRows(threadId, true);
@@ -1421,11 +1535,12 @@ export class T3Nesting {
   private preparedParent(
     taskId: string,
     observation: { kind: string; absent?: boolean },
+    launchCommandId?: string,
   ): boolean {
     return (
       observation.kind === "deleted" &&
       observation.absent === true &&
-      !this.parentLaunchReserved(taskId)
+      !this.parentLaunchReserved(taskId, launchCommandId)
     );
   }
 
@@ -1485,7 +1600,7 @@ export class T3Nesting {
         // Only a prepared binding (nothing reserved for a send) may be settled by the
         // complete inventory. A sent parent keeps its transient wait, so churn never
         // turns its read into archive scans or a finished marker (nucleus#1451, #1460).
-        if (this.parentLaunchReserved(parent.taskId))
+        if (this.parentLaunchReserved(parent.taskId, parent.launchCommandId))
           throw new T3TransientReadError(error);
       } else if (!isThreadNotFoundRpcError(error)) throw error;
     }

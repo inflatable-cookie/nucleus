@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,7 +8,12 @@ import {
   qaFenceRecordSchema,
 } from "../../shared/contracts";
 import { LEGACY_QA_ROLL_DEFERRED } from "../../shared/service-roll";
-import { findProcessByCommandToken } from "../../core/machine/process-identity";
+import {
+  findProcessByCommandToken,
+  processCommandLine,
+} from "../../core/machine/process-identity";
+import { processStartIdentityLiveness } from "../../core/machine/process-identity-search";
+import { pidAlive } from "../../core/machine/pid";
 import {
   assertWorkPlacementAvailable,
   liveWorkPlacement,
@@ -37,6 +41,10 @@ function defer(reason: string): never {
 }
 
 /**
+ * Custody is live evidence, never a record field: an unfinished run, a process
+ * still alive, or a checkout still on disk. A finished run's stale pid, cleanup
+ * flag or old checkout root holds nothing once that evidence is gone.
+ *
  * Read the predecessor's durable custody in one snapshot. Warm standby checks
  * before touching the live endpoint; cold startup and the post-drain check
  * also run before opening the writable store. This boundary never repairs data.
@@ -112,14 +120,17 @@ function checkLegacyQa(db: DatabaseSync, dataDir: string): void {
       if (
         !run.finishedAt ||
         !Number.isFinite(Date.parse(run.finishedAt)) ||
-        run.pid !== null ||
         run.state === "queued" ||
-        run.state === "running" ||
-        run.checkoutCleanupPending
+        run.state === "running"
       )
-        defer(
-          `Legacy QA run ${run.id} still owns execution or checkout cleanup`,
-        );
+        defer(`Legacy QA run ${run.id} still owns execution`);
+      // A recorded pid counts only while it is alive and still names QA work.
+      if (
+        run.pid !== null &&
+        pidAlive(run.pid) &&
+        (processCommandLine(run.pid)?.includes("project-qa/") ?? true)
+      )
+        defer(`Legacy QA run ${run.id} still has a live process`);
       runs.set(run.id, run);
     }
   }
@@ -179,19 +190,13 @@ function checkLegacyQa(db: DatabaseSync, dataDir: string): void {
     );
     if (
       run.escapedDescendants.some(
-        (entry) => !covered.has(`${entry.pid}:${entry.startIdentity}`),
+        (entry) =>
+          !covered.has(`${entry.pid}:${entry.startIdentity}`) &&
+          processStartIdentityLiveness(entry.pid, entry.startIdentity) !==
+            "dead",
       )
     )
-      defer(
-        `Legacy QA run ${run.id} lacks exit proof for its escaped processes`,
-      );
-    if (
-      !host &&
-      run.steps.some(
-        (step) => step.processGroupEmpty === false || step.terminationError,
-      )
-    )
-      defer(`Legacy QA run ${run.id} lacks process-group settlement`);
+      defer(`Legacy QA run ${run.id} has an escaped process still alive`);
   }
 
   const live = liveWorkPlacement(dataDir);
@@ -199,20 +204,9 @@ function checkLegacyQa(db: DatabaseSync, dataDir: string): void {
   if (live && (runs.size || qaRoots.some((root) => stat(root))))
     assertWorkPlacementAvailable(getWorkPlacement(dataDir));
   for (const root of qaRoots) checkLegacyQaFiles(root);
-  for (const run of runs.values()) {
-    if (!run.checkoutPath) continue;
-    const key = createHash("sha256")
-      .update(run.submittedKey ?? run.key)
-      .digest("hex")
-      .slice(0, 24);
-    if (
-      !/^[a-f0-9-]{36}$/.test(run.id) ||
-      !qaRoots.some((root) => run.checkoutPath === join(root, key, run.id))
-    )
-      defer(`Legacy QA run ${run.id} has an unverified checkout allocation`);
-    if (stat(run.checkoutPath))
+  for (const run of runs.values())
+    if (run.checkoutPath && stat(run.checkoutPath))
       defer(`Legacy QA run ${run.id} still owns its checkout`);
-  }
 }
 
 function checkLegacyQaFiles(directory: string): void {

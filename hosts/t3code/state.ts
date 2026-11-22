@@ -19,6 +19,8 @@ const workspace = z.object({
   directory: z.string(),
   projectId: z.string(),
   title: z.string(),
+  projectRootPath: z.string().optional(),
+  worktreeSlug: z.string().optional(),
   archivedAt: z.string().optional(),
 });
 /**
@@ -175,6 +177,8 @@ const parentThread = z.object({
   workspaceId: z.string(),
   projectId: z.string(),
   directory: z.string(),
+  /** Scoped launch command id when a recovered closeout workspace replaces the original parent. */
+  launchCommandId: z.string().optional(),
   createdAt: z.string(),
   /** The task's own state title, the base the row's step rides after. */
   title: z.string().optional(),

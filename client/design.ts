@@ -26,7 +26,7 @@ export const type = {
   heading: { fontSize: 24, lineHeight: 32 },
 } as const;
 
-export const radius = { control: 8, card: 8, panel: 10 } as const;
+export const radius = { control: 8, card: 8, panel: 10, full: 999 } as const;
 
 /**
  * The one control size (Tom, 2026-11-09: "make inputs sizing a bit more consistent").
@@ -96,5 +96,55 @@ export function roles(c: Colors) {
   } as const;
 }
 
+/**
+ * The inbox row's fixed marks (nucleus#1515): the kind tile, the status dot and the
+ * generated T3 project monogram beside the project name.
+ */
+export const cardRow = {
+  tile: 28,
+  tileIcon: 14,
+  dot: 6,
+  projectMark: {
+    height: 16,
+    maxWidth: 32,
+    paddingX: 3,
+    radius: 4,
+    fontSize: 8,
+  },
+} as const;
+
 /** Overlay colours that are structure, not theme roles: the modal scrim and popover shadow. */
 export const overlay = { scrim: "rgba(0,0,0,0.68)", shadow: "#000" } as const;
+
+/**
+ * Derive a low-alpha tint surface from a theme colour role (nucleus#1515 kind tiles).
+ * Parses hex (`#rgb`, `#rrggbb`, `#rrggbbaa`) and `rgb()`/`rgba()` strings into `rgba(r, g, b, alpha)`,
+ * falling back to `fallback` (typically `surface2`) when a host palette omits a role.
+ */
+export function toneSurface(
+  color: string | undefined,
+  fallback: string,
+  alpha = 0.14,
+): string {
+  if (!color) return fallback;
+  const trimmed = color.trim();
+  const hex = trimmed.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i)?.[1];
+  if (hex) {
+    const full =
+      hex.length === 3
+        ? hex
+            .split("")
+            .map((ch) => ch + ch)
+            .join("")
+        : hex.slice(0, 6);
+    const r = parseInt(full.slice(0, 2), 16);
+    const g = parseInt(full.slice(2, 4), 16);
+    const b = parseInt(full.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  const rgb = trimmed.match(
+    /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i,
+  );
+  if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
+  return fallback;
+}

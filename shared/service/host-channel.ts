@@ -118,7 +118,7 @@ export const hostOperationInputSchemas = {
   "thread.cascade": z
     .object({
       threadId: boundedText(128),
-      action: z.literal("archive"),
+      action: z.enum(["archive", "delete"]),
     })
     .strict(),
   "thread.archive": z
@@ -128,6 +128,17 @@ export const hostOperationInputSchemas = {
        * The cascade rows the caller already accepted. An archive whose own cascade
        * read names anything outside this set is refused: a thread Nucleus did not
        * create is never archived (Spec 062, decision 4).
+       */
+      expectedCascadeThreadIds: z.array(boundedText(128)).max(200),
+    })
+    .strict(),
+  "thread.delete": z
+    .object({
+      threadId: boundedText(128),
+      /**
+       * The cascade rows the caller already accepted. A delete whose own cascade
+       * read names anything outside this set is refused: a thread Nucleus did not
+       * create is never deleted.
        */
       expectedCascadeThreadIds: z.array(boundedText(128)).max(200),
     })
@@ -270,7 +281,7 @@ export const hostOperationValueSchemas = {
   "thread.cascade": z
     .object({
       threadId: boundedText(128),
-      action: z.literal("archive"),
+      action: z.enum(["archive", "delete"]),
       cascadeThreadIds: z.array(boundedText(128)).max(200),
     })
     .strict(),
@@ -278,6 +289,13 @@ export const hostOperationValueSchemas = {
     .object({
       threadId: boundedText(128),
       archivedAt: timestamp,
+      cascadeThreadIds: z.array(boundedText(128)).max(200),
+    })
+    .strict(),
+  "thread.delete": z
+    .object({
+      threadId: boundedText(128),
+      deleted: z.literal(true),
       cascadeThreadIds: z.array(boundedText(128)).max(200),
     })
     .strict(),

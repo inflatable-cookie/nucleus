@@ -162,10 +162,11 @@ test("the old-lifecycle panels are gone from the task detail (Spec 058 step 4)",
 });
 
 test("a board card shows the newest report headline where it used to show only the stored reason", () => {
-  // Task 858 rebuilt the card; its snippet reads the report headline.
+  // Task 858 rebuilt the card; the row's status detail (nucleus#1515) reads the
+  // report headline ahead of the stored reason.
   const source = ui();
   assert.match(
     source,
-    /:\s*task\.headline\s*\?\s*\(\s*<Text\b(?=[^>]*numberOfLines=\{2\})[^>]*>\s*\{task\.headline\}\s*<\/Text>\s*\)\s*:\s*\(\s*<Text\b[^>]*>\s*\{task\.reason\}\s*<\/Text>\s*\)/,
+    /const detail = task\.headline \|\| task\.reason \|\| null;/,
   );
 });

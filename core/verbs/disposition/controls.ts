@@ -1,4 +1,5 @@
 import { dispositionDetail } from "./read-model";
+import { ProvenPreSendRefusalError } from "../../host/errors";
 import { existsSync } from "node:fs";
 import type {
   BulkDisposition,
@@ -31,12 +32,14 @@ export class Dispositions {
     return this.engine.adapter;
   }
   dispositionDeps() {
+    const controls = this;
     return productionDeps({
       store: this.store,
       hooks: this.engine.hooks,
-      readProcesses: this.adapter.hostProcessListing
-        ? () => this.adapter.hostProcessListing!()
-        : undefined,
+      get readProcesses() {
+        const list = controls.adapter.hostProcessListing;
+        return list ? () => list.call(controls.adapter) : undefined;
+      },
       hostAvailable: (task) => this.engine.taskHostAvailable(task),
       withHost: (id, fn) => this.engine.withHost(id, fn),
       observe: (id) => this.engine.host.observe(id),
@@ -144,14 +147,17 @@ export class Dispositions {
         );
       },
       archiveSiblings: (task) => this.engine.removeSiblings(task.id),
-      interruptTurn: this.adapter.interruptAndContinue
-        ? (agentId, messageId, text) =>
-            this.adapter.interruptAndContinue!(agentId, messageId, text)
-        : undefined,
+      get interruptTurn() {
+        const interrupt = controls.adapter.interruptAndContinue;
+        return interrupt
+          ? (agentId: string, messageId: string, text: string) =>
+              interrupt.call(controls.adapter, agentId, messageId, text)
+          : undefined;
+      },
     });
   }
   async continueWithdrawnWorker(task: Task): Promise<void> {
-    if (!task.agentId || !this.adapter.interruptAndContinue) return;
+    if (!task.agentId) return;
     if (
       !this.store
         .events(task.id)
@@ -162,13 +168,49 @@ export class Dispositions {
         )
     )
       return;
-    try {
-      await this.adapter.interruptAndContinue(
-        task.agentId,
-        `ns-withdraw-${task.id}-${task.version}`,
-        "Nucleus: cancellation was withdrawn. Your assignment and authority are unchanged: continue exactly where you left off within your original instructions.",
+    const deliver = async () => {
+      if (!this.adapter.interruptAndContinue && !this.adapter.enqueueMessage)
+        return;
+      const messageId = `ns-withdraw-${task.id}-${task.version}`;
+      const text =
+        "Nucleus: cancellation was withdrawn. Your assignment and authority are unchanged: continue exactly where you left off within your original instructions.";
+      if (this.adapter.interruptAndContinue) {
+        try {
+          await this.adapter.interruptAndContinue(
+            task.agentId!,
+            messageId,
+            text,
+          );
+        } catch (error) {
+          // A worker that already heeded the stop is idle: a proven pre-send steer
+          // refusal falls back once to the queued send. Any unknown delivery is
+          // never resent.
+          if (
+            !(error instanceof ProvenPreSendRefusalError) ||
+            !this.adapter.enqueueMessage
+          )
+            throw error;
+          await this.adapter.enqueueMessage(
+            task.agentId!,
+            `${messageId}-queued`,
+            text,
+          );
+        }
+      } else {
+        await this.adapter.enqueueMessage!(task.agentId!, messageId, text);
+      }
+      this.store.event(
+        task.id,
+        "disposition_withdraw_continued",
+        task.agentId!,
       );
-      this.store.event(task.id, "disposition_withdraw_continued", task.agentId);
+    };
+    try {
+      if (task.hostId && typeof this.engine.onTaskHost === "function") {
+        await this.engine.onTaskHost(task, deliver);
+      } else {
+        await deliver();
+      }
     } catch (error) {
       this.store.event(
         task.id,

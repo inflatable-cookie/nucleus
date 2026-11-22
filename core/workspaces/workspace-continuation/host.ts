@@ -6,8 +6,15 @@ import type { Task } from "../../../shared/contracts";
 import { intakeOwnedReviewWorkspace } from "../../../shared/workspace-ownership";
 import { workspaceOutsideQueueAllocation } from "../../../shared/workspace-ownership";
 import type { HostWorkspaceRef } from "../../../shared/host";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { git, queueCheckoutStatus } from "../../git/index";
+import {
+  repoCommonDir,
+  sameWorkspacePath,
+  workspaceRepoRoot,
+  WORKSPACES_DIR,
+} from "../workspace-allocation";
 import { workspaceToolProcessIssue } from "../../recovery/stall";
 import type { ParticipantRuntime } from "../../machine/participant-runtime";
 import type {
@@ -142,11 +149,42 @@ export class WorkspaceContinuation {
   async findCloseoutWorkspaces(task: Task) {
     const slug = `ns-closeout-${task.id}`,
       entries = await this.host.workspaceHost.workspaceInventory();
-    return entries
+    const registered = entries
       .filter(
         (w) => w.projectRootPath === task.repoPath && w.worktreeSlug === slug,
       )
       .map((w) => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
+    if (registered.length > 0) return registered;
+    // Reconcile a crash between Git worktree creation and host registration:
+    // if the deterministic owned closeout checkout already exists and proves
+    // repository membership, branch, commit and cleanliness, complete registration.
+    const expectedHead = task.resolution.closeoutWorkspaceHead;
+    if (!expectedHead || (!this.host.placement() && !this.host.dataDir))
+      return [];
+    const placement = this.host.placement();
+    const workspacesRoot =
+      placement?.workspaceRoot ??
+      join(placement?.dataDir ?? this.host.dataDir!(), WORKSPACES_DIR);
+    let directory: string;
+    try {
+      const commonDir = await repoCommonDir(task.repoPath);
+      directory = join(workspaceRepoRoot(workspacesRoot, commonDir), slug);
+    } catch {
+      return [];
+    }
+    if (!existsSync(directory)) return [];
+    try {
+      await proveOwnedCloseoutWorktree(
+        task.repoPath,
+        directory,
+        slug,
+        expectedHead,
+      );
+    } catch {
+      return [];
+    }
+    const adopted = await this.createCloseoutWorkspace(task);
+    return [adopted];
   }
   async verifyCloseoutWorkspace(task: Task, id: string, directory: string) {
     const workspace = this.host.workspaceHost.workspaceRef(id);
@@ -183,6 +221,7 @@ export interface WorkspaceContinuationHost {
    * self-calls did: every internal call to one of these goes through the host.
    */
   placement(): WorkspacePlacement;
+  dataDir?(): string;
   ownedPathFor(task: Task): Promise<string>;
   hostProcessListing(): Promise<HostProcessFact[] | null>;
 }
@@ -197,4 +236,100 @@ export interface WorkspaceContinuationHostCalls {
   createCloseoutWorkspace(
     spec: HostWorktreeWorkspaceSpec,
   ): Promise<{ id: string; directory: string | null }>;
+}
+
+/**
+ * Prove that an existing directory is a linked Git worktree of `repoPath` on
+ * `branchName`, clean, and at `expectedHead`. Used both before adopting an
+ * unregistered closeout worktree after a crash and before reusing an existing
+ * path at the deterministic closeout location.
+ */
+export async function proveOwnedCloseoutWorktree(
+  repoPath: string,
+  directory: string,
+  branchName: string,
+  expectedHead: string,
+): Promise<void> {
+  const porcelain = await git(repoPath, "worktree", "list", "--porcelain");
+  const blocks = porcelain
+    .split(/\r?\n\r?\n/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  let matched: { path: string; branch?: string } | undefined;
+  for (const block of blocks) {
+    let path = "";
+    let branch: string | undefined;
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith("worktree ")) path = line.slice("worktree ".length);
+      else if (line.startsWith("branch "))
+        branch = line.slice("branch ".length);
+    }
+    if (path && sameWorkspacePath(path, directory)) {
+      matched = { path, branch };
+      break;
+    }
+  }
+  if (!matched) {
+    throw new Error(
+      `Existing closeout path ${directory} is not a registered Git worktree of ${repoPath}`,
+    );
+  }
+  if (matched.branch !== `refs/heads/${branchName}`) {
+    throw new Error(
+      `Existing closeout worktree is on branch ${matched.branch ?? "(detached)"}, expected refs/heads/${branchName}`,
+    );
+  }
+  const head = await git(directory, "rev-parse", "HEAD");
+  if (head !== expectedHead) {
+    throw new Error(
+      `Existing closeout worktree HEAD ${head} does not match expected integration commit ${expectedHead}`,
+    );
+  }
+  const dirty = await queueCheckoutStatus(directory, "status", "--porcelain");
+  if (dirty) {
+    throw new Error(
+      "Existing closeout worktree is dirty and cannot be adopted",
+    );
+  }
+}
+
+/**
+ * Create a Nucleus-owned closeout Git worktree using the same workspaces root and
+ * volume placement check that task worktrees already use. Hosts that do not create
+ * Git worktrees natively (T3 Code, BB) call this and then register the directory.
+ */
+export async function createOwnedCloseoutWorktree(
+  placement: WorkspacePlacement,
+  dataDir: string,
+  spec: HostWorktreeWorkspaceSpec,
+): Promise<string> {
+  const workspacesRoot =
+    placement?.workspaceRoot ??
+    join(placement?.dataDir ?? dataDir, WORKSPACES_DIR);
+  const commonDir = await repoCommonDir(spec.source.cwd);
+  const directory = join(
+    workspaceRepoRoot(workspacesRoot, commonDir),
+    spec.source.worktreeSlug,
+  );
+  if (placement) placement.admit(directory);
+  mkdirSync(dirname(directory), { recursive: true });
+  if (existsSync(directory)) {
+    await proveOwnedCloseoutWorktree(
+      spec.source.cwd,
+      directory,
+      spec.source.branchName,
+      spec.source.baseBranch,
+    );
+  } else {
+    await git(
+      spec.source.cwd,
+      "worktree",
+      "add",
+      "-b",
+      spec.source.branchName,
+      directory,
+      spec.source.baseBranch,
+    );
+  }
+  return directory;
 }

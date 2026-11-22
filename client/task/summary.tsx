@@ -8,6 +8,7 @@ import { Pressable, Text, View } from "react-native";
 import { DetailSection, muted, row, type Colors } from "../controls";
 import type { Run, TaskDetail, TaskNext } from "../../shared/contracts";
 import { decisionAge } from "../../shared/pipeline-board";
+import { hostDisplayLabel } from "../../shared/host-outage";
 import {
   budgetBars,
   budgetNeedsAttention,
@@ -292,6 +293,21 @@ export function TaskSummaryBlock({
             </Text>
           ))}
       </View>
+      {/* A host outage the engine records beside an owner-facing stop (core/engine.ts):
+          the row shows only "on the host", so the detail names the host and since when. */}
+      {task.resolution.hostWait && wait.stop?.reason !== "host_unavailable" && (
+        <Text
+          accessibilityLabel={`Host wait: waiting on ${hostDisplayLabel(task.resolution.hostWait.hostId)} since ${task.resolution.hostWait.since}`}
+          style={{
+            color: c.foreground,
+            fontSize: typeScale.metadata.fontSize,
+            lineHeight: typeScale.metadata.lineHeight,
+          }}
+        >
+          Waiting on {hostDisplayLabel(task.resolution.hostWait.hostId)} ·{" "}
+          {decisionAge(task.resolution.hostWait.since)}
+        </Text>
+      )}
       {holds.map((hold) => (
         <Text
           key={hold.kind}

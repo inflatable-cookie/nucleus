@@ -526,10 +526,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   runs as an ordinary task, and the QA runs tab is gone.
 - **Needs you is one list** (Tom, 2026-11-21: "one list of cards, and make the cards
   obvious what they are"). Its header names the count and there are no section
-  headers. Each card draws its kind first, in its eyebrow: **Decision** (an agent
-  decision), **Hold** (a Nucleus-raised merge hold), **Lane** (a drained-lane prompt)
-  or **Task** (a task needing attention). Lists other than Needs you draw no kind label.
-  The list has one empty state, "Nothing here.", shown only when the total is zero.
+  headers. Each row's kind tile and line 1 say what it is (card anatomy, below). The
+  list has one empty state, "Nothing here.", shown only when the total is zero.
 - **The Leads filter** sits in the list's header row, after the item count. It offers
   only the tags on leads in the current scope, each with its count, and never the
   reserved `papercut` tag: a papercut-tagged lead is a papercut and sits in Papercuts,
@@ -588,19 +586,54 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   scrolls on its own, so the page never grows into one long scroll (Tom,
   2026-09-28). Leads and Papercuts page their cards, and Queue ends with its "…and N
   more" rows.
-- **Rows stay short, and a card's controls sit in its row** (nucleus#1511). A task row
-  keeps its project, its title, one status line and its chips: the line is the wait or
-  stop that moves the task next, else its progress, so the host wait reads once
-  ("Waiting on the host · 1m ago") without the host identity; an owner-facing stop
-  keeps its detail ahead of that wait on the same line. The routing sentence behind
-  a host choice belongs to the task detail, which names the host selection and its
-  reason; the row's accessible label keeps the full wording. A card with operator
-  controls (the drained lane's Close and Keep, the escalated merge hold's Release and
-  Keep) draws them inside its row's frame, below its content and outside the row's press
-  target, so a press on a control never opens the record too. Pressing a drained lane's
-  row opens that lane in Planning. The Leads and Papercuts lists hide the Lead and
-  Papercut kind chip, which would otherwise repeat the list on every row. Needs you
-  names each card's kind instead (above).
+- **Card anatomy: every card is a three-line row** (Tom, 2026-11-21: the cards were
+  "way too noisy right now and need redesigning"; nucleus#1515, which replaces the
+  nucleus#1511 row rules):
+  - A **kind tile** on the left: one fixed icon and colour per kind — task, decision,
+    hold prompt (merge or dispatch), drained lane, lead, papercut. The task tile does
+    not change with phase; the status dot and words carry the phase. Tile colours are
+    the theme's tone roles at low alpha.
+  - **Line 1:** for a task its reference (`#1072`), otherwise the kind in words
+    (Decision, Merge hold, Lane drained, Lead, Papercut); then the project by its
+    display name (a lane's or lead's projects; a decision's asking repository), with
+    the T3 project badge where matched, otherwise the folder icon; the age,
+    right-aligned (a stop, wait or hold's start, else the task's last change; a
+    decision's ask, a lane's escalation, a lead's or submission's creation). The
+    project group shrinks and clips as one unit so the age keeps its place: at most two
+    project marks, the rest as one "+N" count.
+  - **Line 2:** the title, up to two lines.
+  - **Line 3:** a coloured dot, the state in plain words and the single most useful
+    detail after a middle dot ("Working · running affected tests", "Needs attention ·
+    reviewer launch unconfirmed", "Waiting · on the host", "Checked · awaiting
+    approval"). The detail is the existing wait, stop or report wording, shortened,
+    never a raw ID. A declared wait names its state and next action, its owner in the
+    accessible name (Spec 043). A lead's state follows its current check first:
+    unchecked, then checks failed (even with an earlier approval kept), then approved
+    or awaiting approval.
+  - **Flags**, below, only for exceptions: a dispatch or merge hold, parked,
+    interactive, budget reached and the PR as a small flag. A hold flag is dropped only
+    when the status line was chosen from that fence (a dispatch hold, a held stop, a
+    declared merge-hold wait), never because other text mentions it. The PR flag is a
+    link that opens the pull request without opening the task; on the web board it is a
+    real anchor, so the keyboard opens it too. A normal task shows none.
+  - **Buttons** only where the row is the action: the hold prompt's Release and Keep
+    (with its reason) and the drained lane's Close lane and Keep. They and the flags
+    sit inside the row's frame, below its content and outside its press target, so a
+    press on a control or the PR link never opens the record too, and no control is
+    nested inside the row's button. Pressing a drained lane's row opens that lane
+    in Planning.
+  - **Detail only:** routing sentences, host identity and kind, profile names, host
+    waits beyond "on the host", attempt counts, report headlines beyond the status
+    line, prerequisite counts and promotion, a decision's choices, a lane's aim, and the
+    Lead and Papercut kind chips. The task detail's header carries the stop category,
+    a stop while paused, linked open decisions and, for an escalated hold, the
+    Nucleus-raised badge; its summary names a host outage recorded beside a stop (the
+    host and since when); a decision's Links name each task by reference, title and
+    project; a drained lane's Planning screen names its Nucleus-raised escalation. The
+    row's accessible name keeps the record's own title as written, the status with its
+    detail, and the wording the row shortens, with identifiers sanitized only in
+    operational text; like the row, it names a host wait and its age, never the host
+    or the exact time.
 - **Pending submissions** (Tom, 2026-09-27): a submitted brief or handoff whose
   operation has not yet created its task shows as a Queued card marked
   "submitting", so an accepted submission is never invisible. Brief-bearing leads
