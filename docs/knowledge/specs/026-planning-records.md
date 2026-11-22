@@ -426,6 +426,12 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   standing ruling still carries `relayed: true` with a note naming the standing
   ruling and the brief it covers, never a per-brief operator conversation that
   did not happen.
+- **Projects without a planner (Tom, 2026-11-22).** Any project planner may brief
+  and dispatch routine, in-scope tasks for a project that has no registered planner
+  ("Can we add into the skill approval for other planners to brief and dispatch
+  tasks on projects that don't have a planner?"). The dispatching planner is that
+  task's planner. Its note names this ruling and the project. Product or scope
+  changes for that project still go to the operator.
 - **Promote to task.** One action turns an approved lead version, or a papercut, into
   a task. It re-checks at promotion time, is atomic, and is idempotent on the source
   and the admitted version, digest and repository. The admitted approval retains

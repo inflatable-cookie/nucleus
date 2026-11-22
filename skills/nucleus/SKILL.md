@@ -208,7 +208,11 @@ planner decides whether to dispatch an ordinary in-scope brief (see
 changes, held-profile requests, releases and other explicitly reserved operator
 actions still need the operator. A relayed note under the standing ruling names
 that ruling and the brief it covers, never a per-brief conversation that did not
-happen; the check, digest, attribution and promotion gates still apply. A failed
+happen; the check, digest, attribution and promotion gates still apply. For a project
+with no registered planner (Northstar, for example), any project planner may brief and
+dispatch routine, in-scope work the same way (Tom, 2026-11-22). You become that task's
+planner, and your note names the 2026-11-22 ruling and the project. Its product or
+scope changes still go to Tom. A failed
 check returns `{lead}` with `check.message` and no approval or task. An existing
 same-title lead or task in that repository is returned without creating another
 or changing the lead; inspect an existing lead before deciding its next step.
