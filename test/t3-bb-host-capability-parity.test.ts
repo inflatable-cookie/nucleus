@@ -1345,3 +1345,94 @@ test("Unbound fleet sweep still delivers queued brief amendments and interrupts 
     "resumed cancellation interrupted active turn on the task host",
   );
 });
+
+test("BriefAmendmentDelivery prefers steerOrNotify over enqueueMessage when the host supports steering", async (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "ns-amend-steer-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const store = new Store(join(scratch, "queue.sqlite"));
+  t.after(() => store.close());
+
+  const hostId = "t3code:connected";
+  const steered: Array<{ id: string; messageId: string; text: string }> = [];
+  const enqueued: Array<{ id: string; messageId: string; text: string }> = [];
+  const adapter = {
+    steerOrNotify: async (id: string, messageId: string, text: string) => {
+      steered.push({ id, messageId, text });
+      return "delivered" as const;
+    },
+    enqueueMessage: async (id: string, messageId: string, text: string) => {
+      enqueued.push({ id, messageId, text });
+    },
+  } as unknown as Adapter;
+
+  const task = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Steered amendment task",
+      repoPath: "/synthetic/repo",
+      planningCommit: "e".repeat(40),
+      handoffPath: "/synthetic/handoff.md",
+      originAgentId: "origin",
+    }),
+    hostId,
+    "/synthetic/handoff.md",
+    "e".repeat(40),
+  );
+  store.update(task.id, {
+    phase: "working",
+    agentId: "thr-steer-worker",
+    briefVersions: [
+      {
+        version: 2,
+        text: "Updated brief text",
+        digest: `sha256:${"f".repeat(64)}`,
+        mediaType: "text/markdown",
+        pinnedAt: new Date().toISOString(),
+        reason: "clarification",
+      },
+    ],
+  });
+  store.event(
+    task.id,
+    "brief_amendment_delivery_intent",
+    JSON.stringify({
+      version: 2,
+      agentId: "thr-steer-worker",
+      hostId,
+      role: "worker",
+      messageId: `ns-brief-amendment-${task.id}-v2-worker`,
+    }),
+  );
+
+  const engineStub = {
+    store,
+    stopped: false,
+    adapter,
+    resolution: {
+      originHostAvailable: (candidate: string) => candidate === hostId,
+      withHost: async <T>(candidate: string, fn: () => Promise<T> | T) => {
+        assert.equal(candidate, hostId);
+        return await fn();
+      },
+    },
+  };
+
+  const amendments = new BriefAmendmentDelivery(engineStub as never);
+  await amendments.deliverPending();
+  assert.equal(steered.length, 1);
+  assert.equal(enqueued.length, 0);
+  assert.equal(steered[0]!.id, "thr-steer-worker");
+  assert.equal(
+    steered[0]!.messageId,
+    `ns-brief-amendment-${task.id}-v2-worker`,
+  );
+  assert.match(
+    steered[0]!.text,
+    /amended this task's Nucleus-held brief to version 2/,
+  );
+  assert.ok(
+    store
+      .eventsAll(task.id)
+      .some((event) => event.kind === "brief_amendment_delivered"),
+  );
+});
