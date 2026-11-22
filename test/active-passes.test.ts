@@ -9,12 +9,15 @@ import { Engine } from "../core/engine";
 import { enginePorts } from "../core/port-context";
 import {
   FINISHED_CATCH_UP_PAGE,
+  FRESH_FINISH_ATTEMPTS,
   HostPass,
   finishedCatchUpCursorKey,
 } from "../core/scheduling/host-pass";
 import type { Adapter } from "../core/host";
 import type { Task } from "../shared/contracts";
 import { fakeAdapter, submission } from "./support/fakes";
+import { finishedThreadCleanupKey } from "../core/store/store-core";
+import { HostOperationTimeoutError } from "../service/host-executor";
 
 /**
  * Spec 069 §4 (Tom, 2026-11-22): a pass's cost grows with active work, never with
@@ -88,6 +91,8 @@ function populate(store: Store, active: number, finished: number) {
  * written through the real funnels, and its stored row is copied under fresh
  * identities (task, submission, workspace and worker). Every copy is the exact
  * stored shape of a real closeout; the next open parses them into the projection.
+ * Its thread cleanup is complete, as settled history's is, and its identities sort
+ * before any fresh task's, so a cursor page over it never reaches a fresh finish.
  */
 function retainHistory(store: Store, count: number) {
   if (!count) return;
@@ -102,10 +107,19 @@ function retainHistory(store: Store, count: number) {
        '$.resolution.archivedWorkspaceIds', json_array(?))
      FROM tasks WHERE id=?`,
   );
+  const cleaned = store.db.prepare("INSERT INTO meta(key, value) VALUES(?, ?)");
+  store.setMeta(
+    finishedThreadCleanupKey(template.id),
+    new Date().toISOString(),
+  );
   store.db.exec("BEGIN");
   for (let i = 1; i < count; i++) {
-    const id = randomUUID();
+    const id = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
     const submissionId = randomUUID();
+    cleaned.run(
+      finishedThreadCleanupKey(id),
+      JSON.stringify(new Date().toISOString()),
+    );
     copy.run(
       id,
       submissionId,
@@ -137,13 +151,31 @@ function countingAdapter(calls: Record<string, number>, seen?: Loose) {
     beginHostPass: (tasks: readonly Task[]) =>
       void bump("beginHostPass.tasks", tasks.length),
     endHostPass: () => {},
-    reconcileTaskRow: async () => {},
+    reconcileTaskRow: async () => {
+      if (seen?.abortOnce) {
+        seen.abortOnce = false;
+        throw new HostOperationTimeoutError(
+          "thread.observe",
+          25,
+          new Promise(() => {}),
+        );
+      }
+    },
     rowSnoozeVisibility: async () => ({ kind: "clear" as const }),
     reconcileThreadTitles: async (tasks: readonly Task[]) =>
       void bump("reconcileThreadTitles.tasks", tasks.length),
-    reconcileFinishedParents: async (tasks: readonly Task[]) => {
+    reconcileFinishedParents: async (
+      tasks: readonly Task[],
+      lookup?: (taskId: string) => Task | null,
+    ) => {
       bump("reconcileFinishedParents.tasks", tasks.length);
       seen?.parents?.push(tasks.map((task) => task.id));
+      // The host's own open bindings, resolved through the pass's lookup.
+      seen?.resolved?.push(
+        [...(seen.bindings ?? [])].filter((taskId: string) =>
+          ["done", "cancelled"].includes(lookup?.(taskId)?.phase ?? ""),
+        ),
+      );
       return [];
     },
   }) as Loose;
@@ -265,7 +297,7 @@ test("a pass over 2,000 finished tasks costs what it costs over 200, and history
   );
 });
 
-test("the slow cursor visits all finished history a page at a time, persists across a restart, and a fresh finish is caught up at once", async (t) => {
+test("the slow cursor visits all finished history a page at a time, persists across a restart, and never skips a page on an aborted pass", async (t) => {
   const path = join(scratch(t), "queue.sqlite");
   const total = 2 * FINISHED_CATCH_UP_PAGE + 10;
   const seed = new Store(path);
@@ -276,6 +308,9 @@ test("the slow cursor visits all finished history a page at a time, persists acr
     .filter((task) => task.phase === "done")
     .map((task) => task.id)
     .sort();
+  // Settled history: its thread cleanup is complete, so nothing here is a fresh hint.
+  for (const id of expected)
+    seed.setMeta(finishedThreadCleanupKey(id), new Date().toISOString());
   seed.close();
 
   const open = () => {
@@ -287,55 +322,50 @@ test("the slow cursor visits all finished history a page at a time, persists acr
         /* closed by the roll below */
       }
     });
-    const seen = { parents: [] as string[][] };
+    const seen: Loose = { parents: [] as string[][] };
     const { engine } = engineFor(t, store, countingAdapter({}, seen));
     const pass = hostPassFor(engine);
     const run = () => engine.withHost(HOST, () => pass.run(HOST));
     return { store, engine, seen, run };
   };
+  const cursor = (store: Store) =>
+    store.getMeta(finishedCatchUpCursorKey(HOST));
 
   let service = open();
-  const first = await service.run();
+  await service.run();
   assert.deepEqual(
     service.seen.parents[0],
     expected.slice(0, FINISHED_CATCH_UP_PAGE),
     "the first page, in identity order",
   );
-  assert.deepEqual(
-    [...first.finishedCatchUp.keys()].sort(),
-    expected.slice(0, FINISHED_CATCH_UP_PAGE),
-    "thread cleanup is selected from the same page only",
-  );
   assert.equal(
-    service.store.getMeta(finishedCatchUpCursorKey(HOST)),
+    cursor(service.store),
     expected[FINISHED_CATCH_UP_PAGE - 1],
     "the cursor's position is durable",
   );
+
+  // A pass that a hung step aborts after reading its page does not move the cursor.
+  service.seen.abortOnce = true;
+  await service.run();
+  assert.equal(service.seen.abortOnce, false, "the row step aborted the pass");
+  assert.equal(cursor(service.store), expected[FINISHED_CATCH_UP_PAGE - 1]);
 
   // A service roll resumes from the recorded position, not from the start.
   await service.engine.stop();
   service.store.close();
   service = open();
-  const second = await service.run();
+  await service.run();
   assert.deepEqual(
     service.seen.parents[0],
     expected.slice(FINISHED_CATCH_UP_PAGE, 2 * FINISHED_CATCH_UP_PAGE),
+    "the page the aborted pass read is the one read again",
   );
-  assert.deepEqual(
-    [...second.finishedCatchUp.keys()].sort(),
-    expected.slice(FINISHED_CATCH_UP_PAGE, 2 * FINISHED_CATCH_UP_PAGE),
-  );
-  const third = await service.run();
+  await service.run();
   assert.deepEqual(
     service.seen.parents[1],
     expected.slice(2 * FINISHED_CATCH_UP_PAGE),
   );
-  assert.equal(third.finishedCatchUp.size, 10);
-  assert.equal(
-    service.store.getMeta(finishedCatchUpCursorKey(HOST)),
-    "",
-    "the last page wraps the cursor",
-  );
+  assert.equal(cursor(service.store), "", "the last page wraps the cursor");
   await service.run();
   assert.deepEqual(
     service.seen.parents[2],
@@ -343,30 +373,100 @@ test("the slow cursor visits all finished history a page at a time, persists acr
     "and the next pass starts over",
   );
 
-  // A task that finishes now is caught up on the very next pass, wherever the
-  // cursor is; the hint is taken once.
+  // A task that finishes now is caught up on the very next pass, beside the page.
   const running = service.store
     .tasks()
     .find((task) => task.phase === "working")!;
   finish(service.store, running);
-  await service.run();
-  assert.ok(
-    service.seen.parents[3]!.includes(running.id),
-    "the fresh finish is in this pass",
-  );
-  assert.ok(
-    service.seen.parents[3]!.length <= 2 * FINISHED_CATCH_UP_PAGE,
-    "a pass reads at most the fresh finishes and one page",
-  );
-  const cursor = expected[FINISHED_CATCH_UP_PAGE - 1]!;
+  const fresh = await service.run();
+  const after = expected[FINISHED_CATCH_UP_PAGE - 1]!;
   const page = [...expected, running.id]
     .sort()
-    .filter((id) => id > cursor)
+    .filter((id) => id > after)
     .slice(0, FINISHED_CATCH_UP_PAGE);
   assert.deepEqual(
     new Set(service.seen.parents[3]),
     new Set([running.id, ...page]),
-    "the fresh finish, then the cursor's next page, which now includes it in order",
+    "the fresh finish, then the cursor's next page",
+  );
+  assert.deepEqual(
+    [...fresh.finishedCatchUp.keys()],
+    [running.id],
+    "only the fresh finish still owes thread cleanup",
+  );
+});
+
+test("fresh finishes keep a prompt catch-up across an aborted pass and a restart, and parents come from the host's open bindings", async (t) => {
+  const path = join(scratch(t), "queue.sqlite");
+  const seed = new Store(path);
+  seed.setMeta("paused", false);
+  // Settled history whose identities sort before every fresh task: no cursor page
+  // in this test reaches a fresh finish, so only its hint can.
+  retainHistory(seed, 200);
+  const [a, b, c] = ["A", "B", "C"].map((title) =>
+    launch(seed, insert(seed, title)),
+  ) as [Task, Task, Task];
+  // A finishes just before the service rolls.
+  finish(seed, a);
+  seed.close();
+
+  const store = new Store(path);
+  t.after(() => store.close());
+  const seen: Loose = {
+    parents: [] as string[][],
+    resolved: [] as string[][],
+    bindings: new Set([a.id, b.id, c.id]),
+  };
+  const { engine } = engineFor(t, store, countingAdapter({}, seen));
+  const pass = hostPassFor(engine);
+  const run = () => engine.withHost(HOST, () => pass.run(HOST));
+
+  const first = await run();
+  assert.ok(
+    first.finishedCatchUp.has(a.id),
+    "a finish from before the roll still gets its thread cleanup on the first pass",
+  );
+  assert.deepEqual(
+    seen.resolved[0],
+    [a.id],
+    "its parent is found from the host's own binding, whatever the pass listed",
+  );
+
+  // B finishes, and the next pass is aborted by a hung step after reading its hints.
+  finish(store, b);
+  seen.abortOnce = true;
+  const aborted = await run();
+  assert.equal(seen.abortOnce, false, "the row step aborted the pass");
+  assert.equal(
+    aborted.finishedCatchUp.size,
+    0,
+    "the aborted pass selected nothing",
+  );
+  const next = await run();
+  assert.ok(
+    next.finishedCatchUp.has(b.id),
+    "the hint survived the aborted pass",
+  );
+  assert.deepEqual(new Set(seen.resolved.at(-1)), new Set([a.id, b.id]));
+
+  // B's cleanup completes, so it leaves at once. A's never does: it keeps its prompt
+  // place for its attempts (two completed passes so far), then waits for the cursor.
+  store.setMeta(finishedThreadCleanupKey(b.id), new Date().toISOString());
+  const later = [];
+  for (let i = 0; i < 3; i++) later.push(await run());
+  assert.deepEqual(
+    later.map((result) => result.finishedCatchUp.has(a.id)),
+    Array.from({ length: 3 }, (_, i) => i < FRESH_FINISH_ATTEMPTS - 2),
+    "A's hint is spent after its attempts",
+  );
+  assert.ok(
+    later.every((result) => !result.finishedCatchUp.has(b.id)),
+    "a completed cleanup is never selected again",
+  );
+  assert.deepEqual(
+    new Set(seen.resolved.at(-1)),
+    new Set([a.id, b.id]),
+    "both parents stay owed from the bindings whatever the hints say",
   );
 });
 

@@ -242,12 +242,21 @@ live tasks per host, finished tasks per host in identity order, fresh finishes a
 owner stops, maintained on every task write and rebuilt when the projection is),
 never `store.tasks()`. Observation reads the host's live set; rows, titles and
 hidden-row reads cover the host's active tasks (the ones that have a thread).
-Finished history goes to a slow cursor: each pass takes the tasks that finished
-since the last pass and one page (`FINISHED_CATCH_UP_PAGE`) from the cursor
-persisted in `finishedCatchUpCursor:<host>`, and only those reach the finished-parent
-archive, finished rows, hidden-row clearing, title catch-up and the finished-thread
-cleanup selection, so every finished task is revisited once the cursor wraps and no
-pass reads all of them. The sweep runs that page's thread-cleanup catch-up in its
+The finished-parent archive is selected from the host's own open parent
+bindings, each resolved through the store's single-task read, so it never depends
+on which finished tasks a pass lists and survives a service roll. Other finished
+history goes to a slow cursor: each pass takes up to one page
+(`FINISHED_CATCH_UP_PAGE`) of fresh finishes, then one page from the cursor
+persisted in `finishedCatchUpCursor:<host>`, and only those reach finished rows,
+hidden-row clearing, title catch-up and the finished-thread cleanup selection. A
+fresh finish (from the write that finishes it, or from one read of every task still
+owing thread cleanup when the service starts) keeps its place until its cleanup is
+no longer owed or it has had `FRESH_FINISH_ATTEMPTS` passes. The cursor advances,
+and hints are spent, only when the pass reaches its end. After that, a failed thread
+cleanup on an older finished task is retried only when the cursor comes round again,
+about (finished tasks on the host ÷ page) passes later: roughly 40 passes, or 13
+minutes at the 20-second tick, for 1,000 finished tasks. The task's own closeout
+quantum remains the main cleanup path. The sweep runs that page's thread-cleanup catch-up in its
 own bounded step on each task's lane, outside the live window, so a page that
 changes every pass never resets the window's cursor. A host that is down or not
 yet read is not walked again in the same pass. A host step that hangs or fails

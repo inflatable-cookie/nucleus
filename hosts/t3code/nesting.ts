@@ -814,6 +814,7 @@ export class T3Nesting {
    */
   async archiveFinishedParents(
     tasks: readonly Task[],
+    lookup?: (taskId: string) => Task | null,
   ): Promise<readonly ParentArchiveWait[]> {
     const state = this.core.state.read();
     const bindings = Object.entries(state.parents ?? {}).filter(
@@ -821,16 +822,22 @@ export class T3Nesting {
     );
     if (!bindings.length) return [];
     this.core.requireConnection();
-    const terminal = new Map(
-      tasks
-        .filter(
-          (task) =>
-            task.hostId === this.core.hostId() &&
-            terminalTask(task) &&
-            !isDispositionActive(task),
-        )
-        .map((task) => [task.id, task]),
-    );
+    // The obligation is the open binding itself (Spec 069 §4): each one's task is
+    // resolved from the pass's list or, when the caller gives one, its lookup, so
+    // a pass costs one read per open binding, never one per finished task, and a
+    // finish the batch did not reach is still owed on the next pass.
+    const known = new Map(tasks.map((task) => [task.id, task]));
+    const terminal = new Map<string, Task>();
+    for (const [taskId] of bindings) {
+      const task = known.get(taskId) ?? lookup?.(taskId) ?? null;
+      if (
+        task &&
+        task.hostId === this.core.hostId() &&
+        terminalTask(task) &&
+        !isDispositionActive(task)
+      )
+        terminal.set(taskId, task);
+    }
     if (!terminal.size) return [];
     // One thread claimed by two task records is never archived on a guess: the binding
     // pair is not a positively proved identity (nucleus#1459 review).

@@ -420,8 +420,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     ) {
       return this.native.reconcileThreadTitles(tasks, rows);
     }
-    reconcileFinishedParents(tasks: readonly Task[]) {
-      return this.native.reconcileFinishedParents(tasks);
+    reconcileFinishedParents(
+      tasks: readonly Task[],
+      lookup?: (taskId: string) => Task | null,
+    ) {
+      return this.native.reconcileFinishedParents(tasks, lookup);
     }
     agentTimelinePage(id: string, limit?: number) {
       return this.native.agentTimelinePage(id, limit);
