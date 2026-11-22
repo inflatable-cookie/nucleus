@@ -105,3 +105,102 @@ test("the web board renders the PR flag as a keyboard-activatable anchor to the 
   assert.match(anchor!, /aria-label="Pull request #41, [^"]*, open on GitHub"/);
   assert.match(html, />#41</, "the flag still reads its number");
 });
+
+/** The row module, bundled the same way, for a complete task row. */
+async function webRow() {
+  const result = await build({
+    stdin: {
+      contents:
+        'export { TaskCard, BoardCardVariantContext } from "./client/board/cards";',
+      resolveDir: root,
+      loader: "ts",
+    },
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    write: false,
+    jsx: "automatic",
+    logLevel: "silent",
+    plugins: [shellStub],
+    external: [
+      "react",
+      "react/jsx-runtime",
+      "react-dom",
+      "react-native-web",
+      "@tanstack/react-query",
+    ],
+    alias: { "react-native": "react-native-web" },
+  });
+  const compiled = { exports: {} as Record<string, unknown> };
+  new Function("require", "module", "exports", result.outputFiles[0]!.text)(
+    createRequire(import.meta.url),
+    compiled,
+    compiled.exports,
+  );
+  return compiled.exports as {
+    TaskCard: (props: unknown) => React.ReactElement | null;
+    BoardCardVariantContext: React.Context<string>;
+  };
+}
+
+test("in a complete web row, the PR link and the task button are separate controls, never nested", async () => {
+  const { TaskCard, BoardCardVariantContext } = await webRow();
+  const { taskSummarySchema } = await import("../shared/contracts");
+  const { JSDOM } = await import("jsdom");
+  const url = "https://github.com/owner/app/pull/41";
+  const task = taskSummarySchema.parse({
+    id: "row-task",
+    title: "Row with a pull request",
+    repoPath: "/app",
+    version: 1,
+    number: 41,
+    reference: null,
+    entrypoint: "worker",
+    phase: "reviewing",
+    reason: "Reviewer reading the diff",
+    held: false,
+    dependsOn: [],
+    queuePriority: 0,
+    prUrl: url,
+    resolution: {},
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      BoardCardVariantContext.Provider,
+      { value: "row" },
+      React.createElement(
+        TaskCard as never,
+        {
+          task,
+          selected: false,
+          onPress: () => {},
+          prState: "OPEN",
+          c: dark,
+          board: true,
+        } as never,
+      ),
+    ),
+  );
+  const { document } = new JSDOM(html).window;
+  const link = document.querySelector(`a[href="${url}"]`);
+  assert.ok(link, "the row renders the PR flag as an anchor");
+  const button = document.querySelector(
+    '[role="button"][aria-label^="app, Row with a pull request"]',
+  );
+  assert.ok(button, "the row renders its task button");
+  assert.equal(
+    button!.contains(link),
+    false,
+    "the link is not inside the task button",
+  );
+  assert.equal(
+    link!.closest('[role="button"]'),
+    null,
+    "no button wraps the link",
+  );
+  assert.equal(
+    button!.querySelector("a, [href]"),
+    null,
+    "the task button holds no link",
+  );
+});

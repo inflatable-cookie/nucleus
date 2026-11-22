@@ -617,9 +617,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     link that opens the pull request without opening the task; on the web board it is a
     real anchor, so the keyboard opens it too. A normal task shows none.
   - **Buttons** only where the row is the action: the hold prompt's Release and Keep
-    (with its reason) and the drained lane's Close lane and Keep. They sit inside the
-    row's frame, below its content and outside its press target, so a press on a
-    control never opens the record too. Pressing a drained lane's row opens that lane
+    (with its reason) and the drained lane's Close lane and Keep. They and the flags
+    sit inside the row's frame, below its content and outside its press target, so a
+    press on a control or the PR link never opens the record too, and no control is
+    nested inside the row's button. Pressing a drained lane's row opens that lane
     in Planning.
   - **Detail only:** routing sentences, host identity and kind, profile names, host
     waits beyond "on the host", attempt counts, report headlines beyond the status

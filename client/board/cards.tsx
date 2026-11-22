@@ -369,20 +369,6 @@ export const BoardCard = React.memo(function BoardCard({
           <StatusLine status={status} c={c} />
         </View>
       ) : null}
-      {flags ? (
-        // Presses pass through the flags to the row, except on the PR link.
-        <View
-          pointerEvents="box-none"
-          style={{
-            ...row,
-            gap: space.xxs,
-            flexWrap: "wrap",
-            marginTop: space.xxs / 2,
-          }}
-        >
-          {flags}
-        </View>
-      ) : null}
     </View>
   );
   const body = (
@@ -397,10 +383,24 @@ export const BoardCard = React.memo(function BoardCard({
       {content}
     </View>
   );
-  // Buttons line up under the content, past the tile.
+  // Flags and buttons line up under the content, past the tile.
   const actionInset = kind ? cardRow.tile + space.sm : 0;
+  // The flags sit outside the row's press target, like its buttons, so the PR link is
+  // never nested inside the task's button: each is its own focusable control.
+  const flagsRow = flags ? (
+    <View
+      style={{
+        ...row,
+        gap: space.xxs,
+        flexWrap: "wrap",
+      }}
+    >
+      {flags}
+    </View>
+  ) : null;
+  const below = Boolean(flags) || actions !== undefined;
   // A row keeps its divider, padding and accent edge on the outer frame, so a
-  // card's own controls land inside the row instead of under its divider.
+  // card's own flags and controls land inside the row instead of under its divider.
   if (variant === "row")
     return (
       <View
@@ -419,29 +419,29 @@ export const BoardCard = React.memo(function BoardCard({
           onPress={onPress}
           style={{
             paddingHorizontal: space.md,
-            paddingVertical: space.sm,
+            paddingTop: space.sm,
+            paddingBottom: below ? space.xxs : space.sm,
           }}
         >
           {body}
         </Pressable>
-        {actions !== undefined && (
+        {below && (
           <View
             style={{
+              gap: space.xs,
               paddingLeft: space.md + actionInset,
               paddingRight: space.md,
               paddingBottom: space.sm,
             }}
           >
+            {flagsRow}
             {actions}
           </View>
         )}
       </View>
     );
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={onPress}
+    <View
       style={{
         gap: space.xs,
         padding: board ? space.sm : space.md,
@@ -451,11 +451,20 @@ export const BoardCard = React.memo(function BoardCard({
         backgroundColor: c.surface1,
       }}
     >
-      {body}
-      {actions !== undefined && (
-        <View style={{ paddingLeft: actionInset }}>{actions}</View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        onPress={onPress}
+      >
+        {body}
+      </Pressable>
+      {below && (
+        <View style={{ gap: space.xs, paddingLeft: actionInset }}>
+          {flagsRow}
+          {actions}
+        </View>
       )}
-    </Pressable>
+    </View>
   );
 });
 /**

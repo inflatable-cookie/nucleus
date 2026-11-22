@@ -1799,6 +1799,26 @@ test("a task row in the inbox list shows its T3 project badge from its own host,
 /** A node's whole visible text, and whether it holds a node a predicate matches. */
 const nodeText = (node: HostNode | string): string =>
   typeof node === "string" ? node : node.children.map(nodeText).join(" ");
+/**
+ * The row frame around a row's press target (nucleus#1515): the task button and, beside
+ * it, the row's flags and controls, which sit outside the button.
+ */
+const rowFrame = (
+  tree: { ofType(type: string): HostNode[] },
+  label: RegExp,
+): HostNode | undefined =>
+  tree
+    .ofType("View")
+    .find(
+      (node) =>
+        node.props.style?.borderLeftWidth === 2 &&
+        node.children.some(
+          (child) =>
+            typeof child !== "string" &&
+            child.type === "Pressable" &&
+            label.test(String(child.props.accessibilityLabel ?? "")),
+        ),
+    );
 const nodeHas = (
   node: HostNode | string,
   match: (node: HostNode) => boolean,
@@ -2482,12 +2502,19 @@ test("every card kind draws the three-line row, with flags only for exceptions a
         "the accessible label keeps the title and the status",
       );
 
-      // The PR is a small flag after the status line.
-      const pr = row(/^App, with-pr,/);
+      // The PR is a small flag after the status line, outside the task button, so the
+      // link and the button are separate focusable controls.
+      const prButton = row(/^App, with-pr,/);
+      const pr = rowFrame(tree.raw, /^App, with-pr,/)!;
+      assert.ok(pr, "the row frame holds the button and its flags");
       assert.match(
         nodeText(pr),
         /In review\s+· Reviewer reading the diff\s+#39\s*$/,
         "the PR rides as the one flag",
+      );
+      assert.ok(
+        !nodeHas(prButton, (child) => child.props.accessibilityRole === "link"),
+        "the PR link is not nested inside the task button",
       );
       assert.ok(
         nodeHas(pr, (child) =>
@@ -2676,7 +2703,8 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     );
 
     // A host wait wins the status line, so the dispatch hold stays visible as a flag.
-    const away = tree.query(/^App, held-and-away,/) as HostNode;
+    tree.query(/^App, held-and-away,/);
+    const away = rowFrame(tree.raw, /^App, held-and-away,/)!;
     assert.match(nodeText(away), /Waiting\s+· on the host/);
     assert.match(
       nodeText(away),
@@ -2718,7 +2746,8 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     );
 
     // A live fence keeps its flag even when the report headline mentions it.
-    const fenced = tree.query(/^App, fenced-working,/) as HostNode;
+    tree.query(/^App, fenced-working,/);
+    const fenced = rowFrame(tree.raw, /^App, fenced-working,/)!;
     assert.match(
       nodeText(fenced),
       /Working\s+· Dispatch held was discussed with the planner\s+Dispatch held\s*$/,
