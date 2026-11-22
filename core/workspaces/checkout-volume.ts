@@ -12,10 +12,12 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   getLocalWorkspacePlacement,
+  getWorkPlacement,
   getWorkRoot,
   getWorkStorage,
   readWorkVolume,
   validSubpathInsideMount,
+  type WorkPlacement,
 } from "./work-root.mjs";
 import { defaultDataDir } from "../../shared/service/default-data-dir";
 
@@ -43,9 +45,13 @@ function isLiveDataDir(dataDir: string): boolean {
   }
 }
 
-/** Private Queue data directories never select the live checkout roots. */
-export function liveCheckoutDataDir(dataDir: string): string | null {
-  return isLiveDataDir(dataDir) ? join(getWorkRoot(), "queue") : null;
+/**
+ * The live store's own work-volume placement, or null for a private data
+ * directory (a fixture or a `NUCLEUS_DATA_HOME` instance), whose files stay in
+ * its data directory.
+ */
+export function liveWorkPlacement(dataDir: string): WorkPlacement | null {
+  return isLiveDataDir(dataDir) ? getWorkPlacement(dataDir) : null;
 }
 
 /** Live checkout placement, separating the work-volume mount from local task-workspace roots. */
@@ -99,10 +105,18 @@ export function assertCheckoutAvailable(
   } = {},
 ): void {
   try {
-    const local =
+    const placement =
       options.mount === undefined && options.scope !== "intake"
-        ? getLocalWorkspacePlacement()
+        ? getWorkPlacement()
         : null;
+    const local = placement
+      ? {
+          workRoot: placement.workRoot,
+          ...(placement.volumeId ? { volumeId: placement.volumeId } : {}),
+          activeRoot: placement.worktreesRoot,
+          retainedRoots: placement.retainedRoots,
+        }
+      : null;
     const mount = options.mount ?? local?.workRoot ?? getWorkRoot();
     const mountStat = proveWorkRoot(
       mount,
@@ -144,6 +158,16 @@ export function assertCheckoutAvailable(
         )
       : (local?.retainedRoots ?? []);
     const components = [join(mount, "queue"), queueWorkspaces, queueProjectQa];
+    if (placement) {
+      // The archive and scratch classes are proved too, so a redirected
+      // `archives` or `scratch` level refuses before any backup or run writes there.
+      components.push(
+        placement.backupRoot,
+        placement.projectQaRoot,
+        placement.scratchRoot,
+        placement.custodianRoot,
+      );
+    }
     const addAncestors = (candidate: string) => {
       const rel = relative(mount, candidate);
       if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
@@ -163,6 +187,14 @@ export function assertCheckoutAvailable(
           queueProjectQa,
           activeRoot,
           ...retainedRoots,
+          ...(placement
+            ? [
+                placement.backupRoot,
+                placement.projectQaRoot,
+                placement.scratchRoot,
+                placement.custodianRoot,
+              ]
+            : []),
         ]),
       ];
       const matchedRoot = allowedRoots.find((root) => {
@@ -180,6 +212,64 @@ export function assertCheckoutAvailable(
         );
       addAncestors(options.target);
     }
+    proveCheckoutComponents(mountStat, components);
+  } catch (error) {
+    throw checkoutUnavailable(error);
+  }
+}
+
+/**
+ * Prove the configured work volume and every existing component of each
+ * work-volume class root (worktrees, backups, QA history, run scratch, custodian
+ * records) before a write. A class root's own missing leaf is allowed: its
+ * creator makes it after this proof, never before. A redirected component, a
+ * mismatched pin or an absent volume refuses without falling back to internal
+ * storage.
+ */
+export function assertWorkPlacementAvailable(
+  placement: Pick<
+    WorkPlacement,
+    | "workRoot"
+    | "volumeId"
+    | "worktreesRoot"
+    | "backupRoot"
+    | "projectQaRoot"
+    | "scratchRoot"
+    | "custodianRoot"
+    | "retainedRoots"
+  >,
+  options: {
+    observe?: (mount: string) => CheckoutVolumeInfo;
+    read?: (mount: string) => CheckoutVolumeInfo;
+  } = {},
+): void {
+  try {
+    const mountStat = proveWorkRoot(
+      placement.workRoot,
+      placement.volumeId,
+      options.observe,
+      options.read,
+    );
+    const components: string[] = [];
+    const addAncestors = (candidate: string) => {
+      const rel = relative(placement.workRoot, candidate);
+      if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+        return;
+      let path = placement.workRoot;
+      for (const part of rel.split(sep)) {
+        path = join(path, part);
+        components.push(path);
+      }
+    };
+    for (const root of [
+      placement.worktreesRoot,
+      placement.backupRoot,
+      placement.projectQaRoot,
+      placement.scratchRoot,
+      placement.custodianRoot,
+      ...placement.retainedRoots,
+    ])
+      addAncestors(root);
     proveCheckoutComponents(mountStat, components);
   } catch (error) {
     throw checkoutUnavailable(error);

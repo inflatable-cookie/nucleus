@@ -288,10 +288,16 @@ test("mixed-root cutover and restart: old task resumes, prepared path binds, new
     return volumeInfo(targetMount, volumeUuid);
   };
 
-  // Phase 1: Pre-cutover settings (workRoot only -> <mount>/queue/workspaces).
+  // Phase 1: Pre-cutover settings, when <mount>/queue/workspaces was the active
+  // root. A current install writes that path explicitly; the default is now
+  // <mount>/worktrees/nucleus (nucleus#1526).
   writeFileSync(
     join(data, "settings.json"),
-    JSON.stringify({ workRoot: mount, workVolumeId: "stash-uuid" }),
+    JSON.stringify({
+      workRoot: mount,
+      workVolumeId: "stash-uuid",
+      localWorkspaceRoot: join(mount, "queue", "workspaces"),
+    }),
   );
   initializeWorkRoot(data, {});
   const prePlacement = getLocalWorkspacePlacement(data, {});
@@ -653,6 +659,9 @@ test("mixed-root cutover and restart: old task resumes, prepared path binds, new
     JSON.stringify({
       workRoot: mount,
       workVolumeId: "stash-uuid",
+      // Rollback names the retired root explicitly: removing the setting returns
+      // to the current portable default, <mount>/worktrees/nucleus.
+      localWorkspaceRoot: join(mount, "queue", "workspaces"),
       retainedWorkspaceRoots: [newWorkspaceRoot],
     }),
   );

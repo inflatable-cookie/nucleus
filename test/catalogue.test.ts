@@ -20,6 +20,7 @@ const READ_ONLY_METHODS = new Set([
   "host.run.board",
   "queue.snapshot",
   "backup.list",
+  "queue.work-storage",
   "queue.ui-snapshot",
   "queue.queued-page",
   "lane.task-page",

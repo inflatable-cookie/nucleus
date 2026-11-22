@@ -64,10 +64,20 @@ export interface VolumeStat {
 }
 
 /**
- * Spec 028: Queue's one backup directory. It is on the configured work root, which is
- * not a consumer prune root, and it is the only place a snapshot is written.
+ * Spec 028: Queue's one backup directory. It is the configured `backupRoot` on the
+ * work volume, which is not a consumer prune root, and it is the only place a new
+ * snapshot is written.
  */
 export function liveBackupDir(): string;
+/** The retired `<workRoot>/queue/backups` location an existing install still reads. */
+export function legacyLiveBackupDir(): string;
+/** Every location the live backup set is read from: configured first, then the retired one. */
+export function liveBackupReadDirs(placement?: {
+  backupRoot: string;
+  retired: { backupRoot?: string };
+}): string[];
+/** The newest verified scheduled snapshot across every live backup location, or null. */
+export function newestLiveScheduledSnapshotAt(dirs?: string[]): number | null;
 /** The live store's path, so a refusal can name the only store the live set holds. */
 export function liveStorePath(): string;
 /** True for the one data directory whose backups use the configured work root. */
@@ -80,11 +90,24 @@ export function volumeRootFor(dir: string): string | null;
 export function isStorageUnavailable(error: unknown): boolean;
 /** Require an external volume root to be a mounted directory, not an ordinary local one. */
 export function assertBackupVolume(root: string, stat?: (path: string) => VolumeStat): void;
+/**
+ * Prove every existing level from the work root down to the live backup directory
+ * is a real directory on the mount's own device. An absent work root answers
+ * `false` and is not a fault (an unpinned install creates it with the directory);
+ * a redirected level or a non-directory root throws.
+ */
+export function assertLiveBackupComponents(workRoot: string, backupRoot: string, options?: {
+  stat?: (path: string) => VolumeStat;
+  lstat?: (path: string) => { dev: number | bigint; isDirectory(): boolean; isSymbolicLink(): boolean };
+  realpath?: (path: string) => string;
+}): boolean;
 /** Whether the backup directory is usable right now, and why not. */
 export function backupDirState(dir: string, volumeRoot?: string | null): { available: boolean; error: string | null };
 
 /** The verified snapshots in the one backup directory, and why the last snapshot failed. */
 export function listBackups(dir: string, dataDir?: string): BackupList;
+/** The live backup listing, merged with the retired location while it still holds snapshots. */
+export function listLiveBackups(dataDir: string, dirs?: string[]): BackupList;
 /** The durable status a listing and the board's snapshot health read, kept beside the store. */
 export function readBackupStatus(dataDir: string): BackupStatus;
 /** Decompress a snapshot in a stream and require the digest of the verified bytes. */

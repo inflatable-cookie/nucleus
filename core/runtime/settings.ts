@@ -32,12 +32,20 @@ import type { CapacityChangeJournal } from "../dispatch/capacity-changes";
 import {
   capacityWriteRefusalMessage,
   capacityWriteSurface,
+  workStorageWriteRefusalMessage,
 } from "../../shared/capacity-authority";
+import type { WorkStorageInput } from "../../shared/schema/work-storage";
+import {
+  readWorkStorage,
+  saveWorkStorage as persistWorkStorage,
+} from "../workspaces/work-storage";
 /** Meta key prefix of the stored host catalog, one per host and directory (nucleus#970). */
 const HOST_CATALOG_META_PREFIX = "hostCatalog:";
 
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface SettingsContext {
+  /** The data directory whose `settings.json` this runtime reads and writes. */
+  readonly dataDir: string;
   store: Store;
   engine: Pick<Engine, "wake" | "resumePausedStops"> &
     Partial<
@@ -376,6 +384,21 @@ export class RuntimeSettings {
     const result = this.context.capacityChanges.apply(input, surface);
     if (result.changed) void this.context.wakeAndSettlePostBootstrapTimeout();
     return { ok: true as const };
+  }
+
+  /** Settings → Storage: the resolved work-volume placement (nucleus#1526). */
+  workStorage() {
+    return readWorkStorage({ dataDir: this.context.dataDir });
+  }
+
+  async saveWorkStorage(
+    input: WorkStorageInput,
+    _accepted?: unknown,
+    context?: { via?: string | null },
+  ) {
+    if (!capacityWriteSurface(context?.via))
+      throw new Error(workStorageWriteRefusalMessage());
+    return persistWorkStorage(input, { dataDir: this.context.dataDir });
   }
 
   async configureProjectDispatchLimit(

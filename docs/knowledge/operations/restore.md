@@ -1,6 +1,13 @@
 # Restore the Nucleus store
 
-Use a verified `.sqlite.gz` snapshot from `<work-root>/queue/backups` for the live store; a private `NUCLEUS_DATA_HOME` instance or fixture uses its own `<data dir>/backups/`. The data directory is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
+Use a verified `.sqlite.gz` snapshot from the configured backup location for the
+live store: `backupRoot` in `settings.json`, the `NUCLEUS_BACKUP_ROOT` override, or
+the portable default `<work-root>/archives/nucleus-backups/`. A private
+`NUCLEUS_DATA_HOME` instance or fixture uses its own `<data dir>/backups/`. The data
+directory is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set. An existing install whose
+snapshots are still in `<work-root>/queue/backups/` keeps being listed there until
+those files are moved, so both locations are valid restore sources; the live
+**Storage** page shows where new snapshots go.
 
 Work placement comes from `workRoot` in `settings.json` or the
 `NUCLEUS_WORK_ROOT` environment override. A fresh install uses a portable
@@ -8,7 +15,8 @@ root at `~/.nucleus/work`. Optional `workVolumeId` (or
 `NUCLEUS_WORK_VOLUME_ID`) pins a volume. Existing mount-rooted records adopt
 their common root and its observed volume ID once, preserving the guard. If that volume is away,
 `backup.list` reports it unavailable; no backup falls back to another drive.
-Retired paths outside the active placement are never read or listed.
+Retired locations outside the active placement are never read or listed, except
+the backup and QA locations named above while their files are still there.
 
 1. Run `paseo plugin disable nucleus`. Wait for the Nucleus service to stop.
    Do not restore while it owns the store.

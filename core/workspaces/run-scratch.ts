@@ -1,10 +1,14 @@
-import type { RunScratchPlacement } from '../host/types';
-export type { RunScratchPlacement } from '../host/types';
+import type { RunScratchPlacement } from "../host/types";
+export type { RunScratchPlacement } from "../host/types";
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { lstatSync, realpathSync } from "node:fs";
-import { createCheckoutScratchDirectory, removeCheckoutRunScratchDirectory, type CheckoutVolumeInfo } from "./checkout-volume";
-import { getWorkRoot } from "./work-root.mjs";
+import {
+  createCheckoutScratchDirectory,
+  removeCheckoutRunScratchDirectory,
+  type CheckoutVolumeInfo,
+} from "./checkout-volume";
+import { getWorkPlacement, getWorkRoot } from "./work-root.mjs";
 
 /**
  * Queue #535 (papercut 5ac8ffb0): every Queue-launched run gets its own TMPDIR
@@ -26,14 +30,28 @@ import { getWorkRoot } from "./work-root.mjs";
 export const RUN_SCRATCH_NAMESPACE = "nucleus";
 const SCRATCH_NAMESPACE_SHAPE = /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$/;
 
-export function repositoryScratchNamespace(repository: string | null | undefined, override?: string | null): string {
+export function repositoryScratchNamespace(
+  repository: string | null | undefined,
+  override?: string | null,
+): string {
   if (override !== undefined && override !== null) {
-    if (!SCRATCH_NAMESPACE_SHAPE.test(override)) throw new Error("Repository scratch namespace is invalid");
+    if (!SCRATCH_NAMESPACE_SHAPE.test(override))
+      throw new Error("Repository scratch namespace is invalid");
     return override;
   }
   const identity = (repository ?? "").trim();
-  const name = identity.split(/[\\/]/).filter(Boolean).at(-1)?.replace(/\\.git$/i, "")?.toLowerCase() || "repository";
-  const safe = name.replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 31).replace(/-+$/g, "");
+  const name =
+    identity
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .at(-1)
+      ?.replace(/\\.git$/i, "")
+      ?.toLowerCase() || "repository";
+  const safe = name
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 31)
+    .replace(/-+$/g, "");
   return SCRATCH_NAMESPACE_SHAPE.test(safe) ? safe : "repository";
 }
 
@@ -42,9 +60,18 @@ export function repositoryScratchNamespace(repository: string | null | undefined
  * on purpose: macOS caps a Unix socket path at 104 bytes. Test fixtures use
  * short hash-named directories directly under TMPDIR so the longest repository
  * namespace still leaves room for the socket leaf.
+ *
+ * `scratchRoot` in `settings.json` (or `NUCLEUS_SCRATCH_ROOT`) names Nucleus's
+ * own scratch root; its portable default is `<workRoot>/scratch/nucleus`. A
+ * repository-scoped namespace keeps its established `<workRoot>/scratch/<namespace>`
+ * placement, because recorded run directories name it and are read back as-is.
  */
-export function runScratchRoot(mount: string = getWorkRoot(), namespace = RUN_SCRATCH_NAMESPACE): string {
-  if (!SCRATCH_NAMESPACE_SHAPE.test(namespace)) throw new Error("Repository scratch namespace is invalid");
+export function runScratchRoot(
+  mount: string = getWorkRoot(),
+  namespace = RUN_SCRATCH_NAMESPACE,
+): string {
+  if (!SCRATCH_NAMESPACE_SHAPE.test(namespace))
+    throw new Error("Repository scratch namespace is invalid");
   return join(mount, "scratch", namespace);
 }
 
@@ -55,8 +82,14 @@ const runIdShape = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
 
 /** A run's directory is named by a short digest of its id, so the whole path stays socket-sized. */
 export function runTemporaryDirectory(runId: string, root: string): string {
-  if (!runIdShape.test(runId)) throw new Error(`Run id ${JSON.stringify(runId)} cannot name a run temp directory`);
-  return join(root, createHash("sha256").update(runId).digest("hex").slice(0, 8));
+  if (!runIdShape.test(runId))
+    throw new Error(
+      `Run id ${JSON.stringify(runId)} cannot name a run temp directory`,
+    );
+  return join(
+    root,
+    createHash("sha256").update(runId).digest("hex").slice(0, 8),
+  );
 }
 
 /**
@@ -71,23 +104,38 @@ export function runTemporaryDirectory(runId: string, root: string): string {
  * or an unusable identity is not a root this can extend, so it answers undefined
  * rather than inventing one.
  */
-function leafForTicketShape(recorded: string, ticket: string): ((nextTicket: string) => string) | undefined {
+function leafForTicketShape(
+  recorded: string,
+  ticket: string,
+): ((nextTicket: string) => string) | undefined {
   if (!runIdShape.test(ticket)) return undefined;
   const root = dirname(recorded);
-  if (recorded === runTemporaryDirectory(ticket, root)) return next => runTemporaryDirectory(next, root);
-  const legacyLeaf = (id: string) => createHash("sha256").update(id).digest("hex").slice(0, 12);
-  if (basename(recorded) === legacyLeaf(ticket)) return next => join(root, legacyLeaf(next));
-  if (basename(recorded) === ticket && basename(root) === "runs") return next => join(root, next);
+  if (recorded === runTemporaryDirectory(ticket, root))
+    return (next) => runTemporaryDirectory(next, root);
+  const legacyLeaf = (id: string) =>
+    createHash("sha256").update(id).digest("hex").slice(0, 12);
+  if (basename(recorded) === legacyLeaf(ticket))
+    return (next) => join(root, legacyLeaf(next));
+  if (basename(recorded) === ticket && basename(root) === "runs")
+    return (next) => join(root, next);
   return undefined;
 }
 
 /** True when `recorded` is the per-ticket temporary leaf for `ticket` in one of Queue's shapes. */
-export function recordedTicketMatchesLeaf(recorded: string | undefined, ticket: string | undefined): boolean {
+export function recordedTicketMatchesLeaf(
+  recorded: string | undefined,
+  ticket: string | undefined,
+): boolean {
   return Boolean(recorded && ticket && leafForTicketShape(recorded, ticket));
 }
 
-export function ticketTemporaryDirectoryBeside(recorded: string | undefined, recordedTicket: string | undefined, ticket: string): string | undefined {
-  if (!recorded || !recordedTicket || !ticket || ticket === recordedTicket) return undefined;
+export function ticketTemporaryDirectoryBeside(
+  recorded: string | undefined,
+  recordedTicket: string | undefined,
+  ticket: string,
+): string | undefined {
+  if (!recorded || !recordedTicket || !ticket || ticket === recordedTicket)
+    return undefined;
   if (!runIdShape.test(ticket)) return undefined;
   return leafForTicketShape(recorded, recordedTicket)?.(ticket);
 }
@@ -96,55 +144,148 @@ export function ticketTemporaryDirectoryBeside(recorded: string | undefined, rec
  * The production placement: the configured scratch root, created only after the
  * root proves its canonical path and any configured volume identity.
  */
-export function checkoutRunScratchPlacement(options: {
-  mount?: string;
-  namespace?: string;
-  uuid?: string;
-  observe?: (mount: string) => CheckoutVolumeInfo;
-  create?: (directory: string) => void;
-} = {}): RunScratchPlacement {
+export function checkoutRunScratchPlacement(
+  options: {
+    mount?: string;
+    namespace?: string;
+    /** Fixture seam: the exact root, instead of deriving it from the mount and namespace. */
+    root?: string;
+    uuid?: string;
+    observe?: (mount: string) => CheckoutVolumeInfo;
+    create?: (directory: string) => void;
+  } = {},
+): RunScratchPlacement {
   const mount = options.mount ?? getWorkRoot();
-  const root = runScratchRoot(mount, options.namespace ?? RUN_SCRATCH_NAMESPACE);
+  const namespace = options.namespace ?? RUN_SCRATCH_NAMESPACE;
+  // The configured scratch root applies to Nucleus's own namespace on the real
+  // work volume; an explicit fixture mount or a repository namespace keeps the
+  // established `<mount>/scratch/<namespace>` derivation.
+  const configured =
+    options.mount === undefined &&
+    options.root === undefined &&
+    namespace === RUN_SCRATCH_NAMESPACE;
+  const root =
+    options.root ??
+    (configured
+      ? getWorkPlacement().scratchRoot
+      : runScratchRoot(mount, namespace));
   return {
-    mount, root,
-    create: directory => createCheckoutScratchDirectory({ mount, root, target: directory, uuid: options.uuid, observe: options.observe, create: options.create, exclusive: true }),
-    createAtRoot: (recordedRoot, directory) => createCheckoutScratchDirectory({ mount, root: recordedRoot, target: directory, uuid: options.uuid, observe: options.observe, create: options.create, exclusive: true }),
-    remove: directory => removeCheckoutRunScratchDirectory({ mount, root, target: directory, uuid: options.uuid, observe: options.observe }),
-    withNamespace: namespace => checkoutRunScratchPlacement({ ...options, namespace }),
+    mount,
+    root,
+    create: (directory) =>
+      createCheckoutScratchDirectory({
+        mount,
+        root,
+        target: directory,
+        uuid: options.uuid,
+        observe: options.observe,
+        create: options.create,
+        exclusive: true,
+      }),
+    createAtRoot: (recordedRoot, directory) =>
+      createCheckoutScratchDirectory({
+        mount,
+        root: recordedRoot,
+        target: directory,
+        uuid: options.uuid,
+        observe: options.observe,
+        create: options.create,
+        exclusive: true,
+      }),
+    remove: (directory) =>
+      removeCheckoutRunScratchDirectory({
+        mount,
+        root,
+        target: directory,
+        uuid: options.uuid,
+        observe: options.observe,
+      }),
+    withNamespace: (namespace) =>
+      checkoutRunScratchPlacement({ ...options, namespace }),
   };
 }
 
 /** Overlay a recorded run temp directory onto a listed launch environment. Absent directory keeps the listed values. */
-export function withRunTemporaryDirectory(listed: Record<string, string>, directory: string | undefined): Record<string, string> {
+export function withRunTemporaryDirectory(
+  listed: Record<string, string>,
+  directory: string | undefined,
+): Record<string, string> {
   if (!directory) return listed;
   return { ...listed, TMPDIR: directory, TMP: directory, TEMP: directory };
 }
 
 /** The per-run temp environment for a turn, with its directory proved and created. */
-export function runTemporaryEnvironment(runId: string, placement: RunScratchPlacement = checkoutRunScratchPlacement(), recordedDirectory?: string): Record<string, string> {
+export function runTemporaryEnvironment(
+  runId: string,
+  placement: RunScratchPlacement = checkoutRunScratchPlacement(),
+  recordedDirectory?: string,
+): Record<string, string> {
   const directory = runTemporaryDirectory(runId, placement.root);
   if (recordedDirectory && recordedDirectory !== directory) {
     // A persisted run keeps its own recorded namespace even if repository
     // settings changed after dispatch. Earlier Queue roots remain readable too.
     const hash = createHash("sha256").update(runId).digest("hex").slice(0, 8);
-    const legacyHash = createHash("sha256").update(runId).digest("hex").slice(0, 12);
-    const recordedMount = recordedDirectory.startsWith(`${placement.mount}/scratch/`) ? placement.mount : undefined;
-    const relativeRoot = recordedMount ? dirname(recordedDirectory).slice(`${recordedMount}/scratch/`.length) : "";
-    const currentRecordedRoot = /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$/.test(relativeRoot);
-    const legacyRecordedRoot = /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?\/(?:q|r)$/.test(relativeRoot);
-    const legacyRoot = ((recordedMount && /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?\/runs$/.test(relativeRoot) && basename(recordedDirectory) === runId) || recordedDirectory === join(placement.root, "runs", runId)) && runIdShape.test(runId);
-    if ((currentRecordedRoot && basename(recordedDirectory) === hash) || (legacyRecordedRoot && basename(recordedDirectory) === legacyHash) || legacyRoot) {
+    const legacyHash = createHash("sha256")
+      .update(runId)
+      .digest("hex")
+      .slice(0, 12);
+    // A leaf directly under the placement's own root is one Queue wrote there,
+    // whatever the configured root is.
+    const ownRoot =
+      dirname(recordedDirectory) === placement.root &&
+      basename(recordedDirectory) === hash;
+    const recordedMount = recordedDirectory.startsWith(
+      `${placement.mount}/scratch/`,
+    )
+      ? placement.mount
+      : undefined;
+    const relativeRoot = recordedMount
+      ? dirname(recordedDirectory).slice(`${recordedMount}/scratch/`.length)
+      : "";
+    const currentRecordedRoot = /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$/.test(
+      relativeRoot,
+    );
+    const legacyRecordedRoot =
+      /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?\/(?:q|r)$/.test(relativeRoot);
+    const legacyRoot =
+      ((recordedMount &&
+        /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?\/runs$/.test(relativeRoot) &&
+        basename(recordedDirectory) === runId) ||
+        recordedDirectory === join(placement.root, "runs", runId)) &&
+      runIdShape.test(runId);
+    if (
+      ownRoot ||
+      (currentRecordedRoot && basename(recordedDirectory) === hash) ||
+      (legacyRecordedRoot && basename(recordedDirectory) === legacyHash) ||
+      legacyRoot
+    ) {
       const root = dirname(recordedDirectory);
-      if (!placement.createAtRoot) throw new Error("Recorded run temp directory cannot be proved on its recorded storage");
-      try { placement.createAtRoot(root, recordedDirectory); }
-      catch (error) {
-        if (!(error instanceof Error) || !/EEXIST/.test(error.message)) throw error;
+      if (!placement.createAtRoot)
+        throw new Error(
+          "Recorded run temp directory cannot be proved on its recorded storage",
+        );
+      try {
+        placement.createAtRoot(root, recordedDirectory);
+      } catch (error) {
+        if (!(error instanceof Error) || !/EEXIST/.test(error.message))
+          throw error;
         const stat = lstatSync(recordedDirectory);
-        if (stat.isSymbolicLink() || !stat.isDirectory() || realpathSync(recordedDirectory) !== recordedDirectory) throw error;
+        if (
+          stat.isSymbolicLink() ||
+          !stat.isDirectory() ||
+          realpathSync(recordedDirectory) !== recordedDirectory
+        )
+          throw error;
       }
-      return { TMPDIR: recordedDirectory, TMP: recordedDirectory, TEMP: recordedDirectory };
+      return {
+        TMPDIR: recordedDirectory,
+        TMP: recordedDirectory,
+        TEMP: recordedDirectory,
+      };
     }
-    throw new Error("Recorded run temp directory does not match its run identity");
+    throw new Error(
+      "Recorded run temp directory does not match its run identity",
+    );
   }
   try {
     placement.create(directory);
@@ -154,8 +295,15 @@ export function runTemporaryEnvironment(runId: string, placement: RunScratchPlac
     if (!(error instanceof Error) || !/EEXIST/.test(error.message)) throw error;
     try {
       const stat = lstatSync(directory);
-      if (stat.isSymbolicLink() || !stat.isDirectory() || realpathSync(directory) !== directory) throw error;
-    } catch { throw error; }
+      if (
+        stat.isSymbolicLink() ||
+        !stat.isDirectory() ||
+        realpathSync(directory) !== directory
+      )
+        throw error;
+    } catch {
+      throw error;
+    }
   }
   return { TMPDIR: directory, TMP: directory, TEMP: directory };
 }
@@ -165,16 +313,42 @@ export function runTemporaryEnvironment(runId: string, placement: RunScratchPlac
  * checkout volume is history from a drive Queue no longer uses: it is absent, so
  * there is nothing to clean up, and the drive is never probed.
  */
-export function removeRecordedRunScratchDirectory(directory: string, fixture?: {
-  mount: string; uuid: string; observe: (mount: string) => CheckoutVolumeInfo;
-}): boolean {
+export function removeRecordedRunScratchDirectory(
+  directory: string,
+  fixture?: {
+    mount: string;
+    uuid: string;
+    observe: (mount: string) => CheckoutVolumeInfo;
+  },
+): boolean {
   const mount = fixture?.mount ?? getWorkRoot();
+  const placement = fixture ? null : getWorkPlacement();
+  // A leaf directly under the configured scratch root is one Queue wrote there.
+  if (placement && dirname(directory) === placement.scratchRoot)
+    return removeCheckoutRunScratchDirectory({
+      root: placement.scratchRoot,
+      target: directory,
+      mount,
+      uuid: placement.volumeId,
+      observe: fixture?.observe,
+    });
   if (!directory.startsWith(`${mount}/scratch/`)) return true;
   const relativePath = directory.slice(`${mount}/scratch/`.length);
-  const current = relativePath.match(/^([a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?)\/([a-f0-9]{8})$/);
-  const earlier = relativePath.match(/^([a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?)\/(q|r)\/([a-f0-9]{12})$/);
-  const old = relativePath.match(/^([a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?)\/runs\/([A-Za-z0-9][A-Za-z0-9._-]{0,159})$/);
+  const current = relativePath.match(
+    /^([a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?)\/([a-f0-9]{8})$/,
+  );
+  const earlier = relativePath.match(
+    /^([a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?)\/(q|r)\/([a-f0-9]{12})$/,
+  );
+  const old = relativePath.match(
+    /^([a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?)\/runs\/([A-Za-z0-9][A-Za-z0-9._-]{0,159})$/,
+  );
   if (!current && !earlier && !old) return false;
-  return removeCheckoutRunScratchDirectory({ root: dirname(directory), target: directory, mount,
-    uuid: fixture?.uuid, observe: fixture?.observe });
+  return removeCheckoutRunScratchDirectory({
+    root: dirname(directory),
+    target: directory,
+    mount,
+    uuid: fixture?.uuid,
+    observe: fixture?.observe,
+  });
 }

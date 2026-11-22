@@ -471,7 +471,7 @@ test("blank optional environment values cannot bypass adoption or remove a persi
   );
 });
 
-test("local workspace placement defaults to queue/workspaces, supports opt-in and rollback, and validates roots inside workRoot", () => {
+test("local workspace placement defaults to worktrees/nucleus, supports opt-in and rollback, and validates roots inside workRoot", () => {
   const root = fixture(),
     data = join(root, "data"),
     work = join(root, "volume");
@@ -481,16 +481,17 @@ test("local workspace placement defaults to queue/workspaces, supports opt-in an
     JSON.stringify({ workRoot: work, workVolumeId: "synthetic-volume-id" }),
   );
 
-  // Default: not opted in preserves <workRoot>/queue/workspaces with no extra retained roots.
+  // Default: a fresh install allocates under <workRoot>/worktrees/nucleus and keeps
+  // the retired <workRoot>/queue/workspaces supported for continuation and cleanup.
   assert.deepEqual(getLocalWorkspacePlacement(data, {}), {
     workRoot: work,
     volumeId: "synthetic-volume-id",
-    activeRoot: join(work, "queue", "workspaces"),
-    defaultRoot: join(work, "queue", "workspaces"),
-    retainedRoots: [],
+    activeRoot: join(work, "worktrees", "nucleus"),
+    defaultRoot: join(work, "worktrees", "nucleus"),
+    retainedRoots: [join(work, "queue", "workspaces")],
   });
 
-  // Opt-in via settings.json directs new workspaces to <workRoot>/worktrees/nucleus and retains <workRoot>/queue/workspaces.
+  // The port the operator's machine already set keeps that path and the retired one.
   const optedIn = join(work, "worktrees", "nucleus");
   writeFileSync(
     join(data, "settings.json"),
@@ -504,7 +505,7 @@ test("local workspace placement defaults to queue/workspaces, supports opt-in an
     workRoot: work,
     volumeId: "synthetic-volume-id",
     activeRoot: optedIn,
-    defaultRoot: join(work, "queue", "workspaces"),
+    defaultRoot: join(work, "worktrees", "nucleus"),
     retainedRoots: [join(work, "queue", "workspaces")],
   });
 
@@ -519,7 +520,7 @@ test("local workspace placement defaults to queue/workspaces, supports opt-in an
       workRoot: work,
       volumeId: "synthetic-volume-id",
       activeRoot: envRoot,
-      defaultRoot: join(work, "queue", "workspaces"),
+      defaultRoot: join(work, "worktrees", "nucleus"),
       retainedRoots: [join(work, "queue", "workspaces")],
     },
   );
@@ -529,12 +530,14 @@ test("local workspace placement defaults to queue/workspaces, supports opt-in an
     optedIn,
   );
 
-  // Rollback: removing localWorkspaceRoot while keeping retainedWorkspaceRoots keeps the opted-in root supported for cleanup/continuation.
+  // Rollback: localWorkspaceRoot back to the retired root clears the retained
+  // list unless the operator names roots explicitly.
   writeFileSync(
     join(data, "settings.json"),
     JSON.stringify({
       workRoot: work,
       workVolumeId: "synthetic-volume-id",
+      localWorkspaceRoot: join(work, "queue", "workspaces"),
       retainedWorkspaceRoots: [optedIn],
     }),
   );
@@ -542,7 +545,7 @@ test("local workspace placement defaults to queue/workspaces, supports opt-in an
     workRoot: work,
     volumeId: "synthetic-volume-id",
     activeRoot: join(work, "queue", "workspaces"),
-    defaultRoot: join(work, "queue", "workspaces"),
+    defaultRoot: join(work, "worktrees", "nucleus"),
     retainedRoots: [optedIn],
   });
 

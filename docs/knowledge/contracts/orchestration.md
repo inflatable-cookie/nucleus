@@ -1470,8 +1470,9 @@ request identities and stored committed-handoff rows are not rewritten.
 ### Orphan worktree after a timed-out create
 
 - Initial workspace creation is Nucleus-owned bulk Git: `git worktree add` into
-  `<work-root>/queue/workspaces/<digest of git common dir>/ns-<taskId>`
-  under the 600 s bulk ceiling, then registration with Paseo as a directory
+  `<local-workspace-root>/<digest of git common dir>/ns-<taskId>` (default
+  `<work-root>/worktrees/nucleus/`; a pre-cutover task keeps its recorded
+  `<work-root>/queue/workspaces/` path) under the 600 s bulk ceiling, then registration with Paseo as a directory
   under the active project rooted at the repository. Populate stays outside
   Paseo admission and is not timed as Paseo latency.
 - The external placement admits creation only while the path’s volume and
