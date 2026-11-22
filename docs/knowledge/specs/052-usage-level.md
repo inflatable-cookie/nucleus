@@ -164,6 +164,16 @@ the step-up (Tom, 2026-11-19: "a medium complexity task goes to a Worker
 profile, a high complexity task starts on a Worker but can escalate to a
 Heavyweight if it needs to").
 
+**Ruling (Tom, 2026-11-22): no operator sign-off for profiles.** The sign-off
+decisions always landed after the fact: "This system of asking for frontier
+doesn't work - it always lands after the fact. Let's remove the need for operator
+interaction, but make frontier a specific request a planner has to make in normal
+and high limits modes." At Low, Normal and High, Frontier is never automatic and
+runs only on an explicit planner request (or owner route) with a reason. The
+request applies directly, with no board decision, no routing grant and no wait.
+nucleus#1539 implements this and rewrites the Permission column below, which
+still describes shipped behaviour until it lands.
+
 | Level | Where a task's worker starts | Permission |
 | --- | --- | --- |
 | **Low** | One bracket below the one it may climb to. | High and very-high complexity work needs permission at submission: a decision opens on the board and the task is held until the operator approves. Once approved, the Low rules apply. Frontier needs permission; Heavyweight does unless the task starts or climbs there. |

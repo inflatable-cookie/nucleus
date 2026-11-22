@@ -84,10 +84,10 @@ all fragments into the changelog and removes the folded files.
   supersede.
 - No release mutations, CI workflow edits or live acceptance runs that create
   GitHub or native application resources without operator authorization.
-- Frontier and other profiles the usage level's permission rule holds (Spec 052)
-  need an explicit per-role request, a reason and the operator's board sign-off,
-  unless the level puts them in automatic selection. An unsigned request runs on
-  automatic selection.
+- Frontier runs only on an explicit per-role planner request with a reason at the
+  Low, Normal and High usage levels (Spec 052). The request applies directly, with
+  no operator sign-off (Tom, 2026-11-22). Automatic selection never picks Frontier
+  at those levels.
 - When a change alters what is true, update the owning knowledge file in the
   same PR. An operator ruling given in conversation goes into its owning file
   before the thread ends.
