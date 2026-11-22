@@ -11,6 +11,7 @@ import {
   FINISHED_CATCH_UP_PAGE,
   FRESH_FINISH_ATTEMPTS,
   HostPass,
+  PAGE_ABORT_LIMIT,
   finishedCatchUpCursorKey,
 } from "../core/scheduling/host-pass";
 import type { Adapter } from "../core/host";
@@ -91,10 +92,15 @@ function populate(store: Store, active: number, finished: number) {
  * written through the real funnels, and its stored row is copied under fresh
  * identities (task, submission, workspace and worker). Every copy is the exact
  * stored shape of a real closeout; the next open parses them into the projection.
- * Its thread cleanup is complete, as settled history's is, and its identities sort
- * before any fresh task's, so a cursor page over it never reaches a fresh finish.
+ * Its thread cleanup is complete, as settled history's is (unless `owing`), and its
+ * identities sort before any fresh task's, so a cursor page over it never reaches a
+ * fresh finish.
  */
-function retainHistory(store: Store, count: number) {
+function retainHistory(
+  store: Store,
+  count: number,
+  options: { owing?: boolean } = {},
+) {
   if (!count) return;
   const template = finish(
     store,
@@ -108,18 +114,20 @@ function retainHistory(store: Store, count: number) {
      FROM tasks WHERE id=?`,
   );
   const cleaned = store.db.prepare("INSERT INTO meta(key, value) VALUES(?, ?)");
-  store.setMeta(
-    finishedThreadCleanupKey(template.id),
-    new Date().toISOString(),
-  );
+  if (!options.owing)
+    store.setMeta(
+      finishedThreadCleanupKey(template.id),
+      new Date().toISOString(),
+    );
   store.db.exec("BEGIN");
   for (let i = 1; i < count; i++) {
     const id = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
     const submissionId = randomUUID();
-    cleaned.run(
-      finishedThreadCleanupKey(id),
-      JSON.stringify(new Date().toISOString()),
-    );
+    if (!options.owing)
+      cleaned.run(
+        finishedThreadCleanupKey(id),
+        JSON.stringify(new Date().toISOString()),
+      );
     copy.run(
       id,
       submissionId,
@@ -468,6 +476,78 @@ test("fresh finishes keep a prompt catch-up across an aborted pass and a restart
     new Set([a.id, b.id]),
     "both parents stay owed from the bindings whatever the hints say",
   );
+});
+
+test("after a restart behind 200 owed cleanups, a new finish is in the next pass and the last one before the roll is in the first", async (t) => {
+  const path = join(scratch(t), "queue.sqlite");
+  const seed = new Store(path);
+  seed.setMeta("paused", false);
+  // History whose thread cleanup is still owed, all seeded at start-up.
+  retainHistory(seed, 200, { owing: true });
+  const [before, after] = ["Before", "After"].map((title) =>
+    launch(seed, insert(seed, title)),
+  ) as [Task, Task];
+  finish(seed, before);
+  seed.close();
+
+  const store = new Store(path);
+  t.after(() => store.close());
+  const { engine } = engineFor(t, store, countingAdapter({}));
+  const pass = hostPassFor(engine);
+  const run = () => engine.withHost(HOST, () => pass.run(HOST));
+
+  const first = await run();
+  assert.ok(
+    first.finishedCatchUp.has(before.id),
+    "the finish just before the roll heads the start-up backlog",
+  );
+  assert.ok(first.finishedCatchUp.size <= 2 * FINISHED_CATCH_UP_PAGE);
+  finish(store, after);
+  const next = await run();
+  assert.ok(
+    next.finishedCatchUp.has(after.id),
+    "a finish after the roll goes ahead of the backlog",
+  );
+});
+
+test("the slow cursor moves past a page that aborted its pass three times in a row", async (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  retainHistory(store, 4 * FINISHED_CATCH_UP_PAGE);
+  // The template closeout's own finish is a hint; take it so only the cursor reads.
+  store.takeRecentlyFinishedHostTasks(HOST, Number.MAX_SAFE_INTEGER);
+  const ids = store
+    .tasks()
+    .filter((task) => task.phase === "done")
+    .map((task) => task.id)
+    .sort();
+  const seen: Loose = { parents: [] as string[][] };
+  const { engine } = engineFor(t, store, countingAdapter({}, seen));
+  const pass = hostPassFor(engine);
+  const run = () => engine.withHost(HOST, () => pass.run(HOST));
+  const page = (n: number) =>
+    ids.slice(n * FINISHED_CATCH_UP_PAGE, (n + 1) * FINISHED_CATCH_UP_PAGE);
+
+  await run();
+  assert.deepEqual(seen.parents[0], page(0));
+  for (let abort = 0; abort < PAGE_ABORT_LIMIT; abort++) {
+    seen.abortOnce = true;
+    await run();
+    assert.equal(seen.abortOnce, false, "the row step aborted the pass");
+    assert.deepEqual(
+      seen.parents.at(-1),
+      page(1),
+      "the same page is read again",
+    );
+  }
+  await run();
+  assert.deepEqual(
+    seen.parents.at(-1),
+    page(2),
+    "after the limit the cursor moves on instead of pinning on the hanging page",
+  );
+  assert.equal(store.getMeta(finishedCatchUpCursorKey(HOST)), page(2).at(-1));
 });
 
 test("the live, finished and owner-stop sets follow every write and are rebuilt on open", async (t) => {

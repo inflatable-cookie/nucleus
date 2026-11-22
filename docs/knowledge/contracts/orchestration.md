@@ -249,10 +249,12 @@ history goes to a slow cursor: each pass takes up to one page
 (`FINISHED_CATCH_UP_PAGE`) of fresh finishes, then one page from the cursor
 persisted in `finishedCatchUpCursor:<host>`, and only those reach finished rows,
 hidden-row clearing, title catch-up and the finished-thread cleanup selection. A
-fresh finish (from the write that finishes it, or from one read of every task still
-owing thread cleanup when the service starts) keeps its place until its cleanup is
-no longer owed or it has had `FRESH_FINISH_ATTEMPTS` passes. The cursor advances,
-and hints are spent, only when the pass reaches its end. After that, a failed thread
+finish seen since the last pass goes first; the start-up backlog (one read of
+every task still owing thread cleanup, most recent finish first) and retries queue
+behind it. Each keeps its place until its cleanup is no longer owed or it has had
+`FRESH_FINISH_ATTEMPTS` passes. The cursor advances, and hints are spent, only when
+the pass reaches its end, except that a page which aborted `PAGE_ABORT_LIMIT` passes
+in a row is skipped, so one hanging finished task cannot pin the cursor. After that, a failed thread
 cleanup on an older finished task is retried only when the cursor comes round again,
 about (finished tasks on the host ÷ page) passes later: roughly 40 passes, or 13
 minutes at the 20-second tick, for 1,000 finished tasks. The task's own closeout

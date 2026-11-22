@@ -49,6 +49,12 @@ export const FINISHED_CATCH_UP_PAGE = 25;
  */
 export const FRESH_FINISH_ATTEMPTS = 3;
 
+/**
+ * Passes in a row a host may abort on the same cursor page before the cursor moves
+ * past it, so one finished task whose step hangs cannot pin the cursor.
+ */
+export const PAGE_ABORT_LIMIT = 3;
+
 /** The durable position of one host's finished-history cursor. */
 export const finishedCatchUpCursorKey = (host: string) =>
   `finishedCatchUpCursor:${host}`;
@@ -150,84 +156,123 @@ export class HostPass {
 
   /**
    * The finished tasks this pass catches up on (Spec 069 §4): up to a page of the
-   * fresh finishes this host still owes, then one page from its durable slow
-   * cursor. A fresh finish keeps its place until its thread cleanup is no longer
-   * owed or it has had `FRESH_FINISH_ATTEMPTS` passes; after that, and for all older
-   * history, a retry waits for the cursor to come round again (finished tasks ÷ page
-   * passes). No pass reads more than two pages of history.
+   * finishes this host still owes a prompt catch-up, then one page from its durable
+   * slow cursor. Finishes seen since the last pass go first; the start-up seed and
+   * retries queue behind them, so a backlog never delays a new finish. A finish
+   * keeps its place until its thread cleanup is no longer owed or it has had
+   * `FRESH_FINISH_ATTEMPTS` passes; after that, and for all older history, a retry
+   * waits for the cursor to come round again (finished tasks ÷ page passes). No pass
+   * reads more than two pages of history.
    */
   private finishedCatchUp(host: string): {
     tasks: Task[];
     settle: (owing: ReadonlySet<string> | null) => void;
   } {
-    let fresh = this.freshFinishes.get(host);
-    if (!fresh) this.freshFinishes.set(host, (fresh = new Map()));
-    // A service start has no fresh-finish hints in memory, so the first pass on a
-    // host reads, once, every finished task still owing thread cleanup: a task that
-    // finished just before a roll keeps its prompt catch-up.
+    let queues = this.catchUpQueues.get(host);
+    if (!queues)
+      this.catchUpQueues.set(
+        host,
+        (queues = { fresh: new Map(), backlog: new Map() }),
+      );
+    const { fresh, backlog } = queues;
+    // A service start has no hints in memory, so the first pass on a host reads,
+    // once, every finished task still owing thread cleanup, most recent finish first:
+    // a task that finished just before a roll is at the head of the backlog.
     if (!this.seededHosts.has(host)) {
       this.seededHosts.add(host);
-      for (const task of finishedThreadCleanupCatchUp(
+      const owing = finishedThreadCleanupCatchUp(
         this.store,
         host,
         removesThreads(this.adapter),
-      ))
-        if (!fresh.has(task.id)) fresh.set(task.id, 0);
+      ).sort((left, right) =>
+        (right.finishedAt ?? "").localeCompare(left.finishedAt ?? ""),
+      );
+      for (const task of owing)
+        if (!fresh.has(task.id) && !backlog.has(task.id))
+          backlog.set(task.id, 0);
     }
     for (const task of this.store.takeRecentlyFinishedHostTasks(
       host,
       Number.MAX_SAFE_INTEGER,
-    ))
+    )) {
+      backlog.delete(task.id);
       if (!fresh.has(task.id)) fresh.set(task.id, 0);
-    const hinted: Task[] = [];
-    for (const id of [...fresh.keys()].slice(0, FINISHED_CATCH_UP_PAGE)) {
-      const task = this.store.taskOrNull(id);
-      if (
-        !task ||
-        task.removedAt != null ||
-        task.hostId !== host ||
-        !["done", "cancelled"].includes(task.phase)
-      ) {
-        fresh.delete(id);
-        continue;
-      }
-      hinted.push(task);
     }
+    const hinted: Array<{ task: Task; attempts: number }> = [];
+    for (const queue of [fresh, backlog])
+      for (const [id, attempts] of [...queue]) {
+        if (hinted.length >= FINISHED_CATCH_UP_PAGE) break;
+        const task = this.store.taskOrNull(id);
+        if (
+          !task ||
+          task.removedAt != null ||
+          task.hostId !== host ||
+          !["done", "cancelled"].includes(task.phase)
+        ) {
+          queue.delete(id);
+          continue;
+        }
+        hinted.push({ task, attempts });
+      }
     const key = finishedCatchUpCursorKey(host);
-    const after = this.store.getMeta<string>(key) || null;
+    let after = this.store.getMeta<string>(key) || null;
+    // One finished task whose step hangs every time must not pin the cursor: after
+    // `PAGE_ABORT_LIMIT` passes in a row aborted on the same page, it moves on.
+    const aborts = this.pageAborts.get(host);
+    const count = aborts && aborts.after === after ? aborts.count + 1 : 0;
+    if (count >= PAGE_ABORT_LIMIT) {
+      const stuck = this.store.finishedHostTaskPage(
+        host,
+        after,
+        FINISHED_CATCH_UP_PAGE,
+      );
+      this.store.setMeta(key, stuck.next ?? "");
+      after = stuck.next;
+      this.pageAborts.set(host, { after, count: 0 });
+    } else this.pageAborts.set(host, { after, count });
     const page = this.store.finishedHostTaskPage(
       host,
       after,
       FINISHED_CATCH_UP_PAGE,
     );
-    const byId = new Map(hinted.map((task) => [task.id, task]));
+    const byId = new Map(hinted.map(({ task }) => [task.id, task]));
     for (const task of page.tasks) byId.set(task.id, task);
     return {
       tasks: [...byId.values()],
       // Called only when the pass reached its end: an aborted pass keeps both the
       // cursor's page and every hint for the next pass.
       settle: (owing) => {
+        this.pageAborts.delete(host);
         if ((page.next ?? "") !== (after ?? ""))
           this.store.setMeta(key, page.next ?? "");
         // A paused pass selects no cleanup, so it spends no hint's attempt.
         if (!owing) return;
-        for (const task of hinted) {
-          const attempts = (fresh.get(task.id) ?? 0) + 1;
+        for (const { task, attempts } of hinted) {
           fresh.delete(task.id);
-          // Still owed and still within its attempts: back of the line.
-          if (owing.has(task.id) && attempts < FRESH_FINISH_ATTEMPTS)
-            fresh.set(task.id, attempts);
+          backlog.delete(task.id);
+          // Still owed and still within its attempts: back of the backlog.
+          if (owing.has(task.id) && attempts + 1 < FRESH_FINISH_ATTEMPTS)
+            backlog.set(task.id, attempts + 1);
         }
       },
     };
   }
   /**
-   * Fresh finishes each host still owes a prompt catch-up, with the passes each has
-   * had. A task enters on the write that finishes it (or from the one start-up read)
-   * and leaves once its thread cleanup is no longer owed or its attempts are spent.
+   * The finishes each host still owes a prompt catch-up, with the passes each has
+   * had: `fresh` holds those seen since the last pass and goes first; `backlog`
+   * holds the start-up seed and retries. A task leaves once its thread cleanup is no
+   * longer owed or its attempts are spent.
    */
-  private readonly freshFinishes = new Map<string, Map<string, number>>();
+  private readonly catchUpQueues = new Map<
+    string,
+    { fresh: Map<string, number>; backlog: Map<string, number> }
+  >();
   private readonly seededHosts = new Set<string>();
+  /** Consecutive aborted passes on one host's current cursor page. */
+  private readonly pageAborts = new Map<
+    string,
+    { after: string | null; count: number }
+  >();
 
   /** Refresh host thread titles and Inbox offers after a sweep opens a new decision. */
   async reconcileInboxTitles(host: string): Promise<void> {
