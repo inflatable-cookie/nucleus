@@ -2666,3 +2666,157 @@ test("review round 9: run.start never calls legacy verifyPr when verifyPrIdentit
     probe.explicitResolution?.warnings.some((w) => w.id === "head_mismatch"),
   );
 });
+
+/** The reviewer pool and task facts a `run.start reviewer fresh` needs. */
+async function reviewStartFixture(t: TestContext) {
+  const f = await fixture(t);
+  const { worktree, initialSha } = await attachGitCheckout(
+    f.root,
+    f.store,
+    f.current().id,
+  );
+  f.store.update(f.current().id, {
+    phase: "awaiting_review",
+    prHead: initialSha,
+    profile: profile("worker-author"),
+  });
+  f.runtime.engine.profiles = [profile("rev-1")];
+  f.store.setMeta("pool", [
+    {
+      profileId: "rev-1",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+  return { ...f, worktree, initialSha };
+}
+
+test("068: run.start reviewer fresh returns a clean checkout detached at the branch tip to its branch", async (t) => {
+  const f = await reviewStartFixture(t);
+  const { store, worktree, initialSha } = f;
+  await git(worktree, "checkout", "--quiet", "--detach", initialSha);
+  assert.equal(await git(worktree, "branch", "--show-current"), "");
+  const applied = await f.command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+  });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  // The reattach step moved no commit: the branch carries the same tree.
+  assert.equal(
+    await git(worktree, "branch", "--show-current"),
+    f.current().branch,
+  );
+  assert.equal(await git(worktree, "rev-parse", "HEAD"), initialSha);
+  assert.equal((await git(worktree, "status", "--porcelain")) ?? "", "");
+  assert.ok(
+    store.eventsAll(f.current().id).some(
+      (event) =>
+        event.kind === "task_checkout_reattached" &&
+        event.detail.includes(initialSha),
+    ),
+  );
+});
+
+test("068: run.start reviewer fresh leaves a dirty detached checkout alone and names the refusal", async (t) => {
+  const f = await reviewStartFixture(t);
+  const { worktree, initialSha } = f;
+  await git(worktree, "checkout", "--quiet", "--detach", initialSha);
+  writeFileSync(join(worktree, "uncommitted.txt"), "worker scratch\n");
+  await assert.rejects(
+    f.command({ action: "run.start", role: "reviewer", agent: "fresh" }),
+    /was not returned to .*uncommitted changes: \?\? uncommitted.txt/,
+  );
+  assert.equal(await git(worktree, "branch", "--show-current"), "");
+  assert.equal(
+    readFileSync(join(worktree, "uncommitted.txt"), "utf8"),
+    "worker scratch\n",
+  );
+});
+
+test("068: run.start reviewer fresh leaves a detached checkout that is not the branch tip alone", async (t) => {
+  const f = await reviewStartFixture(t);
+  const { worktree, initialSha } = f;
+  // The branch advances while the checkout stays detached at the earlier tip.
+  writeFileSync(join(worktree, "a.txt"), "v2\n");
+  await git(worktree, "add", "a.txt");
+  await git(worktree, "commit", "-m", "v2");
+  const tip = await git(worktree, "rev-parse", "HEAD");
+  await git(worktree, "checkout", "--quiet", "--detach", initialSha);
+  await assert.rejects(
+    f.command({ action: "run.start", role: "reviewer", agent: "fresh" }),
+    /is not the tip of .*would move the working tree/,
+  );
+  assert.equal(await git(worktree, "branch", "--show-current"), "");
+  assert.equal(await git(worktree, "rev-parse", "HEAD"), initialSha);
+  assert.notEqual(tip, initialSha, "the branch tip moved");
+});
+
+test("068: run.start reviewer fresh does not disturb an unreleased follow-up round's detached checkout", async (t) => {
+  const f = await reviewStartFixture(t);
+  const { store, worktree, initialSha } = f;
+  const reader = runSchema.parse({
+    ...f.run("live-reader", "reviewer", "reader-agent"),
+    head: initialSha,
+    ordinaryDetached: true,
+    priorRunId: "prior-round",
+    priorHead: initialSha,
+  });
+  store.putRun(reader);
+  store.update(f.current().id, {
+    resolution: {
+      ...f.current().resolution,
+      currentRunId: reader.id,
+      reviewerAgentId: reader.agentId,
+    },
+  });
+  await git(worktree, "checkout", "--quiet", "--detach", initialSha);
+  await assert.rejects(
+    f.command({ action: "run.start", role: "reviewer", agent: "fresh" }),
+    new RegExp(`owned by unreleased review round ${reader.id}`),
+  );
+  assert.equal(await git(worktree, "branch", "--show-current"), "");
+  assert.equal(await git(worktree, "rev-parse", "HEAD"), initialSha);
+});
+
+test("068: run.release returns the checkout its settled round left detached to the branch", async (t) => {
+  const f = await reviewStartFixture(t);
+  const { store, worktree, initialSha } = f;
+  const reader = runSchema.parse({
+    ...f.run("settling-reader", "reviewer", "reader-agent"),
+    head: initialSha,
+    ordinaryDetached: true,
+    priorRunId: "prior-round",
+    priorHead: initialSha,
+  });
+  store.putRun(reader);
+  store.setCredential(reader.id, "test-secret");
+  store.update(f.current().id, {
+    resolution: {
+      ...f.current().resolution,
+      currentRunId: reader.id,
+      reviewerAgentId: reader.agentId,
+    },
+  });
+  await git(worktree, "checkout", "--quiet", "--detach", initialSha);
+  const released = await f.command({
+    action: "run.release",
+    run: reader.id,
+    accept: ["live_turn", "unreported_result"],
+  });
+  assert.equal(released.explicitResolution?.status, "applied");
+  assert.equal(store.run(reader.id)?.released, true);
+  assert.equal(
+    await git(worktree, "branch", "--show-current"),
+    f.current().branch,
+  );
+  assert.equal(await git(worktree, "rev-parse", "HEAD"), initialSha);
+  assert.ok(
+    store.eventsAll(f.current().id).some(
+      (event) => event.kind === "task_checkout_reattached",
+    ),
+  );
+});

@@ -18,6 +18,10 @@ import {
 } from "../../shared/task-stop";
 import type { Engine } from "../engine";
 import { signalProcessGroupByLeader } from "../machine/process-group";
+import {
+  reattachRefusal,
+  reattachTaskCheckout,
+} from "../git/checkout-reattach";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
@@ -441,6 +445,19 @@ export function releasePlan(
           );
         }
       };
+      // Spec 068 §4: a release settles its run's custody of the checkout, so the
+      // same reattach step runs here and reports why a detached checkout stayed
+      // detached. The commit never moves.
+      const reattach = await reattachTaskCheckout(
+        store.task(task.id),
+        store.runs(task.id),
+        {
+          settlingRunId: run?.id ?? input.run,
+          record: (event, detail) => store.event(task.id, event, detail),
+        },
+      );
+      const reattachRefused = reattachRefusal(reattach);
+      if (reattachRefused) issues.push(`Checkout reattach: ${reattachRefused}.`);
       if (process?.pid && process.processGroupId && process.startIdentity) {
         await attempt("Process-group stop", () => {
           signalProcessGroupByLeader(

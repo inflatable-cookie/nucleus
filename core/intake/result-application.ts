@@ -40,8 +40,8 @@ import {
   gitDeliveryUnknown,
   ReviewPublicationTransientError,
 } from "../forge/forge-health";
-import { git, WorkerSourceRefusal } from "../git/index";
-import { readGitCheckout } from "../git/git-identity";
+import { WorkerSourceRefusal } from "../git/index";
+import { reattachTaskCheckout } from "../git/checkout-reattach";
 import { hookHoldReason } from "../hooks/hooks";
 import {
   consecutiveNonDeliveries,
@@ -612,8 +612,9 @@ export class ResultApplication {
         "The forge observed a different publication ID. The review publication owner must reconcile it",
       );
 
-    // Retained ordinary rounds can leave the worktree detached. The prior
-    // receipt and the existing source and owned-tool proofs still govern restoration.
+    // Retained ordinary rounds read their exact head in the task checkout, which
+    // the round itself never detaches (Spec 068 §4). The prior receipt and the
+    // existing source and owned-tool proofs still govern custody.
     if (run.ordinaryDetached) {
       const prior = runs.find((item) => item.id === run.priorRunId);
       if (
@@ -673,12 +674,17 @@ export class ResultApplication {
         );
     }
     if (run.ordinaryDetached) {
-      const branch = readGitCheckout(t.directory!).branch;
-      await ordinaryReviewSource(t, run.head, branch === "");
+      await ordinaryReviewSource(t, run.head, true);
       const custody = recheck();
       if ("refusal" in custody) return blocked(custody.refusal);
-      if (!branch) await git(t.directory!, "checkout", "--quiet", t.branch);
-      assertOrdinaryReviewIdentity(t, run.head, false);
+      // One reattach step returns a checkout an earlier round left detached to
+      // its task branch, and never blocks a verdict about the head that round
+      // read: the commit does not move either way.
+      await reattachTaskCheckout(t, this.store.runs(t.id), {
+        settlingRunId: run.id,
+        record: (event, detail) => this.store.event(t.id, event, detail),
+      });
+      assertOrdinaryReviewIdentity(this.store.task(t.id), run.head, true);
     }
     return this.commitReviewerVerdict(t, run, completion, true, () => {
       const boundary = recheck();
@@ -897,10 +903,12 @@ export class ResultApplication {
     let c = run.completion;
     if (run.ordinaryDetached) {
       await this.resolution.ordinaryRoundCustody(t, run, true);
-      const branch = readGitCheckout(t.directory!).branch;
-      await ordinaryReviewSource(t, run.head, branch === "");
-      if (!branch) await git(t.directory!, "checkout", "--quiet", t.branch);
-      await ordinaryReviewSource(t, run.head, false);
+      await ordinaryReviewSource(t, run.head, true);
+      await reattachTaskCheckout(t, this.store.runs(t.id), {
+        settlingRunId: run.id,
+        record: (event, detail) => this.store.event(t.id, event, detail),
+      });
+      assertOrdinaryReviewIdentity(t, run.head, true);
     }
     // A pass that read this reviewer as current before another pass settled it
     // has nothing left to do, and must not clear whichever run is current now.

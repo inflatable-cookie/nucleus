@@ -179,6 +179,10 @@ budget (200 KB) bounds long reports only — the review text in revision
 instructions, the joint operator question and the decider context.
 The shared checkout detaches only after custody and source checks, and returns to
 its recorded author branch after release; dirty, moved or still-owned source refuses.
+(Spec 068 §4 supersedes the detach: a follow-up round reads its exact head in the
+task checkout on its own branch, and one reattach step returns a checkout an
+earlier round left detached to its branch — see
+[Spec 068](068-self-healing.md).)
 A bound ordinary reader is not archived just because its verdict was applied.
 A positively closed reader gets a fresh replacement. An errored reader is held
 until its availability is known. These rules replace the old archive-after-verdict

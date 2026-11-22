@@ -647,7 +647,13 @@ test("ordinary public changes-required lifecycle retains the reader with a new e
     assert.doesNotMatch(second.reviewDelta!, /owner revised source/);
     assert.doesNotMatch(second.reviewDelta!, /^diff --git /m);
     assert.doesNotMatch(second.reviewDelta!, /^@@ /m);
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    // The follow-up round reads its exact head in the task checkout and never
+    // detaches it (Spec 068 §4): the checkout stays on the task branch.
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
+    assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), head);
     assert.match(
       runPrompt(f.store.task(f.task.id), second, "/helper", "/ticket", true),
       /Judge the delta/,
@@ -2095,7 +2101,7 @@ async function authorRevision(f: ReturnType<typeof fixture>, number: number) {
   return f.current();
 }
 
-test("a detached reviewer redelivers an accepted verdict without reattaching the checkout", async () => {
+test("a follow-up reviewer redelivers an accepted verdict with the checkout on its branch", async () => {
   const f = fixture();
   const oldPath = process.env.PATH;
   try {
@@ -2115,7 +2121,11 @@ test("a detached reviewer redelivers an accepted verdict without reattaching the
       true,
     );
     assert.match(prompt, /Owner direction: Inspect the outstanding proof/);
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
+    assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), run.head);
     f.idle(run);
     const bin = join(f.root, "redelivery-bin");
     mkdirSync(bin);
@@ -2162,7 +2172,10 @@ test("a detached reviewer redelivers an accepted verdict without reattaching the
       }),
     );
     assert.equal(asked, 1);
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
     await f.report(run, "ready_to_merge");
     assert.equal(f.store.run(run.id)?.completion?.status, "ready_to_merge");
   } finally {
@@ -2171,14 +2184,52 @@ test("a detached reviewer redelivers an accepted verdict without reattaching the
   }
 });
 
-test("refusing a fresh reviewer preserves the active detached checkout", async () => {
+test("a launch returns a checkout a settled round left detached to its branch", async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    const first = f.current();
+    // An earlier round left the shared checkout detached at the reviewed head.
+    runGit(f.workspace, "checkout", "--quiet", "--detach", first.head);
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "",
+      "the checkout starts detached at the reviewed head",
+    );
+    await f.report(first, "changes_required");
+    // The revision launch returns it to the task branch before dispatching, and
+    // no commit moves: the branch carries exactly the commit the round read.
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
+    assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), first.head);
+    assert.equal(f.current().role, "revision", f.store.task(f.task.id).reason);
+    assert.ok(
+      f.store
+        .eventsAll(f.task.id)
+        .some(
+          (event) =>
+            event.kind === "task_checkout_reattached" &&
+            event.detail.includes(first.head),
+        ),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("refusing a fresh reviewer preserves the active follow-up checkout", async () => {
   const f = fixture();
   try {
     await f.engine.wake();
     await f.report(f.current(), "changes_required");
     const run = await authorRevision(f, 1);
     assert.equal(run.ordinaryDetached, true);
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
     const head = runGit(f.workspace, "rev-parse", "HEAD");
     const status = runGit(f.workspace, "status", "--porcelain");
     f.adapter.verifyPr = machineVerifyPr;
@@ -2197,7 +2248,10 @@ test("refusing a fresh reviewer preserves the active detached checkout", async (
       ),
       /retained reviewer is still live/,
     );
-    assert.equal(runGit(f.workspace, "branch", "--show-current"), "");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
     assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), head);
     assert.equal(runGit(f.workspace, "status", "--porcelain"), status);
     assert.equal(f.store.task(f.task.id).resolution.currentRunId, run.id);

@@ -207,14 +207,16 @@ export class RunLaunchDeliver {
       t = this.store.task(t.id);
     let dispatchInvoked = false;
     try {
+      // A follow-up round reads the exact head in the task checkout on its own
+      // branch; no launch detaches it (Spec 068 §4). The source is proved in the
+      // shape the round reads, before and after the forge observation, which
+      // itself reads the branch.
       if (run.ordinaryDetached) {
         await this.resolution.ordinaryRoundCustody(t, run);
-        await ordinaryReviewSource(t, run.head, false);
+        await ordinaryReviewSource(t, run.head, true);
         await git(t.directory!, "fetch", "origin", `refs/heads/${t.branch}`);
         await this.machine.verifyPr(t, taskPrNumber(t));
         await this.resolution.ordinaryRoundCustody(t, run);
-        await ordinaryReviewSource(t, run.head, false);
-        await git(t.directory!, "checkout", "--quiet", "--detach", run.head);
         await ordinaryReviewSource(t, run.head, true);
       }
       // Ordinary review takes custody of a detached exact-head checkout only

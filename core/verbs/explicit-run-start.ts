@@ -32,6 +32,10 @@ import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
 import { queueCheckoutStatus } from "../git/index";
 import {
+  reattachRefusal,
+  reattachTaskCheckout,
+} from "../git/checkout-reattach";
+import {
   commonDirMatchesTask,
   originsMatchForTask,
   readGitCheckout,
@@ -456,10 +460,11 @@ function assertReviewSourceAvailable(task: Task): void {
 
 /**
  * Preflight reviewer source availability, forge PR head, checkout HEAD and live
- * writer observation before the transaction creates a run. Makes no Git writes.
- * If the forge head differs from the checkout HEAD or cannot be read,
- * `runStartPlan` returns `head_mismatch` and accepting starts the run on the
- * checkout as it is.
+ * writer observation before the transaction creates a run. Its one Git write is
+ * the reattach step: a checkout a review round left detached returns to its task
+ * branch when that moves no commit, so a run can start on it. If the forge head
+ * differs from the checkout HEAD or cannot be read, `runStartPlan` returns
+ * `head_mismatch` and accepting starts the run on the checkout as it is.
  */
 export async function preflightExplicitRunStart(
   engine: Engine,
@@ -475,6 +480,16 @@ export async function preflightExplicitRunStart(
     };
   }
   assertReviewSourceAvailable(task);
+  // Spec 068 §4: one reattach step runs here too, so a reviewer starts on a
+  // checkout a round left detached at the tip. It names its refusal instead.
+  const reattach = await reattachTaskCheckout(task, engine.store.runs(task.id), {
+    record: (event, detail) => engine.store.event(task.id, event, detail),
+  });
+  const reattachRefused = reattachRefusal(reattach);
+  if (reattachRefused)
+    throw Error(
+      `The task checkout was not returned to ${task.branch}: ${reattachRefused}`,
+    );
   let localHead: string | null = null;
   if (task.entrypoint !== "proof" && task.directory) {
     const dirty = await queueCheckoutStatus(
@@ -528,7 +543,7 @@ export async function preflightExplicitRunStart(
 
 /**
  * Read-only verification of the task checkout before delivering a reviewer run.
- * `run.start` makes no Git writes at all.
+ * The reattach step in preflight is the only Git write `run.start` makes.
  */
 async function verifyReviewerCheckout(task: Task, run: Run): Promise<void> {
   if (task.entrypoint === "proof" || !task.directory) return;

@@ -1,10 +1,11 @@
 import { climbedTier, requestedTier } from "../../../shared/demand";
 import type { LaunchSourceContext } from "../launch";
 import type { LaunchMachinePorts } from "./machine";
-import { git } from "../../git/index";
 import { unreviewedMergeRoute } from "../../../shared/task-view";
-import { readGitCheckout } from "../../git/git-identity";
-import { ordinaryReviewSource } from "../../review/ordinary-review";
+import {
+  reattachRefusal,
+  reattachTaskCheckout,
+} from "../../git/checkout-reattach";
 import { chooseProfile, reviewerFiltersWorker } from "../routing";
 import {
   combineWorkerHostProfiles,
@@ -100,24 +101,20 @@ export class RunLaunchSource {
       proof?: ProofActivation;
     },
   ): Promise<void> {
-    if (
-      t.directory &&
-      !t.reviewEntry &&
-      this.store.runs(t.id).some((run) => run.ordinaryDetached) &&
-      readGitCheckout(t.directory).branch === ""
-    ) {
-      const previous = this.store
-        .runs(t.id)
-        .findLast((run) => run.ordinaryDetached);
-      if (
-        !previous?.released ||
-        !["finished", "superseded"].includes(previous.status)
-      )
-        throw Error("Detached ordinary review is still owned");
-      await this.resolution.ordinaryRoundCustody(t, previous, true);
-      await ordinaryReviewSource(t, previous.head, true);
-      await git(t.directory, "checkout", "--quiet", t.branch);
-      await ordinaryReviewSource(t, previous.head, false);
+    // One reattach step before any launch into the task checkout (Spec 068 §4).
+    // It never moves the commit: a checkout a review round left detached returns
+    // to its task branch only when no unreleased round owns it, the tree is clean
+    // and HEAD already equals the branch tip. Otherwise the launch carries the
+    // step's own reason instead of leaving a detached checkout unexplained.
+    if (t.directory) {
+      const reattach = await reattachTaskCheckout(t, this.store.runs(t.id), {
+        record: (event, detail) => this.store.event(t.id, event, detail),
+      });
+      const refusal = reattachRefusal(reattach);
+      if (refusal)
+        throw Error(
+          `The task checkout was not returned to ${t.branch}: ${refusal}`,
+        );
     }
 
     const firstReviewEntryWorker =

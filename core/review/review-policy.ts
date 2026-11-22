@@ -253,7 +253,10 @@ export async function retainedWorkspacePlacement(workspace: { directory?: string
   if (!common || (common !== checkout.commonDir && !(task.directory && safeRealpathSync(source.directory) === safeRealpathSync(task.directory) && commonDirMatchesTask(task, checkout.commonDir, common, source.directory))))
     return refuse(`Retained reviewer checkout is not a worktree of the task repository ${phase}; no delivery was sent`);
   if (run.ordinaryDetached) await ordinaryReviewSource(task, run.head, true);
-  if (checkout.branch !== (run.ordinaryDetached ? '' : task.branch) || checkout.head !== run.head)
+  // A follow-up round reads its exact head in the task checkout, which its own
+  // launch never detaches (Spec 068 §4); a checkout an earlier round left
+  // detached reads the same commit, so either shape is the reviewed source.
+  if ((checkout.branch !== task.branch && !(run.ordinaryDetached && checkout.branch === '')) || checkout.head !== run.head)
     return refuse(`Retained reviewer checkout is not the reviewed branch and head ${phase}; no delivery was sent`);
   // The workspace descriptor was sampled before those awaited Git reads, so it is
   // re-read here and must describe the same placement, and the Git evidence is
