@@ -433,8 +433,7 @@ a privileged install.
   limit (`projectCapacities`); project overrides keep no change record of their
   own. A failed first read or a failed refresh says whether
   the values shown may be stale, and Try again re-reads; nothing is written.
-  Sections run usage level, task slots, project overrides, role demand, then
-  frontier grants (Nucleus UI lane, step 5).
+  Sections cover usage level, task slots and project overrides.
 - **Restart and upgrade.** The meta keys are the limits, so a restart or roll
   reads the same values and record. Nothing resets them or re-asserts over a
   later change.
@@ -535,7 +534,7 @@ The runtime build packages both bundles together.
   `QueueSettingsScreen` directly. The Settings writes (`queue.capacity`,
   `queue.pool`, `queue.profile`, `queue.availability`,
   `queue.usage`, `queue.project-dispatch-limit`,
-  `queue.routing-grant`, `repository.set`, `backup.now`,
+  `repository.set`, `backup.now`,
   `profile.create`, `profile.update`, `profile.remove`;
   `SETTINGS_WRITE_METHODS` in `shared/web-surface.ts`) are served over the web only
   when the request also carries `x-nucleus-surface: settings`, which the web

@@ -491,7 +491,6 @@ test("Settings override removal stays locked across tab switches, distinguishes 
     projectLimit: 4,
     papercutProjectLimit: 2,
     usage: { level: "normal", setLevel: "normal", until: null, expired: false },
-    routingGrants: [],
     tasks: [],
     profiles: [],
     pool: [],

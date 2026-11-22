@@ -2,7 +2,7 @@ import type { LaunchThreadContext } from '../launch';
 import { type Run, type Task } from '../../../shared/contracts';
 import type { HostObservation } from '../../../shared/host';
 import { proofExecutor } from '../../recovery/task-reasons';
-import { decideWorkerReplacement, isWorkerRouteApproved, retainedWorkerFailureCause } from '../../recovery/worker-replacement';
+import { decideWorkerReplacement, isWorkerRouteAllowed, retainedWorkerFailureCause } from '../../recovery/worker-replacement';
 import { modelKey } from '../../../shared/authors';
 import { groupForProfile, type LaunchOptions, type ThreadBinding } from './thread-binding';
 import { executorThreadDecision } from './thread-decisions';
@@ -44,7 +44,7 @@ export async function reconcileExecutorThread(ctx: LaunchThreadContext, t: Task,
       requestedProfileId: options.profile?.id ?? null,
       requestedModel: profile?.model ?? null,
       currentModel,
-      approved: options.profile ? isWorkerRouteApproved(t, options.profile.id, ctx.store.pool(), ctx.store.usageLevel()) : false,
+      approved: options.profile ? isWorkerRouteAllowed(t, options.profile.id, ctx.store.pool(), ctx.store.usageLevel()) : false,
       failure,
       explicitOperatorRelay: false,
     });
@@ -55,7 +55,7 @@ export async function reconcileExecutorThread(ctx: LaunchThreadContext, t: Task,
     });
     if (replacementDecision === 'fresh') agentId = null;
     else if (replacementDecision === 'reselect') {
-      // A same-model selection or a route still waiting on sign-off keeps
+      // A same-model selection keeps
       // the existing binding and its pinned profile together.
       profile = priorExecutor.profile;
       group = groupForProfile(ctx, profile);

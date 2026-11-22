@@ -56,7 +56,7 @@ export type LaunchThreadContext = Pick<
   | "retainedProfileIssue"
   | "reviewerCapabilityIssue"
   | "select"
-  | "signoffIssue"
+  | "retainedRouteIssue"
   | "store"
   | "update"
   | "usageCeilingNote"

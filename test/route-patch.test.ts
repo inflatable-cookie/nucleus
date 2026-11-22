@@ -25,7 +25,6 @@ test('route patch keeps other live slots and advances eligible roles', () => {
         phase: 'changes_requested', reason: 'Owner routed the worker profile; selecting the next worker run on p',
         resolution: { currentRunId: null, review: null, attention: false, recoveryActive: false, recoveryAttempts: 0,
           recovery: null, stalledTurnStop: null, pendingWorkerInstruction: 'continue', prePrResumeInstruction: null } }],
-    [{ role: 'worker', current: { ...task, phase: 'working', agentId: 'a' }, replacementRefusal: { rule: 'signoff_pending', detail: 'pending' } }, { profileRequests: {} }],
   ];
   for (const [changes, expected] of cases) assert.deepEqual(routePatch({ ...base, ...changes }), expected);
 });

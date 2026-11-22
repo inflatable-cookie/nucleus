@@ -7,23 +7,12 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { Decisions } from '../core/planning/decisions';
 import { chooseProfile, eligibilityReasons } from '../core/dispatch/routing';
-import { reconcileRoutingSignoffs, signoffApprove } from '../core/dispatch/routing-signoff';
 import { supersedingRouteProfile } from '../shared/pool';
 import { submissionSchema, type Profile, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 import type { ResolutionAdapter } from '../core/resolution';
 
-/**
- * Task 515: routing honours the operator's chosen route. The latest approved
- * route for a role is the selection Queue dispatches, and routing messages say
- * plainly why a profile was not used. Clears papercuts 8e141468 (an approved
- * worker route left an older dispatch selection in force), ca2dfcdc (routing
- * asks for approval again after the operator already chose that task and
- * profile) and d9c61c02 (a profile filtered for independence is reported as
- * absent from the catalog).
- */
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
 
 
@@ -84,14 +73,9 @@ function routeFixture() {
 
 test('papercut 8e141468: an approved worker route replaces the stale dispatch selection', async () => {
   const f = routeFixture(); try {
-    // The operator approved sol for the worker after the task dispatched on
-    // author: the sign-off decision was answered on the board, so the request
-    // is required and honoured. Only the recording differs from a `route`
-    // verb, which would have armed the replacement itself.
     const approved = f.store.update(f.task.id, {
-      profileRequests: { worker: { profileId: 'sol', reason: 'Sol is stronger for the revision', required: true,
-        signoff: { status: 'approved', decisionId: 'decision-1', by: 'operator (board)', at: new Date().toISOString(), note: '' } } },
-    }, 'routing_signoff', JSON.stringify({ role: 'worker', requested: 'sol', profileId: 'sol', status: 'approved', decisionId: 'decision-1', note: '' }));
+      profileRequests: { worker: { profileId: 'sol', reason: 'Sol is stronger for the revision', required: true } },
+    });
     assert.equal(chooseProfile(approved, profiles, pool as never, {}, new Set(), 'worker')?.profile.id, 'sol');
     assert.equal(supersedingRouteProfile(approved.profileRequests?.worker, approved.profile?.id, pool as never, 'normal'), 'sol');
 
@@ -106,10 +90,6 @@ test('papercut 8e141468: an approved worker route replaces the stale dispatch se
 
 test('review finding: a required reviewer route supersedes the retained reviewer selection', async () => {
   const f = routeFixture(); try {
-    // A retained reviewer from an earlier round, idle in its own workspace,
-    // while a required within-level request names another profile. No
-    // sign-off is needed for the request, so signoffIssue stays silent: only
-    // the general rule switches the next run to the approved route.
     f.idle('old-rev');
     f.store.update(f.task.id, {
       phase: 'awaiting_review',
@@ -162,62 +142,6 @@ test('papercut 8e141468 control: without an approved route the retained selectio
   } finally { await f.close(); }
 });
 
-test('papercut ca2dfcdc: a second request for the same approved task and profile opens no new decision', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ns-no-reask-'));
-  const store = new Store(join(dir, 'queue.sqlite'));
-  store.setMeta('pool', [
-    { profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], },
-    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'frontier' },
-  ]);
-  const cheap = profile('cheap', 'cheap-model'), sol = profile('sol', 'sol-model');
-  const catalog = [cheap, sol];
-  const decisions = new Decisions(store);
-  const submit = () => store.insert(submissionSchema.parse({ submissionId: `reask-${Math.random()}`, title: 'Reask',
-    repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'planner',
-    profileRequests: { reviewer: { profileId: 'sol', reason: 'Independent complete review', required: true } } }), 'host', 'handoff', 'a'.repeat(40));
-  try {
-    const task = submit();
-    reconcileRoutingSignoffs(store, decisions, task.id, catalog);
-    const first = store.task(task.id).profileRequests!.reviewer!.signoff!;
-    assert.equal(first.status, 'pending');
-    assert.equal(decisions.list({ task: task.id }).length, 1);
-    const decision = decisions.get({ id: first.decisionId! });
-    decisions.answer({ id: decision.id, version: decision.version, answer: signoffApprove('sol'), answeredBy: 'operator (board)', relayed: false, note: '' });
-    reconcileRoutingSignoffs(store, decisions, task.id, catalog);
-    assert.equal(store.task(task.id).profileRequests!.reviewer!.signoff!.status, 'approved');
-    // The approval is re-recorded without its sign-off, the way set_routing
-    // stores a plain request. Asking again would repeat the operator's choice.
-    store.update(task.id, { profileRequests: { reviewer: { profileId: 'sol', reason: 'Independent complete review', required: true } } },
-      'routing_changed', JSON.stringify({ role: 'reviewer', profileId: 'sol' }));
-    reconcileRoutingSignoffs(store, decisions, task.id, catalog);
-    const restored = store.task(task.id).profileRequests!.reviewer!;
-    assert.equal(restored.signoff!.status, 'approved', 'the recorded approval is restored, not asked again');
-    assert.equal(restored.signoff!.decisionId, first.decisionId, 'the restored approval names the original decision');
-    assert.equal(decisions.list({ task: task.id }).length, 1, 'no second decision is opened for the same approved task and profile');
-  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('papercut ca2dfcdc control: a later decline wins, so a re-request asks again', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ns-reask-decline-'));
-  const store = new Store(join(dir, 'queue.sqlite'));
-  store.setMeta('pool', [
-    { profileId: 'cheap', enabled: true, group: 'cheap', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], },
-    { profileId: 'sol', enabled: true, group: 'sol', roles: ['worker', 'reviewer'], weight: "default", scopes: ['general'], capability: 'frontier' },
-  ]);
-  const catalog = [profile('cheap', 'cheap-model'), profile('sol', 'sol-model')];
-  const decisions = new Decisions(store);
-  try {
-    const task = store.insert(submissionSchema.parse({ submissionId: 'reask-decline', title: 'Reask decline',
-      repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'planner',
-      profileRequests: { reviewer: { profileId: 'sol', reason: 'Review', required: true } } }), 'host', 'handoff', 'a'.repeat(40));
-    store.event(task.id, 'routing_signoff', JSON.stringify({ role: 'reviewer', requested: 'sol', profileId: 'sol', status: 'approved', decisionId: 'old', note: '' }));
-    store.event(task.id, 'routing_signoff', JSON.stringify({ role: 'reviewer', requested: 'sol', profileId: 'sol', status: 'declined', decisionId: 'newer', note: 'changed mind' }));
-    store.update(task.id, { profileRequests: { reviewer: { profileId: 'sol', reason: 'Review', required: true } } }, 'routing_changed', '{}');
-    reconcileRoutingSignoffs(store, decisions, task.id, catalog);
-    assert.equal(decisions.list({ task: task.id }).length, 1, 'a newer decline ends the reuse: the operator is asked again');
-  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
-});
-
 test('papercut d9c61c02: an independence-filtered profile is reported as filtered, not missing', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ns-filtered-'));
   const store = new Store(join(dir, 'queue.sqlite'));
@@ -245,16 +169,15 @@ test('papercut d9c61c02: an independence-filtered profile is reported as filtere
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('the general rule: a required honoured route supersedes the recorded selection; anything else does not', () => {
-  const honoured = { profileId: 'sol', reason: 'Board choice', required: true,
-    signoff: { status: 'approved', decisionId: 'd', by: 'operator (board)', at: 'now', note: '' } };
+test('the general rule: a required honoured route supersedes the recorded selection; a request-only profile also supersedes it', () => {
+  const honoured = { profileId: 'sol', reason: 'Selected profile', required: true };
   assert.equal(supersedingRouteProfile(honoured, 'author', pool as never, 'normal'), 'sol');
   assert.equal(supersedingRouteProfile(honoured, 'sol', pool as never, 'normal'), null, 'the same profile is not superseded');
   assert.equal(supersedingRouteProfile({ ...honoured, required: false }, 'author', pool as never, 'normal'), null,
     'a soft request never displaces a recorded selection');
-  assert.equal(supersedingRouteProfile({ profileId: 'sol', reason: 'Pending', required: true }, 'author', [
+  assert.equal(supersedingRouteProfile({ profileId: 'sol', reason: 'Needed for this role', required: false }, 'author', [
     { profileId: 'sol', enabled: true, group: 'sol', capability: 'frontier', },
-  ] as never, 'normal'), null, 'an unsigned request for a by-request profile pins nothing');
+  ] as never, 'normal'), 'sol', 'a request-only profile supersedes a retained binding');
   assert.equal(supersedingRouteProfile({ profileId: 'sol', reason: 'Within level', required: true }, 'author',
     pool as never, 'normal'), 'sol', 'a required within-level request is honoured at once');
 });

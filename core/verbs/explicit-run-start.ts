@@ -16,7 +16,7 @@ import {
 } from "../../shared/contracts";
 import { climbedTier, requestedTier } from "../../shared/demand";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { groupIsUnavailable, requestReaches } from "../../shared/pool";
+import { automaticReachable, groupIsUnavailable, requestOnly } from "../../shared/pool";
 import type {
   ExplicitResolution,
   ResolutionWarningId,
@@ -297,7 +297,6 @@ function selectProfileForStart(
 ): {
   profile: Profile | null;
   group: string | null;
-  needsPolicySignoff: boolean;
 } {
   const store = engine.store;
   const pool = store.pool();
@@ -317,32 +316,6 @@ function selectProfileForStart(
     profile
       ? (pool.find((entry) => entry.profileId === profile.id)?.group ?? null)
       : null;
-  const policySignoffFor = (profile: Profile | null) => {
-    const entry = profile
-      ? pool.find((item) => item.profileId === profile.id)
-      : null;
-    const tierBlocked = Boolean(
-      entry &&
-        !requestReaches(
-          entry,
-          usage,
-          request,
-          requestedTier(task.complexity),
-          climbedTier(task),
-        ),
-    );
-    const roleSignoff =
-      role !== "worker" && profile
-        ? engine.resolution.signoffIssue(task, profile, role)
-        : null;
-    return Boolean(
-      tierBlocked ||
-        roleSignoff ||
-        request?.signoff?.status === "pending" ||
-        (role === "worker" && usageGateBlocked(task, usage)),
-    );
-  };
-
   if (agentMode === "retained") {
     const profile =
       role === "worker"
@@ -365,7 +338,6 @@ function selectProfileForStart(
     return {
       profile,
       group: groupOf(profile),
-      needsPolicySignoff: policySignoffFor(profile),
     };
   }
 
@@ -385,7 +357,6 @@ function selectProfileForStart(
     return {
       profile,
       group: selected?.entry.group ?? groupOf(profile),
-      needsPolicySignoff: policySignoffFor(profile),
     };
   }
 
@@ -413,19 +384,22 @@ function selectProfileForStart(
   }
   if (!profile) {
     const entry = pool.find(
-      (item) => item.enabled && item.roles.includes(role),
+      (item) => item.enabled && item.roles.includes(role) &&
+        automaticReachable(item, usage, requestedTier(task.complexity), climbedTier(task), role),
     );
     profile =
       (entry
         ? allProfiles.find((item) => item.id === entry.profileId)
         : null) ??
-      allProfiles[0] ??
+      allProfiles.find((candidate) => {
+        const entry = pool.find((item) => item.profileId === candidate.id);
+        return !entry || automaticReachable(entry, usage, requestedTier(task.complexity), climbedTier(task), role);
+      }) ??
       null;
   }
   return {
     profile,
     group: groupOf(profile),
-    needsPolicySignoff: policySignoffFor(profile),
   };
 }
 
@@ -632,7 +606,7 @@ export function runStartPlan(
       })
     : null;
 
-  const { profile, group, needsPolicySignoff } = selectProfileForStart(
+  const { profile, group } = selectProfileForStart(
     engine,
     task,
     input.role,
@@ -749,12 +723,16 @@ export function runStartPlan(
       "The task's replacement ceiling, revision cap or execution budget is reached.",
     );
   }
-  if (needsPolicySignoff) {
-    warn(
-      "route_policy",
-      `Starting ${input.role} on ${profile?.id ?? "this route"} requires Spec 052 operator sign-off.`,
-    );
-  }
+  const entry = engine.store.pool().find((item) => item.profileId === profile?.id);
+  const usage = engine.store.usageLevel();
+  if (
+    entry &&
+    task.profileRequests?.[input.role]?.profileId !== entry.profileId &&
+    requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task))
+  )
+    throw Error(`Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`);
+  if (input.role === "worker" && usageGateBlocked(task, usage))
+    warn("route_policy", "The Low usage level requires approval to admit this high-complexity task.");
 
   let createdRun: Run | null = null;
   let token = "";

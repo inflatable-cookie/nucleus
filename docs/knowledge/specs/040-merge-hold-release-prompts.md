@@ -156,7 +156,7 @@ A task has one owner (Tom, 2026-10-26: "There should be one owner field so
 reparenting is a single change"): `notificationAgentId`, recorded at submission as
 the creator and the only field a reparent writes. Every reader of "who owns this
 task now" resolves through it (`taskOwner`): attention, prerequisite and completion
-origin notices, the stop view, the wait state, routing sign-off answers, and every
+origin notices, the stop view, the wait state, and every
 owner-placed hold (above). The creator (`originAgentId`) is history only. In the
 completion membership a done transition freezes, a creator that nominated itself
 and the owner's own subscription choice are the owner entry, delivered to the

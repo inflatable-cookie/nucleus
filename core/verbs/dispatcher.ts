@@ -35,6 +35,7 @@ import {
 } from "./owner-authority";
 import { applyReceiptAcceptance } from "./receipt-acceptance";
 import { recordNoAutomaticRetryRule } from "./no-automatic-retry-record";
+import { sameCallerIdentity } from "../../shared/agent-identity";
 
 /**
  * Every task control enters here: the audit lines, the force and cap gates, and
@@ -233,6 +234,14 @@ export class TaskControlDispatcher {
       throw new DurableFenceRefusal(FORCE_ACTION_REFUSAL);
     }
     assertAuthorRevisionAllowance(this.engine, input, task);
+    if (
+      (input.action === "route" ||
+        (input.action === "set_routing" && input.profileRequests !== undefined)) &&
+      [task.agentId, task.resolution.reviewerAgentId].some((agentId) =>
+        sameCallerIdentity(input.caller, agentId, undefined, task.hostId),
+      )
+    )
+      throw new DurableFenceRefusal("The task's worker and reviewer cannot request a profile for this task");
     if (input.action === "complete")
       return await this.engine.applyTaskControlComplete(
         input,

@@ -26,14 +26,6 @@ import {
   releasePatch,
   OPERATOR_HOLD_OWNER,
 } from "../merge/merge-hold";
-import { coveringGrant, grantSignoff } from "../dispatch/routing-signoff";
-import {
-  boardSignoff,
-  OPERATOR_BOARD,
-  priorNonGrantSignoff,
-  reconcileRoutingSignoffs,
-  withdrawOpen,
-} from "../dispatch/routing-signoff";
 import {
   plainProfileRequest,
   validateNamedProfile,
@@ -147,34 +139,13 @@ export class SettingsControls {
       // Spec 050: the `ownerRoute` marker is route-only. `set_routing`
       // stores the plain request so a same-model reviewer never inherits the
       // owner-route independence waiver (which needs a recorded waiver).
-      // Spec 052: a set_routing from the operator's board is its own sign-off; a relayed one is asked.
       for (const role of ["worker", "reviewer", "coordinator"] as const) {
         const request = input.profileRequests?.[role];
         if (request === null) delete requests[role];
         else if (request) {
-          const board = input.caller === OPERATOR_BOARD && !input.relayed;
-          const prior = !board
-            ? priorNonGrantSignoff(this.store, task.id, role, request.profileId)
-            : null;
-          const grant = !board
-            ? coveringGrant(this.store, task, request.profileId)
-            : null;
-          const carry =
-            prior &&
-            (prior.status === "approved" ||
-              (prior.status === "declined" && grant))
-              ? prior
-              : null;
           requests[role] = {
             ...plainProfileRequest(request),
             ...(input.caller ? { requestedBy: input.caller } : {}),
-            ...(board
-              ? { signoff: boardSignoff() }
-              : carry
-                ? { signoff: carry }
-                : grant
-                  ? { signoff: grantSignoff(grant) }
-                  : {}),
           };
         }
       }
@@ -323,20 +294,6 @@ export class SettingsControls {
           }),
         ),
       );
-      // A replaced or removed request takes its open sign-off question with it.
-      for (const role of ["worker", "reviewer", "coordinator"] as const) {
-        const old = task.profileRequests?.[role]?.signoff;
-        if (
-          old?.status === "pending" &&
-          old.decisionId &&
-          input.profileRequests?.[role] !== undefined
-        )
-          withdrawOpen(
-            this.engine.signoffDecisions,
-            old.decisionId,
-            "The role's routing was changed",
-          );
-      }
       return changed;
     };
     return this.store.db.isTransaction
@@ -707,32 +664,8 @@ export class SettingsControls {
       );
     }, `task:${input.taskId}`);
   }
+
   reparent(input: ReparentInput) {
-    return this.engine.control(async () => {
-      const result = await this.resolution.origins.reparent(input);
-      for (const change of result.changed) {
-        const task = this.store.task(change.taskId);
-        const workerCatalogs = this.engine.workerHostCatalogs(task);
-        if (
-          !this.engine.profileCatalogKnown() &&
-          !this.engine.profileCatalogKnownFor(task.hostId) &&
-          !workerCatalogs.length
-        )
-          continue;
-        reconcileRoutingSignoffs(
-          this.store,
-          this.engine.signoffDecisions,
-          change.taskId,
-          this.engine.profileCatalogKnownFor(task.hostId)
-            ? this.engine.profilesFor(task.hostId)
-            : this.engine.profiles,
-          {
-            workerProfiles: this.engine.workerRoutingProfiles(task),
-            workerCatalogPending: this.engine.workerHostCatalogPending(task),
-          },
-        );
-      }
-      return result;
-    }, "control:origin");
+    return this.engine.control(() => this.resolution.origins.reparent(input), "control:origin");
   }
 }

@@ -1,3 +1,4 @@
+import { Decisions } from "../planning/decisions";
 import type { AssignmentRole } from "../../shared/schema/state";
 import { StoreAuth } from "./store-auth";
 import { StoreConfig } from "./store-config";
@@ -153,7 +154,6 @@ import {
   type ProjectValidation,
   type RepositoryChecksPolicy,
   type RepositorySettings,
-  type RoutingGrant,
   type RoutingPolicy,
   type Run,
   type RuntimeRetirement,
@@ -269,6 +269,7 @@ export class Store {
   private readonly migrationStore = new StoreMigration(this.core, {
     retainedArchiveKeys: () => this.retentionStore.retainedArchiveKeys(),
     pruneThreadArchiveKeys: () => this.retentionStore.pruneThreadArchiveKeys(),
+    withdrawDecision: (input) => new Decisions(this).withdrawInTransaction(input),
   });
   private readonly admissionStore = new StoreAdmission(this.core, {
     storedSchema: (path, integrity) => Store.storedSchema(path, integrity),
@@ -342,7 +343,6 @@ export class Store {
       putOutcome: (record) => store.putOutcome(record),
       completePapercutsForTask: (task) =>
         store.planningStore.completePapercutsForTask(task),
-      noteGrantRun: (task, role) => store.noteGrantRun(task, role),
       receipt: (input, token, credentialRunId) =>
         store.receipt(input, token, credentialRunId),
       setCompletionReceipt: (id, task, run, hash, response) =>
@@ -1605,12 +1605,6 @@ export class Store {
     return this.configStore.usageView(at);
   }
   /** Spec 052 planner grants stored in meta, like usage. */
-  routingGrants(): RoutingGrant[] {
-    return this.configStore.routingGrants();
-  }
-  noteGrantRun(task: Task, role: "worker" | "reviewer" | "coordinator"): void {
-    return this.configStore.noteGrantRun(task, role);
-  }
   /** Whether a run of another unremoved task names this workspace: one query, not a per-task run read. */
   workspaceUsedByOtherTaskRun(taskId: string, workspaceId: string): boolean {
     return Boolean(

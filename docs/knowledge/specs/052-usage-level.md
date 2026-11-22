@@ -115,7 +115,7 @@ profiles.
   (2026-11-08) are retired.
 - The
   earlier migration copied Paseo's `config.agentProfiles` once with
-  ids unchanged and records that it ran, so the pool, routing requests, grants
+  ids unchanged and records that it ran, so the pool, routing requests
   and history keep matching; a Nucleus profile is never overwritten and a later
   Paseo change imports nothing. Availability is read from a stored profile and
   one host catalog, with no silent fallback: a host lacking the provider or model
@@ -164,21 +164,15 @@ the step-up (Tom, 2026-11-19: "a medium complexity task goes to a Worker
 profile, a high complexity task starts on a Worker but can escalate to a
 Heavyweight if it needs to").
 
-**Ruling (Tom, 2026-11-22): no operator sign-off for profiles.** The sign-off
-decisions always landed after the fact: "This system of asking for frontier
-doesn't work - it always lands after the fact. Let's remove the need for operator
-interaction, but make frontier a specific request a planner has to make in normal
-and high limits modes." At Low, Normal and High, Frontier is never automatic and
-runs only on an explicit planner request (or owner route) with a reason. The
-request applies directly, with no board decision, no routing grant and no wait.
-nucleus#1539 implements this and rewrites the Permission column below, which
-still describes shipped behaviour until it lands.
+**Explicit profile requests (Tom, 2026-11-22).** A planner can request a profile
+for a role with a reason in the brief or through an owner route. The request
+takes effect on that role's next run, and routing details show the reason.
 
 | Level | Where a task's worker starts | Permission |
 | --- | --- | --- |
-| **Low** | One bracket below the one it may climb to. | High and very-high complexity work needs permission at submission: a decision opens on the board and the task is held until the operator approves. Once approved, the Low rules apply. Frontier needs permission; Heavyweight does unless the task starts or climbs there. |
-| **Normal** (default) | On its own bracket: Mechanical, Worker or Heavyweight. | Frontier needs permission; Heavyweight does unless the task starts there (very high) or climbs there (high). |
-| **High** | At the bracket it may climb to, up to Heavyweight. | Frontier needs permission. |
+| **Low** | One bracket below the one it may climb to. | The operator approves admission of high and very-high work. Frontier is request-only, as is Heavyweight unless the task starts or climbs there. |
+| **Normal** (default) | On its own bracket: Mechanical, Worker or Heavyweight. | Frontier is request-only, as is Heavyweight unless the task starts or climbs there. |
+| **High** | At the bracket it may climb to, up to Heavyweight. | Frontier is request-only. |
 | **Extra high** | As at High. | None. |
 | **Maximum** | Workers and reviewers run on Heavyweight or Frontier regardless of complexity. | None. |
 
@@ -187,9 +181,9 @@ still describes shipped behaviour until it lands.
 - **Step-up.** When an applied review requests changes on a task that started
   below the bracket it may climb to, the next worker run climbs one bracket,
   never past it: a medium task stays on Worker, a high task climbs once to
-  Heavyweight, a very-high task climbs to Frontier under the level's
-  permission rule (sign-off at Low, Normal and High; automatic at Extra high
-  and Maximum; planner correction, question 10020177), and very-low and low tasks stay on Mechanical. The applied review outcome
+  Heavyweight, and very-low and low tasks stay on Mechanical. A very-high task
+  steps up to at most Heavyweight at Low, Normal and High, and can step up to
+  Frontier at Extra high and Maximum. The applied review outcome
   (`resolution.review.status === "changes_required"`) authorizes it, never the
   `changes_requested` phase alone (an owner move or recovery also takes that
   phase), and one climb is recorded per review run
@@ -204,12 +198,9 @@ still describes shipped behaviour until it lands.
   thread and charges nothing: the rotation history counts fresh and explicitly
   selected bindings only. The climb is recorded before the launch
   so its bracket stays permitted, and the `changes_requested` phase alone never
-  authorizes it. Request reconciliation (`reconcileRoutingSignoffs`) and route
-  admission read the same recorded climb, so a request or route at the earned
-  bracket needs no second sign-off; the same-capability non-delivery and rate-limit
-  replacements read it too, so an eligible alternate on the earned bracket is not
-  discarded. Climbing to Heavyweight never needs permission; going above the
-  climb bracket is an explicit planner or operator route.
+  authorizes it. Availability and failover checks use the recorded climb when
+  checking the earned bracket. A planner or owner can request a higher bracket
+  explicitly.
 - **Automatic selection stays at or below the climb bracket.** The run's
   bracket is its demand: it rotates inside that bracket, takes the nearest
   bracket above only when nothing carries it, and falls back to the most
@@ -232,9 +223,9 @@ still describes shipped behaviour until it lands.
   capable as the worker when one is permitted, and falls back the same way
   (kept by Tom, 2026-11-19). At Maximum reviewers still use Heavyweight and
   Frontier.
-- **Nothing waits for an escalation sign-off** except the Low submission gate.
-  A role whose preferred profile needs permission runs on the best allowed bracket
-  while the decision is open on the board, as before.
+- **Nothing waits for profile approval.** An explicit request applies on the
+  role's next run. The Low submission gate still holds work that needs
+  admission approval.
 - **Other roles.** Reviewers keep the independence rule, and a retained
   reviewer below the bracket the level asks of it is replaced on the next
   round. Coordinator and recovery runs always use Mechanical when an eligible
@@ -244,19 +235,11 @@ still describes shipped behaviour until it lands.
   all"). There are no role-demand offsets: the Settings section is gone and the
   store drops a stored `demandRoleOffsets`, noting it in the migration record.
   Deciders run on the task's own bracket (nucleus#1362).
-- **Eligibility** (Tom, 2026-11-09). Automatic selection may use a profile when
-  its capability bracket and its On/Off switch allow it at the level in force,
-  nothing else. Outside that, a profile needs an explicit request with a reason
-  and sign-off. Profile cost is retired and the rotation weight is a five-stop slider
-  ([Spec 053](053-demand-based-selection.md), Tom, 2026-11-21); neither is ever a
-  permission rule.
-- **Cost removed, Weight a slider** (Tom, 2026-11-21). The profile Cost rating
-  is gone now that capability brackets decide eligibility; no routing, sign-off
-  or recovery path reads it. Non-delivery routing and transient rate-limit
-  failover no longer filter on it, and a coordinator `route` is checked only
-  against the level's permission rule. Saved profiles read their legacy Cost
-  and integer weight at the existing boundaries (Spec 053 states the mapping);
-  the Cost value is discarded.
+- **Eligibility.** Automatic selection uses enabled, available profiles within
+  the effective usage and role bounds. A planner request with a reason can
+  reach outside automatic selection, subject to profile availability, thinking
+  support and role rules. Rotation weight affects selection among eligible
+  profiles ([Spec 053](053-demand-based-selection.md)).
 - **Frontier is a capability bracket, not a cost** (Tom, 2026-11-09: "Can we
   get rid of very low, and instead add `frontier` to the other end of the
   scale?… then Opus would move to `frontier` to distinguish it better from
@@ -277,8 +260,7 @@ still describes shipped behaviour until it lands.
   earlier the same day: "lift it at maximum slider? That's sort of the point of
   that slider setting"). The pool's `byRequest` flag, its toggle and its row
   status are gone; the store drops stored flags on open, and a pool write that
-  still carries one reads without it. Requests and grants still work for any
-  profile the level's permission rule holds.
+  still carries one reads without it.
 - **Preference.** The level sets each run's start bracket, not a weight: since
   [Spec 053](053-demand-based-selection.md) (Tom, 2026-10-21; 2026-11-04) the
   set is every profile rated at or above the demand, with rotation and fair
@@ -289,64 +271,22 @@ still describes shipped behaviour until it lands.
 - **Roles.** The level applies to every automatic selection: worker, reviewer,
   coordinator and replacements. Review independence is unchanged; the reviewer
   still excludes every author model.
-- **Coordinators.** A coordinator's `route` is refused to a profile the level's
-  permission rule holds: Frontier, or a Heavyweight profile the task neither
-  starts nor climbs on, at Low or Normal, or a Frontier profile at High.
-- **Explicit requests and sign-off** (Tom, 2026-10-21: "fully bound by
-  default, but allow explicit override with reason _and_ sign off from me").
-  A request (`profileRequests`, owner or coordinator `route`, `set_routing`)
-  for a profile the level's permission rule holds applies only
-  once the operator signs it off on the board or through their authenticated T3 session. Nucleus asks through an operator
-  decision linked to the task, on the requester's behalf: approve the
-  requested profile, pick another from the role's pool, or decline. A required
-  legacy worker preference for such a profile enters the same request and
-  decision lifecycle before dispatch; it grants no sign-off by itself. Nothing
-  waits for the answer (Tom: "don't hold things up"): an unsigned request pins
-  nothing, sets no thinking level and never leaves a role waiting, so the role
-  runs on automatic selection within the level. When an approval arrives, Nucleus
-  applies it through `route`: a live role run that was selected automatically
-  while the request awaited sign-off is replaced on the approved profile, and a
-  role with no live run (including a worker that has handed over to review) gets
-  the route for its next run. Workspace and branch stay in place. The replacement
-  ceiling and worker replacement guard still apply; if they refuse a live worker
-  replacement, the approved route is saved for the next run and the activity
-  records why the live run stayed. A decline leaves the run alone. Only a direct operator answer on the board or in T3 counts; a relayed answer, a withdrawal or an answer that names no option
-  declines, and the requester gets the answer as for any decision. The
-  operator's own board `route` or `set_routing` is its own sign-off. An
-  approval already given for a task and profile is not asked again: a
-  re-recorded request for the same role and profile restores the recorded
-  approval instead of opening a new decision, while a later ruling for the
-  same role and profile wins. A recorded selection that predates a required
-  approved route yields to it from that role's next run: the next worker run
-  is replaced onto the approved profile and a stale reviewer or coordinator
-  binding is dropped, without stopping a live run. A route
-  that replaces the request withdraws the open question; a finished task
-  withdraws its open ones; a level that later covers the profile withdraws it
-  as moot. `route now` to an unsigned request-only profile is refused, since it
-  would only restart the role on automatic selection. Requests on live tasks
-  when this shipped were bound too, each opening its own question (Tom: "Bind
-  them too"). A request within the level needs no sign-off. A worker already
-  bound to its task keeps its own thread on its profile until the task ends
-  (Tom, 2026-10-21: "Keep its thread"); a live run and a review continuation are
-  never stopped by sign-off. Every new selection is bound: a fresh reviewer on
-  the recorded reviewer profile, a new run on the bound coordinator, and new or
-  replacement workers. The answer maps through the options as they were asked,
-  and an unsigned worker route keeps its thinking level on the request. Submissions never
-  carry a sign-off; Nucleus writes it. `routingPolicy` rows show each request's
-  sign-off state. Spec 058 cutover 3 retired every other automatic author capability upgrade: apart from the one review-authorised step-up above, a stronger worker model requires an owner route and the usual sign-off.
-- **Planner grants** (Tom, 2026-11-06: when frontier is needed it is generally needed for a string of dispatches; agents ask and handle the routing, the operator only says yes). A planner requests a standing grant with `queue.routing-grant` action `request`, naming why and optionally which profiles and until when. Nucleus opens one operator decision on the existing board. A direct operator yes on the board or in T3 activates the grant; a relayed answer does not. A repeat request while one is open joins it; a planner with an active grant is told so. Only a direct operator answer activates a grant: an agent cannot grant itself or another. While the grant stands, an explicit `profileRequests` or `route` on a task whose owner is that planner is treated as signed off, with the grant ID recorded on the request and in `routingPolicy`, and no per-task decision. Requests the grant does not cover — another planner's task, automatic selection, a profile outside a named set — keep today's route. The grant does not move automatic selection or demand. Coverage follows the current owner: a reparented task is covered only while its owner is the granted planner; reparenting away clears a grant-based sign-off, so the next fresh run falls back unless the new owner has a covering grant or a true operator per-task sign-off. The planner ends the grant with action `end`. The operator revokes from Settings → Limits at any time. An optional `until` expires it. An archived planner thread ends it. Revoking, ending, expiry and archive stop new sign-offs at once, are idempotent, and record the time. A covered request then remains on automatic selection without a new per-task decision; `routingPolicy` names the ended grant. A new grant or a fresh explicit request after the end enables frontier again. A task already running on the profile finishes that run; its next fresh run falls back. Open per-task decisions the new grant covers settle themselves; an explicit per-task decline stays declined, including if the planner resubmits or routes the same request while a grant stands. Without a covering grant, resubmitting a declined request is unsigned and opens a fresh per-task decision (today's route). Restart keeps stored grants. Settings → Limits lists active grants (planner, profiles, since when, run count) with a revoke control, never the board header (Tom, 2026-11-06); `next` says a request was covered by a grant. Run count increments for each fresh dispatch under the grant: the initial worker at `dispatch_intent`, and each new reviewer, worker-revision, or coordinator-route (recovery, verification, closeout) run on first `putRun`. Wake inventories live agents to archive a grant only when one is pending or live, bounded to 10s; a truncated or failed inventory leaves grants standing. Board projection reads live grants without persisting expiry; reconcile still writes expiry so covered sign-offs clear.
+- **Request a profile for each role that needs it.** The task planner, project
+  planner or operator can name a profile and reason in `profileRequests`. An
+  owner can use `route` for the same change on an existing task. Workers and
+  reviewers cannot request a profile for themselves. A legacy worker preference
+  stays within automatic selection. An ordinary `route` applies from the next
+  run, and `route now` uses the existing stop and replacement gates.
+- **Upgrade.** The store withdraws open routing approval decisions and records
+  the removal of standing grants. Existing explicit requests keep their
+  profile and reason. Historical decisions remain in the record.
 - **Expiry.** `until` returns the level to Normal when it passes. Settings shows
   which level is in force, and when a set level has expired. The board
   re-projects once when the level in force changes, so an open Settings screen
   never keeps showing an expired level.
-- **Diagnostics.** When the level's permission rule, not the pool, leaves a
-  role with no profile, the wait says so: it names the bracket the level holds
-  selection below, and says to raise the level or `route` the role. A catalogued
-  profile the eligible set filtered out is reported as filtered, never as
-  missing: excluded for this task, sharing the reviewer's model, or filtered
-  from the eligible set; only a profile outside the catalog is absent. The wait stays a
-  verb-free `route_unavailable` wait, since a coordinator cannot route past the
-  level's permission either; `next` offers the owner `route`.
+- **Diagnostics.** When usage bounds leave a role without an automatic
+  profile, `next` names the bracket and offers `route`. It also reports
+  catalog, subscription, exclusion and reviewer-independence constraints.
 - **Effective policy on reads.** Tom chose this explanation as the Nucleus
   priority on 2026-10-19 (decision 83556116; papercut b6804a4b): an owner read
   a stored flag as absolute and rerouted a correct automatic Maximum pick.
@@ -356,8 +296,8 @@ still describes shipped behaviour until it lands.
     one row per profile the task names (worker request, worker preference,
     recorded worker or reviewer run, reviewer and coordinator requests). Each
     row has `capability`, `automatic` (`allowed`, `request_tier` when the
-    level's permission rule holds the profile, or null outside the pool), its pool `gates` (disabled,
-    group unavailable) and an `explanation`. A request stays
+    automatic selection excludes the profile, or null outside the pool), its pool `gates` (disabled,
+    group unavailable), an `explanation` and the request reason when present. A request stays
     explicit at every level; a preference alone does not satisfy a request
     requirement; a recorded run is history, not relabelled by today's level.
     Catalog availability is checked at dispatch, not here. Both reads compute
@@ -390,5 +330,5 @@ still describes shipped behaviour until it lands.
     view says it has no recorded assignments. Routing, the global 50-assignment
     selection window, assignment totals and group data do not change. The capability control shows the
     four brackets, and its (?) says where each complexity starts and which brackets
-    need permission.
+    require a profile request.
 - **Normal.** Normal starts every task on its own bracket.

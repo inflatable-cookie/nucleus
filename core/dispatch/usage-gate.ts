@@ -2,7 +2,7 @@
  * Spec 052 (Tom, 2026-11-17): at the Low usage level a high or very-high
  * complexity submission needs the operator's permission before it runs. Nucleus
  * opens one decision on the board and holds the task with a dispatch fence until
- * that decision is approved; nothing else in the level waits for a sign-off.
+ * that decision is approved.
  *
  * The gate is decided at admission: `store.insert` records `usageGate` only when
  * the level in force then is Low and the complexity qualifies, so work already

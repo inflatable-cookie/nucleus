@@ -8,11 +8,6 @@ import { formatAgentId } from "../shared/agent-identity";
 
 const commands = [
   [
-    "queue.routing-grant",
-    { action: "request", reason: "Within scope" },
-    "caller",
-  ],
-  [
     "task.register",
     {
       title: "Caller fixture",

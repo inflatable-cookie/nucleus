@@ -1061,8 +1061,7 @@ session) it falls back to the connected T3 host's pinned **Nucleus** inbox
 rather than pinning the unavailable host or leaving the decision offered nowhere
 (nucleus#1516). Other operator decisions also go to the inbox. No parent is
 created to ask a question. Opening, withdrawing or
-superseding a decision (including a routing sign-off opened during a task
-quantum) wakes the reconciliation sweep so the inbox refreshes its title and
+superseding a decision wakes the reconciliation sweep so the inbox refreshes its title and
 raises or settles cards without waiting for an unrelated wake. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,

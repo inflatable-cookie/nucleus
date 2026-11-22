@@ -16,7 +16,6 @@ import {
   StopSlider,
   muted,
   row,
-  sectionCard,
   useSectionAutoSave,
   type Colors,
 } from "./controls";
@@ -37,7 +36,7 @@ import {
 
 /*
  * Settings → Dispatch limits. One place for what the host runs with: the usage
- * level, the task slots, project overrides, role demand and frontier grants.
+ * level, the task slots, project overrides.
  * Every limit reads as its value in force when that
  * differs from what is entered. The RPCs and their authority are unchanged; this
  * module only changes how they read (Tom, 2026-11-08: half the height, same controls).
@@ -79,186 +78,16 @@ const small = (c: Colors) => ({
  * One grant on one full-width row (Tom, 2026-11-08): the planner, its profiles, the (?)
  * holding reason, since, until and run count, and Revoke as an icon button that asks first.
  */
-function GrantCard({
-  c,
-  grant,
-  planner,
-  profiles,
-  busy,
-  onRevoke,
-}: {
-  c: Colors;
-  grant: api.RoutingGrantView;
-  planner: string;
-  profiles: string;
-  busy: boolean;
-  onRevoke: () => void;
-}) {
-  const [reasonOpen, setReasonOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const anchor = useRef<View | null>(null);
-  const runs = `${grant.runCount} run${grant.runCount === 1 ? "" : "s"}`;
-  const detail = `${grant.reason ? `${grant.reason}. ` : ""}Since ${formatLocalDateTime(grant.activatedAt ?? grant.requestedAt)}${grant.until ? ` · until ${formatLocalDateTime(grant.until)}` : ""} · ${runs}.`;
-  return (
-    <View
-      accessibilityLabel={`Grant for ${planner}, ${runs}`}
-      style={{ ...sectionCard(c), gap: space.xs }}
-    >
-      <View
-        ref={anchor}
-        style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}
-      >
-        <Text
-          numberOfLines={1}
-          style={{
-            color: roles(c).foreground,
-            fontWeight: "600",
-            fontSize: type.body.fontSize,
-            lineHeight: type.body.lineHeight,
-            flexShrink: 0,
-            maxWidth: "50%",
-          }}
-        >
-          {planner}
-        </Text>
-        <Text
-          numberOfLines={1}
-          style={{
-            color: roles(c).foreground,
-            fontSize: type.body.fontSize,
-            lineHeight: type.body.lineHeight,
-            flexShrink: 1,
-            minWidth: 0,
-          }}
-        >
-          {profiles}
-        </Text>
-        <HelpTip
-          c={c}
-          label={`Grant for ${planner}`}
-          text={detail}
-          open={reasonOpen}
-          onOpenChange={setReasonOpen}
-        />
-        {reasonOpen && (
-          <HelpPopover
-            c={c}
-            anchor={anchor}
-            label={`Grant for ${planner}`}
-            text={detail}
-          />
-        )}
-        <View style={{ flex: 1 }} />
-        <ActionButton
-          c={c}
-          action="remove"
-          label={`Revoke the grant for ${planner}`}
-          disabled={busy || confirming}
-          onPress={() => setConfirming(true)}
-        />
-      </View>
-      {confirming && (
-        <InlineConfirm
-          c={c}
-          question={`Revoke ${planner}'s grant?`}
-          confirmLabel="Revoke"
-          label={`grant for ${planner}`}
-          busy={busy}
-          onConfirm={() => {
-            setConfirming(false);
-            onRevoke();
-          }}
-          onCancel={() => setConfirming(false)}
-        />
-      )}
-    </View>
-  );
-}
-
-/** Spec 052: planners holding a frontier grant. Tom, 2026-11-06: this belongs in Limits, not the board header. */
-function FrontierGrants({
-  c,
-  state,
-  refresh,
-}: {
-  c: Colors;
-  state: UiQueueState;
-  refresh: () => Promise<unknown>;
-}) {
-  const routingGrant = useRpc(api.routingGrant);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const plannerName = (agentId: string) => {
-    const project = state.projects.find(
-      (item) => item.planner?.agentId === agentId,
-    );
-    return project ? `${project.name} planner` : agentId;
-  };
-  const profileName = (id: string) =>
-    state.profiles.find((profile) => profile.id === id)?.name ?? id;
-  const revoke = async (grant: api.RoutingGrantView) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await routingGrant({
-        action: "revoke",
-        caller: "operator (board)",
-        grantId: grant.id,
-        reason: "revoked from Settings",
-      });
-      await refresh();
-    } catch (failure) {
-      setError(failureText(failure));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Section
-      c={c}
-      title="Frontier grants"
-      last
-      status={error ? `Not saved: ${error}` : null}
-      description="While a grant stands, this planner's requests for these profiles need no per-task question. Automatic selection is unchanged. The planner ends a grant when its work is done; you can revoke it here."
-    >
-      {!state.routingGrants.length && (
-        <Text style={muted(c)}>
-          None. A planner asks once, and the request arrives on the board.
-        </Text>
-      )}
-      {state.routingGrants.length > 0 && (
-        <View style={{ gap: space.sm }}>
-          {state.routingGrants.map((grant) => (
-            <GrantCard
-              key={grant.id}
-              c={c}
-              grant={grant}
-              planner={plannerName(grant.planner)}
-              profiles={
-                grant.profiles.length
-                  ? grant.profiles.map(profileName).join(", ")
-                  : "All profiles that need permission"
-              }
-              busy={busy}
-              onRevoke={() => void revoke(grant)}
-            />
-          ))}
-        </View>
-      )}
-    </Section>
-  );
-}
-
 /**
  * Spec 052 (Tom, 2026-11-19): what each level does to a task's start bracket and
- * which runs need the operator's permission. The full sentence sits behind the
+ * which profiles require a request. The full sentence sits behind the
  * slider's (?).
  */
 const USAGE_EFFECT: Record<UsageLevel, string> = {
-  low: "Every task starts one bracket below the one it may climb to. High and very-high complexity work needs permission when it is submitted. The reviewer runs one bracket below the worker.",
+  low: "Every task starts one bracket below the one it may climb to. High and very-high complexity work needs permission when it is submitted. Frontier requires an explicit profile request. The reviewer runs one bracket below the worker.",
   normal:
-    "Low complexity runs on Mechanical, medium and high on Worker, very high on Heavyweight. A high task may step up to Heavyweight after review changes; Frontier needs permission. The reviewer runs one bracket below the worker.",
-  high: "High and very-high complexity start on Heavyweight. Frontier profiles need permission. The reviewer runs on the worker's bracket.",
+    "Low complexity runs on Mechanical, medium and high on Worker, very high on Heavyweight. A high task may step up to Heavyweight after review changes; Frontier requires an explicit profile request. The reviewer runs one bracket below the worker.",
+  high: "High and very-high complexity start on Heavyweight. Frontier profiles require an explicit request. The reviewer runs on the worker's bracket.",
   extra_high:
     "Starts as at High, and nothing needs permission. The reviewer runs on the worker's bracket.",
   maximum:
@@ -704,6 +533,7 @@ function ProjectOverrides({
     <Section
       c={c}
       title="Project overrides"
+      last
       description="Slots run 0–64, where 0 admits nothing. A project may have twice its slots in flight. A project without an override uses the per-project limit."
       action={
         <DropdownSelect
@@ -896,7 +726,7 @@ function ProjectLimitRow({
 
 /**
  * Settings → Dispatch limits, in the order the operator reads it: usage level, task
- * slots, project overrides, role demand, then frontier grants.
+ * slots, project overrides.
  */
 export function DispatchLimits(props: DispatchLimitsProps) {
   const { c, state, authority } = props;
@@ -918,7 +748,6 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         saveProjectLimit={props.saveProjectLimit}
         pendingOverrideRemovals={props.pendingOverrideRemovals}
       />
-      <FrontierGrants c={c} state={state} refresh={props.refreshBoard} />
     </View>
   );
 }

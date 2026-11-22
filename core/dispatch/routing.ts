@@ -29,8 +29,6 @@ import {
   automaticSelection,
   requestOnly,
   describeRoutePolicy,
-  honouredRequest,
-  requestReaches,
   groupIsUnavailable,
   topTier,
 } from "../../shared/pool";
@@ -114,10 +112,6 @@ type ResolvedModel =
   | { kind: "opaque"; profileId: string; model: string }
   | { kind: "concrete"; profileId: string; model: string; key: string };
 
-/**
- * Preflight proves a pairing impossible; a request awaiting the operator's
- * sign-off (Spec 052) is not, so preflight reads requests as recorded.
- */
 function workerRequest(routing: RoutingPreflightInput): RoleRequest | null {
   const request = routing.profileRequests?.worker;
   if (request)
@@ -160,8 +154,7 @@ function identityRoutes(
   profiles: readonly Profile[],
   pool: readonly PoolEntry[],
 ): Array<{ id: string; model: string; key: string }> {
-  const request =
-    role === "worker" ? workerRequest(routing) : reviewerRequest(routing);
+  const request = routing.profileRequests?.[role];
   const requested = requestedTier(routing.complexity);
   return pool.flatMap((entry) => {
     const profile = profiles.find(
@@ -373,12 +366,11 @@ export function eligibilityReasons(
   usage: UsageLevel = "normal",
   catalog: readonly Profile[] = profiles,
 ) {
-  const raw = task.profileRequests?.worker;
+  const request = task.profileRequests?.worker;
   const requested = requestedTier(task.complexity);
   const climb = climbedTier(task);
-  const request = honouredRequest(raw, pool, usage, requested, climb);
-  const preferred = request?.profileId ?? (raw ? "" : task.preferredProfileId);
-  const required = request?.required ?? (!raw && task.requirePreferred);
+  const preferred = request?.profileId ?? task.preferredProfileId;
+  const required = request?.required ?? task.requirePreferred;
   const reasons = pool
     .map((entry) => {
       const p = profiles.find((profile) => profile.id === entry.profileId);
@@ -386,12 +378,8 @@ export function eligibilityReasons(
       if (!entry.enabled) causes.push("disabled");
       if (!p) causes.push(eligibilityAbsence(task, entry.profileId, catalog));
       else if (!p.available) causes.push(`unavailable: ${p.problem}`);
-      if (!requestReaches(entry, usage, request, requested, climb))
-        causes.push(
-          raw?.profileId === entry.profileId
-            ? "awaiting the operator's board sign-off"
-            : `${entry.capability ?? "unrated"} tier needs the operator's board sign-off at the ${usage} usage level`,
-        );
+      if (request?.profileId !== entry.profileId && requestOnly(entry, usage, requested, climb))
+        causes.push(`${entry.capability ?? "unrated"} tier requires an explicit profile request at the ${usage} usage level`);
       const thinking = workerThinking(task);
       if (thinking && p && !p.supportedThinking.includes(thinking))
         causes.push(`thinking option ${thinking} unsupported`);
@@ -445,10 +433,7 @@ export function chooseProfile(
   usage: UsageLevel = "normal",
   initialWorker = false,
 ) {
-  // Spec 052 (2026-10-21): an unsigned request for a request-only profile is
-  // dropped whole: it pins nothing, waits for nothing and sets no thinking, so
-  // the role runs on automatic selection until the operator signs it off.
-  const raw = task.profileRequests?.[role];
+  const request = task.profileRequests?.[role];
   const requested = requestedTier(task.complexity);
   // Spec 052 (Tom, 2026-11-17): the applied changes-required review authorizes
   // one worker climb (recorded then), and the record keeps the climbed tier
@@ -456,20 +441,9 @@ export function chooseProfile(
   // no exception.
   const climb = role === "worker" ? workerClimbTarget(task, pool, usage) : null;
   const climbTier = climb?.to ?? climbedTier(task);
-  const request = honouredRequest(raw, pool, usage, requested, climbTier);
-  const unsigned = Boolean(raw && !request);
-  const preferredId =
-    request?.profileId ??
-    (role === "worker" && !unsigned ? task.preferredProfileId : "");
-  const required =
-    request?.required ??
-    (role === "worker" && !unsigned && task.requirePreferred);
-  const thinkingOptionId =
-    role === "worker"
-      ? unsigned
-        ? (task.thinkingOptionId ?? "")
-        : workerThinking(task)
-      : (request?.thinkingOptionId ?? "");
+  const preferredId = request?.profileId ?? (role === "worker" ? task.preferredProfileId : "");
+  const required = request?.required ?? (role === "worker" && task.requirePreferred);
+  const thinkingOptionId = role === "worker" ? workerThinking(task) : (request?.thinkingOptionId ?? "");
   // Spec 053 / Spec 052 (Tom, 2026-11-17): the run's tier decides the set.
   const fullDemand = runDemand(task.complexity, role, usage);
   const workerActual = workerActualTier(task, pool);
@@ -510,10 +484,6 @@ export function chooseProfile(
     // Spec 053 retires the pool's role and scope switches: every model can work, review and coordinate.
     if (!entry.enabled || !profile?.available || unavailable.has(entry.group))
       return [];
-    // A profile the level's permission rule holds (Spec 052, Tom 2026-11-17)
-    // is never selected automatically; only an explicit request with a reason
-    // that the operator signed off on the board reaches it.
-    if (!requestReaches(entry, usage, request, requested, climbTier)) return [];
     if (
       thinkingOptionId &&
       !profile.supportedThinking.includes(thinkingOptionId)
@@ -531,29 +501,23 @@ export function chooseProfile(
   });
   if (preferredId) {
     const preferred = eligible.find((e) => e.profile.id === preferredId);
-    // An explicit (honoured) request or owner route is its own permission; a
-    // plain preference never reaches above the requested tier or a tier the
-    // level holds. A preferred reviewer must also meet the worker's capability.
-    const preferredReaches =
-      Boolean(preferred) &&
-      roleMeets(preferred!.entry) &&
-      (request
-        ? true
-        : automaticReachable(
-            preferred!.entry,
-            usage,
-            requested,
-            climbTier,
-            role,
-          ));
-    if (preferred && preferredReaches) return preferred;
+    // A legacy preference is subject to the automatic selection bounds.
+    if (
+      preferred &&
+      roleMeets(preferred.entry) &&
+      (request || automaticReachable(preferred.entry, usage, requested, climbTier, role))
+    )
+      return preferred;
     if (required) return null;
   }
+  // An explicit request can reach a profile outside automatic selection.
+  // If the request fell through, keep all automatic bounds.
+  eligible = eligible.filter(({ entry }) => !requestOnly(entry, usage, requested, climbTier));
   if (role === "reviewer" && task.critical) {
     const rigorous = eligible.filter((candidate) =>
       criticalReviewerMeets(task, candidate.profile, pool),
     );
-    // Availability includes usage/sign-off gates above. A shortfall never parks review.
+    // A capability shortfall never parks review.
     if (rigorous.length) eligible = rigorous;
   }
   // A worker never exceeds the bracket the task may climb to automatically. A
@@ -678,10 +642,6 @@ export function taskRoutingPolicy(
                 ]
               : []),
           ];
-      const requested =
-        source === "request"
-          ? task.profileRequests?.[role]?.signoff
-          : undefined;
       const policy = {
         role,
         profileId,
@@ -692,19 +652,7 @@ export function taskRoutingPolicy(
           ? automaticSelection(entry, usage.level, taskTier, climbTier, role)
           : null,
         gates,
-        ...(requested
-          ? {
-              signoff: {
-                status: requested.status,
-                decisionId: requested.decisionId,
-                note: requested.note,
-                ...(requested.grantId ? { grantId: requested.grantId } : {}),
-                ...(requested.endedGrantId
-                  ? { endedGrantId: requested.endedGrantId }
-                  : {}),
-              },
-            }
-          : {}),
+        ...(source === "request" ? { reason: task.profileRequests?.[role]?.reason } : {}),
       };
       return {
         ...policy,
@@ -761,7 +709,7 @@ export function workerSelectionExplanation(
     (entry) =>
       entry.enabled &&
       !unavailableGroups.has(entry.group) &&
-      requestReaches(entry, usage, null, requested, climbTier) &&
+      !requestOnly(entry, usage, requested, climbTier) &&
       profiles.some(
         (profile) => profile.id === entry.profileId && profile.available,
       ),
@@ -1089,13 +1037,7 @@ export class RoleSelection {
         thinkingOptionId: "",
         scope:
           role === "coordinator" &&
-          !honouredRequest(
-            t.profileRequests?.coordinator,
-            pool,
-            usage,
-            requestedTier(t.complexity),
-            climbedTier(t),
-          )
+          !t.profileRequests?.coordinator
             ? ("general" as const)
             : t.scope,
       },
@@ -1172,7 +1114,7 @@ export class RoleSelection {
             "maximum",
           );
     return above
-      ? `; the ${usage} usage level needs the operator's board sign-off for ${(above.entry.capability ?? "top-tier").replaceAll("_", " ")} runs: raise the usage level or route the ${role} to a profile`
+      ? `; the ${usage} usage level requires an explicit profile request for ${(above.entry.capability ?? "top-tier").replaceAll("_", " ")} runs: route the ${role} to a profile or raise the usage level`
       : "";
   }
   /**
@@ -1222,43 +1164,14 @@ export class RoleSelection {
   retainedWorkerProfileIssue(t: Task) {
     return this.resolution.retainedProfileIssue(t.profile);
   }
-  /**
-   * Spec 052 sign-off for a new run on a retained profile: a reviewer launched
-   * fresh on the recorded reviewer profile, or a new run on the bound coordinator.
-   * A live run, a review continuation and a worker continuing its own thread are
-   * not new selections and are never stopped by it (Tom, 2026-10-21: keep the
-   * worker's thread).
-   */
-  signoffIssue(
-    t: Task,
-    assigned: Profile | null,
-    role: "reviewer" | "coordinator",
-  ): string | null {
-    if (!assigned) return null;
-    const entry = this.store
-      .pool()
-      .find((item) => item.profileId === assigned.id);
+  /** Keep a retained reviewer or coordinator eligible when the usage level changes. */
+  retainedRouteIssue(t: Task, assigned: Profile | null, role: "reviewer" | "coordinator"): string | null {
+    if (!assigned || t.profileRequests?.[role]?.profileId === assigned.id) return null;
+    const entry = this.store.pool().find((item) => item.profileId === assigned.id);
     const usage = this.store.usageLevel();
-    const request = t.profileRequests?.[role];
-    // A request the operator has since signed off for another profile takes over
-    // from the retained one, as an owner route does.
-    if (
-      request?.signoff?.status === "approved" &&
-      request.profileId !== assigned.id
-    )
-      return `the operator signed off ${request.profileId} for the ${role}`;
-    if (
-      !entry ||
-      requestReaches(
-        entry,
-        usage,
-        request,
-        requestedTier(t.complexity),
-        climbedTier(t),
-      )
-    )
-      return null;
-    return `profile ${assigned.name || assigned.id} needs the operator's board sign-off at the ${usage} usage level`;
+    return entry && requestOnly(entry, usage, requestedTier(t.complexity), climbedTier(t))
+      ? `profile ${assigned.name || assigned.id} requires an explicit profile request at the ${usage} usage level`
+      : null;
   }
   assertReviewProfileIndependent(task: Task, run: Run) {
     if (!task.hostId || run.hostId !== task.hostId)

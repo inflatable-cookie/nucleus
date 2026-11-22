@@ -420,6 +420,7 @@ export class StoreAdmission {
       // nucleus#1385: profile capability moves to four brackets and the retired
       // role-demand offsets are dropped, noted in the migration record.
       this.hooks.migration.migrateCapabilityBrackets();
+      this.hooks.migration.retireRoutingApprovals();
       // Task 1158: stored profiles move to the canonical vocabulary once; a
       // profile with a value the migration doesn't know stays as stored and is
       // reported in the record.

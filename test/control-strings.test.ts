@@ -1607,7 +1607,7 @@ responsible_question_stale_answered:1:1 responsible_question_superseded:2:2 revi
 review_delivery_delivered:1:0 review_delivery_refused:1:0 review_delivery_reserved:1:1 review_delivery_uncertain:1:0 review_published:1:2
 review_reapplied:4:4 review_result_applied:4:5 reviewer_consult:1:2 reviewer_consult_answered:1:2 reviewer_consult_missed:1:3
 reviewer_consult_payload:1:2 reviewer_consult_reviewer:1:2 reviewer_consult_sent:1:2 reviewer_consult_unknown:2:4 revision_budget_exhausted:2:1
-revision_requested:4:3 role_replacement:1:6 routing_signoff:1:7 run_completion:1:1 run_completion_corrected:1:1 run_intent:1:1
+revision_requested:4:3 role_replacement:1:6 run_completion:1:1 run_completion_corrected:1:1 run_intent:1:1
 runnable_proof_refused:1:1 runnable_proof_started:1:1 shell_notice_cleared:1:1 shell_notice_shown:1:1 state:2:40 submitted:1:1 telemetry_recovery:1:2
 telemetry_stage:1:5 transport_deferred:1:3 unchanged_check_revision_refused:2:1 unfinished_continuation:2:2 unfinished_pushback:2:2
 unused_workspace_archive_intent:1:1 worker_resume_requested:5:4 workspace_archived:2:4 workspace_cleanup_wait:1:1 workspace_contents_discarded:2:3
