@@ -950,12 +950,13 @@ confident, for a later pass:
 - Prompts carry the brief inline, labelled as Nucleus-held, and tell the worker
   not to commit it. Operator `amend_brief` (text and reason) pins a new version
   before merge and is refused after it; each run records the version it was
-  given. A live worker or reviewer is told of the amendment — steered into its
-  live turn when the host supports it (falling back to a queued send when idle
-  or on a host without steering), never as a turn-aborting interrupt; an open
-  `ask` is answered with the new brief. The next run is given the new version.
-  `amend_brief` with no text is refused: there is no committed instruction to
-  re-pin.
+  given. A live worker or reviewer is told of the amendment through
+  `steerOrNotify` when the host supports it — injecting into the active turn or
+  interrupting and restarting the live step depending on the host and provider,
+  the same path `tell` and decision notices use (falling back to a queued send
+  when idle or on a host without steering); an open `ask` is answered with the
+  new brief. The next run is given the new version. `amend_brief` with no text
+  is refused: there is no committed instruction to re-pin.
 - Adoption requires a Queue-held brief and takes over an existing isolated
   worker without resetting files or inventing review approval; externally owned
   workspaces are preserved.
