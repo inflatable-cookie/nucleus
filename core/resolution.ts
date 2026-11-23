@@ -197,6 +197,7 @@ import type { RecoveryDispatchSnapshot } from "./recovery/recovery-context";
 import type { OwnerReviewContext } from "./review/owner-review-context";
 import {
   publishedReviewDecision,
+  reviewApplicationDecision,
   ResultApplication,
 } from "./intake/result-application";
 import { Closeout } from "./closeout/closeout";
@@ -3980,24 +3981,23 @@ export class Resolution {
     if (this.stopped() || !this.hostAvailable(original))
       return Promise.resolve();
     const task = this.store.task(original.id);
-    const published = publishedReviewDecision(this.store, task);
-    if (published.kind === "none")
-      return this.schedulingLifecycle.advance(task);
-    if (published.kind === "blocked" && published.permanent) {
+    const review = reviewApplicationDecision(this.store, task);
+    if (review.kind === "none") return this.schedulingLifecycle.advance(task);
+    if (review.kind === "blocked" && review.permanent) {
       // A report no later fact can apply stops governing: it is superseded,
       // never applied, and the phase's ordinary next step runs in this pass.
       if (
         this.resultApplication.supersedeRefusedReport(
           task,
-          published.run,
-          published.refusal,
+          review.run,
+          review.refusal,
         )
       )
         return this.advance(this.store.task(task.id));
       return Promise.resolve();
     }
-    if (published.kind === "blocked") {
-      // Published admission already proved the reviewer run is released, so
+    if (review.kind === "blocked") {
+      // Admission already proved the reviewer run is released, so
       // a retained current-run binding still lets the parked ladder reconcile.
       // Ordinary phase work could start another review.
       if (
@@ -4016,11 +4016,11 @@ export class Resolution {
           task.resolution.stop.reason === "lifecycle") &&
         !this.store.runs(task.id).some((run) => !run.released)
       )
-        this.waiting(task, published.refusal, "lifecycle");
+        this.waiting(task, review.refusal, "lifecycle");
       return Promise.resolve();
     }
     return this.resultApplication
-      .applyPublishedReview(task, published)
+      .applyAdmittedReview(task, review)
       .then((result) => {
         if (result.kind === "blocked" && !this.stopped()) {
           const current = this.store.task(task.id);
@@ -4028,7 +4028,7 @@ export class Resolution {
             current.version === task.version &&
             (!current.resolution.stop ||
               current.resolution.stop.reason === "lifecycle") &&
-            publishedReviewDecision(this.store, current).kind === "ready"
+            reviewApplicationDecision(this.store, current).kind === "ready"
           )
             this.waiting(current, result.refusal, "lifecycle");
         }

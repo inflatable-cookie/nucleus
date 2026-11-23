@@ -13,6 +13,7 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { mergeGate } from "../core/forge/merge";
 import { publishFormalReview } from "../core/forge/reviews";
+import { reviewPublicationBody } from "../core/forge/index";
 import { publishedReviewDecision } from "../core/intake/result-application";
 import { ordinaryReviewSource } from "../core/review/ordinary-review";
 import { git } from "../core/git/index";
@@ -27,13 +28,20 @@ import {
   runSchema,
   submissionSchema,
   taskControlTaskSchema,
+  type Run,
+  type Task,
 } from "../shared/contracts";
+import { taskStopRecord } from "../shared/task-stop";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
-import { operationInputHash } from "../core/store/store";
+import { digest, operationInputHash, type Store } from "../core/store/store";
+import {
+  claimReviewPublication,
+  reviewPublicationKey,
+} from "../core/review/review-publication";
 import {
   collectOwnerVerbFacts,
   ownerPendingEffects,
@@ -822,7 +830,7 @@ test("#1508: run.start reviewer head=<pushed> warns on head_mismatch and starts 
 
   const applied = await command({ ...args, accept: ["head_mismatch"] });
   assert.equal(applied.explicitResolution?.status, "applied");
-  assert.equal(applied.phase, "working");
+  assert.equal(applied.phase, "reviewing");
   const created = store.run(applied.explicitResolution!.runId!);
   assert.equal(created?.head, pushed);
   assert.equal(created?.status, "running");
@@ -2809,8 +2817,11 @@ test("review round 9: run.start never calls legacy verifyPr when verifyPrIdentit
 });
 
 /** The reviewer pool and task facts a `run.start reviewer fresh` needs. */
-async function reviewStartFixture(t: TestContext) {
-  const f = await fixture(t);
+async function reviewStartFixture(
+  t: TestContext,
+  adapterOverrides: Record<string, unknown> = {},
+) {
+  const f = await fixture(t, adapterOverrides);
   const { worktree, initialSha } = await attachGitCheckout(
     f.root,
     f.store,
@@ -2834,6 +2845,226 @@ async function reviewStartFixture(t: TestContext) {
   ]);
   return { ...f, worktree, initialSha };
 }
+
+async function parkedReviewFixture(t: TestContext) {
+  const publications: string[] = [];
+  const verifyPr = async (task: Task) => ({
+    head: task.prHead,
+    url: task.prUrl,
+    repository: "example/repo",
+    headRepository: "example/repo",
+  });
+  const f = await reviewStartFixture(t, {
+    verifyPr,
+    verifyPrIdentity: verifyPr,
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "workspace",
+      status: "idle",
+      active: false,
+      permissions: false,
+      error: "",
+    }),
+    publishReview: async (
+      store: Store,
+      task: Task,
+      run: Run,
+      status: string,
+      review: string,
+      allowed: () => boolean,
+    ) => {
+      const hash = digest(reviewPublicationBody(task, run, status, review));
+      assert.deepEqual(claimReviewPublication(store, run.id, hash, "review"), {
+        kind: "claimed",
+      });
+      assert.ok(allowed(), "publication is still admitted");
+      publications.push(run.id);
+      store.setMeta(reviewPublicationKey(run.id), { hash, reviewId: 101 });
+      return 101;
+    },
+    verifyReview: async () => 101,
+    mergeGate: async (task: Task) => ({
+      head: task.prHead,
+      base: task.planningCommit,
+      wait: "",
+    }),
+    merge: async () => {},
+  });
+  const former = {
+    ...f.run("former-reviewer", "reviewer", null),
+    head: f.initialSha,
+  };
+  const task = f.current();
+  f.store.patchRepository(
+    { path: task.repoPath, origin: null },
+    { reviewer: { login: "review-bot" } },
+  );
+  const stop = taskStopRecord(
+    "operator_needed",
+    "Previous review could not start",
+  );
+  f.store.putRun(former);
+  f.store.update(task.id, {
+    phase: "needs_attention",
+    reason: stop.detail,
+    resumePrNumber: 1,
+    resolution: {
+      ...task.resolution,
+      attention: true,
+      currentRunId: former.id,
+      stop,
+      incident: {
+        id: "former-reviewer-fault",
+        fingerprint: "former-reviewer-fault",
+        role: "reviewer",
+        runId: former.id,
+        cause: "repository_identity",
+        detail: stop.detail,
+        status: "escalated",
+        attempt: 1,
+        action: "",
+        createdAt: stop.since,
+        updatedAt: stop.since,
+      },
+    },
+  });
+  const engine = f.runtime.engine;
+  const tokens = new Map<string, string>();
+  const createRun = f.adapter.createRun!;
+  f.adapter.createRun = async (...args) => {
+    tokens.set(args[1].id, args[2]);
+    return createRun(...args);
+  };
+  const advance = () =>
+    engine.withHost(host, () => engine.resolution.advance(f.current()));
+  const report = async (run: Run, token: string) => {
+    const receipt = await engine.complete(
+      {
+        taskId: task.id,
+        runId: run.id,
+        eventId: "exact-head-verdict",
+        status: "ready_to_merge",
+        head: run.head,
+        summary: "Exact PR head approved",
+        reviewText: "Reviewed the requested source and its checks.",
+      },
+      token,
+    );
+    assert.equal(receipt.accepted, true);
+    await engine.quiesce();
+    // Keep the setup at the durable, released receipt. The tests drive the
+    // lifecycle pass separately from host observation.
+    const reported = f.store.run(run.id);
+    assert.ok(reported?.completion);
+    f.store.putRun({
+      ...reported,
+      active: false,
+      released: true,
+      status: "finished",
+    });
+  };
+  const expectApplied = (run: Run) => {
+    const current = f.current();
+    assert.equal(current.resolution.review?.runId, run.id, current.reason);
+    assert.equal(current.resolution.review?.head, current.prHead);
+    assert.equal(current.resolution.review?.reviewId, 101);
+    assert.equal(current.resolution.attention, false);
+    assert.equal(current.phase, "verifying");
+    assert.ok(current.resolution.integrationTurn);
+    assert.deepEqual(publications, [run.id]);
+    assert.ok(!f.calls.some((call) => call.startsWith("create recovery")));
+  };
+  return {
+    ...f,
+    former,
+    stop,
+    advance,
+    report,
+    expectApplied,
+    publications,
+    tokens,
+  };
+}
+
+test("explicit fresh reviewer moves a parked task into review and its verdict enters integration", async (t) => {
+  const f = await parkedReviewFixture(t);
+  const started = await f.command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    replacing: f.former.id,
+    accept: ["duplicate_thread"],
+  });
+  assert.equal(started.explicitResolution?.status, "applied");
+  const run = f.store.run(started.explicitResolution!.runId!);
+  assert.ok(run);
+  const cleared = await f.command({
+    action: "record.clear",
+    kind: "stop",
+    id: f.stop.since,
+  });
+  assert.equal(cleared.explicitResolution?.status, "applied");
+  const token = f.tokens.get(run.id);
+  assert.ok(token);
+  await f.report(run, token);
+  await f.advance();
+  f.expectApplied(run);
+  assert.equal(started.phase, "reviewing");
+  f.store.setMeta("paused", false);
+  await f.advance();
+  assert.equal(f.current().phase, "merging", f.current().reason);
+  assert.equal(f.current().resolution.mechanicalVerification?.head, run.head);
+});
+
+async function reportOnParkedTask(
+  f: Awaited<ReturnType<typeof parkedReviewFixture>>,
+) {
+  const run = {
+    ...f.run("current-reviewer", "reviewer", "current-reader"),
+    head: f.initialSha,
+  };
+  // An explicit start from an older build left the phase unchanged.
+  f.store.putRun({ ...f.former, status: "superseded", released: true });
+  f.store.putRun(run);
+  f.store.setCredential(run.id, "reviewer-ticket");
+  const task = f.current();
+  f.store.update(task.id, {
+    resolution: {
+      ...task.resolution,
+      currentRunId: run.id,
+      reviewerAgentId: run.agentId,
+      stop: null,
+    },
+  });
+  await f.report(run, "reviewer-ticket");
+  assert.equal(f.current().resolution.review, null);
+  return run;
+}
+
+test("phase.set reviewing resumes the current reviewer's already released verdict", async (t) => {
+  const f = await parkedReviewFixture(t);
+  const run = await reportOnParkedTask(f);
+  const resumed = await f.command({ action: "phase.set", to: "reviewing" });
+  assert.equal(resumed.explicitResolution?.status, "applied");
+  await f.advance();
+  f.expectApplied(run);
+});
+
+test("phase.set reviewing refuses a released verdict after the PR head changed", async (t) => {
+  const f = await parkedReviewFixture(t);
+  const run = await reportOnParkedTask(f);
+  await git(f.worktree, "commit", "--allow-empty", "-m", "Advance the PR head");
+  const newHead = await git(f.worktree, "rev-parse", "HEAD");
+  assert.notEqual(newHead, run.head);
+  f.store.update(f.current().id, { prHead: newHead });
+  await f.command({ action: "phase.set", to: "reviewing" });
+  await f.advance();
+  const current = f.current();
+  assert.equal(current.resolution.review, null);
+  assert.equal(current.resolution.integrationTurn, null);
+  assert.deepEqual(f.publications, []);
+  assert.match(current.resolution.stop?.detail ?? "", /exact verdict head/);
+});
 
 test("068: run.start reviewer fresh returns a clean checkout detached at the branch tip to its branch", async (t) => {
   const f = await reviewStartFixture(t);

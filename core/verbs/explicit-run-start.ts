@@ -931,6 +931,7 @@ export function runStartPlan(
       store.putRun(createdRun);
 
       const patch: Partial<Task> = { ...basePatch, resolution };
+      if (runRole === "reviewer") patch.phase = "reviewing";
       // Only record a forge-confirmed PR head when the task checkout already
       // matches it (e.g. #1508 where the worker pushed from the task checkout).
       // Never record an unconfirmed SHA as prHead.
@@ -967,6 +968,7 @@ export function runStartPlan(
         patch,
         before: {
           replacing: releaseChange?.before ?? null,
+          phase: task.phase,
           currentRunId: task.resolution.currentRunId,
           reviewerAgentId: task.resolution.reviewerAgentId,
           agentId: task.agentId,

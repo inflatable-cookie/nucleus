@@ -145,18 +145,19 @@ function authenticatedReviewResult(
   );
 }
 
-type PublishedReview = {
+type ReviewAdmission<PublicationId extends number | null = number> = {
   kind: "ready";
   run: Run;
   completion: Completion;
   prNumber: number;
   reviewer: ReviewerSetting | null;
-  publicationId: number;
+  publicationId: PublicationId;
   settledWaits: { id: string; resolved: boolean }[];
   settlesIncident: boolean;
 };
-type PublishedReviewDecision =
-  | PublishedReview
+type PublishedReview = ReviewAdmission;
+type ReviewDecision<PublicationId extends number | null = number> =
+  | ReviewAdmission<PublicationId>
   | { kind: "none" }
   /**
    * `permanent`: no later fact can make this run's report apply (it was
@@ -249,12 +250,39 @@ function reviewLadderWait(
   };
 }
 
-/** The stored admission for a published verdict. All three entry points use this read. */
+/** Owner moves can adopt existing evidence without starting publication. */
 export function publishedReviewDecision(
   store: Store,
   task: Task,
   enclosing?: VerifiedEnclosingOperation,
-): PublishedReviewDecision {
+): ReviewDecision {
+  return readReviewAdmission(store, task, enclosing);
+}
+
+export function reviewApplicationDecision(
+  store: Store,
+  task: Task,
+): ReviewDecision<number | null> {
+  return readReviewAdmission(store, task, undefined, true);
+}
+
+function readReviewAdmission(
+  store: Store,
+  task: Task,
+  enclosing?: VerifiedEnclosingOperation,
+): ReviewDecision;
+function readReviewAdmission(
+  store: Store,
+  task: Task,
+  enclosing: VerifiedEnclosingOperation | undefined,
+  resumeUnpublished: boolean,
+): ReviewDecision<number | null>;
+function readReviewAdmission(
+  store: Store,
+  task: Task,
+  enclosing?: VerifiedEnclosingOperation,
+  resumeUnpublished = false,
+): ReviewDecision<number | null> {
   // Receipt-only qualification and review of a recorded external merge keep their own lifecycle.
   if (
     task.entrypoint === "proof" ||
@@ -283,16 +311,29 @@ export function publishedReviewDecision(
     (!currentRunId &&
       (run.head !== task.prHead || run.agentId !== reviewerAgentId)) ||
     resultApplied(store, task.id, run.id) ||
-    (!currentRunId && task.resolution.review?.runId === run.id) ||
-    !hasPublicationEvidence(store, run)
+    (!currentRunId && task.resolution.review?.runId === run.id)
+  )
+    return { kind: "none" };
+  const published = hasPublicationEvidence(store, run);
+  // Returning to review gives the released current verdict a chance to settle
+  // the attention episode. Source approvals still go through proof routing.
+  if (
+    !published &&
+    !(
+      resumeUnpublished &&
+      task.phase === "reviewing" &&
+      task.resolution.attention &&
+      currentRunId === run.id &&
+      !run.completion.sourceApproved
+    )
   )
     return { kind: "none" };
 
-  const blocked = (refusal: string): PublishedReviewDecision => ({
+  const blocked = (refusal: string): ReviewDecision => ({
     kind: "blocked",
     refusal,
   });
-  const refusedForever = (refusal: string): PublishedReviewDecision => ({
+  const refusedForever = (refusal: string): ReviewDecision => ({
     kind: "blocked",
     refusal,
     permanent: true,
@@ -390,12 +431,14 @@ export function publishedReviewDecision(
   const otherId = reviewer ? c.reviewCommentId : c.reviewId;
   // Publication writes its ID before intake enriches the completion. The receipt
   // still authenticates the original completion across that crash boundary.
-  const publicationId = id ?? recordedPublicationId(store, run.id, kind);
+  const publicationId =
+    id ?? recordedPublicationId(store, run.id, kind) ?? null;
   if (
-    otherId != null ||
-    typeof publicationId !== "number" ||
-    !Number.isSafeInteger(publicationId) ||
-    publicationId <= 0
+    published &&
+    (otherId != null ||
+      typeof publicationId !== "number" ||
+      !Number.isSafeInteger(publicationId) ||
+      publicationId <= 0)
   )
     // The report carries only the other publication form (or an invalid ID), and
     // Nucleus publishes only from an unpublished report: no later fact gives it one.
@@ -403,12 +446,12 @@ export function publishedReviewDecision(
       `Review publication must prove a ${kind} ID under the current repository policy`,
     );
   const completion =
-    id === publicationId
+    publicationId === null || id === publicationId
       ? c
       : reviewer
         ? { ...c, reviewId: publicationId }
         : { ...c, reviewCommentId: publicationId };
-  if (store.getMeta(reviewPublicationKey(run.id)) != null) {
+  if (published && store.getMeta(reviewPublicationKey(run.id)) != null) {
     const publication = classifyReviewPublication(store, task, {
       ...run,
       completion,
@@ -641,10 +684,18 @@ export class ResultApplication {
       return true;
     });
   }
-  /** Verify a recorded publication and commit its verdict, with no publish or dispatch. */
   async applyPublishedReview(
     t: Task,
     decision: PublishedReview,
+    enclosing?: ReviewInvocation,
+  ): Promise<PublishedReviewApplication> {
+    return this.applyAdmittedReview(t, decision, enclosing);
+  }
+
+  /** Verify a verdict and its custody before it can publish or apply. */
+  async applyAdmittedReview(
+    t: Task,
+    decision: ReviewAdmission<number | null>,
     enclosing?: ReviewInvocation,
   ): Promise<PublishedReviewApplication> {
     const { run, completion, reviewer, prNumber, publicationId } = decision;
@@ -652,12 +703,17 @@ export class ResultApplication {
     const changed =
       "Task changed during published review verification. Read next again";
     const recheck = ():
-      | { task: Task; decision: PublishedReview }
+      | { task: Task; decision: ReviewAdmission<number | null> }
       | { refusal: string } => {
       const task = this.store.task(t.id);
       if (this.resolution.stopped())
         return { refusal: "The scheduler is stopped" };
-      const current = publishedReviewDecision(this.store, task, enclosing?.());
+      const current = readReviewAdmission(
+        this.store,
+        task,
+        enclosing?.(),
+        publicationId === null,
+      );
       if (current.kind === "blocked") return { refusal: current.refusal };
       if (
         current.kind !== "ready" ||
@@ -693,17 +749,19 @@ export class ResultApplication {
       return blocked(
         "The forge reports a changed PR identity or head. Read next again",
       );
-    const verifiedId = await verifyReview.call(
-      this.adapter,
-      t,
-      run,
-      completion,
-      reviewer ?? undefined,
-    );
-    if (verifiedId !== undefined && verifiedId !== publicationId)
-      return blocked(
-        "The forge observed a different publication ID. The review publication owner must reconcile it",
+    if (publicationId !== null) {
+      const verifiedId = await verifyReview.call(
+        this.adapter,
+        t,
+        run,
+        completion,
+        reviewer ?? undefined,
       );
+      if (verifiedId !== undefined && verifiedId !== publicationId)
+        return blocked(
+          "The forge observed a different publication ID. The review publication owner must reconcile it",
+        );
+    }
 
     // Retained ordinary rounds read their exact head in the task checkout, which
     // the round itself never detaches (Spec 068 §4). The prior receipt and the
@@ -777,6 +835,33 @@ export class ResultApplication {
       if ("refusal" in custody) return blocked(custody.refusal);
       assertOrdinaryReviewIdentity(this.store.task(t.id), run.head);
     }
+    if (publicationId === null) {
+      if (!run.ordinaryDetached)
+        await reattachStoredTaskCheckout(this.store, t.id, run.id);
+      const boundary = recheck();
+      if ("refusal" in boundary) return blocked(boundary.refusal);
+      const published = await this.publishReviewerResult(
+        boundary.task,
+        run,
+        completion,
+        reviewer,
+        () => !("refusal" in recheck()),
+      );
+      if (
+        !published ||
+        !observationAdvanceSince(this.store.task(t.id), t.version)
+      )
+        return blocked(changed);
+      const latest = this.store.task(t.id);
+      const recorded = publishedReviewDecision(
+        this.store,
+        latest,
+        enclosing?.(),
+      );
+      if (recorded.kind === "ready" && recorded.run.id === run.id)
+        return this.applyPublishedReview(latest, recorded, enclosing);
+      return blocked(recorded.kind === "blocked" ? recorded.refusal : changed);
+    }
     return this.commitReviewerVerdict(t, run, completion, true, () => {
       const boundary = recheck();
       if ("refusal" in boundary) return blocked(boundary.refusal);
@@ -799,7 +884,7 @@ export class ResultApplication {
           this.store.event(t.id, "planner_escalation_resolved", detail);
         closeEscalationFollowups(this.store, t.id, id);
       }
-      return boundary.decision;
+      return { ...boundary.decision, publicationId };
     });
   }
 
@@ -1684,6 +1769,12 @@ export class ResultApplication {
       this.store.transaction(() => this.closeProofOnlyQualification(t, run, c));
       return this.verdictApplied(t.id, run.id);
     }
+    if (
+      !t.resolution.unreviewedMerge &&
+      t.prHead &&
+      (t.prHead !== run.head || c.head !== run.head)
+    )
+      throw Error("Review is stale for the current PR head");
     // The verdict applies on the task branch at the head the round read. The one
     // reattach step returns a checkout an earlier round left detached before this
     // body publishes, verifies or commits it — for this run's own round, and
@@ -1696,42 +1787,9 @@ export class ResultApplication {
       reviewer ? completion.reviewId : completion.reviewCommentId;
     const publicationRecord = this.store.getMeta(`reviewPublication:${run.id}`);
     if (!publicationId(c) && (reapplied ? !publicationRecord : true)) {
-      if (!c.reviewText || !this.adapter.publishReview)
-        throw Error("Review publication is unavailable");
-      // Task 704: the adapter publishes single-flight per run and reports whether
-      // this pass posted. A repeat that reuses a recorded publication is silent:
-      // no extra `review_published` event.
-      let outcome: number | PublicationOutcome;
-      try {
-        outcome = await this.adapter.publishReview(
-          this.store,
-          t,
-          run,
-          c.status,
-          c.reviewText,
-          () => !settlementHeld(this.store, this.resolution.stopped()),
-          reviewer ?? undefined,
-        );
-      } catch (error) {
-        if (
-          gitDeliveryUnknown(error) &&
-          classifyGitTransientFailure(error) === "network" &&
-          this.store.getMeta(`reviewPublication:${run.id}`)
-        )
-          throw new ReviewPublicationTransientError(error);
-        throw error;
-      }
-      if (this.verdictApplied(t.id, run.id)) return false;
-      const id = typeof outcome === "number" ? outcome : outcome.id;
-      const published = typeof outcome === "number" || outcome.published;
-      c = reviewer ? { ...c, reviewId: id } : { ...c, reviewCommentId: id };
-      this.store.putRun({ ...this.store.run(run.id)!, completion: c });
-      if (published)
-        this.store.event(
-          t.id,
-          "review_published",
-          `${reviewer ? "PR review" : "PR comment"} ${id}`,
-        );
+      const published = await this.publishReviewerResult(t, run, c, reviewer);
+      if (!published) return false;
+      c = published;
     }
     const verifiedId = await this.adapter.verifyReview!(
       t,
@@ -1774,6 +1832,56 @@ export class ResultApplication {
     return this.commitReviewerVerdict(t, run, c, reapplied).kind === "applied";
   }
 
+  private async publishReviewerResult(
+    t: Task,
+    run: Run,
+    completion: Completion,
+    reviewer: ReviewerSetting | null,
+    stillAdmitted = () => true,
+  ): Promise<Completion | null> {
+    if (!completion.reviewText || !this.adapter.publishReview)
+      throw Error("Review publication is unavailable");
+    // The adapter publishes single-flight per run. A repeat that reuses the
+    // recorded publication produces no extra review_published event.
+    let outcome: number | PublicationOutcome;
+    try {
+      outcome = await this.adapter.publishReview(
+        this.store,
+        t,
+        run,
+        completion.status,
+        completion.reviewText,
+        () =>
+          !settlementHeld(this.store, this.resolution.stopped()) &&
+          stillAdmitted(),
+        reviewer ?? undefined,
+      );
+    } catch (error) {
+      if (
+        gitDeliveryUnknown(error) &&
+        classifyGitTransientFailure(error) === "network" &&
+        this.store.getMeta(reviewPublicationKey(run.id))
+      )
+        throw new ReviewPublicationTransientError(error);
+      throw error;
+    }
+    if (this.verdictApplied(t.id, run.id)) return null;
+    const currentRun = this.store.run(run.id);
+    if (currentRun?.completion?.eventId !== completion.eventId) return null;
+    const id = typeof outcome === "number" ? outcome : outcome.id;
+    const result = reviewer
+      ? { ...completion, reviewId: id }
+      : { ...completion, reviewCommentId: id };
+    this.store.putRun({ ...currentRun, completion: result });
+    if (typeof outcome === "number" || outcome.published)
+      this.store.event(
+        t.id,
+        "review_published",
+        `${reviewer ? "PR review" : "PR comment"} ${id}`,
+      );
+    return result;
+  }
+
   /** Commit the verdict and, for a published result, its verified evidence together. */
   private commitReviewerVerdict(
     t: Task,
@@ -1792,6 +1900,8 @@ export class ResultApplication {
       if (this.verdictApplied(t.id, run.id)) return changed;
       const published = admitPublished?.();
       if (published?.kind === "blocked") return published;
+      const current = this.store.task(t.id);
+      if (!published && current.prHead !== t.prHead) return changed;
       // This verdict settles the review. Displaced runs can release, and their
       // verdict-only credentials can no longer win at this head.
       for (const replaced of this.store.runs(t.id)) {
@@ -1803,7 +1913,6 @@ export class ResultApplication {
         )
           this.store.putRun({ ...replaced, released: true });
       }
-      const current = this.store.task(t.id);
       if (reapplied && !published) {
         const latestRun = this.store.run(run.id);
         if (
