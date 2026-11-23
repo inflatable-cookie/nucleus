@@ -2043,10 +2043,11 @@ review or merge credit; live participants and unsettled effects remain fences.
   §3). Two facts prove death, and nothing else does: the participant's own
   recorded process is positively gone (its PID absent from a complete process
   table, a different process holding that PID, a zombie, or a start before the
-  machine's last boot), or its thread is absent, archived or removed on its host
+  machine's last boot), or its thread is absent or removed on its host
   by the host's own exact answer (on T3 the live shell inside its freshness
   bound, then one exact read by id; never an archived list and never the `t3`
-  CLI). A live recorded process vetoes thread absence, and an unreadable process
+  CLI). An archived thread is not death (a retained thread resumes from its
+  archive). A live recorded process vetoes thread absence, and an unreadable process
   table, an unproven start identity, an unavailable host and a failed or partial
   read prove nothing. The proof is checked when a turn passes the stall
   threshold, when the host answers that a run's or the worker's thread is gone,

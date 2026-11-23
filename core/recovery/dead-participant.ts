@@ -29,7 +29,7 @@ import { isAgentGoneRefusal, ThreadUnobservedError } from "../host/errors";
  * - **Process facts.** Its own recorded process is gone: the PID is absent from
  *   a complete process table, a different process holds that PID, it is a
  *   zombie, or it started before the machine's last boot (nucleus#1552).
- * - **Thread facts.** Its thread is absent, archived or removed on its host,
+ * - **Thread facts.** Its thread is absent or removed on its host,
  *   answered by the host's own exact read: on T3 the live shell inside its
  *   freshness bound, then one exact read by id (`T3Reads.readThreadRecord`).
  *
@@ -54,10 +54,9 @@ export function threadGoneError(error: unknown): boolean {
   return isAgentGoneRefusal(error) || error instanceof ThreadUnobservedError;
 }
 
-export type ThreadDeathEvidence =
-  | "thread_absent"
-  | "thread_archived"
-  | "thread_deleted";
+// An archived thread is not death: a retained thread can be resumed from its
+// archive, and observation already treats a closed retained thread as resumable.
+export type ThreadDeathEvidence = "thread_absent" | "thread_deleted";
 export type DeathEvidence = ProcessDeathEvidence | ThreadDeathEvidence;
 
 /** The proof one release names, kept in the event that records it. */
@@ -128,7 +127,6 @@ export async function threadDeathEvidence(
     );
     if (!origin) return "thread_absent";
     if (origin.deleted) return "thread_deleted";
-    if (origin.archived) return "thread_archived";
     return null;
   } catch {
     return null;
@@ -208,7 +206,6 @@ export function deadParticipantDetail(proof: DeadParticipantProof): string {
     start_identity_changed: "a different process now holds its PID",
     zombie: "its process is a zombie",
     thread_absent: "its thread is absent from a complete host read",
-    thread_archived: "its thread is archived on its host",
     thread_deleted: "its thread was removed on its host",
   }[proof.evidence];
   const process = proof.process
@@ -218,9 +215,7 @@ export function deadParticipantDetail(proof: DeadParticipantProof): string {
 }
 
 const threadEvidence = (evidence: DeathEvidence): boolean =>
-  evidence === "thread_absent" ||
-  evidence === "thread_archived" ||
-  evidence === "thread_deleted";
+  evidence === "thread_absent" || evidence === "thread_deleted";
 
 /** The proof is the only authority this path asks for; a coordinator has its own. */
 function coordinatorOwnsTask(store: Store, task: Task): boolean {
@@ -449,7 +444,7 @@ function prNumberOf(url: string | null | undefined): number | null {
 
 /**
  * Spec 068 §3 (gap: a dead retained worker): before a revision launch observes
- * the retained worker, a thread its host positively reports absent, archived or
+ * the retained worker, a thread its host positively reports absent or
  * removed is retired into the task's history with that proof, so the launch
  * continues the same revision on a fresh worker instead of waiting on a thread
  * that can never answer. A live recorded process vetoes the retirement. Past the
@@ -497,7 +492,6 @@ export async function retireGoneRetainedWorker(
   const detail = `retained worker ${agentId} is gone: ${
     {
       thread_absent: "its thread is absent from a complete host read",
-      thread_archived: "its thread is archived on its host",
       thread_deleted: "its thread was removed on its host",
     }[evidence]
   }`;

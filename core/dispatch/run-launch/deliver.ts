@@ -76,9 +76,9 @@ async function reviewPrIdentity(
   return machine.verifyMergedReviewSource!(t, route);
 }
 
-// Spec 068 §3: every role's uncertain creation is settled by lookup in the
-// observation pass (`creation-lookup.ts`), so none of them throws an owner stop.
-const creationRoles = new Set<Run["role"]>(["reviewer", "revision", "closeout"]);
+// Spec 068 §3: the observation pass settles every role's uncertain creation by
+// lookup (`creation-lookup.ts`); these roles also skip the owner stop here.
+const creationRoles = new Set<Run["role"]>(["reviewer", "closeout"]);
 
 /** The guard a host re-runs immediately before a reviewer's native send or creation. */
 type ReviewAdmissionGuard = {
