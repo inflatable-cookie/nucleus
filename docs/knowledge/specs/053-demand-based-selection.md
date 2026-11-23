@@ -69,8 +69,8 @@ Each run gets a **demand**: the capability bracket it needs.
 
 ```
 worker      = the usage level's start bracket for the task's complexity (Spec 052)
-reviewer    = one bracket below the worker's actual profile at Low and Normal,
-              the worker's bracket at High, Extra high and Maximum
+reviewer    = one bracket below the worker's actual profile at Low, Normal and High,
+              the worker's bracket at Extra high and Maximum
 coordinator = Mechanical
 ```
 
@@ -234,7 +234,7 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | --- | --- | --- |
 | 1 | Complexity medium, Normal, worker | Every Worker profile rotates by weight share, none is starved; a review asking for changes never climbs past Worker |
 | 2 | Complexity high, Normal, worker | Starts on Worker; after an applied changes-required review, climbs once to Heavyweight |
-| 2b | Same task, reviewer, Worker author | Mechanical (one bracket below); on the author's bracket at High |
+| 2b | Same task, reviewer, Worker author | Mechanical (one bracket below) at Low, Normal and High; on the author's bracket at Extra high and Maximum |
 | 3 | Any complexity, coordinator | Mechanical when available, else the lowest permitted bracket with a profile |
 | 4 | Complexity very_high, Normal | Starts on Heavyweight. Frontier requires an explicit request. |
 | 5 | Same task at Maximum | Heavyweight or Frontier |
