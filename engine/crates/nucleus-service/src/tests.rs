@@ -136,7 +136,7 @@ pub(super) fn reservation(
             entry,
             origin_thread: None,
         },
-        "---\ncomplexity: normal\n---\n\n# Synthetic change\n\nFixture details.".into(),
+        "---\ncomplexity: normal\n---\n\nFixture introduction.\n\n# Synthetic change\n\nFixture details.".into(),
         (entry == Entry::ReviewEntry).then(|| pr.clone()),
     );
     let observation = Observation {
