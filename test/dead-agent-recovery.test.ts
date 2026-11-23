@@ -256,11 +256,28 @@ function fixture(options: { graceMs?: number } = {}) {
         }
       );
     },
+    agentTimeline: async (id: string) =>
+      id === "review-agent"
+        ? [
+            {
+              timestamp: minutesAgo(39),
+              turnId: "stalled-turn",
+              item: {
+                type: "tool_call",
+                callId: "review-test",
+                status: "running",
+                detail: { type: "shell", command: "effigy test unit" },
+              },
+            },
+          ]
+        : [],
     archiveAgent: async () => {},
     notify: async () => {},
     originAgent: async (id: string) => {
       if (unreadableThreads.has(id))
-        throw new HostReadRefusalError("host read refused: shell snapshot is stale");
+        throw new HostReadRefusalError(
+          "host read refused: shell snapshot is stale",
+        );
       if (goneThreads.has(id)) return null;
       return { id, workspaceId: "workspace", title: id, archived: false };
     },
@@ -452,12 +469,14 @@ test("a reviewer whose recorded process started before this boot is released and
   }
 });
 
-test("a reused PID with a different start identity is released", async () => {
+test("a fresh reviewer observation does not delay the wake for a reused PID", async (t) => {
   const f = fixture();
   try {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
     const at = Date.now();
     f.store.putRun({
       ...f.store.run("review-run")!,
+      lastObservedAt: new Date(at).toISOString(),
       participantActivity: f.participantActivity(
         "review-run",
         "review-agent",
@@ -465,24 +484,30 @@ test("a reused PID with a different start identity is released", async () => {
         { pid: 5151, startIdentity: "5151@boot-9:7", seenAt: at - 5_000 },
       ),
     });
+    const process = {
+      pid: 5151,
+      ppid: 1,
+      pgid: 5151,
+      uid: 501,
+      state: "S",
+      startIdentity: "5151@boot-9:7",
+      command: "node",
+      cwd: null,
+    };
+    rememberParticipantProcessTable([process], at, new Set([5151]));
+    f.states.set("review-agent", {
+      ...f.states.get("review-agent")!,
+      updatedAt: new Date(at).toISOString(),
+    });
+    await f.engine.scheduleTaskQuantum(f.submitted.id);
+    assert.equal(f.store.run("review-run")!.released, false);
     rememberParticipantProcessTable(
-      [
-        {
-          pid: 5151,
-          ppid: 1,
-          pgid: 5151,
-          uid: 501,
-          state: "S",
-          startIdentity: "5151@boot-9:100",
-          command: "node",
-          cwd: null,
-        },
-      ],
-      at,
+      [{ ...process, startIdentity: "5151@boot-9:100" }],
+      Date.now(),
       new Set([5151]),
     );
-
-    await f.engine.wake();
+    t.mock.timers.tick(25_000);
+    await f.engine.quiesce();
 
     assert.equal(f.store.run("review-run")!.released, true);
     assert.match(
@@ -638,24 +663,52 @@ test("reboot: every run whose thread is gone is released and relaunched with no 
     assert.equal(reviewers[0]!.agentId, null);
     assert.equal(reviewers[0]!.head, head);
     assert.notEqual(f.current().resolution.reviewerAgentId, "review-agent");
-    assert.equal(f.current().resolution.attention, false, "nothing parked for a person");
+    assert.equal(
+      f.current().resolution.attention,
+      false,
+      "nothing parked for a person",
+    );
   } finally {
     await f.close();
   }
 });
 
-test("reboot: a thread missing from the host with no process facts is released on the exact read alone", async () => {
+test("the exact observation deadline wakes an absent reviewer with no process facts", async (t) => {
   const f = fixture();
   try {
-    f.store.putRun({ ...f.store.run("review-run")!, active: false });
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    f.store.putRun({
+      ...f.store.run("review-run")!,
+      lastObservedAt: new Date().toISOString(),
+    });
+    await f.engine.scheduleTaskQuantum(f.submitted.id);
     f.goneThreads.add("review-agent");
     f.states.delete("review-agent");
+    const observe = f.engine.primaryAdapter.observe;
+    f.engine.primaryAdapter.observe = async (agentId) => {
+      if (agentId === "review-agent")
+        throw new Error("threads.list omitted the requested thread");
+      return observe(agentId);
+    };
 
-    await f.engine.wake();
+    t.mock.timers.tick(25_000);
+    for (
+      let attempt = 0;
+      attempt < 50 && !f.store.run("review-run")!.released;
+      attempt++
+    )
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    await f.engine.quiesce();
 
     assert.equal(f.store.run("review-run")!.released, true);
-    assert.match(f.events("participant_gone")[0]!.detail, /"evidence":"thread_absent"/);
-    assert.equal(f.createdRuns.filter((run) => run.role === "reviewer").length, 1);
+    assert.match(
+      f.events("participant_gone")[0]!.detail,
+      /"evidence":"thread_absent"/,
+    );
+    assert.equal(
+      f.createdRuns.filter((run) => run.role === "reviewer").length,
+      1,
+    );
   } finally {
     await f.close();
   }

@@ -7,11 +7,8 @@ import {
 /**
  * Mid-turn stall detection and recovery (Queue reliability lane).
  *
- * A worker, revision or reviewer whose agent shows no timeline activity past
- * the threshold while Paseo still reports it running is stalled, not healthy:
- * Queue routes the first stale activity observation to coordinator recovery,
- * even when a validation process is still running in the worktree. A permission
- * pending past that threshold is the same stall.
+ * Opaque tools use the stall deadline. Output and permissions renew activity,
+ * and the turn and its lease are still owned by the recorded participant.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -26,6 +23,9 @@ import { command, git } from "../core/git/index";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
+import { phaseLatency } from "../core/scheduling/phase-latency";
+import { T3CodeHost } from "../hosts/t3code/adapter";
+import { syntheticRun, t3Fake, threadProjection } from "./support/t3code-fake";
 import type { Adapter, AgentObservation } from "../core/host";
 import type { ResolutionAdapter } from "../core/resolution";
 import {
@@ -99,9 +99,12 @@ interface Fixture {
   setTimelines: (pages: TimelineEntry[][]) => void;
 }
 
-async function fixture(t: {
-  after: (cb: () => Promise<void> | void) => void;
-}): Promise<Fixture> {
+async function fixture(
+  t: {
+    after: (cb: () => Promise<void> | void) => void;
+  },
+  graceMs = 0,
+): Promise<Fixture> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "nsq-stall-")));
   t.after(() =>
     rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
@@ -259,7 +262,7 @@ async function fixture(t: {
       loadAverage: [],
     }),
   });
-  const engine = new Engine(store, adapter, 0);
+  const engine = new Engine(store, adapter, graceMs);
   engine.profiles.push(worker, coordinator, reviewer);
   engine.hooks.options.hostRuns = hostRuns;
   // A coordinator admission leaves lane and host-run work behind it. Stop the
@@ -308,12 +311,148 @@ const shellEntry = (minutes: number, command = "effigy qa"): TimelineEntry => ({
   },
 });
 
-test("a running agent with a stale activity timestamp goes to coordinator attention", async (t) => {
+const opaqueTool = (): TimelineEntry => ({
+  ...shellEntry(35),
+  turnId: "worker-turn-1",
+  item: { ...shellEntry(35).item, callId: "opaque-call" },
+});
+
+async function until(predicate: () => boolean): Promise<void> {
+  const deadline = performance.now() + 5_000;
+  while (!predicate() && performance.now() < deadline)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.ok(predicate(), "the scoped recovery wake did not settle");
+}
+
+test("an exact T3 turn-end read wakes its worker and the late-callback deadline sends the first reminder", async (t) => {
+  const graceMs = 500;
+  const f = await fixture(t, graceMs);
+  t.after(() => f.store.close());
+  const server = await t3Fake(t, f.root);
+  const agentId = "thread:worker";
+  const thread = threadProjection(agentId, f.directory);
+  thread.runs = [
+    syntheticRun(agentId, 1, {
+      status: "running",
+      startedAt: minutesAgo(1),
+      completedAt: null,
+    }),
+  ];
+  server.threads.set(agentId, thread);
+  const host = new T3CodeHost({
+    endpoint: server.endpoint,
+    bearer: "synthetic-bearer",
+    statePath: join(f.root, "recovery-host.json"),
+    probeThreadId: agentId,
+  });
+  t.after(() => host.close());
+  await host.connect();
+  const state = await host.observe(agentId);
+  const observationReads: string[] = [];
+  Object.assign(f.adapter, {
+    observe: async (id: string) => {
+      observationReads.push(id);
+      return host.observe(id);
+    },
+  });
+  f.store.update(f.task.id, { agentId, workspaceId: state.workspaceId });
+  const unrelated = f.store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Unrelated task",
+      repoPath: f.repo,
+      planningCommit: f.base,
+      handoffPath: "handoff.md",
+      originAgentId: "origin",
+    }),
+    f.task.hostId!,
+    "handoff",
+    f.base,
+  );
+  f.store.update(unrelated.id, {
+    phase: "working",
+    agentId: "unrelated-worker",
+    workspaceId: "other",
+  });
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+  await f.engine.scheduleTaskQuantum(f.task.id);
+  assert.equal(f.store.task(f.task.id).idleSince, null);
+
+  const endedAt = new Date().toISOString();
+  thread.runs[0].status = "completed";
+  thread.runs[0].completedAt = endedAt;
+  thread.updatedAt = endedAt;
+  thread.thread.updatedAt = endedAt;
+  t.mock.timers.tick(25_000);
+  await until(() => Boolean(f.store.task(f.task.id).idleSince));
+  const confirmedAt = Date.parse(f.store.task(f.task.id).idleSince!);
+  const sent = () =>
+    f.store
+      .eventsAll(f.task.id)
+      .find((event) =>
+        ["worker_push_continuation", "callback_reminder"].includes(event.kind),
+      );
+  await f.engine.quiesce();
+  assert.equal(sent(), undefined);
+  t.mock.timers.tick(graceMs);
+  await until(() => Boolean(sent()));
+
+  assert.ok(Date.parse(sent()!.at) >= confirmedAt + graceMs);
+  assert.ok(
+    f.store.eventsAll(f.task.id).some(
+      (event) =>
+        event.kind === "recovery_evidence" &&
+        event.detail ===
+          JSON.stringify({
+            source: "host_turn_end",
+            runId: "initial",
+            at: new Date(confirmedAt).toISOString(),
+          }),
+    ),
+  );
+  assert.ok(!observationReads.includes("unrelated-worker"));
+});
+
+test("an authenticated worker callback wakes its own task between sweeps", async (t) => {
+  const f = await fixture(t, 60_000);
+  t.after(() => f.store.close());
+  f.setObservation(
+    running({ status: "idle", active: false, activeTurnId: null }),
+  );
+  f.store.setCredential("initial", "synthetic-callback-token");
+  const input = {
+    taskId: f.task.id,
+    runId: "initial",
+    eventId: randomUUID(),
+    status: "blocked" as const,
+    summary: "A required test fixture has no input",
+    impediment: "The synthetic input is missing.",
+  };
+  await assert.rejects(f.engine.complete(input, "invalid-token"));
+  assert.equal(f.store.task(f.task.id).completion, null);
+  assert.equal(
+    (await f.engine.complete(input, "synthetic-callback-token")).accepted,
+    true,
+  );
+  await f.engine.quiesce();
+  assert.equal(f.store.task(f.task.id).completion?.eventId, input.eventId);
+  const { pending, samples } = phaseLatency(f.store, f.task.id);
+  assert.ok(
+    [...pending, ...samples].some(
+      (sample) =>
+        sample.key === `callback:${input.eventId}` &&
+        sample.cause.startsWith("Authenticated callback"),
+    ),
+  );
+});
+
+test("an opaque running tool past the stall deadline goes to coordinator attention", async (t) => {
   const f = await fixture(t);
   t.after(() => f.store.close());
   f.setObservation(
     running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }),
   );
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
   await f.engine.wake();
   const current = f.store.task(f.task.id);
   assert.equal(
@@ -415,20 +554,26 @@ console.log(JSON.stringify([process.pid, helper.pid, child.pid])); setInterval((
   );
 });
 
-test("a recorded running tool prevents a stale turn from being flagged", async (t) => {
+test("fresh tool output renews a long test run with a stale host turn stamp", async (t) => {
   const f = await fixture(t);
   t.after(() => f.store.close());
   f.setObservation(
     running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }),
   );
   const entry: TimelineEntry = {
-    timestamp: minutesAgo(2),
+    timestamp: minutesAgo(35),
+    turnId: "worker-turn-1",
     item: {
       type: "tool_call",
       callId: "call-1",
       status: "running",
       name: "Bash",
-      detail: { type: "shell", command: "long test" },
+      detail: {
+        type: "shell",
+        command: "effigy test unit",
+        startedAt: minutesAgo(35),
+        lastOutputAt: minutesAgo(2),
+      },
     },
   };
   f.setTimelines([[entry], [entry]]);
@@ -437,6 +582,7 @@ test("a recorded running tool prevents a stale turn from being flagged", async (
   assert.equal(current.resolution.incident, null);
   assert.equal(current.resolution.recovery, null);
   assert.equal(current.resolution.stop?.reason === "run_stalled", false);
+  assert.equal(current.lastActivityAt, entry.item.detail?.lastOutputAt);
 });
 
 test("a live queued or running validation process does not mask a stale worker turn", async (t) => {
@@ -480,6 +626,7 @@ test("a live queued or running validation process does not mask a stale worker t
     },
   );
   assert.equal(queued.state, "queued");
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
   f.setObservation(
     running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }),
   );
@@ -508,6 +655,7 @@ test("a live queued or running validation process does not mask a stale worker t
     }),
   );
   assert.equal(f.hostRuns.get(queued.id)?.state, "running");
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
   await f.engine.wake();
   const current = f.store.task(f.task.id);
   assert.equal(current.resolution.attention, true);
@@ -673,7 +821,10 @@ test("two runs in one store retain their own activity stamps during the same obs
       completion: null,
       released: false,
     });
-    f.setAgentObservation(agentId, running({ id: agentId, updatedAt: stamp }));
+    f.setAgentObservation(
+      agentId,
+      running({ id: agentId, updatedAt: stamp, turnStartedAt: minutesAgo(4) }),
+    );
   }
   f.store.update(f.task.id, {
     phase: "changes_requested",
@@ -753,7 +904,7 @@ test("a fresh permission wait is not a stall", async (t) => {
   assert.match(f.store.task(f.task.id).reason, /permission response/);
 });
 
-test("a permission pending past the stall threshold raises owner attention", async (t) => {
+test("a pending permission is activity even if the provider stamp is old", async (t) => {
   const f = await fixture(t);
   t.after(() => f.store.close());
   f.setObservation(
@@ -765,13 +916,15 @@ test("a permission pending past the stall threshold raises owner attention", asy
       pendingRequest: { id: "perm-1", kind: "shell", firstLine: "git push" },
     }),
   );
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
   await f.engine.wake();
   const current = f.store.task(f.task.id);
-  assert.equal(current.phase, "needs_attention");
-  assert.equal(current.resolution.attention, true);
-  assert.equal(current.resolution.incident?.cause, "stalled_turn");
-  assert.match(current.reason, /pending permission perm-1: git push/);
-  assert.equal(current.resolution.stop?.reason, "run_stalled");
+  assert.equal(current.phase, "working");
+  assert.equal(current.resolution.attention, false);
+  assert.equal(
+    current.lastActivityAt,
+    current.participantActivity?.permission?.since,
+  );
 });
 
 test("a missing activity stamp is never judged stale", async (t) => {
@@ -801,6 +954,7 @@ test("the stall threshold is a setting and the default is 30 minutes", async (t)
     "the default threshold stays at 30 minutes",
   );
   f.store.setMeta("stallThresholdMinutes", 1);
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
   f.setObservation(
     running({ updatedAt: minutesAgo(25), turnStartedAt: minutesAgo(26) }),
   );
@@ -850,6 +1004,7 @@ test("a stalled revision run enters coordinator attention through the run observ
       turnStartedAt: minutesAgo(40),
     }),
   );
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
   await f.engine.resolution.observe();
   const current = f.store.task(f.task.id);
   assert.equal(
