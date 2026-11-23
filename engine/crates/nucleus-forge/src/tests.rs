@@ -107,7 +107,32 @@ struct Request {
     body: Option<Value>,
 }
 
+struct FixtureReply {
+    status: u16,
+    headers: &'static str,
+    body: Value,
+}
+
+impl FixtureReply {
+    fn ok(body: Value) -> Self {
+        Self {
+            status: 200,
+            headers: "",
+            body,
+        }
+    }
+}
+
 fn server(responses: Vec<Option<Value>>) -> (GitHub, JoinHandle<Vec<Request>>) {
+    scripted(
+        responses
+            .into_iter()
+            .map(|value| value.map(FixtureReply::ok))
+            .collect(),
+    )
+}
+
+fn scripted(responses: Vec<Option<FixtureReply>>) -> (GitHub, JoinHandle<Vec<Request>>) {
     let socket = TcpListener::bind("127.0.0.1:0").expect("bind HTTP fixture");
     let addr = socket.local_addr().expect("fixture address");
     let thread = thread::spawn(move || {
@@ -130,8 +155,8 @@ fn server(responses: Vec<Option<Value>>) -> (GitHub, JoinHandle<Vec<Request>>) {
             let mut body = vec![0; length];
             reader.read_exact(&mut body).expect("read body");
             if let Some(response) = response {
-                let json = response.to_string();
-                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}", json.len()).expect("write fixture response");
+                let json = response.body.to_string();
+                write!(stream, "HTTP/1.1 {} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{json}", response.status, json.len(), response.headers).expect("write fixture response");
             }
             Request { method_and_path, body: (!body.is_empty()).then(|| serde_json::from_slice(&body).expect("fixture JSON")) }
         }).collect()
@@ -146,21 +171,23 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
     let (forge, calls) = server(vec![
         Some(pull('a', false)),
         Some(checks('a', "SUCCESS")),
+        Some(pull('a', false)),
         None,
         Some(pull('a', true)),
         Some(pull('a', true)),
     ]);
     let target = branches().target(PR_URL).expect("target");
     let task = task_with_approval();
-    for _ in 0..2 {
-        let merged = forge.merge(&task, &target).await.expect("read back merge");
+    for write in [MergeWrite::Unknown, MergeWrite::Skipped] {
+        let attempt = forge.merge(&task, &target).await.expect("read back merge");
+        assert_eq!(attempt.write, write);
         assert!(
-            matches!(merged, Forge::Merged { pr, commit } if pr.head == sha('a') && commit == sha('f'))
+            matches!(attempt.observed, Ok(Forge::Merged { pr, commit }) if pr.head == sha('a') && commit == sha('f'))
         );
     }
     let requests = calls.join().expect("HTTP requests");
-    let [read, graph, merge, readback, replay] = requests.as_slice() else {
-        panic!("five requests")
+    let [read, graph, preflight, merge, readback, replay] = requests.as_slice() else {
+        panic!("six requests")
     };
     assert!(read.method_and_path.starts_with(&format!("GET {PR_PATH} ")));
     assert!(graph.method_and_path.starts_with("POST /graphql "));
@@ -173,7 +200,7 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
         merge.body,
         Some(json!({"sha": sha('a'), "merge_method": "squash"}))
     );
-    for read in [readback, replay] {
+    for read in [preflight, readback, replay] {
         assert!(read.method_and_path.starts_with(&format!("GET {PR_PATH} ")));
     }
 }
@@ -185,18 +212,184 @@ async fn a_new_head_or_unfinished_checks_do_not_send_a_merge() {
         ('a', "PENDING", CheckState::Pending),
     ] {
         let (forge, calls) = server(vec![Some(pull(digit, false)), Some(checks(digit, rollup))]);
-        let observed = forge
+        let attempt = forge
             .merge(
                 &task_with_approval(),
                 &branches().target(PR_URL).expect("target"),
             )
             .await
             .expect("observe without merging");
+        assert_eq!(attempt.write, MergeWrite::Skipped);
         assert!(
-            matches!(observed, Forge::Open { pr, checks } if pr.head == sha(digit) && checks == expected)
+            matches!(attempt.observed, Ok(Forge::Open { pr, checks }) if pr.head == sha(digit) && checks == expected)
         );
         assert_eq!(calls.join().expect("HTTP requests").len(), 2);
     }
+}
+
+fn ready_preflight() -> Vec<Option<FixtureReply>> {
+    [pull('a', false), checks('a', "SUCCESS"), pull('a', false)]
+        .into_iter()
+        .map(|value| Some(FixtureReply::ok(value)))
+        .collect()
+}
+
+#[tokio::test]
+async fn write_outcomes_survive_stale_or_unreadable_readback() {
+    let target = branches().target(PR_URL).expect("target");
+    for (status, expected) in [
+        (409, MergeWrite::HeadMismatch),
+        (
+            405,
+            MergeWrite::Refused {
+                status: StatusCode::METHOD_NOT_ALLOWED,
+            },
+        ),
+        (502, MergeWrite::Unknown),
+    ] {
+        let mut responses = ready_preflight();
+        responses.push(Some(FixtureReply {
+            status,
+            headers: "",
+            body: json!({}),
+        }));
+        if status == 405 {
+            responses.push(None);
+        } else {
+            responses.extend([
+                Some(FixtureReply::ok(pull('a', false))),
+                Some(FixtureReply::ok(checks('a', "SUCCESS"))),
+            ]);
+        }
+        let (forge, calls) = scripted(responses);
+        let attempt = forge
+            .merge(&task_with_approval(), &target)
+            .await
+            .expect("keep write outcome");
+        assert_eq!(attempt.write, expected);
+        match status {
+            409 => assert!(matches!(
+                attempt.observed,
+                Err(ForgeError::HeadNotRefreshed)
+            )),
+            405 => assert!(attempt.observed.is_err()),
+            _ => assert!(matches!(
+                attempt.observed,
+                Ok(Forge::Open {
+                    checks: CheckState::Ready,
+                    ..
+                })
+            )),
+        }
+        calls.join().expect("HTTP requests");
+    }
+}
+
+#[tokio::test]
+async fn an_unresolved_optional_conversation_does_not_override_github_merge_state() {
+    let target = branches().target(PR_URL).expect("target");
+    let mut graphql = checks('a', "SUCCESS");
+    graphql["data"]["repository"]["pullRequest"]["reviewThreads"] = json!({
+        "nodes": [{"isResolved": false}], "pageInfo": {"hasNextPage": true},
+    });
+    let (forge, calls) = server(vec![Some(pull('a', false)), Some(graphql)]);
+    assert!(matches!(
+        forge.observe(&target).await,
+        Ok(Forge::Open {
+            checks: CheckState::Ready,
+            ..
+        })
+    ));
+    let calls = calls.join().expect("HTTP requests");
+    let query = calls[1].body.as_ref().expect("GraphQL body")["query"]
+        .as_str()
+        .expect("GraphQL query");
+    assert!(!query.contains("reviewThreads"));
+}
+
+#[tokio::test]
+async fn a_rate_limited_put_returns_the_deadline_without_readback() {
+    let target = branches().target(PR_URL).expect("target");
+    let reset = UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+    for (status, headers) in [
+        (429, "Retry-After: 75\r\n"),
+        (
+            403,
+            "X-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 2000000000\r\n",
+        ),
+    ] {
+        let before = SystemTime::now();
+        let mut responses = ready_preflight();
+        responses.push(Some(FixtureReply {
+            status,
+            headers,
+            body: json!({}),
+        }));
+        let (forge, calls) = scripted(responses);
+        let attempt = forge
+            .merge(&task_with_approval(), &target)
+            .await
+            .expect("deferral");
+        let MergeWrite::Deferred { until } = attempt.write else {
+            panic!("expected retry deadline")
+        };
+        if status == 429 {
+            assert!(until >= before + Duration::from_secs(75));
+        } else {
+            assert_eq!(until, reset);
+        }
+        assert!(
+            matches!(attempt.observed, Err(ForgeError::Deferred { until: read_until }) if read_until == until)
+        );
+        assert_eq!(calls.join().expect("HTTP requests").len(), 4);
+    }
+}
+
+#[tokio::test]
+async fn decoder_errors_do_not_reveal_diagnostic_values() {
+    const TOKEN: &str = "synthetic-token-in-response";
+    let target = branches().target(PR_URL).expect("target");
+    let mut body = pull('a', false);
+    body["state"] = json!(TOKEN);
+    let (forge, calls) = server(vec![Some(body)]);
+    let error = forge.observe(&target).await.expect_err("invalid state");
+    assert!(matches!(error, ForgeError::Decode { .. }));
+    assert!(!format!("{error:?}").contains(TOKEN));
+    assert!(!error.to_string().contains(TOKEN));
+    calls.join().expect("HTTP requests");
+}
+
+#[tokio::test]
+async fn a_retargeted_base_is_checked_before_and_after_the_put() {
+    let target = branches().target(PR_URL).expect("target");
+    let mut retargeted = pull('a', false);
+    retargeted["base"]["ref"] = json!("another-base");
+    let (forge, calls) = server(vec![
+        Some(pull('a', false)),
+        Some(checks('a', "SUCCESS")),
+        Some(retargeted),
+    ]);
+    assert!(matches!(
+        forge.merge(&task_with_approval(), &target).await,
+        Err(ForgeError::BaseChanged)
+    ));
+    assert_eq!(calls.join().expect("HTTP requests").len(), 3);
+
+    let mut after = pull('a', true);
+    after["base"]["ref"] = json!("another-base");
+    let mut responses = ready_preflight();
+    responses.extend([
+        Some(FixtureReply::ok(json!({"merged": true, "sha": sha('f')}))),
+        Some(FixtureReply::ok(after)),
+    ]);
+    let (forge, calls) = scripted(responses);
+    let attempt = forge
+        .merge(&task_with_approval(), &target)
+        .await
+        .expect("write and readback");
+    assert_eq!(attempt.write, MergeWrite::Merged { commit: sha('f') });
+    assert!(matches!(attempt.observed, Err(ForgeError::BaseChanged)));
+    assert_eq!(calls.join().expect("HTTP requests").len(), 5);
 }
 
 #[tokio::test]

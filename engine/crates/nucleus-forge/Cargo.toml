@@ -6,6 +6,7 @@ rust-version = "1.95"
 publish.workspace = true
 
 [dependencies]
+httpdate = "1"
 nucleus-core = { path = "../nucleus-core" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -1,4 +1,4 @@
-use nucleus_core::{CheckState, Head};
+use nucleus_core::{CheckState, Forge, Head, PullRequest};
 use serde::Deserialize;
 
 use crate::ForgeError;
@@ -14,7 +14,25 @@ pub(crate) struct Pull {
     pub(crate) head: GitRef,
 }
 
-#[derive(Deserialize)]
+impl Pull {
+    pub(crate) fn forge(self, checks: CheckState) -> Result<Forge, ForgeError> {
+        let pr = PullRequest {
+            url: self.html_url,
+            head: self.head.sha,
+        };
+        match (self.merged, self.state) {
+            (true, PullState::Closed) => Ok(Forge::Merged {
+                pr,
+                commit: self.merge_commit_sha.ok_or(ForgeError::Incomplete)?,
+            }),
+            (false, PullState::Closed) => Ok(Forge::Closed(pr)),
+            (false, PullState::Open) => Ok(Forge::Open { pr, checks }),
+            (true, PullState::Open) => Err(ForgeError::Incomplete),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum PullState {
     Open,
@@ -63,31 +81,11 @@ struct Checks {
     merge_state_status: String,
     review_decision: Option<String>,
     status_check_rollup: Option<Rollup>,
-    review_threads: ReviewThreads,
 }
 
 #[derive(Deserialize)]
 struct Rollup {
     state: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReviewThreads {
-    nodes: Vec<ReviewThread>,
-    page_info: PageInfo,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReviewThread {
-    is_resolved: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PageInfo {
-    has_next_page: bool,
 }
 
 impl GraphReply {
@@ -100,7 +98,10 @@ impl GraphReply {
             .and_then(|data| data.repository)
             .and_then(|repository| repository.pull_request)
             .ok_or(ForgeError::Incomplete)?;
-        if checks.head_ref_oid != *head || checks.base_ref_name != base || checks.state != "OPEN" {
+        if checks.base_ref_name != base {
+            return Err(ForgeError::BaseChanged);
+        }
+        if checks.head_ref_oid != *head || checks.state != "OPEN" {
             return Err(ForgeError::Incomplete);
         }
         Ok(checks.state())
@@ -109,18 +110,8 @@ impl GraphReply {
 
 impl Checks {
     fn state(&self) -> CheckState {
-        if self.is_draft
-            || self.mergeable == "CONFLICTING"
-            || self
-                .review_threads
-                .nodes
-                .iter()
-                .any(|thread| !thread.is_resolved)
-        {
+        if self.is_draft || self.mergeable == "CONFLICTING" {
             return CheckState::Blocked;
-        }
-        if self.review_threads.page_info.has_next_page {
-            return CheckState::Unknown;
         }
         let review = self.review_decision.as_deref();
         let rollup = self

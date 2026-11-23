@@ -2,12 +2,12 @@
 
 mod wire;
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use nucleus_core::{Action, Forge, Observation, Observed, Task, decide};
+use nucleus_core::{Action, CheckState, Forge, Head, Observation, Observed, Task, decide};
 use reqwest::{
     Client, Response, StatusCode, Url,
-    header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
+    header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, RETRY_AFTER},
 };
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
@@ -18,13 +18,17 @@ const API_VERSION: &str = "2026-03-10";
 const CHECKS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
   repository(owner:$owner,name:$repo){pullRequest(number:$number){\
   headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision\
-  statusCheckRollup{state} reviewThreads(first:100){nodes{isResolved}pageInfo{hasNextPage}}\
+  statusCheckRollup{state}\
   }}}";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ForgeError {
     #[error("pull request identity does not match the configured repository and branches")]
     Identity,
+    #[error("GitHub reported a different pull request base")]
+    BaseChanged,
+    #[error("GitHub refused the original head and the readback still shows it")]
+    HeadNotRefreshed,
     #[error("more than one open pull request matches the task branch")]
     Ambiguous,
     #[error("GitHub credential cannot be used as a bearer")]
@@ -33,12 +37,32 @@ pub enum ForgeError {
     Incomplete,
     #[error("GitHub response exceeded the read limit")]
     Oversize,
-    #[error("GitHub refused the merge with HTTP {0}")]
-    Refused(StatusCode),
+    #[error("GitHub deferred requests until {until:?}")]
+    Deferred { until: SystemTime },
     #[error("GitHub request failed")]
     Http(#[from] reqwest::Error),
-    #[error("GitHub response could not be decoded")]
-    Decode(#[from] serde_json::Error),
+    #[error("GitHub response could not be decoded ({category:?} at {line}:{column})")]
+    Decode {
+        category: serde_json::error::Category,
+        line: usize,
+        column: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeWrite {
+    Skipped,
+    Merged { commit: Head },
+    HeadMismatch,
+    Refused { status: StatusCode },
+    Unknown,
+    Deferred { until: SystemTime },
+}
+
+#[derive(Debug)]
+pub struct MergeAttempt {
+    pub write: MergeWrite,
+    pub observed: Result<Forge, ForgeError>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +160,6 @@ impl PullTarget {
     fn verify(&self, pull: &Pull) -> Result<(), ForgeError> {
         if pull.number != self.number
             || self.branches.target(&pull.html_url)? != *self
-            || pull.base.branch != self.branches.base
             || pull.head.branch != self.branches.head
             || ![&pull.base, &pull.head].into_iter().all(|git_ref| {
                 git_ref
@@ -146,6 +169,9 @@ impl PullTarget {
             })
         {
             return Err(ForgeError::Identity);
+        }
+        if pull.base.branch != self.branches.base {
+            return Err(ForgeError::BaseChanged);
         }
         Ok(())
     }
@@ -228,39 +254,38 @@ impl GitHub {
     /// Returns an error when evidence is unreadable, incomplete, or bound to
     /// another branch, repository or head. The engine treats errors as unknown.
     pub async fn observe(&self, target: &PullTarget) -> Result<Forge, ForgeError> {
+        let pull = self.pull(target).await?;
+        let checks = if !pull.merged && pull.state == PullState::Open {
+            let response = self.client.post(format!("{}/graphql", self.origin)).json(&json!({
+                "query": CHECKS_QUERY,
+                "variables": { "owner": target.branches.owner, "repo": target.branches.repository, "number": target.number },
+            })).send().await?;
+            let graph: GraphReply = decode(response).await?;
+            graph.checks(&pull.head.sha, &target.branches.base)?
+        } else {
+            CheckState::Unknown
+        };
+        pull.forge(checks)
+    }
+
+    async fn pull(&self, target: &PullTarget) -> Result<Pull, ForgeError> {
         let url = format!("{}/{}", self.origin, target.path());
         let pull: Pull = decode(self.client.get(url).send().await?).await?;
         target.verify(&pull)?;
-        let pr = nucleus_core::PullRequest {
-            url: pull.html_url,
-            head: pull.head.sha,
-        };
-        match (pull.merged, pull.state) {
-            (true, PullState::Closed) => Ok(Forge::Merged {
-                pr,
-                commit: pull.merge_commit_sha.ok_or(ForgeError::Incomplete)?,
-            }),
-            (false, PullState::Closed) => Ok(Forge::Closed(pr)),
-            (false, PullState::Open) => {
-                let response = self.client.post(format!("{}/graphql", self.origin)).json(&json!({
-                    "query": CHECKS_QUERY,
-                    "variables": { "owner": target.branches.owner, "repo": target.branches.repository, "number": target.number },
-                })).send().await?;
-                let graph: GraphReply = decode(response).await?;
-                let checks = graph.checks(&pr.head, &target.branches.base)?;
-                Ok(Forge::Open { pr, checks })
-            }
-            (true, PullState::Open) => Err(ForgeError::Incomplete),
-        }
+        Ok(pull)
     }
 
     /// Recheck the merge decision against fresh GitHub facts, submit its exact
     /// SHA once, then read back. Any later attempt starts with a new read.
     ///
     /// # Errors
-    /// Returns an error if the target is outside the task's binding, a definite
-    /// refusal remains unresolved, or readback is unknown.
-    pub async fn merge(&self, task: &Task, target: &PullTarget) -> Result<Forge, ForgeError> {
+    /// Returns an error if the preflight cannot verify the target. After a PUT,
+    /// the write outcome and subsequent observation are returned separately.
+    pub async fn merge(
+        &self,
+        task: &Task,
+        target: &PullTarget,
+    ) -> Result<MergeAttempt, ForgeError> {
         if !target
             .branches
             .matches_repository(&task.identity().repository)
@@ -282,29 +307,117 @@ impl GitHub {
             let Observed::Known(forge) = observation.forge else {
                 return Err(ForgeError::Incomplete);
             };
-            return Ok(forge);
+            return Ok(MergeAttempt {
+                write: MergeWrite::Skipped,
+                observed: Ok(forge),
+            });
         };
+        // GitHub's PUT compares the supplied head SHA only. Recheck the base
+        // immediately before sending, and verify it again in the readback.
+        let latest = self.pull(target).await?;
+        if latest.head.sha != head || latest.merged || latest.state != PullState::Open {
+            return Ok(MergeAttempt {
+                write: MergeWrite::Skipped,
+                observed: latest.forge(CheckState::Unknown),
+            });
+        }
         let url = format!("{}/{}/merge", self.origin, target.path());
-        let status = self
+        let reply = self
             .client
             .put(url)
             .json(&json!({ "sha": head, "merge_method": "squash" }))
             .send()
-            .await
-            .map(|response| response.status());
-        let confirmed = self.observe(target).await?;
-        if let Ok(status) = status
-            && !status.is_success()
-            && status != StatusCode::CONFLICT
-            && !matches!(confirmed, Forge::Merged { .. })
-        {
-            return Err(ForgeError::Refused(status));
+            .await;
+        let write = match reply {
+            Ok(reply) => classify_write(reply).await,
+            Err(_) => MergeWrite::Unknown,
+        };
+        if let MergeWrite::Deferred { until } = write {
+            return Ok(MergeAttempt {
+                write,
+                observed: Err(ForgeError::Deferred { until }),
+            });
         }
-        Ok(confirmed)
+        let mut observed = self.observe(target).await;
+        if write == MergeWrite::HeadMismatch
+            && matches!(&observed, Ok(Forge::Open { pr, .. }) if pr.head == head)
+        {
+            observed = Err(ForgeError::HeadNotRefreshed);
+        }
+        Ok(MergeAttempt { write, observed })
     }
 }
 
+async fn classify_write(response: Response) -> MergeWrite {
+    #[derive(Deserialize)]
+    struct Receipt {
+        merged: bool,
+        sha: Option<Head>,
+    }
+
+    if let Some(until) = deferred(&response) {
+        return MergeWrite::Deferred { until };
+    }
+    match response.status() {
+        StatusCode::OK => match decode::<Receipt>(response).await {
+            Ok(Receipt {
+                merged: true,
+                sha: Some(commit),
+            }) => MergeWrite::Merged { commit },
+            _ => MergeWrite::Unknown,
+        },
+        StatusCode::CONFLICT => MergeWrite::HeadMismatch,
+        status if status.is_server_error() || status == StatusCode::REQUEST_TIMEOUT => {
+            MergeWrite::Unknown
+        }
+        status => MergeWrite::Refused { status },
+    }
+}
+
+fn deferred(response: &Response) -> Option<SystemTime> {
+    let headers = response.headers();
+    let retry = headers.get(RETRY_AFTER);
+    let exhausted = headers
+        .get("x-ratelimit-remaining")
+        .is_some_and(|value| value == "0");
+    if response.status() != StatusCode::TOO_MANY_REQUESTS
+        && !(response.status() == StatusCode::FORBIDDEN && (exhausted || retry.is_some()))
+    {
+        return None;
+    }
+    let now = SystemTime::now();
+    let after = retry
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .parse::<u64>()
+                .ok()
+                .and_then(|seconds| now.checked_add(Duration::from_secs(seconds)))
+                .or_else(|| httpdate::parse_http_date(value).ok())
+        });
+    let reset = (exhausted || response.status() == StatusCode::TOO_MANY_REQUESTS)
+        .then(|| {
+            headers
+                .get("x-ratelimit-reset")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+        })
+        .flatten();
+    Some(
+        after
+            .into_iter()
+            .chain(reset)
+            .max()
+            .filter(|time| *time >= now)
+            .unwrap_or(now + Duration::from_mins(1)),
+    )
+}
+
 async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ForgeError> {
+    if let Some(until) = deferred(&response) {
+        return Err(ForgeError::Deferred { until });
+    }
     let mut response = response.error_for_status()?;
     let mut data = Vec::new();
     while let Some(bytes) = response.chunk().await? {
@@ -313,7 +426,11 @@ async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ForgeError
         }
         data.extend_from_slice(&bytes);
     }
-    Ok(serde_json::from_slice(&data)?)
+    serde_json::from_slice(&data).map_err(|error| ForgeError::Decode {
+        category: error.classify(),
+        line: error.line(),
+        column: error.column(),
+    })
 }
 
 #[cfg(test)]
