@@ -7,6 +7,11 @@ import { TaskChangedRefusal } from "../../shared/task-version";
 import { activityReadContext } from "../telemetry/task-activity-observation";
 import { proofWaitApplies } from "../qa/proof-wait";
 import { resultApplied } from "../intake/applied-result";
+import { DurableFenceRefusal } from "../intake/run-settlement";
+import { WorkerSourceRefusal } from "../git/git-refusals";
+import { ForeignPrIdentity } from "../forge/pr-identity";
+import { ProvenPreSendRefusalError } from "../host/errors";
+import { RetainedRunRefusal } from "./task-reasons/refusals";
 import { blockingRecoveryEffectsRefusal } from "./recovery-effects";
 import { operatorReplacementPending } from "./task-reasons";
 import { taskWaitStateContext, taskWithCurrentWait } from "./wait-context";
@@ -126,7 +131,13 @@ export function orphanPhase(store: Engine["store"], task: Task, paused: boolean)
   return { phase: task.phase, ...route, key };
 }
 
-export type OrphanPhaseContext = Pick<Engine, "hostAvailable" | "moveToReview" | "moveToWork" | "store"> & {
+/** The refusals that answer a result application, as opposed to a read that failed and is retried. */
+function typedRefusal(error: unknown): boolean {
+  return error instanceof WorkerSourceRefusal || error instanceof ForeignPrIdentity || error instanceof DurableFenceRefusal ||
+    error instanceof RetainedRunRefusal || error instanceof ProvenPreSendRefusalError;
+}
+
+export type OrphanPhaseContext = Pick<Engine, "hostAvailable" | "moveToReview" | "moveToWork" | "stopped" | "store"> & {
   readonly resolution: Pick<Resolution, "advance" | "recordStop" | "update">;
 };
 
@@ -197,10 +208,17 @@ export class OrphanPhases {
     try {
       await this.context.resolution.advance(current);
     } catch (error) {
+      // Only a typed refusal is an answer. Anything else (a forge read that
+      // failed, a timeout) leaves the rebinding for the next pass to retry, as
+      // the ordinary path does.
+      if (!typedRefusal(error)) return;
       const message = error instanceof Error ? error.message : String(error);
-      this.stop(store.task(task.id), orphan, `Worker run ${run.id} reported ${status} and was released, and applying its report failed: ${message}`.slice(0, 3000) + ` ${this.resultCommand(status)}`);
+      this.stop(store.task(task.id), orphan, `Worker run ${run.id} reported ${status} and was released, and applying its report was refused: ${message}`.slice(0, 3000) + ` ${this.resultCommand(status)}`);
       return;
     }
+    // A pass that ended because the service is stopping, or its host left,
+    // applied nothing by design: that is no evidence against the result.
+    if (this.context.stopped || (task.hostId && !this.context.hostAvailable(task.hostId))) return;
     const after = store.task(task.id);
     if (resultApplied(store, task.id, run.id) || after.phase !== task.phase || after.resolution.stop || after.resolution.attention) {
       store.event(task.id, ORPHAN_PHASE_READMITTED, JSON.stringify({ phase: orphan.phase, move: orphan.move, result: run.id }));

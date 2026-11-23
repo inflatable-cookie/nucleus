@@ -12,6 +12,7 @@ import { ORPHAN_PHASE_READMITTED, ORPHAN_PHASE_STOPPED, ORPHAN_READMISSION_BOUND
 import { taskActivity } from "../shared/task-activity";
 import { activityReadContext } from "../core/telemetry/task-activity-observation";
 import { OPERATOR_WORKER_REMAP_REASON } from "../core/recovery/task-reasons";
+import { WORKER_PR_IDENTITY_REFUSAL, WorkerSourceRefusal } from "../core/git/git-refusals";
 import { running, selfHealingFixture, type SelfHealingFixture } from "./support/self-healing-fixture";
 
 const idle = running({ status: "idle", active: false, activeTurnId: null, updatedAt: new Date().toISOString() });
@@ -210,6 +211,52 @@ test("a released blocked revision nothing applied climbs the ordinary blocker pa
   assert.ok(events(f, "run_result_applied").some((event) => event.detail === "revision-1"), "result application took the blocked report");
   assert.equal(task.phase, "blocked");
   assert.deepEqual(f.createdRuns, [], "nothing is launched over an unanswered blocked report");
+});
+
+test("a transient failure while applying a released result is retried, never an operator stop", async (t) => {
+  const f = await selfHealingFixture(t);
+  f.setObservation(idle);
+  const head = await f.pushRevision();
+  releasedRevision(f, "ready_for_review", "Addressed review findings", head, false);
+  // The failure escapes result application, as an untyped forge read does.
+  const advance = f.engine.resolution.advance;
+  f.engine.resolution.advance = async () => { throw new Error("gh api: HTTP 502 Bad Gateway"); };
+  t.after(() => { f.engine.resolution.advance = advance; });
+  quantum(f).graceMs = 0;
+  await quantum(f).settle(f.task.id, false);
+  const task = f.store.task(f.task.id);
+  assert.equal(events(f, ORPHAN_PHASE_STOPPED).length, 0, JSON.stringify(events(f, ORPHAN_PHASE_STOPPED)));
+  assert.equal(task.resolution.stop, null);
+  assert.equal(task.resolution.currentRunId, "revision-1", "the rebinding stays for the next pass");
+});
+
+test("a typed refusal while applying a released result records the typed stop", async (t) => {
+  const f = await selfHealingFixture(t);
+  f.setObservation(idle);
+  const head = await f.pushRevision();
+  releasedRevision(f, "ready_for_review", "Addressed review findings", head, false);
+  const advance = f.engine.resolution.advance;
+  f.engine.resolution.advance = async () => { throw new WorkerSourceRefusal("pr_identity", WORKER_PR_IDENTITY_REFUSAL); };
+  t.after(() => { f.engine.resolution.advance = advance; });
+  quantum(f).graceMs = 0;
+  await quantum(f).settle(f.task.id, false);
+  const task = f.store.task(f.task.id);
+  assert.equal(events(f, ORPHAN_PHASE_STOPPED).length, 1);
+  assert.deepEqual(task.resolution.stop?.fact, { code: "orphan_phase", subject: "changes_requested" });
+  assert.match(task.resolution.stop?.detail ?? "", /was refused: PR must be open/);
+});
+
+test("a pass cut short by a stopping service records no stop", async (t) => {
+  const f = await selfHealingFixture(t);
+  f.setObservation(idle);
+  const head = await f.pushRevision();
+  releasedRevision(f, "ready_for_review", "Addressed review findings", head, false);
+  quantum(f).graceMs = 0;
+  f.engine.stopped = true;
+  t.after(() => { f.engine.stopped = false; });
+  await quantum(f).settle(f.task.id, false);
+  assert.equal(events(f, ORPHAN_PHASE_STOPPED).length, 0);
+  assert.equal(f.store.task(f.task.id).resolution.stop, null);
 });
 
 test("an owner-armed replacement is the fleet's, never an orphan", async (t) => {

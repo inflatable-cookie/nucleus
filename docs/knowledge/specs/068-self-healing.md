@@ -182,7 +182,10 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
   the host showed that call's output at least once, or declares
   `streamsRunningToolOutput`. Many providers return shell output only when the
   command ends, so a call with no output shown is unknown and never terminated.
-  No host declares the capability today.
+  No host declares the capability today. Follow-up, not in batch 5b: the quiet
+  clock depends on `lastOutputAt` advancing with every output chunk, and only
+  T3's explicit `lastOutputAt` is tested. Verify BB's timeline shape (and any
+  other host's) before it relies on this.
 - **Interrupted tool.** A call the host reports `interrupted` with its turn
   (bovine#6928: T3's "Stopped by user") is finished once the turn is proven
   over. A kind that can outlive its turn, such as a shell command, still takes the
