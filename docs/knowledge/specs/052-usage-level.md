@@ -268,7 +268,7 @@ takes effect on that role's next run, and routing details show the reason.
 - **Preference.** The level sets each run's start bracket, not a weight: since
   [Spec 053](053-demand-based-selection.md) (Tom, 2026-10-21; 2026-11-04) the
   set is every profile rated at or above the demand, with rotation and fair
-  share inside it, weighted by the five-stop weight share (80% to 120% of Default, Tom, 2026-11-21), which never removes a profile. The
+  share inside it, weighted by the five-stop weight share (50% to 200% of Default, Tom, 2026-11-22; the 2026-11-21 stops were 80% to 120%), which never removes a profile. The
   2026-10-18 soft leans and tier orders are retired. An unavailable
   subscription group leaves the set; when nothing meets the demand, selection
   takes the most capable eligible profiles.
