@@ -175,8 +175,16 @@ function Checkbox({ c, checked }: { c: Colors; checked: boolean }) {
   );
 }
 
-/** A row's task count, at the same place whether the row shows its name or the rename editor. */
-function Count({ c, value }: { c: Colors; value: number }) {
+/** A row's active and total counts, at the same place in the name row and rename editor. */
+function Count({
+  c,
+  active,
+  total,
+}: {
+  c: Colors;
+  active: number;
+  total: number;
+}) {
   return (
     <Text
       accessibilityElementsHidden
@@ -188,7 +196,7 @@ function Count({ c, value }: { c: Colors; value: number }) {
         fontVariant: ["tabular-nums"],
       }}
     >
-      {value}
+      {active} / {total}
     </Text>
   );
 }
@@ -548,7 +556,12 @@ export function ProjectSelector({
     );
   };
   /** Rename edits the name in its own slot: the input takes the label's place, so one name shows throughout. */
-  const renderEditor = (full: Project, tasks: number, checked: boolean) => {
+  const renderEditor = (
+    full: Project,
+    tasks: number,
+    total: number,
+    checked: boolean,
+  ) => {
     const name = full.name;
     const problem = projectNameProblem(draft);
     const trimmed = draft.trim();
@@ -627,7 +640,7 @@ export function ProjectSelector({
             onPress={() => setMenu(null)}
           />
         </View>
-        <Count c={c} value={tasks} />
+        <Count c={c} active={tasks} total={total} />
       </View>
     );
     const note = message ? (
@@ -716,7 +729,12 @@ export function ProjectSelector({
               const editing = mine && menuState?.view === "rename";
               const panelOpen = mine && !editing;
               const editor = editing
-                ? renderEditor(full!, project.tasks, project.checked)
+                ? renderEditor(
+                    full!,
+                    project.tasks,
+                    project.total,
+                    project.checked,
+                  )
                 : null;
               // Hidden until hover, focus or an open panel on a hover pointer; it keeps its place either way.
               const revealed =
@@ -760,7 +778,7 @@ export function ProjectSelector({
                     ) : (
                       <Pressable
                         accessibilityRole="checkbox"
-                        accessibilityLabel={`Project ${project.name}, ${project.tasks} tasks`}
+                        accessibilityLabel={`Project ${project.name}, ${project.tasks} active, ${project.total} in total`}
                         accessibilityState={{ checked: project.checked }}
                         {...reveal}
                         onPress={(event) => {
@@ -799,7 +817,11 @@ export function ProjectSelector({
                         >
                           {project.name}
                         </Text>
-                        <Count c={c} value={project.tasks} />
+                        <Count
+                          c={c}
+                          active={project.tasks}
+                          total={project.total}
+                        />
                       </Pressable>
                     )}
                     {withActions && (

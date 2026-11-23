@@ -142,8 +142,11 @@ export type ProjectSelectorRow = {
   key: string;
   name: string;
   primary: string;
+  /** Live tasks, including hidden queued work. */
   tasks: number;
   leads: number;
+  /** Active tasks plus open leads and papercuts. */
+  total: number;
   checked: boolean;
   version: number;
   dormant: boolean;
@@ -156,9 +159,10 @@ export function projectSelectorRowGroup(
 }
 /** Selector popover rows: every project matching the filter box, with its primary repository and counts.
  * Active projects sort first, then the Dormant group (nucleus#1529):
- * inside each group rows order by live-task total (highest first, including the
- * hidden queued portion), then by last activity (most recent first; a project
- * with no activity sorts after those with some), then by name, so the order is
+ * inside each group rows order by active work plus open leads and papercuts
+ * (highest first, including the hidden queued portion), then by last activity
+ * (most recent first; a project with no activity sorts after those with some),
+ * then by name, so the order is
  * stable. Dormancy follows the one activity rule (Spec 026, nucleus#1446):
  * `activity` is the store-wide read, and `nowMs` ages it. */
 export function projectSelectorRows(
@@ -213,13 +217,15 @@ export function projectSelectorRows(
       )
         return [];
       const counts = projectPlanningCounts(project, tasks, leads);
+      const active = tasksByKey.get(project.key) ?? counts.tasks;
       return [
         {
           key: project.key,
           name: project.name,
           primary,
           ...counts,
-          tasks: tasksByKey.get(project.key) ?? counts.tasks,
+          tasks: active,
+          total: active + counts.leads,
           checked: selection.includes(project.key),
           version: project.version,
           dormant: dormantOf(project),
@@ -229,7 +235,7 @@ export function projectSelectorRows(
     .sort(
       (a, b) =>
         projectSelectorRowGroup(a) - projectSelectorRowGroup(b) ||
-        b.tasks - a.tasks ||
+        b.total - a.total ||
         (lastActivityByKey.get(b.key) ?? missingActivity) -
           (lastActivityByKey.get(a.key) ?? missingActivity) ||
         a.name.localeCompare(b.name),
