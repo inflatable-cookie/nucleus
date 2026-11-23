@@ -378,6 +378,7 @@ export function composeBbAdapter(input: {
       this.requireQuestionThread(agent, workspace);
       await threads.answerQuestion(agent, requestId, answers);
     }
+    /** Spec 068 Decision 4: BB answers a task run's permission natively, so its runs keep the profile's mode. */
     async answerNativePermission(
       agent: string,
       workspace: string,

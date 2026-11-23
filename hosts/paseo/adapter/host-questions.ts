@@ -1,6 +1,7 @@
 import type { PaseoAgentHandle, PaseoAgentTimelineEvent } from '@getpaseo/client';
 import type { Task } from '../../../shared/contracts';
-import type { AnsweredQuestionRead, NativeDecisionInput } from '../../../shared/host';
+import type { AnsweredQuestionRead, HostPermissionDecision, NativeDecisionInput } from '../../../shared/host';
+import { ProvenPreSendRefusalError } from '../../../core/host';
 import type { PaseoAdapter } from './paseo';
 
 /**
@@ -39,6 +40,18 @@ export class PaseoQuestionHost {
     if (!await agent.refresh() || agent.archivedAt || agent.workspaceId !== workspaceId) throw Error('Question thread identity changed');
     if (!(agent.pendingPermissions ?? []).some(request => request.id === requestId && request.kind === 'question')) throw Error('Question is no longer pending');
     await agent.respondToPermission({ requestId, response: { behavior: 'allow', updatedInput: { answers } } });
+  }
+  /**
+   * Spec 068 Decision 4: one native permission answer. Paseo carries no intent
+   * store, so the request must still be pending on the exact thread; an answered
+   * one refuses rather than answering twice.
+   */
+  async answerNativePermission(agentId: string, workspaceId: string, requestId: string, decision: HostPermissionDecision) {
+    const agent = this.owner.api.agents.ref(agentId);
+    if (!await agent.refresh() || agent.archivedAt || agent.workspaceId !== workspaceId) throw new ProvenPreSendRefusalError('Permission thread identity changed', 'Permission answer');
+    if (!(agent.pendingPermissions ?? []).some(request => request.id === requestId && request.kind !== 'question'))
+      throw new ProvenPreSendRefusalError('Permission is no longer pending', 'Permission answer');
+    await agent.respondToPermission({ requestId, response: decision === 'decline' || decision === 'cancel' ? { behavior: 'deny' } : { behavior: 'allow' } });
   }
   async dismissNativeQuestion(agentId: string, workspaceId: string, requestId: string) {
     const agent = this.owner.api.agents.ref(agentId);

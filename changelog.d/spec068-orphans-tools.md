@@ -1,0 +1,5 @@
+### Changed
+
+- A task left in `working`, `changes_requested`, `awaiting_review` or `reviewing` with no live run, stop or hold now returns to its worker or reviewer on its own after five minutes, through `move to=work` or `move to=review` (Spec 068). A revision that reported and was released without its result being applied goes on to review when it pushed a head, and stops with its report otherwise. When Nucleus can't readmit a task, or has already tried three times, it records a stop that names the cause and the command to run.
+- A worker's or reviewer's shell command that produces no output for 30 minutes is now stopped, and the agent carries on after a failed tool call. Nucleus finds the command's own processes by process ID and start time and never touches the agent's turn. A repository can change the limit with `toolQuietLimitMinutes` in `repository.set`.
+- A permission prompt in a worker, revision or reviewer run is now declined automatically, and the agent is told to carry on without that permission or report it as a blocker. The task history records each prompt that was declined. Paseo can now answer permission requests too.

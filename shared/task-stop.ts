@@ -196,6 +196,8 @@ export const taskDecisionFactSchema = z
       "integration_turn",
       "workspace_absent",
       "workspace_orphan",
+      // Spec 068 §4: a phase with no live run, stop or hold that could not be readmitted.
+      "orphan_phase",
       "creation_lookup",
       "worker_lookup",
       "callback_missing",

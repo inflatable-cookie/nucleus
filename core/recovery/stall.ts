@@ -45,6 +45,8 @@ import {
   type ParticipantRuntime,
 } from "../machine/participant-runtime";
 import type { HostProcessFact } from "../host/types";
+import { HungTools, type ShellPeek } from "./hung-tools";
+import { denyPendingPermission } from "./permission-policy";
 
 /**
  * Mid-turn stall detection (Queue reliability lane). Paseo keeps reporting a
@@ -214,13 +216,14 @@ export type StallsContext = Pick<
 
 export class Stalls {
   /** Per-agent coalescing for timeline peeks; the cached verdict holds for the window so repeated observations agree. */
-  private shellPeeks = new Map<
-    string,
-    { at: number; notice: string | null; live: boolean; turnId: string | null; tool?: ParticipantActivity["tool"] }
-  >();
+  private shellPeeks = new Map<string, ShellPeek & { at: number }>();
   /** How long one peek's verdict is reused; tests shorten it to drive successive peeks. */
   peekTtlMs = 60_000;
-  constructor(private readonly resolution: StallsContext) {}
+  /** Spec 068 §4: the hung-tool limit's owner; tests shorten its signal grace. */
+  readonly hungTools: HungTools;
+  constructor(private readonly resolution: StallsContext) {
+    this.hungTools = new HungTools(resolution);
+  }
   private get store() {
     return this.resolution.store;
   }
@@ -236,9 +239,9 @@ export class Stalls {
    * long-running shell command, and returns the shell-command notice text for
    * the task, or null; the caller shows it. A stale turn enters normal
    * attention and coordinator recovery. A run that already reported, or has no
-   * activity timestamp, is never flagged. A permission pending past the stall
-   * threshold is a stall: it raises owner attention and names the request.
-   * Nothing is auto-approved or auto-denied.
+   * activity timestamp, is never flagged. A pending permission is declined at
+   * once (Spec 068 Decision 4); one that could not be declined and stays past
+   * the stall threshold is a stall naming the request. Nothing is auto-approved.
    */
   async check(
     t: Task,
@@ -247,6 +250,10 @@ export class Stalls {
   ): Promise<string | null> {
     const current = this.store.task(t.id);
     if (isDispositionActive(current) || isDispositionComplete(current))
+      return null;
+    // Spec 068 Decision 4: nobody answers a task run's permission prompt, so it
+    // is declined at once and the turn continues; the stall is judged next time.
+    if (state.permissions && (await denyPendingPermission(this.resolution, current, run, state)))
       return null;
     // Brief scope: initial workers, revisions and reviewers. Verification and
     // closeout coordinators keep their existing callback-reminder recovery.
@@ -259,6 +266,11 @@ export class Stalls {
     const peek = await this.shellNotice(current, role, state);
     if (peek.tool !== undefined && peek.turnId === (state.activeTurnId ?? null))
       recordActivityTool(this.store, t.id, runId, state.id, peek.turnId, peek.tool);
+    // Spec 068 §4: a command quiet past the repository's tool limit is stopped;
+    // the agent sees a failed tool call and its turn is judged next time. One
+    // that cannot be stopped no longer fences stall detection.
+    const hung = await this.hungTools.settle(current, run, runId, state.id, peek);
+    if (hung === "terminated") return null;
     const shellNotice = peek.notice;
     // No activity timestamp is no evidence of staleness; never judge without it.
     if (!state.updatedAt || !Number.isFinite(Date.parse(state.updatedAt)))
@@ -272,7 +284,7 @@ export class Stalls {
       shellNotice ??
       (peek.live ? `${role} is waiting on a running tool` : null) ??
       (await this.ownedProcessNotice(current, run, role, runId, state.id));
-    if (toolNotice) return toolNotice;
+    if (toolNotice && hung !== "unterminated") return toolNotice;
     const turn = state.activeTurnId
       ? `, active turn ${state.activeTurnId}`
       : "";
@@ -476,7 +488,7 @@ export class Stalls {
     t: Task,
     role: string,
     state: AgentObservation,
-  ): Promise<{ notice: string | null; live: boolean; turnId: string | null; tool?: ParticipantActivity["tool"] }> {
+  ): Promise<ShellPeek> {
     const turnId = state.activeTurnId ?? null;
     const turnStartedAt = state.turnStartedAt
       ? Date.parse(state.turnStartedAt)
@@ -498,6 +510,7 @@ export class Stalls {
     let notice: string | null = null;
     let live = false;
     let tool: ParticipantActivity["tool"] | undefined;
+    let shellCall = false;
     try {
       const timeline = this.resolution.adapter.agentTimeline
         ? await this.resolution.onTaskHost(t, () =>
@@ -506,13 +519,15 @@ export class Stalls {
         : undefined;
       const shell = runningShellCommand(timeline ?? null);
       if (timeline) tool = observeRunningTool(timeline, turnId);
+      shellCall = Boolean(tool && timeline?.some((entry) =>
+        entry.item.type === "tool_call" && entry.item.callId === tool!.callId && entry.item.detail?.type === "shell"));
       notice = this.shellNoticeText(role, shell);
       live = Boolean(shell || (timeline && runningOwnedTool(timeline)));
     } catch {
       notice = null;
     }
     if (this.shellPeeks.size > 512) this.shellPeeks.clear();
-    const result = { at: Date.now(), notice, live, turnId, tool };
+    const result = { at: Date.now(), notice, live, turnId, tool, shellCall };
     this.shellPeeks.set(agentId, result);
     return result;
   }

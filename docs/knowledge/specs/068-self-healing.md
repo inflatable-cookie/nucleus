@@ -156,12 +156,26 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
   Spec 057's task-workspace identity and start without `node_modules`). When the
   branch tip is not the reviewed head it refuses by name and never detaches.
 - **Orphan phase.** A non-terminal phase with no live run and no stop returns to
-  ordinary admission for its role, or records a typed stop.
+  ordinary admission for its role, or records a typed stop. Built (batch 5b): a
+  `working`, `changes_requested`, `awaiting_review` or `reviewing` task whose
+  activity reads `unclassified` with no participant for five unchanged minutes
+  goes through the owner's own `move to=work` or `move to=review`. A released
+  revision whose authenticated report nothing applied decides by that report
+  (bovine-accelerator#6935): a pushed head goes to its reviewer, any other
+  status is the typed stop. A refused move, or a fourth readmission with nothing
+  started, records `operator_needed` with fact `orphan_phase`.
 - **Hung tool.** Past the tool limit with no output, Nucleus terminates that
   command's own process. It identifies the process by PID and start identity, and
-  never kills the turn. The agent sees a failed tool call and continues.
+  never kills the turn. The agent sees a failed tool call and continues. Built
+  (batch 5b): the command is the topmost process under the run's provider whose
+  command line carries the tool's command; its own group, else its own pids, get
+  SIGTERM then SIGKILL, each after a fresh start-identity read. A command that
+  cannot be stopped no longer fences stall detection.
 - **Permission prompt.** A pending permission request in a task run follows the
-  policy under [Decisions](#decisions).
+  policy under [Decisions](#decisions). Built (batch 5b) for worker, revision
+  and reviewer runs on T3, BB and Paseo, which all answer permissions natively
+  (Paseo gained the answer in this batch); coordinator runs are outside the stall
+  observer and keep their profile's mode.
 - **Coordinator cap.** The cap charges only repairs that applied nothing. A
   hard ceiling of six coordinator launches per head remains.
 
@@ -216,7 +230,7 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 4a | nucleus#1551 | A completion releases its run, `run.release` keeps a reported verdict, and the verdict-only credential. | — |
 | 4b | nucleus#1550 | Branch-attached follow-up review reads, and one reattach step for detached task checkouts. | — |
 | 5a | nucleus#1553 | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. | 1 |
-| 5b | nucleus#1556 | Hung-tool limit, permission policy and orphan-phase readmission. | 1, 3b |
+| 5b | nucleus#1556 (cancelled; built as a direct PR) | Hung-tool limit, permission policy and orphan-phase readmission. Done. | 1, 3b |
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
 
 **Done when:** over one week, no task spends more than 30 minutes outside the four

@@ -2010,17 +2010,51 @@ review or merge credit; live participants and unsettled effects remain fences.
   separately. If that stall ends before recovery acts, its pending episode and
   planner escalation close automatically. A pending recovery without a coordinator
   checks the current participant's exact thread for progress before escalating.
-  A permission pending past that threshold is
-  the same stall: it raises owner attention and names the request. Nothing is
-  auto-approved or auto-denied. Nucleus doesn't interrupt it and the lease holds
-  until it stops. A missing activity timestamp is never stale. Merge lease wait
+  A missing activity timestamp is never stale. Merge lease wait
   text names a pending permission or question when the identity matches.
+- A pending permission request in a worker, revision or reviewer run is declined
+  at once through the host's own permission answer, and the agent is told to
+  carry on without it or report the blocker
+  ([Spec 068](../specs/068-self-healing.md) Decision 4). The intent is recorded
+  before the send (`permission_denial_intent`, then `permission_denied`); an
+  unknown outcome is never resent, and a proven pre-send refusal is retried on a
+  later pass. A native question is not a permission and keeps its own route, and
+  an interactive task's worker session is never answered. Nothing is ever
+  approved automatically. T3, BB and Paseo all answer permissions natively, so
+  every host keeps its profile's runtime mode; a host that could not answer would
+  launch task runs in its provider's non-interactive approval mode instead.
 - A stalled turn stays attached to its exact identities until `restart`; Nucleus
   rechecks identities and fences before cancelling, and starts nothing
   automatically ([Spec 016](../specs/016-live-evidence-before-recovery.md) rule
   7).
 - A shell command running over 15 minutes shows a notice on the task, recorded
   in the event ledger so it clears across restarts.
+- A shell command with no output for the repository's `toolQuietLimitMinutes`
+  (default 30) is terminated ([Spec 068](../specs/068-self-healing.md)
+  Decision 3). Its process is the topmost process under the run's provider (the
+  parent of the run's own MCP report helper) whose command line carries the
+  tool's command; exactly one must match. The helper, the provider and its
+  standing tool runtimes are never targets, so the turn continues and the agent
+  sees a failed tool call. A command that leads its own process group is
+  signalled as that group, otherwise pid by pid: SIGTERM, then SIGKILL after a
+  short grace, each signal only after a fresh start-identity read of the exact
+  pid or group leader, so a reused pid is never signalled. Each call records one
+  `hung_tool_terminated` or `hung_tool_unterminated` event and is never
+  signalled twice. A command past the limit that could not be stopped no longer
+  fences stall detection.
+- A non-terminal `working`, `changes_requested`, `awaiting_review` or
+  `reviewing` task with no live run, no stop, no hold and no recovery, whose
+  activity reads `unclassified` for five minutes with nothing changing, returns
+  to ordinary admission for its role through the owner's own verb: worker phases
+  through `move to=work`, review phases through `move to=review`
+  (`orphan_phase_readmitted`). A released revision whose authenticated report
+  nothing applied decides by that report: `ready_for_review` goes on to its
+  reviewer, any other status records the typed stop. A move that refuses, or a
+  fourth readmission with no participant started, records an `operator_needed`
+  stop with fact `orphan_phase` naming the cause and `move` or `run.start`.
+  Pause, holds, owner stops, dispositions, prerequisite waits, an unavailable
+  host and a spent revision allowance are never orphans
+  ([Spec 068](../specs/068-self-healing.md) §4).
 - Owner `restart role=worker` may supersede a stopped unreleased revision whose
   validation is still running, so the same worker can report when it finishes.
 - Transport and login-session deferrals during a prerequisite wait are recorded

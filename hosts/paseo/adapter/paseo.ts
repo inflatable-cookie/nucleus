@@ -49,6 +49,7 @@ import type {
   HostCatalogOptions,
   HostFeature,
   HostModel,
+  HostPermissionDecision,
   HostProvider,
   HostWorkspaceRef,
   NativeDecisionInput,
@@ -782,6 +783,20 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
     }
     pendingQuestions(agentId: string) {
       return this.questionHost.pendingQuestions(agentId);
+    }
+    /** Spec 068 Decision 4: Paseo answers a task run's permission prompt natively, so its runs keep the profile's mode. */
+    answerNativePermission(
+      agentId: string,
+      workspaceId: string,
+      requestId: string,
+      decision: HostPermissionDecision,
+    ) {
+      return this.questionHost.answerNativePermission(
+        agentId,
+        workspaceId,
+        requestId,
+        decision,
+      );
     }
     answerNativeQuestion(
       agentId: string,
