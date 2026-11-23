@@ -191,6 +191,11 @@ also check the open PR and clean checkout after native authorization.
   engine and T3 under the same local user with private task checkout roots.
   Use a fresh pass after a launch can have started new processes. Barge pools
   require the host-side inherited hold.
+- Set `NUCLEUS_ENGINE_T3_RUNTIME_DESCRIPTOR` to the connected T3 server's
+  `userdata/server-runtime.json` to recognise standing provider processes.
+  Each pass verifies the descriptor origin and server PID, then follows only
+  direct app-server and helper ancestry. Shells and work spawned by a helper
+  keep custody. Unreadable process facts and conflicting bindings also hold.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
   a retained, idle thread. Reopen an archived thread before reusing it. On
   revocation, clear an unsent request directly and stop a confirmed delivery

@@ -67,9 +67,18 @@ impl Service {
             self.project.verify()?;
             observation.workspace = seen(checkout.allocate(&pr.head));
         }
-        observation.host = read_host(host, task, &binding).await;
+        let host_error = match read_host(host, task, &binding).await {
+            Ok(observed) => {
+                observation.host = observed;
+                None
+            }
+            Err(error) => Some(error),
+        };
 
         match decide(task, &observation) {
+            Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {
+                Err(ServiceError::Host(error))
+            }
             Action::Wait(WaitReason::Question) => self.notify_question(row).await,
             Action::Launch {
                 via: Launch::SendPrepared,
@@ -543,18 +552,25 @@ impl Service {
     }
 }
 
-async fn read_host(host: &impl TaskHost, task: &Task, binding: &Binding) -> Observed<Host> {
+async fn read_host(
+    host: &impl TaskHost,
+    task: &Task,
+    binding: &Binding,
+) -> Result<Observed<Host>, HostError> {
     if let Some(run) = task.run() {
-        return seen(host.observe_run(run, now_ms()).await);
+        return host.observe_run(run, now_ms()).await.map(Observed::Known);
     }
     let role = match task.phase() {
         Phase::Working => Role::Worker,
         Phase::Reviewing => Role::Reviewer,
-        _ => return Observed::Unknown,
+        _ => return Ok(Observed::Unknown),
     };
     match task.threads().get(role) {
-        Some(thread) => seen(host.observe_retained(binding, thread).await),
-        None => Observed::Unknown,
+        Some(thread) => host
+            .observe_retained(binding, thread)
+            .await
+            .map(Observed::Known),
+        None => Ok(Observed::Unknown),
     }
 }
 

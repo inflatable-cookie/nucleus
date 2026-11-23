@@ -5,12 +5,13 @@ mod process;
 mod projection;
 mod questions;
 mod rpc;
+mod runtime;
 #[cfg(test)]
 mod t3_tests;
 
 use std::{
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -24,6 +25,7 @@ pub use questions::{
     NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, NoticeTarget, PlannerThread,
 };
 use rpc::{Read, Reply, Rpc};
+use runtime::ServerRuntime;
 use serde_json::{Value, json};
 use tokio::sync::OnceCell;
 
@@ -53,6 +55,8 @@ pub enum HostError {
     Binding,
     #[error("the host observation or mutation outcome is unknown")]
     Uncertain,
+    #[error("the local process census could not confirm workspace custody")]
+    ProcessCoverage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +196,7 @@ pub trait TaskHost: Send + Sync {
 
 pub struct T3 {
     rpc: Rpc,
+    runtime_descriptor: Option<PathBuf>,
 }
 
 /// Exact T3 reads share a single bounded process inventory within each pass.
@@ -210,7 +215,15 @@ impl T3 {
     pub fn new(endpoint: &str, bearer: &str) -> Result<Self, HostError> {
         Ok(Self {
             rpc: Rpc::new(endpoint, bearer)?,
+            runtime_descriptor: None,
         })
+    }
+
+    /// Use the connected T3 server's own runtime descriptor for custody checks.
+    #[must_use]
+    pub fn with_runtime_descriptor(mut self, path: PathBuf) -> Self {
+        self.runtime_descriptor = Some(path);
+        self
     }
 
     #[must_use]
@@ -349,6 +362,7 @@ impl T3Pass<'_> {
     async fn quiet(
         &self,
         binding: &Binding,
+        thread: &str,
         projection: Option<&Projection>,
     ) -> Result<bool, HostError> {
         if let Some(projection) = projection
@@ -362,19 +376,29 @@ impl T3Pass<'_> {
         }
         let inventory = self
             .processes
-            .get_or_init(Inventory::capture)
+            .get_or_init(|| async {
+                let server = self
+                    .host
+                    .runtime_descriptor
+                    .as_deref()
+                    .and_then(|path| ServerRuntime::read(path, self.host.rpc.endpoint()));
+                Inventory::capture(server).await
+            })
             .await
             .as_ref()
-            .map_err(|error| *error)?;
+            .map_err(|_| HostError::ProcessCoverage)?;
         let checkout = Path::new(&binding.worktree_path);
         let activity = match self.scratch {
-            Some(scratch) => inventory.activity_for(checkout, scratch).await?,
-            None => inventory.activity(checkout)?,
+            Some(scratch) => inventory
+                .activity_for(checkout, scratch, thread)
+                .await
+                .map_err(|_| HostError::ProcessCoverage)?,
+            None => inventory.activity(checkout, &std::collections::HashSet::new())?,
         };
         match activity {
             Activity::Busy => Ok(false),
             Activity::Quiet => Ok(true),
-            Activity::Unknown => Err(HostError::Uncertain),
+            Activity::Unknown => Err(HostError::ProcessCoverage),
         }
     }
 }
@@ -401,7 +425,7 @@ impl TaskHost for T3Pass<'_> {
     }
     async fn observe_retained(&self, binding: &Binding, thread: &str) -> Result<Host, HostError> {
         let projection = self.host.thread(binding, thread).await?;
-        let state = if self.quiet(binding, projection.as_ref()).await? {
+        let state = if self.quiet(binding, thread, projection.as_ref()).await? {
             projection
                 .as_ref()
                 .map_or(Ok(RetainedThread::Gone), Projection::retained)?
@@ -424,7 +448,9 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         let state = if matches!(state, RunState::Ended | RunState::Gone)
-            && !self.quiet(&wire.binding, thread.as_ref()).await?
+            && !self
+                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+                .await?
         {
             RunState::Running
         } else {
@@ -442,7 +468,11 @@ impl TaskHost for T3Pass<'_> {
         }
         let wire = Wire::read(run)?;
         let (thread, state) = self.host.delivery(run, &wire).await?;
-        if state != RunState::ReadyToSend || !self.quiet(&wire.binding, thread.as_ref()).await? {
+        if state != RunState::ReadyToSend
+            || !self
+                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+                .await?
+        {
             return Err(HostError::Uncertain);
         }
         Ok(ReplayAuthorization {
@@ -516,7 +546,9 @@ impl TaskHost for T3Pass<'_> {
         match state {
             RunState::ReadyToSend if !awaiting_reply(run, now_ms) => Ok(StopProgress::ReplayDue),
             RunState::Ended | RunState::Gone
-                if self.quiet(&wire.binding, thread.as_ref()).await? =>
+                if self
+                    .quiet(&wire.binding, &launch.thread, thread.as_ref())
+                    .await? =>
             {
                 if archive
                     && state == RunState::Ended
@@ -548,7 +580,10 @@ impl T3Pass<'_> {
         if thread.retained()? == RetainedThread::Gone {
             return Ok(settled);
         }
-        if !self.quiet(&wire.binding, Some(&thread)).await? {
+        if !self
+            .quiet(&wire.binding, &run.launch().thread, Some(&thread))
+            .await?
+        {
             return Ok(StopProgress::Waiting);
         }
         Ok(if thread.archived() {
