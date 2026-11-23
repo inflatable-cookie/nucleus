@@ -75,6 +75,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
         options: Vec::new(),
     };
     let project = Project {
+        mode: ProjectMode::Fixture,
         repository: REPOSITORY.into(),
         checkout,
         base: "main".into(),

@@ -15,10 +15,21 @@ use crate::ServiceError;
 
 const FIXTURE_REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 
+/// Non-fixture dispatch requires an explicit opt-in in the serve file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectMode {
+    #[default]
+    Fixture,
+    Project,
+}
+
 /// The one repository and native project this instance is authorized to use.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Project {
+    #[serde(default)]
+    pub mode: ProjectMode,
     pub repository: String,
     pub checkout: PathBuf,
     pub base: String,
@@ -68,19 +79,26 @@ impl Default for LaunchBudget {
 
 impl Project {
     pub(crate) fn verify(&self) -> Result<(), ServiceError> {
-        if self.repository != FIXTURE_REPOSITORY
+        let allowed = match self.mode {
+            ProjectMode::Fixture => self.repository == FIXTURE_REPOSITORY,
+            ProjectMode::Project => self.acp_provider.is_some(),
+        };
+        if !allowed
             || self.launch_budget.slots == 0
             || !self.launch_budget.max_load.is_finite()
             || self.launch_budget.max_load <= 0.0
-            || self.host_project.is_empty()
-            || self.acp_provider.as_deref().is_some_and(str::is_empty)
+            || self.host_project.trim().is_empty()
+            || self
+                .acp_provider
+                .as_deref()
+                .is_some_and(|provider| provider.trim().is_empty())
             || !self.checkout.is_absolute()
             || self.checkout.canonicalize()? != self.checkout
             || !self.checkout.is_dir()
         {
             return Err(ServiceError::Project);
         }
-        Branches::new(&self.repository, &self.base, "ns-fixture")?;
+        Branches::new(&self.repository, &self.base, "ns-binding")?;
         let git = Git::new(&GIT_POLICY, Redactor::new([], RedactionRules::common()));
         let identity = git
             .worktree_identity(&self.checkout)
@@ -100,7 +118,7 @@ impl Project {
                     Duration::from_secs(5),
                 )
                 .map_err(|_| ServiceError::Project)?;
-            if !fixture_origin(&url) {
+            if !matches_origin(&self.repository, &url) {
                 return Err(ServiceError::Project);
             }
         }
@@ -130,11 +148,11 @@ impl Project {
     }
 }
 
-fn fixture_origin(url: &str) -> bool {
+fn matches_origin(repository: &str, url: &str) -> bool {
     let url = url.strip_suffix(".git").unwrap_or(url);
     url.strip_prefix("https://github.com/")
         .or_else(|| url.strip_prefix("git@github.com:"))
-        == Some(FIXTURE_REPOSITORY)
+        .is_some_and(|origin| origin.eq_ignore_ascii_case(repository))
 }
 
 pub(super) fn linked_checkout(project: &Path, path: &Path) -> Result<bool, HostError> {

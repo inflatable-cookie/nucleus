@@ -42,7 +42,7 @@ use tokio::{
     time::Instant,
 };
 
-pub use project::{LaunchBudget, Project, RegisteredAgent, RegisteredRole};
+pub use project::{LaunchBudget, Project, ProjectMode, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
 pub use web::{Controller, router};
 
