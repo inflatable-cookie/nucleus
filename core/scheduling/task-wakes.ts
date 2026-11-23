@@ -64,6 +64,7 @@ import {
   QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
   isQuantumDeadlineExceeded,
+  propagateQuantumDeferral,
   runInTaskQuantumScope,
   runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
@@ -1188,19 +1189,7 @@ export class TaskWakes {
   noteStepFailure(taskId: string, error: unknown) {
     const current = this.store.task(taskId);
     const terminal = ["done", "cancelled"].includes(current.phase);
-    if (isQuantumDeadlineExceeded(error)) {
-      if (
-        !terminal &&
-        (!current.resolution.stop ||
-          current.resolution.stop.reason === "lifecycle")
-      )
-        this.resolution.waiting(
-          current,
-          `${error.message}; retrying on the next pass`,
-          "lifecycle",
-        );
-      return;
-    }
+    propagateQuantumDeferral(error);
     if (!terminal && error instanceof HostReadRefusalError) {
       this.deferHostReadTransient(taskId, error, false);
       return;

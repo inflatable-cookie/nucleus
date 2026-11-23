@@ -5,7 +5,7 @@ import {
   recordLiveEvidenceFailure,
 } from "../../machine/live-evidence";
 import { now } from "../../store/store";
-import { isQuantumDeadlineExceeded } from "../../scheduling/pass-snapshot";
+import { propagateQuantumDeferral } from "../../scheduling/pass-snapshot";
 import type { WorkerReconcileContext } from "./context";
 import { branchPrLookupOutcome } from "./decisions";
 
@@ -77,7 +77,7 @@ export async function reconcileBranchPr(
   try {
     matches = await adapter.findOpenBranchPr(current);
   } catch (error) {
-    if (isQuantumDeadlineExceeded(error)) return true;
+    propagateQuantumDeferral(error);
     lookupError = error;
   }
   const previousOutcome = current.prLookup?.outcome ?? null;

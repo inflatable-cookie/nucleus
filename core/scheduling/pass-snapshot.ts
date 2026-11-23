@@ -111,6 +111,30 @@ export function isQuantumDeadlineExceeded(
 }
 
 /**
+ * Failure handlers preserve the deadline signal for the quantum owner. They
+ * may settle their own send reservation first when its delivery is known.
+ */
+export function propagateQuantumDeferral(error: unknown): void {
+  if (isQuantumDeadlineExceeded(error)) throw error;
+}
+
+export type TaskQuantumOutcome<T> =
+  | { kind: "settled"; value: T }
+  | { kind: "deferred"; error: QuantumDeadlineExceededError };
+
+/** Settle a task quantum without treating a missed deadline as a failed step. */
+export async function settleTaskQuantum<T>(
+  work: () => Promise<T> | T,
+): Promise<TaskQuantumOutcome<T>> {
+  try {
+    return { kind: "settled", value: await work() };
+  } catch (error) {
+    if (!isQuantumDeadlineExceeded(error)) throw error;
+    return { kind: "deferred", error };
+  }
+}
+
+/**
  * Typed sentinel thrown by pass-snapshot-backed timeline adapters when a
  * timeline page was not captured in the host pass, exceeded its pass budget,
  * or timed out inside `PassSnapshot`. Consumers carry this as a typed
@@ -324,40 +348,18 @@ export async function boundedRead<T>(
       reason: `${label} timed out after 0 ms`,
     };
   }
-  let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // Invoke `work()` synchronously so caller stack frames stay intact and no
   // extra microtask turn sits ahead of the underlying host/process call.
-  let pending: Promise<T>;
-  try {
-    pending = Promise.resolve(work());
-  } catch (error) {
-    if (isQuantumDeadlineExceeded(error)) {
-      return { state: "unknown", reason: error.message };
-    }
-    return Promise.reject(error);
-  }
+  const pending = Promise.resolve(work());
   // Prevent a late rejection after the deadline has already settled from
   // escaping as an unhandled rejection.
   pending.catch(() => {});
   try {
     return await Promise.race([
-      pending.then(
-        (value): BoundedReadResult<T> => {
-          settled = true;
-          return { state: "ok", value };
-        },
-        (error): BoundedReadResult<T> => {
-          if (isQuantumDeadlineExceeded(error)) {
-            settled = true;
-            return { state: "unknown", reason: error.message };
-          }
-          throw error;
-        },
-      ),
+      pending.then((value): BoundedReadResult<T> => ({ state: "ok", value })),
       new Promise<BoundedReadResult<T>>((resolve) => {
         timer = setTimeout(() => {
-          settled = true;
           resolve({
             state: "unknown",
             reason: `${label} timed out after ${boundMs} ms`,
@@ -368,9 +370,6 @@ export async function boundedRead<T>(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
-    if (!settled) {
-      /* work rejected before deadline; caller receives the rejection */
-    }
   }
 }
 

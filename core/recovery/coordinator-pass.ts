@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { missingReportBindingCompletion } from "../intake/reporting-failure";
 import { digest, now } from "../store/store";
 import type { Run, Task } from "../../shared/contracts";
@@ -645,6 +646,7 @@ export class CoordinatorPass {
               ),
             };
           } catch (error) {
+            propagateQuantumDeferral(error);
             observation = { kind: "unobservable", error };
           }
           if (this.resolution.stopped()) return;
@@ -966,6 +968,7 @@ export class CoordinatorPass {
           );
         });
       } catch (error) {
+        propagateQuantumDeferral(error);
         if (this.resolution.startsNoRuns()) continue;
         const reason = error instanceof Error ? error.message : String(error);
         t = this.store.task(t.id);

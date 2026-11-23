@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../../scheduling/pass-snapshot";
 import type { Run, Task } from "../../../shared/contracts";
 import { TaskChangedRefusal } from "../../../shared/task-version";
 import type { Engine } from "../../engine";
@@ -86,6 +87,7 @@ export async function moveToWork(engine: Engine, input: WorkMoveInput): Promise<
     }
     try { continuedPr = await engine.resolution.verifyContinuedPr(task); }
     catch (error) {
+      propagateQuantumDeferral(error);
       if (error instanceof ForeignPrIdentity && task.completion && evidenceOnlyPr(task)) foreignCompletion = task.completion.eventId;
       else throw Error(`Move to work cannot bind PR #${evidenceOnlyPr(task)}, which the task knows only from its ${task.completion?.status} report: ${error instanceof Error ? error.message : String(error)}. Nothing was written`);
     }

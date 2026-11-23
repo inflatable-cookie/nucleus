@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { settleReportedReviewerTurn } from "./reported-turn";
 import { isDeepStrictEqual } from "node:util";
 import { resultApplied, recordResultApplied } from "./applied-result";
@@ -963,6 +964,7 @@ export class ResultApplication {
       if (!leased || settlementHeld(this.store, this.resolution.stopped()))
         return "blocked";
     } catch (error) {
+      propagateQuantumDeferral(error);
       this.resolution.attention(
         this.store.task(t.id),
         error instanceof Error ? error.message : String(error),
@@ -2134,6 +2136,7 @@ export class ResultApplication {
     try {
       pr = await this.adapter.verifyPr(t, effectivePr);
     } catch (error) {
+      propagateQuantumDeferral(error);
       const handled = this.store.transaction(() => {
         const latest = this.store.task(t.id);
         if (

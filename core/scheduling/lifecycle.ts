@@ -10,7 +10,7 @@ import {
 import { staleChangesRequestedPhase } from "../intake/current-binding";
 import { isProviderFailure } from "../questions/ladder";
 import { isMergeCloseoutPhase } from "../closeout/closeout";
-import { isQuantumDeadlineExceeded } from "./pass-snapshot";
+import { propagateQuantumDeferral } from "./pass-snapshot";
 import type { Resolution } from "../resolution";
 import { TASK_PROGRESSING_REASON, stopNamesRun } from "../../shared/task-stop";
 
@@ -176,7 +176,7 @@ export class SchedulingLifecycle {
         await this.context.advancePhase(t);
       });
     } catch (error) {
-      if (isQuantumDeadlineExceeded(error)) return;
+      propagateQuantumDeferral(error);
       if (!this.context.paused())
         this.context.settleAdvanceFailure(
           t,

@@ -1,3 +1,4 @@
+import { isQuantumDeadlineExceeded } from "../scheduling/pass-snapshot";
 import type { Task } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { now, type Store } from "../store/store";
@@ -52,11 +53,16 @@ export type GuardedMergeSendParams = {
 export async function sendGuardedMerge(
   params: GuardedMergeSendParams,
 ): Promise<"superseded" | "accepted" | "error"> {
+  const reserve = () => {
+    const before = params.store.task(params.taskId);
+    const reservation = params.reserve();
+    return reservation && { ...reservation, before };
+  };
   const reservation = params.store.db.isTransaction
-    ? params.reserve()
-    : params.store.transaction(params.reserve);
+    ? reserve()
+    : params.store.transaction(reserve);
   if (!reservation) return "superseded";
-  const { task, matchesCurrent } = reservation;
+  const { task, matchesCurrent, before } = reservation;
   try {
     await params.send(task, () => {
       const latest = params.store.task(params.taskId);
@@ -65,6 +71,18 @@ export async function sendGuardedMerge(
     });
   } catch (error) {
     const latest = params.store.task(params.taskId);
+    if (isQuantumDeadlineExceeded(error)) {
+      // Restore only a reservation made by this call, while it still holds
+      // the exact task version. Older or potentially sent intents stay bound.
+      if (error.preSend && before.version !== task.version &&
+          latest.version === task.version && matchesCurrent(latest))
+        params.store.update(task.id, {
+          resolution: before.resolution,
+          reason: before.reason,
+          reasonFact: before.reasonFact,
+        });
+      throw error;
+    }
     params.onError(latest, error, matchesCurrent(latest));
     return "error";
   }

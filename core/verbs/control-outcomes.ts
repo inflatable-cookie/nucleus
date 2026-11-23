@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import { TaskChangedRefusal, taskChangedHint } from "../../shared/task-version";
 import type { Engine } from "../engine";
@@ -39,6 +40,7 @@ export async function applyControlWithVersionHint(engine: Engine, input: TaskCon
       recordOutcome("applied");
       return engine.store.task(input.taskId);
     }
+    propagateQuantumDeferral(error);
     if (
       !committed?.preSendBoundaryStartedAt &&
       committed && error instanceof HostReadRefusalError

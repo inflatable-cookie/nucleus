@@ -11,6 +11,7 @@ import {
   currentTaskQuantumScope,
   QUANTUM_TOTAL_READ_BUDGET_MS,
   runInTaskQuantumScope,
+  settleTaskQuantum,
   type PassSnapshot,
 } from "../scheduling/pass-snapshot";
 import { assertSupportedSubmission, PlanningSubmission } from "./submission";
@@ -111,6 +112,12 @@ function operationLaneKey(payload: unknown, operation: QueueOperation): string {
     (removal.success ? removal.data.taskId : undefined) ??
     null;
   return taskId ? `task:${taskId}` : `operation:${operation.id}`;
+}
+
+export class OperationNotFoundError extends Error {
+  constructor() {
+    super("Operation not found");
+  }
 }
 
 /**
@@ -457,7 +464,7 @@ export class Operations {
     const deadline = Date.now() + Math.max(0, timeoutMs);
     for (;;) {
       const operation = this.store.operation(operationId);
-      if (!operation) throw new Error("Operation not found");
+      if (!operation) throw new OperationNotFoundError();
       if (operationIsSettled(operation.state)) return operation;
       if (this.engine.stopped || Date.now() >= deadline) return operation;
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
@@ -731,11 +738,45 @@ export class Operations {
       });
     });
     try {
-      const result = running.hostId
-        ? await this.engine.withHost(running.hostId, () =>
-            this.engine.performOperation(running, payload),
-          )
-        : await this.engine.performOperation(running, payload);
+      const outcome = await settleTaskQuantum(() =>
+        running.hostId
+          ? this.engine.withHost(running.hostId, () =>
+              this.engine.performOperation(running, payload),
+            )
+          : this.engine.performOperation(running, payload),
+      );
+      if (outcome.kind === "deferred") {
+        const current = this.store.operation(id);
+        if (current?.state !== "running") return;
+        if (current.result && current.effect?.status === "reconciled") {
+          this.store.putOperation({
+            ...current,
+            state: "succeeded",
+            settledAt: now(),
+            diagnostic: "",
+          });
+          return;
+        }
+        if (
+          !current.result &&
+          !current.preSendBoundaryStartedAt &&
+          isDeepStrictEqual(current.effect, effect)
+        ) {
+          // A compatibility command can be sent again at the same version.
+          // Withdraw its unperformed attempt, including its operation intent.
+          if (current.kind === "task_control" && current.key.startsWith("task-control:")) {
+            this.store.withdrawOperation(current);
+            this.store.deleteMeta(this.engine.transientKey(id));
+            this.engine.clearHostReadTransient(id, "op");
+          } else {
+            this.store.putOperation(pending);
+          }
+        }
+        // A possible send remains the durable authority. Its existing
+        // reconciliation owns the next observation.
+        return;
+      }
+      const result = outcome.value;
       // Re-read: the handler may have advanced the task, and the settled record
       // must reflect the observed identity rather than the intent's snapshot.
       this.store.deleteMeta(this.engine.transientKey(id));

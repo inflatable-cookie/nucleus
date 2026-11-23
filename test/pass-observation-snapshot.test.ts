@@ -1,3 +1,4 @@
+import { sendGuardedMerge } from "../core/merge/merge-phase";
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -14,9 +15,11 @@ import type {
 } from "../core/host";
 import {
   PassSnapshot,
+  QuantumDeadlineExceededError,
   boundedRead,
   isQuantumDeadlineExceeded,
   runInTaskQuantumScope,
+  settleTaskQuantum,
 } from "../core/scheduling/pass-snapshot";
 import { HostFacade } from "../core/host/host-facade";
 import { LANE_PRIORITY_TASK } from "../core/scheduling/lane-priorities";
@@ -2697,6 +2700,55 @@ test("already-expired quantum scope rejects before invoking native host or forge
   );
 });
 
+test("a deferred guarded merge send releases only its unsent retry reservation", async (t) => {
+  const f = engineFixture(t);
+  const inserted = f.store.insert(submission(), HOST, "handoff", HEAD);
+  const before = f.store.update(inserted.id, {
+    phase: "merging",
+    reason: "Awaiting exact-head merge reconciliation",
+    resolution: {
+      ...inserted.resolution,
+      mergeIntent: true,
+      mergeHead: HEAD,
+      mergeResponseOutcome: "uncertain",
+    },
+  });
+  let sends = 0;
+  const request = () => sendGuardedMerge({
+    store: f.store,
+    taskId: before.id,
+    head: HEAD,
+    reserve: () => {
+      const current = f.store.task(before.id);
+      const task = f.store.update(current.id, {
+        resolution: {
+          ...current.resolution,
+          mergeRetryAt: new Date().toISOString(),
+          mergeRetryOutcome: "pending",
+          mergeAutoRetryExhausted: true,
+        },
+      });
+      return { task, matchesCurrent: (latest) => latest.version === task.version };
+    },
+    send: async () => {
+      if (sends++ === 0)
+        throw new QuantumDeadlineExceededError("merge", undefined, true);
+    },
+    onAccepted: () => {},
+    onError: () => assert.fail("a deadline deferral reported a merge failure"),
+  });
+
+  await assertQuantumDefers(1000, async () => { await request(); });
+  assert.deepEqual(f.store.task(before.id).resolution, before.resolution);
+  assert.equal(f.store.task(before.id).reason, before.reason);
+  assert.equal(await request(), "accepted");
+});
+
+async function assertQuantumDefers(budgetMs: number, work: () => Promise<void>) {
+  const outcome = await settleTaskQuantum(() => runInTaskQuantumScope(budgetMs, work));
+  assert.equal(outcome.kind, "deferred");
+}
+
 test("settleArchive preserves durable intent when confirmation expires after mutation succeeds, and synchronous adapter members stay synchronous in an expired scope", async (t) => {
   const { settleArchive } = await import(
     "../core/workspaces/thread-archive-effect"
@@ -2753,7 +2805,7 @@ test("settleArchive preserves durable intent when confirmation expires after mut
   // Pass 1: mutation runs and succeeds, then confirmation `originAgent` sees an
   // already-expired scope (`preSend: true` for read). The effect MUST stay
   // `intent` (never reverted to `ready`).
-  await runInTaskQuantumScope(20, async () => {
+  await assertQuantumDefers(20, async () => {
     await settleArchive(
       f.store,
       f.engine.adapter,
@@ -2924,7 +2976,7 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
     resolution: { ...sendTask.resolution, currentRunId: sendRun.id },
   });
 
-  await runInTaskQuantumScope(0, async () => {
+  await assertQuantumDefers(0, async () => {
     await f.engine.resolution.dispatchLaunch.deliver.deliverLaunchRun(
       f.store.task(sendTask.id),
       "reviewer",
@@ -2982,7 +3034,7 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
     },
   });
 
-  await runInTaskQuantumScope(40, async () => {
+  await assertQuantumDefers(40, async () => {
     await f.engine.resolution.dispatchLaunch.deliver.deliverLaunchRun(
       f.store.task(sendTask.id),
       "reviewer",
@@ -3105,7 +3157,7 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
     profile: workerProfile,
   });
   expireBeforeCreateAgent = true;
-  await runInTaskQuantumScope(200, async () => {
+  await assertQuantumDefers(200, async () => {
     await f.engine.launchAgent(workerTask);
   });
   assert.equal(

@@ -92,18 +92,19 @@ export class StoreOperations {
       .map((row) => this.numberedOperation(String(row.data)));
   }
 
-  /** Filter the durable pass demand before applying the retry batch limit. */
+  /** Filter accepted task work and pass proof demand before applying the retry batch limit. */
   passProofOperations(): QueueOperation[] {
     const prefix = hostReadTransientKey("op", "");
     return this.core.db
       .prepare(
-        `SELECT operations.data FROM meta
-         JOIN operations ON operations.id = substr(meta.key, ?)
-         WHERE meta.key GLOB ? AND json_extract(meta.value, '$.retryOnPass') = 1
-           AND operations.state IN ('pending','running')
+        `SELECT operations.data FROM operations
+         LEFT JOIN meta ON meta.key = ? || operations.id
+         WHERE operations.state IN ('pending','running')
+           AND (json_extract(meta.value, '$.retryOnPass') = 1
+                OR (operations.state = 'pending' AND operations.taskId IS NOT NULL))
          ORDER BY operations.rowid LIMIT 200`,
       )
-      .all(prefix.length + 1, `${prefix}*`)
+      .all(prefix)
       .map((row) => this.numberedOperation(String(row.data)));
   }
 
@@ -256,6 +257,18 @@ export class StoreOperations {
     if (next.taskId && next.taskId !== previousTaskId)
       this.access.taskChanged(next.taskId);
     return next;
+  }
+
+  /** Withdraw an exact, unperformed operation so its caller can submit it again. */
+  withdrawOperation(operation: QueueOperation): void {
+    this.core.transaction(() => {
+      const deleted = this.core.db
+        .prepare("DELETE FROM operations WHERE id=? AND data=?")
+        .run(operation.id, JSON.stringify(operation));
+      if (!deleted.changes) return;
+      this.core.advanceRevision();
+      if (operation.taskId) this.access.taskChanged(operation.taskId);
+    });
   }
 
   /**

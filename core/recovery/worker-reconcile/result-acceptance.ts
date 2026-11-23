@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../../scheduling/pass-snapshot";
 import { admitPhaseFacts } from "../../scheduling/phase-latency";
 import {
   parseAgentId,
@@ -109,6 +110,7 @@ async function verifiedPrIdentity(
   try {
     pr = await engine.adapter.verifyPr(current, c.prNumber!);
   } catch (error) {
+    propagateQuantumDeferral(error);
     const handled = engine.store.transaction(() => {
       const latest = engine.store.task(current.id);
       if (

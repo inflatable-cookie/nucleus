@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import {
   externalMergeSourceAcceptance,
   holdsOf,
@@ -217,6 +218,7 @@ export async function preflightExplicitIntegration(
             result.prIdentityError = `PR targets ${observed.base}, not task base ${task.baseBranch}`;
           }
         } catch (error) {
+          propagateQuantumDeferral(error);
           result.mergeReadError = String(error);
         }
       }
@@ -224,6 +226,7 @@ export async function preflightExplicitIntegration(
         try {
           await engine.adapter.verifyPrIdentity(task, prNumber);
         } catch (error) {
+          propagateQuantumDeferral(error);
           result.prIdentityError = `PR identity verification failed: ${String(error)}`;
         }
       }
@@ -242,6 +245,7 @@ export async function preflightExplicitIntegration(
             checks.wait || "PR checks are pending or failed.";
         }
       } catch (error) {
+        propagateQuantumDeferral(error);
         result.checksWarning = `PR checks could not be read: ${String(error).slice(0, 500)}`;
       }
     }
@@ -281,6 +285,7 @@ async function preflightCloseout(engine: Engine, task: Task): Promise<ExplicitIn
           : {}),
       };
     } catch (error) {
+      propagateQuantumDeferral(error);
       return error instanceof ExternalMergeProofRefusal
         ? { prIdentityError: error.message }
         : { observedMerge: null, mergeReadError: String(error) };
@@ -308,6 +313,7 @@ async function preflightCloseout(engine: Engine, task: Task): Promise<ExplicitIn
         },
       };
     } catch (error) {
+      propagateQuantumDeferral(error);
       return { observedMerge: null, mergeReadError: String(error) };
     }
   }
@@ -325,6 +331,7 @@ async function preflightCloseout(engine: Engine, task: Task): Promise<ExplicitIn
           : { merged: false, commit: null, head: null, base: null },
       };
     } catch (error) {
+      propagateQuantumDeferral(error);
       return { observedMerge: null, mergeReadError: String(error) };
     }
   }

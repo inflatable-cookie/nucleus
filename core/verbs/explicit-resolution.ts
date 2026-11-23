@@ -1,3 +1,4 @@
+import { settleTaskQuantum } from "../scheduling/pass-snapshot";
 import { parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
 import {
   holdsOf,
@@ -496,10 +497,11 @@ export async function resolveExplicitly(
         releasing?.role === "recovery",
     };
   });
-  const finished =
-    "finish" in result && result.finish
-      ? await onHost(() => result.finish!())
-      : undefined;
+  const finish = "finish" in result ? result.finish : undefined;
+  const finishOutcome = finish
+    ? await settleTaskQuantum(() => onHost(finish))
+    : undefined;
+  const finished = finishOutcome?.kind === "settled" ? finishOutcome.value : undefined;
   const latestTask = result.status === "applied" ? store.task(id) : result.task;
   const next = describeNext(latestTask);
   const deliveryNote = finished?.delivery

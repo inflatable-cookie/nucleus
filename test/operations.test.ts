@@ -1,3 +1,4 @@
+import { QuantumDeadlineExceededError } from '../core/scheduling/pass-snapshot';
 import { briefDigest } from '../core/planning/brief';
 import { fakeAdapter, observeIdle } from './support/fakes';
 import { test } from 'node:test';
@@ -88,6 +89,60 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 4000) => {
   while (Date.now() < deadline) { if (predicate()) return true; await new Promise(resolve => setTimeout(resolve, 5)); }
   return predicate();
 };
+
+test('a deferred complete returns retry and can be submitted again at the same task version', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nsq-complete-retry-')));
+  const taskBase = 'a'.repeat(40);
+  let defer = true;
+  const adapter = fakeAdapter({
+    hostId: 'host',
+    client: { isConnected: true },
+    connect: async () => {},
+    close: async () => {},
+    socketPath: join(root, 'callback.sock'),
+    helperPath: join(root, 'worker-report.mjs'),
+    profiles: async () => [profile],
+    observe: observeIdle('ws'),
+    findAnyOpenBranchPr: async () => {
+      if (defer) throw new QuantumDeadlineExceededError('findAnyOpenBranchPr');
+      return [];
+    },
+  });
+  const runtime = new QueueRuntime({
+    dataDir: join(root, 'data'),
+    adapterFactory: () => adapter,
+    timers: false,
+  });
+  try {
+    await runtime.started;
+    const task = runtime.store.insert(submissionSchema.parse({
+      submissionId: randomUUID(), title: 'Deferred completion', repoPath: '/repo',
+      planningCommit: taskBase, handoffPath: 'handoff.md', originAgentId: 'origin',
+    }), 'host', 'handoff', taskBase);
+    const current = runtime.store.update(task.id, {
+      phase: 'working', workspaceId: 'ws', agentId: 'worker', runId: 'worker-run',
+    });
+    const command = {
+      taskId: current.id, version: current.version,
+      action: 'complete' as const, reason: 'The report was accepted',
+    };
+    const events = runtime.store.eventsAll(task.id);
+    const result = await runtime.taskControl(command);
+    assert.ok('explicitResolution' in result);
+    assert.equal(result.explicitResolution?.status, 'retry');
+    assert.deepEqual(runtime.store.task(task.id), current);
+    assert.deepEqual(runtime.store.eventsAll(task.id), events);
+    assert.deepEqual(runtime.store.operations({ taskId: task.id }), []);
+
+    defer = false;
+    const completed = await runtime.taskControl(command);
+    assert.ok('phase' in completed);
+    assert.equal(completed.phase, 'done');
+  } finally {
+    await runtime.drain();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('acceptance is idempotent on the caller key and fails closed on different input', async () => {
   const f = fixture();

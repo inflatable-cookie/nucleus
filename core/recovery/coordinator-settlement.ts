@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
 import { digest } from "../store/store";
 import type { Task, Run, RecoveryActionBinding } from "../../shared/contracts";
@@ -358,6 +359,7 @@ export class RecoverySettlement {
           finish("applied");
           return;
         } catch (error) {
+          propagateQuantumDeferral(error);
           const message =
             error instanceof Error ? error.message : String(error);
           // Only the explicit version refusal is safe to retry. Rebuild the plan

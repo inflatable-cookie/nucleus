@@ -128,6 +128,8 @@ import type {
 } from "../shared/contracts";
 import { taskControlChanges } from "../shared/task-control-changes";
 import type { ExplicitResolution } from "../shared/schema/task-control";
+import { OperationNotFoundError } from "../core/planning/operations";
+import { runInTaskQuantumScope, settleTaskQuantum } from "../core/scheduling/pass-snapshot";
 import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import { previewUnreviewedCloseout } from "../core/verbs/explicit-integration";
 import {
@@ -2375,6 +2377,17 @@ export class QueueRuntime {
     );
   }
 
+  private taskControlRetry(taskId: string): import("../shared/contracts").TaskControlTask {
+    return {
+      ...this.store.task(this.store.resolveTaskId(taskId)),
+      explicitResolution: {
+        status: "retry",
+        warnings: [],
+        next: "The task quantum deadline elapsed. Read next and retry the command.",
+      },
+    };
+  }
+
   async taskControl(
     request: TaskControlRequest | ExplicitResolution,
   ): Promise<
@@ -2391,22 +2404,7 @@ export class QueueRuntime {
       request.action === "merge.now" ||
       request.action === "closeout.now"
     )
-      return resolveExplicitly(this.engine, request, (task) => {
-        if (task.removedAt)
-          return "The scheduler leaves this removed task alone.";
-        const next = this.board.taskNext({ taskId: task.id });
-        if (next.paused) return "The scheduler waits for Nucleus to resume.";
-        if (next.stop)
-          return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
-        if (
-          ["awaiting_review", "reviewing"].includes(task.phase) &&
-          !next.activeRun
-        )
-          return "The scheduler rechecks reviewer admission at the recorded PR head.";
-        if (next.activeRun)
-          return `The scheduler checks the ${next.activeRun.role} run for progress.`;
-        return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
-      });
+      return this.explicitTaskControl(request);
     const input = this.engine.resolveTaskControl(request);
     const before = this.store.task(input.taskId);
     if (!controlHasExternalEffect(input)) {
@@ -2430,7 +2428,11 @@ export class QueueRuntime {
       expectedVersion: payload.control.version,
     });
     if ("backpressured" in acceptance) return acceptance;
-    const operation = await this.engine.awaitOperation(acceptance.operation.id);
+    const operation = await this.engine.awaitOperation(acceptance.operation.id).catch((error) => {
+      if (error instanceof OperationNotFoundError) return null;
+      throw error;
+    });
+    if (!operation) return this.taskControlRetry(input.taskId);
     if (operation.state === "succeeded" && operation.result?.taskId)
       // A superseded external-effect action reports the same deprecation note as
       // its local sibling, even though the settled path re-reads the task row.
@@ -2444,6 +2446,32 @@ export class QueueRuntime {
     if (operation.state === "failed")
       throw new Error(operation.diagnostic || "Task control failed");
     return { accepted: true, operation };
+  }
+
+  private async explicitTaskControl(request: ExplicitResolution) {
+    const outcome = await settleTaskQuantum(() =>
+      runInTaskQuantumScope(this.engine.resolution.quantumReadBudgetMs, () =>
+        resolveExplicitly(this.engine, request, (task) => {
+          if (task.removedAt)
+            return "The scheduler leaves this removed task alone.";
+          const next = this.board.taskNext({ taskId: task.id });
+          if (next.paused) return "The scheduler waits for Nucleus to resume.";
+          if (next.stop)
+            return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
+          if (
+            ["awaiting_review", "reviewing"].includes(task.phase) &&
+            !next.activeRun
+          )
+            return "The scheduler rechecks reviewer admission at the recorded PR head.";
+          if (next.activeRun)
+            return `The scheduler checks the ${next.activeRun.role} run for progress.`;
+          return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
+        }),
+      ),
+    );
+    return outcome.kind === "deferred"
+      ? this.taskControlRetry(request.taskId)
+      : outcome.value;
   }
 
   async bulkDisposition(input: BulkDispositionRequest) {

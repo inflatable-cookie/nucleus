@@ -15,6 +15,7 @@ import { PrerequisiteReleases } from "./scheduling/prerequisites";
 import {
   QUANTUM_TOTAL_READ_BUDGET_MS,
   runInTaskQuantumScope,
+  settleTaskQuantum,
 } from "./scheduling/pass-snapshot";
 import { TaskQuantum } from "./scheduling/task-quantum";
 
@@ -1643,11 +1644,14 @@ export class Engine {
     // carries the task quantum deadline scope, whoever scheduled it (audit
     // branch-PR recovery, wake follow-up, dispatch, or full taskQuantum).
     const scoped = key.startsWith("task:")
-      ? () =>
-          runInTaskQuantumScope(
-            this.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS,
-            () => Promise.resolve(work()),
-          )
+      ? async () => {
+          await settleTaskQuantum(() =>
+            runInTaskQuantumScope(
+              this.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS,
+              () => Promise.resolve(work()),
+            ),
+          );
+        }
       : work;
     return this.laneScheduler.scheduleLane(
       key,

@@ -172,7 +172,7 @@ export function unproductiveCoordinatorRuns(store: Store, taskId: string): numbe
   const head = task.prHead ?? task.planningBase, reset = lastRecoveryReset(store, taskId);
   const coverage = reviewCoverageAtHead(task, store), coverageTimeline = checkpointCoverageAtHead(store, taskId, head);
   const runs = store.runs(taskId).filter(run => {
-    if (run.role !== 'recovery') return false;
+    if (run.role !== 'recovery' || run.releasedBeforeSend) return false;
     if (!reset) return true;
     const launch = launched.get(run.id);
     // Durable order when the launch event exists; otherwise charge anything not
@@ -225,7 +225,7 @@ export function coordinatorLaunchesAtHead(store: Store, taskId: string): number 
   const task = store.task(taskId), head = task.prHead ?? task.planningBase;
   const launched = coordinatorLaunches(store, taskId), reset = lastRecoveryReset(store, taskId);
   return store.runs(taskId).filter(run => {
-    if (run.role !== 'recovery' || run.head !== head) return false;
+    if (run.role !== 'recovery' || run.head !== head || run.releasedBeforeSend) return false;
     const launch = launched.get(run.id);
     if (launch?.outage) return false;
     if (!reset) return true;

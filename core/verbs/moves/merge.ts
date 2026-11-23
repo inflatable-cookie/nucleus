@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../../scheduling/pass-snapshot";
 import { holdsOf, type OwnerAcceptanceRecord, type Task } from "../../../shared/contracts";
 import type { Engine } from "../../engine";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
@@ -35,6 +36,7 @@ async function observeBeforeWrite<T>(
   try {
     return await observe();
   } catch (error) {
+    propagateQuantumDeferral(error);
     if (store.eventsAll(taskId).length !== eventsBefore) throw error;
     throw new PreWriteMergeObservationRefusal(error instanceof Error ? error.message : String(error));
   }

@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../../scheduling/pass-snapshot";
 import type { OwnerAcceptanceRecord, Task } from "../../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../../shared/lanes";
 import type { Engine } from "../../engine";
@@ -100,7 +101,7 @@ export async function reconcileRetainedExternalMerge(engine: Engine, input: Exte
         effect: operation.effect ? { ...operation.effect, status: 'reconciled', result: settled.id, resultAt: at } : null });
     };
     return await engine.resolution.acceptExternalMerge(task, input.reason, `move closeout: ${input.reason}`, engine.coordinatorActionRunId.getStore(), undefined, { acceptanceFor, assertQuiet, assertState, settleOperation });
-  } catch (error) { throw error instanceof ExternalMergeRefusal ? error : new ExternalMergeRefusal(error instanceof Error ? error.message : String(error)); }
+  } catch (error) { propagateQuantumDeferral(error); throw error instanceof ExternalMergeRefusal ? error : new ExternalMergeRefusal(error instanceof Error ? error.message : String(error)); }
 }
 
 /**
@@ -157,6 +158,7 @@ export async function reconcileReviewEntryExternalMerge(engine: Engine, input: E
     return await engine.resolution.acceptExternalMerge(store.task(task.id), input.reason, `move closeout: ${input.reason}`,
       engine.coordinatorActionRunId.getStore(), { operationId: input.operationId, acceptanceFor, assertQuiet });
   } catch (error) {
+    propagateQuantumDeferral(error);
     // Every refusal on this path happens before its one transaction, so it is
     // definite: nothing was merged, accepted or dispatched.
     throw error instanceof ExternalMergeRefusal ? error : new ExternalMergeRefusal(error instanceof Error ? error.message : String(error));

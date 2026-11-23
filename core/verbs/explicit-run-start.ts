@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
@@ -615,7 +616,10 @@ export async function preflightExplicitRunStart(
       }
     }
     if (task.agentId && typeof engine.host?.observe === "function") {
-      const state = await engine.host.observe(task.agentId).catch(() => null);
+      const state = await engine.host.observe(task.agentId).catch((error) => {
+        propagateQuantumDeferral(error);
+        return null;
+      });
       if (state && (state.status === "running" || state.activeTurnId)) {
         workerTurnActive = true;
       }

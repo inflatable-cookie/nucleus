@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../../scheduling/pass-snapshot";
 import type { Task, TaskControlInput } from "../../../shared/contracts";
 import type { Engine } from "../../engine";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
@@ -53,6 +54,7 @@ export class MoveControls {
     let result: Task;
     try { result = await attempt(input.version); }
     catch (error) {
+      propagateQuantumDeferral(error);
       const message = error instanceof Error ? error.message : String(error);
       const cancelled = store.eventsAll(input.taskId).filter(event => event.kind === "owner_stop_sent").length > cancelsBefore;
       if (!cancelled || !MOVE_REPLAN_MESSAGE.test(message)) throw error;

@@ -598,12 +598,12 @@ export class RunLaunchDeliver {
                 ...unsentReviewIntent(latest, run),
               });
           });
-          return;
+          throw error;
         }
         const latestRun = this.store.run(run.id);
         if (latestRun && !latestRun.released)
           this.store.putRun({ ...latestRun, status: "uncertain" });
-        return;
+        throw error;
       }
       // A host that has not settled its model options has not refused this run:
       // nothing crossed the send boundary, so the run is released and the task

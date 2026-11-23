@@ -1,3 +1,5 @@
+import { QuantumDeadlineExceededError } from "../core/scheduling/pass-snapshot";
+import { LANE_PRIORITY_TASK } from "../core/scheduling/lane-priorities";
 import { profile } from "./support/fakes";
 import {
   COORDINATOR_LOOP_LIMIT,
@@ -584,7 +586,7 @@ test("coordinator launches recorded during an outage do not spend the recovery b
  * about. A reviewer checkpoint no longer is one, because Queue continues it
  * itself (Tom, 2026-10-31), so the generic coordinator machinery rides on this.
  */
-async function workerErrorEpisode(
+function recordWorkerError(
   f: ReturnType<typeof fixture>,
   runId = "failed-revision",
 ) {
@@ -626,6 +628,10 @@ async function workerErrorEpisode(
     },
     "worker_error",
   );
+}
+
+async function workerErrorEpisode(f: ReturnType<typeof fixture>, runId?: string) {
+  recordWorkerError(f, runId);
   await f.engine.resolution.recovery.route(f.current());
   await f.engine.quiesce();
   const episode = f.coordinatorRuns().at(-1)!;
@@ -636,6 +642,36 @@ async function workerErrorEpisode(
   );
   return episode;
 }
+
+test("a coordinator send deferred before admission retries the same stop", async () => {
+  const f = fixture();
+  try {
+    recordWorkerError(f);
+    const stopped = f.engine.resolution.recordStop(f.current(), "operator_needed", "Worker build failed", ["restart"]);
+    const createRun = f.adapter.createRun!;
+    f.adapter.createRun = async () => {
+      throw new QuantumDeadlineExceededError("createRun", undefined, true);
+    };
+    const route = () => f.engine.scheduleLane(`task:${stopped.id}`, LANE_PRIORITY_TASK, async () => {
+      await f.engine.resolution.recovery.route(f.current());
+    });
+    for (let attempt = 0; attempt < 4; attempt++) await route();
+    const deferred = f.current();
+    assert.deepEqual(deferred.resolution.stop, stopped.resolution.stop);
+    assert.equal(deferred.resolution.recovery, null);
+    assert.equal(deferred.resolution.recoveryActive, false);
+    assert.equal(deferred.resolution.recoveryAttempts, stopped.resolution.recoveryAttempts);
+    assert.equal(f.coordinatorRuns().filter((run) => !run.released).length, 0);
+    assert.equal(f.events("recovery_escalated").length, 0);
+
+    f.adapter.createRun = createRun;
+    await route();
+    assert.equal(f.coordinatorRuns().filter((run) => !run.released).length, 1);
+    assert.equal(f.current().resolution.recovery?.status, "running");
+  } finally {
+    await f.close();
+  }
+});
 
 test("a reported recovery settles its action after its thread leaves observation", async () => {
   const f = fixture();

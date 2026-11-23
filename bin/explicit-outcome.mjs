@@ -47,6 +47,9 @@ export function explicitOutcome(result) {
       exitCode: NOT_APPLIED_EXIT_CODE,
     };
   }
+  if (resolution.status === 'retry') {
+    return { line: `retry: ${resolution.next}`, exitCode: NOT_APPLIED_EXIT_CODE };
+  }
   if (resolution.status === 'stale') {
     const version = typeof result.version === 'number' ? ` at version ${result.version}` : '';
     return { line: `stale: not applied; the task is now${version}, so read next and resend with that version`, exitCode: NOT_APPLIED_EXIT_CODE };

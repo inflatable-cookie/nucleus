@@ -2535,6 +2535,9 @@ export class Store {
   operation(id: string): QueueOperation | null {
     return this.operationsStore.operation(id);
   }
+  withdrawOperation(operation: QueueOperation): void {
+    this.operationsStore.withdrawOperation(operation);
+  }
   operationPayload(id: string): unknown {
     return this.operationsStore.operationPayload(id);
   }
