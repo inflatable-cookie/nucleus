@@ -84,6 +84,12 @@ struct NoticeThread {
     snoozed_until: Option<String>,
 }
 
+struct NoticeSnapshot {
+    sequence: u64,
+    thread: NoticeThread,
+    projection: Value,
+}
+
 impl T3 {
     /// Read the host's planner candidates. A missing or partial listing cannot
     /// establish that a stronger candidate is absent.
@@ -144,10 +150,10 @@ impl T3 {
         &self,
         delivery: &QuestionDelivery,
     ) -> Result<NoticeState, HostError> {
-        let Some((_, projection)) = self.notice_projection(&delivery.thread).await? else {
+        let Some(snapshot) = self.notice_projection(&delivery.thread).await? else {
             return Ok(NoticeState::Gone);
         };
-        notice_state(&projection, &delivery.command)
+        notice_state(&snapshot.projection, &delivery.command)
     }
 
     /// Reconcile any preceding send and unsettle the exact planner if needed.
@@ -163,38 +169,38 @@ impl T3 {
             .last_send_at_ms
             .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS);
         let payload = frozen_payload(delivery)?;
-        let Some((mut thread, mut projection)) = self.notice_projection(&delivery.thread).await?
-        else {
+        let Some(mut snapshot) = self.notice_projection(&delivery.thread).await? else {
             return Ok(None);
         };
-        let state = notice_state(&projection, &delivery.command)?;
+        let state = notice_state(&snapshot.projection, &delivery.command)?;
         let ready = match state {
             NoticeState::Absent => !reply_may_arrive,
-            NoticeState::Queued => settled(&thread),
+            NoticeState::Queued => settled(&snapshot.thread),
             _ => false,
         };
-        if !ready || snoozed(&thread)? {
+        if !ready || snoozed(&snapshot.thread)? {
             return Ok(None);
         }
-        if settled(&thread) {
-            let at = thread.settled_at.as_deref().ok_or(HostError::Uncertain)?;
-            let occurrence = OffsetDateTime::parse(at, &Rfc3339)
-                .map_err(|_| HostError::Protocol)?
-                .unix_timestamp_nanos();
+        if settled(&snapshot.thread) {
+            if snapshot.sequence == 0 {
+                return Err(HostError::Uncertain);
+            }
+            let command_id = format!("unsettle:{}:{}", snapshot.thread.id, snapshot.sequence);
             self.thread_command(json!({
                 "type":"thread.unsettle", "threadId":delivery.thread,
-                "commandId":format!("{}-unsettle-{occurrence}", delivery.command), "reason":"user",
+                "commandId":command_id, "reason":"user",
             }))
             .await?;
             let Some(fresh) = self.notice_projection(&delivery.thread).await? else {
                 return Err(HostError::Uncertain);
             };
-            (thread, projection) = fresh;
-            if settled(&thread) || snoozed(&thread)? {
+            snapshot = fresh;
+            if settled(&snapshot.thread) || snoozed(&snapshot.thread)? {
                 return Ok(None);
             }
         }
-        if reply_may_arrive || notice_state(&projection, &delivery.command)? != NoticeState::Absent
+        if reply_may_arrive
+            || notice_state(&snapshot.projection, &delivery.command)? != NoticeState::Absent
         {
             return Ok(None);
         }
@@ -227,10 +233,7 @@ impl T3 {
         }
     }
 
-    async fn notice_projection(
-        &self,
-        id: &str,
-    ) -> Result<Option<(NoticeThread, Value)>, HostError> {
+    async fn notice_projection(&self, id: &str) -> Result<Option<NoticeSnapshot>, HostError> {
         let result = self
             .rpc
             .call(
@@ -246,12 +249,19 @@ impl T3 {
             Reply::Failure(cause) if projection::missing_thread(&cause, id) => return Ok(None),
             Reply::Failure(_) => return Err(HostError::Uncertain),
         };
-        if value["hasMoreHistory"] == true || value.get("idTable").is_some() {
+        if value["hasMoreHistory"] == true
+            || value["turnItemsOmitLocalVisible"] == true
+            || value.get("idTable").is_some()
+        {
             return Err(HostError::Uncertain);
         }
         let Value::Object(mut snapshot) = value else {
             return Err(HostError::Protocol);
         };
+        let sequence = snapshot
+            .get("snapshotSequence")
+            .and_then(Value::as_u64)
+            .ok_or(HostError::Protocol)?;
         let projection = snapshot.remove("projection").ok_or(HostError::Protocol)?;
         let thread: NoticeThread = serde_json::from_value(projection["thread"].clone())
             .map_err(|_| HostError::Protocol)?;
@@ -261,7 +271,11 @@ impl T3 {
         if thread.archived_at.is_some() || thread.deleted_at.is_some() {
             return Ok(None);
         }
-        Ok(Some((thread, projection)))
+        Ok(Some(NoticeSnapshot {
+            sequence,
+            thread,
+            projection,
+        }))
     }
 }
 
@@ -305,11 +319,19 @@ fn notice_state(projection: &Value, command: &str) -> Result<NoticeState, HostEr
         .as_array()
         .ok_or(HostError::Protocol)?;
     let accepted = messages.iter().find(|item| item["id"] == message);
-    let associated = accepted.and_then(|item| item["runId"].as_str());
-    if let Some(run) = runs
-        .iter()
-        .find(|run| run["userMessageId"] == message || associated.is_some_and(|id| run["id"] == id))
-    {
+    let run = if let Some(id) = accepted.and_then(|item| item["runId"].as_str()) {
+        let run = runs
+            .iter()
+            .find(|run| run["id"] == id)
+            .ok_or(HostError::Uncertain)?;
+        if run["userMessageId"] != message {
+            return promoted_steer(projection, &message, id);
+        }
+        Some(run)
+    } else {
+        runs.iter().find(|run| run["userMessageId"] == message)
+    };
+    if let Some(run) = run {
         return match (run["status"].as_str(), run.get("startedAt")) {
             (_, Some(Value::String(started)))
                 if OffsetDateTime::parse(started, &Rfc3339).is_ok() =>
@@ -330,5 +352,26 @@ fn notice_state(projection: &Value, command: &str) -> Result<NoticeState, HostEr
         NoticeState::Queued
     } else {
         NoticeState::Absent
+    })
+}
+
+fn promoted_steer(
+    projection: &Value,
+    message: &str,
+    run_id: &str,
+) -> Result<NoticeState, HostError> {
+    let items = projection["turnItems"]
+        .as_array()
+        .ok_or(HostError::Uncertain)?;
+    let delivered = items.iter().any(|item| {
+        item["type"] == "user_message"
+            && item["messageId"] == message
+            && item["runId"] == run_id
+            && item["status"] == "completed"
+    });
+    Ok(if delivered {
+        NoticeState::Started
+    } else {
+        NoticeState::Queued
     })
 }

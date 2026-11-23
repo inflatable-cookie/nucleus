@@ -631,6 +631,7 @@ async fn planner_notice_unsettles_and_queue_acceptance_is_not_delivery() {
     let mut unsettled = settled.clone();
     unsettled["projection"]["thread"]["settledOverride"] = json!("active");
     unsettled["projection"]["thread"]["settledAt"] = Value::Null;
+    unsettled["snapshotSequence"] = json!(17);
     let mut started = interrupted.clone();
     started["projection"]["runs"][0]["startedAt"] = json!("2026-11-23T16:01:00Z");
     let (client, server) = server(vec![
@@ -696,7 +697,10 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
     let mut first = idle.clone();
     first["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
     let mut second = first.clone();
-    second["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:01:00Z");
+    second["snapshotSequence"] = json!(18);
+    let mut active_first = idle.clone();
+    active_first["snapshotSequence"] = json!(17);
+    idle["snapshotSequence"] = json!(19);
     let rejected = json!([{"_tag":"Fail","error":{
         "_tag":"OrchestrationV2DispatchCommandError",
         "commandId":notice.command,
@@ -709,7 +713,7 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
     let (client, server) = server(vec![
         (probe, Response::Snapshot(first)),
         (command, Response::Success),
-        (probe, Response::Snapshot(idle.clone())),
+        (probe, Response::Snapshot(active_first)),
         (probe, Response::Snapshot(second)),
         (command, Response::Success),
         (probe, Response::Snapshot(idle)),
@@ -749,6 +753,50 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
         assert_eq!(wire["type"], "thread.unsettle");
         wire["commandId"].as_str().expect("wake ID").to_owned()
     };
-    assert_ne!(wake_id(1), wake_id(4));
+    assert_eq!(wake_id(1), format!("unsettle:{THREAD}:16"));
+    assert_eq!(wake_id(4), format!("unsettle:{THREAD}:18"));
     assert_eq!(frames[6].payload.get(), notice.payload);
+}
+
+#[tokio::test]
+async fn a_promoted_steer_needs_delivery_of_its_own_provider_item() {
+    use crate::NoticeState;
+
+    let directory = checkout_fixture();
+    let binding = binding(directory.path());
+    let notice = T3::prepare_notice(THREAD.into(), "fixture-question".into(), "Please decide")
+        .expect("notice");
+    let probe = "orchestration.subscribeThread";
+    let message = format!("{}-message", notice.command);
+    let mut pending = snapshot(&binding, &notice.command, "running", false);
+    pending["projection"]["messages"] = json!([{"id":message, "runId":NATIVE_RUN}]);
+    pending["projection"]["runs"] = json!([
+        { "id":"old-queue", "status":"cancelled", "userMessageId":message, "startedAt":null },
+        { "id":NATIVE_RUN, "status":"running", "userMessageId":"other-message", "startedAt":"2026-11-23T16:00:00Z" }
+    ]);
+    let item = |message_id: &str, run_id: &str, status: &str| {
+        json!({"type":"user_message", "messageId":message_id, "runId":run_id,
+            "inputIntent":"promoted_queued_to_steer", "status": status})
+    };
+    pending["projection"]["turnItems"] = json!([
+        item("other-message", NATIVE_RUN, "completed"),
+        item(&message, "old-queue", "completed"),
+        item(&message, NATIVE_RUN, "pending")
+    ]);
+    let mut delivered = pending.clone();
+    delivered["projection"]["turnItems"][2]["status"] = json!("completed");
+    let (client, server) = server(vec![
+        (probe, Response::Snapshot(pending)),
+        (probe, Response::Snapshot(delivered)),
+    ])
+    .await;
+    assert_eq!(
+        client.notice_state(&notice).await.expect("unread steer"),
+        NoticeState::Queued
+    );
+    assert_eq!(
+        client.notice_state(&notice).await.expect("delivered steer"),
+        NoticeState::Started
+    );
+    server.await.expect("fixture trace");
 }

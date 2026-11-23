@@ -234,13 +234,21 @@ board reads committed task data separately from those checks.
 An open question owns its message intent. Resolve the project's most active
 responsible planner at send time. Keep the thread ID only as part of the native delivery
 binding. Reconcile that binding before rebinding when the planner changes.
-Unsettle a settled thread with a command ID tied to that settlement, then read
-it back. Queue behind an active turn and let an idle planner start immediately.
+Unsettle a settled thread using its ID and the high-water sequence from the
+same exact snapshot, then read it back. A settle emits a thread event, and the
+snapshot reads the largest event sequence for that thread in the projection
+transaction. A later settle advances the sequence even when it reuses a
+timestamp. Queue behind an active turn and let an idle planner start immediately.
+[T3 settle event](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L5564-L5626)
+[T3 thread snapshot](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/ProjectionStore.ts#L7075-L7093)
+
 Record the send marker after the preflight, just before dispatching the frozen
-message. The exact turn's start timestamp proves delivery. Replay uncertain
-delivery under the same ID after the host's wait window. A durable rejection or
-a terminal turn that never started permits a fresh binding. Clearing the
-question also clears its binding.
+message. The notice is delivered when it initiated a turn that started. If a
+person promotes the notice to a steer in T3, look for the completed user-message
+item with the exact message and target turn IDs. Replay uncertain delivery
+under the same ID after the host's wait window. A durable rejection or a
+terminal turn that never started permits a fresh binding. Clearing the question
+also clears its binding.
 
 ## ACP task sessions
 
