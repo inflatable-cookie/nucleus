@@ -3528,6 +3528,13 @@ export class Resolution {
     const published = publishedReviewDecision(this.store, task);
     if (published.kind === "none")
       return this.schedulingLifecycle.advance(task);
+    if (published.kind === "blocked" && published.permanent) {
+      // A report no later fact can apply stops governing: it is superseded,
+      // never applied, and the phase's ordinary next step runs in this pass.
+      if (this.resultApplication.supersedeRefusedReport(task, published.run, published.refusal))
+        return this.advance(this.store.task(task.id));
+      return Promise.resolve();
+    }
     if (published.kind === "blocked") {
       // Published admission already proved the reviewer run is released, so
       // a retained current-run binding still lets the parked ladder reconcile.

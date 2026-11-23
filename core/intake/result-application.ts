@@ -158,7 +158,13 @@ type PublishedReview = {
 type PublishedReviewDecision =
   | PublishedReview
   | { kind: "none" }
-  | { kind: "blocked"; refusal: string };
+  /**
+   * `permanent`: no later fact can make this run's report apply (it was
+   * published in a form the repository's policy refuses, or its reviewer
+   * authored the work). Every other refusal waits on its named owner.
+   */
+  | { kind: "blocked"; refusal: string; permanent?: undefined }
+  | { kind: "blocked"; refusal: string; permanent: true; run: Run };
 type PublishedReviewApplication =
   | { kind: "applied" }
   | { kind: "blocked"; refusal: string };
@@ -286,6 +292,12 @@ export function publishedReviewDecision(
     kind: "blocked",
     refusal,
   });
+  const refusedForever = (refusal: string): PublishedReviewDecision => ({
+    kind: "blocked",
+    refusal,
+    permanent: true,
+    run,
+  });
   const later = runs
     .slice(runs.indexOf(run) + 1)
     .find((item) =>
@@ -341,7 +353,7 @@ export function publishedReviewDecision(
       ...task.proofExecutions.map((proof) => proof.agentId),
     ].includes(run.agentId)
   )
-    return blocked(
+    return refusedForever(
       "The reviewer authored this task. The review lifecycle owner must establish independent review",
     );
   if (run.profile) {
@@ -381,7 +393,9 @@ export function publishedReviewDecision(
     !Number.isSafeInteger(publicationId) ||
     publicationId <= 0
   )
-    return blocked(
+    // The report carries only the other publication form (or an invalid ID), and
+    // Nucleus publishes only from an unpublished report: no later fact gives it one.
+    return refusedForever(
       `Review publication must prove a ${kind} ID under the current repository policy`,
     );
   const completion =
@@ -575,6 +589,35 @@ export class ResultApplication {
       const current = this.store.task(taskId);
       this.resolution.waiting(current, this.resolution.leaseDeclineText(current, agentId, state), "lifecycle");
     };
+  }
+  /**
+   * A reported verdict admission refuses forever stops governing the task. It is
+   * never applied: the report is recorded as superseded, naming the refusal, and
+   * the reviewer run releases its hold on the task (its binding and retained
+   * reviewer), so the phase's ordinary next step admits a fresh reviewer whose
+   * run records the repository's publication form. No verdict is accepted, so
+   * merge still needs a valid exact-head review. Returns whether it superseded.
+   */
+  supersedeRefusedReport(task: Task, run: Run, refusal: string): boolean {
+    return this.store.transaction(() => {
+      const current = this.store.task(task.id);
+      if (current.version !== task.version || resultApplied(this.store, task.id, run.id)) return false;
+      const { resolution } = current;
+      const ownStop = resolution.stop?.reason === "lifecycle" && resolution.stop.detail === refusal;
+      this.resolution.update(
+        current,
+        {
+          ...(resolution.currentRunId === run.id ? { currentRunId: null } : {}),
+          ...(resolution.reviewerAgentId === run.agentId ? { reviewerAgentId: null, reviewerProfile: null } : {}),
+          ...(ownStop ? { stop: null } : {}),
+        },
+        {},
+        "reported_verdict_superseded",
+        `${run.id} ${run.completion?.status ?? "report"} at ${run.head}: ${refusal}. The report is never applied; a fresh review is admitted`.slice(0, 4000),
+      );
+      recordResultApplied(this.store, task.id, run.id);
+      return true;
+    });
   }
   /** Verify a recorded publication and commit its verdict, with no publish or dispatch. */
   async applyPublishedReview(

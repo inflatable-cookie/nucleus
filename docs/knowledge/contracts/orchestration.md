@@ -2506,6 +2506,15 @@ reports, grants or spends that history.
   own `gh` calls; it is never stored, logged or given to an agent. A token kept
   under the legacy service `paseo-queue.github-reviewer` is still read as a
   fallback. A missing or refused token raises attention and never falls back to a comment.
+- Every reviewer run, scheduled or started with `run.start`, records the
+  repository's publication form, so a formal-review reviewer leaves publication
+  to Nucleus.
+- A reported verdict that admission refuses names the refusal as the task's
+  lifecycle wait. When no later fact can make it apply (it was published in the
+  form the policy refuses, or its reviewer authored the work), it is recorded as
+  `reported_verdict_superseded`, never applied, and releases the task's reviewer
+  binding, so the phase's next step admits a fresh reviewer. A refusal that waits
+  on another owner (the ladder, a hold, the forge) keeps the report governing.
 
 ### Review entry
 
