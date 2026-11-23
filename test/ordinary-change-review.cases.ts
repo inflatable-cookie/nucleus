@@ -401,6 +401,8 @@ async function pendingVerdict(
         ...task.resolution,
         currentRunId: run.id,
         review: null,
+        integrationTurn: null,
+        mergeIntent: false,
         reviews: task.resolution.reviews.filter(
           (review) => review.runId !== run.id,
         ),
@@ -738,6 +740,8 @@ test("a released authenticated review with a lost application is reapplied once 
           ...task.resolution,
           currentRunId: null,
           review: null,
+          integrationTurn: null,
+          mergeIntent: false,
           reviews: task.resolution.reviews.filter(
             (review) => review.runId !== run.id,
           ),
@@ -828,6 +832,8 @@ test("a lost follow-up verdict returns a detached checkout before it is reapplie
           ...task.resolution,
           currentRunId: null,
           review: null,
+          integrationTurn: null,
+          mergeIntent: false,
           reviews: task.resolution.reviews.filter(
             (review) => review.runId !== run.id,
           ),

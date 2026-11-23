@@ -48,12 +48,14 @@ import {
   sendRunVia,
   type RunSendOwner,
 } from "../core/dispatch/run-launch/send";
+import { spawnGate, SPAWN_CONCURRENCY } from "../core/dispatch/spawn-gate";
 import { recoveryDispatchSnapshot } from "../core/recovery/recovery-context";
 import { ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
 import { checkoutRunScratchPlacement } from "../core/workspaces/run-scratch";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
+import { waitFor } from "./support/budgets";
 import { explicitOutcome } from "../bin/explicit-outcome.mjs";
 
 const head = "a".repeat(40);
@@ -3156,6 +3158,116 @@ test("an open escalation still blocks a reviewer start and an ordinary verdict a
   await f.command({ action: "record.clear", kind: "escalation", id: "scope" });
   await f.applyReport(run);
   assert.equal(f.current().resolution.review?.runId, run.id);
+});
+
+test("an answered escalation with a live wait still blocks the reviewer start and offer", async (t) => {
+  const f = await reviewStartFixture(t);
+  const task = f.current();
+  const reader = { ...f.run("uncertain-reviewer", "reviewer", null), head: f.initialSha };
+  f.store.putRun(reader);
+  const offersStart = () =>
+    ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).explicitCommands?.some(
+      (command) => command.action === "run.start" && command.args.role === "reviewer",
+    ) ?? false;
+  assert.equal(offersStart(), true);
+
+  for (const kind of ["time", "decision"] as const) {
+    const id = `scope-${kind}`;
+    const target = kind === "time" ? new Date(Date.now() + 60_000).toISOString() : "decision-id";
+    f.store.event(task.id, "planner_escalation", `${id}: cause owner-decision; run worker`);
+    f.store.event(
+      task.id,
+      "planner_escalation_answer_pending",
+      `${id}: ${JSON.stringify({ who: planner, answer: "wait", control: { kind, target } })}`,
+    );
+    f.store.event(task.id, "planner_escalation_wait", `${id}: ${JSON.stringify({ kind, target })}`);
+    f.store.event(task.id, "planner_escalation_answered", `${id}: answered by planner: wait`);
+    f.store.event(task.id, "planner_escalation_applied", `${id}: waiting on ${target}`);
+    assert.equal(plannerEscalations(f.store.eventsAll(task.id)).find((item) => item.id === id)?.answered, true);
+
+    assert.equal(offersStart(), false);
+    await assert.rejects(f.command(freshReviewer), /planner ladder still owns escalation .*wait/);
+
+    f.store.event(task.id, "planner_escalation_woke", `${id}: wait settled`);
+    assert.equal(offersStart(), true);
+  }
+  assert.deepEqual(f.store.runs(task.id).map(({ id }) => id), [reader.id]);
+});
+
+test("comment publication rechecks verdict ownership after waiting for a gh process slot", async (t) => {
+  const f = await ordinaryReviewerFixture(t, undefined, { publishReview: publishReviewOnce });
+  const task = f.current();
+  const run = await f.seedReport();
+  f.store.patchRepository({ path: task.repoPath, origin: null }, { reviewer: null });
+  await git(task.repoPath, "remote", "set-url", "origin", "git@github.com:example/repo.git");
+
+  const bin = join(f.root, "fake-bin");
+  mkdirSync(bin);
+  const userStarted = join(f.root, "user-started");
+  const releaseUser = join(f.root, "release-user");
+  const posted = join(f.root, "posted");
+  const gh = join(bin, "gh");
+  writeFileSync(gh, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "pr" && args[1] === "view") {
+  console.log(${JSON.stringify(JSON.stringify({
+    state: "OPEN",
+    isDraft: false,
+    headRefName: task.branch,
+    baseRefName: task.baseBranch,
+    headRefOid: run.head,
+    url: task.prUrl,
+  }))});
+} else if (args[0] === "api" && args[1] === "user") {
+  fs.writeFileSync(${JSON.stringify(userStarted)}, "");
+  const wait = setInterval(() => {
+    if (!fs.existsSync(${JSON.stringify(releaseUser)})) return;
+    clearInterval(wait);
+    console.log(JSON.stringify({ login: "fixture" }));
+  }, 10);
+} else if (args.includes("POST")) {
+  fs.writeFileSync(${JSON.stringify(posted)}, "");
+  const body = args.find((arg) => arg.startsWith("body=")).slice(5);
+  console.log(JSON.stringify({ id: 101, body, user: { login: "fixture" } }));
+} else {
+  process.exitCode = 1;
+}
+`);
+  chmodSync(gh, 0o755);
+  const path = process.env.PATH ?? "";
+  process.env.PATH = `${bin}:${path}`;
+
+  let releaseSlots!: () => void;
+  const slotsHeld = new Promise<void>((resolve) => { releaseSlots = resolve; });
+  const blockers = Array.from({ length: SPAWN_CONCURRENCY - 1 }, () =>
+    spawnGate.run(() => slotsHeld),
+  );
+  const application = f.applyReport(run).then(() => null, (error: unknown) => error);
+  let integrationTurn: Task["resolution"]["integrationTurn"] = null;
+  try {
+    await waitFor(() => existsSync(userStarted), 10_000, "the gh user lookup");
+    let allSlotsHeld = false;
+    blockers.push(spawnGate.run(() => {
+      allSlotsHeld = true;
+      return slotsHeld;
+    }));
+    writeFileSync(releaseUser, "");
+    await waitFor(() => allSlotsHeld && spawnGate.queued > 0, 10_000, "the queued gh POST");
+    await f.command({ action: "turn.take" });
+    integrationTurn = f.current().resolution.integrationTurn;
+    assert.ok(integrationTurn);
+  } finally {
+    writeFileSync(releaseUser, "");
+    releaseSlots();
+    await Promise.all(blockers);
+    await application;
+    process.env.PATH = path;
+  }
+  assert.equal(await application, null);
+  assert.equal(existsSync(posted), false);
+  assert.equal(f.store.getMeta(`reviewPublication:${run.id}`), undefined);
+  assert.deepEqual(f.current().resolution.integrationTurn, integrationTurn);
 });
 
 test("an ordinary callback from a source author never publishes a verdict", async (t) => {

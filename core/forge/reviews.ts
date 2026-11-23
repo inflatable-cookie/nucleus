@@ -151,6 +151,12 @@ function earliestPublication<T extends { id?: unknown; submitted_at?: unknown }>
     return Number(left.id) - Number(right.id);
   })[0]!;
 }
+class ReviewPublicationAlreadyClaimed extends Error {
+  constructor(readonly claim: Exclude<ReturnType<typeof claimReviewPublication>, { kind: 'claimed' }>) {
+    super('Another pass claimed this review publication');
+  }
+}
+
 async function publishReviewCommentOnce(store:Store,t:Task,run:Run,status:string,text:string,allowed:ReviewPublicationGuard=()=>true):Promise<PublicationOutcome> {
   const pr=await reviewSourcePr(t,verifyPr);if(pr.head!==run.head)throw Error('Review is stale for the current PR head');
   const body=reviewPublicationBody(t,run,status,text,store.run(run.id)?.completion?.verdicts??[]);
@@ -172,16 +178,23 @@ async function publishReviewCommentOnce(store:Store,t:Task,run:Run,status:string
     const earliest=earliestPublication(matches) as {id:number};
     store.setMeta(key,{hash,commentId:earliest.id});return {id:earliest.id,published:false};
   }
-  if (allowed.observe) await allowed.observe();
-  if(!allowed())throw Error('Paused before review publication');
-  const claim=claimReviewPublication(store,run.id,hash,'comment');
-  if(claim.kind==='settled')return verifyComment(claim.id);
-  if(claim.kind==='intent'){
+  let comment: { id: number; body: string; user?: { login?: string } };
+  try {
+    comment = await api(t, `repos/${name}/issues/${taskPrNumber(t)}/comments`, ['-X', 'POST', '-f', `body=${body}`], {
+      prepare: allowed.observe,
+      check() {
+        if (!allowed()) throw Error('Paused before review publication');
+        const claim = claimReviewPublication(store, run.id, hash, 'comment');
+        if (claim.kind !== 'claimed') throw new ReviewPublicationAlreadyClaimed(claim);
+      },
+    });
+  } catch (error) {
+    if (!(error instanceof ReviewPublicationAlreadyClaimed)) throw error;
+    if (error.claim.kind === 'settled') return verifyComment(error.claim.id);
     // Another pass holds the durable intent; observe its result, never repost.
     await awaitRecordedPublication(store,key);
     return publishReviewCommentOnce(store,t,run,status,text,allowed);
   }
-  const comment=await api(t,`repos/${name}/issues/${taskPrNumber(t)}/comments`,['-X','POST','-f',`body=${body}`]);
   if(!Number.isSafeInteger(comment.id)||comment.body!==body||comment.user?.login!==user.login)throw Error('GitHub returned an unexpected review publication');
   store.setMeta(key,{hash,commentId:comment.id});return {id:comment.id,published:true};
 }

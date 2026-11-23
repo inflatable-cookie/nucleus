@@ -106,14 +106,16 @@ No command changes anything it does not name.
 
 `run.start role=reviewer` enters `reviewing` from `needs_attention`, `blocked`,
 `awaiting_review` or `changes_requested` when it reserves the run. These are the
-only eligible phases. An open escalation, any hold or incident, an escalated
-recovery episode, a merge request, an integration turn, or a recorded merge
-blocks the start. `next` uses the same eligibility check for its offers.
+only eligible phases. Open escalations, active escalation waits, holds,
+incidents, escalated recovery episodes, merge requests, integration turns and
+recorded merges block the start. `next` uses the same eligibility check for its
+offers.
 
 Reviewer callbacks follow the ordinary verdict path. Accepting
 `discard_reported_verdict` records the displaced reviewer's replacement when
 the new run is reserved. After credential lookup, publication checks live
-reviewer independence and durable ownership before sending to the forge. The
+reviewer independence and durable ownership before sending to the forge.
+Comment publication checks them after acquiring its `gh` process slot. The
 verdict transaction uses the same gate, which includes the reviewer binding,
 the exact head, discard, dispatch holds, publication policy and integration
 ownership.

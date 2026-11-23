@@ -50,7 +50,11 @@ import {
   readGitCheckout,
 } from "../git/git-identity";
 import type { Adapter } from "../host/adapter";
-import { plannerEscalations, type LadderEvent } from "../questions/ladder/records";
+import {
+  activePlannerEscalationWait,
+  plannerEscalations,
+  type LadderEvent,
+} from "../questions/ladder/records";
 import {
   assertOrdinaryReviewIdentity,
   ordinaryReviewSource,
@@ -226,6 +230,8 @@ export function reviewerStartRefusal(
   );
   if (escalation)
     return `The planner ladder still owns escalation ${escalation.id}.`;
+  const wait = activePlannerEscalationWait(events);
+  if (wait) return `The planner ladder still owns escalation ${wait}'s wait.`;
   if (incident)
     return `The recovery owner must clear ${incident.status} incident ${incident.id}.`;
   if (recovery?.status === "escalated")
