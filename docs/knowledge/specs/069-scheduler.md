@@ -137,8 +137,9 @@ ran about 6 times a minute, and Settings stayed on "loading".
   it. The copy is live only while its tail spoke within five minutes and the
   subscription is under fifteen minutes old; past that, or after a dropped stream,
   `snapshot-required` or an unknown item, the next reader that needs a current
-  answer takes exactly one fresh snapshot. The board's live-agent list is served
-  the previous copy while that happens; decisions are not.
+  answer takes exactly one fresh snapshot (60-second deadline; a slow one is a
+  timeout, failed opens back off from 1 s to 60 s). The board's live-agent list is
+  served the previous copy while that happens; decisions are not.
 - **A thread snapshot only when its row moved.** A thread is read only when the
   live shell's row for it changed since the snapshot Nucleus holds, or a reader
   needs what the row cannot carry: a pending question's body, or a running

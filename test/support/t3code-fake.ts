@@ -698,6 +698,8 @@ export async function t3Fake(t: TestContext, directory: string) {
     beforeArchiveRead: (() => {}) as () => void,
     /** The next this-many `subscribeShell` requests fail remotely: T3 cannot read its shell. */
     shellFailures: 0,
+    /** Delay before a `subscribeShell` answers its opening snapshot. */
+    slowShellMs: 0,
     /** Methods this fake receives and never answers, as a wedged T3 does. */
     stalledMethods: [] as string[],
     /** Threads whose projection read answers `ThreadNotFoundError` though the shell lists them. */
@@ -1391,7 +1393,7 @@ export async function t3Fake(t: TestContext, directory: string) {
             threads: active.map((row) => row.id),
             archivedThreads: archived.map((row) => row.id),
           });
-          return stream([
+          const opening = [
             {
               kind: "snapshot",
               snapshot: {
@@ -1412,7 +1414,13 @@ export async function t3Fake(t: TestContext, directory: string) {
                 ]
               : []),
             ...marker(),
-          ]);
+          ];
+          // A busy host's whole-shell snapshot can outlast the client's deadline.
+          if (controls.slowShellMs > 0) {
+            setTimeout(() => stream(opening), controls.slowShellMs);
+            return;
+          }
+          return stream(opening);
         }
         case "orchestration.getArchivedShellSnapshot":
           controls.beforeArchiveRead();

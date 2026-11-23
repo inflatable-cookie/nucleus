@@ -335,6 +335,8 @@ export class T3Reads {
    * stream's lag, so they still get an exact read.
    */
   private readonly written = new Set<string>();
+  /** Threads T3 confirmed removed by a settled `thread.delete` receipt on this connection. */
+  private readonly deletedByReceipt = new Set<string>();
   /** The archived walk the retention pass last read, by thread id. */
   private retentionWalk: Map<string, ShellRow> | null = null;
   private threadReads = 0;
@@ -348,7 +350,10 @@ export class T3Reads {
   private readonly forgetEpochs = new Map<string, number>();
   private passing = false;
   constructor(private readonly core: T3ReadContext) {
-    this.live = new T3LiveShell(core.rpc, core.rpc.defaultTimeoutMs);
+    this.live = new T3LiveShell(
+      core.rpc,
+      core.rpc.deadlineFor("orchestration.subscribeShell"),
+    );
     this.live.onChange((threadId) => {
       // A discarded copy proves nothing about what a command just started, so the
       // lag protection in `written` survives it; only a positive listing (or a
@@ -404,6 +409,7 @@ export class T3Reads {
     this.live.close();
     this.absent.clear();
     this.written.clear();
+    this.deletedByReceipt.clear();
     this.retentionWalk = null;
   }
 
@@ -1108,6 +1114,7 @@ export class T3Reads {
   noteDeleted(threadId: string) {
     this.retentionWalk?.delete(threadId);
     this.absent.delete(threadId);
+    this.deletedByReceipt.add(threadId);
   }
 
   /**
@@ -1123,6 +1130,8 @@ export class T3Reads {
   async threadArchiveState(
     id: string,
   ): Promise<{ archivedAt: string | null; deleted: boolean } | null> {
+    // A settled delete receipt is final, even before T3's shell streams the removal.
+    if (this.deletedByReceipt.has(id)) return null;
     const live = await this.shellRow(id);
     if (live)
       return { archivedAt: live.archivedAt ?? null, deleted: !!live.deletedAt };

@@ -8,6 +8,10 @@ import { randomUUID } from "node:crypto";
 import { T3CodeHost } from "../hosts/t3code/adapter";
 import { createAdapter } from "../hosts/t3code";
 import { T3_THREAD_READ_CONCURRENCY } from "../hosts/t3code/reads";
+import { T3RpcClient, T3RpcError } from "../hosts/t3code/rpc";
+import { T3CompatibilityError } from "../hosts/t3code/contracts";
+import { T3ShellBackoffError } from "../hosts/t3code/live-shell";
+import { HostReadRefusalError } from "../core/host";
 import { HostPolicies } from "../core/host/host-policies";
 import type { HostPolicyConstructor } from "../core/host";
 import { Store } from "../core/store/store";
@@ -46,7 +50,12 @@ const taskId = (index: number) => `task-load-${index}`;
 
 async function fixture(
   t: TestContext,
-  input: { live?: number; finished?: number; followUps?: string[] } = {},
+  input: {
+    live?: number;
+    finished?: number;
+    followUps?: string[];
+    timeoutMs?: number;
+  } = {},
 ) {
   const live = input.live ?? LIVE;
   const finished = input.finished ?? 0;
@@ -94,7 +103,7 @@ async function fixture(
     endpoint: server.endpoint,
     bearer: "synthetic-bearer",
     statePath,
-    timeoutMs: 5_000,
+    timeoutMs: input.timeoutMs ?? 5_000,
     probeThreadId: threadId(0),
   });
   t.after(() => host.close());
@@ -468,4 +477,57 @@ test("a creation lookup never answers a thread the live shell lists as absent", 
     [[target, true]],
   );
   server.controls.projectionMissing = [];
+});
+
+test("a shell snapshot slower than its deadline is a timeout, never an incompatibility, and reopens back off", async (t) => {
+  // The live shell's opening snapshot has the 60 s deadline thread snapshots have.
+  assert.equal(
+    new T3RpcClient({
+      endpoint: "http://127.0.0.1:1",
+      bearer: "synthetic-bearer",
+    }).deadlineFor("orchestration.subscribeShell"),
+    60_000,
+  );
+  // A host configured with a short deadline stands in for a snapshot past 60 s.
+  const { server, host, liveIds, tasks } = await fixture(t, {
+    live: 4,
+    timeoutMs: 300,
+  });
+  host.reads.live.close();
+  server.controls.slowShellMs = 600;
+  await assert.rejects(host.reads.shell(), (error: unknown) => {
+    assert.ok(!(error instanceof T3CompatibilityError), "not an incompatibility");
+    return (
+      error instanceof T3RpcError &&
+      error.code === "timeout" &&
+      error.method === "orchestration.subscribeShell"
+    );
+  });
+  assert.equal(host.reads.compatibilityFailure, "", "nothing is reported to the operator");
+  assert.equal(host.connected, true, "the connection stays up");
+  // A decision read during the backoff is a bounded refusal, not another open.
+  const opens = served(server, "orchestration.subscribeShell");
+  await assert.rejects(
+    host.reads.isObserved(liveIds[0]!),
+    (error: unknown) =>
+      error instanceof T3ShellBackoffError &&
+      error instanceof HostReadRefusalError,
+  );
+  assert.equal(served(server, "orchestration.subscribeShell"), opens);
+  // Once T3 answers in time and the backoff has run out, the shell reopens once.
+  server.controls.slowShellMs = 0;
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  host.reads.beginPass(tasks);
+  assert.equal(await host.reads.isObserved(liveIds[0]!), true);
+  host.reads.endPass();
+  assert.equal(served(server, "orchestration.subscribeShell"), opens + 1);
+});
+
+test("a settled delete receipt confirms the removal before T3's shell streams it", async (t) => {
+  const { host, liveIds } = await fixture(t, { live: 4 });
+  const target = liveIds[1]!;
+  await host.reads.shell();
+  assert.ok(host.reads.live.row(target), "listed before the removal");
+  await host.deleteAgent(target);
+  assert.equal(await host.reads.threadArchiveState(target), null);
 });

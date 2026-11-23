@@ -804,12 +804,16 @@ open, its tail has delivered an item within five minutes
 minutes (`LIVE_SHELL_MAX_AGE_MS`). Past either bound, or after a dropped stream, a
 disconnect, `snapshot-required` or an item the adapter does not know, the next
 reader that needs a current answer opens a new subscription and waits for its one
-fresh snapshot; rows that differ between the two copies count as changed. A remote
-failure to open it is a transient read refusal (`T3TransientReadError`), never a
-host fault. The previous copy is kept: the board's and Settings' live-agent list
-(`listLiveAgents`) answers from it at once while the new one opens in the
-background, with backoff (1 s doubling to 60 s) after failed opens. Decisions never
-read that dated copy.
+fresh snapshot; rows that differ between the two copies count as changed. The
+opening snapshot has the 60-second deadline thread snapshots have; one that
+outlasts it is a `T3RpcError` timeout, which fails only the step that waited, and
+a remote failure to open is a transient read refusal (`T3TransientReadError`).
+Neither is an incompatibility or a host fault. After a failed open the next one
+waits out a backoff (1 s doubling to 60 s); a decision read in between gets a
+bounded `T3ShellBackoffError` refusal instead of another open. The previous copy
+is kept: the board's and Settings' live-agent list (`listLiveAgents`) answers from
+it at once while the new one opens in the background. Decisions never read that
+dated copy.
 
 There is no archived or paired inventory in steady state (Tom, 2026-11-22: "We
 shouldn't need to be reading archived threads at all"). Where this spec says a T3
@@ -876,8 +880,8 @@ coordinator admission, durable owner controls/restarts, or `question.answer`:
 (with a 60-second deadline), and only the retention pass calls it.
 `threadArchiveState` then answers from the live shell (an unarchived thread reads
 live there at once) and from that same walk. The read after a removal is not a
-fresh observation: T3's settled `thread.delete` receipt confirms the removal and
-drops the thread from the walk, so that read answers absent. Without a walk on
+fresh observation: T3's settled `thread.delete` receipt confirms the removal, so
+that read answers absent even before T3's shell streams the removal. Without a walk on
 this connection it is one exact read by id. Do not enable omission of older settled threads or idle children.
 Project-enrichment snapshots marked with `resolvedRepositoryIdentityRoots` can
 carry empty thread arrays; they never replace authoritative shell reads.

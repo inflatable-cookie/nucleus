@@ -73,6 +73,8 @@ const protocolTag = (value: unknown): string | null =>
 // Bounded thread projections can still be megabytes; small commands keep their deadline.
 const METHOD_TIMEOUT_MS: Readonly<Record<string, number>> = {
   "orchestration.subscribeThread": 60_000,
+  // The live shell's opening snapshot of every thread on a busy host.
+  "orchestration.subscribeShell": 60_000,
   // The retention pass's one archived walk: thousands of rows on a busy host.
   "orchestration.getArchivedShellSnapshot": 60_000,
 };
@@ -341,6 +343,10 @@ export class T3RpcClient {
   /** The small-request deadline this client was configured with. */
   get defaultTimeoutMs(): number {
     return this.timeoutMs;
+  }
+  /** The deadline a request of this method gets: a configured one, else the method's own. */
+  deadlineFor(method: string): number {
+    return this.requestTimeoutMs ?? METHOD_TIMEOUT_MS[method] ?? this.timeoutMs;
   }
   get connected(): boolean {
     return this.socket?.readyState === WebSocket.OPEN;

@@ -838,6 +838,8 @@ test("empty enrichment snapshots preserve inventory while missing fields and inc
   await assert.rejects(host.observe(created.id), /activeRunId/);
   assert.equal(await host.observationInventory([created.id]), null);
   server.controls.shellMissingField = "";
+  // The refused shell opens back off; T3's fixed shape is read without waiting it out.
+  host.reads.live.close();
   // A coverage claim that names more history without saying where it went cannot
   // be used by either read: nothing in it bounds or locates the rest.
   server.controls.incompleteThread = true;

@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { T3RpcClient } from "./rpc";
+import { HostReadRefusalError } from "../../core/host";
+import { T3RpcError, type T3RpcClient } from "./rpc";
 import {
   decode,
   project,
@@ -57,8 +58,21 @@ const projectRemoved = z.object({
 export const LIVE_SHELL_QUIET_BOUND_MS = 5 * 60_000;
 /** A subscription this old is replaced by a fresh one, whatever its tail did. */
 export const LIVE_SHELL_MAX_AGE_MS = 15 * 60_000;
-/** The longest a background reopen waits after failed opens. */
-const BACKGROUND_OPEN_BACKOFF_MAX_MS = 60_000;
+/** The longest a reopen waits after failed opens. */
+const OPEN_BACKOFF_MAX_MS = 60_000;
+
+/**
+ * The live shell's last open failed moments ago and its backoff has not run out:
+ * a bounded read refusal (the host stays online), never an incompatibility.
+ */
+export class T3ShellBackoffError extends HostReadRefusalError {
+  constructor(waitMs: number) {
+    super(
+      `T3 shell subscription failed to open; the next attempt is in ${Math.ceil(waitMs / 1000)} s`,
+    );
+    this.name = "T3ShellBackoffError";
+  }
+}
 
 /** One copy of T3's shell: its rows, projects and the sequence it reached. */
 interface ShellCopy {
@@ -108,7 +122,7 @@ export class T3LiveShell {
   private built: LiveShellSnapshot | null = null;
   private generation = 0;
   private openFailures = 0;
-  private nextBackgroundOpenAt = 0;
+  private nextOpenAt = 0;
   private readonly listeners = new Set<(threadId: string | null) => void>();
   /** Authoritative snapshots taken on this host: one per (re)subscription. */
   snapshotsTaken = 0;
@@ -156,6 +170,10 @@ export class T3LiveShell {
       await liveShellTestBarrier();
       if (this.live) return this.snapshot();
     }
+    // After a failed open, the next one waits out its backoff (1 s doubling to 60 s);
+    // a reader in between gets a bounded refusal instead of another open.
+    const wait = this.nextOpenAt - Date.now();
+    if (!this.opening && wait > 0) throw new T3ShellBackoffError(wait);
     await this.open();
     return this.snapshot();
   }
@@ -169,8 +187,7 @@ export class T3LiveShell {
    */
   async currentOrLast(): Promise<LiveShellSnapshot> {
     if (this.live || !this.copy) return this.current();
-    if (Date.now() >= this.nextBackgroundOpenAt)
-      void this.open().catch(() => undefined);
+    if (Date.now() >= this.nextOpenAt) void this.open().catch(() => undefined);
     return this.snapshot();
   }
 
@@ -189,7 +206,7 @@ export class T3LiveShell {
     this.copy = null;
     this.built = null;
     this.openFailures = 0;
-    this.nextBackgroundOpenAt = 0;
+    this.nextOpenAt = 0;
     this.notify(null);
   }
 
@@ -216,12 +233,9 @@ export class T3LiveShell {
 
   private noteOpenFailure(): void {
     this.openFailures++;
-    this.nextBackgroundOpenAt =
+    this.nextOpenAt =
       Date.now() +
-      Math.min(
-        BACKGROUND_OPEN_BACKOFF_MAX_MS,
-        1_000 * 2 ** Math.min(this.openFailures - 1, 6),
-      );
+      Math.min(OPEN_BACKOFF_MAX_MS, 1_000 * 2 ** Math.min(this.openFailures - 1, 6));
   }
 
   private notify(threadId: string | null): void {
@@ -267,7 +281,7 @@ export class T3LiveShell {
         clearTimeout(timer);
         if (error === undefined) {
           this.openFailures = 0;
-          this.nextBackgroundOpenAt = 0;
+          this.nextOpenAt = 0;
           resolve();
         } else {
           this.noteOpenFailure();
@@ -281,10 +295,12 @@ export class T3LiveShell {
         this.lapse();
         finish(error);
       };
+      // A snapshot slower than its deadline is a timeout, like any other T3 call
+      // that outlives its bound: it fails only the step that waited on it.
       const timer = setTimeout(
         () =>
           fail(
-            new T3CompatibilityError("subscribeShell: no synchronized snapshot"),
+            new T3RpcError("timeout", "orchestration.subscribeShell", undefined, "unknown"),
           ),
         this.openTimeoutMs,
       );

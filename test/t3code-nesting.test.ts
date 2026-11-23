@@ -1213,6 +1213,7 @@ test("#1458 a transient read after the parent binding is stored resumes the same
     (error: unknown) => error instanceof HostReadRefusalError,
   );
   server.controls.shellFailures = 0;
+  host.reads.live.close(); // the failed opens' backoff ends with T3's recovery
   const bound = parentOf(host)!;
   assert.ok(bound, "the binding is durable before the launch is sent");
   assert.equal(
@@ -1249,6 +1250,7 @@ test("#1458 a rolled host resumes the prepared launch from durable state without
     (error: unknown) => error instanceof HostReadRefusalError,
   );
   server.controls.shellFailures = 0;
+  host.reads.live.close(); // the failed opens' backoff ends with T3's recovery
   // The unread transient fault is not the rolled host's: it reads cleanly.
   server.controls.threadProjectionErrors = 0;
   const bound = parentOf(host)!;
@@ -1292,6 +1294,7 @@ test("#1458 a prepared binding whose parent T3 shows archived refuses without a 
     host.createAgent(spec("worker-create", "Do the work")),
   );
   server.controls.shellFailures = 0;
+  host.reads.live.close(); // the failed opens' backoff ends with T3's recovery
   const bound = parentOf(host)!;
   const twin = threadProjection(bound.threadId, bound.directory);
   Object.assign(twin.thread, {
@@ -1319,6 +1322,7 @@ test("#1458 a prepared binding whose parent id is held by another checkout refus
     host.createAgent(spec("worker-create", "Do the work")),
   );
   server.controls.shellFailures = 0;
+  host.reads.live.close(); // the failed opens' backoff ends with T3's recovery
   const bound = parentOf(host)!;
   const twin = threadProjection(bound.threadId, "/synthetic/other-checkout");
   Object.assign(twin.thread, {
@@ -1386,6 +1390,7 @@ async function preparedBinding(t: TestContext) {
     (error: unknown) => error instanceof HostReadRefusalError,
   );
   f.server.controls.shellFailures = 0;
+  f.host.reads.live.close(); // the failed opens' backoff ends with T3's recovery
   const bound = parentOf(f.host)!;
   assert.ok(bound, "the binding is durable before the launch");
   assert.equal(commandOf(f.server, "orchestration.launchThread"), undefined);
