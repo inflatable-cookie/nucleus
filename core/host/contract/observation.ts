@@ -1,3 +1,5 @@
+import type { HostObservationOptions } from "../../../shared/host";
+
 export interface AgentObservation {
   id: string;
   workspaceId: string | null;
@@ -37,7 +39,10 @@ import type {
 
 /** What the host reports about its threads and the processes behind them: one thread observation, an inventory of them, live agents, timeline pages, the host process table and a worktree validation scan. */
 export interface HostObservation {
-  observe(agentId: string): Promise<AgentObservation>;
+  observe(
+    agentId: string,
+    options?: HostObservationOptions,
+  ): Promise<AgentObservation>;
   /**
    * Audit A6: one complete labelled inventory of Queue-created threads, answering
    * the named identities wherever a list entry carries every field `observe`

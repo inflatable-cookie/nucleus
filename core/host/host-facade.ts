@@ -14,6 +14,7 @@ import type {
   HostLiveAgent,
   HostMessage,
   HostObservation,
+  HostObservationOptions,
   HostTimelineEntry,
   HostTimelinePage,
   HostWorkspaceCatalog,
@@ -171,8 +172,18 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     });
   }
 
-  observe(id: AgentId): Promise<HostObservation> {
-    return this.#route(id, (adapter, nativeId) => adapter.observe(nativeId));
+  observe(
+    id: AgentId,
+    options?: HostObservationOptions,
+  ): Promise<HostObservation> {
+    return this.#route(id, (adapter, nativeId) =>
+      options ? adapter.observe(nativeId, options) : adapter.observe(nativeId),
+    );
+  }
+
+  /** The host read that may authorize release of a participant's lease. */
+  observeForRelease(id: AgentId): Promise<HostObservation> {
+    return this.observe(id, { fresh: true });
   }
 
   observationInventory(

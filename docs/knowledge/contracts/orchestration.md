@@ -3879,9 +3879,10 @@ after the task finishes.
   A callback wake with pending run-bound cleanup can prefetch participant
   evidence on the task's host before entering the lane, even while the task is
   still reviewing. A prefetched busy observation can keep an unchanged run's
-  lease busy. Release and other lifecycle effects require a fresh observation
-  in the task lane. The fresh reads for task wakes and reported-run releases
-  bypass the host's idle-observation cache.
+  lease busy. The release observation for a reported run, a reviewer pending
+  replacement, or a run settling on inactivity takes a fresh per-thread host
+  read. Busy sweep inventory can keep a lease held. The release read bypasses
+  the idle cache and pass inventory, as well as T3's held thread projection.
   Missing evidence leaves the settlement pending for a later pass. A skip is
   final for an unsafe root. Records cover runs in queue-owned workspaces since
   this rule took effect.

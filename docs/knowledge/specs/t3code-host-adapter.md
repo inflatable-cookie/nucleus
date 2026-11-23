@@ -357,7 +357,7 @@ already present.
 | Dispose a child's wake | `delegated_task.completion-delivery.dispose` naming `node:delegated-task:<commandId>` | `completionDelivery.state: disposed`; sent after the create and after every follow-up dispatch |
 | Hold and release the parent | `message.dispatch` (one re-entry prompt) and the ACP session's `release` | The parent's run is live exactly while a child may be created; a finished task's held turn is released at once and the parent archived |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
-| Observe | `orchestration.subscribeShell` and a bounded `orchestration.subscribeThread` | Fresh state, including active run and pending request, from a snapshot whose timeline window never makes a long thread unobservable |
+| Observe | `orchestration.subscribeShell` and a bounded `orchestration.subscribeThread` | Reads for lease release use an exact thread snapshot for active runs and pending requests, even while the shell update is pending. Other reads can reuse the held projection. |
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |

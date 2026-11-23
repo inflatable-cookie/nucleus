@@ -702,6 +702,8 @@ export async function t3Fake(t: TestContext, directory: string) {
     shellFailures: 0,
     /** Delay before a `subscribeShell` answers its opening snapshot. */
     slowShellMs: 0,
+    /** Delay live shell deltas while exact thread reads continue. */
+    holdShellUpdates: false,
     /** Methods this fake receives and never answers, as a wedged T3 does. */
     stalledMethods: [] as string[],
     /** Threads whose projection read answers `ThreadNotFoundError` though the shell lists them. */
@@ -1081,7 +1083,7 @@ export async function t3Fake(t: TestContext, directory: string) {
       ]);
     /** Send each held shell subscription the rows that changed since it last heard. */
     const publishShell = () => {
-      if (!shellSubscribers.size || !sockets.has(socket)) return;
+      if (controls.holdShellUpdates || !shellSubscribers.size || !sockets.has(socket)) return;
       let lists: { active: Value[]; archived: Value[] };
       try {
         lists = shellLists();

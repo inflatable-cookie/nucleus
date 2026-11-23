@@ -17867,6 +17867,49 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
       }
     });
   }
+  for (const replacement of [true, false]) {
+    const scenario = replacement ? "pending reviewer replacement" : "sweep of an exhausted reviewer";
+    await t.test(`${scenario} requires fresh inactivity`, async () => {
+      const admission = replacement ? new Admission({ startIntervalMs: 0 }) : undefined;
+      const f = fixture(false, false, undefined, false, admission);
+      try {
+        await f.engine.wake();
+        const run = f.run();
+        assert.ok(run?.agentId && run.hostId, f.current().reason);
+        const agentId = run.agentId;
+        f.idle(agentId, run.workspaceId);
+        const idle = f.states.get(agentId)!;
+        const cached = replacement ? idle : { ...idle, error: "quota_exceeded" };
+        let inventory: ReadonlyMap<string, AgentObservation> | undefined;
+
+        if (replacement) {
+          f.adapter.originAgent = async (id) => ({
+            id, workspaceId: run.workspaceId, title: "Reviewer", archived: false,
+          });
+          f.adapter.deleteAgent = async () => assert.fail("replacement must retain the thread");
+          const key = f.store.threadArchiveKey(agentId, run.hostId);
+          assert.ok(key);
+          f.store.putThreadArchiveEffect(key, agentId, {
+            status: "ready", at: new Date().toISOString(),
+          });
+          await f.engine.withHost(run.hostId, () => f.engine.host.observe(agentId));
+        } else {
+          inventory = new Map([[agentId, cached]]);
+        }
+
+        f.states.set(agentId, { ...idle, status: "running", active: true, activeTurnId: "new-turn" });
+        await f.engine.resolution.observe(inventory);
+        assert.equal(f.store.run(run.id)?.released, false);
+        assert.equal(f.current().resolution.currentRunId, run.id);
+
+        f.states.set(agentId, cached);
+        await f.engine.resolution.observe(inventory);
+        assert.equal(f.store.run(run.id)?.released, true, f.current().reason);
+      } finally {
+        await f.close();
+      }
+    });
+  }
 });
 
 test("released result remains an overdue wait until the next run is admitted", async (t) => {
@@ -17923,24 +17966,16 @@ test("busy reported run keeps observing until it releases", async (t) => {
     await f.engine.wake();
     const run = f.run(),
       token = f.tokens.get(run.id)!;
+    f.engine.completionFollowUps.stop();
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
     let observations = 0;
     const observe = f.adapter.observe.bind(f.adapter);
     f.adapter.observe = async (id) => {
-      if (id === run.agentId) {
-        observations++;
-        await new Promise((resolve) => setTimeout(resolve, 15));
-      }
+      if (id === run.agentId) observations++;
       return observe(id);
     };
-    const calls: Record<string, number> = {};
-    const methods = f.adapter as unknown as Record<string, unknown>;
-    for (const [name, method] of Object.entries(methods))
-      if (typeof method === "function")
-        methods[name] = (...args: unknown[]) => {
-          calls[name] = (calls[name] ?? 0) + 1;
-          return method.apply(f.adapter, args);
-        };
-    f.engine.completionFollowUpDelays = [10, 20, 30];
+    const delays = [10, 20, 30];
+    f.engine.completionFollowUpDelays = delays;
     f.engine.resolution.complete(
       {
         eventId: "busy-review-result",
@@ -17955,15 +17990,16 @@ test("busy reported run keeps observing until it releases", async (t) => {
       token,
     );
     await f.engine.wakeTask(f.task.id);
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    assert.equal(f.store.run(run.id)?.released, false);
-    assert.ok(
-      observations > 4,
-      "observation continues after the initial backoff",
-    );
+    assert.equal(observations, 1);
+    for (const [index, delay] of delays.entries()) {
+      t.mock.timers.tick(delay);
+      await f.engine.quiesce();
+      assert.equal(observations, index + 2);
+      assert.equal(f.store.run(run.id)?.released, false);
+    }
     f.idle(run.agentId!, run.workspaceId!);
-    for (let i = 0; i < 50 && !f.store.run(run.id)?.released; i++)
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    t.mock.timers.tick(30);
+    await f.engine.quiesce();
     assert.equal(
       f.store.run(run.id)?.released,
       true,
@@ -17971,6 +18007,7 @@ test("busy reported run keeps observing until it releases", async (t) => {
     );
     t.diagnostic(`continued observations while busy: ${observations}`);
   } finally {
+    t.mock.timers.reset();
     await f.close();
   }
 });

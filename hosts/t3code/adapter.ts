@@ -7,6 +7,7 @@ import type {
   HostAgentSpec,
   HostWorkspaceSpec,
   HostMessage,
+  HostObservationOptions,
   HostGuardedMessage,
   HostSendGuard,
   HostAsk,
@@ -643,8 +644,8 @@ export class T3CodeHost implements Host {
   async listLiveAgents() {
     return await this.reads.listLiveAgents();
   }
-  async observe(id: string) {
-    return await this.reads.observe(id);
+  async observe(id: string, options?: HostObservationOptions) {
+    return await this.reads.observe(id, options);
   }
   async originAgent(id: string) {
     this.requireConnection();

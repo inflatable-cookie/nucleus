@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { Task } from "../../shared/contracts";
-import type { HostThread, HostTimelinePage } from "../../shared/host";
+import type {
+  HostObservationOptions,
+  HostThread,
+  HostTimelinePage,
+} from "../../shared/host";
 import {
   hostFailureRefusalDetail,
   HostReadRefusalError,
@@ -1180,10 +1184,14 @@ export class T3Reads {
     };
   }
 
-  async observe(id: string): Promise<T3ThreadObservation> {
+  async observe(
+    id: string,
+    options?: HostObservationOptions,
+  ): Promise<T3ThreadObservation> {
     this.core.requireConnection();
+    const fresh = options?.fresh === true;
     const observed = this.observes(id);
-    const native = await this.threadRow(id);
+    const native = fresh ? undefined : await this.threadRow(id);
     if (native && (!observed || native.archivedAt || native.deletedAt)) {
       const record = agentRecord(this.core.state.read(), id);
       const active = !!native.activeRunId || activeStatuses.has(native.status);
@@ -1227,12 +1235,17 @@ export class T3Reads {
     let detail: Projection;
     try {
       detail =
-        native && observed
+        !fresh && native && observed
           ? await this.readProjection(id, "observation")
-          : await this.readDirectProjection(id, "observation");
+          : await this.readDirectProjection(id, "observation", fresh);
     } catch (error) {
-      if (isThreadNotFoundRpcError(error))
-        return await this.observeThreadList(id);
+      if (isThreadNotFoundRpcError(error)) {
+        if (!fresh) return await this.observeThreadList(id);
+        const listed = this.live.row(id);
+        if (listed && !listed.archivedAt && !listed.deletedAt)
+          throw new T3TransientReadError(error);
+        throw new T3UnobservedThreadError(id);
+      }
       if (isTransientT3ReadRpcError(error))
         throw new T3TransientReadError(error);
       throw error;
@@ -1240,9 +1253,12 @@ export class T3Reads {
     const { thread } = detail;
     const shellNative =
       native ??
-      (thread.archivedAt || thread.deletedAt
+      (fresh || thread.archivedAt || thread.deletedAt
         ? undefined
         : await this.shellRow(id));
+    // A fresh projection carries live turns and requests even while its shell
+    // update is pending. Shell metadata can still describe the last host error.
+    const shellMetadata = fresh ? this.live.row(id) : shellNative;
     const record = agentRecord(this.core.state.read(), id);
     const active = detail.runs.find((r) => activeStatuses.has(r.status));
     const pending = detail.runtimeRequests.filter(
@@ -1273,7 +1289,7 @@ export class T3Reads {
         thread.archivedAt || thread.deletedAt
           ? false
           : pending.length > 0 || !!shellNative?.pendingRuntimeRequest,
-      error: shellNative?.lastError ?? "",
+      error: shellMetadata?.lastError ?? "",
       model: thread.modelSelection.model,
       provider: thread.modelSelection.instanceId,
       modeId: thread.runtimeMode ?? null,
@@ -1286,7 +1302,7 @@ export class T3Reads {
         thread.archivedAt || thread.deletedAt
           ? null
           : (active?.startedAt ?? null),
-      lastUserMessageAt: shellNative?.latestUserMessageAt ?? null,
+      lastUserMessageAt: shellMetadata?.latestUserMessageAt ?? null,
       labels: record?.labels ?? {},
       pendingPermissionKinds:
         thread.archivedAt || thread.deletedAt

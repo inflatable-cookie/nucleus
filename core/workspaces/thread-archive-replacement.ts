@@ -47,7 +47,9 @@ export async function archiveReplacedReviewer(
   const key = store.threadArchiveKey(run.agentId, run.hostId);
   if (!key || !adapter.originAgent) return false;
   const stoppedAndIdle = async (): Promise<boolean> => {
-    const state = await new HostFacade({ adapter }).observe(run.agentId!);
+    const state = await new HostFacade({ adapter }).observeForRelease(
+      run.agentId!,
+    );
     return (
       state.id === run.agentId &&
       state.workspaceId === run.workspaceId &&

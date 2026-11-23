@@ -14,6 +14,7 @@
  */
 import { createHash } from "node:crypto";
 import type { Adapter, OriginAgent } from "./adapter";
+import type { HostObservationOptions } from "../../shared/host";
 import { isTransportFailure } from "../../shared/transport";
 import { HostCallAbandonedError } from "./errors";
 import {
@@ -1286,7 +1287,12 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     if (fn) overrides[name] = fn;
   };
 
-  set("observe", (id: string) => admission.observe(id, () => raw.observe(id)));
+  set("observe", (id: string, options?: HostObservationOptions) => {
+    if (options?.fresh) admission.invalidate(id);
+    return admission.observe(id, () =>
+      options ? raw.observe(id, options) : raw.observe(id),
+    );
+  });
   // Spec 058 slice 1: establishing a run's usage stream is one observation-class Paseo call.
   set(
     "subscribeRunUsage",

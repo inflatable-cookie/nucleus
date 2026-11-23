@@ -34,7 +34,6 @@ import {
 import type { Resolution } from "../resolution";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 import { hostFaultHost, reportHostCallFailure } from "../host/adapter-routing";
-import { admissionOf } from "../host/admission";
 import { HostReadRefusalError } from "../host";
 import { readHostReadTransientEpisode } from "./host-read-transient";
 import { runsUnchangedSince } from "./observation-advance";
@@ -170,9 +169,8 @@ export class Observation {
   }
   /**
    * Audit A6: `inventory` is the pass's one complete labelled Paseo inventory.
-   * An identity it answers is used as read; anything it does not answer — absent,
-   * partial or unreadable — takes the narrow fresh per-agent observation, so a
-   * list can never turn missing evidence into inactivity.
+   * A busy inventory observation can keep a lease held. Inactivity and
+   * reported results go through the fresh per-agent release read.
    */
   async observe(
     inventory?: ReadonlyMap<string, AgentObservation> | null,
@@ -323,23 +321,23 @@ export class Observation {
         // Its new turn needs a narrow read started against the delivered state.
         let state: AgentObservation;
         try {
-          const freshReadRequired = Boolean(completedTaskId || run.completion);
-          const cached =
-            freshReadRequired || reviewInProgress(run)
+          const inventoryState =
+            completedTaskId || run.completion || reviewInProgress(run)
               ? null
               : (inventory?.get(run.agentId) ?? null);
-          if (cached) {
-            state = cached;
+          if (
+            inventoryState &&
+            !inventoryState.archived &&
+            active(inventoryState)
+          ) {
+            state = inventoryState;
           } else {
             const read = await boundedRead(
               "retained run observation",
               () =>
-                this.resolution.onTaskHost(run, () => {
-                  // Prefetch can populate the host cache with an idle sample.
-                  if (freshReadRequired)
-                    admissionOf(this.adapter)?.invalidate(run.agentId!);
-                  return this.resolution.host.observe(run.agentId!);
-                }),
+                this.resolution.onTaskHost(run, () =>
+                  this.resolution.host.observeForRelease(run.agentId!),
+                ),
               this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
             );
             if (read.state === "unknown") continue;
@@ -347,6 +345,7 @@ export class Observation {
           }
         } catch (error) {
           if (
+            !(error instanceof HostReadRefusalError) &&
             this.settleUnobservableCompletion(run, observationStartedAt, error)
           )
             continue;

@@ -3,6 +3,11 @@ import type { NucleusProfile } from "./profiles";
 import type { HostVocabulary } from "./profile-vocabulary";
 import type { Profile, Task } from "./contracts";
 
+export interface HostObservationOptions {
+  /** Read the host directly, bypassing reusable observations. */
+  fresh?: boolean;
+}
+
 /**
  * One agent application Nucleus drives (Paseo today, others later). The host
  * reports what it can run; Nucleus owns the profiles that choose from that
@@ -83,7 +88,7 @@ export interface Host {
   findAgents(labels: Record<string, string>): Promise<AgentRef[]>;
   originAgent(id: AgentId): Promise<OriginAgent | null>;
   /** One agent's native state; an unreadable agent is a refused read, never an idle one. */
-  observe(id: AgentId): Promise<HostObservation>;
+  observe(id: AgentId, options?: HostObservationOptions): Promise<HostObservation>;
   /** `null` means the inventory could not be walked to its end; a missing identity is unknown, not inactive. */
   observationInventory(
     ids: readonly AgentId[],

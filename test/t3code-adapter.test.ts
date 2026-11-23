@@ -828,6 +828,24 @@ test("observations distinguish idle, active run, permissions, archived and expli
   );
 });
 
+test("a fresh T3 observation reads through a pending shell update", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const projection = server.threads.get(created.id)!;
+  projection.runs = [];
+  assert.equal((await host.observe(created.id)).active, false);
+
+  server.controls.holdShellUpdates = true;
+  projection.runs = [syntheticRun(created.id, 2, {
+    id: "new-turn", status: "running", completedAt: null,
+  })];
+  assert.equal((await host.observe(created.id)).active, false);
+
+  const fresh = await host.observe(created.id, { fresh: true });
+  assert.equal(fresh.active, true);
+  assert.equal(fresh.activeTurnId, "new-turn");
+});
+
 test("empty enrichment snapshots preserve inventory while missing fields and incomplete reads stay unknown", async (t) => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
