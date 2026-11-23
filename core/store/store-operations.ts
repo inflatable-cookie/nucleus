@@ -10,11 +10,7 @@ import {
   type OperationAcceptance,
   type QueueOperation,
 } from "../../shared/operations";
-import {
-  StoreCore,
-  now,
-  operationIdForKey,
-} from "./store-core";
+import { StoreCore, now, operationIdForKey } from "./store-core";
 import { hostReadTransientKey } from "../recovery/host-read-transient";
 
 interface OperationTaskAccess {

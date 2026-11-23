@@ -131,7 +131,8 @@ export class CoordinatorPass {
     if (!proof || this.resolution.stopped() || this.resolution.startsNoRuns())
       return "none";
     if (
-      this.episode.goneReleasesAtHead(t, proof.head) >= DEAD_PARTICIPANT_ATTEMPTS
+      this.episode.goneReleasesAtHead(t, proof.head) >=
+      DEAD_PARTICIPANT_ATTEMPTS
     ) {
       const latest = this.store.task(t.id);
       const reason = `${deadParticipantDetail(proof)}. Nucleus already replaced this coordinator ${DEAD_PARTICIPANT_ATTEMPTS} times at this head; use run.start coordinator fresh replacing=${run.id} or run.release run=${run.id}`;
@@ -151,23 +152,34 @@ export class CoordinatorPass {
    * for `COORDINATOR_UNOBSERVED_BOUND_MS` (outages and downtime excluded), the
    * observation stops waiting and escalates. Returns whether it waits.
    */
-  private deferCoordinatorObservation(t: Task, run: Run, error: unknown): boolean {
+  private deferCoordinatorObservation(
+    t: Task,
+    run: Run,
+    error: unknown,
+  ): boolean {
     const since = run.lastObservedAt ?? run.createdAt;
     if (
       this.resolution.hostAvailable(t, run) &&
       waitAgeMs(this.store, t.hostId, since) >= COORDINATOR_UNOBSERVED_BOUND_MS
     )
       return false;
-    if (
-      !coordinatorObservationDeferral(this.store.eventsAll(t.id), run)
-    ) {
+    if (!coordinatorObservationDeferral(this.store.eventsAll(t.id), run)) {
       const detail: CoordinatorObservationDeferral = {
         runId: run.id,
         since,
-        until: new Date(Date.parse(since) + COORDINATOR_UNOBSERVED_BOUND_MS).toISOString(),
-        cause: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+        until: new Date(
+          Date.parse(since) + COORDINATOR_UNOBSERVED_BOUND_MS,
+        ).toISOString(),
+        cause: (error instanceof Error ? error.message : String(error)).slice(
+          0,
+          300,
+        ),
       };
-      this.store.event(t.id, COORDINATOR_OBSERVATION_DEFERRED_EVENT, JSON.stringify(detail));
+      this.store.event(
+        t.id,
+        COORDINATOR_OBSERVATION_DEFERRED_EVENT,
+        JSON.stringify(detail),
+      );
     }
     return true;
   }
@@ -191,8 +203,7 @@ export class CoordinatorPass {
           (run) => run.mergeRetirement && run.completion && !run.released,
         )) {
         const snapshot = JSON.stringify(retired);
-        if (!(await this.resolution.executionLease(t, false, true)))
-          continue;
+        if (!(await this.resolution.executionLease(t, false, true))) continue;
         this.store.transaction(() => {
           const current = this.store.task(t.id),
             latest = this.store.run(retired.id);
@@ -555,11 +566,10 @@ export class CoordinatorPass {
       }
       if (
         !run ||
-        (run.released && (
-          !run.completion ||
-          resultApplied(this.store, t.id, run.id) ||
-          this.episode.bindingFrom(run, incident)?.status !== "pending"
-        ))
+        (run.released &&
+          (!run.completion ||
+            resultApplied(this.store, t.id, run.id) ||
+            this.episode.bindingFrom(run, incident)?.status !== "pending"))
       )
         continue;
       try {
@@ -662,21 +672,34 @@ export class CoordinatorPass {
           )
             continue;
           state = observation.kind === "observed" ? observation.state : null;
-          if (state && (state.id !== agentId || state.workspaceId !== run.workspaceId))
+          if (
+            state &&
+            (state.id !== agentId || state.workspaceId !== run.workspaceId)
+          )
             throw Error("Recovery coordinator workspace changed");
-          const idle = state !== null &&
-            !state.active && !state.activeTurnId && !state.permissions &&
+          const idle =
+            state !== null &&
+            !state.active &&
+            !state.activeTurnId &&
+            !state.permissions &&
             ["idle", "error", "closed"].includes(state.status);
           const reported = timestampCompletion(this.store, run, at);
-          const ready = completedTurnCanRelease(reported, observation, at, this.resolution.graceMs);
+          const ready = completedTurnCanRelease(
+            reported,
+            observation,
+            at,
+            this.resolution.graceMs,
+          );
           const changed = state !== null || reported !== run;
-          run = state ? {
-            ...reported,
-            active: !idle,
-            lastObservedAt: at,
-            idleSince: idle ? (run.idleSince ?? at) : null,
-            participantActivity: runActivityObservation(run, state, at),
-          } : reported;
+          run = state
+            ? {
+                ...reported,
+                active: !idle,
+                lastObservedAt: at,
+                idleSince: idle ? (run.idleSince ?? at) : null,
+                participantActivity: runActivityObservation(run, state, at),
+              }
+            : reported;
           if (changed) this.store.putRun(run);
           if (this.resolution.startsNoRuns()) continue;
           if (reviewFenceHoldsCoordinators(t, this.store)) {
@@ -710,7 +733,11 @@ export class CoordinatorPass {
               const failedHost = hostFaultHost(error);
               if (failedHost || isTransportFailure(error)) {
                 if (failedHost)
-                  reportHostCallFailure(this.resolution.adapter, failedHost, error);
+                  reportHostCallFailure(
+                    this.resolution.adapter,
+                    failedHost,
+                    error,
+                  );
                 if (this.deferCoordinatorObservation(t, run, error)) continue;
                 throw error;
               }
@@ -725,7 +752,11 @@ export class CoordinatorPass {
             }
           } else if (
             (!run.completion &&
-              (await this.resolution.resumeTransientProviderThread(t, run, state))) ||
+              (await this.resolution.resumeTransientProviderThread(
+                t,
+                run,
+                state,
+              ))) ||
             !idle
           )
             continue;

@@ -46,7 +46,6 @@ import {
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
 
-
 import { z } from "zod";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { AcpSessionSurface } from "../shared/acp/surface";
@@ -1346,12 +1345,7 @@ export class Engine {
           "performTaskControl",
           "store",
         ],
-        [
-          "attention",
-          "openPlannerEscalation",
-          "recovery",
-          "update",
-        ],
+        ["attention", "openPlannerEscalation", "recovery", "update"],
       ),
     );
     this.pausedStops = new PausedStops(this);
@@ -1647,7 +1641,8 @@ export class Engine {
       ? async () => {
           await settleTaskQuantum(() =>
             runInTaskQuantumScope(
-              this.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS,
+              this.resolution.quantumReadBudgetMs ??
+                QUANTUM_TOTAL_READ_BUDGET_MS,
               () => Promise.resolve(work()),
             ),
           );
@@ -2721,9 +2716,12 @@ export class Engine {
     const { version } = this.store.task(taskId);
     const apply = await admit();
     if (typeof apply !== "function") return apply;
-    const current = () => this.requireOwnerControlCurrent(
-      this.store.task(taskId), version, "Task changed during restart",
-    );
+    const current = () =>
+      this.requireOwnerControlCurrent(
+        this.store.task(taskId),
+        version,
+        "Task changed during restart",
+      );
     current();
     await displacement.cancel();
     current();

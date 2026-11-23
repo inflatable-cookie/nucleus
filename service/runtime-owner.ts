@@ -129,7 +129,10 @@ import type {
 import { taskControlChanges } from "../shared/task-control-changes";
 import type { ExplicitResolution } from "../shared/schema/task-control";
 import { OperationNotFoundError } from "../core/planning/operations";
-import { runInTaskQuantumScope, settleTaskQuantum } from "../core/scheduling/pass-snapshot";
+import {
+  runInTaskQuantumScope,
+  settleTaskQuantum,
+} from "../core/scheduling/pass-snapshot";
 import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import { previewUnreviewedCloseout } from "../core/verbs/explicit-integration";
 import {
@@ -1690,7 +1693,7 @@ export class QueueRuntime {
     return this.board.uiSnapshot(input);
   }
   async t3BoardTheme() {
-    return await this.t3Host?.boardTheme() ?? null;
+    return (await this.t3Host?.boardTheme()) ?? null;
   }
 
   /**
@@ -1723,7 +1726,10 @@ export class QueueRuntime {
     const taskId = input.taskId
       ? this.store.resolveTaskId(input.taskId)
       : this.store.taskIdByNumber(input);
-    const proof = await previewUnreviewedCloseout(this.engine, this.store.task(taskId));
+    const proof = await previewUnreviewedCloseout(
+      this.engine,
+      this.store.task(taskId),
+    );
     return this.board.taskNext({ ...input, taskId }, proof);
   }
   outcome(input: {
@@ -2377,7 +2383,9 @@ export class QueueRuntime {
     );
   }
 
-  private taskControlRetry(taskId: string): import("../shared/contracts").TaskControlTask {
+  private taskControlRetry(
+    taskId: string,
+  ): import("../shared/contracts").TaskControlTask {
     return {
       ...this.store.task(this.store.resolveTaskId(taskId)),
       explicitResolution: {
@@ -2428,10 +2436,12 @@ export class QueueRuntime {
       expectedVersion: payload.control.version,
     });
     if ("backpressured" in acceptance) return acceptance;
-    const operation = await this.engine.awaitOperation(acceptance.operation.id).catch((error) => {
-      if (error instanceof OperationNotFoundError) return null;
-      throw error;
-    });
+    const operation = await this.engine
+      .awaitOperation(acceptance.operation.id)
+      .catch((error) => {
+        if (error instanceof OperationNotFoundError) return null;
+        throw error;
+      });
     if (!operation) return this.taskControlRetry(input.taskId);
     if (operation.state === "succeeded" && operation.result?.taskId)
       // A superseded external-effect action reports the same deprecation note as

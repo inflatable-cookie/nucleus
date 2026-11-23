@@ -224,19 +224,20 @@ export class TaskQuantum {
     const budgetMs =
       this.context.resolution.quantumReadBudgetMs ??
       QUANTUM_TOTAL_READ_BUDGET_MS;
-    const visit = () => runInTaskQuantumScope(budgetMs, async () => {
-      const task = this.reconcileProfileAdmission(
-        this.context.store.task(taskId),
-      );
-      const quantum = { pausedForPrerequisiteWait: false };
-      // One pass, one worktree-validation scan: every read this quantum makes for
-      // the same task worktree and selector argv shares it, and the next quantum
-      // reads again (task 450).
-      this.context.resolution.beginValidationScanPass();
-      await this.context.quantumSteps(taskId, task, quantum);
-      if (!quantum.pausedForPrerequisiteWait)
-        await this.context.quantumFinish(taskId);
-    });
+    const visit = () =>
+      runInTaskQuantumScope(budgetMs, async () => {
+        const task = this.reconcileProfileAdmission(
+          this.context.store.task(taskId),
+        );
+        const quantum = { pausedForPrerequisiteWait: false };
+        // One pass, one worktree-validation scan: every read this quantum makes for
+        // the same task worktree and selector argv shares it, and the next quantum
+        // reads again (task 450).
+        this.context.resolution.beginValidationScanPass();
+        await this.context.quantumSteps(taskId, task, quantum);
+        if (!quantum.pausedForPrerequisiteWait)
+          await this.context.quantumFinish(taskId);
+      });
     if (currentTaskQuantumScope()) return visit();
     await settleTaskQuantum(visit);
   }
@@ -696,7 +697,11 @@ export class TaskQuantum {
         this.context.noteStepFailure(taskId, error);
       }
     }
-    await archiveFinishedThreads(this.context.store, this.context.adapter, taskId).catch((error) => {
+    await archiveFinishedThreads(
+      this.context.store,
+      this.context.adapter,
+      taskId,
+    ).catch((error) => {
       propagateQuantumDeferral(error);
       this.context.store.event(
         taskId,

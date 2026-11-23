@@ -291,21 +291,24 @@ export type CoveredObservationSnapshot = {
 
 /** A matching observation still needs process proof before it can settle tools. */
 export function isTerminalParticipant(
-  observation: Partial<
-    Pick<
-      HostObservation,
-      "active" | "activeTurnId" | "permissions" | "status" | "archived"
-    >
-  > | null | undefined,
+  observation:
+    | Partial<
+        Pick<
+          HostObservation,
+          "active" | "activeTurnId" | "permissions" | "status" | "archived"
+        >
+      >
+    | null
+    | undefined,
 ): boolean {
   return Boolean(
     observation &&
-    observation.active === false &&
-    observation.activeTurnId === null &&
-    observation.permissions === false &&
-    (observation.archived === true ||
-      observation.status === "closed" ||
-      observation.status === "gone"),
+      observation.active === false &&
+      observation.activeTurnId === null &&
+      observation.permissions === false &&
+      (observation.archived === true ||
+        observation.status === "closed" ||
+        observation.status === "gone"),
   );
 }
 
@@ -400,11 +403,14 @@ export class PassSnapshot {
     Map<string, HostObservation>
   >();
   private readonly processReads = new Map<string, Promise<PassProcessRead>>();
-  private readonly directProcessReads = new Map<string, {
-    read: Promise<PassProcessRead>;
-    beforeScan: ReadonlyMap<string, ObservedTurnState>;
-    invalidated?: true;
-  }>();
+  private readonly directProcessReads = new Map<
+    string,
+    {
+      read: Promise<PassProcessRead>;
+      beforeScan: ReadonlyMap<string, ObservedTurnState>;
+      invalidated?: true;
+    }
+  >();
   private readonly timelineReads = new Map<
     string,
     Promise<BoundedReadResult<HostTimelineEntry[] | null>>
@@ -596,7 +602,8 @@ export class PassSnapshot {
         if (cached.invalidated)
           return {
             state: "unknown",
-            reason: "the direct process listing was invalidated; waiting for the next host pass",
+            reason:
+              "the direct process listing was invalidated; waiting for the next host pass",
             capturedAt: scan.capturedAt,
             fromPassSnapshot: true,
             deferred: true,
@@ -607,7 +614,9 @@ export class PassSnapshot {
           directBeforeScan: cached.beforeScan.get(agentId) ?? null,
         };
       });
-    const beforeScan = new Map<string, ObservedTurnState>(this.hostInventories.get(key));
+    const beforeScan = new Map<string, ObservedTurnState>(
+      this.hostInventories.get(key),
+    );
     if (participant) beforeScan.set(agentId, participant);
     const listing = read();
     this.directProcessReads.set(key, { read: listing, beforeScan });
@@ -720,8 +729,7 @@ export class PassSnapshot {
     const agentKey = `${hostKey}\0${agentId}`;
     const entries = this.timelinePageReads.get(agentKey) ?? [];
     const compatible = (entry: CachedTimelinePageEntry): boolean => {
-      if (options.cacheOnly && entry.settled?.state === "unknown")
-        return true;
+      if (options.cacheOnly && entry.settled?.state === "unknown") return true;
       if (options.provenTerminal && !entry.settled?.provenTerminal)
         return false;
       if (

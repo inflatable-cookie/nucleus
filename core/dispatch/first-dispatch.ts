@@ -1,4 +1,7 @@
-import { isQuantumDeadlineExceeded, propagateQuantumDeferral } from "../scheduling/pass-snapshot";
+import {
+  isQuantumDeadlineExceeded,
+  propagateQuantumDeferral,
+} from "../scheduling/pass-snapshot";
 import {
   effectiveDefaultHostKind,
   type HostKind,

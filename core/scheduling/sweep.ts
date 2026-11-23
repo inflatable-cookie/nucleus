@@ -538,10 +538,12 @@ export class Sweep {
       if (proofRetries.length && passSnapshot && !this.engine.stopped) {
         const retries = proofRetries.flatMap((operation) =>
           operation.taskId && passSnapshot.hostPassCompleted(operation.hostId)
-            ? [this.boundTaskQuantum(
-                this.engine.scheduleOperation(operation.id, passSnapshot),
-                operation.taskId,
-              )]
+            ? [
+                this.boundTaskQuantum(
+                  this.engine.scheduleOperation(operation.id, passSnapshot),
+                  operation.taskId,
+                ),
+              ]
             : [],
         );
         if (retries.length) await Promise.all(retries);

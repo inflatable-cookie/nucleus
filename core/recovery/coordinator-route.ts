@@ -1,4 +1,7 @@
-import { isQuantumDeadlineExceeded, propagateQuantumDeferral } from "../scheduling/pass-snapshot";
+import {
+  isQuantumDeadlineExceeded,
+  propagateQuantumDeferral,
+} from "../scheduling/pass-snapshot";
 import { recordPromptSize } from "../dispatch/prompt-text/measure";
 import {
   isMechanicalStallStop,
@@ -1059,13 +1062,22 @@ export class CoordinatorRoute {
                 active: false,
               });
               if (current.prHead) {
-                const key = requiredCheckPollMetaKey(current.id, current.prHead);
-                const poll = this.store.getMeta<{ recoveryRunId?: string }>(key);
+                const key = requiredCheckPollMetaKey(
+                  current.id,
+                  current.prHead,
+                );
+                const poll = this.store.getMeta<{ recoveryRunId?: string }>(
+                  key,
+                );
                 if (poll?.recoveryRunId === run.id)
                   this.store.setMeta(key, { ...poll, recoveryRunId: null });
               }
             }
-            if (current.resolution.recovery.id !== beforeRoute.resolution.recovery?.id || sending)
+            if (
+              current.resolution.recovery.id !==
+                beforeRoute.resolution.recovery?.id ||
+              sending
+            )
               this.resolution.update(current, {
                 recovery: beforeRoute.resolution.recovery,
                 recoveryActive: beforeRoute.resolution.recoveryActive,

@@ -74,8 +74,12 @@ export async function sendGuardedMerge(
     if (isQuantumDeadlineExceeded(error)) {
       // Restore only a reservation made by this call, while it still holds
       // the exact task version. Older or potentially sent intents stay bound.
-      if (error.preSend && before.version !== task.version &&
-          latest.version === task.version && matchesCurrent(latest))
+      if (
+        error.preSend &&
+        before.version !== task.version &&
+        latest.version === task.version &&
+        matchesCurrent(latest)
+      )
         params.store.update(task.id, {
           resolution: before.resolution,
           reason: before.reason,

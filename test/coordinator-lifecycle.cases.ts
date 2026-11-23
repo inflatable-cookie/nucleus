@@ -630,7 +630,10 @@ function recordWorkerError(
   );
 }
 
-async function workerErrorEpisode(f: ReturnType<typeof fixture>, runId?: string) {
+async function workerErrorEpisode(
+  f: ReturnType<typeof fixture>,
+  runId?: string,
+) {
   recordWorkerError(f, runId);
   await f.engine.resolution.recovery.route(f.current());
   await f.engine.quiesce();
@@ -647,20 +650,33 @@ test("a coordinator send deferred before admission retries the same stop", async
   const f = fixture();
   try {
     recordWorkerError(f);
-    const stopped = f.engine.resolution.recordStop(f.current(), "operator_needed", "Worker build failed", ["restart"]);
+    const stopped = f.engine.resolution.recordStop(
+      f.current(),
+      "operator_needed",
+      "Worker build failed",
+      ["restart"],
+    );
     const createRun = f.adapter.createRun!;
     f.adapter.createRun = async () => {
       throw new QuantumDeadlineExceededError("createRun", undefined, true);
     };
-    const route = () => f.engine.scheduleLane(`task:${stopped.id}`, LANE_PRIORITY_TASK, async () => {
-      await f.engine.resolution.recovery.route(f.current());
-    });
+    const route = () =>
+      f.engine.scheduleLane(
+        `task:${stopped.id}`,
+        LANE_PRIORITY_TASK,
+        async () => {
+          await f.engine.resolution.recovery.route(f.current());
+        },
+      );
     for (let attempt = 0; attempt < 4; attempt++) await route();
     const deferred = f.current();
     assert.deepEqual(deferred.resolution.stop, stopped.resolution.stop);
     assert.equal(deferred.resolution.recovery, null);
     assert.equal(deferred.resolution.recoveryActive, false);
-    assert.equal(deferred.resolution.recoveryAttempts, stopped.resolution.recoveryAttempts);
+    assert.equal(
+      deferred.resolution.recoveryAttempts,
+      stopped.resolution.recoveryAttempts,
+    );
     assert.equal(f.coordinatorRuns().filter((run) => !run.released).length, 0);
     assert.equal(f.events("recovery_escalated").length, 0);
 
@@ -677,15 +693,18 @@ test("a reported recovery settles its action after its thread leaves observation
   const f = fixture();
   try {
     const episode = await workerErrorEpisode(f);
-    f.engine.resolution.complete({
-      eventId: "gone-coordinator",
-      taskId: f.submitted.id,
-      runId: episode.id,
-      status: "recovered",
-      summary: "Observed the worker's state",
-      coordinatorGeneration: episode.generation,
-      coordinatorAction: { verb: "none", reason: "No owner verb is needed" },
-    }, f.tokens.get(episode.id)!);
+    f.engine.resolution.complete(
+      {
+        eventId: "gone-coordinator",
+        taskId: f.submitted.id,
+        runId: episode.id,
+        status: "recovered",
+        summary: "Observed the worker's state",
+        coordinatorGeneration: episode.generation,
+        coordinatorAction: { verb: "none", reason: "No owner verb is needed" },
+      },
+      f.tokens.get(episode.id)!,
+    );
     f.hooks.onObserve = (id) => {
       if (id === episode.agentId) throw new T3UnobservedThreadError(id);
     };

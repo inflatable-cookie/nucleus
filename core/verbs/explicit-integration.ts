@@ -86,11 +86,22 @@ function externalCloseoutHead(store: Store, task: Task): string | null {
     r.mergeRequestedAt ||
     r.mergeResponseOutcome === "uncertain" ||
     r.mergeRetryOutcome === "uncertain"
-  ) return null;
+  )
+    return null;
   // Intake binds an existing workspace before Nucleus dispatches a reviewer.
-  if (task.reviewEntry && !task.agentId && !store.runs(task.id).some((run) =>
-    run.agentId && (run.role === "reviewer" || run.role === "revision" || run.role === "executor")
-  ))
+  if (
+    task.reviewEntry &&
+    !task.agentId &&
+    !store
+      .runs(task.id)
+      .some(
+        (run) =>
+          run.agentId &&
+          (run.role === "reviewer" ||
+            run.role === "revision" ||
+            run.role === "executor"),
+      )
+  )
     return null;
   if (r.mergedCommit) return r.externalMerge ? r.mergeHead : null;
   return task.prHead;
@@ -105,17 +116,20 @@ function unreviewedCloseoutWarning(
     !externalCloseoutHead(store, task) ||
     mergeReviewEvidenceAt(task, merge.head) ||
     externalMergeSourceAcceptance(task)
-  ) return null;
+  )
+    return null;
   const runs = store.runs(task.id);
   const atHead = { id: task.id, prHead: merge.head };
-  if (runs.some((run) => reportedUnappliedVerdict(store, atHead, run))) return null;
+  if (runs.some((run) => reportedUnappliedVerdict(store, atHead, run)))
+    return null;
   const review = task.resolution.review;
   const evidence = acceptanceEvidenceAt(task, runs, merge.head);
-  const missingEvidence = review?.status === "changes_required" && review.head === merge.head
-    ? "The recorded changes_required verdict at the merged head is still outstanding"
-    : evidence.available && evidence.acceptance === "operator_source"
-      ? evidence.missingEvidence
-      : null;
+  const missingEvidence =
+    review?.status === "changes_required" && review.head === merge.head
+      ? "The recorded changes_required verdict at the merged head is still outstanding"
+      : evidence.available && evidence.acceptance === "operator_source"
+        ? evidence.missingEvidence
+        : null;
   if (!missingEvidence) return null;
   return {
     id: "unreviewed_merge" as const,
@@ -255,29 +269,40 @@ export async function preflightExplicitIntegration(
   return preflightCloseout(engine, task);
 }
 
-async function preflightCloseout(engine: Engine, task: Task): Promise<ExplicitIntegrationPreflight> {
+async function preflightCloseout(
+  engine: Engine,
+  task: Task,
+): Promise<ExplicitIntegrationPreflight> {
   const externalHead = externalCloseoutHead(engine.store, task);
   if (
     externalHead &&
-    (!task.resolution.mergedCommit || !mergeReviewEvidenceAt(task, externalHead)) &&
+    (!task.resolution.mergedCommit ||
+      !mergeReviewEvidenceAt(task, externalHead)) &&
     !externalMergeSourceAcceptance(task) &&
-    (task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber) &&
+    (task.reviewEntry?.prNumber ??
+      task.resumePrNumber ??
+      task.completion?.prNumber) &&
     engine.resolution.adapter.merged
   ) {
     try {
-      const observed = await engine.resolution.adapter.merged(task, { externalOnly: true });
+      const observed = await engine.resolution.adapter.merged(task, {
+        externalOnly: true,
+      });
       const recorded = task.resolution.unreviewedMerge;
       const expectedCommit = task.resolution.mergedCommit ?? recorded?.commit;
       const verified =
         observed.merged &&
         observed.base === task.baseBranch &&
         (observed.head === externalHead ||
-          (!task.resolution.mergedCommit && observed.descendsFrom === externalHead)) &&
+          (!task.resolution.mergedCommit &&
+            observed.descendsFrom === externalHead)) &&
         /^[a-f0-9]{40}$/.test(observed.head) &&
         observed.commit &&
         /^[a-f0-9]{40}$/.test(observed.commit) &&
         (!expectedCommit || observed.commit === expectedCommit) &&
-        (!recorded || (recorded.prNumber === taskPrNumber(task) && recorded.head === observed.head));
+        (!recorded ||
+          (recorded.prNumber === taskPrNumber(task) &&
+            recorded.head === observed.head));
       return {
         observedMerge: observed,
         ...(verified && observed.commit
@@ -348,15 +373,22 @@ export async function previewUnreviewedCloseout(engine: Engine, task: Task) {
     !externalCloseoutHead(engine.store, task) ||
     externalMergeSourceAcceptance(task) ||
     (!(externalMerge && mergedCommit) && !unreviewedMergeObservation(task))
-  ) return undefined;
+  )
+    return undefined;
   const read = await boundedRead(
     "external closeout preflight",
     () => engine.onTaskHost(task, () => preflightCloseout(engine, task)),
     engine.resolution.quantumReadTimeoutMs,
   );
   if (read.state === "unknown" || !read.value.externalMerge) return undefined;
-  const warning = unreviewedCloseoutWarning(engine.store, task, read.value.externalMerge);
-  return warning ? { taskId: task.id, version: task.version, warning } : undefined;
+  const warning = unreviewedCloseoutWarning(
+    engine.store,
+    task,
+    read.value.externalMerge,
+  );
+  return warning
+    ? { taskId: task.id, version: task.version, warning }
+    : undefined;
 }
 
 export function turnReleasePlan(
@@ -787,7 +819,12 @@ export function closeoutNowPlan(
       ? unreviewedCloseoutWarning(store, task, preflight.externalMerge)
       : null;
   const priorExternalAcceptance = externalMergeSourceAcceptance(task);
-  if (!mergeHead || (!hasExplicitMergeEvidence(task, mergeHead) && !sourceAcceptance && !priorExternalAcceptance)) {
+  if (
+    !mergeHead ||
+    (!hasExplicitMergeEvidence(task, mergeHead) &&
+      !sourceAcceptance &&
+      !priorExternalAcceptance)
+  ) {
     throw Error(
       `closeout.now refused: merged head ${mergeHead ?? "unknown"} has no applied review verdict or explicit operator source acceptance`,
     );
@@ -870,8 +907,12 @@ export function closeoutNowPlan(
           : "Integration checkout synchronized; closeout pending";
       const ownerAcceptances = [...baseResolution.ownerAcceptances];
       if (sourceAcceptance) {
-        if (!mergeHead || !input.caller) throw Error("External merge acceptance requires an exact head and authenticated caller");
-        const authority = input.caller === OPERATOR_BOARD_CALLER ? "operator" : "planner";
+        if (!mergeHead || !input.caller)
+          throw Error(
+            "External merge acceptance requires an exact head and authenticated caller",
+          );
+        const authority =
+          input.caller === OPERATOR_BOARD_CALLER ? "operator" : "planner";
         const acceptance: OwnerAcceptanceRecord = {
           at: now(),
           kind: "external_merge_source",
@@ -886,13 +927,21 @@ export function closeoutNowPlan(
           review: null,
         };
         ownerAcceptances.push(acceptance);
-        store.event(task.id, "owner_acceptance", JSON.stringify({ taskId: task.id, ...acceptance }));
+        store.event(
+          task.id,
+          "owner_acceptance",
+          JSON.stringify({ taskId: task.id, ...acceptance }),
+        );
         const escalation = findOpenPlannerEscalation(
           store.eventsAll(task.id),
           unreviewedExternalMergeCause(task.id, mergeHead),
         );
         if (escalation) {
-          store.event(task.id, "planner_escalation_resolved", `${escalation.id}: External merge source accepted`);
+          store.event(
+            task.id,
+            "planner_escalation_resolved",
+            `${escalation.id}: External merge source accepted`,
+          );
           closeEscalationFollowups(store, task.id, escalation.id);
         }
       }
@@ -915,7 +964,9 @@ export function closeoutNowPlan(
             mergedCommit,
             ...(mergeHead ? { mergeHead } : {}),
             ...(r.mergedCommit ? {} : { externalMerge: true }),
-            ...(sourceAcceptance ? { ownerAcceptances, mergedWithNone: true } : {}),
+            ...(sourceAcceptance
+              ? { ownerAcceptances, mergedWithNone: true }
+              : {}),
             integrationTurn,
             stop: null,
             attention: false,

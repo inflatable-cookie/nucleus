@@ -7,8 +7,8 @@
  * dispatch share one derivation without importing the recovery class: the count
  * an owner reads is the count that stops the loop. Nothing here writes.
  */
-import type { Run, Task } from '../../shared/contracts';
-import { digest, type Store } from '../store/store';
+import type { Run, Task } from "../../shared/contracts";
+import { digest, type Store } from "../store/store";
 
 /** Consecutive coordinator runs that applied nothing before Nucleus stops launching them (Tom, 2026-10-19). */
 export const COORDINATOR_LOOP_LIMIT = 3;
@@ -22,7 +22,7 @@ export const COORDINATOR_HEAD_CEILING = 6;
 export const COORDINATOR_HEAD_CEILING_SUMMARY = `Coordinator recovery stopped: ${COORDINATOR_HEAD_CEILING} coordinator runs at this exact head, so Nucleus launches no more for it and the planner decides. A new head resets the ceiling, and so does one explicit restart role=coordinator.`;
 
 /** Coordinator report verbs that apply nothing: an observation or an inability. */
-const NO_OP_COORDINATOR_VERBS = new Set(['none', 'cannot']);
+const NO_OP_COORDINATOR_VERBS = new Set(["none", "cannot"]);
 
 /**
  * The task's work identity for the recovery loop only: the exact source head,
@@ -39,21 +39,49 @@ const NO_OP_COORDINATOR_VERBS = new Set(['none', 'cannot']);
  * coverage at one head never removes the ordinary move authority an episode was
  * opened with (review 5668519775).
  */
-export function taskWorkIdentity(t: Task, store: Pick<Store, 'runs'>): string {
+export function taskWorkIdentity(t: Task, store: Pick<Store, "runs">): string {
   const head = t.prHead ?? t.planningBase;
   const coverage = reviewCoverageAtHead(t, store);
-  return digest(JSON.stringify([head, t.briefVersions.at(-1)?.digest ?? null, t.resolution.mergeIntent, t.resolution.mergedCommit, coverage]));
+  return digest(
+    JSON.stringify([
+      head,
+      t.briefVersions.at(-1)?.digest ?? null,
+      t.resolution.mergeIntent,
+      t.resolution.mergedCommit,
+      coverage,
+    ]),
+  );
 }
 
 /** Where each launched coordinator run recorded the work identity it was asked about, and where that launch sits in the event history. */
-const coordinatorLaunches = (store: Pick<Store, 'eventsAll'>, taskId: string): Map<string, { work: string | undefined; eventId: number; outage: boolean }> => {
-  const launched = new Map<string, { work: string | undefined; eventId: number; outage: boolean }>();
+const coordinatorLaunches = (
+  store: Pick<Store, "eventsAll">,
+  taskId: string,
+): Map<
+  string,
+  { work: string | undefined; eventId: number; outage: boolean }
+> => {
+  const launched = new Map<
+    string,
+    { work: string | undefined; eventId: number; outage: boolean }
+  >();
   for (const event of store.eventsAll(taskId)) {
-    if (event.kind !== 'telemetry_recovery') continue;
+    if (event.kind !== "telemetry_recovery") continue;
     try {
-      const detail = JSON.parse(event.detail) as { runId?: string; work?: string; outage?: boolean };
-      if (detail.runId) launched.set(detail.runId, { work: typeof detail.work === 'string' ? detail.work : undefined, eventId: event.id, outage: detail.outage === true });
-    } catch { /* a legacy launch detail names no work identity; its run is charged only at this head */ }
+      const detail = JSON.parse(event.detail) as {
+        runId?: string;
+        work?: string;
+        outage?: boolean;
+      };
+      if (detail.runId)
+        launched.set(detail.runId, {
+          work: typeof detail.work === "string" ? detail.work : undefined,
+          eventId: event.id,
+          outage: detail.outage === true,
+        });
+    } catch {
+      /* a legacy launch detail names no work identity; its run is charged only at this head */
+    }
   }
   return launched;
 };
@@ -66,20 +94,43 @@ const coordinatorLaunches = (store: Pick<Store, 'eventsAll'>, taskId: string): M
  * the bound silently, so owner reviewer restarts bought a fourth coordinator
  * launch for the same unchanged work.
  */
-const lastRecoveryReset = (store: Pick<Store, 'eventsAll'>, taskId: string): { eventId: number; at: string } | null => store.eventsAll(taskId)
-  .filter(event => event.kind === 'closeout_recovery_budget'
-    // The explicit coordinator restart records its re-arm inside the successful
-    // transition, so the reset never depends on the best-effort owner_control
-    // audit line or on that line's prose surviving its length bound.
-    || event.kind === 'coordinator_rearm'
-    || (event.kind === 'owner_control' && (() => {
-      try {
-        const detail = JSON.parse(event.detail) as { verb?: unknown; identities?: { restart?: { role?: unknown } } };
-        return detail.verb === 'restart' && detail.identities?.restart?.role === 'coordinator';
-      } catch { return false; }
-    })()))
-  // Ordered by the durable event id, never by a millisecond timestamp.
-  .reduce<{ eventId: number; at: string } | null>((latest, event) => !latest || event.id > latest.eventId ? { eventId: event.id, at: event.at } : latest, null);
+const lastRecoveryReset = (
+  store: Pick<Store, "eventsAll">,
+  taskId: string,
+): { eventId: number; at: string } | null =>
+  store
+    .eventsAll(taskId)
+    .filter(
+      (event) =>
+        event.kind === "closeout_recovery_budget" ||
+        // The explicit coordinator restart records its re-arm inside the successful
+        // transition, so the reset never depends on the best-effort owner_control
+        // audit line or on that line's prose surviving its length bound.
+        event.kind === "coordinator_rearm" ||
+        (event.kind === "owner_control" &&
+          (() => {
+            try {
+              const detail = JSON.parse(event.detail) as {
+                verb?: unknown;
+                identities?: { restart?: { role?: unknown } };
+              };
+              return (
+                detail.verb === "restart" &&
+                detail.identities?.restart?.role === "coordinator"
+              );
+            } catch {
+              return false;
+            }
+          })()),
+    )
+    // Ordered by the durable event id, never by a millisecond timestamp.
+    .reduce<{ eventId: number; at: string } | null>(
+      (latest, event) =>
+        !latest || event.id > latest.eventId
+          ? { eventId: event.id, at: event.at }
+          : latest,
+      null,
+    );
 
 /**
  * Accepted review coverage at one exact head, ordered by the durable event that
@@ -88,10 +139,14 @@ const lastRecoveryReset = (store: Pick<Store, 'eventsAll'>, taskId: string): { e
  * whole history undatable, which is reported as `null` and never read as
  * progress (the charge is kept instead).
  */
-function checkpointCoverageAtHead(store: Pick<Store, 'eventsAll'>, taskId: string, head: string): { eventId: number; ordinal: number }[] | null {
+function checkpointCoverageAtHead(
+  store: Pick<Store, "eventsAll">,
+  taskId: string,
+  head: string,
+): { eventId: number; ordinal: number }[] | null {
   const timeline: { eventId: number; ordinal: number }[] = [];
   for (const event of store.eventsAll(taskId)) {
-    if (event.kind !== 'review_checkpoint') continue;
+    if (event.kind !== "review_checkpoint") continue;
     const match = /^(\d+)\/\d+ \S+ run \S+ at (\S+)$/.exec(event.detail.trim());
     if (!match) return null;
     if (match[2] !== head) continue;
@@ -101,10 +156,13 @@ function checkpointCoverageAtHead(store: Pick<Store, 'eventsAll'>, taskId: strin
 }
 
 /** The highest accepted checkpoint ordinal any reader reached at one exact head. */
-function reviewCoverageAtHead(task: Task, store: Pick<Store, 'runs'>): number {
+function reviewCoverageAtHead(task: Task, store: Pick<Store, "runs">): number {
   const head = task.prHead ?? task.planningBase;
-  return store.runs(task.id).filter(run => run.role === 'reviewer' && run.head === head)
-    .flatMap(run => run.reviewCheckpoints ?? []).reduce((max, record) => Math.max(max, record.ordinal), 0);
+  return store
+    .runs(task.id)
+    .filter((run) => run.role === "reviewer" && run.head === head)
+    .flatMap((run) => run.reviewCheckpoints ?? [])
+    .reduce((max, record) => Math.max(max, record.ordinal), 0);
 }
 
 /**
@@ -117,27 +175,45 @@ function reviewCoverageAtHead(task: Task, store: Pick<Store, 'runs'>): number {
  * command that changes task or run state counts: `message.send` changes neither,
  * so a run that only sent messages is still charged.
  */
-const STATELESS_EXPLICIT_COMMANDS = new Set(['message.send']);
+const STATELESS_EXPLICIT_COMMANDS = new Set(["message.send"]);
 function coordinatorRunApplied(
   run: Run,
-  events: ReturnType<Store['eventsAll']>,
+  events: ReturnType<Store["eventsAll"]>,
   launchEventId: number | undefined,
   nextLaunchEventId: number | undefined,
 ): boolean {
   const completion = run.completion;
   const verb = completion?.coordinatorAction?.verb;
-  if (completion && verb && !NO_OP_COORDINATOR_VERBS.has(verb)
-    && events.some(event => event.kind === 'coordinator_action_applied' && event.detail === completion.eventId))
+  if (
+    completion &&
+    verb &&
+    !NO_OP_COORDINATOR_VERBS.has(verb) &&
+    events.some(
+      (event) =>
+        event.kind === "coordinator_action_applied" &&
+        event.detail === completion.eventId,
+    )
+  )
     return true;
   if (launchEventId === undefined) return false;
-  return events.some(event => {
-    if (event.kind !== 'owner_resolution' || event.id <= launchEventId) return false;
-    if (nextLaunchEventId !== undefined && event.id >= nextLaunchEventId) return false;
+  return events.some((event) => {
+    if (event.kind !== "owner_resolution" || event.id <= launchEventId)
+      return false;
+    if (nextLaunchEventId !== undefined && event.id >= nextLaunchEventId)
+      return false;
     try {
-      const record = JSON.parse(event.detail) as { source?: unknown; command?: unknown };
-      return record.source === 'coordinator' && typeof record.command === 'string'
-        && !STATELESS_EXPLICIT_COMMANDS.has(record.command);
-    } catch { return false; }
+      const record = JSON.parse(event.detail) as {
+        source?: unknown;
+        command?: unknown;
+      };
+      return (
+        record.source === "coordinator" &&
+        typeof record.command === "string" &&
+        !STATELESS_EXPLICIT_COMMANDS.has(record.command)
+      );
+    } catch {
+      return false;
+    }
   });
 }
 
@@ -167,12 +243,19 @@ function coordinatorRunApplied(
  * checkpoint history is never read as progress. It is never re-labelled with a
  * newer identity and no episode binding is reconstructed.
  */
-export function unproductiveCoordinatorRuns(store: Store, taskId: string): number {
-  const task = store.task(taskId), work = taskWorkIdentity(task, store), launched = coordinatorLaunches(store, taskId);
-  const head = task.prHead ?? task.planningBase, reset = lastRecoveryReset(store, taskId);
-  const coverage = reviewCoverageAtHead(task, store), coverageTimeline = checkpointCoverageAtHead(store, taskId, head);
-  const runs = store.runs(taskId).filter(run => {
-    if (run.role !== 'recovery' || run.releasedBeforeSend) return false;
+export function unproductiveCoordinatorRuns(
+  store: Store,
+  taskId: string,
+): number {
+  const task = store.task(taskId),
+    work = taskWorkIdentity(task, store),
+    launched = coordinatorLaunches(store, taskId);
+  const head = task.prHead ?? task.planningBase,
+    reset = lastRecoveryReset(store, taskId);
+  const coverage = reviewCoverageAtHead(task, store),
+    coverageTimeline = checkpointCoverageAtHead(store, taskId, head);
+  const runs = store.runs(taskId).filter((run) => {
+    if (run.role !== "recovery" || run.releasedBeforeSend) return false;
     if (!reset) return true;
     const launch = launched.get(run.id);
     // Durable order when the launch event exists; otherwise charge anything not
@@ -181,18 +264,29 @@ export function unproductiveCoordinatorRuns(store: Store, taskId: string): numbe
   });
   const events = store.eventsAll(taskId);
   // Launch event ids in launch order, so a run's window ends at the next launch.
-  const launchIds = [...launched.values()].map(launch => launch.eventId).sort((a, b) => a - b);
+  const launchIds = [...launched.values()]
+    .map((launch) => launch.eventId)
+    .sort((a, b) => a - b);
   const nextLaunch = (eventId: number | undefined) =>
-    eventId === undefined ? undefined : launchIds.find(id => id > eventId);
+    eventId === undefined ? undefined : launchIds.find((id) => id > eventId);
   let charged = 0;
   for (const run of runs.reverse()) {
     const launch = launched.get(run.id);
     // Spec 068 §4: a repair that applied is progress, so it ends the charged chain.
-    if (coordinatorRunApplied(run, events, launch?.eventId, nextLaunch(launch?.eventId))) break;
+    if (
+      coordinatorRunApplied(
+        run,
+        events,
+        launch?.eventId,
+        nextLaunch(launch?.eventId),
+      )
+    )
+      break;
     // An outage launch does not spend the bound, but its work identity still
     // separates earlier work from the current trailing chain.
     if (launch?.outage) {
-      if (launch.work !== undefined ? launch.work !== work : run.head !== head) break;
+      if (launch.work !== undefined ? launch.work !== work : run.head !== head)
+        break;
       continue;
     }
     if (!launch) {
@@ -205,8 +299,12 @@ export function unproductiveCoordinatorRuns(store: Store, taskId: string): numbe
     if (launch.work === undefined) {
       if (run.head !== head) break;
       // Charge unless the maximum coverage at this head rose after this launch.
-      const before = coverageTimeline === null ? null
-        : coverageTimeline.filter(entry => entry.eventId < launch.eventId).reduce((max, entry) => Math.max(max, entry.ordinal), 0);
+      const before =
+        coverageTimeline === null
+          ? null
+          : coverageTimeline
+              .filter((entry) => entry.eventId < launch.eventId)
+              .reduce((max, entry) => Math.max(max, entry.ordinal), 0);
       if (before !== null && coverage > before) break;
       charged++;
       continue;
@@ -221,11 +319,17 @@ export function unproductiveCoordinatorRuns(store: Store, taskId: string): numbe
  * Spec 068 §4: coordinator launches at the task's current exact head since the last
  * deliberate re-arm, whatever they applied. Outage launches spend nothing.
  */
-export function coordinatorLaunchesAtHead(store: Store, taskId: string): number {
-  const task = store.task(taskId), head = task.prHead ?? task.planningBase;
-  const launched = coordinatorLaunches(store, taskId), reset = lastRecoveryReset(store, taskId);
-  return store.runs(taskId).filter(run => {
-    if (run.role !== 'recovery' || run.head !== head || run.releasedBeforeSend) return false;
+export function coordinatorLaunchesAtHead(
+  store: Store,
+  taskId: string,
+): number {
+  const task = store.task(taskId),
+    head = task.prHead ?? task.planningBase;
+  const launched = coordinatorLaunches(store, taskId),
+    reset = lastRecoveryReset(store, taskId);
+  return store.runs(taskId).filter((run) => {
+    if (run.role !== "recovery" || run.head !== head || run.releasedBeforeSend)
+      return false;
     const launch = launched.get(run.id);
     if (launch?.outage) return false;
     if (!reset) return true;
@@ -239,25 +343,46 @@ export function coordinatorLaunchesAtHead(store: Store, taskId: string): number 
  * the per-head ceiling of six launches. Recovery's dispatch and the explicit
  * coordinator restart read this one answer.
  */
-export function coordinatorBoundExhausted(store: Store, taskId: string): string | null {
-  if (unproductiveCoordinatorRuns(store, taskId) >= COORDINATOR_LOOP_LIMIT) return COORDINATOR_LOOP_SUMMARY;
-  if (coordinatorLaunchesAtHead(store, taskId) >= COORDINATOR_HEAD_CEILING) return COORDINATOR_HEAD_CEILING_SUMMARY;
+export function coordinatorBoundExhausted(
+  store: Store,
+  taskId: string,
+): string | null {
+  if (unproductiveCoordinatorRuns(store, taskId) >= COORDINATOR_LOOP_LIMIT)
+    return COORDINATOR_LOOP_SUMMARY;
+  if (coordinatorLaunchesAtHead(store, taskId) >= COORDINATOR_HEAD_CEILING)
+    return COORDINATOR_HEAD_CEILING_SUMMARY;
   return null;
 }
 
 /** The current work basis in words, so `next` explains what the count is charged to. */
-function recoveryWorkBasis(task: Task, store: Pick<Store, 'runs'>): string {
+function recoveryWorkBasis(task: Task, store: Pick<Store, "runs">): string {
   const head = task.prHead ?? task.planningBase;
   const coverage = reviewCoverageAtHead(task, store);
   const brief = task.briefVersions.at(-1)?.version ?? null;
-  const merge = task.resolution.mergedCommit ? 'merged' : task.resolution.mergeIntent ? 'merge requested' : 'not merging';
-  return `${head ? `head ${head}` : 'no source head'}, brief ${brief ?? 'none'}, coverage checkpoint ${coverage}, ${merge}`;
+  const merge = task.resolution.mergedCommit
+    ? "merged"
+    : task.resolution.mergeIntent
+      ? "merge requested"
+      : "not merging";
+  return `${head ? `head ${head}` : "no source head"}, brief ${brief ?? "none"}, coverage checkpoint ${coverage}, ${merge}`;
 }
 
 /** The charged launch count, the bound, and the work basis `next` and task detail report. */
-export function recoveryBoundStatus(store: Store, task: Task): { charged: number; limit: number; basis: string; atHead: number; ceiling: number } {
+export function recoveryBoundStatus(
+  store: Store,
+  task: Task,
+): {
+  charged: number;
+  limit: number;
+  basis: string;
+  atHead: number;
+  ceiling: number;
+} {
   return {
-    charged: unproductiveCoordinatorRuns(store, task.id), limit: COORDINATOR_LOOP_LIMIT, basis: recoveryWorkBasis(task, store),
-    atHead: coordinatorLaunchesAtHead(store, task.id), ceiling: COORDINATOR_HEAD_CEILING,
+    charged: unproductiveCoordinatorRuns(store, task.id),
+    limit: COORDINATOR_LOOP_LIMIT,
+    basis: recoveryWorkBasis(task, store),
+    atHead: coordinatorLaunchesAtHead(store, task.id),
+    ceiling: COORDINATOR_HEAD_CEILING,
   };
 }

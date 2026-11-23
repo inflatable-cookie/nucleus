@@ -624,7 +624,11 @@ export class RunLaunchDeliver {
           if (latest.resolution.currentRunId === run.id)
             this.resolution.update(
               latest,
-              { currentRunId: null, attention: false, ...unsentReviewIntent(latest, run) },
+              {
+                currentRunId: null,
+                attention: false,
+                ...unsentReviewIntent(latest, run),
+              },
               { phase: role === "reviewer" ? "reviewing" : latest.phase },
               "review_waiting_on_host_snapshot",
               error.detail,

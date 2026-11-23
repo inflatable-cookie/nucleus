@@ -1151,8 +1151,7 @@ export class TaskWakes {
       }
       return "exhausted";
     }
-    const retryOnPass =
-      operation && activeOld?.retryOnPass === true;
+    const retryOnPass = operation && activeOld?.retryOnPass === true;
     const scopeParts = [
       next.hostId ? `host ${next.hostId}` : null,
       next.target || null,
@@ -1503,10 +1502,16 @@ export class TaskWakes {
               try {
                 const processes = await adapter.hostProcessListing!();
                 if (processes === null)
-                  return { state: "unknown", reason: "host process listing is unreadable", deferred: true };
+                  return {
+                    state: "unknown",
+                    reason: "host process listing is unreadable",
+                    deferred: true,
+                  };
                 return { state: "listed", processes };
               } catch (error) {
-                const deferred = error instanceof HostReadRefusalError || error instanceof DeferredPassReadError;
+                const deferred =
+                  error instanceof HostReadRefusalError ||
+                  error instanceof DeferredPassReadError;
                 return {
                   state: "unknown",
                   reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,

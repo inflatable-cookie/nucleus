@@ -60,7 +60,10 @@ async function announceReportReady(
       .some((event) => event.kind === "report_ready_planner_notice_intent")
   )
     return;
-  const project = store.projectFor(current.repoPath, normalizeRepositoryOrigin(current.repository ?? ""));
+  const project = store.projectFor(
+    current.repoPath,
+    normalizeRepositoryOrigin(current.repository ?? ""),
+  );
   const { rungs } = await resolution.plannerRungsFor(current);
   const planner = rungs[0]?.agentId;
   if (!planner || store.task(current.id).phase !== "report_ready") return;
@@ -199,7 +202,8 @@ export async function acceptWorkerResult(
   const stopAttention =
     current.resolution.attention &&
     (awaitedReminder ||
-      (current.reasonFact?.code === "callback_missing" && current.reasonFact.subject === "worker"));
+      (current.reasonFact?.code === "callback_missing" &&
+        current.reasonFact.subject === "worker"));
   // The blocked hook above waited on I/O: a push-back recorded meanwhile owns this return.
   if (
     c.status !== "ready_for_review" &&

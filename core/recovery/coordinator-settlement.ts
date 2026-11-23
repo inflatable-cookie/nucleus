@@ -37,10 +37,7 @@ export type RecoverySettlementContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
-    | "attention"
-    | "openPlannerEscalation"
-    | "recovery"
-    | "update"
+    "attention" | "openPlannerEscalation" | "recovery" | "update"
   >;
 };
 export class RecoverySettlement {
@@ -200,7 +197,8 @@ export class RecoverySettlement {
         latest.resolution.recovery?.runId !== run.id ||
         latest.resolution.recovery.action?.eventId !== binding.eventId ||
         latest.resolution.recovery.action.status !== "pending" ||
-        coordinatorActionAttempt(this.store, task.id, claimKey) === "run_result_applying"
+        coordinatorActionAttempt(this.store, task.id, claimKey) ===
+          "run_result_applying"
       )
         return false;
       this.store.event(task.id, "run_result_applying", claimKey);

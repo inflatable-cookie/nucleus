@@ -621,7 +621,6 @@ test("supersededIdleFence bounds hung observe, and sealed host passes treat task
   );
 });
 
-
 test("boundedRead propagates errors thrown before deadline and swallows late rejections after timeout", async () => {
   await assert.rejects(
     boundedRead(
@@ -1277,10 +1276,7 @@ test("wake-triggered task quantum keeps expensive reads outside the lane and doe
   assert.equal(timelineCalls, 0);
   assert.equal(timelinePageCalls, 0);
   assert.equal(mergeCalls, 0);
-  assert.match(
-    f.store.task(task.id).reason,
-    /Merge outcome is uncertain/,
-  );
+  assert.match(f.store.task(task.id).reason, /Merge outcome is uncertain/);
 
   // 2. Callback wake (`wakeTask`) with a slow 60 s timeline page runs its
   // bounded prefetch OUTSIDE the exclusive task lane, seals the host, and
@@ -1297,11 +1293,7 @@ test("wake-triggered task quantum keeps expensive reads outside the lane and doe
     0,
     "wakeTask must never start hostProcessListing inside the exclusive task lane",
   );
-  assert.equal(
-    mergeCalls,
-    0,
-    "an unknown merge response remains held",
-  );
+  assert.equal(mergeCalls, 0, "an unknown merge response remains held");
 });
 
 test("retained-run observation and creation lookup respect the quantum read deadline and preserve pending state", async (t) => {
@@ -2701,7 +2693,7 @@ test("already-expired quantum scope rejects before invoking native host or forge
 });
 
 test("a deferred guarded merge send releases only its unsent retry reservation", async (t) => {
-  const f = engineFixture(t);
+  const f = engineFixture(t, {});
   const inserted = f.store.insert(submission(), HOST, "handoff", HEAD);
   const before = f.store.update(inserted.id, {
     phase: "merging",
@@ -2714,38 +2706,50 @@ test("a deferred guarded merge send releases only its unsent retry reservation",
     },
   });
   let sends = 0;
-  const request = () => sendGuardedMerge({
-    store: f.store,
-    taskId: before.id,
-    head: HEAD,
-    reserve: () => {
-      const current = f.store.task(before.id);
-      const task = f.store.update(current.id, {
-        resolution: {
-          ...current.resolution,
-          mergeRetryAt: new Date().toISOString(),
-          mergeRetryOutcome: "pending",
-          mergeAutoRetryExhausted: true,
-        },
-      });
-      return { task, matchesCurrent: (latest) => latest.version === task.version };
-    },
-    send: async () => {
-      if (sends++ === 0)
-        throw new QuantumDeadlineExceededError("merge", undefined, true);
-    },
-    onAccepted: () => {},
-    onError: () => assert.fail("a deadline deferral reported a merge failure"),
-  });
+  const request = () =>
+    sendGuardedMerge({
+      store: f.store,
+      taskId: before.id,
+      head: HEAD,
+      reserve: () => {
+        const current = f.store.task(before.id);
+        const task = f.store.update(current.id, {
+          resolution: {
+            ...current.resolution,
+            mergeRetryAt: new Date().toISOString(),
+            mergeRetryOutcome: "pending",
+            mergeAutoRetryExhausted: true,
+          },
+        });
+        return {
+          task,
+          matchesCurrent: (latest) => latest.version === task.version,
+        };
+      },
+      send: async () => {
+        if (sends++ === 0)
+          throw new QuantumDeadlineExceededError("merge", undefined, true);
+      },
+      onAccepted: () => {},
+      onError: () =>
+        assert.fail("a deadline deferral reported a merge failure"),
+    });
 
-  await assertQuantumDefers(1000, async () => { await request(); });
+  await assertQuantumDefers(1000, async () => {
+    await request();
+  });
   assert.deepEqual(f.store.task(before.id).resolution, before.resolution);
   assert.equal(f.store.task(before.id).reason, before.reason);
   assert.equal(await request(), "accepted");
 });
 
-async function assertQuantumDefers(budgetMs: number, work: () => Promise<void>) {
-  const outcome = await settleTaskQuantum(() => runInTaskQuantumScope(budgetMs, work));
+async function assertQuantumDefers(
+  budgetMs: number,
+  work: () => Promise<void>,
+) {
+  const outcome = await settleTaskQuantum(() =>
+    runInTaskQuantumScope(budgetMs, work),
+  );
   assert.equal(outcome.kind, "deferred");
 }
 
@@ -3179,11 +3183,19 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
 test("execution custody uses an exact idle roster and shares only a covering complete scan", async (t) => {
   const stamp = new Date(Date.now() - 60_000).toISOString();
   const idle = (id: string, workspaceId: string): AgentObservation => ({
-    id, workspaceId, status: "idle", active: false, activeTurnId: null,
-    permissions: false, error: "", updatedAt: stamp,
+    id,
+    workspaceId,
+    status: "idle",
+    active: false,
+    activeTurnId: null,
+    permissions: false,
+    error: "",
+    updatedAt: stamp,
   });
   let scans = 0;
-  let processes: HostProcessTable | null = Object.assign([], { cwdComplete: true });
+  let processes: HostProcessTable | null = Object.assign([], {
+    cwdComplete: true,
+  });
   let background: string[] = [];
   const f = engineFixture(t, {
     observeParticipant: async (id: string) => ({
@@ -3224,14 +3236,22 @@ test("execution custody uses an exact idle roster and shares only a covering com
     f.engine.resolution.executionLease(task, syncing, true);
 
   await missed(async (snapshot) => {
-    snapshot.recordHostObservation(HOST, second.agentId!, idle(second.agentId!, second.workspaceId!));
+    snapshot.recordHostObservation(
+      HOST,
+      second.agentId!,
+      idle(second.agentId!, second.workspaceId!),
+    );
     assert.equal(await lease(), true);
     assert.equal(await lease(second, true), true);
     assert.equal(scans, 1);
   });
   await missed(async () => {
     assert.equal(await lease(), true);
-    assert.equal(await lease(second), false, "the shared scan has no prior observation of this participant");
+    assert.equal(
+      await lease(second),
+      false,
+      "the shared scan has no prior observation of this participant",
+    );
     assert.equal(scans, 2);
   });
 
@@ -3243,11 +3263,24 @@ test("execution custody uses an exact idle roster and shares only a covering com
   await missed(async () => assert.equal(await lease(), false));
   processes = null;
   await missed(async () => assert.equal(await lease(), false));
-  for (const cwd of [join(tmpdir(), first.workspaceId!), first.temporaryDirectory!]) {
-    processes = Object.assign([{
-      pid: 42, ppid: 1, pgid: 42, uid: 501, startIdentity: "synthetic-start",
-      command: "synthetic-writer", cwd,
-    }], { cwdComplete: true });
+  for (const cwd of [
+    join(tmpdir(), first.workspaceId!),
+    first.temporaryDirectory!,
+  ]) {
+    processes = Object.assign(
+      [
+        {
+          pid: 42,
+          ppid: 1,
+          pgid: 42,
+          uid: 501,
+          startIdentity: "synthetic-start",
+          command: "synthetic-writer",
+          cwd,
+        },
+      ],
+      { cwdComplete: true },
+    );
     await missed(async () => assert.equal(await lease(), false));
   }
 });

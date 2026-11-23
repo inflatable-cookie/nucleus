@@ -70,10 +70,7 @@ import {
 import { reviewerSettingOf } from "../review/reviewer-setting";
 import { reviewRecordFor } from "../review/review-verdicts";
 import { digest, now, type Store } from "../store/store";
-import {
-  coordinative,
-  proofExecutor,
-} from "../recovery/task-reasons";
+import { coordinative, proofExecutor } from "../recovery/task-reasons";
 import {
   observationAdvanceSince,
   runsUnchangedSince,
@@ -173,7 +170,10 @@ type ReviewVerification =
     }
   | { kind: "ordinary"; reviewer: ReviewerSetting | null; id: number | void };
 
-function reviewDispatchRefusal(hold: { owner: string; reason: string }): string {
+function reviewDispatchRefusal(hold: {
+  owner: string;
+  reason: string;
+}): string {
   return `Dispatch is held by ${hold.owner}: ${hold.reason}. Its owner must release the hold`;
 }
 
@@ -210,7 +210,8 @@ function recordedReviewIndependence(
   )
     return {
       permanent: true,
-      refusal: "The reviewer authored this task. The review lifecycle owner must establish independent review",
+      refusal:
+        "The reviewer authored this task. The review lifecycle owner must establish independent review",
     };
   if (!run.profile) return null;
   const authors = taskAuthorModelKeys(task, revisions);
@@ -229,7 +230,8 @@ function recordedReviewIndependence(
   return independence === "collision"
     ? {
         permanent: false,
-        refusal: "The recorded models conflict with the review independence policy. The review lifecycle owner must reconcile them",
+        refusal:
+          "The recorded models conflict with the review independence policy. The review lifecycle owner must reconcile them",
       }
     : null;
 }
@@ -739,8 +741,14 @@ export class ResultApplication {
           participants.set(prior.agentId, prior.workspaceId);
         for (const worker of t.retiredWorkers) {
           const previous = runs.find((item) => item.id === worker.runId);
-          if (!previous?.explicitlyReleasedAt && !participants.has(worker.agentId))
-            participants.set(worker.agentId, previous?.workspaceId ?? run.workspaceId);
+          if (
+            !previous?.explicitlyReleasedAt &&
+            !participants.has(worker.agentId)
+          )
+            participants.set(
+              worker.agentId,
+              previous?.workspaceId ?? run.workspaceId,
+            );
         }
       }
     }
@@ -748,9 +756,12 @@ export class ResultApplication {
       if (!agentId) continue;
       if (this.adapter.observeParticipant) {
         const issue = await this.resolution.participantLease.exactCustodyIssue(
-          t, agentId, workspaceId,
+          t,
+          agentId,
+          workspaceId,
         );
-        if (issue !== null) return blocked(`Retained participant ${agentId}: ${issue}`);
+        if (issue !== null)
+          return blocked(`Retained participant ${agentId}: ${issue}`);
         continue;
       }
       const state = await this.resolution.host.observe(agentId);
@@ -1799,7 +1810,8 @@ export class ResultApplication {
         isDispositionActive(current) ||
         currentRunId !== task.resolution.currentRunId ||
         (currentRunId !== run.id && !(reapplied && currentRunId === null)) ||
-        current.resolution.reviewerAgentId !== task.resolution.reviewerAgentId ||
+        current.resolution.reviewerAgentId !==
+          task.resolution.reviewerAgentId ||
         current.resolution.mergedCommit !== task.resolution.mergedCommit ||
         current.prHead !== task.prHead ||
         (!current.resolution.unreviewedMerge &&
@@ -1832,11 +1844,13 @@ export class ResultApplication {
       const runs = this.store.runs(task.id);
       if (
         currentRunId === null &&
-        runs.findLast((candidate) => candidate.role === "reviewer")?.id !== run.id
+        runs.findLast((candidate) => candidate.role === "reviewer")?.id !==
+          run.id
       )
         return changed;
       if (
-        reapplied && !published &&
+        reapplied &&
+        !published &&
         (current.resolution.review?.runId === run.id ||
           current.prHead !== run.head ||
           current.phase !== task.phase ||

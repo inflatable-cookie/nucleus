@@ -2688,10 +2688,7 @@ export class Store {
    * a queued review-entry task that never dispatched is the one shape whose own PR may have
    * merged outside Queue before any reviewer existed.
    */
-  reviewEntryUnrunBeforeFirstRun(
-    task: Task,
-    operationId?: string,
-  ): boolean {
+  reviewEntryUnrunBeforeFirstRun(task: Task, operationId?: string): boolean {
     return reviewEntryUnrun(this.reviewEntryFacts, task, operationId);
   }
   /** The dependency boundary; `store-prerequisites.ts` owns its admission rules. */

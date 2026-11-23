@@ -519,7 +519,10 @@ export class Operations {
   reconcileSourcePromotion(operation: QueueOperation): void {
     reconcileSourcePromotion(this.store, operation, this.activeOperations);
   }
-  async scheduleOperation(id: string, passSnapshot?: PassSnapshot): Promise<void> {
+  async scheduleOperation(
+    id: string,
+    passSnapshot?: PassSnapshot,
+  ): Promise<void> {
     const operation = this.store.operation(id);
     if (!operation || operationIsSettled(operation.state)) return;
     if (this.engine.ownerSettledOperation(operation.taskId, id)) return;
@@ -534,12 +537,15 @@ export class Operations {
           () =>
             passSnapshot
               ? runInTaskQuantumScope(
-                  this.engine.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS,
+                  this.engine.resolution.quantumReadBudgetMs ??
+                    QUANTUM_TOTAL_READ_BUDGET_MS,
                   () => this.engine.runOperation(id),
                   passSnapshot,
                 )
               : this.engine.runOperation(id),
-          { coalesce: `${passSnapshot ? "operation-pass" : "operation"}:${id}` },
+          {
+            coalesce: `${passSnapshot ? "operation-pass" : "operation"}:${id}`,
+          },
         ),
       )
       .catch(() => {
@@ -612,7 +618,8 @@ export class Operations {
     ) {
       const at = now();
       const diagnostic =
-        pending.diagnostic || "The operation was interrupted; delivery remains uncertain";
+        pending.diagnostic ||
+        "The operation was interrupted; delivery remains uncertain";
       this.store.putOperation({
         ...pending,
         state: "needs_attention",
@@ -764,7 +771,10 @@ export class Operations {
         ) {
           // A compatibility command can be sent again at the same version.
           // Withdraw its unperformed attempt, including its operation intent.
-          if (current.kind === "task_control" && current.key.startsWith("task-control:")) {
+          if (
+            current.kind === "task_control" &&
+            current.key.startsWith("task-control:")
+          ) {
             this.store.withdrawOperation(current);
             this.store.deleteMeta(this.engine.transientKey(id));
             this.engine.clearHostReadTransient(id, "op");
@@ -785,7 +795,11 @@ export class Operations {
       if (targetTaskId)
         this.engine.clearHostReadTransient(targetTaskId, "task");
       const settled = this.store.operation(id) ?? running;
-      if (settled.state === "failed" && settled.settlement?.kind === "superseded") return;
+      if (
+        settled.state === "failed" &&
+        settled.settlement?.kind === "superseded"
+      )
+        return;
       // A submit creates its task, so the top-level identity is only known here; mirror it
       // so callers need not dig into result.taskId.
       this.store.putOperation({
@@ -821,7 +835,11 @@ export class Operations {
       const committed = this.store.operation(id);
       const message = error instanceof Error ? error.message : String(error);
       const currentOperation = this.store.operation(id);
-      if (currentOperation?.state === "failed" && currentOperation.settlement?.kind === "superseded") return;
+      if (
+        currentOperation?.state === "failed" &&
+        currentOperation.settlement?.kind === "superseded"
+      )
+        return;
       // A parent restore has its own exact intent. Preserve the operation until
       // that intent can be observed, rather than classifying a lost reply as a
       // refusal or replaying the restart.
@@ -1143,10 +1161,7 @@ export class Operations {
     const matchingStop =
       task.resolution.ownerStop?.operationId === operation.id;
     if (!operation.preSendBoundaryStartedAt && !matchingStop) return false;
-    if (
-      operation.result?.taskId &&
-      operation.effect?.status === "reconciled"
-    ) {
+    if (operation.result?.taskId && operation.effect?.status === "reconciled") {
       this.store.putOperation({
         ...operation,
         state: "succeeded",
@@ -1280,7 +1295,9 @@ export class Operations {
    * offline recorded host, read from the store as it stands. `null` means the
    * operation is valid so far and waits, exactly as #912 recorded it.
    */
-  private hostIndependentRefusal(pending: QueueOperation): string | null | Promise<string | null> {
+  private hostIndependentRefusal(
+    pending: QueueOperation,
+  ): string | null | Promise<string | null> {
     if (pending.kind === "task_control") {
       const payload = this.store.operationPayload(pending.id) as {
         control?: unknown;

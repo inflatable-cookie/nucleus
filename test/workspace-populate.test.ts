@@ -1656,7 +1656,11 @@ test("a pre-send populate deferral releases the admission for the next pass", as
     const task = f.queued();
     const populate = f.adapter.populateTaskWorktree!;
     f.adapter.populateTaskWorktree = async () => {
-      throw new QuantumDeadlineExceededError("populateTaskWorktree", undefined, true);
+      throw new QuantumDeadlineExceededError(
+        "populateTaskWorktree",
+        undefined,
+        true,
+      );
     };
     await f.engine.scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, () =>
       f.engine.dispatchTask(task.id, false),
