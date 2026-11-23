@@ -167,7 +167,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn the_native_fixture_binding_expires_when_its_root_changes() {
+    async fn shell_enrichment_preserves_the_authoritative_native_fixture_binding() {
         let (_home, mut service) =
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
         let retargeted = Arc::new(AtomicBool::new(false));
@@ -181,10 +181,15 @@ mod tests {
             } else {
                 checkout.to_str().expect("fixture root")
             };
-            json!({"_tag":"Chunk","requestId":request["id"],"values":[
-                {"kind":"snapshot","snapshot":{"projects":[{"id":project,"workspaceRoot":root}]}},
-                {"kind":"synchronized"}
-            ]})
+            json!([
+                {"_tag":"Chunk","requestId":request["id"],"values":[
+                    {"kind":"snapshot","snapshot":{"projects":[{"id":project,"workspaceRoot":root}]}},
+                    {"kind":"snapshot","resolvedRepositoryIdentityRoots":[checkout],"snapshot":{
+                        "projects":[{"id":project,"workspaceRoot":checkout,"repositoryIdentity":null}],"threads":[]
+                    }}
+                ]},
+                {"_tag":"Chunk","requestId":request["id"],"values":[{"kind":"synchronized"}]}
+            ])
         })
         .await;
         service.host = host;

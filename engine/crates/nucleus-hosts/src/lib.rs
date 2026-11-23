@@ -281,7 +281,7 @@ impl T3 {
         let Reply::Value(snapshot) = self.rpc.call(
             "orchestration.subscribeShell",
             json!({"requestCompletionMarker": true, "omitIdleSubagents": true, "omitOlderSettled": true}),
-            Read::Snapshot,
+            Read::Shell,
         ).await? else { return Err(HostError::Protocol) };
         let projects = snapshot
             .pointer("/snapshot/projects")
@@ -305,7 +305,7 @@ impl T3 {
             .call(
                 "orchestration.subscribeThread",
                 json!({"threadId": id, "requestCompletionMarker": true, "acceptBoundedSnapshot": false}),
-                Read::Snapshot,
+                Read::Thread,
             )
             .await?;
         match reply {

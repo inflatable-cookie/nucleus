@@ -35,7 +35,8 @@ pub(crate) enum Reply {
 #[derive(Clone, Copy)]
 pub(crate) enum Read {
     One,
-    Snapshot,
+    Shell,
+    Thread,
 }
 
 pub(crate) struct Rpc {
@@ -273,12 +274,26 @@ impl Connection {
                     "Exit" if frame["exit"]["_tag"] == "Success" && matches!(read, Read::One) => {
                         return Ok(Reply::Value(frame["exit"]["value"].clone()));
                     }
-                    "Chunk" if matches!(read, Read::Snapshot) => {
+                    "Chunk" if matches!(read, Read::Shell | Read::Thread) => {
                         self.send(json!({"_tag":"Ack","requestId":id})).await?;
                         let items = frame["values"].as_array().ok_or(HostError::Protocol)?;
                         for item in items {
                             match item["kind"].as_str() {
-                                Some("snapshot") if snapshot.is_none() => {
+                                // Shell can emit repository metadata before synchronization.
+                                // Project and thread authority comes from the unmarked snapshot.
+                                Some("snapshot")
+                                    if matches!(read, Read::Shell)
+                                        && item["resolvedRepositoryIdentityRoots"]
+                                            .as_array()
+                                            .is_some_and(|roots| {
+                                                roots.iter().all(Value::is_string)
+                                            }) => {}
+                                Some("snapshot")
+                                    if snapshot.is_none()
+                                        && item
+                                            .get("resolvedRepositoryIdentityRoots")
+                                            .is_none() =>
+                                {
                                     snapshot = Some(item.clone());
                                 }
                                 Some("synchronized") => {
