@@ -19,6 +19,7 @@ pub struct PlannerThread {
     pub project_id: String,
     pub updated_at: String,
     pub latest_user_message_at: Option<String>,
+    pub worktree_path: Option<String>,
     pub archived_at: Option<String>,
     pub deleted_at: Option<String>,
 }

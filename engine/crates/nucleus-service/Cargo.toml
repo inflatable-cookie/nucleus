@@ -1,0 +1,30 @@
+[package]
+name = "nucleus-service"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+getrandom = "0.3"
+longhorn-git-workspace.workspace = true
+longhorn-redact.workspace = true
+nucleus-core = { path = "../nucleus-core" }
+nucleus-forge = { path = "../nucleus-forge" }
+nucleus-hosts = { path = "../nucleus-hosts" }
+nucleus-store = { path = "../nucleus-store" }
+nucleus-work = { path = "../nucleus-work" }
+rustix = { version = "1", features = ["fs"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "process", "sync", "time"] }
+
+[dev-dependencies]
+axum = { version = "0.8.9", features = ["ws"] }
+nucleus-forge = { path = "../nucleus-forge", features = ["loopback-fixture"] }
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints]
+workspace = true
