@@ -2,9 +2,11 @@
 import { execFileSync } from "node:child_process";
 import {
   accessSync,
+  chmodSync,
   constants,
   lstatSync,
   mkdirSync,
+  readdirSync,
   realpathSync,
   rmSync,
   type Stats,
@@ -595,6 +597,9 @@ export function removeCheckoutRunScratchDirectory(input: {
       realpathSync(target) !== target
     )
       throw Error("recorded run temp path is not a real directory");
+    // A tool can leave a read-only folder in its scratch (a frozen executable,
+    // say): its entries cannot be unlinked until the folder is writable again.
+    openLeafDirectories(target, mountStat.dev);
     // The one synchronous recursive removal left on the executor thread, and it
     // is bounded: this is one run's recorded TMPDIR leaf, removed from the store
     // retention and release paths that must answer a boolean synchronously. It is
@@ -610,5 +615,27 @@ export function removeCheckoutRunScratchDirectory(input: {
       `Queue left run temp directory in place: ${target}: ${error instanceof Error ? error.message : String(error)}`,
     );
     return false;
+  }
+}
+
+/**
+ * Give the owner full access to every directory inside one proved run leaf, so
+ * the recursive removal can unlink what a tool left read-only. It walks with
+ * `lstat` and never follows a symbolic link, so nothing outside the leaf is
+ * touched. A directory on another device (a mount inside the leaf) refuses, so
+ * the leaf stays in place rather than reaching into another volume.
+ */
+function openLeafDirectories(leaf: string, dev: number): void {
+  const pending = [leaf];
+  while (pending.length) {
+    const directory = pending.pop()!;
+    const stat = lstatSync(directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) continue;
+    if (stat.dev !== dev)
+      throw Error(`${directory} is on another device inside the run leaf`);
+    if ((stat.mode & 0o700) !== 0o700)
+      chmodSync(directory, (stat.mode & 0o7777) | 0o700);
+    for (const entry of readdirSync(directory, { withFileTypes: true }))
+      if (entry.isDirectory()) pending.push(join(directory, entry.name));
   }
 }
