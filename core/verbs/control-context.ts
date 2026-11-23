@@ -10,6 +10,12 @@ export class ControlContext {
   readonly coordinatorActionRunId = new AsyncLocalStorage<string>();
   /** Set within one replayed owner verb's async context: a replay is not the owner's next verb. */
   readonly replayingDeferredVerb = new AsyncLocalStorage<true>();
+  /**
+   * Set within one authorized author-round control at the revision cap: the task
+   * and the acceptance detail its own transaction records if the control applies
+   * (`recordAcceptedRevisionRound`).
+   */
+  readonly revisionCapAcceptance = new AsyncLocalStorage<{ taskId: string; detail: string }>();
 
   /** Round 4: a direct owner call — not a coordinator report and not a deferred replay. */
   isOwnerCall(): boolean {

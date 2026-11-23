@@ -18,10 +18,10 @@ import { fixture } from "./support/responsible-lifecycle-fixture";
  * broke the read with a raw too_big refusal under the board header.
  */
 
-test("1141-1 the joint-review producer keeps a long finding inside the limit with the material in details", async () => {
+test("1141-1 the third non-converging round raises no board decision; its long finding travels in the planner tell", async () => {
   const f = fixture({ responsible: true });
-  // Board route: the joint question becomes a Spec 032 decision instead of a
-  // native prompt. Only the route changes; the adapter keeps every other fake.
+  // Board route: a Nucleus question would become a Spec 032 decision instead of a
+  // native prompt. Spec 068 Decision 2 raises none at the third round.
   Object.assign(f.adapter, { capabilities: () => ({ nativeDecisions: false }) });
   try {
     await f.reviews(2);
@@ -29,28 +29,17 @@ test("1141-1 the joint-review producer keeps a long finding inside the limit wit
     assert.equal(f.run().role, "revision", "a returned revision runs before the third review");
     await f.report("ready_for_review");
     await f.engine.wake();
-    assert.equal(f.run().role, "reviewer", "the third review runs before the joint question");
+    assert.equal(f.run().role, "reviewer", "the third review runs");
     const longFinding = `Authenticated findings: ${"Finding detail. ".repeat(400).trim()}`;
     assert.ok(longFinding.length > 4000, "the fixture finding exceeds the view limit");
     await f.report("changes_required", { reviewText: longFinding });
     await f.settle(2);
-    // The producer recorded its question instead of refusing it.
-    assert.equal(f.events("responsible_question").length, 1, "exactly one joint question");
-    assert.equal(f.events("responsible_question_unknown").length, 0, "no producer refusal");
-    assert.equal(f.asks.length, 0, "no native prompt on the board route");
-    // The board decision carries a short readable ask; the long material is in
-    // the details, never in the clipped question.
-    const open = new Decisions(f.store).list({ status: "open" });
-    assert.equal(open.length, 1, "the joint question is one open board decision");
-    const view = open[0]!;
-    assert.deepEqual(view.links.tasks, [f.current().id]);
-    assert.ok(view.question.length <= 4000, "the recorded question stays within the view limit");
-    assert.match(view.question, /Three review rounds have not converged/);
-    assert.doesNotMatch(view.question, /Finding detail\./, "the full finding is not inlined in the question");
-    assert.ok((view.details ?? "").includes(longFinding), "the full finding travels in the details");
-    assert.match(view.details ?? "", /revision reported ready_for_review/, "the worker return travels in the details");
-    // The board read validates: the decision list output contract parses.
-    decisionList.output.parse(open);
+    assert.equal(f.events("responsible_question").length, 0, "no joint question");
+    assert.equal(new Decisions(f.store).list({ status: "open" }).length, 0, "no board decision");
+    for (let i = 0; i < 30 && !f.events("review_round_planner_told").length; i++) await new Promise(resolve => setImmediate(resolve));
+    const tell = f.prompts.find(prompt => prompt.messageId.startsWith("ns-review-round-"));
+    assert.ok(tell, "the planner tell was sent");
+    assert.ok(tell!.text.includes("Finding detail."), "the finding travels in the tell");
   } finally { await f.close(); }
 });
 

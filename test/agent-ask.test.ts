@@ -1076,24 +1076,13 @@ test("an ask joins a question Queue itself raised and collects its answer instea
   }
 });
 
-test("the joint review question on a provider without native questions goes through the nucleus_ask path", async () => {
-  const delegated: { planner: string | null; decider: string | null } = {
-    planner: null,
-    decider: null,
-  };
+test("the third non-converging round on a provider without native questions prompts nothing and tells the planner", async () => {
   const f = lifecycleFixture({
     responsible: true,
     provider: "pi",
-    delegates: delegated,
+    delegates: { planner: null, decider: null },
   });
-  f.engine.resolution.delegatedAnswerWaitMs = 30_000;
   try {
-    const settled = new Decisions(f.store).add({
-      question: "Should this review stay on the current branch?",
-      askedBy: "planner",
-      project: { origin: join(f.dir, "repo"), path: join(f.dir, "repo") },
-    });
-    delegated.planner = `Choice: Continue the current approach\nReason: The disagreement is mechanical\nOvertakes: ${settled.id}`;
     f.store.upsertProject({
       key: "app",
       name: "App",
@@ -1104,136 +1093,42 @@ test("the joint review question on a provider without native questions goes thro
       agentId: "planner-1",
       setBy: "operator",
     });
-    let resumedReason: string | undefined;
-    const update = f.store.update.bind(f.store);
-    f.store.update = (...args) => {
-      const task = update(...args);
-      if (args[2] === "responsible_question_resumed")
-        resumedReason = task.reason;
-      return task;
-    };
     await f.reviews(3);
     await f.engine.wake();
-    await until(() => f.events("responsible_question").length > 0);
-    await until(() => f.prompts.length > 0);
-    assert.equal(
-      f.asks.length,
-      0,
-      "a provider without native questions is never prompted to raise one",
-    );
+    await until(() => f.events("review_round_planner_told").length > 0);
+    assert.equal(f.asks.length, 0, "no native question");
     assert.equal(
       f.events("queue_ask_delivery").length,
-      1,
-      "the join key is recorded durably",
-    );
-    assert.match(
-      f.prompts[0]!.text,
-      /question MCP tool named in your session's launch instructions/,
-    );
-    assert.doesNotMatch(f.prompts[0]!.text, /nucleus_ask/);
-    assert.match(f.prompts[0]!.text, /Three review rounds have not converged/);
-    assert.equal(
-      f.delegated.answers.length,
       0,
-      "there is no native permission to answer",
+      "no Queue-raised question goes through the ask path",
     );
+    assert.equal(f.events("responsible_question").length, 0);
+    const tells = f.prompts.filter((prompt) =>
+      prompt.messageId.startsWith("ns-review-round-"),
+    );
+    assert.equal(tells.length, 1, "one tell to the planner");
     assert.equal(
-      f.delegated.planner.length,
-      1,
-      "the planner answers the delegated question",
+      f.prompts.filter((prompt) => !prompt.messageId.startsWith("ns-review-round-") && /Three review rounds have not converged/.test(prompt.text)).length,
+      0,
+      "the worker thread is never asked to raise a joint question",
     );
-
-    // The settle path records the answer with who answered it and resumes the task.
-    await until(() => f.events("responsible_question_answered").length > 0);
-    assert.match(
-      f.events("responsible_question_answered")[0]!.detail,
-      /Continue the current approach — answered by delegated planner origin/,
-    );
-    const marked = new Decisions(f.store).get({ id: settled.id })
-      .overtakenBy?.[0];
-    assert.equal(marked?.kind, "planner_answer");
-    assert.equal(marked?.id, f.current().id);
-    assert.equal(
-      marked?.sourceId,
-      f.events("responsible_question")[0]!.detail.split(":")[0],
-    );
-    await until(() => f.events("responsible_question_resumed").length > 0);
-    assert.equal(
-      f.current().resolution.stop,
-      null,
-      "the answered question clears the wait",
-    );
-    assert.match(
-      resumedReason ?? "",
-      /A delegated planner answered the joint review question/,
-      "the continuation names planner authority instead of presenting it as an operator instruction",
-    );
-
-    // The thread's own nucleus_ask call, carrying the exact delivered content, joins and collects the answer.
-    const prompt = f.prompts[0]!.text;
-    const question = prompt.slice(
-      prompt.indexOf("Question: ") + "Question: ".length,
-      prompt.indexOf(" Choices: "),
-    );
-    const choices = prompt
-      .slice(
-        prompt.indexOf(" Choices: ") + " Choices: ".length,
-        prompt.indexOf(". Do not answer"),
-      )
-      .split(" | ");
-    await f.engine.wake();
-    await until(() => Boolean(f.current().resolution.currentRunId));
-    const run = f.run();
-    const receipt = await f.engine.resolution.agentAsk(
-      {
-        eventId: createHash("sha256").update(randomUUID()).digest("hex"),
-        taskId: f.submitted.id,
-        runId: run.id,
-        question,
-        choices,
-      },
-      f.tokens.get(run.id)!,
-    );
-    assert.equal(receipt.status, "answered");
-    assert.equal(receipt.answer, "Continue the current approach");
-    assert.equal(receipt.answeredBy, "delegated planner origin");
-    assert.equal(
-      f.events("agent_ask_joined").length,
-      1,
-      "the ask joined the Queue-raised question",
-    );
-    assert.equal(
-      f.delegated.planner.length,
-      1,
-      "a join never asks the planner twice",
-    );
+    assert.equal(f.delegated.planner.length, 0, "nothing is delegated");
   } finally {
     await f.close();
   }
 });
 
-test("a T3-bound third-round review question goes to the task planner through question.answer", async () => {
-  const delegated = {
-    planner: null as string | null,
-    decider: null as string | null,
-  };
+test("a T3-bound third non-converging round tells the task planner, not the project planner", async () => {
   const f = lifecycleFixture({
     responsible: true,
     provider: "pi",
     hostId: "t3code:synthetic-environment",
-    delegates: delegated,
+    delegates: { planner: null, decider: null },
   });
-  f.engine.resolution.delegatedAnswerWaitMs = 30_000;
   Object.assign(f.adapter, {
     capabilities: () => ({ nativeDecisions: false, reportingViaMcp: false }),
     reportingViaMcp: false,
   });
-  const prior = new Decisions(f.store).add({
-    question: "Earlier planner question?",
-    askedBy: "planner",
-    project: { origin: join(f.dir, "repo"), path: join(f.dir, "repo") },
-  });
-  delegated.planner = `Choice: Continue the current approach\nReason: The current approach remains safe\nOvertakes: ${prior.id}`;
   f.store.upsertProject({
     key: "app",
     name: "App",
@@ -1248,32 +1143,18 @@ test("a T3-bound third-round review question goes to the task planner through qu
   try {
     await f.reviews(3);
     await f.engine.wake();
-    await until(() => f.events("responsible_question_answered").length > 0);
-    assert.equal(f.delegated.planner.length, 1);
-    assert.equal(
-      f.delegated.planner[0]!.agentId,
-      "task-planner-1",
-      "the task planner is the first rung",
+    await until(() => f.events("review_round_planner_told").length > 0);
+    const tell = f.prompts.find((prompt) =>
+      prompt.messageId.startsWith("ns-review-round-"),
     );
-    assert.match(f.delegated.planner[0]!.prompt, /question\.answer/);
-    assert.match(
-      f.delegated.planner[0]!.prompt,
-      /Three review rounds have not converged/,
-    );
+    assert.equal(tell?.agentId, "task-planner-1", "the task planner is the first rung");
     assert.equal(
       new Decisions(f.store).list({ task: f.submitted.id, status: "open" })
         .length,
       0,
-      "planner-ladder questions do not become board decisions when the task host lacks native questions",
+      "the third round raises no board decision",
     );
-    assert.match(
-      f.events("responsible_question_answered")[0]!.detail,
-      /Continue the current approach — answered by delegated planner/,
-    );
-    assert.ok(
-      f.events("responsible_question_resumed").length > 0,
-      "the review round continues after the planner answer",
-    );
+    assert.equal(f.delegated.planner.length, 0);
   } finally {
     await f.close();
   }

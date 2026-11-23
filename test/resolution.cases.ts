@@ -27,6 +27,7 @@ import { briefDigest } from "../core/planning/brief";
 import { parseAgentId } from "../shared/agent-identity";
 import { Engine, controlHasExternalEffect } from "../core/engine";
 import {
+  completionSchema,
   holdOwnerOf,
   taskOwner,
   QUEUE_REPOSITORY_ORIGIN,
@@ -11356,6 +11357,120 @@ test("three coordinator runs that applied nothing stop coordinator recovery and 
       COORDINATOR_LOOP_LIMIT + 1,
       "a coordinator runs again after the explicit coordinator restart",
     );
+  } finally {
+    await f.close();
+  }
+});
+/**
+ * Spec 068 §4: a stored coordinator run whose owner verb Nucleus applied, in the shape
+ * the report path leaves: a `recovered` completion carrying the action, and the
+ * `coordinator_action_applied` event naming that completion.
+ */
+function appliedCoordinatorRun(
+  f: ReturnType<typeof fixture>,
+  id: string,
+  at: number,
+  verb: "restart" | "none" = "restart",
+) {
+  const eventId = `${id}-report`;
+  f.store.putRun({
+    id,
+    taskId: f.task.id,
+    role: "recovery",
+    generation: f.current().coordinatorGeneration,
+    head,
+    base,
+    agentId: `coordinator-${id}`,
+    workspaceId: "workspace",
+    profile: null,
+    status: "finished",
+    createdAt: new Date(at).toISOString(),
+    lastObservedAt: null,
+    active: false,
+    idleSince: null,
+    released: true,
+    completion: completionSchema.parse({
+      eventId,
+      taskId: f.task.id,
+      runId: id,
+      status: "recovered",
+      summary: verb === "none" ? "The reviewer is live" : "Restarted the stopped reviewer",
+      coordinatorAction:
+        verb === "none"
+          ? { verb: "none", reason: "The reviewer is live and progressing" }
+          : { verb: "restart", role: "reviewer", reason: "The reviewer stopped without a report" },
+    }),
+  } as never);
+  f.store.event(f.task.id, "coordinator_action_applied", eventId);
+}
+function failedCoordinatorRun(f: ReturnType<typeof fixture>, id: string, at: number) {
+  f.store.putRun({
+    id, taskId: f.task.id, role: "recovery", generation: f.current().coordinatorGeneration, head, base,
+    agentId: `coordinator-${id}`, workspaceId: "workspace", profile: null, status: "finished",
+    createdAt: new Date(at).toISOString(), lastObservedAt: null, active: false, idleSince: null,
+    released: true, completion: null,
+  } as never);
+}
+test("three coordinator repairs that applied at one head do not spend the loop bound (Spec 068 §4)", async () => {
+  const { unproductiveCoordinatorRuns, coordinatorLaunchesAtHead } = await import(
+    "../core/recovery/recovery-bound"
+  );
+  const f = fixture();
+  try {
+    enableRecovery(f);
+    // 2026-11-22: three successful repairs at one head spent the cap and left the
+    // task blocked until `restart role=coordinator`.
+    for (let index = 0; index < 3; index++)
+      appliedCoordinatorRun(f, `repaired-${index}`, Date.now() + index);
+    assert.equal(unproductiveCoordinatorRuns(f.store, f.task.id), 0, "an applied repair is progress, not a charge");
+    assert.equal(coordinatorLaunchesAtHead(f.store, f.task.id), 3);
+    attention(f, "The reviewer stopped again without a report");
+    await f.engine.wake();
+    assert.equal(
+      f.store.runs(f.task.id).filter((run) => run.role === "recovery").length,
+      4,
+      "the fourth fault still gets a coordinator",
+    );
+    assert.notEqual(f.current().resolution.recovery?.status, "escalated");
+  } finally {
+    await f.close();
+  }
+});
+test("a coordinator that applied nothing (none or no report) is charged, and an applied repair ends the charged chain", async () => {
+  const { unproductiveCoordinatorRuns, COORDINATOR_LOOP_LIMIT } = await import(
+    "../core/recovery/recovery-bound"
+  );
+  const f = fixture();
+  try {
+    failedCoordinatorRun(f, "failed-0", Date.now());
+    appliedCoordinatorRun(f, "repaired-1", Date.now() + 1);
+    failedCoordinatorRun(f, "failed-2", Date.now() + 2);
+    appliedCoordinatorRun(f, "observed-3", Date.now() + 3, "none");
+    assert.equal(unproductiveCoordinatorRuns(f.store, f.task.id), 2, "the two runs after the repair applied nothing");
+    failedCoordinatorRun(f, "failed-4", Date.now() + 4);
+    assert.equal(unproductiveCoordinatorRuns(f.store, f.task.id), COORDINATOR_LOOP_LIMIT);
+  } finally {
+    await f.close();
+  }
+});
+test("six coordinator launches at one head stop recovery and ask the planner even when each applied (Spec 068 §4)", async () => {
+  const { COORDINATOR_HEAD_CEILING, COORDINATOR_HEAD_CEILING_SUMMARY } = await import(
+    "../core/recovery/recovery-bound"
+  );
+  const f = fixture();
+  try {
+    enableRecovery(f);
+    for (let index = 0; index < COORDINATOR_HEAD_CEILING; index++)
+      appliedCoordinatorRun(f, `repaired-${index}`, Date.now() + index);
+    attention(f, "The reviewer stopped again without a report");
+    await f.engine.wake();
+    assert.equal(
+      f.store.runs(f.task.id).filter((run) => run.role === "recovery").length,
+      COORDINATOR_HEAD_CEILING,
+      "no seventh coordinator at this head",
+    );
+    assert.equal(f.current().resolution.recovery?.status, "escalated");
+    assert.equal(f.current().resolution.recovery?.summary, COORDINATOR_HEAD_CEILING_SUMMARY);
   } finally {
     await f.close();
   }

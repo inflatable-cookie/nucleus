@@ -88,6 +88,33 @@ export function extendedTaskBudgetLimits(
   });
 }
 
+/**
+ * Spec 068 Decision 1 (Tom, 2026-11-22): the first time a task's budget is spent,
+ * Nucleus extends it once by one default increment on its own and records
+ * `budget_extended` with this source and policy; the next spend raises the ordinary
+ * operator budget question. Planners and the operator extended 34 of 35 spent
+ * budgets on 15–22 November.
+ */
+export const AUTOMATIC_BUDGET_EXTENSION_SOURCE = "automatic";
+export const AUTOMATIC_BUDGET_EXTENSION_POLICY =
+  "Spec 068 Decision 1: a task's first spent budget is extended once by one default increment; the next spend asks the operator";
+/** The `budget_extended` detail prefix an automatic extension records. */
+export const AUTOMATIC_BUDGET_EXTENSION_DETAIL = `${AUTOMATIC_BUDGET_EXTENSION_SOURCE}: ${AUTOMATIC_BUDGET_EXTENSION_POLICY}`;
+
+/**
+ * Phases whose next step starts a participant run, the step the budget gates. A
+ * task verifying, merging or closing out starts no run, so a spent budget there is
+ * not its stop; it stops only if that stage needs another run (the launch gate).
+ */
+export const BUDGET_GATED_PHASES = ["dispatching", "working", "changes_requested", "awaiting_review", "reviewing"] as const;
+export const budgetGatesPhase = (phase: string): boolean =>
+  (BUDGET_GATED_PHASES as readonly string[]).includes(phase);
+
+/** Whether a spent budget is still the task's first, so Nucleus extends it itself. */
+export function automaticBudgetExtensionDue(task: Pick<Task, "resolution">): boolean {
+  return (task.resolution.budgetExtensions ?? 0) === 0;
+}
+
 /** Compact board wire form: token used/limit/evidence, wall used/limit, exhausted. */
 export const taskBudgetBoardViewSchema = z.tuple([
   z.number().int().min(0), z.number().int().positive(), z.enum(["exact", "partial", "none"]),
@@ -377,6 +404,6 @@ export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Parti
  */
 export function budgetPauseDetail(budget: TaskBudgetView): string {
   return budget.exhausted === "wall_time"
-    ? `Budget reached: ${budget.wallMs.limit / MINUTE_MS} minutes of wall time since the responsible lifecycle began`
+    ? `Budget reached: ${Math.round(budget.wallMs.limit / MINUTE_MS)} minutes of wall time since the responsible lifecycle began`
     : `Budget reached: ${budget.effectiveTokens.limit.toLocaleString("en-US")} effective tokens`;
 }

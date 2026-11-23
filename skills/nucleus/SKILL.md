@@ -748,11 +748,25 @@ Planned briefs run the responsible lifecycle. Explicit `queue.responsible: false
 
 **When the task is stuck, reach for `explicitCommands` first.** When `next`
 returns `explicitCommands`, those are the commands that resolve the current
-state, each with prefilled `args`. Copy one, add `reason` (and `accept` with
-the warning IDs when a warnings response asks for them), and call the command
-named in `action` (`nucleus closeout.now -` and so on). Prefer them to
-`restart`, `move` and `retry_effect` for anything stuck; the normal-flow verbs
-stay for ordinary progress.
+state, each with prefilled `args` and, where Nucleus can tell, the `warnings` it
+will name. Copy one, add `reason` and `accept` with the warning IDs you accept
+from that list, and call the command named in `action` (`nucleus closeout.now -`
+and so on). Prefer them to `restart`, `move` and `retry_effect` for anything
+stuck; the normal-flow verbs stay for ordinary progress.
+
+**Read the first line, not the JSON.** An explicit command prints its outcome
+first: `applied`, `warnings: <ids> (not applied; resend with "accept": [...])`
+or `stale: …`, and exits 2 unless it applied. A warnings or stale answer changed
+nothing, however much task JSON follows it; resend with the named `accept` list
+or the current version.
+
+**A spent budget or revision cap is a stop.** It reads `Budget reached: …` or
+`Revision cap reached: …`, never "progressing". Nucleus extends a task's first
+spent budget once by itself; the second spend asks you (answer the question or
+use `extend_budget`). To start the next run past a cap, use the listed `run.start`
+with `accept: ["budget"]`. The third non-converging review round no longer asks:
+Nucleus continues and tells you the reviewer's findings, and a change of approach
+is yours (`move to=work` with direction, or `route role=worker`).
 
 **When a run or record is stuck:** the task's coordinator, responsible planner
 or operator can use `nucleus run.start -`, `nucleus run.release -`,
@@ -760,8 +774,8 @@ or operator can use `nucleus run.start -`, `nucleus run.release -`,
 `nucleus turn.take -`, `nucleus turn.release -`, `nucleus merge.now -` or
 `nucleus closeout.now -`. Use the task version from `next` and include a reason.
 Repeat a warning response with the warning IDs you accept. Only a planner or
-operator may accept `hold_owner`, `route_policy`, `two_writers` or
-`creation_in_flight`, or resolve a
+operator may accept `hold_owner`, `route_policy`, `two_writers`,
+`creation_in_flight` or `budget`, or resolve a
 critical task; only the operator board may accept `unverified_merge`. Workers
 and reviewers ask one of those roles to act.
 

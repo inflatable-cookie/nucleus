@@ -368,7 +368,8 @@ then follows the same workflow. Rulings the same day:
 - **Merge holds:** "only useful if another thread requires it". That thread manages the hold with the
   worker or reviewer for a specific reason; there is no default hold.
 - **Budgets:** an exhausted budget pauses the task and asks the operator "in a simple visible way
-  (eg composer pill in Paseo)".
+  (eg composer pill in Paseo)". Since Spec 068 Decision 1 (Tom, 2026-11-22) the first spend is
+  extended once automatically and only a later spend asks; host and service downtime never count.
 - **Pilot:** this repository first, provided piloting on Nucleus itself does not make developing it
   difficult (the old lifecycle and direct operator-accepted PRs stay available as the escape hatch).
 - **Threads:** the Sol Supervisor goes; the Nucleus owner thread becomes the planner and may itself be

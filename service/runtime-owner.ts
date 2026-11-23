@@ -1,4 +1,9 @@
 import { pruneLegacyQaEvidence } from "../core/qa/legacy-qa-retention";
+import {
+  recordServiceAlive,
+  recordServiceStart,
+  SERVICE_ALIVE_INTERVAL_MS,
+} from "../core/scheduling/service-downtime";
 import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
 import { registerServiceRollRequest } from "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
@@ -659,6 +664,9 @@ export class QueueRuntime {
         pid: process.pid,
         owner: this.owner,
       });
+      // Spec 068 Decision 1: the window since the previous owner was last alive
+      // (its drain or crash) was service downtime, which no task budget spends.
+      recordServiceStart(this.store, this.owner);
     });
     this.hostRegistry = new HostRegistry(
       {
@@ -1097,6 +1105,17 @@ export class QueueRuntime {
       // closeout's seconds of work cost minutes of waiting. The pass stays bounded and
       // pre-emptible, so running it more often only tightens the net.
       this.timers.push(setInterval(() => tick(false), this.sweepIntervalMs));
+      // Spec 068 Decision 1: the service's own last-alive stamp, so a crash's
+      // downtime is discounted from task budgets from (at most) this long ago.
+      const aliveTimer = setInterval(() => {
+        try {
+          recordServiceAlive(this.store, this.owner);
+        } catch {
+          /* the next stamp retries; a missed one only widens the discount */
+        }
+      }, SERVICE_ALIVE_INTERVAL_MS);
+      aliveTimer.unref?.();
+      this.timers.push(aliveTimer);
       this.timers.push(
         setInterval(() => tick(true), PROFILE_REFRESH_INTERVAL_MS),
       );
@@ -1594,6 +1613,13 @@ export class QueueRuntime {
   async drain(): Promise<void> {
     if (this.closing) return;
     this.lifecycle.beginDrain();
+    // Spec 068 Decision 1: a drain (a roll or a stop) is where downtime begins,
+    // so the roll's own window never spends a task's budget.
+    try {
+      recordServiceAlive(this.store, this.owner);
+    } catch {
+      /* a closed store keeps the last stamp */
+    }
     this.clearPluginPresenceWatch();
     for (const timer of this.timers) clearInterval(timer);
     this.timers = [];

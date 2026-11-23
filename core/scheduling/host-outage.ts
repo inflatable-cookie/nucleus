@@ -6,6 +6,7 @@ import {
 } from "../../shared/host-outage";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { now, type Store } from "../store/store";
+import { serviceDowntimeIntervals } from "./service-downtime";
 
 /** How many waiting tasks one notice lists before it names the rest as a count. */
 export const HOST_OUTAGE_NOTICE_TASK_LIMIT = 10;
@@ -162,6 +163,19 @@ export function hostOutageIntervals(
   if (!hostId) return [];
   const open = openHostOutage(store, hostId);
   return [...hostOutageHistoryFor(store, hostId), ...(open ? [{ since: open.since, until: null }] : [])];
+}
+
+/**
+ * Everything a task's budget read discounts besides the task's own pauses: its
+ * host's outages (Spec 069 §3) and the Nucleus service's own downtime and rolls
+ * (Spec 068 Decision 1). Every budget reader passes this one list to `taskBudget`,
+ * so the gate, `next`, the board and the extension verb measure one figure.
+ */
+export function budgetOutageIntervals(
+  store: Pick<Store, "getMeta">,
+  hostId: string | null | undefined,
+): HostOutageInterval[] {
+  return [...hostOutageIntervals(store, hostId), ...serviceDowntimeIntervals(store)];
 }
 
 /**

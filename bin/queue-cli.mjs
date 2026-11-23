@@ -17,6 +17,7 @@ import { loadCliRuntime, repoDirFrom } from './cli-bootstrap.mjs';
 import { stampInput } from './cli-stamping.mjs';
 import { credentialFor, readRunTicket, runTicketPath } from './run-ticket.mjs';
 import { usageText } from './cli-usage.mjs';
+import { EXPLICIT_COMMANDS, explicitOutcome } from './explicit-outcome.mjs';
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const repoDir = repoDirFrom(dirname(fileURLToPath(import.meta.url)));
@@ -67,7 +68,7 @@ async function main() {
   const uiCommand = requestedMethod === 'ui';
   const file = uiCommand ? undefined : rest.find(arg => !['--wait', '--dry-run'].includes(arg));
   // Spec 050: the CLI verb name for the task.next read RPC.
-  const explicit = ['run.start', 'run.release', 'record.clear', 'phase.set', 'message.send', 'turn.take', 'turn.release', 'merge.now', 'closeout.now'].includes(requestedMethod);
+  const explicit = EXPLICIT_COMMANDS.includes(requestedMethod);
   const method = uiCommand ? 'service.ui-link' : requestedMethod === 'next' ? 'task.next' : explicit ? 'task' : requestedMethod;
   const input = uiCommand ? { action: rest.includes('--revoke') ? 'revoke' : 'issue' } : readPayload(file);
   if (explicit) input.action = requestedMethod;
@@ -155,6 +156,13 @@ async function main() {
       if (result.portFallback) console.error(`Board port ${result.port} is in use; this link uses the available fallback port.`);
       console.error(`Pair this link before ${result.expiresAt}; its session stays paired until \`nucleus ui --revoke\` or 30 days without use.`);
       if (!rest.includes('--no-open')) openInBrowser(result.url);
+    } else if (explicit && explicitOutcome(result)) {
+      // The outcome leads (papercut ee6e634c): one line on stderr, then the JSON body
+      // for machines on stdout; anything but `applied` exits 2.
+      const outcome = explicitOutcome(result);
+      console.error(outcome.line);
+      console.log(JSON.stringify(result, null, 2));
+      process.exitCode = outcome.exitCode;
     } else console.log(JSON.stringify(result, null, 2));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

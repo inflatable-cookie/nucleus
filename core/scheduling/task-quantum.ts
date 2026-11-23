@@ -102,6 +102,7 @@ export type TaskQuantumContext = Pick<
     | "recoverExternalMerge"
     | "recovery"
     | "resumeClearedAttention"
+    | "resumeRoundTells"
     | "settleBudgetClock"
     | "settleSettledWaitStop"
     | "slotAdmissionReason"
@@ -554,6 +555,8 @@ export class TaskQuantum {
         current = this.context.resolution.settleBudgetClock(current, {
           returned: true,
         });
+        // Spec 068 Decision 2: a round-3 tell the service stopped before sending.
+        this.context.resolution.resumeRoundTells(current);
         // A budget stop always asks its question (nucleus#1153). Asking from the
         // task's own pass means a phase that records the stop, a task host that is
         // offline and a support step that failed earlier in the sweep cannot leave
