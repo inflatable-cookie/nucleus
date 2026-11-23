@@ -109,6 +109,7 @@ export type HostPassContext = Pick<
         Resolution,
         | "hostPassWarmBudgetMs"
         | "markPassTimelineBudgetExhausted"
+        | "takePassProofs"
         | "primePassProcesses"
         | "primePassTimeline"
         | "primePassTimelinePage"
@@ -362,6 +363,108 @@ export class HostPass {
    */
   private readonly terminalOperationCursor = new Map<string, number>();
   private readonly lastRunProcessSweep = new Map<string, number>();
+  /**
+   * Observe the participants a quantum demanded last pass (Spec 068 §6), and the
+   * other execution participants of their tasks, before this pass's process
+   * snapshot. A merge proves its participants one at a time and stops at the
+   * first hold, so serving the whole task lets the proof converge in one more
+   * pass rather than one pass per participant.
+   *
+   * An inactive observation is recorded as the pre-process proof the owned-tool
+   * freshness rule needs, and that participant's tool page is returned to be
+   * warmed first. An inventory answer is already that proof and costs no read.
+   * An active or unknown participant is left out: its proof holds or defers on
+   * its own facts. Every read is bounded by the pass's warm budget.
+   */
+  private async observeDemandedParticipants(
+    host: string,
+    activeTasks: readonly Task[],
+    observed: ReadonlyMap<string, AgentObservation> | null,
+    budgetMs: number,
+  ): Promise<
+    Array<{
+      taskId: string;
+      agentId: string;
+      coveredObservation: {
+        updatedAt: string | null;
+        status: string;
+        archived?: boolean;
+      };
+    }>
+  > {
+    const resolution = this.context.resolution;
+    if (!resolution.takePassProofs) return [];
+    const taskOf = new Map<string, string>();
+    const participantsOf = new Map<string, string[]>();
+    for (const task of activeTasks)
+      for (const { agentId } of knownExecutionParticipantIds(
+        task,
+        this.store.runs(task.id),
+      )) {
+        if (taskOf.has(agentId)) continue;
+        taskOf.set(agentId, task.id);
+        participantsOf.set(task.id, [
+          ...(participantsOf.get(task.id) ?? []),
+          agentId,
+        ]);
+      }
+    const pending = resolution.takePassProofs(host, new Set(taskOf.keys()));
+    if (!pending.length) return [];
+    const serve = new Set<string>();
+    for (const agentId of pending) {
+      serve.add(agentId);
+      for (const sibling of participantsOf.get(taskOf.get(agentId)!) ?? [])
+        serve.add(sibling);
+    }
+    const inactive = (state: AgentObservation): boolean =>
+      !state.active &&
+      !state.activeTurnId &&
+      !state.permissions &&
+      (noTurnLive(state) ||
+        state.status === "closed" ||
+        state.status === "gone" ||
+        state.archived === true);
+    const deadlineAt = Date.now() + Math.max(0, budgetMs);
+    const demanded: Awaited<
+      ReturnType<HostPass["observeDemandedParticipants"]>
+    > = [];
+    await this.step(host, "demandedParticipantObservations", async () => {
+      for (const agentId of serve) {
+        let state = observed?.get(agentId) ?? null;
+        if (!state) {
+          await yieldToLoop();
+          if (this.context.stopped) return;
+          const remaining = deadlineAt - Date.now();
+          if (remaining <= 0) return;
+          const read = await boundedRead(
+            "participant observation",
+            () => this.context.host.observe(agentId),
+            Math.min(remaining, QUANTUM_READ_DEADLINE_MS),
+          ).catch(() => ({
+            state: "unknown" as const,
+            reason: "observe failed",
+          }));
+          if (read.state !== "ok" || !read.value || read.value.id !== agentId)
+            continue;
+          state = read.value;
+          if (inactive(state))
+            resolution.recordPassHostObservation?.(host, agentId, state);
+        }
+        if (!inactive(state)) continue;
+        demanded.push({
+          taskId: taskOf.get(agentId)!,
+          agentId,
+          coveredObservation: {
+            updatedAt: state.updatedAt ?? null,
+            status: state.status,
+            archived: state.archived,
+          },
+        });
+      }
+    });
+    return demanded;
+  }
+
   /** Per-host rotating offset so timeline warming stays fair across passes. */
   private readonly warmOffset = new Map<string, number>();
 
@@ -869,6 +972,16 @@ export class HostPass {
         });
       }
     }
+    // Spec 068 §6: participants a quantum could not prove last pass are observed
+    // here, before the process snapshot, so an idle participant outside the
+    // inventory (a released run, the task-row worker) has an inactivity proof
+    // that predates the scan. Their pages are warmed first below.
+    const demanded = await this.observeDemandedParticipants(
+      host,
+      activeTasks,
+      observed as ReadonlyMap<string, AgentObservation> | null,
+      warmBudgetMs,
+    );
     // Spec 068 §6 / Spec 066 R1: one shared process-table snapshot per host
     // pass, bounded by its deadline. Captured AFTER inventory and retained
     // terminal observations so every pre-process observation predates the scan.
@@ -958,8 +1071,9 @@ export class HostPass {
       budgetRemaining() > 0 &&
       (warmed < HOST_PASS_WARM_CANDIDATE_CAP ||
         (candidate?.kind === "tool" &&
-          primaryToolTaskId !== null &&
-          candidate.taskId === primaryToolTaskId));
+          (candidate.demanded === true ||
+            (primaryToolTaskId !== null &&
+              candidate.taskId === primaryToolTaskId))));
 
     type WarmItem =
       | { kind: "delivery"; agentId: string; workspaceId: string }
@@ -972,6 +1086,8 @@ export class HostPass {
             status?: string;
             archived?: boolean;
           };
+          /** A quantum asked for this page last pass: warmed first, outside the cap. */
+          demanded?: boolean;
         }
       | { kind: "shell"; agentId: string };
 
@@ -1145,14 +1261,24 @@ export class HostPass {
       ].filter((group) => group.length > 0),
       passOffset,
     );
-    const interleaved: WarmItem[] = [];
+    // Demanded pages go ahead of the rotation so a page a quantum asked for is
+    // never starved two passes running; the rotation keeps the rest fair.
+    const demandedIds = new Set(demanded.map((item) => item.agentId));
+    const interleaved: WarmItem[] = demanded.map((item) => ({
+      kind: "tool" as const,
+      ...item,
+      demanded: true,
+    }));
     const maxLen = rotatedGroups.reduce(
       (max, group) => Math.max(max, group.length),
       0,
     );
     for (let i = 0; i < maxLen; i++) {
       for (const group of rotatedGroups) {
-        if (i < group.length) interleaved.push(group[i]!);
+        const item = group[i];
+        if (!item) continue;
+        if (item.kind === "tool" && demandedIds.has(item.agentId)) continue;
+        interleaved.push(item);
       }
     }
 
@@ -1161,7 +1287,7 @@ export class HostPass {
         for (const candidate of interleaved) {
           await yieldToLoop();
           if (this.context.stopped || budgetRemaining() <= 0) return;
-          if (candidate.kind === "tool") {
+          if (candidate.kind === "tool" && !candidate.demanded) {
             primaryToolTaskId ??= candidate.taskId;
           }
           if (!canWarmMore(candidate)) continue;

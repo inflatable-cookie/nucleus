@@ -608,6 +608,7 @@ export class Engine {
           "endPassSnapshot",
           "hostPassWarmBudgetMs",
           "markPassTimelineBudgetExhausted",
+          "takePassProofs",
           "observationTargets",
           "observe",
           "origins",
