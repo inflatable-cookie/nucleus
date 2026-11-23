@@ -1,4 +1,5 @@
 import type { Run, Task } from "./contracts";
+import { z } from "zod";
 import type {
   ParticipantActivity,
   ParticipantProcess,
@@ -85,6 +86,39 @@ const personStops = new Set<TaskStopReason>([
   "escalated",
   "budget",
 ]);
+
+export const PLANNER_DELIVERY_EVENT = "planner_message_delivery_update";
+const plannerDeliveryUpdate = z.object({
+  occurrence: z.string(),
+  messageId: z.string(),
+  state: z.enum([
+    "routed",
+    "intent",
+    "accepted",
+    "queued",
+    "started",
+    "unknown",
+    "refused",
+  ]),
+  attempt: z.number().int().nonnegative(),
+  retryAt: z.number().optional(),
+  acceptedAt: z.string().optional(),
+  nativeMessageId: z.string().optional(),
+  runId: z.string().optional(),
+  startedAt: z.string().optional(),
+  deadline: z.number().optional(),
+  detail: z.string().optional(),
+});
+export type PlannerDeliveryUpdate = z.infer<typeof plannerDeliveryUpdate>;
+
+export function readPlannerDelivery(detail: string) {
+  try {
+    const parsed = plannerDeliveryUpdate.safeParse(JSON.parse(detail));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The event a planner's, the operator's or a delegated answer's author-round
@@ -326,6 +360,36 @@ export function taskActivity({
     return answer("needs_person", waitStateLabels[wait.state], stop?.since, {
       occurrence: `wait:${wait.state}:${wait.decisionId ?? ""}`,
     });
+  const escalation = stop?.fact;
+  if (
+    stop?.reason === "escalated" &&
+    escalation?.code === "escalation" &&
+    escalation.escalationWait?.kind === "planner"
+  ) {
+    for (let index = events.length - 1; index >= 0; index--) {
+      const event = events[index];
+      if (event?.kind !== PLANNER_DELIVERY_EVENT) continue;
+      const delivery = readPlannerDelivery(event.detail);
+      if (!delivery || escalation.subject !== delivery.occurrence) continue;
+      if (delivery.state === "started") break;
+      const detail =
+        delivery.state === "queued"
+          ? "Queued behind the planner’s active turn"
+          : delivery.state === "refused"
+            ? "Planner message refused before send"
+            : "Waiting on the host to deliver the planner message";
+      const exhausted =
+        delivery.state === "refused" && delivery.retryAt === undefined;
+      return answer(
+        exhausted ? "needs_person" : "nucleus",
+        detail,
+        stop.since,
+        {
+          occurrence: `planner-delivery:${delivery.occurrence}`,
+        },
+      );
+    }
+  }
   if (stop && personStops.has(stop.reason))
     return answer("needs_person", stopWords[stop.reason], stop.since, {
       occurrence: `stop:${stop.reason}:${stop.since}`,

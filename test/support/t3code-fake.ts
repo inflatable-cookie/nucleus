@@ -479,8 +479,12 @@ export async function t3Fake(t: TestContext, directory: string) {
     });
   };
   const watched = new WeakMap<object, object>();
-  const watch = <T,>(target: T): T => {
-    if (target === null || typeof target !== "object" || Buffer.isBuffer(target))
+  const watch = <T>(target: T): T => {
+    if (
+      target === null ||
+      typeof target !== "object" ||
+      Buffer.isBuffer(target)
+    )
       return target;
     const known = watched.get(target as object);
     if (known) return known as T;
@@ -538,7 +542,12 @@ export async function t3Fake(t: TestContext, directory: string) {
       thisArg?: unknown,
     ) {
       for (const [key, value] of this.entries())
-        callback.call(thisArg, value, key, this as unknown as Map<string, Value>);
+        callback.call(
+          thisArg,
+          value,
+          key,
+          this as unknown as Map<string, Value>,
+        );
     }
   }
   const projectRows: Value[] = watch(projectRowsRaw);
@@ -745,6 +754,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     unsettleLagReads: 0,
     refuseMutation: false,
     postEffectDefect: false,
+    queueMessageRuns: false,
     unsupportedProjectCreate: false,
     projectMutationFailure: false,
     projectMutationSecretFailure: false,
@@ -1077,11 +1087,17 @@ export async function t3Fake(t: TestContext, directory: string) {
       new Map<string, { location: "active" | "archive"; key: string }>([
         ...active.map(
           (row) =>
-            [row.id, { location: "active" as const, key: JSON.stringify(row) }] as const,
+            [
+              row.id,
+              { location: "active" as const, key: JSON.stringify(row) },
+            ] as const,
         ),
         ...archived.map(
           (row) =>
-            [row.id, { location: "archive" as const, key: JSON.stringify(row) }] as const,
+            [
+              row.id,
+              { location: "archive" as const, key: JSON.stringify(row) },
+            ] as const,
         ),
       ]);
     /** Send each held shell subscription the rows that changed since it last heard. */
@@ -1168,7 +1184,8 @@ export async function t3Fake(t: TestContext, directory: string) {
         controls.holdDelegatedLaunch &&
         request._tag === "Request" &&
         request.tag === "orchestration.dispatchCommand" &&
-        (request.payload as Value | undefined)?.type === "delegated_task.request"
+        (request.payload as Value | undefined)?.type ===
+          "delegated_task.request"
       ) {
         controls.holdDelegatedLaunch = false;
         heldLaunches.push(() => {
@@ -1182,7 +1199,10 @@ export async function t3Fake(t: TestContext, directory: string) {
     };
     const handleFrame = (request: Value) => {
       // A stalled method is never answered, as a wedged T3 leaves it.
-      if (request._tag === "Request" && controls.stalledMethods.includes(request.tag)) {
+      if (
+        request._tag === "Request" &&
+        controls.stalledMethods.includes(request.tag)
+      ) {
         requests.push(request);
         return;
       }
@@ -1268,9 +1288,19 @@ export async function t3Fake(t: TestContext, directory: string) {
           return success(controls.settings);
         case "subscribeServerConfig":
           return stream([
-            { version: 1, type: "snapshot", config: { settings: controls.settings } },
+            {
+              version: 1,
+              type: "snapshot",
+              config: { settings: controls.settings },
+            },
             ...(payload.environmentThemes === true
-              ? [{ version: 1, type: "environmentThemesUpdated", payload: { themes: controls.environmentThemes } }]
+              ? [
+                  {
+                    version: 1,
+                    type: "environmentThemesUpdated",
+                    payload: { themes: controls.environmentThemes },
+                  },
+                ]
               : []),
           ]);
         case "server.getConfig": {
@@ -1460,8 +1490,8 @@ export async function t3Fake(t: TestContext, directory: string) {
           return stream(opening);
         }
         case "orchestration.getThreadFamily": {
-          const root =
-            threads.get(payload.threadId)?.thread.lineage?.rootThreadId;
+          const root = threads.get(payload.threadId)?.thread.lineage
+            ?.rootThreadId;
           return success({
             snapshotSequence: controls.snapshotSequence,
             threads: [...threads.values()]
@@ -1780,11 +1810,18 @@ export async function t3Fake(t: TestContext, directory: string) {
           )!;
           switch (payload.type) {
             case "message.dispatch": {
-              p.messages.push({
+              const message: {
+                id: string;
+                role: string;
+                text: string;
+                runId: string | null;
+              } = {
                 id: payload.messageId,
                 role: "user",
                 text: payload.text,
-              });
+                runId: null,
+              };
+              p.messages.push(message);
               // The nightly wakes a snoozed thread on an ordinary delivery
               // (dispatchMessage): `snoozedUntil` and `snoozedAt` are cleared unless
               // the dispatch is an automatic notification or a delegated completion
@@ -1804,6 +1841,26 @@ export async function t3Fake(t: TestContext, directory: string) {
               // recordSubagentFollowup does (node:delegated-task:<commandId>). A
               // parent thread's held turn is re-armed by its message (nucleus#1305).
               if (
+                controls.queueMessageRuns &&
+                payload.dispatchMode.type === "queue_after_active"
+              ) {
+                const busy = p.runs.some((run: Value) =>
+                  ["preparing", "starting", "running", "waiting"].includes(
+                    run.status,
+                  ),
+                );
+                message.runId = `run:${payload.commandId}`;
+                p.runs.push(
+                  syntheticRun(payload.threadId, p.runs.length + 1, {
+                    id: message.runId,
+                    userMessageId: message.id,
+                    status: busy ? "queued" : "running",
+                    queuePosition: busy ? 1 : null,
+                    startedAt: busy ? null : new Date().toISOString(),
+                    completedAt: null,
+                  }),
+                );
+              } else if (
                 (controls.runOnLaunch ||
                   (p.thread.providerInstanceId === "nucleus" &&
                     controls.parentHeldTurn !== false)) &&
@@ -1882,7 +1939,10 @@ export async function t3Fake(t: TestContext, directory: string) {
                 });
               }
               p.thread.archivedAt = STAMP;
-              if (controls.archiveClearsDelegation && p.thread.lineage?.parentThreadId) {
+              if (
+                controls.archiveClearsDelegation &&
+                p.thread.lineage?.parentThreadId
+              ) {
                 const parent = threads.get(p.thread.lineage.parentThreadId);
                 for (const task of parent?.subagents ?? []) {
                   if (
@@ -1898,9 +1958,10 @@ export async function t3Fake(t: TestContext, directory: string) {
                   if (item) item.status = "failed";
                 }
                 if (parent?.pendingBackgroundTasks)
-                  parent.pendingBackgroundTasks = parent.pendingBackgroundTasks.filter(
-                    (task: Value) => task.childThreadId !== payload.threadId,
-                  );
+                  parent.pendingBackgroundTasks =
+                    parent.pendingBackgroundTasks.filter(
+                      (task: Value) => task.childThreadId !== payload.threadId,
+                    );
               }
               break;
             }

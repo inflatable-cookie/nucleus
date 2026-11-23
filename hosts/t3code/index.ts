@@ -19,7 +19,10 @@ import type { Profile, Run, Task } from "../../shared/contracts";
 import type { TaskAttention } from "../../shared/task-attention";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import { createOwnedCloseoutWorktree } from "../../core/workspaces/workspace-continuation/host";
+import type { PlannerMessageHost } from "../../core/questions/delegation";
 import { T3CodeHost, type T3CodeConfig } from "./adapter";
+import { identity } from "./intents";
+import { activeStatuses } from "./reads";
 
 export { T3CodeHost, type T3CodeConfig } from "./adapter";
 export { T3CompatibilityError, T3ConnectionRefusalError } from "./contracts";
@@ -268,6 +271,102 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     askReviewer(...args: Parameters<T3Adapter["askPlanner"]>) {
       return this.askPlanner(...args);
     }
+    /** Planner delivery observes the exact queued message even before it becomes a turn item. */
+    plannerMessage: PlannerMessageHost["plannerMessage"] = async (
+      recipient,
+      input,
+    ) => {
+      const commandId = input.messageId;
+      const nativeMessageId = identity("message", commandId);
+      const accepted = { state: "accepted", nativeMessageId } as const;
+      if (input.kind === "send") {
+        const check = () => {
+          if (!input.current())
+            throw new ProvenPreSendRefusalError(
+              "The planner question has closed",
+              "Planner message",
+            );
+        };
+        try {
+          check();
+          await this.native.presentation.wakeBeforeDelivery(
+            recipient,
+            commandId,
+          );
+        } catch (error) {
+          // No message dispatch has been attempted yet. Even a lost unsettle
+          // response is known pre-send for this message.
+          throw new ProvenPreSendRefusalError(
+            error instanceof Error ? error.message : String(error),
+            "Planner message",
+          );
+        }
+        await this.native.intents.effect(
+          commandId,
+          "orchestration.dispatchCommand",
+          {
+            type: "message.dispatch",
+            commandId,
+            threadId: recipient,
+            messageId: nativeMessageId,
+            text: input.text,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "server",
+            dispatchMode: { type: "queue_after_active" },
+          },
+          check,
+          undefined,
+          { retryRefusedBeforeSend: true },
+        );
+        void this.native.nesting
+          .afterFollowUp(recipient, commandId)
+          .catch(() => {});
+        return accepted;
+      }
+
+      const intent = this.native.state.read().intents[commandId];
+      const matches =
+        intent?.kind === "message.dispatch" && intent.threadId === recipient;
+      if (intent && !matches) return { state: "unknown", nativeMessageId };
+      if (matches && intent.status === "refused")
+        return { state: "refused", nativeMessageId };
+      const snapshot = await this.native.reads
+        .readDirectProjection(recipient, "observation", true)
+        .catch(() => null);
+      if (snapshot?.thread.id === recipient) {
+        const message = snapshot.messages.find(
+          (row) => row.id === nativeMessageId && row.role === "user",
+        );
+        const run = snapshot.runs.find(
+          (row) =>
+            row.userMessageId === nativeMessageId || row.id === message?.runId,
+        );
+        if (run?.startedAt)
+          return {
+            state: "started",
+            nativeMessageId,
+            runId: run.id,
+            startedAt: run.startedAt,
+          };
+        if (
+          run?.status === "queued" ||
+          (!run &&
+            message &&
+            snapshot.runs.some(
+              (row) =>
+                activeStatuses.has(row.status) && row.status !== "queued",
+            ))
+        )
+          return { state: "queued", nativeMessageId };
+        if (message || run) return accepted;
+      }
+      // The journal can still prove acceptance if the thread window is unread
+      // or its current suffix no longer contains the message.
+      return matches && intent.status === "settled"
+        ? accepted
+        : { state: "unknown", nativeMessageId };
+    };
     /** A short-lived decider child under the task's parent; core delivers the question and archives it. */
     async runDecider(
       task: Task,
