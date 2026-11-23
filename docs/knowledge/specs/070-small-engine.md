@@ -114,10 +114,10 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 | `id`, `reference`, `repository`, `base`, `entry`, `origin_thread` | Identity fixed at admission. Entry is `brief` or `review_entry`. The submitting or promoting thread is the origin when the caller has one. |
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. |
-| `threads` | Retained worker and reviewer thread IDs and a monotonic launch sequence. Reuse each role's thread when it is idle. Replace its ID when the host confirms the thread is gone, or when the role's profile changes (ruling 9): a profile climb starts a new child thread, because one thread cannot change provider. |
-| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds the immutable launch request, the last possible send time and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
+| `threads` | Retained worker and reviewer thread IDs, their canonical profile bindings and a monotonic launch sequence. Reuse each role's thread when it is idle and can run the next assignment. A profile change starts a fresh child. The worker binding records which applied review launch authorized its most recent climb. |
+| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds the immutable launch request and selected profile, the last possible send time and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
 | `pr` | URL and head SHA. |
-| `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. |
+| `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. Step-up requires an applied changes verdict at the current head with a review launch sequence newer than the climb recorded on the worker binding. |
 | `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
 | `question` | At most one open question to the task's planner, with its options and the head it was asked at. Observing a new head clears it. |
 | `hold` | An optional operator or planner hold, with its reason. |
