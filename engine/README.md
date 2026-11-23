@@ -70,8 +70,9 @@ history in its own `engine.sqlite`. It uses WAL and transactional schema
 versioning. The brief's text, version and digest are stored together. Store
 a human acceptance, when needed, as an exact-head
 alternative in the verdict slot, including the accepting actor and authority.
-Resolve the task's planner through repository settings. Append audit history in
-the state transaction. The pass loop only reads active task rows. API history
+Resolve the responsible planner from the task's origin and live host inventory.
+Append audit history in the state transaction. The pass loop schedules active
+rows. API history
 and live notifications may read the event log.
 
 Normalize the relevant observations to one signal per phase. The bound run

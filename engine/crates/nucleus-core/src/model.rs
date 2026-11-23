@@ -559,6 +559,22 @@ impl Task {
         true
     }
 
+    /// Drop only the exact notice that was proven not delivered.
+    pub fn clear_question_delivery(&mut self, command: &str) -> bool {
+        let Some(question) = &mut self.question else {
+            return false;
+        };
+        if question
+            .delivery
+            .as_ref()
+            .is_none_or(|delivery| delivery.command != command)
+        {
+            return false;
+        }
+        question.delivery = None;
+        true
+    }
+
     #[must_use]
     pub const fn hold(&self) -> Option<&Hold> {
         self.hold.as_ref()

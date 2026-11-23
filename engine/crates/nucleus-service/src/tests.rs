@@ -283,9 +283,12 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         .create(&task, &event("fixture"))
         .expect("seed");
     let stale = service.task(id).await.expect("old version");
-    let host = Due(AtomicUsize::new(0));
+    service
+        .checked_project
+        .set(())
+        .expect("fixture project verified");
 
-    let (result, moved) = tokio::join!(service.advance(&stale, &host), async {
+    let (result, moved) = tokio::join!(service.pass(), async {
         entered.notified().await;
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(2),
@@ -303,12 +306,17 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
             .expect("the command is independent of the pending read")
             .expect("move")
     },);
+    let results = result.expect("pass outcome");
     assert!(matches!(
-        result,
-        Err(ServiceError::Store(StoreError::StaleTask))
+        results.as_slice(),
+        [PassOutcome { task, result: Err(ServiceError::Store(StoreError::StaleTask)) }] if task == id
     ));
     assert_eq!(moved.version, stale.version + 1);
     assert_eq!(service.task(id).await.expect("current row"), moved);
+    assert_eq!(
+        service.state.lock().await.schedule.ready(Instant::now()),
+        [id]
+    );
     let worktrees = service.worktrees().expect("worktree root");
     let checkout = worktrees
         .checkout(&service.project.checkout, REPOSITORY, id)

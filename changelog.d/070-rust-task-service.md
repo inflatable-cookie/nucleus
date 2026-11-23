@@ -1,2 +1,2 @@
-Wire the Rust engine to run the isolated fixture lifecycle and expose task
-state, commands and authenticated reports through a local JSON API.
+The Rust service runs the isolated fixture lifecycle, wakes tasks as they
+become due, routes planner questions and checks authenticated run reports.

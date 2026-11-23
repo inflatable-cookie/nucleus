@@ -1,7 +1,7 @@
 use std::{cmp::Reverse, path::Path};
 
 use nucleus_core::{Action, Question, Task, WaitReason};
-use nucleus_hosts::{HostError, NoticeState, T3};
+use nucleus_hosts::{HostError, NoticeSend, NoticeState, T3};
 use nucleus_store::{TaskRow, ThreadProvenance};
 
 use crate::{RegisteredRole, Service, ServiceError, event, project::linked_checkout};
@@ -12,7 +12,7 @@ impl Service {
         let bound = if let Some(delivery) = row.task.question_delivery() {
             match self.host.notice_state(delivery).await? {
                 NoticeState::Started => return Ok(wait),
-                NoticeState::Gone => None,
+                NoticeState::Gone | NoticeState::Undelivered => None,
                 NoticeState::Absent | NoticeState::Queued => Some(delivery),
             }
         } else {
@@ -28,17 +28,25 @@ impl Service {
             let command = format!("task-{}-question-{}", row.task.identity().id, row.version);
             T3::prepare_notice(thread, command, &notice_text(&row.task, question))?
         };
+        let _fence = self.effect(row).await?;
         let Some(authorization) = self.host.authorize_notice(&attempt).await? else {
             return Ok(wait);
         };
-        let _fence = self.effect(row).await?;
-        authorization.record(&mut attempt)?;
+        let dispatch = authorization.record(&mut attempt)?;
+        let command = attempt.command.clone();
         let mut updated = row.task.clone();
-        if !updated.bind_question_delivery(attempt.clone()) {
+        if !updated.bind_question_delivery(attempt) {
             return Err(ServiceError::Input);
         }
-        self.save(row, updated, &event("question_delivery")).await?;
-        self.host.send_notice(&attempt, authorization).await?;
+        let sent = self.save(row, updated, &event("question_delivery")).await?;
+        if self.host.send_notice(dispatch).await? == NoticeSend::Rejected {
+            let mut pending = sent.task.clone();
+            if !pending.clear_question_delivery(&command) {
+                return Err(ServiceError::Input);
+            }
+            self.save(&sent, pending, &event("question_delivery_rejected"))
+                .await?;
+        }
         Ok(wait)
     }
 
@@ -145,12 +153,14 @@ fn notice_text(task: &Task, question: &Question) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use axum::{
         Json, Router,
         extract::ws::{Message, WebSocketUpgrade},
         routing::{get, post},
     };
-    use nucleus_core::{Entry, Identity};
+    use nucleus_core::{Entry, Host, Identity, Observed, Report, RunState};
     use nucleus_forge::GitHub;
     use serde_json::{Value, json};
     use tokio::net::TcpListener;
@@ -167,7 +177,8 @@ mod tests {
         ] {
             let (_home, mut service) =
                 crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
-            let (host, server) = native_fixture(strongest).await;
+            let (host, server) =
+                native_fixture(move |request| snapshot_reply(request, strongest)).await;
             service.host = host;
             service.project.agents = [
                 (strongest, RegisteredRole::Planner),
@@ -205,40 +216,107 @@ mod tests {
         }
     }
 
-    async fn native_fixture(strongest: &'static str) -> (T3, tokio::task::JoinHandle<()>) {
-        let app = Router::new()
-            .route("/api/auth/websocket-ticket/rpc", post(|| async { Json(json!({"ticket":"fixture"})) }))
-            .route("/ws", get(move |upgrade: WebSocketUpgrade| async move {
-                upgrade.on_upgrade(move |mut ws| async move {
-                    while let Some(Ok(Message::Text(frame))) = ws.recv().await {
-                        let req: Value = serde_json::from_str(&frame).expect("Effect request");
-                        if req["_tag"] != "Request" {
-                            continue;
-                        }
-                        let mut projection = match req["tag"].as_str() {
-                            Some("orchestration.subscribeShell") => json!({"snapshot": {"threads": [
-                                shell(strongest, "2026-11-02T00:00:00.000Z"),
-                                shell("planner-other", "2026-11-01T00:00:00.000Z"),
-                                shell("registered-agent", "2026-11-03T00:00:00.000Z")
-                            ]}}),
-                            Some("orchestration.subscribeThread") => {
-                                let id = req["payload"]["threadId"].as_str().expect("exact thread");
-                                json!({"hasMoreHistory": id == "unverified", "projection": {"thread": {
-                                    "id": if id == "mismatch" { "another-thread" } else { id },
-                                    "archivedAt": (id == "gone").then_some("2026-11-01T00:00:00.000Z")
-                                }}})
-                            }
-                            _ => panic!("unexpected method"),
-                        };
-                        projection["kind"] = json!("snapshot");
-                        let reply = json!({
-                            "_tag": "Chunk", "requestId": req["id"],
-                            "values": [projection, {"kind":"synchronized"}],
-                        });
-                        ws.send(Message::Text(reply.to_string().into())).await.expect("reply");
+    #[tokio::test]
+    async fn a_rejected_notice_rebinds_and_unknown_delivery_keeps_its_id() {
+        let (_home, mut service) =
+            crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let native = Arc::clone(&received);
+        let (host, server) = native_fixture(move |request| {
+            if request["tag"] != "orchestration.dispatchCommand" {
+                return snapshot_reply(request, "planner");
+            }
+            let command = request["payload"]["commandId"].as_str().expect("command ID");
+            let mut sent = native.lock().expect("notice trace");
+            sent.push(command.to_owned());
+            let name = if sent.len() == 1 { "OrchestratorCommandPreviouslyRejectedError" } else { "UnknownError" };
+            json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
+                {"_tag":"Fail","error":{
+                    "_tag":"OrchestrationV2DispatchCommandError", "commandId":command,
+                    "commandType":"message.dispatch", "cause":{
+                        "name":name, "message":format!("Command {command} was previously rejected: fixture")
                     }
-                })
-            }));
+                }}
+            ]}})
+        }).await;
+        service.host = host;
+        let (mut task, credential, mut observation) =
+            crate::tests::reservation("notice", Entry::Brief, &service.project.start);
+        let instance = task.run().expect("worker").launch().instance.clone();
+        task.record_report(
+            &instance,
+            credential.as_bytes(),
+            Report::Question {
+                prompt: "Choose the greeting".into(),
+                options: Vec::new(),
+            },
+        )
+        .expect("authenticated question");
+        observation.host = Observed::Known(Host::Current {
+            instance,
+            state: RunState::Ended,
+        });
+        assert!(matches!(task.reconcile(&observation), Action::Ask(_)));
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .expect("seed question");
+        let first = service.task("notice").await.expect("first row");
+        service
+            .notify_question(&first)
+            .await
+            .expect("durable rejection settles");
+        let fresh = service.task("notice").await.expect("question still open");
+        assert!(fresh.task.question_delivery().is_none());
+        assert!(fresh.task.question().is_some());
+        assert!(matches!(
+            service.notify_question(&fresh).await,
+            Err(ServiceError::Host(HostError::Uncertain))
+        ));
+        let bound = service.task("notice").await.expect("uncertain delivery");
+        let id = &bound
+            .task
+            .question_delivery()
+            .expect("frozen binding")
+            .command;
+        service
+            .notify_question(&bound)
+            .await
+            .expect("wait for reply window");
+        let sent = received.lock().expect("native sends");
+        assert_eq!(sent.len(), 2);
+        assert_ne!(sent[0], sent[1]);
+        assert_eq!(sent[1], *id);
+        server.abort();
+    }
+
+    async fn native_fixture(
+        response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
+    ) -> (T3, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route(
+                "/api/auth/websocket-ticket/rpc",
+                post(|| async { Json(json!({"ticket":"fixture"})) }),
+            )
+            .route(
+                "/ws",
+                get(move |upgrade: WebSocketUpgrade| async move {
+                    upgrade.on_upgrade(move |mut ws| async move {
+                        while let Some(Ok(Message::Text(frame))) = ws.recv().await {
+                            let req: Value = serde_json::from_str(&frame).expect("Effect request");
+                            if req["_tag"] == "Request" {
+                                let reply = response(&req);
+                                ws.send(Message::Text(reply.to_string().into()))
+                                    .await
+                                    .expect("reply");
+                            }
+                        }
+                    })
+                }),
+            );
         let tcp = TcpListener::bind("127.0.0.1:0").await.expect("listen");
         let host = T3::new(
             &format!("http://{}", tcp.local_addr().expect("address")),
@@ -251,6 +329,29 @@ mod tests {
                 axum::serve(tcp, app).await.expect("native server");
             }),
         )
+    }
+
+    fn snapshot_reply(req: &Value, strongest: &str) -> Value {
+        let mut projection = match req["tag"].as_str() {
+            Some("orchestration.subscribeShell") => json!({"snapshot": {"threads": [
+                shell(strongest, "2026-11-02T00:00:00.000Z"),
+                shell("planner-other", "2026-11-01T00:00:00.000Z"),
+                shell("registered-agent", "2026-11-03T00:00:00.000Z")
+            ]}}),
+            Some("orchestration.subscribeThread") => {
+                let id = req["payload"]["threadId"].as_str().expect("exact thread");
+                json!({"hasMoreHistory": id == "unverified", "projection": {"thread": {
+                                    "id": if id == "mismatch" { "another-thread" } else { id },
+                                    "archivedAt": (id == "gone").then_some("2026-11-01T00:00:00.000Z")
+                                }, "messages":[], "runs":[]}})
+            }
+            _ => panic!("unexpected method"),
+        };
+        projection["kind"] = json!("snapshot");
+        json!({
+            "_tag": "Chunk", "requestId": req["id"],
+            "values": [projection, {"kind":"synchronized"}],
+        })
     }
 
     fn shell(id: &str, time: &str) -> Value {
