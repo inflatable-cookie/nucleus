@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { Engine } from "../core/engine";
 import { Decisions } from "../core/planning/decisions";
 import { escalationWaitDetail } from "../core/questions/ladder";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
+import { OPERATOR_BOARD_CALLER } from "../shared/contracts";
 import { fixture } from "./support/responsible-lifecycle-fixture";
 
 const escalationId = "e".repeat(64);
@@ -88,10 +90,12 @@ test("an operator handoff reuses an unlinked decision by identity after its cont
   }
 });
 
-for (const interveningControl of [false, true]) {
-  test(interveningControl
-    ? "a roll respects an owner control after a link with no operator wait journal"
-    : "a roll repairs a linked operator decision whose wait journal is missing", async () => {
+for (const [control, name] of [
+  ["none", "a roll repairs a linked operator decision whose wait journal is missing"],
+  ["move", "a roll respects an owner control after a link with no operator wait journal"],
+  ["clear", "a roll keeps an explicitly cleared stop cleared after an interrupted operator handoff"],
+] as const) {
+  test(name, async () => {
     const f = handoffFixture();
     let replacement: Engine | undefined;
     try {
@@ -104,7 +108,25 @@ for (const interveningControl of [false, true]) {
         tasks: [f.taskId],
       });
       f.store.event(f.taskId, "planner_escalation_decision_linked", `${escalationId}: decision ${decision.id}`);
-      if (interveningControl) f.store.event(f.taskId, "operator_control", "move");
+      if (control === "move") f.store.event(f.taskId, "operator_control", "move");
+      if (control === "clear") {
+        const task = f.current();
+        const stop = task.resolution.stop;
+        assert.ok(stop);
+        const cleared = await resolveExplicitly(f.engine, {
+          action: "record.clear",
+          kind: "stop",
+          id: stop.since,
+          taskId: task.id,
+          version: task.version,
+          caller: OPERATOR_BOARD_CALLER,
+          reason: "The planner stop has been disposed of",
+          accept: [],
+        }, () => "next");
+        assert.equal(cleared.explicitResolution?.status, "applied");
+        assert.equal(f.events("owner_resolution").length, 1);
+        assert.equal(f.current().resolution.stop, null);
+      }
       await f.engine.stop();
       replacement = new Engine(f.store, f.engine.adapter, 0);
       assert.equal(replacement.resolution.ladder.operatorDecisionApplied(f.taskId, escalationId), false);
@@ -113,12 +135,17 @@ for (const interveningControl of [false, true]) {
 
       assert.deepEqual(f.decisions.list({ task: f.taskId }).map(item => item.id), [decision.id]);
       assert.equal(f.events("planner_escalation_decision_linked").length, 1);
-      assert.equal(f.events("planner_escalation_wait").length, interveningControl ? 0 : 1);
-      if (!interveningControl) {
+      assert.equal(f.events("planner_escalation_wait").length, control === "none" ? 1 : 0);
+      if (control === "none") {
         assert.deepEqual(f.current().resolution.stop?.fact?.escalationWait, { kind: "decision", target: decision.id });
         assert.equal(f.current().resolution.stop?.detail, escalationWaitDetail.operator(escalationId, decision.id));
       }
-      assert.equal(replacement.resolution.ladder.operatorDecisionApplied(f.taskId, escalationId), !interveningControl);
+      if (control === "clear") {
+        assert.equal(f.current().resolution.stop, null);
+        await replacement.resolution.blockerLadderStep(f.current());
+        assert.equal(f.current().resolution.stop, null);
+      }
+      assert.equal(replacement.resolution.ladder.operatorDecisionApplied(f.taskId, escalationId), control === "none");
     } finally {
       await replacement?.stop();
       await f.close();

@@ -6,7 +6,7 @@ import { digest } from '../../store/store-core';
 import { establishEscalationWait, matchesEscalationWait, type EscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { plannerEscalationSuggestedVerbs } from './proof';
-import { plannerEscalations, type LadderEvent } from './records';
+import { escalationWaitSettledAfter, plannerEscalations, type LadderEvent } from './records';
 import { escalationWaitDetail } from './waits';
 
 /**
@@ -114,6 +114,7 @@ export function operatorDecisionApplied(ladder: Ladder, taskId: string, id: stri
   const linked = events.findLast(event => event.kind === 'planner_escalation_decision_linked' && event.detail.startsWith(`${id}:`));
   const decisionId = linked?.detail.match(/decision ([0-9a-f-]{36})/)?.[1];
   if (!linked || !decisionId) return false;
+  if (escalationWaitSettledAfter(events, id, linked.id)) return false;
   if (events.some(event => event.kind === 'planner_escalation_returned' && event.id > linked.id && event.detail.startsWith(`${id}:`)))
     return false;
   const waitEvent = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`));
@@ -239,7 +240,7 @@ export function reconcileLegacyPlaceholderDecisions(ladder: Ladder, t: Task): vo
       && event.detail.startsWith(`${escalation.id}:`)
       && !events.some(sup => sup.kind === 'planner_escalation_wait_superseded' && sup.id > event.id && sup.detail.startsWith(`${escalation.id}:`)));
     const anchorId = waitEvent?.id ?? linked.id;
-    if (events.some(event => event.id > anchorId && event.kind === 'operator_control' && event.detail !== 'note')) continue;
+    if (escalationWaitSettledAfter(events, escalation.id, anchorId)) continue;
     let stored: Decision;
     try { stored = ladder.store.decision(escalation.decisionId); } catch { continue; }
     if (stored.status !== 'open' || !isPlaceholderDecisionRecord(stored)) continue;

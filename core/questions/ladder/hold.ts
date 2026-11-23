@@ -2,6 +2,7 @@ import type { DecisionView } from '../../../shared/contracts';
 import type { TaskDecisionFact, TaskStopRecord } from '../../../shared/task-stop';
 import { Decisions } from '../../planning/decisions';
 import type { Ladder } from './ladder';
+import { escalationWaitSettledAfter } from './records';
 
 /**
  * The task-side wait an escalation establishes: the durable wait event and the
@@ -43,7 +44,7 @@ export function establishEscalationWait(ladder: Ladder, taskId: string, id: stri
     const current = ladder.store.task(taskId);
     if (['done', 'cancelled'].includes(current.phase)) return false;
     const events = ladder.store.eventsAll(taskId);
-    if (afterEventId > 0 && events.some(event => event.id > afterEventId && event.kind === 'operator_control' && event.detail !== 'note')) return false;
+    if (afterEventId > 0 && escalationWaitSettledAfter(events, id, afterEventId)) return false;
     if (wait.kind === 'decision') {
       let decision: DecisionView;
       try { decision = new Decisions(ladder.store).get({ id: wait.target }); } catch { return false; }

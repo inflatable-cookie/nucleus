@@ -19,6 +19,26 @@ export type LadderEvent = {
   detail: string;
 };
 
+/** A later applied control or explicit escalation settlement ends the wait's authority. */
+export function escalationWaitSettledAfter(events: readonly LadderEvent[], id: string, after: number): boolean {
+  return events.some(event => {
+    if (event.id <= after) return false;
+    if (event.kind === "planner_escalation_resolved") return event.detail.startsWith(`${id}:`);
+    if (event.kind === "operator_control") return event.detail !== "note";
+    if (event.kind !== "owner_control" && event.kind !== "owner_resolution") return false;
+    try {
+      const detail: unknown = JSON.parse(event.detail);
+      if (!detail || typeof detail !== "object") return false;
+      const action = event.kind === "owner_control"
+        ? ("verb" in detail ? detail.verb : undefined)
+        : ("command" in detail ? detail.command : undefined);
+      return typeof action === "string" && action !== "note" && action !== "message.send";
+    } catch {
+      return false;
+    }
+  });
+}
+
 export interface ReviewerConsult {
   /** The consult id, stable per cause occurrence. */
   id: string;
@@ -265,6 +285,17 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
       decisionId:
         activeDecision?.detail.match(/decision ([0-9a-f-]{36})/)?.[1] ?? null,
     };
+  });
+}
+
+/** An open decision can outlive a stop the owner cleared. Only its active wait holds the task. */
+export function plannerEscalationsHoldingTask(events: LadderEvent[]): PlannerEscalation[] {
+  return plannerEscalations(events).filter(({ id, answered, decisionId }) => {
+    if (answered) return false;
+    if (!decisionId) return true;
+    const link = events.findLast(event => event.kind === "planner_escalation_decision_linked"
+      && event.detail === `${id}: decision ${decisionId}`);
+    return !link || !escalationWaitSettledAfter(events, id, link.id);
   });
 }
 

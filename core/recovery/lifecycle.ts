@@ -6,7 +6,7 @@ import { coordinatorReportMatches } from "./coordinator-report";
 import { latestAuthorResult } from "../verbs/owner-verbs";
 import {
   blockerLadderStep as decideBlockerLadderStep,
-  plannerEscalations,
+  plannerEscalationsHoldingTask,
   reviewerConsults,
   blockerCauseId,
   stalledUnknownEscalation,
@@ -112,7 +112,7 @@ export class RecoveryLifecycle {
     const thresholdMs =
       (this.context.store.getMeta<number>("stallThresholdMinutes") ??
         DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
-    const escalations = plannerEscalations(events as LadderEvent[]);
+    const escalations = plannerEscalationsHoldingTask(events);
     const unknownStall = stalledUnknownEscalation({
       escalations,
       now: Date.now(),
@@ -154,13 +154,14 @@ export class RecoveryLifecycle {
     // open, re-assert its escalated wait so no later wait-stamp can strand the
     // ladder behind an operator stop.
     const ladderEvents = this.context.store.eventsAll(t.id);
+    const updatedEscalations = plannerEscalationsHoldingTask(ladderEvents);
     const after = decideBlockerLadderStep({
       classified: true,
       completion,
-      escalations: plannerEscalations(ladderEvents as LadderEvent[]),
+      escalations: updatedEscalations,
       consults: reviewerConsults(ladderEvents as LadderEvent[]),
       unknownStall: stalledUnknownEscalation({
-        escalations: plannerEscalations(ladderEvents as LadderEvent[]),
+        escalations: updatedEscalations,
         now: Date.now(),
         thresholdMs,
       }),

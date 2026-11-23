@@ -38,6 +38,7 @@ export {
   findOpenPlannerEscalation,
   parseAnsweredText,
   plannerEscalations,
+  plannerEscalationsHoldingTask,
   reviewerConsults,
   type LadderEvent,
   type PlannerEscalation,

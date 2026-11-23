@@ -10,7 +10,7 @@ import { escalationWaitState, establishEscalationWait, matchesEscalationWait, ty
 import type { Ladder } from './ladder';
 import { consultRecovery, escalationRecovery } from './pass';
 import { reconcileLegacyPlaceholderDecisions, restoreLinkedOperatorWaits } from './operator';
-import { plannerEscalations, reviewerConsults, type LadderEvent } from './records';
+import { escalationWaitSettledAfter, plannerEscalations, reviewerConsults, type LadderEvent } from './records';
 import { routePlannerEscalation, routePlannerEscalationReturn } from './routing';
 import { escalationWaitDetail } from './waits';
 
@@ -190,6 +190,10 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
     .map(event => [event.detail.slice(0, event.detail.indexOf(':')), event]));
   for (const [id, event] of waits) {
     if (events.some(item => item.kind === 'planner_escalation_wait_superseded' && item.id > event.id && item.detail.startsWith(`${id}:`))) continue;
+    if (escalationWaitSettledAfter(events, id, event.id)) {
+      ladder.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: a later action settled the recorded wait`);
+      continue;
+    }
     const intent = events.some(item => item.kind === 'planner_escalation_wake_intent' && item.detail.startsWith(`${id}:`));
     if (intent) {
       const finished = events.some(item => ['planner_escalation_woke', 'planner_escalation_wake_refused'].includes(item.kind) && item.detail.startsWith(`${id}:`));
@@ -203,10 +207,6 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
       stopDetail?: string;
       stopReason?: 'lifecycle' | 'escalated';
     };
-    if (events.some(item => item.id > event.id && item.kind === 'operator_control' && item.detail !== 'note')) {
-      ladder.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: a later owner control changed the task`);
-      continue;
-    }
     let current = ladder.store.task(task.id);
     if (wait.kind === 'task' && current.prerequisiteWait && current.prerequisiteWait.id === wait.waitId && !current.prerequisiteWait.releasedAt) {
       ladder.store.reconcilePrerequisiteWait(current.id);
