@@ -33,6 +33,10 @@ const PROFILE_IMPORT_META_KEY = "profileImport";
 interface Ports {
   availability: () => Array<z.infer<typeof availabilitySchema>>;
 }
+/** The lifetime row a role's charge to a profile increments: its rotation counts a role apart from the others. */
+const roleLifetimeKey = (role: AssignmentRole, profileId: string) =>
+  `role:${role}:profile:${profileId}`;
+
 export class StoreConfig {
   constructor(
     private readonly core: StoreCore,
@@ -92,13 +96,50 @@ export class StoreConfig {
     );
   }
 
+  /** Lifetime charges per group and per profile. Role-keyed rotation rows (`roleLifetimeKey`) stay out of this read. */
   counts(): Record<string, number> {
     return Object.fromEntries(
       this.db
-        .prepare("SELECT * FROM assignments")
+        .prepare(
+          "SELECT * FROM assignments WHERE substr(group_id,1,5)<>'role:'",
+        )
         .all()
         .map((r) => [String(r.group_id), Number(r.count)]),
     );
+  }
+
+  /**
+   * The counts one role's selection rotates on (Spec 053, nucleus#1558). Group pacing reads
+   * every role as before. A profile's rotation reads its own role only: that role's recent
+   * window (`recentRoleUsage`) and its lifetime charges, so a reviewer run never weighs
+   * against a worker turn.
+   */
+  rotationCounts(role: AssignmentRole): {
+    counts: Record<string, number>;
+    recent: Record<string, number>;
+  } {
+    const groupsOnly = (record: Record<string, number>) =>
+      Object.fromEntries(
+        Object.entries(record).filter(([key]) => !key.startsWith("profile:")),
+      );
+    const prefix = roleLifetimeKey(role, "");
+    const lifetime: Record<string, number> = {};
+    for (const row of this.db
+      .prepare(
+        "SELECT group_id,count FROM assignments WHERE substr(group_id,1,5)='role:'",
+      )
+      .all()) {
+      const key = String(row.group_id);
+      if (key.startsWith(prefix))
+        lifetime[`profile:${key.slice(prefix.length)}`] = Number(row.count);
+    }
+    return {
+      counts: { ...groupsOnly(this.counts()), ...lifetime },
+      recent: {
+        ...groupsOnly(this.recentCounts()),
+        ...this.recentRoleUsage(role).counts,
+      },
+    };
   }
 
   recentCounts(limit = 50): Record<string, number> {
@@ -163,6 +204,7 @@ export class StoreConfig {
         .run(key);
     charge(group);
     charge(`profile:${profileId}`);
+    if (role) charge(roleLifetimeKey(role, profileId));
     this.db
       .prepare(
         "INSERT INTO assignment_history(group_id,profile_id,at) VALUES(?,?,?)",
@@ -212,7 +254,7 @@ export class StoreConfig {
       this.availability(),
       at,
       profiles,
-      { counts: this.counts(), recent: this.recentCounts() },
+      this.rotationCounts("worker"),
     );
   }
 
@@ -242,5 +284,4 @@ export class StoreConfig {
       expired: Boolean(setting && setting.level !== level),
     };
   }
-
 }

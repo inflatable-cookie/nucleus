@@ -257,9 +257,10 @@ function planWorkerFailover(
   const pool = store.pool();
   const usage = store.usageLevel();
   const pending = task.replacementProfile;
-  const requested = pending && isWorkerRouteAllowed(task, pending.profileId, pool, usage)
-    ? pending
-    : null;
+  const requested =
+    pending && isWorkerRouteAllowed(task, pending.profileId, pool, usage)
+      ? pending
+      : null;
   // An errored process is not evidence against its profile. Profile failures
   // are represented by the durable exclusions that an owner can inspect/lift.
   const profiles = facts.profiles.filter(
@@ -322,10 +323,10 @@ function planWorkerFailover(
     replacementTask,
     profiles,
     selectionPool,
-    store.counts(),
+    store.rotationCounts("worker").counts,
     unavailable,
     "worker",
-    store.recentCounts(),
+    store.rotationCounts("worker").recent,
     store.usageLevel(),
   );
   if (!selected) {
@@ -369,10 +370,10 @@ function planWorkerFailover(
         replacementTask,
         restoredProfiles,
         selectionPool,
-        store.counts(),
+        store.rotationCounts("worker").counts,
         new Set(),
         "worker",
-        store.recentCounts(),
+        store.rotationCounts("worker").recent,
         store.usageLevel(),
       )
     ) {
