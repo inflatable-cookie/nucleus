@@ -23,6 +23,7 @@
       "id": "run-1",
       "status": "running",
       "startedAt": "2026-01-01T00:00:00.000Z",
+      "userMessageId": "synthetic-message-run-1",
       "ordinal": 1,
       "rootNodeId": null
     }

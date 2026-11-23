@@ -142,6 +142,8 @@ with bounded concurrency and per-step timeouts so a busy, unavailable or slow
 recipient stays pending and cannot monopolize delivery to an unrelated
 reachable recipient.
 
+A delivery pass clears its retry timer when no retryable notices remain.
+
 Notices use the deterministic version identity (`decision:<id>:<version>`) and
 the shared durable send path (`intent` before send, fresh recipient and host
 availability checks, pause gates). When the asking thread's host supports

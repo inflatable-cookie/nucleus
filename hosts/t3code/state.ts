@@ -42,6 +42,8 @@ const intentKind = z.enum([
   "thread.metadata.update",
   "thread.delete",
   "thread.stop",
+  "subagent.stop",
+  "queued-run.cancel",
   "thread.archive",
   "thread.unarchive",
   "thread.tag.set",
@@ -120,6 +122,8 @@ const intent = z.object({
   // Unknown presentation delivery stays unknown historically, but needs no more work.
   retiredByDeletion: z.string().optional(),
   diagnostic: diagnostic.optional(),
+  /** T3 explicitly replayed a rejected receipt for this exact command. */
+  rejectedReceipt: z.literal(true).optional(),
   timedOut: z.boolean().optional(),
   response: z
     .object({
@@ -189,6 +193,8 @@ const parentThread = z.object({
   holdText: z.string().optional(),
   archivedAt: z.string().optional(),
   releasedAt: z.string().optional(),
+  /** Successor to a parent archive command id that T3 rejected in its receipt ledger. */
+  archiveCommandId: z.string().optional(),
   /** Set when this host re-entered the thread; a create inside its grace window keeps the turn. */
   holdingSince: z.string().optional(),
   /**

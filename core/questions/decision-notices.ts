@@ -457,7 +457,7 @@ export class DecisionNoticeDelivery {
       },
     });
     if (!this.context.stopped && !this.context.resolution.paused()) {
-      this.armRetryIfNeeded();
+      this.reconcileRetryTimer();
     }
   }
 
@@ -496,11 +496,10 @@ export class DecisionNoticeDelivery {
     );
   }
 
-  private armRetryIfNeeded(): void {
+  private reconcileRetryTimer(): void {
     if (
       this.context.stopped ||
       this.context.resolution.paused() ||
-      this.retryTimer ||
       !this.retryDelaysMs.length
     )
       return;
@@ -519,7 +518,13 @@ export class DecisionNoticeDelivery {
           delivery.error !== UNROUTABLE_WAIT && delivery.error !== GONE_WAIT
         );
       });
-    if (!needsRetry) return;
+    // A previous pass can arm a retry while its queued follow-up is still owed.
+    // Once that follow-up drains the queue, the old timer has no work to retry.
+    if (!needsRetry) {
+      this.clearRetryTimer();
+      return;
+    }
+    if (this.retryTimer) return;
     const delay =
       this.retryDelaysMs[
         Math.min(this.retryAttempt++, this.retryDelaysMs.length - 1)
