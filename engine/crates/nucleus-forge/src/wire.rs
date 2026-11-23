@@ -92,6 +92,58 @@ struct Checks {
 #[derive(Deserialize)]
 struct Rollup {
     state: String,
+    contexts: Option<CheckContexts>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckContexts {
+    page_info: CheckPage,
+    nodes: Vec<Option<NamedCheck>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckPage {
+    has_next_page: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum NamedCheck {
+    CheckRun {
+        name: String,
+        conclusion: Option<String>,
+        #[serde(rename = "isRequired")]
+        required: bool,
+    },
+    StatusContext {
+        context: String,
+        state: String,
+        #[serde(rename = "isRequired")]
+        required: bool,
+    },
+}
+
+impl NamedCheck {
+    fn required_result(&self, requested: &str) -> Option<bool> {
+        match self {
+            Self::CheckRun {
+                name,
+                conclusion,
+                required: true,
+            } if name == requested => Some(matches!(
+                conclusion.as_deref(),
+                Some("SUCCESS" | "NEUTRAL" | "SKIPPED")
+            )),
+            Self::StatusContext {
+                context,
+                state,
+                required: true,
+            } if context == requested => Some(state == "SUCCESS"),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -115,13 +167,22 @@ impl GraphReply {
             .any(|error| error.kind.as_deref() == Some("RATE_LIMITED"))
     }
 
-    pub(crate) fn checks(self, head: &Head, base: &str) -> Result<CheckState, ForgeError> {
+    pub(crate) fn checks(
+        self,
+        head: &Head,
+        base: &str,
+        required: &[String],
+    ) -> Result<CheckState, ForgeError> {
         let checks: Checks = self.pull_request()?;
         verify_graph_pull(head, base, &checks.head_ref_oid, &checks.base_ref_name)?;
         if checks.state != "OPEN" {
             return Err(ForgeError::Incomplete);
         }
-        Ok(checks.state())
+        let state = checks.state();
+        if state != CheckState::Ready || required.is_empty() {
+            return Ok(state);
+        }
+        Ok(checks.required_state(required))
     }
 
     pub(crate) fn merge_commit(self, head: &Head, base: &str) -> Result<Head, ForgeError> {
@@ -164,6 +225,33 @@ fn verify_graph_pull(
 }
 
 impl Checks {
+    fn required_state(&self, required: &[String]) -> CheckState {
+        let Some(rollup) = &self.status_check_rollup else {
+            return CheckState::Pending;
+        };
+        let Some(contexts) = &rollup.contexts else {
+            return CheckState::Unknown;
+        };
+        for name in required {
+            let mut results = contexts
+                .nodes
+                .iter()
+                .flatten()
+                .filter_map(|check| check.required_result(name));
+            match results.next() {
+                Some(true) if results.all(|passes| passes) => {}
+                Some(_) => return CheckState::Blocked,
+                None if contexts.page_info.has_next_page
+                    || contexts.nodes.iter().any(Option::is_none) =>
+                {
+                    return CheckState::Unknown;
+                }
+                None => return CheckState::Pending,
+            }
+        }
+        CheckState::Ready
+    }
+
     fn state(&self) -> CheckState {
         if self.is_draft || self.mergeable == "CONFLICTING" {
             return CheckState::Blocked;

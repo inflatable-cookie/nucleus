@@ -1,6 +1,7 @@
 //! The Rust engine's independent `SQLite` database.
 
 mod settings;
+mod settings_domains;
 mod volume;
 
 use std::{collections::BTreeMap, time::Duration};
@@ -12,7 +13,14 @@ use rusqlite::{
 };
 use serde_json::{Value, json};
 
-pub use settings::{EngineSettings, EngineStorage, SettingsFile, StorageError};
+pub use settings::{
+    Backups, EngineSettings, EngineStorage, RetentionSettings, SettingsFile, SettingsSnapshot,
+    SettingsValue, StorageError, VerifiedBackup,
+};
+pub use settings_domains::{
+    Capability, DispatchSettings, Effort, Hosts, NamedProfile, Profile, Profiles, ProjectSettings,
+    Projects, RepositorySettings, T3Settings, UsageLevel, Weight,
+};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");

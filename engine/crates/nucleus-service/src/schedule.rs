@@ -171,6 +171,10 @@ impl Schedule {
             .map_or(self.scan_at, |due| due.min(self.scan_at))
     }
 
+    pub(crate) fn depth(&self) -> usize {
+        self.tasks.len()
+    }
+
     pub(crate) fn due(&self, id: &str) -> Option<Instant> {
         self.tasks.get(id).and_then(Pending::due)
     }

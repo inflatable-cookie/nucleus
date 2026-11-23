@@ -14,7 +14,7 @@ use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
 use nucleus_service::{Controller, Project, ReportTicket, Service, router};
-use nucleus_store::{EngineSettings, PinnedVolume, SettingsFile};
+use nucleus_store::{EngineSettings, Hosts, PinnedVolume, SettingsFile};
 use reqwest::{Client, Method, Response, header};
 use rustix::{
     fs::{FileType, Mode, OFlags, fstat, open},
@@ -59,8 +59,9 @@ enum Action {
         home: PathBuf,
         #[arg(long)]
         project: PathBuf,
+        /// Override the saved T3 connection for this serve process.
         #[arg(long)]
-        t3: String,
+        t3: Option<String>,
         #[arg(long)]
         actor: String,
         /// Bind the controller to the authenticated T3 planner's thread ID.
@@ -86,7 +87,7 @@ enum Action {
         #[arg(long)]
         read_only: bool,
     },
-    /// Read the active storage roots and role profiles.
+    /// Read the isolated engine settings.
     Settings,
     /// Move to a phase subject to the engine's hard gates.
     Move {
@@ -159,7 +160,7 @@ async fn main() -> Result<()> {
                 endpoint,
                 &home,
                 &project,
-                &t3,
+                t3.as_deref(),
                 authority,
                 fixture_origin_thread,
             )
@@ -183,6 +184,7 @@ fn configure(
         work_volume: Some(PinnedVolume::detect(&home)?),
         work_root,
         scratch_root,
+        retention: settings.load()?.retention,
     })?;
     Ok(())
 }
@@ -191,7 +193,7 @@ async fn serve(
     endpoint: SocketAddr,
     home: &Path,
     project: &Path,
-    host: &str,
+    host: Option<&str>,
     authority: Authority,
     fixture_origin_thread: Option<String>,
 ) -> Result<()> {
@@ -204,7 +206,17 @@ async fn serve(
     }
     let settings = SettingsFile::open(&home.canonicalize()?)?;
     let project: Project = from_reader(File::open(project)?)?;
-    let mut host = T3::new(host, &secret("NUCLEUS_ENGINE_T3_BEARER")?)?;
+    let saved_host = if host.is_none() {
+        settings.read::<Hosts>()?.value.t3
+    } else {
+        None
+    };
+    let (host_endpoint, credential_ref) = match (host, saved_host.as_ref()) {
+        (Some(endpoint), _) => (endpoint, "NUCLEUS_ENGINE_T3_BEARER"),
+        (None, Some(saved)) => (saved.endpoint.as_str(), saved.credential_ref.as_str()),
+        (None, None) => return Err("set --t3 or configure a T3 endpoint for this profile".into()),
+    };
+    let mut host = T3::new(host_endpoint, &secret(credential_ref)?)?;
     if let Some(path) = env::var_os("NUCLEUS_ENGINE_T3_RUNTIME_DESCRIPTOR") {
         host = host.with_runtime_descriptor(path.into());
     }

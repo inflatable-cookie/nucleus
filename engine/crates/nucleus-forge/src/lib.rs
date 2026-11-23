@@ -16,11 +16,21 @@ use wire::{GraphReply, Pull, PullState};
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
 const API_VERSION: &str = "2026-03-10";
 const CHECKS_QUERY: &str = "
-  query($owner:String!,$repo:String!,$number:Int!){
+  query($owner:String!,$repo:String!,$number:Int!,$namedChecks:Boolean!){
     repository(owner:$owner,name:$repo){
       pullRequest(number:$number){
         headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision
-        statusCheckRollup{state}
+        statusCheckRollup{
+          state
+          contexts(first:100) @include(if:$namedChecks){
+            pageInfo{hasNextPage}
+            nodes{
+              __typename
+              ... on CheckRun{name conclusion isRequired(pullRequestNumber:$number)}
+              ... on StatusContext{context state isRequired(pullRequestNumber:$number)}
+            }
+          }
+        }
       }
     }
   }
@@ -99,6 +109,7 @@ pub struct Branches {
     repository: String,
     base: String,
     head: String,
+    required_checks: Vec<String>,
 }
 
 impl Branches {
@@ -124,6 +135,7 @@ impl Branches {
             repository: name.into(),
             base: base.into(),
             head: head.into(),
+            required_checks: Vec::new(),
         })
     }
 
@@ -178,6 +190,13 @@ pub struct PullTarget {
 }
 
 impl PullTarget {
+    /// Bind this target to the current project check requirements.
+    #[must_use]
+    pub fn with_required_checks(mut self, checks: Vec<String>) -> Self {
+        self.branches.required_checks = checks;
+        self
+    }
+
     fn path(&self) -> String {
         format!(
             "repos/{}/{}/pulls/{}",
@@ -298,9 +317,11 @@ impl GitHub {
             .confirm_merge_commit(target, self.pull(target).await?)
             .await?;
         let checks = if !pull.merged && pull.state == PullState::Open {
-            self.query_pull(target, CHECKS_QUERY)
-                .await?
-                .checks(&pull.head.sha, &target.branches.base)?
+            self.query_pull(target, CHECKS_QUERY).await?.checks(
+                &pull.head.sha,
+                &target.branches.base,
+                &target.branches.required_checks,
+            )?
         } else {
             CheckState::Unknown
         };
@@ -323,10 +344,20 @@ impl GitHub {
     }
 
     async fn query_pull(&self, target: &PullTarget, query: &str) -> Result<GraphReply, ForgeError> {
-        let response = self.client.post(format!("{}/graphql", self.origin)).json(&json!({
-            "query": query,
-            "variables": { "owner": target.branches.owner, "repo": target.branches.repository, "number": target.number },
-        })).send().await?;
+        let mut variables = json!({
+            "owner": target.branches.owner,
+            "repo": target.branches.repository,
+            "number": target.number,
+        });
+        if query == CHECKS_QUERY {
+            variables["namedChecks"] = json!(!target.branches.required_checks.is_empty());
+        }
+        let response = self
+            .client
+            .post(format!("{}/graphql", self.origin))
+            .json(&json!({"query": query, "variables": variables}))
+            .send()
+            .await?;
         let now = SystemTime::now();
         let deadline =
             deadline_hint(response.headers(), now).unwrap_or(now + Duration::from_mins(1));

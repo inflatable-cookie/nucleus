@@ -20,7 +20,9 @@ use nucleus_core::{
     Report, Task, Verdict, WaitReason,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+#[cfg(test)]
+use serde_json::Value;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -30,6 +32,9 @@ use crate::{
     now_ms,
     presentation::{HistoryEvent, RunView},
 };
+
+mod settings;
+pub(crate) use settings::{CachedHost, RuntimeSettings};
 
 #[cfg(test)]
 mod tests;
@@ -75,7 +80,13 @@ pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Contr
         .route("/v1/tasks", get(list).post(admit))
         .route("/v1/tasks/{id}/acp", post(bind_acp))
         .route("/v1/tasks/{id}/next", get(next))
-        .route("/v1/settings", get(settings))
+        .route("/v1/health", get(settings::health))
+        .route("/v1/settings", get(settings::all))
+        .route(
+            "/v1/settings/{domain}",
+            get(settings::get).put(settings::put),
+        )
+        .route("/v1/settings/projects/reassign", post(settings::reassign))
         .route("/v1/events", get(events))
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize));
     let tasks = Router::new()
@@ -397,19 +408,6 @@ async fn history(
     ))
 }
 
-async fn settings(State(api): State<Api>) -> Json<Value> {
-    let storage = &api.service.storage;
-    let project = &api.service.project;
-    Json(json!({
-        "enabled": true,
-        "storage": {
-            "workRoot": storage.work().path(),
-            "scratchRoot": storage.scratch().path(),
-        },
-        "roles": { "worker": project.worker, "reviewer": project.reviewer },
-    }))
-}
-
 async fn events(State(api): State<Api>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     invalidations(api.service, None)
 }
@@ -482,7 +480,11 @@ struct Summary {
 impl Summary {
     fn read(task: &Task, version: i64, state: &EngineState) -> Self {
         let id = &task.identity().id;
-        let mut view = Self::new(task, version, state.waits.get(id).copied());
+        let mut view = Self::new(
+            task,
+            version,
+            state.waits.get(id).map(|(reason, _)| *reason),
+        );
         if view.wait.is_some() {
             view.next_check_at = state.schedule.due(id).map(|due| {
                 let delay = due.saturating_duration_since(tokio::time::Instant::now());
@@ -555,12 +557,19 @@ enum ApiError {
     Unauthorized,
     Address,
     Invalid,
+    SettingsOperator,
     Service(ServiceError),
 }
 
 impl From<ServiceError> for ApiError {
     fn from(error: ServiceError) -> Self {
         Self::Service(error)
+    }
+}
+
+impl From<nucleus_store::StorageError> for ApiError {
+    fn from(error: nucleus_store::StorageError) -> Self {
+        ServiceError::from(error).into()
     }
 }
 
@@ -573,15 +582,28 @@ impl IntoResponse for ApiError {
                 "request must use the engine's loopback address and origin".into(),
             ),
             Self::Invalid => (StatusCode::BAD_REQUEST, "invalid request".into()),
+            Self::SettingsOperator => (
+                StatusCode::FORBIDDEN,
+                "settings writes require an operator".into(),
+            ),
             Self::Service(error) => {
                 let status = match error {
                     ServiceError::Missing => StatusCode::NOT_FOUND,
-                    ServiceError::Input | ServiceError::Project => StatusCode::BAD_REQUEST,
+                    ServiceError::Input
+                    | ServiceError::Project
+                    | ServiceError::Settings(
+                        nucleus_store::StorageError::InvalidSettings(_)
+                        | nucleus_store::StorageError::MissingVolume
+                        | nucleus_store::StorageError::OutsideVolume
+                        | nucleus_store::StorageError::Layout
+                        | nucleus_store::StorageError::ConfinedDirectory(_),
+                    ) => StatusCode::BAD_REQUEST,
                     ServiceError::QuestionPlanner | ServiceError::PlannerAuthorityRefused => {
                         StatusCode::FORBIDDEN
                     }
                     ServiceError::AcpUnauthorized => StatusCode::UNAUTHORIZED,
-                    ServiceError::Core(_)
+                    ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
+                    | ServiceError::Core(_)
                     | ServiceError::EffectInProgress
                     | ServiceError::Store(nucleus_store::StoreError::StaleTask) => {
                         StatusCode::CONFLICT

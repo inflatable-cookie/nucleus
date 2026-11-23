@@ -100,8 +100,9 @@ GitHub transport and server failures pause requests across all tasks for 30
 seconds, doubling up to four minutes until a read succeeds. Rate limits retain
 their supplied deadline. A settled run that held a launch slot wakes the oldest
 capacity waiter. Capacity also has a 60-second backstop for changes in local
-load. The launch budget is loaded when the service starts.
-The API serves task views from the store and memory and pushes invalidations.
+load. The active slot and load limits take effect when a Dispatch or Projects edit
+commits. The API serves task views from the store and memory and pushes
+invalidations.
 
 Normalize the relevant observations to one signal per phase. The bound run
 takes precedence over downstream work until its turn is quiescent. A required
@@ -407,9 +408,9 @@ current wait or question. Detail adds the brief, current run, PR, verdict,
 hold and paged event history. A `next` read returns the current phase, wait,
 question and available commands. A typed command endpoint handles `move`,
 `answer`, `cancel`, `amend` and `hold`/`release` for the CLI and board.
-`/v1/settings` reports the active work and scratch roots and role profiles.
-Milestone 1 configures the engine setting locally. The board's settings writes
-and optional pool controls follow their migration milestones.
+`/v1/settings` reads the isolated engine's configuration domains. `/v1/health`
+reports cached T3 status, scheduled queue depth and the oldest current waits.
+Neither read contacts an adapter.
 `/v1/events` emits the task ID and version on a change. A reconnect or missed
 interval invalidates the list and visible task views. Task commands use the configured control
 credential. Each run has its own callback credential, including its task and
@@ -456,23 +457,36 @@ to submit and answer as the bound fixture planner.
 
 Keep the Settings tabs, shared controls and save feedback. Use one noun per
 control, put explanations in `?` popovers, autosave, prefer dropdowns and put
-Remove inside the editor. Milestone 2 gives
-each group a versioned Longhorn config domain and reads the live catalogue or
-health separately. Ordinary domains and their backups carry credential
-references. T3 and provider tokens stay in secure storage.
+Remove inside the editor.
 
-| Current screen | Domain | Keep as is | Reshape | Drop |
-| --- | --- | --- | --- | --- |
-| Profiles, editor, subscriptions | `profiles` (user config) | Profile names, provider and model picker, supported options and subscription display | Configure worker and reviewer profiles against the live T3 catalogue. Map usage levels and project overrides to profile IDs. At Low, Normal and High, Frontier requires an explicit per-role planner request with a reason. | Recovery coordinator and ladder profile groups, whose roles have been retired. |
-| Dispatch limits | `dispatch` (user config) | Usage slider, autosave, global and project slot controls and project overrides | Carry over slots, local load, host-call concurrency, budgets and usage levels. Extend a budget once automatically, then ask the planner. Show which setting is in force and which launch it delays. | Wall-clock stall rules, escalation and outage timers. The pass reads activity and schedules checks. Keep papercut limits with the existing papercut service while it owns that work. |
-| Projects | `projects` (project-scoped config) | Project and repository list, editor and lane selection | Bind repositories and base branches. Keep the per-repository hung-tool limit in project settings. A command with no output for that interval is terminated, with 30 minutes as the default. Resolve the most active responsible planner live at send time. | Stored planner thread selection, recovery-agent registration and episode controls. The live role resolves ownership and task commands own cancellation and holds. |
-| Storage | `engine` (machine state) | Work root fields, resolved paths, reset and save feedback | Resolve the pinned work volume, engine database, work and scratch roots through Longhorn. Expose the optional Barge pool when its host hold is ready. | Paths for retired engine side stores. |
-| Hosts | `hosts` (machine state) | T3 connection status and its connection editor | Configure the T3 endpoint and credential reference. Read reachability and catalogue state live. The adapter translates the canonical profile vocabulary. | Multi-host default picker, retired adapter settings and host-specific profile mapping controls. |
-| Backups and Telemetry | Existing Longhorn config backup scopes and engine display history | Backup status, restore controls and useful usage summaries | Show verified config backups and the new engine's task activity with their own provenance. | Recovery attempts, incidents and escalation counts. |
+| Group | Longhorn file in the portable profile | Settings |
+| --- | --- | --- |
+| Profiles | `config/profiles.json` | Name and canonical selection with stable ID, capability, weight, provider, model and effort. |
+| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, local load, one host call slot and one optional allowance in minutes. |
+| Projects | `state/projects.json` | Name, slots, archival and repositories with GitHub origin, path, base, required check names and hung-tool limit. The limit defaults to 30 minutes. Show the planner from the scheduler's current authority. |
+| Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
+| Storage | `state/engine.json` | Pinned volume, work and scratch roots, verified Longhorn config archives and retention. |
 
-The service validates each domain and applies its versioned write through
-Longhorn. Keep task and planning records in their owning stores. Loading a
-setting or restoring a backup grants no task or merge authority.
+Use `GET /v1/settings/{domain}` to read one domain. `PUT` takes its current
+`revision` and replacement `value`. The operator can save only one domain
+per request. An edit whose revision changed returns HTTP 409. Move a
+repository with `POST /v1/settings/projects/reassign` and the current
+`revision`, `origin` and `toProject`. Both projects update in one write.
+Project saves invalidate planner authority at commit and wake the scheduler.
+Capacity changes wake local waiters. GitHub confirms that each configured check
+is required and passing at the exact head. GitHub's branch rules and the
+exact-head approval still govern the merge.
+
+On startup both the old explicit `--t3` fixture endpoint and the saved reference
+are supported. Apply saved connection and storage changes on the next start.
+Storage reports the running process's active paths and the verified archive
+inventory separately from saved intent. The legacy Settings shell stays on its
+existing transport until the dedicated Rust Settings UI lands. The Settings
+domain stores the budget allowance and hung-tool threshold. Applying them to
+run accounting, planner budget questions and native tool termination requires
+scheduler and host follow-up. An exhausted allowance extends automatically once,
+then the planner can choose Extend directly. Backup capture and retention
+execution also belong to that follow-up.
 
 Port the worker start matrix and the reviewer bracket matrix cell for cell from
 [Spec 052](../docs/knowledge/specs/052-usage-level.md). Preserve the critical

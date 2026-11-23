@@ -595,3 +595,27 @@ fn a_pull_target_stays_inside_the_configured_repository() {
         );
     }
 }
+
+#[tokio::test]
+async fn named_project_checks_need_passing_github_branch_rules_at_the_head() {
+    for (required, expected) in [(true, CheckState::Ready), (false, CheckState::Pending)] {
+        let mut response = checks('a', "SUCCESS");
+        response["data"]["repository"]["pullRequest"]["statusCheckRollup"]["contexts"] = json!({
+            "pageInfo": {"hasNextPage": false},
+            "nodes": [{"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS", "isRequired": required}],
+        });
+        let (forge, calls) = server(vec![Some(pull('a', false)), Some(response)]);
+        let target = branches()
+            .target(PR_URL)
+            .expect("target")
+            .with_required_checks(vec!["CI".into()]);
+        assert!(
+            matches!(forge.observe(&target).await, Ok(Forge::Open { checks, .. }) if checks == expected)
+        );
+        let requests = calls.join().expect("HTTP requests");
+        assert_eq!(
+            requests[1].body.as_ref().expect("GraphQL request")["variables"]["namedChecks"],
+            true
+        );
+    }
+}
