@@ -1406,7 +1406,7 @@ test("review fixes: phase.set preserves stop, message.send warns on queue-only r
   assert.equal(current().resolution.stop?.since, stopSince);
 
   // task.next exposes machine-readable explicitCommands.
-  const next = runtime.taskNext({ taskId: current().id });
+  const next = await runtime.taskNext({ taskId: current().id });
   assert.ok(
     next.explicitCommands?.some(
       (c) => c.action === "run.start" && c.args.replacing === stuck.id,
@@ -1899,7 +1899,7 @@ test("review round 2: message.send reports host steer disposition and blocks que
     released: false,
   });
   store.putRun(execRun);
-  const next = runtime.taskNext({ taskId: current().id });
+  const next = await runtime.taskNext({ taskId: current().id });
   assert.ok(
     next.explicitCommands?.some(
       (c) => c.action === "run.release" && c.args.run === execRun.id,

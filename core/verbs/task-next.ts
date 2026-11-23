@@ -4,7 +4,7 @@ import { releaseWarnings } from "./explicit-resolution";
 import { plannerEscalations } from "../questions/ladder/records";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
-import { taskDetailView } from "../../shared/task-view";
+import { externalMergeSourceAcceptance, mergeReviewEvidenceAt, taskDetailView } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import { budgetGatesPhase } from "../../shared/task-budget";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
@@ -814,7 +814,23 @@ function explicitCommandsFor(
     });
   }
 
-  if (task.resolution.mergedCommit) {
+  const { mergedCommit, mergeHead, externalMerge } = task.resolution;
+  const proof = facts.externalCloseout;
+  const unreviewed = proof?.taskId === task.id && proof.version === task.version
+    ? proof.warning
+    : null;
+  if (unreviewed) {
+    push({
+      action: "closeout.now",
+      args: { action: "closeout.now", ...base },
+      fill: ["reason"],
+      note: `${unreviewed.text} Only a responsible planner or the operator board may accept this warning.`,
+      warnings: ["unreviewed_merge"],
+    });
+  } else if (mergedCommit && (
+    !externalMerge || externalMergeSourceAcceptance(task) ||
+    (mergeHead && mergeReviewEvidenceAt(task, mergeHead))
+  )) {
     push({
       action: "closeout.now",
       args: { action: "closeout.now", ...base },

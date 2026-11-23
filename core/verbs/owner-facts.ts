@@ -54,6 +54,8 @@ import {
 
 /** Everything the registry reads about one task; a store read, never a remote call. */
 export interface OwnerVerbFacts {
+  /** Version-bound forge proof from the public task.next read. */
+  externalCloseout?: Awaited<ReturnType<typeof import("./explicit-integration").previewUnreviewedCloseout>>;
   /** Live wait wording for next. Verb guards still read the authoritative task. */
   waitTask?: Task;
   activityWaitContext?: WaitStateContext;

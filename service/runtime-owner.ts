@@ -129,6 +129,7 @@ import type {
 import { taskControlChanges } from "../shared/task-control-changes";
 import type { ExplicitResolution } from "../shared/schema/task-control";
 import { resolveExplicitly } from "../core/verbs/explicit-resolution";
+import { previewUnreviewedCloseout } from "../core/verbs/explicit-integration";
 import {
   type OperationAcceptance,
   type OperationResult,
@@ -1713,12 +1714,16 @@ export class QueueRuntime {
   }) {
     return this.board.detail(input);
   }
-  taskNext(input: {
+  async taskNext(input: {
     taskId?: string;
     reference?: string;
     caller?: "operator (board)";
   }) {
-    return this.board.taskNext(input);
+    const taskId = input.taskId
+      ? this.store.resolveTaskId(input.taskId)
+      : this.store.taskIdByNumber(input);
+    const proof = await previewUnreviewedCloseout(this.engine, this.store.task(taskId));
+    return this.board.taskNext({ ...input, taskId }, proof);
   }
   outcome(input: {
     taskId?: string;
@@ -2399,7 +2404,7 @@ export class QueueRuntime {
       return resolveExplicitly(this.engine, request, (task) => {
         if (task.removedAt)
           return "The scheduler leaves this removed task alone.";
-        const next = this.taskNext({ taskId: task.id });
+        const next = this.board.taskNext({ taskId: task.id });
         if (next.paused) return "The scheduler waits for Nucleus to resume.";
         if (next.stop)
           return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;

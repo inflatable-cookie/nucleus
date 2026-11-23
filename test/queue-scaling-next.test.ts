@@ -16,13 +16,13 @@ test('next derives a queued prerequisite and capacity wait without writing', asy
     const parent = add('parent'), child = add('child', [parent.id]);
     runtime.store.setMeta('paused', false);
     const version = runtime.store.task(child.id).version, events = runtime.store.eventsAll(child.id).length;
-    assert.match(runtime.taskNext({ taskId: child.id }).reason, /Waiting for prerequisites/);
+    assert.match((await runtime.taskNext({ taskId: child.id })).reason, /Waiting for prerequisites/);
     assert.match(runtime.snapshot({}).tasks.find(task => task.id === child.id)!.reason, /Waiting for prerequisites/);
     assert.equal(runtime.store.task(child.id).version, version);
     assert.equal(runtime.store.eventsAll(child.id).length, events);
     runtime.store.setMeta('globalLimit', 0);
     runtime.store.update(parent.id, { phase: 'done' });
-    assert.match(runtime.taskNext({ taskId: child.id }).reason, /Global concurrent task-slot limit reached/);
+    assert.match((await runtime.taskNext({ taskId: child.id })).reason, /Global concurrent task-slot limit reached/);
   } finally { await runtime.stop(); }
 });
 

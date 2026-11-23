@@ -342,7 +342,7 @@ export interface ResolutionAdapter {
     task: Task,
     acceptHead?: boolean,
     retainedSource?: boolean,
-  ): Promise<{ head: string; commit: string } | null>;
+  ): Promise<{ head: string; commit: string; descendsFrom?: string } | null>;
   mergeGate(
     task: Task,
     history?: CheckHistory,
@@ -370,11 +370,13 @@ export interface ResolutionAdapter {
   ): Promise<string>;
   rerunFailedWorkflowRuns?(task: Task, runIds: string[]): Promise<string[]>;
   merge(task: Task, allowed?: () => boolean): Promise<void>;
-  merged(task: Task): Promise<{
+  merged(task: Task, options?: { externalOnly: boolean }): Promise<{
     merged: boolean;
     commit: string | null;
     head: string;
     base: string;
+    /** externalOnly: the recorded source proven to be an ancestor of the observed head. */
+    descendsFrom?: string;
     proof?: { proven: boolean; detail: string };
   }>;
   syncMain(

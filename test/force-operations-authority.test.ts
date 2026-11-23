@@ -102,6 +102,14 @@ async function fixture(origin = QUEUE_REPOSITORY_ORIGIN) {
     resolution: {
       ...store.task(inserted.id).resolution,
       attention: true,
+      review: {
+        taskId: inserted.id,
+        runId: "reviewer-run",
+        eventId: "review-approved",
+        status: "ready_to_merge",
+        summary: "Approved at the merged head",
+        head,
+      },
       integrationTurn: { sequence: 1, acceptedAt: new Date().toISOString() },
     },
   });

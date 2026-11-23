@@ -14,7 +14,7 @@ export const NOT_APPLIED_EXIT_CODE = 2;
  * coordinator that names one is refused. Mirrors `PLANNER_ONLY_WARNINGS` in
  * shared/schema/resolution-warnings.ts (a test holds the two equal).
  */
-export const PLANNER_ONLY_WARNING_IDS = ['hold_owner', 'route_policy', 'two_writers', 'creation_in_flight', 'budget'];
+export const PLANNER_ONLY_WARNING_IDS = ['hold_owner', 'route_policy', 'two_writers', 'creation_in_flight', 'budget', 'unreviewed_merge'];
 /** Warnings only the operator board may accept (`OPERATOR_ONLY_WARNINGS`). */
 export const OPERATOR_ONLY_WARNING_IDS = ['unverified_merge'];
 
