@@ -385,11 +385,20 @@ function fixture(
       findRunAgents: async () => [],
       continueRun: async (r, messageId, text) => {
         continuations.push({ run: r, messageId, text });
+        const agent = states.get(r.agentId!)!;
+        const previous = Date.parse(
+          states.withActivityStamp(agent).updatedAt ?? "",
+        );
+        const updatedAt = Math.max(
+          Date.now(),
+          Number.isFinite(previous) ? previous + 1 : 0,
+        );
         states.set(r.agentId!, {
-          ...states.get(r.agentId!)!,
+          ...agent,
           active: true,
           status: "running",
           error: "",
+          updatedAt: new Date(updatedAt).toISOString(),
         });
       },
       verifyReview: async (t, r, c) => {
@@ -8183,6 +8192,7 @@ test("a transient reviewer provider error resumes the same run and exact head be
     const first = f.run(),
       headBefore = first.head,
       tokenBefore = f.tokens.get(first.id)!;
+    const providerErrorAt = new Date().toISOString();
     f.states.set(first.agentId!, {
       id: first.agentId!,
       workspaceId: first.workspaceId,
@@ -8191,8 +8201,12 @@ test("a transient reviewer provider error resumes the same run and exact head be
       permissions: false,
       error:
         "opencode-go API error (429): rate_limit_error; retry after a brief wait",
-      updatedAt: new Date().toISOString(),
+      updatedAt: providerErrorAt,
     });
+    assert.equal(
+      (await f.adapter.observe(first.agentId!)).updatedAt,
+      providerErrorAt,
+    );
     await f.engine.wake();
     const waiting = f.store.run(first.id)!;
     assert.equal(waiting.transientProviderRetry?.status, "waiting");
@@ -8213,6 +8227,11 @@ test("a transient reviewer provider error resumes the same run and exact head be
     assert.equal(f.continuations.length, 1);
     assert.equal(f.continuations[0].run.id, first.id);
     assert.equal(f.continuations[0].run.head, headBefore);
+    const resumedActivity = await f.adapter.observe(first.agentId!);
+    assert.ok(
+      Date.parse(resumedActivity.updatedAt ?? "") > Date.parse(providerErrorAt),
+      "the successful continuation advances past the provider error's activity stamp",
+    );
     assert.match(
       f.continuations[0].text,
       /Continue where you left off; report via your existing authenticated callback/,
@@ -9081,6 +9100,12 @@ test("ordinary audit routes a long saved external-merge reason before reconcilin
       audit.push("external-merge");
       return null;
     };
+    const verifyReview = f.adapter.verifyReview!.bind(f.adapter);
+    f.adapter.verifyReview = async (task, run, verdict) => {
+      if (run.id === originalRun.id && verdict.eventId === callback.eventId)
+        audit.push("review-verified");
+      return verifyReview(task, run, verdict);
+    };
     const observe = f.adapter.observe.bind(f.adapter);
     f.adapter.observe = async (id) => {
       audit.push(`observe:${id}`);
@@ -9109,6 +9134,10 @@ test("ordinary audit routes a long saved external-merge reason before reconcilin
     assert.ok(
       audit.indexOf("external-merge") > originAt,
       `origin routing precedes external-merge reconciliation: ${audit.join(", ")}`,
+    );
+    assert.ok(
+      audit.indexOf("review-verified") > originAt,
+      `origin routing precedes verification of the accepted verdict: ${audit.join(", ")}`,
     );
     const released = f.store.run(originalRun.id)!;
     assert.equal(released.released, true);

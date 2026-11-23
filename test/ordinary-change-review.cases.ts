@@ -26,6 +26,7 @@ import { queueOperationSchema } from "../shared/operations";
 import { supersedeIdleRunInTx } from "../core/recovery/fence-settlement";
 import { reviewPublicationBody } from "../core/forge/index";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
+import { TOOL_TIMELINE_LIMIT } from "../core/recovery/stall";
 import {
   ordinaryReviewSource,
   ordinaryReviewDelta,
@@ -2707,9 +2708,6 @@ test("a genuine rebase author report receives base movement and covering evidenc
 
 test(
   "a closed reviewer after a retained round permits a fresh reviewer",
-  {
-    todo: "Fresh reviewer restart retries the parked check and leaves the closed reviewer bound",
-  },
   async () => {
     const f = fixture();
     try {
@@ -2717,13 +2715,64 @@ test(
       const first = f.current();
       await f.report(first, "changes_required");
       const second = await authorRevision(f, 1);
-      await f.report(second, "blocked", { reviewResponsibility: "environment" });
-      f.states.set(second.agentId!, {
-        ...f.states.get(second.agentId!)!,
+      assert.equal(second.agentId, first.agentId);
+      // Record the callback without sending a separate task wake. The host
+      // pass supplies both checkout participants' pages before application.
+      f.idle(second);
+      const receipt = f.engine.resolution.complete(
+        {
+          taskId: f.task.id,
+          runId: second.id,
+          eventId: randomUUID(),
+          status: "blocked",
+          reviewResponsibility: "environment",
+          head: second.head,
+          summary: "Environment unavailable",
+        },
+        f.tokens.get(second.id)!,
+      );
+      assert.equal(receipt.accepted, true);
+      const reporting = f.store.task(f.task.id);
+      const { hostId, agentId } = reporting;
+      const reviewerId = second.agentId;
+      assert.ok(hostId && agentId && reviewerId);
+      const resolution = f.engine.resolution;
+      const pass = resolution.beginPassSnapshot();
+      try {
+        await f.engine.onTaskHost(reporting, async () => {
+          for (const id of [agentId, reviewerId]) {
+            const observation = await f.adapter.observe(id);
+            resolution.recordPassHostObservation(hostId, id, observation);
+            const page = await resolution.primePassTimelinePage(
+              id,
+              TOOL_TIMELINE_LIMIT,
+              hostId,
+              { coveredObservation: observation },
+            );
+            assert.equal(page.state, "ok", `host-pass page for ${id}`);
+          }
+        });
+        resolution.sealPassHost(hostId);
+        await f.engine.scheduleTaskQuantum(reporting.id, pass);
+      } finally {
+        resolution.endPassSnapshot(pass);
+      }
+      const blocked = f.store.task(f.task.id);
+      assert.equal(
+        resultApplied(f.store, blocked.id, second.id),
+        true,
+        blocked.reason,
+      );
+      assert.equal(blocked.phase, "blocked", blocked.reason);
+      assert.equal(blocked.resolution.currentRunId, null);
+      assert.equal(blocked.resolution.review?.runId, second.id);
+      assert.equal(blocked.resolution.review?.status, "blocked");
+      f.states.set(reviewerId, {
+        ...f.states.get(reviewerId)!,
         status: "closed",
         active: false,
       });
-      const closed = await f.adapter.observe(second.agentId!);
+      const closed = await f.adapter.observe(reviewerId);
       assert.equal(closed.status, "closed");
       assert.equal(closed.workspaceId, second.workspaceId);
       assert.ok(Date.parse(closed.updatedAt ?? "") > 0);
@@ -2743,7 +2792,7 @@ test(
       const task = f.store.task(f.task.id);
       assert.notEqual(
         review.agentId,
-        second.agentId,
+        reviewerId,
         `restart returned "${restarted.phase}: ${restarted.reason}"; after two passes "${task.phase}: ${task.reason}"`,
       );
       assert.equal(task.resolution.reviewerAgentId, review.agentId);
