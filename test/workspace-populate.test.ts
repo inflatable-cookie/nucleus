@@ -38,6 +38,8 @@ import {
 } from "../core/workspaces/workspace-allocation";
 import { worktreeAddTargets } from "../core/machine/process-identity";
 import { assertCheckoutAvailable } from "../core/workspaces/checkout-volume";
+import { QuantumDeadlineExceededError } from "../core/scheduling/pass-snapshot";
+import { taskActivity } from "../shared/task-activity";
 
 const profile: Profile = {
   id: "worker",
@@ -1643,6 +1645,49 @@ test("a simulated healthy create beyond 120s finishes under the 600s budget and 
     assert.equal(JSON.parse(finished!.detail).elapsedMs, 180000);
     assert.equal(JSON.parse(finished!.detail).outcome, "ok");
     assert.ok(JSON.parse(finished!.detail).elapsedMs > 120000);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a populate quantum deadline keeps the workspace intent waiting for Nucleus", async () => {
+  const f = engineFixture();
+  try {
+    const task = f.queued();
+    f.adapter.populateTaskWorktree = async () => {
+      throw new QuantumDeadlineExceededError("populateTaskWorktree");
+    };
+    await f.engine.dispatchTask(task.id, false);
+    const deferred = f.store.task(task.id);
+    assert.equal(deferred.phase, "dispatching");
+    assert.equal(deferred.workspaceIntent, true);
+    assert.equal(deferred.resolution.attention, false);
+    assert.equal(
+      taskActivity({
+        task: deferred,
+        runs: [],
+        events: [],
+        stop: deferred.resolution.stop,
+        now: Date.now(),
+      }).state,
+      "nucleus",
+    );
+    assert.match(
+      deferred.reason,
+      /quantum deadline exceeded; retrying on the next pass/,
+    );
+    assert.equal(f.calls.create, 0);
+
+    const directory = join(f.dir, "observed-workspace");
+    f.setCreation({ kind: "found_done", directory });
+    f.setWorkspaces([{ id: "observed-workspace", directory }]);
+    await f.engine.wakeTask(task.id);
+    assert.equal(f.store.task(task.id).workspaceId, "observed-workspace");
+    assert.equal(
+      f.calls.create,
+      0,
+      "reconciliation binds the observed workspace",
+    );
   } finally {
     await f.close();
   }

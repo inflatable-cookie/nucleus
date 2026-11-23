@@ -308,6 +308,8 @@ The rules:
 - **Publish and route on receipt.** An authenticated blocker shows on the
   board and opens its next ladder rung in the same step. A classified blocker
   always has a next rung or a named owner, never a bare classification wait.
+  The reporting run keeps its execution lease, and a planner's answer applies
+  after the blocking result settles.
   Recovery deadlines are due times that wake the task themselves, with the
   sweep as backstop. A transient deferral stays Nucleus's move and retries on
   the next pass.
@@ -361,7 +363,7 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 5b | nucleus#1556 (cancelled; built as a direct PR) | Hung-tool limit, permission policy and orphan-phase readmission. Done. | 1, 3b |
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
 | 7a | lead | Wake on facts: confirmed turn end, process death, thread absence and callbacks wake the task; the stall threshold stays only for opaque tools ([§7](#7-attention-reaches-the-planner-quickly)). | — |
-| 7b | lead | Publish and route on receipt: the blocker opens its ladder rung in the same step, no bare classification wait, recovery due times wake the task, transient deferrals stay Nucleus's move. | — |
+| 7b | nucleus#1561 (delivered) | Publish and route on receipt: the blocker opens its ladder rung in the same step, no bare classification wait, recovery due times wake the task, transient deferrals stay Nucleus's move. | — |
 | 7c | lead | One delivery record per planner message (routed, accepted, queued, turn started); an idle planner gets the send at once; no steering. | 7b |
 
 ### Batch A: dead agents and uncertain launches

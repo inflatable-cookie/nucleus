@@ -34,6 +34,7 @@ import {
 } from "../core/verbs/owner-verbs";
 import { Store, digest } from "../core/store/store";
 import { Engine } from "../core/engine";
+import { taskActivity } from "../shared/task-activity";
 import {
   REVISION_BUDGET,
   submissionSchema,
@@ -66,6 +67,210 @@ const until = async (pass: () => boolean, ms = 30_000) => {
 
 const blocked = (summary: string, extra: Partial<Completion> = {}) =>
   ({ status: "blocked", summary, head, ...extra }) as unknown as Completion;
+
+test("an authenticated blocker opens a planner rung while the worker is still live", async () => {
+  const f = fixture({ responsible: true, delegates: { planner: null } });
+  f.engine.resolution.delegatedAnswerWaitMs = 5000;
+  f.idle("planner-1");
+  try {
+    f.store.upsertProject({
+      key: "app",
+      name: "App",
+      repositories: [{ origin: null, path: join(f.dir, "repo") }],
+    });
+    f.store.setProjectPlanner({
+      key: "app",
+      agentId: "planner-1",
+      setBy: "operator",
+    });
+    const task = f.store.update(f.submitted.id, {
+      phase: "working",
+      completion: null,
+      prUrl: null,
+      prHead: null,
+      agentActive: true,
+    });
+    f.states.set("worker", {
+      ...f.states.get("worker")!,
+      status: "running",
+      active: true,
+    });
+    f.store.setCredential(task.runId!, "worker-blocker-token");
+    const input: Completion = {
+      taskId: task.id,
+      runId: task.runId!,
+      eventId: randomUUID(),
+      status: "blocked",
+      summary: "The service owner must grant access",
+      cause: { kind: "external", name: "service access" },
+      impediment: "The service refused the task's credential",
+    };
+    await assert.rejects(f.engine.complete(input, "wrong-token"));
+    assert.equal(f.events("planner_escalation").length, 0);
+    assert.equal(
+      (await f.engine.complete(input, "worker-blocker-token")).accepted,
+      true,
+    );
+    const reported = f.current();
+    assert.equal(reported.completion?.eventId, input.eventId);
+    assert.equal(reported.runId, task.runId);
+    assert.equal(reported.agentActive, true);
+    assert.equal(reported.resolution.stop?.reason, "escalated");
+    assert.equal(
+      taskActivity({
+        task: reported,
+        runs: [],
+        events: [],
+        stop: reported.resolution.stop,
+        now: Date.now(),
+      }).state,
+      "needs_person",
+    );
+    assert.equal(f.events("planner_escalation").length, 1);
+    assert.equal(
+      (await f.engine.complete(input, "worker-blocker-token")).accepted,
+      true,
+    );
+    await until(() => f.delegated.planner.length >= 1, 10_000);
+    await f.engine.quiesce();
+    assert.equal(f.delegated.planner.length, 1);
+    assert.equal(f.events("planner_escalation").length, 1);
+    assert.equal(f.events("workspace_released").length, 0);
+    assert.equal(f.current().resolution.stop?.reason, "escalated");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a stored classification without a rung opens one on the task's next wake", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const task = f.current();
+    const completion: Completion = {
+      taskId: task.id,
+      runId: task.runId!,
+      eventId: randomUUID(),
+      status: "blocked",
+      summary: "A project decision is required",
+      cause: { kind: "external", name: "project decision" },
+    };
+    f.store.update(task.id, {
+      phase: "blocked",
+      completion,
+      reason: completion.summary,
+    });
+    f.store.event(
+      task.id,
+      "blocker_ladder_classified",
+      `${completion.eventId}: ${blockerCauseId(task.id, completion)}`,
+    );
+    await f.engine.wakeTask(task.id);
+    await f.engine.wakeTask(task.id);
+    assert.equal(f.events("blocker_ladder_classified").length, 1);
+    assert.equal(f.events("planner_escalation").length, 1);
+    assert.equal(f.current().resolution.stop?.reason, "escalated");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a planner answer to a live revision blocker applies after result settlement", async () => {
+  const untilTime = new Date(Date.now() + 60_000).toISOString();
+  const f = fixture({
+    responsible: true,
+    delegates: { planner: `Choice: Wait until a time\nReason: ${untilTime}` },
+  });
+  try {
+    f.store.upsertProject({
+      key: "app",
+      name: "App",
+      repositories: [{ origin: null, path: join(f.dir, "repo") }],
+    });
+    f.store.setProjectPlanner({
+      key: "app",
+      agentId: "planner-1",
+      setBy: "operator",
+    });
+    await f.reviews(1);
+    await f.engine.wake();
+    const run = f.run();
+    assert.equal(run.role, "revision");
+    const result = await f.engine.complete(
+      {
+        taskId: run.taskId,
+        runId: run.id,
+        eventId: randomUUID(),
+        status: "blocked",
+        summary: "Waiting for a service window",
+        cause: { kind: "external", name: "service window" },
+      },
+      f.tokens.get(run.id)!,
+    );
+    assert.equal(result.accepted, true);
+    await until(() => f.delegated.planner.length === 1);
+    assert.equal(f.current().resolution.currentRunId, run.id);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.events("planner_escalation_applied").length, 0);
+
+    f.idle(run.agentId!);
+    await f.engine.wakeTask(run.taskId);
+    await until(
+      () => f.events("planner_escalation_applied").length === 1,
+      5000,
+    );
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.current().resolution.currentRunId, null);
+    assert.deepEqual(f.current().resolution.stop?.fact?.escalationWait, {
+      kind: "time",
+      target: untilTime,
+    });
+    assert.equal(f.events("planner_escalation").length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("the recovery no-start deadline wakes the affected task without a sweep", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    f.engine.resolution.recovery.pendingBoundMs = 80;
+    f.engine.resumeHostReadTransients();
+    const task = f.current();
+    f.store.transaction(() => {
+      f.store.update(task.id, {
+        resolution: {
+          ...task.resolution,
+          recovery: {
+            id: randomUUID(),
+            key: "recovery-before-launch",
+            generation: task.coordinatorGeneration,
+            runId: null,
+            agentId: null,
+            status: "pending",
+            summary: "",
+            idleSince: null,
+            incidentId: null,
+            progress: null,
+          },
+        },
+      });
+      f.store.event(
+        task.id,
+        "recovery_pending",
+        "Waiting for the first recovery run",
+      );
+    });
+    assert.equal(f.events("planner_escalation").length, 0);
+    await until(() => f.events("planner_escalation").length === 1, 5000);
+    assert.match(
+      f.events("planner_escalation_question")[0]!.detail,
+      /started no run/,
+    );
+    assert.equal(f.coordinatorRuns().length, 0);
+  } finally {
+    await f.close();
+  }
+});
 
 test("a blocker cause is stable across wording whitespace and re-reports, and differs across tasks and text", () => {
   const cause = blockerCauseId(
