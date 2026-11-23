@@ -54,7 +54,13 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    exist only for the old machinery are deleted. T3 is called directly over its RPC.
 5. **T3 is the only host.** BB and Paseo are dropped, not ported (Tom, 2026-11-23: "Regarding BB and Paseo - I wouldn't be upset if we drop them. I like T3, the workflow can work well.. I'd be tempted to not bother with those two. If I was going to support more ADEs, I would look at something like Zeron, which would get a similar integration to T3."). The host trait stays, so a future ADE gets an adapter shaped like T3's.
 6. **The ACP task session is a core component.** Tom, 2026-11-23: "Is the fake ACP provider part of the T3 integration? That part would be what unlocks supporting other ADEs with the same workflow so it needs to be a core component". This carries over the 2026-11-17 decision 5e9a3193 behind [Spec 065](065-acp-task-session.md): a generic ACP agent in core, with parenting per host. Nucleus is an Agent Client Protocol agent over stdio with no model. Each task is one ACP session, which is one thread in any ACP-capable ADE. The session presents the task's phase, current run, wait and question, and it carries the five commands. A host adapter adds only how that host parents the worker and reviewer under the session. The ACP agent knows nothing about T3.
-7. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
+7. **The ACP session is written for a person.** Tom, 2026-11-23: "I would like the Nucleus ACP to be much more human friendly than it is now - provide actual useful feedback about the task as things happen, avoid too much noise, make it obvious what each sub agent is doing." The rules:
+   - The lifecycle is one ACP `plan`: Queued, Working, Review (round N), Merge and Close. Each step is pending, in progress or done. A wait shows as that step's status (for example, "Waiting for a review slot"). Waits are never messages.
+   - Each worker or reviewer run is one `tool_call`, titled with its role and what it's doing ("Worker: adding the retry test", "Reviewer: checking round 2"). It's updated in place with the agent's current activity and elapsed time, drawn from the observed turn: the running command, a file being edited or tests running.
+   - Messages appear only for things a person would want to read: the PR opened (with its link), a review verdict and its findings in a sentence or two, a merge, a question for the planner, and the finish with a short summary.
+   - No noise. Retries, timeouts, deferrals, unknown reads and repeated identical states produce nothing. A state that persists becomes a status change, shown once.
+8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots, load, budgets and usage levels), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped.
+9. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
    useful"). Barge provides worktrees when its pool setting is on.
 
@@ -210,7 +216,7 @@ Cargo builds" rule for the `engine/` workspace only:
    synthetic `inflatable-cookie/nucleus-fixture` repository and its own T3 project.
    For this proof the engine uses standalone role threads and its default worktree
    allocator.
-2. **Milestone 2:** the board reads the new engine's API. New tasks for one project go
+2. **Milestone 2:** the board reads the new engine's API, and its settings (profiles, limits, projects, storage) work against the new engine (ruling 8). New tasks for one project go
    to the new engine. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
 3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
    takes no new work.
@@ -224,4 +230,4 @@ A task never moves between engines.
 - Papercuts, leads, decisions, plans and milestone QA records keep their current
   store and CLI. The engine reads leads only to admit a promoted task.
 - Usage levels, model selection and budgets carry over as plain settings, not as new
-  state.
+  state. They're part of milestone 2's settings (ruling 8).
