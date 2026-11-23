@@ -1782,7 +1782,11 @@ request identities and stored committed-handoff rows are not rewritten.
   keeps its launch scratch until it releases it. Each proven member is stopped individually so a shared group cannot
   take another run or the operator's processes with it. Survivors retain their
   scratch and appear on the task timeline with PID and start identity.
-  Scratch removal follows the stop attempt and the existing volume proof. The
+  Scratch removal follows the stop attempt and the existing volume proof. Every
+  release, including `run.release`, leaves scratch cleanup pending while a run
+  process still has its cwd or an open file in the workspace or scratch, or
+  remains in the run's process tree. Incomplete cwd or open-file coverage
+  also leaves the intent pending. The
   hourly host sweep applies the same ownership proof to settled historical runs,
   including runs settled before this rule, and retries missed cleanup.
   A live non-init ancestor is an absolute protection: nothing below a live
@@ -3867,11 +3871,13 @@ after the task finishes.
 
 - An authenticated author, revision or reviewer result writes a run-bound
   cleanup record. It settles when the run is released, its agent is idle with no
-  turn, permission, owned tool or blocking effect, no other run in the workspace
+  turn, permission, owned tool or blocking effect, a process scan confirms the
+  run's workspace, scratch and process tree are clear, no other run in the workspace
   is unreleased, no host run holds the checkout
   ([Spec 035](../specs/035-host-run-scheduler.md) "Workspace custody") and the
   checkout shares the repository's common directory. Terminal archive waits on
-  the same host-run hold.
+  the same host-run hold and checks cwd and open files in the workspace and run
+  scratch before removing output or archiving, even for merged tasks.
 - Installed: run-bound settlement removes only Cargo `target`; `node_modules`
   stays and is reported retained, and only terminal cleanup removes it (Tom,
   2026-10-20). Approved, not yet built: Cargo build-output deletion leaves

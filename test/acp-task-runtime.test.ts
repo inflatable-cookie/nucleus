@@ -175,6 +175,7 @@ function identities(
 }
 
 function listing(worktree: string): HostProcessFact[] {
+  const inventory = identities()([PARENT, SESSION, MCP, COMMAND]);
   return [
     fact(
       SERVER,
@@ -196,7 +197,7 @@ function listing(worktree: string): HostProcessFact[] {
       worktree,
     ),
     fact(COMMAND, SESSION, "node build.mjs", worktree),
-  ];
+  ].map((process) => ({ ...process, acpIdentity: inventory.get(process.pid) ?? null }));
 }
 
 function runtimeFor(fixture: ReturnType<typeof hostFixture>) {

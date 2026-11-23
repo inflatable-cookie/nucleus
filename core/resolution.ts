@@ -618,7 +618,10 @@ export class Resolution {
     const read = async (): Promise<HostProcessListRead & { deferred?: true }> => {
       if (this.adapter.hostProcessListing) {
         try {
-          const processes = await this.adapter.hostProcessListing();
+          const list = () => this.adapter.hostProcessListing!();
+          const processes = await (options.allowMissFetch
+            ? runOutsideTaskQuantumScope(list)
+            : list());
           if (processes === null)
             return {
               state: "unknown",
@@ -682,7 +685,7 @@ export class Resolution {
           : result,
       );
     }
-    if (inQuantum && !options.participant) {
+    if (inQuantum && !options.participant && !options.allowMissFetch) {
       return Promise.resolve({
         state: "unknown",
         reason:

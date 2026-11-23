@@ -4,6 +4,8 @@ import { lstat, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { runBuildOutputIntent } from "../core/hooks/build-output-records";
@@ -12,6 +14,7 @@ import { completionSchema, hostRunRecordSchema, runSchema, type HostRunInternalR
 import { HOOK_TEST_TIMEOUT_MS } from "./support/budgets";
 import { HOST_RUN_ACCOUNTING_POLICY, hostRunAccountingAuthority, hostRunAccountingAutomaticRetirementRecord, hostRunAccountingDispositionRecord, hostRunPublicDigest } from "../core/host-runs/host-run-accounting";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
+import { readProcessSubset } from "../core/machine/host-process-listing";
 import { hostRunAccountingDispositionMetaKey } from "../core/host-runs/host-run-meta-keys";
 import { git, setup, settlingAdapter } from "./support/preserved-retirement-fixture";
 
@@ -51,6 +54,43 @@ test("a released run's cleanup settles when its checkout is already absent", { t
     await engine.settleRunBuildOutputs(f.task.id);
     assert.equal(f.store.task(f.task.id).version, version);
   } finally { await engine.stop(); f.store.close(); }
+});
+
+test("run-bound build output waits for a live process after the author result", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
+  const f = await setup(t);
+  authorResult(f, "author-live-process", "blocked");
+  const child = spawn(process.execPath, ["-e", "console.log('ready'); setInterval(() => {}, 1000)"], {
+    cwd: f.directory,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  const exited = once(child, "exit");
+  const adapter = settlingAdapter(f, { active: false });
+  let pid = child.pid;
+  adapter.hostProcessListing = async () => {
+    if (!pid) return [];
+    const read = await readProcessSubset([pid]);
+    return read.state === "listed" ? read.processes : null;
+  };
+  const engine = new Engine(f.store, adapter, 0);
+  try {
+    await once(child.stdout, "data");
+    await engine.settleRunBuildOutputs(f.task.id);
+    assert.equal(runRecord(f)?.state, "intent");
+    assert.match(runRecord(f)?.detail ?? "", /still uses the run workspace or scratch/);
+    await stat(f.target);
+
+    child.kill();
+    await exited;
+    pid = undefined;
+    await engine.settleRunBuildOutputs(f.task.id);
+    assert.equal(runRecord(f)?.state, "complete");
+    await assert.rejects(stat(f.target), { code: "ENOENT" });
+  } finally {
+    child.kill();
+    await exited;
+    await engine.stop();
+    f.store.close();
+  }
 });
 
 test("blocked and error author results keep root and nested node_modules while Cargo output is cleared", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {

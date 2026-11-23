@@ -15,10 +15,7 @@ import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { readFile, readdir, readlink, realpath } from "node:fs/promises";
-import {
-  cwdMapFromLsof,
-  type CwdState,
-} from "../workspaces/worktree-validation";
+import type { CwdState } from "../workspaces/worktree-validation";
 import { parseProcCommandLine, type ProcCommandLine } from "./process-identity";
 import { linuxStartIdentity, macStartIdentity } from "./start-identity";
 import {
@@ -26,9 +23,13 @@ import {
   startIdentityMatches,
 } from "./start-identity";
 import {
+  acpIdentityFromEnvironment,
   darwinBbThreadEnvironments,
+  listedProcessLiveness,
+  refreshedRunProcessLiveness,
   runProcessEnvironments,
 } from "./run-process-identity";
+import { isAcpEntryPoint } from "./acp-task-runtime";
 import { boundedPromise } from "./bounded-promise";
 import { pidAlive } from "./pid";
 
@@ -85,23 +86,25 @@ async function processListing(
   env = process.env,
 ) {
   try {
-    const { stdout } = await execFileAsync(command, args, {
+    const { stdout, stderr } = await execFileAsync(command, args, {
       encoding: "utf8",
       timeout: PS_TIMEOUT_MS,
       killSignal: "SIGKILL",
       maxBuffer: 8 * 1024 * 1024,
       env,
     });
-    return { status: 0, stdout };
+    return { status: 0, stdout, stderr };
   } catch (error) {
     const failure = error as Error & {
       code?: string | number;
       stdout?: string;
+      stderr?: string;
       signal?: NodeJS.Signals;
     };
     return {
       status: typeof failure.code === "number" ? failure.code : null,
       stdout: failure.stdout ?? "",
+      stderr: failure.stderr ?? "",
       error,
       signal: failure.signal,
     };
@@ -152,6 +155,26 @@ async function linuxCommand(pid: number): Promise<ProcCommandLine> {
   }
 }
 
+async function linuxOpenFiles(pid: number): Promise<NonNullable<HostProcessFact["openFiles"]>> {
+  const root = `/proc/${pid}/fd`;
+  const files = await readdir(root).catch(() => null);
+  const paths: string[] = [];
+  if (!files) return { paths, complete: false };
+  let complete = true;
+  for (let offset = 0; offset < files.length; offset += 32)
+    await Promise.all(files.slice(offset, offset + 32).map(async (file) => {
+      try {
+        const path = await readlink(join(root, file));
+        if (isAbsolute(path)) paths.push(path);
+      } catch (error) {
+        // A descriptor may close during enumeration. A refusal proves nothing.
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+          complete = false;
+      }
+    }));
+  return { paths, complete };
+}
+
 async function linuxProcesses(
   uid: number,
   pids?: readonly number[],
@@ -187,6 +210,7 @@ async function linuxProcesses(
         ]);
         // Exits during the walk are absent. Other inspection failures stay unknown.
         if (inspectedProcessGone(command, cwd)) return null;
+        const openFiles = fields[0]?.startsWith("Z") ? undefined : await linuxOpenFiles(pid);
         return {
           pid,
           ppid: Number(fields[1]),
@@ -197,6 +221,7 @@ async function linuxProcesses(
           command:
             command.state === "read" ? truncateCommand(command.line) : "",
           cwd: cwd.state === "read" ? cwd.path : null,
+          openFiles,
         };
       }),
     );
@@ -212,6 +237,54 @@ async function linuxProcesses(
       entries.filter((entry) => /^\d+$/.test(entry)).map(Number),
     ),
   };
+}
+
+function decodeLsofPath(name: string): string | null {
+  if (!name.includes("\\") && !name.includes("^")) return name;
+  // Caret escapes and literal carets share the same spelling.
+  if (/\^[?-_]/.test(name)) return null;
+  const escapes = new Map([["\\", "\\"], ["b", "\b"], ["f", "\f"], ["n", "\n"], ["r", "\r"], ["t", "\t"]]);
+  const decode = new TextDecoder("utf-8", { fatal: true });
+  try {
+    return name.replace(/(?:\\x[0-9a-f]{2})+|\\([\s\S]|$)/gi, (match, escape: string | undefined) => {
+      if (escape === undefined) {
+        const value = decode.decode(Buffer.from(match.replace(/\\x/gi, ""), "hex"));
+        if (!value.includes("\0")) return value;
+      } else {
+        const value = escapes.get(escape);
+        if (value !== undefined) return value;
+      }
+      throw Error("Unreadable lsof path");
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Read cwd and open paths together. Lsof escapes path bytes even in field mode. */
+function darwinOpenFiles(stdout: string) {
+  const processes = new Map<number, { cwd: string | null; paths: Set<string>; complete: boolean }>();
+  let process: ReturnType<typeof processes.get>;
+  let fd = "";
+  for (const raw of stdout.split("\0")) {
+    const field = raw.startsWith("\n") ? raw.slice(1) : raw;
+    if (field.startsWith("p")) {
+      process = { cwd: null, paths: new Set(), complete: true };
+      processes.set(Number(field.slice(1)), process);
+      fd = "";
+    } else if (field.startsWith("f")) {
+      fd = field.slice(1);
+      if (process && fd === "NOFD") process.complete = false;
+    } else if (process && field.startsWith("n")) {
+      const name = field.slice(1);
+      if (!isAbsolute(name)) continue;
+      const path = decodeLsofPath(name);
+      if (path === null) process.complete = false;
+      else if (fd === "cwd") process.cwd = path;
+      else if (fd !== "rtd") process.paths.add(path);
+    }
+  }
+  return processes;
 }
 
 async function darwinProcesses(
@@ -257,17 +330,26 @@ async function darwinProcesses(
       cwd: null,
     });
   }
-  const pids = facts.map((fact) => fact.pid);
-  if (!pids.length) return { state: "listed", processes: [], cwdComplete: true };
-  // One bounded cwd read for the PIDs from this snapshot; a failed read stays unknown.
-  const cwdListing = await processListing("lsof", [
-    "-a", "-d", "cwd", "-Fn", "-p", pids.join(","),
-  ]);
-  const cwds = cwdMapFromLsof(pids, cwdListing) ?? new Map<number, CwdState>();
+  const pids = facts.filter((fact) => !fact.state?.startsWith("Z")).map((fact) => fact.pid);
+  const listingFiles = pids.length ? await processListing("lsof", [
+    "-nP", "-a", "-p", pids.join(","), "-F0pfn",
+  ]) : { status: 0, stdout: "", stderr: "" };
+  const paths = darwinOpenFiles(listingFiles.stdout);
+  const complete = listingFiles.status === 0 && !listingFiles.stderr.trim();
+  const cwds = new Map<number, CwdState>();
   for (const fact of facts) {
-    const cwd = cwds.get(fact.pid);
-    if (cwd?.state === "read" && isAbsolute(cwd.path)) fact.cwd = cwd.path;
-    else cwds.set(fact.pid, { state: pidAlive(fact.pid) ? "unreadable" : "gone" });
+    if (fact.state?.startsWith("Z")) continue;
+    const files = paths.get(fact.pid);
+    if (files?.cwd) {
+      fact.cwd = files.cwd;
+      cwds.set(fact.pid, { state: "read", path: files.cwd });
+    } else {
+      cwds.set(fact.pid, { state: pidAlive(fact.pid) ? "unreadable" : "gone" });
+    }
+    fact.openFiles = {
+      paths: files ? [...files.paths] : [],
+      complete: complete && Boolean(files?.complete && files.cwd),
+    };
   }
   const processes = dropExitedProcesses(facts, cwds);
   return {
@@ -316,8 +398,11 @@ async function readUidProcesses(
           ? await linuxProcesses(uid)
           : await darwinProcesses(uid);
       if (read.state === "listed") {
-        await readBbSessionEnvironments(read.processes);
-        await markTrustedCuaProcesses(read.processes);
+        await Promise.all([
+          readBbSessionEnvironments(read.processes),
+          markTrustedCuaProcesses(read.processes),
+          readAcpInventoryIdentities(read.processes),
+        ]);
       }
       return read;
     })();
@@ -331,6 +416,24 @@ async function readUidProcesses(
     state: "unknown",
     reason: `host process listing is unsupported on ${process.platform}`,
   };
+}
+
+/** Capture the ACP and role environment once for every consumer of this listing. */
+async function readAcpInventoryIdentities(facts: HostProcessFact[]): Promise<void> {
+  const parents = facts.filter((fact) => isAcpEntryPoint(fact.command) && !fact.state?.startsWith("Z"));
+  if (!parents.length) return;
+  const roots = new Set(parents.map((fact) => fact.pid));
+  const servers = new Set(parents.map((fact) => fact.ppid));
+  const candidates = facts.filter((fact) =>
+    !fact.state?.startsWith("Z") &&
+    (roots.has(fact.pid) || (fact.ppid != null && (roots.has(fact.ppid) || servers.has(fact.ppid)))),
+  );
+  const pids = candidates.map((fact) => fact.pid);
+  const environments = await runProcessEnvironments(pids);
+  const liveness = await refreshedRunProcessLiveness(pids, listedProcessLiveness(facts));
+  for (const fact of candidates)
+    if (liveness(fact.pid, fact.startIdentity) === "alive")
+      fact.acpIdentity = acpIdentityFromEnvironment(environments.get(fact.pid));
 }
 
 // proc_pidpath reads the loaded image, unlike argv or KERN_PROCARGS2's exec path.

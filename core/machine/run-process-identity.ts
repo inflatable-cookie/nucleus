@@ -20,6 +20,9 @@ const KEYS = [
   "TMP",
   "TEMP",
   "BB_THREAD_ID",
+  "NUCLEUS_ACP_SESSION",
+  "NUCLEUS_DATA_HOME",
+  "T3CODE_THREAD_ID",
 ] as const;
 export type RunProcessEnvironment = Partial<
   Record<(typeof KEYS)[number], string>
@@ -133,6 +136,16 @@ export interface AcpProcessIdentity {
 /** One identity read per pid; null when that process's environment is unreadable. */
 export type AcpProcessIdentities = Map<number, AcpProcessIdentity | null>;
 
+export function acpIdentityFromEnvironment(
+  values: RunProcessEnvironment | null | undefined,
+): AcpProcessIdentity | null {
+  return values ? {
+    t3ThreadId: values.T3CODE_THREAD_ID?.trim() || null,
+    sessionPath: values.NUCLEUS_ACP_SESSION?.trim() || null,
+    dataHome: values.NUCLEUS_DATA_HOME?.trim() || null,
+  } : null;
+}
+
 /**
  * Read only the identity variables a T3 task parent or role session carries, for
  * a bounded pid set, and never retain a whole environment.
@@ -153,11 +166,7 @@ export function readAcpProcessIdentities(
   );
   if (!unique.length) return result;
   const assign = (pid: number, values: Record<string, string>) =>
-    result.set(pid, {
-      t3ThreadId: values.T3CODE_THREAD_ID?.trim() || null,
-      sessionPath: values.NUCLEUS_ACP_SESSION?.trim() || null,
-      dataHome: values.NUCLEUS_DATA_HOME?.trim() || null,
-    });
+    result.set(pid, acpIdentityFromEnvironment(values));
   const platform = options.platform ?? process.platform;
   if (platform === "linux") {
     for (const pid of unique) {

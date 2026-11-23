@@ -12,7 +12,7 @@ import {
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, realpath, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -213,6 +213,7 @@ async function fixture(
   let timelinePages: TimelineEntry[][] = [];
   const adapter: Adapter & Partial<ResolutionAdapter> = fakeAdapter({
     supportsCoordinatorRecovery: true,
+    hostProcessListing: async () => [],
     profiles: async () => [worker, coordinator, reviewer],
     validate: async (candidate: Task) => candidate.planningCommit,
     createWorkspace: async (candidate: Task) => ({
@@ -512,45 +513,44 @@ test("an opaque running tool past the stall deadline goes to coordinator attenti
   );
 });
 
-test("a real run-owned child in the task workspace prevents a stale turn from stalling", async (t) => {
+test("an opaque tool holding scratch open outside the workspace prevents a stall", async (t) => {
   const f = await fixture(t);
   t.after(() => f.store.close());
-  await writeFile(
-    join(f.root, "mcp-report.mjs"),
-    "setInterval(() => {}, 1000);\n",
-  );
-  await writeFile(
-    join(f.root, "provider.mjs"),
-    `import { spawn } from 'node:child_process';
-const helper = spawn(process.execPath, [process.argv[2], process.argv[3]], { cwd: process.cwd() });
-const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: process.cwd() });
-process.on('SIGTERM', () => { helper.kill(); child.kill(); process.exit(); });
-console.log(JSON.stringify([process.pid, helper.pid, child.pid])); setInterval(() => {}, 1000);`,
-  );
-  const provider = spawn(
+  const scratch = join(f.root, "run-scratch");
+  await mkdir(scratch);
+  f.store.update(f.task.id, { temporaryDirectory: scratch });
+  const file = join(scratch, "held output");
+  const handle = await open(file, "w");
+  const child = spawn(
     process.execPath,
-    [
-      join(f.root, "provider.mjs"),
-      join(f.root, "mcp-report.mjs"),
-      join(f.root, "mcp-initial.json"),
-    ],
-    { cwd: f.directory, stdio: ["ignore", "pipe", "pipe"] },
+    ["-e", "console.log('ready'); setInterval(() => {}, 1000)"],
+    { cwd: f.root, stdio: ["ignore", "pipe", "inherit", handle.fd] },
   );
+  const exit = once(child, "exit");
   t.after(async () => {
-    if (provider.exitCode === null) {
-      provider.kill();
-      await once(provider, "exit");
-    }
+    child.kill();
+    await exit;
   });
-  const [ready] = await once(provider.stdout!, "data");
-  const fixturePids = JSON.parse(String(ready)) as number[];
+  assert.ok(child.stdout);
+  await handle.close();
+  await once(child.stdout, "data");
+  assert.ok(child.pid);
+  const listing = await readProcessSubset([child.pid]);
+  assert.equal(listing.state, "listed");
+  const fact = listing.processes.find((process) => process.pid === child.pid);
+  assert.ok(fact);
+  assert.equal(fact.cwd, f.root);
+  assert.ok(fact.openFiles?.paths.includes(file));
+  let incomplete = false;
+  let exited = false;
   f.adapter.hostProcessListing = async () => {
-    const listing = await readProcessSubset(fixturePids);
-    return listing.state === "listed" ? listing.processes : null;
+    if (incomplete) return [{ ...fact, openFiles: { paths: [], complete: false } }];
+    return exited ? [] : listing.processes;
   };
   f.setObservation(
     running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }),
   );
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
   await f.engine.wake();
   const current = f.store.task(f.task.id);
   assert.equal(current.resolution.incident, null);
@@ -562,6 +562,18 @@ console.log(JSON.stringify([process.pid, helper.pid, child.pid])); setInterval((
       .some((event) => event.kind === "planner_escalation"),
     false,
   );
+  child.kill();
+  await exit;
+  exited = true;
+  incomplete = true;
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
+  await f.engine.wake();
+  assert.equal(f.store.task(f.task.id).resolution.incident, null);
+
+  incomplete = false;
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
+  await f.engine.wake();
+  assert.equal(f.store.task(f.task.id).resolution.stop?.reason, "run_stalled");
 });
 
 test("fresh tool output renews a long test run with a stale host turn stamp", async (t) => {

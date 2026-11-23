@@ -190,8 +190,8 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
   never kills the turn. The agent sees a failed tool call and continues. Built
   (batch 5b): the command is the topmost process under the run's provider whose
   command line carries the tool's command; its own group, else its own pids, get
-  SIGTERM then SIGKILL, each after a fresh start-identity read. A command that
-  cannot be stopped no longer fences stall detection. Silence is known only when
+  SIGTERM then SIGKILL, each after a fresh start-identity read. A failed stop
+  remains visible as a hung tool. Silence is known only when
   the host showed that call's output at least once, or declares
   `streamsRunningToolOutput`. Many providers return shell output only when the
   command ends, so a call with no output shown is unknown and never terminated.
@@ -254,6 +254,13 @@ A shared scan covers only a participant observed inactive before the scan
 whose activity stamp still matches.
 
 ### 7. Attention reaches the planner quickly
+
+An opaque tool can stall only when the process inventory proves there is no live
+run process. A process whose cwd or open file lies in the recorded workspace
+or scratch, or a descendant of the run's identified provider, counts as activity.
+An incomplete inventory defers the verdict. A task uses the host pass's shared scan and can start a
+bounded, shared scan when the pass missed it. The hung-tool limit still governs
+termination when tool silence is observable.
 
 Tom, 2026-11-23: "It takes way too long for a task to be marked as blocked or
 needing attention and for the planner to be notified of the situation." Ruling
