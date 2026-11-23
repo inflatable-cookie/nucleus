@@ -12,7 +12,6 @@ import { WorkerSourceRefusal } from "../git/git-refusals";
 import { ForeignPrIdentity } from "../forge/pr-identity";
 import { ProvenPreSendRefusalError } from "../host/errors";
 import { RetainedRunRefusal } from "./task-reasons/refusals";
-import { blockingRecoveryEffectsRefusal } from "./recovery-effects";
 import { plannerEscalations } from "../questions/ladder/records";
 import { operatorReplacementPending, PR_HEAD_CHANGED_REASON } from "./task-reasons";
 import { taskWaitStateContext, taskWithCurrentWait } from "./wait-context";
@@ -163,7 +162,6 @@ export function orphanPhase(store: Engine["store"], task: Task, paused: boolean)
   if (task.failoverReason || operatorReplacementPending(task) || task.transientProviderRetry) return null;
   const runs = store.runs(task.id);
   if (runs.some((run: Run) => !run.released)) return null;
-  if (blockingRecoveryEffectsRefusal(store, task)) return null;
   const events = store.eventsAll(task.id);
   const key = [task.phase, task.agentId, task.runId, resolution.currentRunId, runs.length].join("|");
   // A worker result that reported and was released, with nothing applying it:

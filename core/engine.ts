@@ -45,7 +45,6 @@ import {
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
 
-import { type VerifiedEnclosingOperation } from "./planning/enclosing-operation";
 
 import { z } from "zod";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
@@ -96,6 +95,7 @@ import type {
 
 import { stopThreads } from "../shared/contracts";
 import type { Submission } from "../shared/contracts";
+import type { LifecycleSignalKind } from "../shared/lifecycle-signal";
 
 import { controlHasExternalEffect } from "./verbs/control-decisions";
 export { controlHasExternalEffect } from "./verbs/control-decisions";
@@ -132,12 +132,9 @@ import { ExternalMergeRefusal, MoveControls } from "./verbs/moves";
 import { RestartControls } from "./verbs/restart";
 import { WorkerRestarts } from "./verbs/restart-worker";
 import { ReviewRestarts } from "./verbs/restart-review";
-import { EpisodeRestarts } from "./verbs/restart-episode";
 import { StalledTurnStops } from "./verbs/stalled-turn-stop";
 import { RetryEffectControls } from "./verbs/retry-effect";
-import { RetryEffectReplay } from "./verbs/retry-effect-replay";
 import { ArchiveEffectRetries } from "./verbs/retry-effect-archive";
-import { RecoveryEffectRetries } from "./verbs/retry-effect-recovery";
 import { OrdinaryEffectRetries } from "./verbs/retry-effect-ordinary";
 import { CallbackIntake } from "./intake/callback-intake";
 import {
@@ -215,10 +212,6 @@ import {
   type RestartRole,
 } from "./verbs/owner-verbs";
 import { RunRelease } from "./recovery/fence-settlement";
-import {
-  blockedEffectAttentionReason,
-  settleObservedHostEffectOperations,
-} from "./recovery/effect-gates";
 import { Sweep } from "./scheduling/sweep";
 import { HostOutages } from "./scheduling/host-outage";
 import { HostHealth, healthWait } from "./scheduling/host-health";
@@ -315,7 +308,6 @@ export class Engine {
         "quantumFinish",
         "quantumSteps",
         "reconcile",
-        "reconcileBlockedEffects",
         "reconcileClosedRetainedReviewer",
         "recoverExistingWorkspace",
         "settleWorkspaceCreation",
@@ -341,13 +333,11 @@ export class Engine {
         "onTaskHost",
         "store",
         "holdProofOnlyGoWait",
-        "ownedToolHold",
         "owns",
         "quantumReadBudgetMs",
         "quantumReadTimeoutMs",
         "raiseOperatorQuestions",
         "reconcileHoldUntil",
-        "reconcileUncertainRunDelivery",
         "recordStop",
         "recoverExternalMerge",
         "recovery",
@@ -931,9 +921,6 @@ export class Engine {
   readonly resolution: Resolution;
   readonly hooks: RepositoryHooks;
   readonly retirement: RuntimeRetirementService;
-  currentServiceBuildId: () => string = () => {
-    throw new Error("Service build identity is not configured");
-  };
   private readonly operations: Operations;
   readonly lifecycle: Lifecycle;
   private readonly agentControls: AgentControls;
@@ -967,12 +954,9 @@ export class Engine {
   readonly restartControls: RestartControls;
   readonly workerRestarts: WorkerRestarts;
   private readonly reviewRestarts: ReviewRestarts;
-  private readonly episodeRestarts: EpisodeRestarts;
   private readonly stalledTurnStops: StalledTurnStops;
   private readonly retryEffectControls: RetryEffectControls;
-  private readonly retryEffectReplay: RetryEffectReplay;
   private readonly archiveEffectRetries: ArchiveEffectRetries;
-  private readonly recoveryEffectRetries: RecoveryEffectRetries;
   private readonly ordinaryEffectRetries: OrdinaryEffectRetries;
   private readonly workerReconcile: WorkerReconcile;
   private readonly callbackIntake: CallbackIntake;
@@ -1198,12 +1182,9 @@ export class Engine {
     this.restartControls = new RestartControls(this);
     this.workerRestarts = new WorkerRestarts(this);
     this.reviewRestarts = new ReviewRestarts(this);
-    this.episodeRestarts = new EpisodeRestarts(this);
     this.stalledTurnStops = new StalledTurnStops(this);
     this.retryEffectControls = new RetryEffectControls(this);
-    this.retryEffectReplay = new RetryEffectReplay(this);
     this.archiveEffectRetries = new ArchiveEffectRetries(this);
-    this.recoveryEffectRetries = new RecoveryEffectRetries(this);
     this.ordinaryEffectRetries = new OrdinaryEffectRetries(this);
     this.workerReconcile = new WorkerReconcile(
       enginePorts(
@@ -1366,8 +1347,6 @@ export class Engine {
         ],
         [
           "attention",
-          "currentPassSnapshot",
-          "escalateRefusedCoordinator",
           "openPlannerEscalation",
           "recovery",
           "update",
@@ -2085,12 +2064,6 @@ export class Engine {
       operated,
     );
   }
-  moveEnclosingInvocation(
-    input: TaskControlInput,
-    operationId?: string,
-  ): () => VerifiedEnclosingOperation | undefined {
-    return this.moveControls.moveEnclosingInvocation(input, operationId);
-  }
   applyTaskControlMove(
     input: TaskControlInput,
     operated: <T>(result: T) => T,
@@ -2517,7 +2490,7 @@ export class Engine {
     head?: string;
     relayed?: boolean;
     relayNote?: string;
-    enclosing?: () => VerifiedEnclosingOperation | undefined;
+    operationId?: string;
   }): Promise<Task> {
     return this.moveControls.moveToCloseout(input);
   }
@@ -2529,7 +2502,7 @@ export class Engine {
     head?: string;
     relayed?: boolean;
     relayNote?: string;
-    enclosing: () => VerifiedEnclosingOperation | undefined;
+    operationId?: string;
   }): Promise<Task> {
     return this.moveControls.reconcileRetainedExternalMerge(input);
   }
@@ -2541,7 +2514,7 @@ export class Engine {
     head?: string;
     relayed?: boolean;
     relayNote?: string;
-    enclosing: () => VerifiedEnclosingOperation | undefined;
+    operationId?: string;
   }): Promise<Task> {
     return this.moveControls.reconcileReviewEntryExternalMerge(input);
   }
@@ -2564,9 +2537,6 @@ export class Engine {
       input,
       publication,
     );
-  }
-  retryOwnedToolHold(task: Task, ownedTool: OwnerEffect): Promise<Task> {
-    return this.ordinaryEffectRetries.retryOwnedToolHold(task, ownedTool);
   }
   retryCancelledWorkspaceRetirement(
     task: Task,
@@ -2600,34 +2570,6 @@ export class Engine {
       input,
       intentWorkspaceId,
     );
-  }
-  retryHookEffect(
-    input: TaskControlInput,
-    current: Task,
-    eventId: string,
-  ): Promise<Task> {
-    return this.recoveryEffectRetries.retryHookEffect(input, current, eventId);
-  }
-  reconcilePublicationEffect(
-    input: TaskControlInput,
-    current: Task,
-    runId: string,
-  ): Promise<Task> {
-    return this.recoveryEffectRetries.reconcilePublicationEffect(
-      input,
-      current,
-      runId,
-    );
-  }
-  retryRecoveryEffect(
-    task: Task,
-    input: TaskControlInput,
-    found: OwnerEffect,
-  ): Promise<Task> {
-    return this.recoveryEffectRetries.retryRecoveryEffect(task, input, found);
-  }
-  retryTaskControlOperation(task: Task, found: OwnerEffect): Promise<Task> {
-    return this.recoveryEffectRetries.retryTaskControlOperation(task, found);
   }
   retryOrdinaryEffect(
     task: Task,
@@ -2767,18 +2709,21 @@ export class Engine {
       commit,
     );
   }
-  executeEpisodeRestart(
+  async executeEpisodeRestart(
     taskId: string,
     displacement: { runIds: string[]; cancel: () => Promise<void> },
     admit: () => Promise<Task | (() => Task | Promise<Task>)>,
-    runIds?: string[],
   ): Promise<Task> {
-    return this.episodeRestarts.executeEpisodeRestart(
-      taskId,
-      displacement,
-      admit,
-      runIds,
+    const { version } = this.store.task(taskId);
+    const apply = await admit();
+    if (typeof apply !== "function") return apply;
+    const current = () => this.requireOwnerControlCurrent(
+      this.store.task(taskId), version, "Task changed during restart",
     );
+    current();
+    await displacement.cancel();
+    current();
+    return apply();
   }
   workerRestartArm(
     task: Task,
@@ -2807,10 +2752,6 @@ export class Engine {
   restartReviewer(request: RestartRequest): Promise<Task> {
     return this.reviewRestarts.restartReviewer(request);
   }
-  restartEpisode(request: RestartRequest): Promise<Task> {
-    return this.episodeRestarts.restartEpisode(request);
-  }
-
   continueRetainedReviewer(
     task: Task,
     options: {
@@ -2887,20 +2828,6 @@ export class Engine {
     runId: string;
   }): Promise<Task> {
     return this.stalledTurnStops.stopStalledTurn(input);
-  }
-  prepareAbsentResolution(
-    input: {
-      taskId: string;
-      version: number;
-      settleFences?: {
-        detail: string;
-        runIds: string[];
-        displacedRunIds?: string[];
-      };
-    },
-    restart?: { input: TaskControlInput; instruction: string },
-  ): Promise<Task | (() => Task | Promise<Task>)> {
-    return this.episodeRestarts.prepareAbsentResolution(input, restart);
   }
   async stop() {
     this.stopped = true;
@@ -2986,39 +2913,6 @@ export class Engine {
       this.projectionsWaiting(),
     );
   }
-  replayedArchiveOutcome(
-    task: Task,
-    input: TaskControlInput,
-    operationId?: string,
-  ): Task | null {
-    return this.retryEffectReplay.replayedArchiveOutcome(
-      task,
-      input,
-      operationId,
-    );
-  }
-  replayedCatalogArchiveOutcome(
-    task: Task,
-    input: TaskControlInput,
-    operationId?: string,
-  ): Task | null {
-    return this.retryEffectReplay.replayedCatalogArchiveOutcome(
-      task,
-      input,
-      operationId,
-    );
-  }
-  replayedDispositionWorkspaceOutcome(
-    task: Task,
-    input: TaskControlInput,
-    operationId?: string,
-  ): Task | null {
-    return this.retryEffectReplay.replayedDispositionWorkspaceOutcome(
-      task,
-      input,
-      operationId,
-    );
-  }
   drainProjections(options: { cleanup?: boolean } = {}): Promise<void> {
     return drainProjectionCut({
       occurrences: this.occurrences,
@@ -3073,11 +2967,14 @@ export class Engine {
     return this.projectLifecycle.migrateProjectOwnersToPlanners();
   }
   noteLifecycleSignal(input: {
+    kind?: LifecycleSignalKind;
     agentId?: string | null;
     workspaceId?: string | null;
     hostId?: string | null;
   }): void {
     this.retiredObservations.noteLifecycleSignal(input);
+    if (input.kind === "agent.turn_ended")
+      this.taskWakes.noteTurnEndHint(input);
   }
   retiredObservationPlan(): {
     persisted: Record<string, { active: boolean; at: string }>;
@@ -3203,34 +3100,8 @@ export class Engine {
   ): Promise<number> {
     return this.runRelease.settleHistoricalProofExecutions(taskId, detail);
   }
-  /**
-   * Nucleus#1159: the ordinary pass observes before it gates. An uncertain
-   * host-effect control whose effect later evidence has answered is settled (and
-   * recorded), and a phase still blocked on an uncertain effect past its bound
-   * becomes attention with `retry_effect` suggested instead of a quiet wait.
-   */
-  reconcileBlockedEffects(taskId: string): void {
-    settleObservedHostEffectOperations(this.store, taskId);
-    const reason = blockedEffectAttentionReason(
-      this.store,
-      this.store.task(taskId),
-    );
-    if (reason) this.note(taskId, reason, "classify");
-  }
   supersededIdleFence(run: Run, deadlineAt?: number): Promise<string | null> {
     return this.runRelease.supersededIdleFence(run, deadlineAt);
-  }
-  ownedToolHold(
-    agentId: string,
-    runId?: string,
-    taskId?: string,
-    options?: {
-      requireCompleteEvidence?: boolean;
-      allowRetired?: boolean;
-      deadlineAt?: number;
-    },
-  ) {
-    return this.runRelease.ownedToolHold(agentId, runId, taskId, options);
   }
   observedRunLiveness(run: Run): Promise<boolean | null> {
     return this.runRelease.observedRunLiveness(run);
@@ -3417,8 +3288,9 @@ export class Engine {
   readStash(directory: string) {
     return this.workspaceProvisioning.readStash(directory);
   }
-  launchAgent(task: Task): Promise<void> {
-    return this.workerLauncher.launchAgent(task);
+  async launchAgent(task: Task): Promise<void> {
+    await this.workerLauncher.launchAgent(task);
+    this.taskWakes.armRecoveryObservation(task.id, Date.now());
   }
   launchAgentOnce(task: Task): Promise<void> {
     return this.workerLauncher.launchAgentOnce(task);

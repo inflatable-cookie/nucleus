@@ -16,7 +16,6 @@ import {
 import type { Adapter } from "../host/adapter";
 import type { TaskStops } from "../recovery/task-stops";
 import { slotRequestFenced } from "../dispatch/capacity";
-import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
 
 export interface ReviewAdvancesContext {
@@ -116,8 +115,7 @@ export class ReviewAdvances {
     // owner stop or effect still owns the task. The reservation rechecks both.
     if (
       t.prerequisiteWait &&
-      (slotRequestFenced(t) ||
-        blockingRecoveryEffectsRefusal(this.context.store, t))
+      slotRequestFenced(t)
     )
       return;
     // An operator-approved replacement owns the next worker. Resuming the retained thread here

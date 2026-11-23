@@ -71,13 +71,8 @@ import { reviewRecordFor } from "../review/review-verdicts";
 import { digest, now, type Store } from "../store/store";
 import {
   coordinative,
-  participantToolRunIds,
   proofExecutor,
 } from "../recovery/task-reasons";
-import {
-  blockingRecoveryEffects,
-  recoveryEffectsRefusal,
-} from "../recovery/recovery-effects";
 import {
   observationAdvanceSince,
   runsUnchangedSince,
@@ -86,7 +81,6 @@ import {
   isOwnerRoutedReviewer,
   reviewerIndependence,
 } from "../dispatch/routing";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import {
   escalationWaitState,
   type EscalationWait,
@@ -177,7 +171,6 @@ type ReviewVerification =
       admit: () => PublishedReview | { kind: "blocked"; refusal: string };
     }
   | { kind: "ordinary"; reviewer: ReviewerSetting | null; id: number | void };
-type ReviewInvocation = () => VerifiedEnclosingOperation | undefined;
 
 function reviewDispatchRefusal(hold: { owner: string; reason: string }): string {
   return `Dispatch is held by ${hold.owner}: ${hold.reason}. Its owner must release the hold`;
@@ -316,7 +309,6 @@ function reviewLadderWait(
 export function publishedReviewDecision(
   store: Store,
   task: Task,
-  enclosing?: VerifiedEnclosingOperation,
 ): PublishedReviewDecision {
   // Receipt-only qualification and review of a recorded external merge keep their own lifecycle.
   if (
@@ -531,28 +523,6 @@ export function publishedReviewDecision(
     return blocked(
       `The ${stop.holderAgentId ?? "stop owner"} must settle the ${stop.reason} stop: ${stop.detail}`,
     );
-  // A publication can conflict with application when it belongs to another
-  // reviewer at this head. Unbound and earlier-head effects still belong to
-  // recovery and the existing merge-custody gate.
-  const effects = blockingRecoveryEffects(store, task, {
-    enclosing,
-    noticeKinds: "all",
-  }).filter(
-    (effect) =>
-      effect.kind !== "publication" ||
-      runs.some(
-        (other) =>
-          other.id === effect.runId &&
-          other.role === "reviewer" &&
-          other.id !== run.id &&
-          other.head === run.head,
-      ),
-  );
-  const refusal = recoveryEffectsRefusal(effects);
-  if (refusal)
-    return blocked(
-      `${refusal}. The effect owner must settle it before applying the verdict`,
-    );
   return {
     kind: "ready",
     run,
@@ -593,7 +563,7 @@ export type ResultApplicationContext = Pick<
   | "graceMs"
   | "onTaskHost"
   | "ordinaryRoundCustody"
-  | "ownedToolHold"
+  | "participantLease"
   | "recordBlockedPrIdentity"
   | "responsibleBlockerLadder"
   | "responsiblePrReportRefused"
@@ -680,7 +650,6 @@ export class ResultApplication {
   async applyPublishedReview(
     t: Task,
     decision: PublishedReview,
-    enclosing?: ReviewInvocation,
   ): Promise<PublishedReviewApplication> {
     const { run, completion, reviewer, prNumber, publicationId } = decision;
     const runs = this.store.runs(t.id);
@@ -692,7 +661,7 @@ export class ResultApplication {
       const task = this.store.task(t.id);
       if (this.resolution.stopped())
         return { refusal: "The scheduler is stopped" };
-      const current = publishedReviewDecision(this.store, task, enclosing?.());
+      const current = publishedReviewDecision(this.store, task);
       if (current.kind === "blocked") return { refusal: current.refusal };
       if (
         current.kind !== "ready" ||
@@ -747,9 +716,11 @@ export class ResultApplication {
         "The forge observed a different publication ID. The review publication owner must reconcile it",
       );
 
-    // Retained ordinary rounds read their exact head in the task checkout, which
-    // the round itself never detaches (Spec 068 §4). The prior receipt and the
-    // existing source and owned-tool proofs still govern custody.
+    const participants = new Map([
+      [t.agentId, run.workspaceId],
+      [run.agentId, run.workspaceId],
+    ]);
+    // Retained ordinary rounds keep the prior receipt and the exact source.
     if (run.ordinaryDetached) {
       const prior = runs.find((item) => item.id === run.priorRunId);
       if (
@@ -762,37 +733,25 @@ export class ResultApplication {
         return blocked(
           "The review lifecycle owner must prove custody from the preceding ordinary round",
         );
-      const participants = new Map([
-        [t.agentId, t.workspaceId!],
-        [run.agentId, run.workspaceId],
-        [prior.agentId, run.workspaceId],
-      ]);
-      for (const worker of t.retiredWorkers)
-        if (!participants.has(worker.agentId))
-          participants.set(
-            worker.agentId,
-            runs.find((item) => item.id === worker.runId)?.workspaceId ??
-              t.workspaceId!,
-          );
-      for (const [agentId, workspaceId] of participants) {
-        if (!agentId) continue;
-        const runIds = participantToolRunIds(t, runs, agentId, workspaceId);
-        const issue = await this.resolution.ownedToolHold(agentId, {
-          runId: runIds[0],
-          runIds,
-          taskId: t.id,
-          workspaceId,
-          requireCompleteEvidence: true,
-          allowRetired: agentId !== t.agentId && agentId !== run.agentId,
-        });
-        if (issue.kind !== "clear")
-          return blocked(
-            `Participant ${agentId} must release its owned tools: ${issue.reason}`,
-          );
+      if (this.adapter.observeParticipant) {
+        if (!prior.explicitlyReleasedAt)
+          participants.set(prior.agentId, prior.workspaceId);
+        for (const worker of t.retiredWorkers) {
+          const previous = runs.find((item) => item.id === worker.runId);
+          if (!previous?.explicitlyReleasedAt && !participants.has(worker.agentId))
+            participants.set(worker.agentId, previous?.workspaceId ?? run.workspaceId);
+        }
       }
     }
-    for (const agentId of new Set([t.agentId, run.agentId])) {
+    for (const [agentId, workspaceId] of participants) {
       if (!agentId) continue;
+      if (this.adapter.observeParticipant) {
+        const issue = await this.resolution.participantLease.exactCustodyIssue(
+          t, agentId, workspaceId,
+        );
+        if (issue !== null) return blocked(`Retained participant ${agentId}: ${issue}`);
+        continue;
+      }
       const state = await this.resolution.host.observe(agentId);
       if (state.workspaceId !== run.workspaceId)
         return blocked(

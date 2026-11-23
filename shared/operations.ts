@@ -88,7 +88,7 @@ export const operationEffectSchema = z
   .strict();
 export type OperationEffect = z.infer<typeof operationEffectSchema>;
 
-/** A receipt written by the executing service, never supplied by a caller. */
+/** Historical receipt data retained when reading an operation written before Spec 067. */
 export const preSendReceiptSchema = z
   .object({
     operationId: z.string().regex(/^[a-f0-9]{64}$/),

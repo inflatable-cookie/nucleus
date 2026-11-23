@@ -1,3 +1,4 @@
+import { hookHoldReason, isRecoveredPreDispatchHookHold } from "../hooks/hooks";
 import {
   dispositionWorkPolicy,
   type Task,
@@ -10,7 +11,8 @@ import { archiveUnusedWorkspace } from "../workspaces/unused-workspace";
 import { progressDisposition, reopenDispositionWorkspace } from "./disposition";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
 import type { Engine } from "../engine";
-import { PassProofPendingError } from "../host/errors";
+import { blockingRecoveryEffects } from "../recovery/recovery-effects";
+import { digest } from "../store/store";
 import {
   collectOwnerVerbFacts,
   ownerEffectIdentity,
@@ -53,15 +55,6 @@ const BEFORE_SETTLEMENT: BeforeSettlementRule[] = [
       return publication
         ? retries.retryPublicationBeforeSettlement(task, input, publication)
         : null;
-    },
-  },
-  {
-    name: "an owned-tool hold is re-proved on its own agent binding",
-    run: ({ task, effects, selected, retries }) => {
-      const ownedTool = effects.find(
-        (effect) => effect.effect === selected && effect.kind === "owned_tool",
-      );
-      return ownedTool ? retries.retryOwnedToolHold(task, ownedTool) : null;
     },
   },
   {
@@ -196,15 +189,6 @@ export class OrdinaryEffectRetries {
     return result;
   }
 
-  async retryOwnedToolHold(task: Task, ownedTool: OwnerEffect): Promise<Task> {
-    await reconcileOwnedToolHold(this.engine, task, ownedTool);
-    await this.engine.settleObservedIdleRuns(
-      task.id,
-      `retry_effect ${ownedTool.effect}`,
-    );
-    return this.store.task(task.id);
-  }
-
   async retryOrdinaryEffect(
     task: Task,
     input: TaskControlInput,
@@ -276,8 +260,37 @@ export class OrdinaryEffectRetries {
     }
     const identity = ownerEffectIdentity(found.effect, found.kind);
     switch (found.kind) {
-      case "hook":
-        return this.engine.retryHookEffect(input, current, identity!);
+      case "hook": {
+        const result = await this.engine.hooks.retry(
+          current,
+          identity!,
+          input.discard === true,
+        );
+        if (result.hold) throw Error(hookHoldReason(result));
+        const latest = this.store.task(task.id);
+        const { recovery, stop } = latest.resolution;
+        if (
+          ["done", "cancelled"].includes(latest.phase) &&
+          stop?.reason === "operator_needed" &&
+          recovery?.status === "resolved" &&
+          recovery.key === digest(`stop:${stop.reason}:${stop.since}`) &&
+          !blockingRecoveryEffects(this.store, latest, { noticeKinds: "all" }).length
+        )
+          return this.resolution.update(
+            latest,
+            { stop: null },
+            {},
+            "finished_hook_retry_cleared_recovery_stop",
+            identity!,
+          );
+        return isRecoveredPreDispatchHookHold(latest, result)
+          ? this.store.update(
+              latest.id,
+              { phase: "queued", reason: "Repository pre-dispatch hooks settled after retry" },
+              "hook_retry_recovered",
+            )
+          : latest;
+      }
       case "workspace_creation":
         return this.engine.retryValidation({
           taskId: task.id,
@@ -364,81 +377,20 @@ export class OrdinaryEffectRetries {
         );
       }
       case "review_publication":
-        return this.engine.reconcilePublicationEffect(
-          input,
-          this.store.task(task.id),
-          identity!,
-        );
+        return this.retryPublicationBeforeSettlement(current, input, found);
       case "planning_base":
         return this.engine.rerecordPlanningBase({
           taskId: task.id,
           version: expected,
         });
       case "owned_tool":
-        throw Error(
-          "Owned-tool holds are re-proved before ordinary side-effect recovery",
-        );
       case "recovery_effect":
-      case "task_control_operation":
-        throw Error(`${found.kind} is settled by its own observer`);
+        if (found.effect === "project-validation.project-validation") {
+          const resumed = this.resolution.retryProjectValidationEffect(current);
+          void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
+          return resumed;
+        }
+        throw Error(`Use record.clear kind=effect id=${found.effect}`);
     }
   }
-}
-
-/**
- * Reconcile one recorded `owned_tool.<runId>` hold against fresh participant
- * custody, tool timeline, and owned-process evidence. Clears stale holds once
- * proven inactive or retired with zero live tools; refuses with the remaining
- * cause otherwise.
- */
-export async function reconcileOwnedToolHold(
-  engine: Engine,
-  task: Task,
-  ownedTool: OwnerEffect,
-): Promise<void> {
-  const runId = ownerEffectIdentity(ownedTool.effect, "owned_tool")!;
-  const runs = engine.store.runs(task.id);
-  const run = runs.find((item) => item.id === runId);
-  // The initial worker and retired initial workers live on the task row,
-  // without a corresponding Run record. Resolve the effect through every
-  // durable participant binding before deciding that its agent is unreadable.
-  const retiredWorker = task.retiredWorkers.find(
-    (worker) => worker.runId === runId,
-  );
-  const bindings = [
-    run?.agentId
-      ? { agentId: run.agentId, workspaceId: run.workspaceId }
-      : null,
-    task.runId === runId && task.agentId && task.workspaceId
-      ? { agentId: task.agentId, workspaceId: task.workspaceId }
-      : null,
-    retiredWorker
-      ? {
-          agentId: retiredWorker.agentId,
-          workspaceId: run?.workspaceId ?? task.workspaceId,
-        }
-      : null,
-  ].filter((binding): binding is { agentId: string; workspaceId: string } =>
-    Boolean(binding?.workspaceId),
-  );
-  const bindingKeys = new Set(
-    bindings.map((binding) => `${binding.agentId}\0${binding.workspaceId}`),
-  );
-  if (bindingKeys.size > 1)
-    throw Error(`Owned-tool hold ${runId} has conflicting agent bindings`);
-  const binding = bindings[0];
-  if (!binding)
-    throw Error(
-      `Owned-tool hold ${runId} no longer has a readable agent binding`,
-    );
-  const hold = await engine.ownedToolHold(binding.agentId, runId, task.id, {
-    requireCompleteEvidence: true,
-    allowRetired: true,
-  });
-  // An unread proof is demanded from the next pass, so it waits there; only a
-  // proven hold refuses (Spec 068 §6).
-  if (hold.kind === "deferred")
-    throw new PassProofPendingError(`Owned-tool hold ${runId}`, hold.reason);
-  if (hold.kind !== "clear")
-    throw Error(`Owned-tool hold ${runId} remains: ${hold.reason}`);
 }

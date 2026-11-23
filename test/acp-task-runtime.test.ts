@@ -32,9 +32,9 @@ import {
   possibleAcpRuntimePids,
 } from "../core/machine/acp-task-runtime";
 import {
-  ownedToolProcessTreeVerdict,
+  runProcessActivity,
   possibleParticipantRuntimePids,
-} from "../core/machine/owned-tool-process-proof";
+} from "../core/machine/run-process-tree";
 import {
   participantRuntime,
   storeDataHome,
@@ -175,6 +175,7 @@ function identities(
 }
 
 function listing(worktree: string): HostProcessFact[] {
+  const inventory = identities()([PARENT, SESSION, MCP, COMMAND]);
   return [
     fact(
       SERVER,
@@ -196,7 +197,7 @@ function listing(worktree: string): HostProcessFact[] {
       worktree,
     ),
     fact(COMMAND, SESSION, "node build.mjs", worktree),
-  ];
+  ].map((process) => ({ ...process, acpIdentity: inventory.get(process.pid) ?? null }));
 }
 
 function runtimeFor(fixture: ReturnType<typeof hostFixture>) {
@@ -374,7 +375,7 @@ test("a report helper's live ticket still settles through the owned-tool proof",
     ),
   ];
   assert.deepEqual(
-    ownedToolProcessTreeVerdict(RUN, processes, {
+    runProcessActivity(RUN, processes, {
       noTurnLive: true,
       runtime,
     }),

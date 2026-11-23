@@ -425,6 +425,9 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     observe(id: string) {
       return this.native.observe(id);
     }
+    observeParticipant(id: string) {
+      return this.native.observeParticipant(id);
+    }
     beginHostPass(tasks: readonly Task[]) {
       return this.native.beginHostPass(tasks);
     }

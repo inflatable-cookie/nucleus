@@ -56,6 +56,8 @@ export function assertOrdinaryReviewIdentity(task: Task, head: string) {
     checkout = readGitCheckout(task.directory);
     repo = readGitCheckout(task.repoPath);
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw Error("Ordinary reviewer requires its recorded Queue-owned checkout root", { cause: error });
     if (error instanceof GitIdentityError) {
       // A directory that is not a usable checkout root is a different answer
       // from a checkout whose head, ref or origin cannot be proved; the typed

@@ -1,7 +1,6 @@
 import type { Task, TaskControlInput } from "../../../shared/contracts";
 import type { Engine } from "../../engine";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
-import { verifyEnclosingOperation, type VerifiedEnclosingOperation } from "../../planning/enclosing-operation";
 import { now } from "../../store/store";
 import { workspaceDiscardKey, type WorkspaceDiscard } from "../../workspaces/orphan-worktree";
 import { RETAINED_PREREQUISITE_REFUSAL } from "../verb-refusal-text";
@@ -29,38 +28,18 @@ const MOVE_REPLAN_MESSAGE = /^(Task changed|Task or run changed|A run started du
 export class MoveControls {
   constructor(readonly engine: Engine) {}
 
-  /**
-   * Task 404/408: the authenticated durable invocation executing this move
-   * right now. `queue.task` persists the `task_control` operation before the
-   * engine performs it, so the review-entry pre-first-run boundary — which
-   * refuses any other unfinished operation — must recognise this one as its own
-   * admitted control rather than a competing writer. Derived from the stored
-   * record on every call, so a settled, foreign, differently versioned or
-   * changed invocation exempts nothing; only the move that reads that
-   * boundary is offered at all.
-   */
-  moveEnclosingInvocation(input: TaskControlInput, operationId?: string): () => VerifiedEnclosingOperation | undefined {
-    if (input.action !== "move" || input.to !== "closeout") return () => undefined;
-    return () => verifyEnclosingOperation(this.engine.store, input, operationId);
-  }
-
   async applyTaskControlMove(input: TaskControlInput, operated: <T>(result: T) => T, operationId?: string): Promise<Task> {
     const store = this.engine.store;
     const before = store.task(input.taskId);
     if (before.resolution.ownerStop)
       throw new DurableFenceRefusal(ownerStopPendingRefusal(before.resolution.ownerStop));
     const eventCount = store.eventsAll(input.taskId).length;
-    // Task 404: the one authenticated durable invocation executing this move is
-    // re-proved from the stored operation at every boundary that reads the
-    // source-only fact, so a settled, foreign, changed or differently versioned
-    // invocation exempts nothing.
-    const enclosing = this.engine.moveEnclosingInvocation(input, operationId);
     const attempt = (version: number) => {
       const moveInput = { taskId: input.taskId, version, reason: input.reason!, instruction: input.instruction, caller: input.caller,
         qualification: input.qualification, head: input.head, relayed: input.relayed, delegated: input.delegated, relayNote: input.note };
       return input.to === "work" ? this.engine.moveToWork(moveInput)
         : input.to === "merge" ? this.engine.moveToMerge(moveInput)
-        : input.to === "closeout" ? this.engine.moveToCloseout({ ...moveInput, enclosing })
+        : input.to === "closeout" ? this.engine.moveToCloseout({ ...moveInput, operationId })
         : this.engine.moveToReview({ taskId: input.taskId, version, reason: input.reason!, reviewer: input.reviewer,
           caller: input.caller, prNumber: input.prNumber,
           fresh: input.to === "review" ? input.fresh : undefined }, operationId);

@@ -649,23 +649,17 @@ test("observe: pause still binds an unbound run, and a hold landing during its l
 // taskQuantum: spy order
 // ---------------------------------------------------------------------------
 
-/**
- * `threadArchiveAdapter` is the one adapter property two steps read: the released
- * run-delivery probe (before superseded-idle settlement) and the terminal thread
- * archive (in the tail). The pin records each read where it happens.
- */
 const THREAD_ARCHIVE_ADAPTER = "threadArchiveAdapter";
 const QUANTUM_TAIL = [
   "profileCatalogKnown",
   "reconcileClosedRetainedReviewer",
   "settleHistoricalProofExecutions",
-  THREAD_ARCHIVE_ADAPTER,
   "settleSupersededIdleRuns",
   "recovery.pass",
   THREAD_ARCHIVE_ADAPTER,
   "enqueueTitle",
 ];
-/** A paused or stopped engine skips the tail archive read, never the observation read. */
+/** Pause skips the archive in the tail. */
 const UNARCHIVED_TAIL = [
   ...QUANTUM_TAIL.slice(0, QUANTUM_TAIL.length - 2),
   "enqueueTitle",
@@ -1306,36 +1300,6 @@ const fenceSettled = (f: ReturnType<typeof fixture>, task: Task) =>
     .eventsAll(task.id)
     .some((event) => event.kind === "owner_fence_settled");
 
-test("retryEffect: replayed outcomes answer first, in order, ahead of the version check and settlement", async (t) => {
-  for (const [answering, calls] of [
-    ["replayedArchiveOutcome", ["replayedArchiveOutcome"]],
-    [
-      "replayedCatalogArchiveOutcome",
-      ["replayedArchiveOutcome", "replayedCatalogArchiveOutcome"],
-    ],
-    [
-      "replayedDispositionWorkspaceOutcome",
-      [
-        "replayedArchiveOutcome",
-        "replayedCatalogArchiveOutcome",
-        "replayedDispositionWorkspaceOutcome",
-      ],
-    ],
-  ] as const) {
-    const f = fixture(t);
-    const task = f.add({ phase: "needs_attention" });
-    const log = retrySpies(f);
-    for (const name of [
-      "replayedArchiveOutcome",
-      "replayedCatalogArchiveOutcome",
-      "replayedDispositionWorkspaceOutcome",
-    ])
-      spy(log, f.internals, name, () => (name === answering ? task : null));
-    spy(log, f.internals, "requireOwnerControlCurrent");
-    assert.equal(await retry(f, task, "workspace_archive.ws"), task);
-    assert.deepEqual(log, calls);
-  }
-});
 
 test("retryEffect: a publication reconciles before any settlement", async (t) => {
   const f = fixture(t);
@@ -1350,34 +1314,6 @@ test("retryEffect: a publication reconciles before any settlement", async (t) =>
   spy(log, f.resolution, "reconcileReviewPublication", () => task);
   await retry(f, task, `review_publication.${run.id}`);
   assert.deepEqual(log, ["reconcileReviewPublication"]);
-});
-
-test("retryEffect: an owned-tool hold settles only after its proof clears, and a live hold settles nothing", async (t) => {
-  for (const hold of [null, "still running"]) {
-    const f = fixture(t);
-    const task = f.add({ phase: "needs_attention" });
-    const run = putRun(f.store, task.id);
-    f.store.event(
-      task.id,
-      "owned_tool_hold",
-      JSON.stringify({ runId: run.id, reason: "Tool" }),
-    );
-    const log = retrySpies(f);
-    spy(log, f.internals, "ownedToolHold", () =>
-      hold ? { kind: "hold", reason: hold } : { kind: "clear" },
-    );
-    if (hold) {
-      await assert.rejects(
-        retry(f, task, `owned_tool.${run.id}`),
-        /remains: still running/,
-      );
-      assert.deepEqual(log, ["ownedToolHold"]);
-    } else {
-      await retry(f, task, `owned_tool.${run.id}`);
-      assert.deepEqual(log, ["ownedToolHold", "settleObservedIdleRuns"]);
-      assert.equal(fenceSettled(f, task), false);
-    }
-  }
 });
 
 test("retryEffect: a cancelled workspace retirement goes straight to its settlement", async (t) => {
@@ -1444,67 +1380,7 @@ test("retryEffect: a superseded review view joins the cleanup lane without settl
   assert.deepEqual(log, ["enqueueCleanup", "awaitProjectionOccurrence"]);
 });
 
-test("retryEffect: a recovery effect settles idle runs first and supersedes no fence", async (t) => {
-  const f = fixture(t);
-  const task = f.add({
-    phase: "needs_attention",
-    agentId: "agent",
-    workspaceId: "ws",
-    runId: "worker-run",
-    prHead: head,
-  });
-  f.patchResolution(task, { incident: incident("reconciling", "worker-run") });
-  const log = retrySpies(f);
-  const settle = f.internals.settleObservedIdleRuns;
-  f.internals.settleObservedIdleRuns = (...args: Loose[]) => {
-    assert.equal(
-      f.store.task(task.id).resolution.incident?.status,
-      "reconciling",
-    );
-    return settle(...args);
-  };
-  const settled = await retry(f, task, "incident.incident");
-  assert.deepEqual(log, ["settleObservedIdleRuns"]);
-  assert.equal(settled.resolution.incident?.status, "resolved");
-  assert.equal(fenceSettled(f, task), false);
-  assert.ok(
-    f.store
-      .eventsAll(task.id)
-      .some((event) => event.kind === "incident_reproved_settled"),
-  );
-});
 
-test("retryEffect: an uncertain retry operation settles idle runs first and supersedes no fence", async (t) => {
-  const f = fixture(t);
-  const task = f.add({ phase: "needs_attention" });
-  const control = {
-    action: "retry_effect",
-    taskId: task.id,
-    version: task.version,
-    effect: "workspace_archive.gone",
-    caller: "operator (board)",
-    reason: "Earlier",
-  };
-  const payload = { type: "task_control", control } as Loose;
-  const accepted = f.store.acceptOperation({
-    key: "pin",
-    kind: "task_control",
-    inputHash: operationInputHash(payload),
-    taskId: task.id,
-    expectedVersion: task.version,
-    payload,
-  }) as Loose;
-  f.store.putOperation({
-    ...accepted.operation,
-    state: "needs_attention",
-    diagnostic: "Unknown",
-  });
-  const log = retrySpies(f);
-  await retry(f, task, `task_control_operation.${accepted.operation.id}`);
-  assert.deepEqual(log, ["settleObservedIdleRuns"]);
-  assert.equal(fenceSettled(f, task), false);
-  assert.equal(f.store.operation(accepted.operation.id)?.state, "succeeded");
-});
 
 test("retryEffect: an ordinary effect settles idle runs, then supersedes fences, then runs at the version that produced", async (t) => {
   const f = fixture(t);

@@ -575,53 +575,6 @@ test("a stopped accepted review-entry merge re-enters sync using the merged chec
   }
 });
 
-test("the parent behaviour reproduces the queued refusal through the public route because of its own running operation", async () => {
-  const service = await openService({ paused: false });
-  const { f, runtime, task } = service,
-    store = runtime.store;
-  const patchable = store as unknown as Record<string, unknown>;
-  // The public boundary without the authenticated invocation: the pre-408 reader.
-  const original = store.reviewEntryUnrunBeforeFirstRun.bind(store);
-  try {
-    const before = store.task(task.id);
-    const control = closeout(service);
-    const { key } = taskControlOperation(control);
-    // The pre-408 boundary: the closeout reader ignores the authenticated
-    // invocation, so the move's own durable operation reads as a competing
-    // writer and the queued task keeps the dispatched-task refusal.
-    let unseen: string[] = [];
-    patchable.reviewEntryUnrunBeforeFirstRun = (current: Task) => {
-      unseen = store
-        .operations({
-          taskId: current.id,
-          states: ["pending", "running", "needs_attention"],
-        })
-        .map((item) => item.id);
-      return original(current);
-    };
-    await assert.rejects(
-      runtime.taskControl(control),
-      /Moving to closeout requires a dispatched task with a PR|Only an unmerged dispatched task can accept an external merge/,
-      "the durable route, not only a parent engine call, reproduced the queued refusal",
-    );
-    const operation = store.operationForKey(key)!;
-    assert.equal(operation.state, "failed");
-    assert.match(
-      operation.diagnostic,
-      /Moving to closeout requires a dispatched task with a PR|Only an unmerged dispatched task can accept an external merge/,
-    );
-    assert.deepEqual(
-      unseen.filter((id) => id === operation.id),
-      [operation.id],
-      "exactly the move\u2019s own running operation caused the parent refusal",
-    );
-    assertUntouched(service, before);
-  } finally {
-    patchable.reviewEntryUnrunBeforeFirstRun = original;
-    await closeService(service);
-  }
-});
-
 test("the observed merge never becomes acceptance: without the exact-final-head source acceptance the task stays held", async () => {
   const service = await openService({ paused: false });
   const { f, runtime, task } = service,
@@ -813,7 +766,7 @@ test("unrelated custody still refuses before anything is accepted", async () => 
   }
 });
 
-test("a stale version, a missing invocation and a mutated invocation exempt nothing", async () => {
+test("only the addressed closeout bypasses its own pending operation", async () => {
   const service = await openService({ paused: false });
   const { f, runtime, task } = service,
     store = runtime.store,
@@ -883,8 +836,7 @@ test("a stale version, a missing invocation and a mutated invocation exempt noth
     });
     assertUntouched(service, before);
 
-    // The invocation is mutated inside the awaited proof: the commit-time
-    // re-read exempts nothing and writes nothing.
+    // The durable payload is not read back after the forge observation.
     const { key } = taskControlOperation(control);
     f.state.onMerge = () => {
       const current = store.operationForKey(key)!;
@@ -899,17 +851,9 @@ test("a stale version, a missing invocation and a mutated invocation exempt noth
         },
       );
     };
-    await assert.rejects(
-      runtime.taskControl(control),
-      /boundary or recorded merge changed|Only an unmerged dispatched task/,
-    );
-    f.state.onMerge = null;
-    assert.equal(
-      store.operationForKey(key)!.state,
-      "failed",
-      "the mutated invocation is not reported as applied",
-    );
-    assertUntouched(service, before);
+    await runtime.taskControl(control);
+    assertAcceptedCloseout(service, before);
+    assert.equal(store.operationForKey(key)?.state, "succeeded");
   } finally {
     f.state.onMerge = null;
     await closeService(service);

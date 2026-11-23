@@ -39,9 +39,8 @@ import {
 import { readProcessSubset } from "../core/machine/host-process-listing";
 import { markPaseoRuntime } from "../hosts/paseo/adapter/protected-runtime";
 import {
-  ownedToolAgentProcessTreeVerdict,
-  ownedToolProcessTreeVerdict,
-} from "../core/machine/owned-tool-process-proof";
+  runProcessActivity,
+} from "../core/machine/run-process-tree";
 import type { HostProcessFact } from "../core/host/types";
 import type { Engine } from "../core/engine";
 import { bbProcessFixture } from "./support/bb-process-fixture";
@@ -99,13 +98,13 @@ test("owned tool process tree is settled only when the run helper is unique and 
       cwd: null,
     },
   ] satisfies HostProcessFact[];
-  assert.deepEqual(ownedToolProcessTreeVerdict("run-1", base), {
+  assert.deepEqual(runProcessActivity("run-1", base), {
     state: "empty",
     providerPid: 100,
     helperPid: 101,
   });
   assert.deepEqual(
-    ownedToolProcessTreeVerdict("run-1", [
+    runProcessActivity("run-1", [
       ...base,
       {
         pid: 102,
@@ -119,13 +118,13 @@ test("owned tool process tree is settled only when the run helper is unique and 
     ]),
     { state: "live", providerPid: 100, helperPid: 101, pid: 102 },
   );
-  assert.equal(ownedToolProcessTreeVerdict("run-1", null).state, "unknown");
+  assert.equal(runProcessActivity("run-1", null).state, "unknown");
   assert.equal(
-    ownedToolProcessTreeVerdict("run-1", base.slice(0, 1)).state,
+    runProcessActivity("run-1", base.slice(0, 1)).state,
     "unknown",
   );
   assert.equal(
-    ownedToolProcessTreeVerdict("run-1", [...base, { ...base[1]!, pid: 103 }])
+    runProcessActivity("run-1", [...base, { ...base[1]!, pid: 103 }])
       .state,
     "unknown",
   );
@@ -222,14 +221,14 @@ test("a finished-turn provider keeps only its own standing tool runtimes outside
       },
     ];
     // Without the turn proof, every descendant is still a possible command.
-    assert.deepEqual(ownedToolProcessTreeVerdict("run-1", tree), {
+    assert.deepEqual(runProcessActivity("run-1", tree), {
       state: "live",
       providerPid: 100,
       helperPid: 101,
       pid: 102,
     });
     assert.deepEqual(
-      ownedToolProcessTreeVerdict("run-1", tree, { noTurnLive: true }),
+      runProcessActivity("run-1", tree, { noTurnLive: true }),
       { state: "empty", providerPid: 100, helperPid: 101 },
     );
     // A command under the kernel is real work, whatever turn proof holds.
@@ -246,7 +245,7 @@ test("a finished-turn provider keeps only its own standing tool runtimes outside
       },
     ];
     assert.deepEqual(
-      ownedToolProcessTreeVerdict("run-1", working, { noTurnLive: true }),
+      runProcessActivity("run-1", working, { noTurnLive: true }),
       { state: "live", providerPid: 100, helperPid: 101, pid: 104 },
     );
     // A program outside the provider's own installation is a command, and an
@@ -261,13 +260,13 @@ test("a finished-turn provider keeps only its own standing tool runtimes outside
       cwd: null,
     };
     assert.deepEqual(
-      ownedToolProcessTreeVerdict("run-1", [...tree, command], {
+      runProcessActivity("run-1", [...tree, command], {
         noTurnLive: true,
       }),
       { state: "live", providerPid: 100, helperPid: 101, pid: 106 },
     );
     assert.deepEqual(
-      ownedToolProcessTreeVerdict(
+      runProcessActivity(
         "run-1",
         [...tree, { ...command, command: "" }],
         { noTurnLive: true },
@@ -377,7 +376,7 @@ test("a finished-turn provider keeps only its own standing tool runtimes outside
       },
     ])
       assert.deepEqual(
-        ownedToolProcessTreeVerdict("run-1", [...tree, held], {
+        runProcessActivity("run-1", [...tree, held], {
           noTurnLive: true,
         }),
         { state: "live", providerPid: 100, helperPid: 101, pid: held.pid },
@@ -387,7 +386,7 @@ test("a finished-turn provider keeps only its own standing tool runtimes outside
     // own sibling runtime script there is the same family: the trusted worker at
     // pid 107 is exempt while the same interpreter outside that directory (113) holds.
     assert.deepEqual(
-      ownedToolProcessTreeVerdict(
+      runProcessActivity(
         "run-1",
         [
           ...tree,
@@ -408,7 +407,7 @@ test("a finished-turn provider keeps only its own standing tool runtimes outside
     // A script a runtime starts is a command even when it runs from the runtime's
     // own scratch directory: the kernel's own child keeps the fence.
     assert.deepEqual(
-      ownedToolProcessTreeVerdict(
+      runProcessActivity(
         "run-1",
         [
           ...tree,
@@ -428,87 +427,12 @@ test("a finished-turn provider keeps only its own standing tool runtimes outside
     );
     // An unreadable listing stays unreadable, and the agent-level proof follows the same rule.
     assert.equal(
-      ownedToolProcessTreeVerdict("run-1", null, { noTurnLive: true }).state,
+      runProcessActivity("run-1", null, { noTurnLive: true }).state,
       "unknown",
-    );
-    assert.deepEqual(
-      ownedToolAgentProcessTreeVerdict(["run-1"], tree, { noTurnLive: true }),
-      { state: "empty", runId: "run-1", providerPid: 100, helperPid: 101 },
-    );
-    assert.deepEqual(
-      ownedToolAgentProcessTreeVerdict(["run-1"], working, {
-        noTurnLive: true,
-      }),
-      {
-        state: "live",
-        runId: "run-1",
-        providerPid: 100,
-        helperPid: 101,
-        pid: 104,
-      },
     );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-
-test("owned tool process proof follows the newest helper among an agent runs", () => {
-  const current = [
-    {
-      pid: 100,
-      ppid: 1,
-      pgid: 100,
-      uid: 501,
-      startIdentity: "100@a",
-      command: "claude",
-      cwd: null,
-    },
-    {
-      pid: 101,
-      ppid: 100,
-      pgid: 100,
-      uid: 501,
-      startIdentity: "101@a",
-      command: "node /p/mcp-report.mjs /tickets/mcp-current-run.json",
-      cwd: null,
-    },
-  ];
-  assert.deepEqual(
-    ownedToolAgentProcessTreeVerdict(
-      ["current-run", "superseded-run"],
-      current,
-    ),
-    {
-      state: "empty",
-      runId: "current-run",
-      providerPid: 100,
-      helperPid: 101,
-    },
-  );
-  assert.deepEqual(
-    ownedToolAgentProcessTreeVerdict(
-      ["current-run", "superseded-run"],
-      [
-        ...current,
-        {
-          pid: 102,
-          ppid: 100,
-          pgid: 100,
-          uid: 501,
-          startIdentity: "102@a",
-          command: "editor-helper",
-          cwd: null,
-        },
-      ],
-    ),
-    {
-      state: "live",
-      runId: "current-run",
-      providerPid: 100,
-      helperPid: 101,
-      pid: 102,
-    },
-  );
 });
 
 async function waitFor(

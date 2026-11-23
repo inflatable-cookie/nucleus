@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   chmodSync,
+  closeSync,
+  openSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -26,6 +30,7 @@ import { formatAgentId } from "../shared/agent-identity";
 import {
   OPERATOR_BOARD_CALLER,
   REVISION_BUDGET,
+  hostRunRecordSchema,
   runSchema,
   submissionSchema,
   taskControlTaskSchema,
@@ -36,6 +41,7 @@ import { taskStopRecord } from "../shared/task-stop";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
+import { hostRunProcessStartIdentity, startIdentityProves } from "../core/machine/start-identity";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { operationInputHash } from "../core/store/store";
@@ -56,7 +62,9 @@ import {
 import { spawnGate, SPAWN_CONCURRENCY } from "../core/dispatch/spawn-gate";
 import { recoveryDispatchSnapshot } from "../core/recovery/recovery-context";
 import { ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
-import { checkoutRunScratchPlacement } from "../core/workspaces/run-scratch";
+import { checkoutRunScratchPlacement, removeRecordedRunScratchDirectory, runTemporaryEnvironment } from "../core/workspaces/run-scratch";
+import { readProcessSubset } from "../core/machine/host-process-listing";
+import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
@@ -327,7 +335,7 @@ test("run.release changes an agentless reviewer's durable fence and revokes its 
   assert.equal(audit().length, 1);
 });
 
-test("ordinary reviewer routing resumes after one release and one effect clear", async (t) => {
+test("ordinary reviewer routing can proceed after release while an old operation is uncertain", async (t) => {
   const { store, current, run, command, calls, runtime } = await fixture(t);
   const reviewer = run("review-run", "reviewer", null);
   store.putRun(reviewer);
@@ -387,20 +395,20 @@ test("ordinary reviewer routing resumes after one release and one effect clear",
     runSettlementFence({ store, task }, reviewer) ?? "",
     /uncertain/,
   );
-  await assert.rejects(
-    command(route),
-    new RegExp(`operation ${operation.id} is uncertain`),
-  );
   const released = await command({
     action: "run.release",
     run: reviewer.id,
     accept: ["live_turn", "unreported_result"],
   });
   assert.equal(released.explicitResolution?.status, "applied");
+  const routed = await command(route);
+  assert.equal(routed.phase, "awaiting_review");
+  assert.equal(routed.profileRequests?.reviewer?.profileId, "next-reviewer");
+  assert.equal(store.operation(operation.id)?.state, "needs_attention");
   const clear = {
     action: "record.clear",
     kind: "effect",
-    id: `task_control_operation.${operation.id}`,
+    id: `operation.${operation.id}`,
     caller: planner,
   };
   assert.equal(
@@ -414,14 +422,78 @@ test("ordinary reviewer routing resumes after one release and one effect clear",
   );
   assert.equal(store.operation(operation.id)?.state, "failed");
 
-  const routed = await command(route);
-  assert.equal(routed.phase, "awaiting_review");
-  assert.equal(routed.profileRequests?.reviewer?.profileId, "next-reviewer");
   assert.deepEqual(
     store.runs(task.id).map((run) => [run.id, run.released]),
     [[reviewer.id, true]],
   );
   assert.deepEqual(calls, []);
+});
+
+test("run.release stops the recorded process group after accepting its warnings", async (t) => {
+  const { store, current, run, command, audit } = await fixture(t);
+  const participant = run("review-process-run", "reviewer", null);
+  store.putRun(participant);
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const exited = once(child, "exit");
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  });
+  await once(child, "spawn");
+  const pid = child.pid;
+  assert.ok(pid);
+  const startIdentity = hostRunProcessStartIdentity(pid);
+  assert.ok(startIdentityProves(startIdentity));
+  const at = new Date().toISOString();
+  store.putHostRun(hostRunRecordSchema.parse({
+    id: participant.id,
+    epoch: 1,
+    caller: "fixture",
+    repository: { path: repo, origin: null },
+    selector: "test",
+    runClass: "heavy",
+    classSource: "default",
+    priority: "milestone",
+    state: "running",
+    submittedAt: at,
+    capacityDeadlineAt: at,
+    runTimeoutMs: 60000,
+    budgetFallback: { cpu: 1, memoryBytes: 1000 },
+    budget: { cpu: 1, memoryBytes: 1000, wallMs: 60000, source: "history" },
+    position: null,
+    admittedAt: at,
+    launchedAt: at,
+    settledAt: null,
+    capacitySample: null,
+    pid,
+    processGroupId: pid,
+    startIdentity,
+    settlement: null,
+    wallMs: null,
+    cpuMs: null,
+    containers: [],
+    capacityReleasedAt: null,
+    capacityReleaseReason: null,
+  }));
+
+  const release = { action: "run.release", run: participant.id };
+  const version = current().version;
+  const warnings = await command(release);
+  assert.equal(warnings.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    warnings.explicitResolution?.warnings.map((warning) => warning.id),
+    ["live_turn", "unreported_result"],
+  );
+  assert.equal(current().version, version);
+  assert.equal(child.signalCode, null);
+  assert.equal(audit().length, 0);
+  const released = await command({ ...release, accept: ["live_turn", "unreported_result"] });
+  assert.equal(released.explicitResolution?.status, "applied");
+  assert.deepEqual(await exited, [null, "SIGKILL"]);
+  assert.equal(store.run(participant.id)?.released, true);
+  assert.equal(audit().length, 1);
 });
 
 test("record.clear supersedes a notice and keeps late delivery evidence from restoring the fence", async (t) => {
@@ -472,6 +544,81 @@ test("record.clear supersedes a notice and keeps late delivery evidence from res
   );
 });
 
+test("an interrupted move is surfaced and can be cleared without inferring delivery from the journal", async (t) => {
+  const { runtime, store, current, command, audit, calls } = await fixture(t);
+  const task = current();
+  const control = {
+    action: "move" as const,
+    to: "merge" as const,
+    taskId: task.id,
+    version: task.version,
+    reason: "Move the reviewed head to merge",
+    caller: OPERATOR_BOARD_CALLER,
+  };
+  const { payload, key } = taskControlOperation(control);
+  const input = {
+    key,
+    kind: "task_control" as const,
+    taskId: task.id,
+    expectedVersion: task.version,
+    inputHash: operationInputHash(payload),
+    payload,
+  };
+  const accepted = store.acceptOperation(input);
+  assert.ok("operation" in accepted);
+  const at = new Date().toISOString();
+  const operation = store.putOperation({
+    ...accepted.operation,
+    state: "running",
+    attempts: 1,
+    startedAt: at,
+    effect: {
+      kind: "task_control",
+      target: "move",
+      status: "intent",
+      intentAt: at,
+      result: null,
+      resultAt: null,
+    },
+  });
+
+  await runtime.engine.runOperation(operation.id);
+  const interrupted = store.operation(operation.id);
+  assert.equal(interrupted?.state, "needs_attention");
+  assert.equal(interrupted?.effect?.status, "uncertain");
+  const repeated = store.acceptOperation(input);
+  assert.ok("operation" in repeated);
+  assert.deepEqual(repeated.operation, interrupted);
+
+  const clear = {
+    action: "record.clear",
+    kind: "effect",
+    id: `operation.${operation.id}`,
+  };
+  const warned = await command(clear);
+  assert.equal(warned.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    warned.explicitResolution?.warnings.map((warning) => warning.id),
+    ["effect_may_land"],
+  );
+  assert.equal(warned.version, task.version);
+  assert.equal(audit().length, 0);
+  assert.deepEqual(store.operation(operation.id), interrupted);
+
+  const applied = await command({ ...clear, accept: ["effect_may_land"] });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.ok(applied.explicitResolution?.next);
+  assert.equal(applied.phase, task.phase);
+  assert.equal(audit().length, 1);
+  const settled = store.operation(operation.id);
+  assert.equal(settled?.state, "failed");
+  assert.equal(settled?.settlement?.kind, "superseded");
+  const replay = store.acceptOperation(input);
+  assert.ok("operation" in replay);
+  assert.deepEqual(replay.operation, settled);
+  assert.deepEqual(calls, []);
+});
+
 function withRecordedTurn(run: Run, turnId: string): Run {
   assert.ok(run.agentId);
   return {
@@ -512,6 +659,95 @@ test("run.release cancels a current revision on the retained worker thread", asy
   assert.equal(result.agentId, revision.agentId);
   assert.equal(result.runId, "original-worker");
   assert.equal(result.resolution.currentRunId, null);
+});
+
+test("a coordinator must accept live_turn before releasing an inactive worker with a live process", async (t) => {
+  let pid: number | undefined;
+  const scan = async () => {
+    if (!pid) return [];
+    const result = await readProcessSubset([pid]);
+    return result.state === "listed" ? result.processes : null;
+  };
+  const f = await fixture(t, { hostProcessListing: scan });
+  const directory = join(f.root, "worktree");
+  mkdirSync(directory);
+  const runId = "initial-worker";
+  const observe = () => ({ MountPoint: f.root, VolumeUUID: "fixture", Internal: false, Writable: true, WritableVolume: true });
+  const placement = checkoutRunScratchPlacement({ mount: f.root, uuid: "fixture", observe });
+  const scratch = runTemporaryEnvironment(runId, placement).TMPDIR;
+  (f.store as unknown as { runScratchRemover: (path: string) => boolean }).runScratchRemover =
+    (path) => removeRecordedRunScratchDirectory(path, { mount: f.root, uuid: "fixture", observe });
+  const coordinator = f.run("recovery-run", "recovery", "coordinator");
+  f.store.putRun(coordinator);
+  const task = f.current();
+  f.store.update(task.id, {
+    phase: "needs_attention",
+    workspaceId: "workspace",
+    directory,
+    temporaryDirectory: scratch,
+    runId,
+    agentId: "worker",
+    agentActive: true,
+    resolution: {
+      ...task.resolution,
+      stop: taskStopRecord("run_stalled", "Stalled worker", null, new Date().toISOString(), ["restart"]),
+      recoveryActive: true,
+      recovery: {
+        id: "episode", key: "key", generation: 1, runId: coordinator.id,
+        agentId: coordinator.agentId, status: "running", summary: "Mechanical stop",
+        idleSince: null, incidentId: null,
+      },
+    },
+  });
+  const file = join(scratch, "held output");
+  const fd = openSync(file, "w");
+  const child = spawn(process.execPath, ["-e", "console.log('ready'); setInterval(() => {}, 1000)"], {
+    cwd: f.root,
+    stdio: ["ignore", "pipe", "inherit", fd],
+  });
+  closeSync(fd);
+  const exited = once(child, "exit");
+  try {
+    assert.ok(child.stdout);
+    await once(child.stdout, "data");
+    pid = child.pid;
+    assert.ok(pid);
+    const fact = (await scan())?.find((process) => process.pid === pid);
+    assert.ok(fact);
+    assert.equal(fact.cwd, f.root);
+    assert.ok(fact.openFiles?.paths.includes(file));
+    const offer = (await f.runtime.taskNext({ taskId: task.id })).explicitCommands?.find(
+      (item) => item.action === "run.release" && item.args.run === runId,
+    );
+    assert.ok(offer?.warnings?.includes("live_turn"));
+
+    f.store.update(task.id, { agentActive: false });
+    const release = { action: "run.release", run: runId, caller: formatAgentId(host, "coordinator") };
+    const refused = await f.command({ ...release, accept: ["unreported_result"] });
+    assert.equal(refused.explicitResolution?.status, "warnings");
+    assert.ok(refused.explicitResolution?.warnings.some((warning) => warning.id === "live_turn"));
+    assert.equal(f.current().runId, runId);
+
+    const result = await f.command({ ...release, accept: ["live_turn", "unreported_result"] });
+    assert.equal(result.explicitResolution?.status, "applied");
+    assert.equal(f.current().runId, null);
+    const intentKey = `runProcessCleanup:${runId}`;
+    await sweepSettledRunProcesses(f.store, host, { taskId: task.id, readProcesses: scan });
+    assert.ok(existsSync(scratch));
+    assert.equal(f.store.getMeta<{ pending: boolean }>(intentKey)?.pending, true);
+    assert.ok(f.store.eventsAll(task.id).some((event) =>
+      event.kind === "run_process_cleanup_deferred" && event.detail.includes("live processes")));
+
+    child.kill();
+    await exited;
+    pid = undefined;
+    await sweepSettledRunProcesses(f.store, host, { taskId: task.id, readProcesses: scan });
+    assert.equal(existsSync(scratch), false);
+    assert.equal(f.store.getMeta<{ pending: boolean }>(intentKey)?.pending, false);
+  } finally {
+    child.kill();
+    await exited;
+  }
 });
 
 test("next and run.release refuse a creation the host may still answer", async (t) => {

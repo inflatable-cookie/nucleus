@@ -13,7 +13,6 @@ import {
 import { briefDigest, currentBrief } from "../../planning/brief";
 import { dispatchBlocked } from "../../dispatch/capacity";
 import { OWNER_STOP_HOLD_PREFIX } from "../../merge/merge-hold";
-import { blockingTaskOperations } from "../../recovery/recovery-effects";
 import type { Store } from "../../store/store";
 import { stoppedDeliveryResume } from "./delivery";
 import {
@@ -39,7 +38,6 @@ export function reviewContinuationLocalRefusal(
   options: {
     settling?: { runIds: string[] };
     paused: boolean;
-    operationId?: string;
     provenance?: (task: Task, record: ReviewCheckpointRecord) => void;
     ownerStopYields?: boolean;
   },
@@ -229,25 +227,6 @@ export function reviewContinuationLocalRefusal(
   )
     return refuse(
       "Merge, publication or validation intent blocks reviewer continuation",
-    );
-  const unsettledOperations = blockingTaskOperations(store, task, {
-    excludeId: options.operationId,
-  });
-  if (unsettledOperations.length)
-    return refuse(
-      "Another unresolved task operation fences reviewer continuation",
-    );
-  if (
-    store
-      .hookEvents(task.id)
-      .some(
-        (hook) =>
-          !["result", "published"].includes(hook.state) ||
-          hook.result?.outcome !== "ok",
-      )
-  )
-    return refuse(
-      "An unresolved repository effect fences reviewer continuation",
     );
   // A brief amended after the checkpoint does not strand the reviewer (Tom,
   // 2026-10-18): the continuation delivers the current brief and re-pins the

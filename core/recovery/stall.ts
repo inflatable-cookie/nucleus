@@ -37,37 +37,48 @@ import {
 } from "./worker-replacement";
 import { resolve, sep } from "node:path";
 import {
-  bbThreadForAgent,
-  ownedToolProcessTreeVerdict,
   participantRuntimePids,
   type RuntimeFact,
-} from "../machine/owned-tool-process-proof";
-import {
-  participantRuntime,
-  storeDataHome,
-  type ParticipantRuntime,
-} from "../machine/participant-runtime";
-import type { HostProcessFact } from "../host/types";
+} from "../machine/run-process-tree";
+import type { ParticipantRuntime } from "../machine/participant-runtime";
+import { readRunProcessCustody } from "../machine/run-process-custody";
 import {
   DeferredPassReadError,
-  QUANTUM_READ_DEADLINE_MS,
-  boundedRead,
   isQuantumDeadlineExceeded,
 } from "../scheduling/pass-snapshot";
 import { HungTools, type ShellPeek } from "./hung-tools";
-import { denyPendingPermission } from "./permission-policy";
+import {
+  denyPendingPermission,
+  PERMISSION_DENIAL_INTENT,
+  PERMISSION_DENIAL_REFUSED,
+  PERMISSION_DENIAL_UNKNOWN,
+  PERMISSION_DENIED,
+} from "./permission-policy";
+import { processDeathProof } from "./dead-participant";
 
 /**
  * Mid-turn stall detection (Queue reliability lane). Paseo keeps reporting a
- * frozen agent as running, so a stalled worker or reviewer reads as healthy
- * work. The agent record carries `updatedAt`, which advances with timeline
- * activity; a running agent whose activity has been quiet past the threshold
- * is stalled. The incident is retained with its task/run identity; Queue never
- * interrupts or replaces a live agent automatically.
+ * frozen agent as running. Only an opaque running tool uses the turn's
+ * wall-clock stall threshold. Streamed tools have their own quiet limit.
+ * A stall keeps the run leased and records the task and turn it observed.
  */
 
 /** How long one shell command may run before the task shows a notice. */
 export const SHELL_NOTICE_MS = 15 * 60_000;
+
+function latestActivity(
+  ...stamps: (string | null | undefined)[]
+): string | undefined {
+  let latest: string | undefined;
+  for (const stamp of stamps)
+    if (
+      stamp &&
+      Number.isFinite(Date.parse(stamp)) &&
+      (!latest || Date.parse(stamp) > Date.parse(latest))
+    )
+      latest = stamp;
+  return latest;
+}
 
 /** The oldest still-running shell command on one timeline page, or null. Unreadable pages are never evidence. */
 export function runningShellCommand(
@@ -228,7 +239,10 @@ export type StallsContext = Pick<
 
 export class Stalls {
   /** Per-agent coalescing for timeline peeks; the cached verdict holds for the window so repeated observations agree. */
-  private shellPeeks = new Map<string, ShellPeek & { at: number }>();
+  private shellPeeks = new Map<
+    string,
+    ShellPeek & { at: number; activityAt?: string }
+  >();
   /** How long one peek's verdict is reused; tests shorten it to drive successive peeks. */
   peekTtlMs = 60_000;
   /** Spec 068 §4: the hung-tool limit's owner; tests shorten its signal grace. */
@@ -239,7 +253,7 @@ export class Stalls {
   private get store() {
     return this.resolution.store;
   }
-  private thresholdMs() {
+  thresholdMs() {
     return (
       (this.store.getMeta<number>("stallThresholdMinutes") ??
         DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000
@@ -251,9 +265,8 @@ export class Stalls {
    * long-running shell command, and returns the shell-command notice text for
    * the task, or null; the caller shows it. A stale turn enters normal
    * attention and coordinator recovery. A run that already reported, or has no
-   * activity timestamp, is never flagged. A pending permission is declined at
-   * once (Spec 068 Decision 4); one that could not be declined and stays past
-   * the stall threshold is a stall naming the request. Nothing is auto-approved.
+   * activity timestamp, is never flagged. A pending permission renews the
+   * activity clock and is declined at once (Spec 068 Decision 4).
    */
   async check(
     t: Task,
@@ -278,7 +291,47 @@ export class Stalls {
     const role = run?.role === "reviewer" ? "Reviewer" : "Worker";
     const runId = run?.id ?? current.runId;
     if (!runId) return null;
-    const peek = await this.shellNotice(current, role, state);
+    if (
+      processDeathProof(this.store, current, run) &&
+      (await this.resolution.releaseDeadParticipant?.(current, run))
+    )
+      return null;
+    const pending = state.permissions ? state.pendingRequest : undefined;
+    if (pending && pending.kind !== "question") {
+      const intentId = `ns-permission-deny-${runId}-${pending.id}`.slice(
+        0,
+        500,
+      );
+      const decision = this.store
+        .eventsAll(t.id)
+        .findLast(
+          (event) =>
+            event.detail.startsWith(`${intentId}:`) &&
+            [
+              PERMISSION_DENIAL_INTENT,
+              PERMISSION_DENIAL_REFUSED,
+              PERMISSION_DENIAL_UNKNOWN,
+              PERMISSION_DENIED,
+            ].includes(event.kind),
+        );
+      // The host still lists the request after a decline that cannot be sent again.
+      // This is a delivery fault, independent of the tool stall clock.
+      if (decision && decision.kind !== PERMISSION_DENIAL_REFUSED) {
+        const reason = `${role} is still waiting on permission ${pending.id} after the recorded decline attempt`;
+        this.resolution.attention(
+          this.store.task(t.id),
+          reason,
+          "uncertain_delivery",
+        );
+        return null;
+      }
+    }
+    const peek = await this.shellNotice(
+      current,
+      role,
+      state,
+      (run ?? current).participantActivity,
+    );
     if (peek.tool !== undefined && peek.turnId === (state.activeTurnId ?? null))
       recordActivityTool(
         this.store,
@@ -288,9 +341,34 @@ export class Stalls {
         peek.turnId,
         peek.tool,
       );
+    const observed = run ? this.store.run(run.id) : this.store.task(t.id);
+    const activity =
+      observed?.participantActivity?.turnId === (state.activeTurnId ?? null)
+        ? observed?.participantActivity
+        : null;
+    const lastActivityAt = latestActivity(
+      state.updatedAt,
+      state.turnStartedAt,
+      peek.activityAt,
+      peek.tool?.startedAt,
+      peek.tool?.lastOutputAt,
+      activity?.tool?.lastOutputAt,
+      activity?.permission?.since,
+    );
+    if (
+      lastActivityAt &&
+      observed &&
+      observed.lastActivityAt !== lastActivityAt
+    ) {
+      if (run) {
+        const latest = this.store.run(run.id);
+        if (latest && !latest.released && latest.agentId === state.id)
+          this.store.putRun({ ...latest, lastActivityAt });
+      } else if (this.store.task(t.id).runId === runId)
+        this.store.update(t.id, { lastActivityAt });
+    }
     // Spec 068 §4: a command quiet past the repository's tool limit is stopped;
-    // the agent sees a failed tool call and its turn is judged next time. One
-    // that cannot be stopped no longer fences stall detection.
+    // the agent sees a failed tool call and its turn is judged next time.
     const hung = await this.hungTools.settle(
       current,
       run,
@@ -299,39 +377,45 @@ export class Stalls {
       peek,
     );
     if (hung === "terminated") return null;
-    const shellNotice = peek.notice;
-    // No activity timestamp is no evidence of staleness; never judge without it.
-    if (!state.updatedAt || !Number.isFinite(Date.parse(state.updatedAt)))
-      return (
-        shellNotice ??
-        (await this.ownedProcessNotice(current, run, role, runId, state.id))
-      );
-    const quietMs = Date.now() - Date.parse(state.updatedAt);
-    if (quietMs < this.thresholdMs()) return shellNotice;
-    // Spec 068 §3 (nucleus#1552): a stalled turn whose agent is provably dead
-    // (its process gone, or its thread gone on a complete host read) is not
-    // work. The release records its proof and ordinary admission relaunches the
-    // role; anything short of proof keeps the run leased and the stall below.
-    if (await this.resolution.releaseDeadParticipant?.(current, run))
-      return null;
-    const toolNotice =
-      shellNotice ??
-      (peek.live ? `${role} is waiting on a running tool` : null) ??
-      (await this.ownedProcessNotice(current, run, role, runId, state.id));
-    if (toolNotice && hung !== "unterminated") return toolNotice;
-    // Spec 068 §6: an unknown timeline read (e.g. sealed pass-snapshot miss or
-    // deadline expiry) is not proof that no tool is live; defer stall attention
-    // until a later pass reads the timeline cleanly.
     if (peek.unknown) return null;
+    const toolNotice =
+      peek.notice ??
+      (peek.live ? `${role} is waiting on a running tool` : null);
+    const opaqueTool =
+      Boolean(peek.tool || peek.live) &&
+      !(peek.tool?.lastOutputAt ?? activity?.tool?.lastOutputAt) &&
+      this.resolution.adapter.capabilities?.().streamsRunningToolOutput !==
+        true;
+    const quietMs = lastActivityAt
+      ? Date.now() - Date.parse(lastActivityAt)
+      : 0;
+    if (hung !== "unterminated" && quietMs < this.thresholdMs())
+      return peek.notice;
+    if (hung !== "unterminated" && !opaqueTool && toolNotice)
+      return toolNotice;
+    const custody = await readRunProcessCustody({
+      store: this.store,
+      readProcesses: this.resolution.readPassProcesses,
+      task: current,
+      run,
+      runId,
+      activityAt: lastActivityAt,
+    });
+    if (custody.state === "live")
+      return peek.notice ??
+        `${role} is running a long command (process ${custody.process.pid} still belongs to the run)`;
+    if (custody.state === "unknown" || (hung !== "unterminated" && !opaqueTool))
+      return toolNotice;
     const turn = state.activeTurnId
       ? `, active turn ${state.activeTurnId}`
       : "";
-    const pending = state.pendingRequest;
     const stalled = state.permissions
       ? pending
         ? `pending ${pending.kind === "question" ? "question" : "permission"} ${pending.id}${pending.firstLine ? `: ${pending.firstLine}` : ""}`
         : "a pending permission with no agent activity"
-      : `no agent activity while ${HOST_KIND_LABELS[hostKindOf(current.hostId)]} still reports it running`;
+      : hung === "unterminated"
+        ? "a quiet tool could not be terminated"
+        : `no activity from a running tool whose output ${HOST_KIND_LABELS[hostKindOf(current.hostId)]} cannot observe`;
     const reason = `The ${role.toLowerCase()} run ${runId} (agent ${state.id}${turn}) looks stalled: ${stalled}. It still owns this task; use run.release run=${runId} or run.start ${role.toLowerCase()} fresh replacing=${runId} after checking its retained identity`;
     this.resolution.attention(
       this.store.task(current.id),
@@ -351,7 +435,7 @@ export class Stalls {
       this.resolution.saveIncident(this.store.task(current.id), {
         turnId: state.activeTurnId,
       });
-    return toolNotice;
+    return null;
   }
 
   /** Positive evidence that an earlier stall verdict no longer holds. */
@@ -370,94 +454,29 @@ export class Stalls {
     const runId = run?.id ?? t.runId;
     if (!runId) return false;
     const role = run?.role === "reviewer" ? "Reviewer" : "Worker";
-    return Boolean(
-      (await this.shellNotice(t, role, state)).live ||
-        (await this.ownedProcessNotice(t, run, role, runId, state.id)),
+    const peek = await this.shellNotice(
+      t,
+      role,
+      state,
+      (run ?? t).participantActivity,
     );
-  }
-
-  /** A live process in this run's workspace or scratch is owned-tool activity. */
-  private async ownedProcessNotice(
-    t: Task,
-    run: Run | null,
-    role: string,
-    runId: string,
-    agentId: string,
-  ): Promise<string | null> {
-    if (!this.resolution.adapter.hostProcessListing) return null;
-    let processes: HostProcessFact[] | null = null;
-    try {
-      const read = await this.resolution.readPassProcesses(
-        run?.hostId ?? t.hostId,
-      );
-      processes = read.state === "listed" ? read.processes : null;
-    } catch {
-      return null;
-    }
-    if (!processes) return null;
-    const verdict = ownedToolProcessTreeVerdict(
+    const activityAt = latestActivity(
+      peek.activityAt,
+      peek.tool?.lastOutputAt,
+      peek.tool?.startedAt,
+    );
+    const limit = peek.tool?.lastOutputAt
+      ? this.store.toolQuietLimitMsFor(t)
+      : this.thresholdMs();
+    if (activityAt && Date.now() - Date.parse(activityAt) < limit) return true;
+    return (await readRunProcessCustody({
+      store: this.store,
+      readProcesses: this.resolution.readPassProcesses,
+      task: t,
+      run,
       runId,
-      processes.filter((process) => !isZombieProcess(process)),
-    );
-    if (verdict.state !== "live") return null;
-    // Scope the run-owned tree to this task, rather than accepting a process
-    // merely because some unrelated process happens to use the workspace.
-    const tree = new Set([verdict.providerPid]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const process of processes)
-        if (
-          process.ppid != null &&
-          tree.has(process.ppid) &&
-          !tree.has(process.pid)
-        ) {
-          tree.add(process.pid);
-          changed = true;
-        }
-    }
-    const helperTree = new Set([verdict.helperPid]);
-    let more = true;
-    while (more) {
-      more = false;
-      for (const process of processes)
-        if (
-          process.ppid != null &&
-          helperTree.has(process.ppid) &&
-          !helperTree.has(process.pid)
-        ) {
-          helperTree.add(process.pid);
-          more = true;
-        }
-    }
-    const roots = [
-      t.directory,
-      run?.temporaryDirectory,
-      run ? undefined : t.temporaryDirectory,
-    ].filter((root): root is string => Boolean(root));
-    const thread = bbThreadForAgent(agentId, run?.hostId ?? t.hostId);
-    const runtime = participantRuntime({
-      dataHome: storeDataHome(this.store),
-      tasks: [t],
-      runs: this.store.runs(t.id),
-      bbThreads: thread ? [thread] : [],
-    });
-    for (const root of roots) {
-      const issue = workspaceToolProcessIssue(
-        processes.filter(
-          (process) =>
-            tree.has(process.pid) &&
-            process.pid !== verdict.providerPid &&
-            !helperTree.has(process.pid),
-        ),
-        root,
-        [runId],
-        runtime,
-      );
-      if (issue && issue.includes("remains in the task workspace process tree"))
-        return `${role} is running a long command (${issue})`;
-    }
-    return null;
+      activityAt,
+    })).state === "live";
   }
 
   /**
@@ -527,30 +546,29 @@ export class Stalls {
     t: Task,
     role: string,
     state: AgentObservation,
-  ): Promise<ShellPeek> {
+    activity: ParticipantActivity | null | undefined,
+  ): Promise<ShellPeek & { activityAt?: string }> {
     const turnId = state.activeTurnId ?? null;
-    const turnStartedAt = state.turnStartedAt
-      ? Date.parse(state.turnStartedAt)
-      : NaN;
-    // A command cannot outlive its turn, so a young turn never needs a peek.
-    const stale =
-      state.updatedAt &&
-      Number.isFinite(Date.parse(state.updatedAt)) &&
-      Date.now() - Date.parse(state.updatedAt) >= this.thresholdMs();
-    if (
-      (!Number.isFinite(turnStartedAt) ||
-        Date.now() - turnStartedAt < SHELL_NOTICE_MS) &&
-      !stale
-    )
+    if (!this.shouldPeek(t, state, activity))
       return { notice: null, live: false, turnId };
     const agentId = state.id;
     const lastPeek = this.shellPeeks.get(agentId);
-    if (lastPeek && Date.now() - lastPeek.at < this.peekTtlMs) return lastPeek;
+    const at = Date.now();
+    const stale = at - Date.parse(state.updatedAt ?? "") >= this.thresholdMs();
+    if (
+      !stale &&
+      lastPeek?.turnId === turnId &&
+      at - lastPeek.at < this.peekTtlMs &&
+      !(this.toolQuietDeadline(t, lastPeek.tool) <= at) &&
+      !(this.boundToolQuietDeadline(t, state, activity) <= at)
+    )
+      return lastPeek;
     let notice: string | null = null;
     let live = false;
     let unknown = false;
     let tool: ParticipantActivity["tool"] | undefined;
     let shellCall = false;
+    let activityAt: string | undefined;
     try {
       let timeline: TimelineEntry[] | null | undefined;
       if (this.resolution.adapter.agentTimeline) {
@@ -564,11 +582,20 @@ export class Stalls {
           timeline = read.value;
         }
       }
-      const shell = runningShellCommand(timeline ?? null);
-      if (timeline) tool = observeRunningTool(timeline, turnId);
+      const current = timeline?.filter(
+        (entry) => !entry.turnId || !turnId || entry.turnId === turnId,
+      );
+      const shell = runningShellCommand(current ?? null);
+      if (current) tool = observeRunningTool(current, turnId);
+      if (timeline && turnId)
+        activityAt = latestActivity(
+          ...timeline
+            .filter((entry) => entry.turnId === turnId)
+            .map((entry) => entry.timestamp),
+        );
       shellCall = Boolean(
         tool &&
-          timeline?.some(
+          current?.some(
             (entry) =>
               entry.item.type === "tool_call" &&
               entry.item.callId === tool!.callId &&
@@ -576,15 +603,69 @@ export class Stalls {
           ),
       );
       notice = this.shellNoticeText(role, shell);
-      live = Boolean(shell || (timeline && runningOwnedTool(timeline)));
+      live = Boolean(shell || (current && runningOwnedTool(current)));
     } catch {
-      notice = null;
+      unknown = true;
     }
     if (unknown) return { notice: null, live: false, unknown: true, turnId };
     if (this.shellPeeks.size > 512) this.shellPeeks.clear();
-    const result = { at: Date.now(), notice, live, turnId, tool, shellCall };
+    const result = {
+      at: Date.now(),
+      notice,
+      live,
+      turnId,
+      tool,
+      shellCall,
+      activityAt,
+    };
     this.shellPeeks.set(agentId, result);
     return result;
+  }
+
+  /** The host prefetch and the stall observer must agree about when a tool read is due. */
+  shouldPeek(
+    task: Task,
+    state: AgentObservation,
+    activity?: ParticipantActivity | null,
+  ): boolean {
+    const at = Date.now();
+    const turnStarted =
+      state.turnStartedAt ??
+      (activity?.agentId === state.id &&
+      activity.turnId === (state.activeTurnId ?? null)
+        ? activity.turnStartedAt
+        : null);
+    return (
+      at - Date.parse(state.updatedAt ?? "") >= this.thresholdMs() ||
+      at - Date.parse(turnStarted ?? "") >=
+        Math.min(SHELL_NOTICE_MS, this.store.toolQuietLimitMsFor(task)) ||
+      this.boundToolQuietDeadline(task, state, activity) <= at
+    );
+  }
+
+  toolQuietDeadline(
+    task: Task,
+    tool: ParticipantActivity["tool"] | undefined,
+  ): number {
+    if (!tool) return Infinity;
+    const streams =
+      this.resolution.adapter.capabilities?.().streamsRunningToolOutput ===
+      true;
+    const quietFrom = tool.lastOutputAt ?? (streams ? tool.startedAt : null);
+    return quietFrom
+      ? Date.parse(quietFrom) + this.store.toolQuietLimitMsFor(task)
+      : Infinity;
+  }
+
+  private boundToolQuietDeadline(
+    task: Task,
+    state: AgentObservation,
+    activity?: ParticipantActivity | null,
+  ): number {
+    return activity?.agentId === state.id &&
+      activity.turnId === (state.activeTurnId ?? null)
+      ? this.toolQuietDeadline(task, activity.tool)
+      : Infinity;
   }
 
   /** The notice text for one peek result, or null; the durable shown event is written by settleNotice. */
@@ -1176,65 +1257,6 @@ export function workspaceToolProcessIssue(
     : null;
 }
 
-/**
- * Typed outcome of an owned-tool or process-proof check (Spec 068 §6, Spec 066 R1):
- * - `clear`: positive proof that no live owned tool or process holds the participant.
- * - `deferred`: quantum timeout, uncaptured pass snapshot, or `QuantumDeadlineExceededError`;
- *   callers defer the lease without recording an `operator_needed` stop or clearing durable intents.
- * - `hold`: positive live-tool / unreadable / inconclusive refusal.
- */
-export type OwnedToolHoldResult =
-  | { kind: "clear" }
-  | { kind: "hold"; reason: string }
-  | { kind: "deferred"; reason: string };
-
-/**
- * Typed outcome of one fresh participant turn observation:
- * - `observed`: fresh observation matching `agentId`.
- * - `deferred`: quantum timeout, budget exhaustion, or `QuantumDeadlineExceededError`.
- * - `unavailable`: unreadable observation or identity mismatch.
- */
-export type ObservedTurnStateRead =
-  | { kind: "observed"; state: AgentObservation }
-  | { kind: "deferred"; reason: string }
-  | { kind: "unavailable"; reason: string; error?: unknown };
-
-/**
- * The turn facts of one fresh observation, read after the tool evidence it
- * settles: an unreadable observation, or one about a different agent, is
- * unavailable and settles nothing; a quantum timeout or deadline expiry is
- * deferred.
- */
-export async function observedTurnState(
-  host: { observe(id: string): Promise<AgentObservation> },
-  agentId: string,
-  deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
-): Promise<ObservedTurnStateRead> {
-  try {
-    const read = await boundedRead(
-      "participant observation",
-      () => host.observe(agentId),
-      deadlineMs,
-    );
-    if (read.state === "unknown")
-      return { kind: "deferred", reason: read.reason };
-    const state = read.value;
-    if (!state || state.id !== agentId)
-      return {
-        kind: "unavailable",
-        reason: "participant observation or identity is unavailable",
-      };
-    return { kind: "observed", state };
-  } catch (error) {
-    if (isQuantumDeadlineExceeded(error))
-      return { kind: "deferred", reason: error.message };
-    return {
-      kind: "unavailable",
-      reason: error instanceof Error ? error.message : String(error),
-      error,
-    };
-  }
-}
 
 /**
  * Widen tails instead of splicing projected pages: projection can collapse tool

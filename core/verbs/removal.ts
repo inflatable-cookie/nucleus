@@ -7,6 +7,7 @@ import { cleanupReasonFor, recordRunBuildOutput } from "../hooks/build-output-re
 import { progressDisposition } from "./disposition";
 import type { Engine } from "../engine";
 import { LANE_PRIORITY_TASK } from "../scheduling/lane-priorities";
+import { readRunProcessCustody } from "../machine/run-process-custody";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { digest, hostRunHoldReason, now } from "../store/store";
 import { isAgentGoneRefusal } from "../host/errors";
@@ -77,7 +78,7 @@ export class TaskRemoval {
           if (shared()) return false;
           this.engine.resolution.update(this.store.task(id), { archiveIntentWorkspaceId: task.workspaceId, archiveIntentHead: null }, {}, "workspace_archive_intent");
           return true;
-        }, false, { requirePublished: true, attachedAgentIds: ids, participantRuns: () => this.store.runs(id) });
+        }, false, { requirePublished: true, attachedAgentIds: ids, workspaceRuns: runs });
         if (!archived) throw new Error("Workspace became shared before archive; task remains visible");
         await this.engine.retirement.archived(id, task.workspaceId);
       }
@@ -226,8 +227,22 @@ export class TaskRemoval {
         : undefined;
       const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory, expectedBarge);
       if (identity) { this.recordRunBuildOutputState(taskId, record, record.state, identity); continue; }
-      // The identity lookup awaits Git. Recheck ownership synchronously after it,
-      // immediately before starting the destructive effect.
+      const custody = await readRunProcessCustody({
+        store: this.store,
+        readProcesses: this.engine.resolution.readPassProcesses.bind(this.engine.resolution),
+        task,
+        runId: record.runId!,
+        run: this.store.run(record.runId!),
+        directory: record.directory,
+      });
+      if (custody.state !== "clear") {
+        const reason = custody.state === "live"
+          ? `Process ${custody.process.pid} still uses the run workspace or scratch`
+          : custody.reason;
+        this.recordRunBuildOutputState(taskId, record, record.state, reason);
+        continue;
+      }
+      // Recheck durable ownership after the reads, at the removal boundary.
       if (this.engine.stopped || this.store.getMeta('paused')) return;
       const latest = this.store.task(taskId);
       const latestRecord = latest.resolution.buildOutputCleanups.find(item => item.runId === record.runId && item.workspaceId === record.workspaceId);

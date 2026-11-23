@@ -43,7 +43,7 @@ import {
 } from "./completed-run-observation";
 import { releaseRunFromRecordedCompletion } from "./fence-settlement";
 import { settleRunCreation } from "./creation-lookup";
-import { threadGoneError } from "./dead-participant";
+import { processDeathProof, threadGoneError } from "./dead-participant";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
@@ -87,6 +87,8 @@ export type ObservationContext = Pick<
 >;
 
 export class Observation {
+  private readonly observingRuns = new Set<string>();
+
   constructor(readonly resolution: ObservationContext) {}
   get store() {
     return this.resolution.store;
@@ -177,8 +179,11 @@ export class Observation {
     completedTaskId?: string,
     onReleased?: (taskId: string) => void,
     scopedHost?: string,
+    factWake = false,
   ) {
-    // A task wake observes its reported runs and active runs with stale observations.
+    // A fact wake may be a turn end for a run observed just seconds ago, or
+    // the expiry of the grace for an already idle run. A general wake keeps
+    // its usual callback and stale-observation scope.
     // The ordinary inventory pass retains its broader recovery responsibilities.
     const candidates = completedTaskId
       ? this.store
@@ -188,10 +193,11 @@ export class Observation {
               run.role !== "recovery" &&
               !run.released &&
               (run.completion ||
+                (factWake && run.agentId) ||
                 (run.active &&
                   Date.now() -
                     Date.parse(run.lastObservedAt ?? run.createdAt) >=
-                    16000)) &&
+                    16_000)) &&
               !this.resolution.launchingRuns.has(run.id),
           )
       : this.observationRuns();
@@ -207,6 +213,7 @@ export class Observation {
               completedTaskId,
               onReleased,
               hostId,
+              factWake,
             ),
           );
         } catch (error) {
@@ -224,9 +231,11 @@ export class Observation {
     for (const original of candidates) {
       if (original.hostId !== scopedHost) continue;
       if (this.resolution.stopped()) return;
+      if (this.observingRuns.has(original.id)) continue;
       let run = this.store.run(original.id)!;
       const task = this.store.task(run.taskId);
       const observationStartedAt = now();
+      this.observingRuns.add(original.id);
       try {
         if (isDispositionActive(task) || isDispositionComplete(task)) continue;
         if (!this.resolution.hostAvailable(task, run)) {
@@ -241,6 +250,13 @@ export class Observation {
           continue;
         // An operator stop preserves its lease and checkpoint.
         if (dispatchBlocked(task) && !run.completion) continue;
+        if (
+          !run.completion &&
+          !startsNoRuns(this.store, this.resolution.stopped()) &&
+          processDeathProof(this.store, task, run) &&
+          (await this.resolution.releaseDeadParticipant?.(task, run))
+        )
+          continue;
         if (!run.agentId) {
           if (this.settleUnobservableCompletion(run, observationStartedAt))
             continue;
@@ -856,9 +872,15 @@ export class Observation {
           error instanceof Error ? error.message : String(error),
         );
       } finally {
+        this.observingRuns.delete(original.id);
         if (!original.released && this.store.run(original.id)?.released)
           onReleased?.(task.id);
       }
     }
+  }
+
+  /** Read only the runs bound to the task whose fact or deadline fired. */
+  observeFact(taskId: string, hostId: string): Promise<void> {
+    return this.observe(null, taskId, undefined, hostId, true);
   }
 }

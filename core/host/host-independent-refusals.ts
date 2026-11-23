@@ -28,7 +28,6 @@ import {
   type TaskControlInput,
 } from "../../shared/contracts";
 import type { Engine } from "../engine";
-import { verifyAcceptedEnclosingOperation } from "../planning/enclosing-operation";
 import { observationAdvanceSince } from "../recovery/observation-advance";
 import { ownerStopPendingRefusal } from "../verbs/owner-stop";
 
@@ -229,11 +228,7 @@ function closeoutBoundaryRefusal(
   )
     return null;
   const store = engine.store;
-  // The never-dispatched review-entry boundary, proved from the operation the
-  // lane accepted for this exact control: this operation is the invocation, not
-  // a competing writer against itself.
-  const enclosing = verifyAcceptedEnclosingOperation(store, input, operationId);
-  if (enclosing && store.reviewEntryUnrunBeforeFirstRun(task, enclosing))
+  if (operationId && store.reviewEntryUnrunBeforeFirstRun(task, operationId))
     return null;
   // The ordinary descendant-acceptance route: a task past its first dispatch
   // with the retained worker, workspace and recorded PR source its proofs read.

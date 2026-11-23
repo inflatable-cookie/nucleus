@@ -1,7 +1,7 @@
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import { TaskChangedRefusal, taskChangedHint } from "../../shared/task-version";
 import type { Engine } from "../engine";
-import { HostReadRefusalError, PassProofPendingError } from "../host/errors";
+import { HostReadRefusalError } from "../host/errors";
 
 /**
  * Apply one owner control and record its outcome (round 4: the applied and
@@ -31,7 +31,6 @@ export async function applyControlWithVersionHint(engine: Engine, input: TaskCon
     if (
       committed?.result &&
       committed.effect?.status === "reconciled" &&
-      !committed.preSendReceipt &&
       (!committed.preSendBoundaryStartedAt ||
         (committed.kind === "task_control" &&
           committed.effect.kind === "task_control" &&
@@ -42,8 +41,7 @@ export async function applyControlWithVersionHint(engine: Engine, input: TaskCon
     }
     if (
       !committed?.preSendBoundaryStartedAt &&
-      (error instanceof PassProofPendingError ||
-        (committed && error instanceof HostReadRefusalError))
+      committed && error instanceof HostReadRefusalError
     )
       throw error;
     const message = error instanceof Error ? error.message : String(error);

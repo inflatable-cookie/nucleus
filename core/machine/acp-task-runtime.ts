@@ -57,7 +57,8 @@ import {
   REPORT_HELPER_SCRIPTS,
 } from "./process-shapes";
 import {
-  readAcpProcessIdentities,
+  type AcpProcessIdentity,
+  type readAcpProcessIdentities,
   type AcpProcessIdentities,
 } from "./run-process-identity";
 import type { AcpTaskRuntimeBinding } from "./participant-runtime";
@@ -69,6 +70,7 @@ export type RuntimeProcessFact = {
   state?: string | null;
   command: string;
   cwd: string | null;
+  acpIdentity?: AcpProcessIdentity | null;
 };
 
 /** The installed ACP agent entry point the `nucleus` provider runs. */
@@ -271,7 +273,11 @@ export function acpTaskRuntimePids(
   const wantedTasks = new Set(binding.taskIds);
   const wantedThreads = new Set(binding.threadIds);
   const cache = new Map<string, string | null>();
-  const readIdentities = reads.identities ?? readAcpProcessIdentities;
+  const readIdentities = reads.identities ?? ((pids: readonly number[]) => {
+    const wanted = new Set(pids);
+    return new Map(processes.filter((fact) => wanted.has(fact.pid))
+      .map((fact) => [fact.pid, fact.acpIdentity ?? null]));
+  });
   const parentIdentities = readIdentities(candidates.map((fact) => fact.pid));
   const parents = new Set<number>();
   for (const fact of candidates) {

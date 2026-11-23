@@ -11,8 +11,7 @@ import { MOVE_MERGE_ACCEPTANCE_REFUSAL, moveStateRefusal, REMOVED_TASK_REFUSAL }
 /**
  * A forge observation failed before this move wrote anything or sent a stop
  * (nucleus#1428). The read was the only work done, so the refusal proves nothing
- * was bound or sent. Typed, so the operation settles failed with its pre-send
- * receipt instead of an uncertain effect that fences later merges.
+ * was bound or sent. The type lets the operation settle as a definite failure.
  */
 export class PreWriteMergeObservationRefusal extends Error {
   constructor(cause: string) {

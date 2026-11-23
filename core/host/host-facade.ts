@@ -14,6 +14,7 @@ import type {
   HostLiveAgent,
   HostMessage,
   HostObservation,
+  HostParticipantObservation,
   HostTimelineEntry,
   HostTimelinePage,
   HostWorkspaceCatalog,
@@ -173,6 +174,18 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
 
   observe(id: AgentId): Promise<HostObservation> {
     return this.#route(id, (adapter, nativeId) => adapter.observe(nativeId));
+  }
+
+  observeParticipant(id: AgentId): Promise<HostParticipantObservation | null> {
+    return this.#route(
+      id,
+      (adapter, nativeId) => {
+        const read = adapter.observeParticipant;
+        if (!read) return refused("This host cannot read exact participant state");
+        return read.call(adapter, nativeId);
+      },
+      "exact participant observation",
+    );
   }
 
   observationInventory(
@@ -487,6 +500,7 @@ export type HostFacadeMethod =
   | "workspaceArchived"
   | "originAgent"
   | "observe"
+  | "observeParticipant"
   | "observationInventory"
   | "listLiveAgents"
   | "agentTimelinePage"

@@ -92,7 +92,7 @@ export async function progressWorkspaceRetirement(store: Store, adapter: Adapter
           write({ state: 'intent', intentAt: now(), head, detail: sourceDetail });
           uncertain = true;
           return true;
-        }, Boolean(catalogAbsent), { requirePublished: true, attachedAgentIds: attached, requireDirectory: true, buildOutputCleanup: cleanup, discard, participantRuns: () => store.runs(taskId) });
+        }, Boolean(catalogAbsent), { requirePublished: true, attachedAgentIds: attached, requireDirectory: true, buildOutputCleanup: cleanup, discard, workspaceRuns: store.runs(taskId) });
       if (!archived) {
         // A refusal before any intent is held. Keep prior intent uncertain:
         // native delivery may already have happened before local teardown refused.

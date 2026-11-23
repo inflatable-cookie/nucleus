@@ -2,9 +2,7 @@ import { NO_PENDING_EFFECT_REFUSAL } from "./verb-refusal-text";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { settleSupersededFences } from "../recovery/fence-settlement";
 import type { Task, TaskControlInput } from "../../shared/contracts";
-import { blockingRecoveryEffects } from "../recovery/recovery-effects";
 import { ownerEffectRetryRefusal } from "./owner-effects";
-import { uncertainOperationRetryRefusal } from "./verb-fences";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { now } from "../store/store";
 import type { Engine } from "../engine";
@@ -40,28 +38,6 @@ export class RetryEffectControls {
   ): Promise<Task> {
     const task = this.store.task(input.taskId);
     if (task.removedAt) throw Error(REMOVED_TASK_REFUSAL);
-    // A replayed retry whose own effect already landed is answered by that
-    // recorded outcome, never re-sent or refused as stale.
-    const archived = this.engine.replayedArchiveOutcome(
-      task,
-      input,
-      operationId,
-    );
-    if (archived) return archived;
-    const catalogArchived = this.engine.replayedCatalogArchiveOutcome(
-      task,
-      input,
-      operationId,
-    );
-    if (catalogArchived) return catalogArchived;
-    // A disposition workspace step that already settled is answered by its
-    // settled disposition, never re-run from a stale operation.
-    const dispositionSettled = this.engine.replayedDispositionWorkspaceOutcome(
-      task,
-      input,
-      operationId,
-    );
-    if (dispositionSettled) return dispositionSettled;
     this.engine.requireOwnerControlCurrent(
       task,
       input.version,
@@ -107,11 +83,6 @@ export class RetryEffectControls {
       input,
     );
     if (beforeSettlement) return beforeSettlement;
-    // An uncertain host-effect control the task has since answered settles by
-    // observation, without force: the owner asked for the effect to be observed,
-    // and the task's own later record is that observation (nucleus#1159).
-    const observed = this.retryEffectByObservation(task, input);
-    if (observed) return observed;
     // Spec 050 terminal-cleanup liveness (papercut b87375b0): apply the same
     // observed-liveness settlement the verbs use before deriving the effect, so
     // an idle never-reporting run cannot fence the retry it holds. A live agent
@@ -144,10 +115,6 @@ export class RetryEffectControls {
             : NO_PENDING_EFFECT_REFUSAL,
       );
     const found = matches[0]!;
-    if (found.kind === "recovery_effect")
-      return this.engine.retryRecoveryEffect(task, input, found);
-    if (found.kind === "task_control_operation")
-      return this.engine.retryTaskControlOperation(task, found);
     // A proof policy belongs only to the disposition workspace step; it is never
     // silently ignored on another effect.
     if (input.workDisposition && found.kind !== "disposition_workspace")
@@ -239,50 +206,5 @@ export class RetryEffectControls {
       });
       return this.store.task(task.id);
     });
-  }
-
-  /**
-   * The observation half of `retry_effect` for a named task operation: the owner
-   * names `operation.<id>`. Sweep records later evidence. This path returns the
-   * current task when the occurrence no longer blocks, or the same refusal as
-   * the read view while the delivery remains uncertain.
-   */
-  retryEffectByObservation(task: Task, input: TaskControlInput): Task | null {
-    const named = input.effect
-      ? ownerEffectIdentity(input.effect, "operation")
-      : null;
-    const candidate = named ? this.store.operation(named) : null;
-    if (
-      !candidate ||
-      candidate.kind !== "task_control" ||
-      candidate.taskId !== task.id ||
-      candidate.state !== "needs_attention"
-    )
-      return null;
-    if (candidate.result && candidate.effect?.status === "reconciled")
-      return null;
-    // nucleus#1428: a move whose journal proves it wrote and sent nothing settles
-    // failed here, with that evidence. Only then may the scheduler continue.
-    if (this.store.unwrittenMergeMoveProof(candidate.id)) {
-      this.store.reconcileUnwrittenMergeMove(candidate.id, candidate.inputHash);
-      void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
-      return this.store.task(task.id);
-    }
-    const blocked = blockingRecoveryEffects(
-      this.store,
-      this.store.task(task.id),
-      { noticeKinds: "all" },
-    ).find(
-      (effect) =>
-        effect.kind === "operation" && effect.identity === candidate.id,
-    );
-    if (!blocked) return this.store.task(task.id);
-    throw new DurableFenceRefusal(
-      uncertainOperationRetryRefusal(
-        candidate.id,
-        blocked.state,
-        blocked.reason,
-      ),
-    );
   }
 }

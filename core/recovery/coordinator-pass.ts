@@ -190,7 +190,7 @@ export class CoordinatorPass {
           (run) => run.mergeRetirement && run.completion && !run.released,
         )) {
         const snapshot = JSON.stringify(retired);
-        if (!(await this.resolution.executionLease(t, undefined, false, true)))
+        if (!(await this.resolution.executionLease(t, false, true)))
           continue;
         this.store.transaction(() => {
           const current = this.store.task(t.id),

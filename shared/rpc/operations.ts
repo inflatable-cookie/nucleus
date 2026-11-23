@@ -20,6 +20,6 @@ export const operationStart = defineRpc({
 
 export const operationStatus = defineRpc({
   name: "queue.operation-status",
-  input: z.object({ operationId: z.string().min(1).max(64), reconcilePreSendInputHash: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict(),
+  input: z.object({ operationId: z.string().min(1).max(64) }).strict(),
   output: queueOperationSchema,
 });

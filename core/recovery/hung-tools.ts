@@ -8,7 +8,7 @@ import {
   terminateHungTool,
   type HungToolSignals,
 } from "../machine/hung-tool";
-import { bbThreadForAgent } from "../machine/owned-tool-process-proof";
+import { bbThreadForAgent } from "../machine/run-process-tree";
 import {
   participantRuntime,
   storeDataHome,

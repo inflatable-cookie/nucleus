@@ -3,6 +3,7 @@ import type { TaskControlTask } from "../../shared/contracts";
 import { controlHasExternalEffect } from "./control-decisions";
 import { stopControlNeedsHost } from "./owner-stop";
 import { hostIndependentControlRefusal } from "../host/host-independent-refusals";
+import { operationInputHash } from "../store/store";
 import type { Engine } from '../engine';
 
 export type TaskControlLifecycleContext = Pick<Engine, 'store' | 'resolveTaskControl' | 'hostAvailable' | 'withHost' | 'taskControlDispatcher' | 'resolution' | 'forceCallerAuthorized' | 'selfForceRole'>;
@@ -21,6 +22,18 @@ export class TaskControlLifecycle {
 
   async performTaskControl(request: TaskControlRequest, operationId?: string): Promise<TaskControlTask> {
     const input = this.context.resolveTaskControl(request);
+    if (
+      operationId &&
+      input.action === "move" &&
+      input.to === "closeout" &&
+      input.qualification
+    ) {
+      // Only the operation serving this request can exempt itself from the
+      // never-dispatched review-entry check.
+      const operation = this.context.store.operation(operationId);
+      const inputHash = operationInputHash({ type: "task_control", control: request });
+      if (operation?.inputHash !== inputHash) operationId = undefined;
+    }
     const hostId = this.context.store.task(input.taskId).hostId;
     if (controlHasExternalEffect(input)) {
       const task = this.context.store.task(input.taskId);

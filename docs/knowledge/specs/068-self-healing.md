@@ -190,8 +190,8 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
   never kills the turn. The agent sees a failed tool call and continues. Built
   (batch 5b): the command is the topmost process under the run's provider whose
   command line carries the tool's command; its own group, else its own pids, get
-  SIGTERM then SIGKILL, each after a fresh start-identity read. A command that
-  cannot be stopped no longer fences stall detection. Silence is known only when
+  SIGTERM then SIGKILL, each after a fresh start-identity read. A failed stop
+  remains visible as a hung tool. Silence is known only when
   the host showed that call's output at least once, or declares
   `streamsRunningToolOutput`. Many providers return shell output only when the
   command ends, so a call with no output shown is unknown and never terminated.
@@ -231,55 +231,36 @@ pass. Every read inside a task quantum gets a deadline and returns "unknown" whe
 it misses (Spec 066 R1). This shares its approach with nucleus#1545 (async
 segregation) and Spec 067 batch 5 (host health).
 
-A pass snapshot clears an owned-tool hold only when the host pass observed the
-participant inactive before it captured the process table. A participant outside
-the pass inventory (the task-row worker, a released reviewer) had no such
-observation, and the warm cap could skip its tool page, so merges alternated
-between those two waits forever. A quantum that reads a participant's page or
-process snapshot registers a demand keyed by host and participant, including
-threads a cleanup or recovery proof names outside the execution roster. The host
-pass serves direct demands before sibling proofs and ordinary warming. When
-delivery or shell reads are waiting, demands get up to half the warming slots
-and time first. Each waiting group gets an attempt, then the rotation shares the
-remaining capacity. Demand can pass the ordinary candidate cap when neither
-group is waiting. The first demand rotates each pass, budget skips stay queued,
-and served demand expires unless renewed.
+The host pass shares process listings and warms timeline pages for diagnostics
+and lifecycle reads. Task quanta request missing pages by host and participant.
+Demand gets up to half the warming slots and time when shell reads are waiting,
+then the rotation shares the remaining capacity. Unserved demand stays queued.
+A sealed pass reports misses as unknown and each new pass collects its own
+snapshot.
 
-An exact observation that proves the bound participant closed, archived or
-gone can satisfy the thread part of an owned-tool proof. The proof still checks
-current custody and requires a later, complete workspace and run-process scan.
-When a page read is attempted and fails, the lane sees the read failure.
-An unknown observation or a scan that predates confirmed inactivity cannot
-clear a lease.
+[Spec 067](067-explicit-resolution.md) batch 6a removes the owned-tool proof from
+review admission and retires pre-send evidence replay. Missing tool timeline or
+process evidence does not hold an ordinary review send. An unsent reviewer
+reservation still preserves its instructions and named checks when a host read
+fails. Run release uses the recorded process identity, and workspace cleanup
+keeps the checkout ownership and source checks.
 
-An ordinary review send that hits an unknown proof releases its unsent run and
-waits with a `pass_proof` fact. The next host pass serves its custody participants,
-including retired workers with explicitly released runs, under the same
-freshness rule. The send keeps its normal review instructions and any named
-checks. Custody checks freshness before using a cached process or tool
-observation to clear or hold custody. Evidence from before the participant's
-latest activity and transient custody read failures, including null timeline
-pages and process listings, leave the proof pending and renew the demand.
-If a completed host pass still cannot
-serve the proof after five minutes of host and service uptime, the task stops with
-`pass_proof_exhausted` and names the unread proof.
-The bound starts at the first proof wait for that review round and head, even
-when an intervening host read writes a different visible wait.
-
-A planner's owned-tool `retry_effect` or `move to=review` waits through the
-bounded host-read retry. Each retry uses a completed pass on the task's host
-while its snapshot is active. The pass also serves recovery and closeout
-participants named by an owned-tool retry. Proof retries have their own batch
-and run while paused so an accepted read-only proof can drain. The verb
-records its outcome when it settles. A coordinator's accepted action stays
-pending on an unread proof. If a completed pass still cannot serve the proof
-after five minutes of host and service uptime from the report's first deferral,
-the action records the exhausted proof and escalates to the planner ladder.
-
-Reusing a previous pass's snapshot was rejected: it would carry reads across
-passes, and that snapshot predates the participant's observation too.
+The remaining T3 custody checks for merge, closeout and retained verdict
+application read the exact bound participant across all provider sessions.
+They require inactivity, an empty background roster, and a complete scan
+covering the participant's workspace and run scratch. If the host pass
+missed its scan, the checks share one bounded direct scan per host pass.
+A shared scan covers only a participant observed inactive before the scan
+whose activity stamp still matches.
 
 ### 7. Attention reaches the planner quickly
+
+An opaque tool can stall only when the process inventory proves there is no live
+run process. A process whose cwd or open file lies in the recorded workspace
+or scratch, or a descendant of the run's identified provider, counts as activity.
+An incomplete inventory defers the verdict. A task uses the host pass's shared scan and can start a
+bounded, shared scan when the pass missed it. The hung-tool limit still governs
+termination when tool silence is observable.
 
 Tom, 2026-11-23: "It takes way too long for a task to be marked as blocked or
 needing attention and for the planner to be notified of the situation." Ruling
@@ -314,6 +295,11 @@ The rules:
   stays only for a running tool whose state can't be observed. Tool output,
   provider events and permissions renew activity. Release and termination
   still need process identity and complete host evidence.
+  A turn-end hint asks for an exact read of the task's live bindings.
+  A worker launch arms its own bounded read even before its first sweep.
+  A confirmed turn end records its source and time, and the grace deadline
+  wakes the task again. A due tool check primes the timeline and process
+  evidence before entering the task lane.
 - **Publish and route on receipt.** An authenticated blocker shows on the
   board and opens its next ladder rung in the same step. A classified blocker
   always has a next rung or a named owner, never a bare classification wait.
@@ -382,7 +368,7 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 5a | direct PR (nucleus#1553 cancelled) | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. Built: see [Batch 5a as built](#batch-5a-as-built). | 1 |
 | 5b | nucleus#1556 (cancelled; built as a direct PR) | Hung-tool limit, permission policy and orphan-phase readmission. Done. | 1, 3b |
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
-| 7a | lead | Wake on facts: confirmed turn end, process death, thread absence and callbacks wake the task; the stall threshold stays only for opaque tools ([§7](#7-attention-reaches-the-planner-quickly)). | — |
+| 7a | nucleus#1560 | Delivered. Confirmed turn end, process death, thread absence and callbacks wake the affected task; the stall threshold stays only for opaque tools ([§7](#7-attention-reaches-the-planner-quickly)). | — |
 | 7b | nucleus#1561 (delivered) | Publish and route on receipt: the blocker opens its ladder rung in the same step, no bare classification wait, recovery due times wake the task, transient deferrals stay Nucleus's move. | — |
 | 7c | nucleus#1562 (delivered) | One delivery record per T3 planner message (routed, accepted, queued, turn started); an idle planner gets the send at once; no steering. | 7b |
 

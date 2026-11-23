@@ -467,11 +467,6 @@ test("reopen after host acted before confirmation settles via observation withou
           s.runId === "review-run" && s.kind === "newer_turn_untouched" && s.untouchedTurnId === "turn-rev-new",
       ),
     );
-    assert.equal(onlineReopened.store.operation(res.operation.id)?.settlement?.kind, "superseded");
-    assert.equal(
-      onlineReopened.store.eventsAll(task.id).filter((e) => e.kind === "operation_superseded").length,
-      1,
-    );
     assert.equal(nextVerbs(onlineReopened.store, task.id).verbs.find((v) => v.verb === "release")?.available, true);
   } finally {
     await h.close();
@@ -713,7 +708,7 @@ test("preserves independent dispatch and merge holds and settles pre-boundary st
   }
 });
 
-test("genuine pre-send refusal writes no hold or intent and records preSendReceipt; replay after reopen never applies", async () => {
+test("genuine pre-send refusal writes no hold or intent and leaves no unresolved operation after reopening", async () => {
   const h = await makeHarness();
   try {
     const task = h.insertTask({ agentId: null, runId: null });

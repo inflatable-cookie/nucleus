@@ -9,7 +9,6 @@ import {
 } from "../workspaces/thread-archive";
 import type { WorkspaceDiscard } from "../workspaces/orphan-worktree";
 import { workspaceDiscardKey } from "../workspaces/orphan-worktree";
-import { participantToolRunIds } from "../recovery/task-reasons";
 import {
   canRetireCancelledWorkspace,
   recordWorkspaceRetirement,
@@ -162,29 +161,7 @@ export class ArchiveEffectRetries {
         );
       }
       if (exhausted.length) {
-        await archiveFinishedThreads(
-          this.store,
-          this.adapter,
-          task.id,
-          async (agentId, workspaceId) => {
-            const current = this.store.task(task.id),
-              runs = this.store.runs(task.id);
-            const runIds = participantToolRunIds(
-              current,
-              runs,
-              agentId,
-              workspaceId,
-            );
-            const hold = await this.resolution.ownedToolHold(agentId, {
-              requireCompleteEvidence: true,
-              runId: runIds[0],
-              runIds,
-              taskId: task.id,
-              workspaceId,
-            });
-            return hold.kind === "clear" ? null : hold.reason;
-          },
-        );
+        await archiveFinishedThreads(this.store, this.adapter, task.id);
         if (
           this.engine.terminalThreadsPending(
             this.store.task(task.id),
