@@ -494,7 +494,11 @@ test("Spec 068 acceptance: after a crash every task recovers with no owner or pl
   // The dispatch creates: T3 answers one late and never receives the other.
   createPlan.set(`${id("dispatch-late")}:worker`, "late");
   createPlan.set(`${id("dispatch-lost")}:worker`, "lost");
-  await passUntil("every worker started", () => [...tasks.values()].every((taskId) => store.task(taskId).phase !== "queued" && store.task(taskId).phase !== "dispatching"));
+  // A worker started once it is bound, or once its create was sent: an unknown
+  // create keeps the task dispatching on its creation wait.
+  const workerStarted = (current: Task) => current.phase !== "queued" &&
+    (current.phase !== "dispatching" || Boolean(current.agentIntent && current.runId));
+  await passUntil("every worker started", () => [...tasks.values()].every((taskId) => workerStarted(store.task(taskId))));
   // The workers that finished push and report their PR. Two reviewer creates
   // then have unknown delivery: T3 answers one late and never receives the other.
   createPlan.set(`${id("uncertain-reviewer-lost")}:reviewer`, "lost");
@@ -719,11 +723,10 @@ test("Spec 068 acceptance: after a crash every task recovers with no owner or pl
     assert.equal(current.agentId, childOf(`ns-agent-${at("dispatch-late").runId}`));
     assert.equal(events("dispatch-late", "creation_bound_by_lookup").length, 1);
   });
-  await t.test("dispatching, an unknown create reads as Nucleus waiting on the host, not a person's stop",
-    { todo: "an unknown first-dispatch create records an operator_needed stop (core/dispatch/worker-launcher.ts:569 rethrows it to the generic step failure)" }, () => {
-      for (const scenario of ["dispatch-late", "dispatch-lost"] as Scenario[])
-        assert.doesNotMatch(at(scenario).activity, /^needs_person/, `${scenario} at the crash`);
-    });
+  await t.test("dispatching, an unknown create reads as Nucleus waiting on the host, not a person's stop", () => {
+    for (const scenario of ["dispatch-late", "dispatch-lost"] as Scenario[])
+      assert.doesNotMatch(at(scenario).activity, /^needs_person/, `${scenario} at the crash`);
+  });
   await t.test("dispatching, create lost: a complete absent read relaunches it under the same command id", () => {
     const { current } = progressedToLiveRun("dispatch-lost", "worker");
     assert.equal(current.agentId, childOf(`ns-agent-${at("dispatch-lost").runId}`));
@@ -769,12 +772,11 @@ test("Spec 068 acceptance: after a crash every task recovers with no owner or pl
     assert.equal(run?.id, at("uncertain-reviewer-late").run?.id);
     assert.equal(events("uncertain-reviewer-late", "creation_bound_by_lookup").length, 1);
   });
-  await t.test("a coordinator episode running at the crash: the repair continues with no planner",
-    { todo: "a recovery episode whose coordinator thread is gone escalates to the planner (core/recovery/coordinator-pass.ts:616 rethrows the unobservable read; :880 escalates it)" }, () => {
-      const reading = next("coordinator");
-      assert.notEqual(reading.activity?.state, "needs_person", `${reading.activity?.detail}: ${task("coordinator").reason}`);
-      assert.equal(events("coordinator", "recovery_escalated").length, 0);
-    });
+  await t.test("a coordinator episode running at the crash: the repair continues with no planner", () => {
+    const reading = next("coordinator");
+    assert.notEqual(reading.activity?.state, "needs_person", `${reading.activity?.detail}: ${task("coordinator").reason}`);
+    assert.equal(events("coordinator", "recovery_escalated").length, 0);
+  });
   await t.test("a task near its budget keeps working: the downtime spent none of it", () => {
     progressedToLiveRun("budget-near", "worker");
   });

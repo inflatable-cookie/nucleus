@@ -30,6 +30,7 @@ import {
 import { RecoverySettlement } from "./recovery/coordinator-settlement";
 import { settleResponsibleFault } from "./recovery/responsible-fault";
 import {
+  deadParticipantProof,
   releaseDeadParticipant,
   retireGoneRetainedWorker,
 } from "./recovery/dead-participant";
@@ -1099,6 +1100,8 @@ export class Engine {
       releaseDeadParticipant(this, task, run);
     this.resolution.retireGoneRetainedWorker = (task) =>
       retireGoneRetainedWorker(this, task);
+    this.resolution.participantGoneProof = (task, run) =>
+      deadParticipantProof(this, task, run);
     this.retirement = retirement ?? new RuntimeRetirementService(store);
     this.lifecycle = new Lifecycle(
       enginePorts(

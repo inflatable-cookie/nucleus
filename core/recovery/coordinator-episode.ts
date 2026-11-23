@@ -50,6 +50,10 @@ import {
 } from "./coordinator-report";
 import { recoveryApplicationsInFlight } from "./coordinator-settlement";
 import {
+  deadParticipantDetail,
+  type DeadParticipantProof,
+} from "./dead-participant";
+import {
   liveNoopSummary,
   liveRecoveryWait,
   liveWorkingParticipant,
@@ -84,6 +88,7 @@ export type RecoveryContext = Pick<
   | "onTaskHost"
   | "openPlannerEscalation"
   | "openReviewContinuationEscalation"
+  | "participantGoneProof"
   | "recordStop"
   | "requiredRouteNote"
   | "responsibleBlockerLadder"
@@ -1099,6 +1104,70 @@ export class CoordinatorEpisode {
       {},
       "absent_recovery_released",
       JSON.stringify({ runId: run.id, ...observed.proof }),
+    );
+  }
+  /**
+   * Spec 068 §3: release the episode's coordinator run whose agent is provably
+   * dead (`DeadParticipantProof`), as batch A releases any other participant.
+   * The episode closes and the coordinator binding clears, so the task's stop
+   * admits a fresh coordinator through the ordinary route, under its cap. Only
+   * the exact run the pass observed, still bound to this episode and generation,
+   * is released.
+   */
+  releaseGone(t: Task, observed: Run, proof: DeadParticipantProof): Task | null {
+    if (!this.store.db.isTransaction)
+      return this.store.transaction(() => this.releaseGone(t, observed, proof));
+    const current = this.store.task(t.id),
+      run = this.store.run(observed.id),
+      episode = current.resolution.recovery;
+    if (
+      !run ||
+      run.released ||
+      run.completion ||
+      run.role !== "recovery" ||
+      run.agentId !== observed.agentId ||
+      run.agentId !== proof.agentId ||
+      run.generation !== current.coordinatorGeneration ||
+      !episode ||
+      episode.runId !== run.id ||
+      current.version !== t.version ||
+      isDispositionActive(current) ||
+      isDispositionComplete(current) ||
+      ["done", "cancelled"].includes(current.phase)
+    )
+      return null;
+    const incident = current.resolution.incident;
+    const summary = `Recovery coordinator released on proof that its agent is gone (Spec 068): ${deadParticipantDetail(proof)}`;
+    this.store.deleteCredential(run.id);
+    this.store.putRun({
+      ...run,
+      status: "superseded",
+      released: true,
+      active: false,
+    });
+    return this.resolution.update(
+      current,
+      {
+        // The dead run settled nothing: the episode closes without a result, so
+        // the stop it answered opens a fresh one, charged under the cap.
+        recoveryActive: false,
+        recovery: null,
+        ...(incident?.runId === run.id && incident.status !== "resolved"
+          ? {
+              incident: {
+                ...incident,
+                status: "resolved" as const,
+                detail: summary,
+                updatedAt: now(),
+              },
+            }
+          : {}),
+      },
+      current.coordinatorAgentId === run.agentId
+        ? { coordinatorAgentId: "" }
+        : {},
+      "participant_gone",
+      JSON.stringify(proof),
     );
   }
   save(t: Task, patch: Partial<RecoveryEpisode>) {

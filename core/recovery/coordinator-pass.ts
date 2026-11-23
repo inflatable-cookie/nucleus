@@ -95,6 +95,15 @@ export class CoordinatorPass {
         action: import("../../shared/contracts").RecoveryActionBinding,
       ) => Promise<void>)
     | null = null;
+  /** Release the episode's coordinator run on proof that its agent is dead. */
+  private async releaseGoneCoordinator(t: Task, run: Run): Promise<boolean> {
+    const prove = this.resolution.participantGoneProof;
+    if (!prove || !run.agentId) return false;
+    const proof = await prove(t, run);
+    if (!proof || this.resolution.stopped() || this.resolution.startsNoRuns())
+      return false;
+    return Boolean(this.episode.releaseGone(t, run, proof));
+  }
   async pass(taskId?: string) {
     if (
       !this.resolution.adapter.supportsCoordinatorRecovery ||
@@ -613,7 +622,15 @@ export class CoordinatorPass {
             run = this.store.run(run.id)!;
           } else if (!state) {
             if (run.completionReceivedAt) continue;
-            if (observation.kind === "unobservable") throw observation.error;
+            if (observation.kind === "unobservable") {
+              // Spec 068 §3: a coordinator whose agent is provably gone is a
+              // dead participant like any other. The failed read is only a
+              // reason to look; the proof (its process gone, or its thread
+              // absent or removed on an exact read) is the authority, and
+              // anything short of it keeps the ordinary handling below.
+              if (await this.releaseGoneCoordinator(t, run)) continue;
+              throw observation.error;
+            }
           } else if (
             (!run.completion &&
               (await this.resolution.resumeTransientProviderThread(t, run, state))) ||

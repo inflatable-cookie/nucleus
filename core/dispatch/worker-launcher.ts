@@ -22,7 +22,12 @@ import {
   PROFILE_CATALOG_PENDING_REASON,
   ProvenPreSendRefusalError,
 } from "../recovery/task-reasons";
-import { HostReadRefusalError } from "../host";
+import {
+  HostReadRefusalError,
+  HostUnknownDeliveryError,
+  isHostOperationTimeout,
+} from "../host";
+import { waitOnUncertainCreation } from "../recovery/creation-lookup";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { agentSettled } from "../machine/agent-settled";
 import { dirname } from "node:path";
@@ -569,6 +574,19 @@ export class WorkerLauncher {
           "transient_provider_retry_scheduled",
           `worker launch: one creation retry at ${retry.retryAt}; ${detail.slice(0, 1200)}`,
         );
+        return;
+      }
+      // Spec 068 §3: a create whose delivery is unknown is Nucleus's to settle,
+      // never a person's stop. It records the same wait every run launch does,
+      // and the quantum's creation lookup binds, relaunches or keeps waiting.
+      if (
+        (error instanceof HostUnknownDeliveryError ||
+          isHostOperationTimeout(error)) &&
+        current.agentIntent &&
+        !current.agentId &&
+        current.runId === runId
+      ) {
+        waitOnUncertainCreation(this.resolution, current, "worker", runId, error);
         return;
       }
       throw error;
