@@ -721,6 +721,66 @@ test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolv
   assert.equal(audit().length, 1);
 });
 
+test("run.start reviewer in a formal-review repository records the formal publication form a scheduled reviewer gets", async (t) => {
+  const launched: Record<string, unknown>[] = [];
+  const { root, store, current, command, runtime } = await fixture(t, {
+    createRun: async (
+      _task: unknown,
+      r: { id: string; role: string; workspaceId: string },
+    ) => {
+      launched.push({ ...r });
+      return {
+        id: `${r.role}-agent-${r.id.slice(0, 8)}`,
+        workspaceId: r.workspaceId || "workspace",
+      };
+    },
+  });
+  const { repoDir, initialSha } = await attachGitCheckout(
+    root,
+    store,
+    current().id,
+  );
+  store.patchRepository(
+    { path: repoDir, origin: null },
+    { reviewer: { login: "reviewer-bot" } },
+  );
+  store.update(current().id, {
+    phase: "awaiting_review",
+    prHead: initialSha,
+    profile: profile("worker-author"),
+    resolution: {
+      ...current().resolution,
+      pendingReviewReason: "Review the pushed fix",
+    },
+  });
+  runtime.engine.profiles = [profile("fresh-reviewer")];
+  store.setMeta("pool", [
+    {
+      profileId: "fresh-reviewer",
+      enabled: true,
+      group: "reviews",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["reviewer"],
+    },
+  ]);
+
+  const applied = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+  });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  const reviewRun = store.run(applied.explicitResolution!.runId!)!;
+  // Admission applies this repository's verdicts only with a formal review ID,
+  // so the run must tell its reviewer to leave publication to Nucleus.
+  assert.equal(reviewRun.formalReview, true);
+  assert.equal(reviewRun.reviewResponsibilityRequired, true);
+  assert.equal(reviewRun.reviewReason, "Review the pushed fix");
+  assert.equal(launched.length, 1);
+  assert.equal(launched[0]!.formalReview, true);
+});
+
 test("#1508: run.start reviewer head=<pushed> warns on head_mismatch and starts at the pushed head", async (t) => {
   const { root, store, current, command, runtime } = await fixture(t);
   const { worktree, initialSha } = await attachGitCheckout(

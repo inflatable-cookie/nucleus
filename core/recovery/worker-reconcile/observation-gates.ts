@@ -1,4 +1,5 @@
 import { workerActivityObservation } from "../../telemetry/task-activity-observation";
+import { threadGoneError } from "../dead-participant";
 import {
   isDispositionActive,
   isDispositionComplete,
@@ -162,7 +163,16 @@ export async function reconcileObservation(
     engine.idleGraceMs,
   );
   if (thread.kind === "unobservable") {
-    if (!completionReceivedAt) throw thread.error;
+    if (!completionReceivedAt) {
+      // Spec 068 §3: a worker whose thread (or process) is provably gone is
+      // released and continued instead of parked on the read failure.
+      if (
+        threadGoneError(thread.error) &&
+        (await resolution.releaseDeadParticipant?.(current, null))
+      )
+        return null;
+      throw thread.error;
+    }
     if (
       !releaseReported ||
       (current.checkpoints.intent &&
@@ -259,6 +269,10 @@ export async function reconcileObservation(
     // the visible cause; "Worker running" must never overwrite it mid-turn.
     if (after.phase === "needs_attention" || after.resolution.attention)
       return null;
+    // The check may have released this worker on proof that it is gone (Spec 068
+    // §3): no worker is bound any more, so the observation describes a stale
+    // display, not a running turn, and the release's own cause stays.
+    if (!after.agentId || after.runId !== current.runId) return null;
     engine.note(
       task.id,
       state.permissions

@@ -106,6 +106,12 @@ const resolutionWarningId = z.enum([
   "holds",
   "unverified_merge",
   "no_verdict",
+  // A reviewer run already reported a verdict at the current head that has not
+  // been applied; replacing or superseding it would discard that verdict.
+  "discard_reported_verdict",
+  // The host may still answer the create command of this role's uncertain run;
+  // a new run could stand beside the thread that late answer brings (Spec 068).
+  "creation_in_flight",
 ]);
 const resolutionFields = {
   taskId: resolutionId,

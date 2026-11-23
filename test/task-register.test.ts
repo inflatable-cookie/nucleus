@@ -216,6 +216,7 @@ async function fixture() {
         ...states.get(id)!,
         status: "running",
         active: true,
+        updatedAt: undefined,
         model: run.profile?.model,
       });
       return { id, workspaceId: run.workspaceId };
@@ -227,6 +228,7 @@ async function fixture() {
         ...states.get(run.agentId!)!,
         status: "running",
         active: true,
+        updatedAt: undefined,
       });
     },
     observe: async (id: string) => {

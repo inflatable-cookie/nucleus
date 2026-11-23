@@ -651,7 +651,8 @@ test("053 rotation weight: equal weights rotate equally whatever the legacy rati
 test("053 rotation weight: each notch moves the share one fixed step from Default, and the diagnostic names the same pick", () => {
   assert.deepEqual(
     profileWeightLevels.map(weightShare),
-    [0.8, 0.9, 1, 1.1, 1.2],
+    [0.5, 0.75, 1, 1.5, 2],
+    "steeper stops: 50, 75, 100, 150 and 200% of Default (nucleus#1558)",
   );
   const stops = ["fewest", "fewer", "default", "more", "most"] as const;
   const stepProfiles: Profile[] = stops.map((id) => ({
@@ -673,13 +674,13 @@ test("053 rotation weight: each notch moves the share one fixed step from Defaul
   );
   const total = Object.values(shares).reduce((sum, n) => sum + n, 0);
   assert.equal(total, 1000);
-  // 0.8 : 0.9 : 1.0 : 1.1 : 1.2 of 5.0 → 160, 180, 200, 220, 240.
+  // 0.5 : 0.75 : 1.0 : 1.5 : 2.0 of 5.75 → 87, 130, 174, 261, 348.
   for (const [id, expected] of Object.entries({
-    fewest: 160,
-    fewer: 180,
-    default: 200,
-    more: 220,
-    most: 240,
+    fewest: 87,
+    fewer: 130,
+    default: 174,
+    more: 261,
+    most: 348,
   }))
     assert.ok(
       Math.abs((shares[id] ?? 0) - expected) <= 2,
@@ -715,11 +716,11 @@ test("053 rotation weight: each notch moves the share one fixed step from Defaul
   assert.deepEqual(
     explained.met.map((row) => [row.profileId, row.weight, row.share]),
     [
-      ["most", "most", 1.2],
-      ["more", "more", 1.1],
+      ["most", "most", 2],
+      ["more", "more", 1.5],
       ["default", "default", 1],
-      ["fewer", "fewer", 0.9],
-      ["fewest", "fewest", 0.8],
+      ["fewer", "fewer", 0.75],
+      ["fewest", "fewest", 0.5],
     ],
   );
   assert.equal(

@@ -1162,6 +1162,7 @@ export class RunRelease {
           run.agentId!,
           run.id,
           run.taskId,
+          { deadlineAt: effectiveDeadlineAt },
         );
         if (tools) return tools;
       }
@@ -1217,7 +1218,11 @@ export class RunRelease {
     agentId: string,
     runId?: string,
     taskId?: string,
-    options: { requireCompleteEvidence?: boolean; allowRetired?: boolean } = {},
+    options: {
+      requireCompleteEvidence?: boolean;
+      allowRetired?: boolean;
+      deadlineAt?: number;
+    } = {},
   ): Promise<string | null> {
     if (!taskId || !runId)
       return this.resolution.ownedToolHold(agentId, options);

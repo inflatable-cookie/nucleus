@@ -12,6 +12,7 @@ import { PlannerPresence } from "./questions/planner-presence";
 import { ResponsibleThreadResolver } from "./questions/responsible-thread-resolver";
 import {
   RESPONSIBLE_OBSERVATION_MS,
+  responsiblePickable,
   type ResponsibleCandidate,
   type ResponsibleObservationState,
   type ResponsibleShortlist,
@@ -29,7 +30,9 @@ import {
   PASS_PROCESS_READ_DEADLINE_MS,
   PassSnapshot,
   QUANTUM_READ_DEADLINE_MS,
+  QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
+  currentTaskQuantumScope,
   type BoundedReadResult,
   type CoveredObservationSnapshot,
   type PassProcessRead,
@@ -385,6 +388,20 @@ export {
 } from "./recovery/resolution-decisions";
 import { resolutionAdapter } from "./resolution-adapter";
 
+/** Planner authority falls back to a finished shortlist read at most this old. */
+export const PLANNER_AUTHORITY_MAX_AGE_MS = 10 * 60_000;
+
+/** One finished observation of a project's shortlist. */
+export interface ConfirmedResponsibleRead {
+  candidates: ResponsibleCandidate[];
+  incomplete: boolean;
+  unreadHosts: string[];
+  /** When the shortlist's inventory was taken. */
+  inventoriedAt: number;
+  /** When its observations finished. */
+  finishedAt: number;
+}
+
 /**
  * The composition root every lifecycle owner reads its ports from.
  *
@@ -438,6 +455,8 @@ export class Resolution {
   responsibleObservationMs = RESPONSIBLE_OBSERVATION_MS;
   /** The read budget per read inside a task quantum; a miss returns unknown (tests shorten it). */
   quantumReadTimeoutMs = QUANTUM_READ_DEADLINE_MS;
+  /** The cumulative read-phase budget for one task quantum; caps serial observations (tests shorten it). */
+  quantumReadBudgetMs = QUANTUM_TOTAL_READ_BUDGET_MS;
   /** The read budget per host process-table snapshot; a miss returns unknown (tests shorten it). */
   passProcessReadTimeoutMs = PASS_PROCESS_READ_DEADLINE_MS;
   /** Total per-host budget for timeline warming inside one host pass (tests shorten it). */
@@ -461,8 +480,10 @@ export class Resolution {
     this.passSnapshot = null;
   }
 
-  /** The currently active pass snapshot, or null outside a sweep pass. */
+  /** The currently active pass snapshot (sweep pass or wake-scoped), or null outside a pass. */
   currentPassSnapshot(): PassSnapshot | null {
+    const scoped = currentTaskQuantumScope()?.snapshot;
+    if (scoped?.active) return scoped;
     return this.passSnapshot?.active ? this.passSnapshot : null;
   }
 
@@ -549,7 +570,10 @@ export class Resolution {
    * inside a sweep pass) or under a bounded deadline (outside a pass). A slow
    * or unreadable table resolves as `{ state: "unknown", reason }`, never a hang.
    */
-  readPassProcesses(hostId?: string | null): Promise<PassProcessRead> {
+  readPassProcesses(
+    hostId?: string | null,
+    options: { allowMissFetch?: boolean } = {},
+  ): Promise<PassProcessRead> {
     const key = this.passHostKey(hostId);
     const deadlineMs = this.passProcessReadTimeoutMs;
     const read = async (): Promise<HostProcessListRead> => {
@@ -572,7 +596,16 @@ export class Resolution {
       return readHostUidProcesses({ deadlineMs });
     };
     const snapshot = this.currentPassSnapshot();
-    if (snapshot) return snapshot.processes(key, read, deadlineMs);
+    if (snapshot) return snapshot.processes(key, read, deadlineMs, options);
+    if (currentTaskQuantumScope()?.inTaskQuantum) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "host process listing was not captured in a host pass; waiting for the next pass",
+        capturedAt: Date.now(),
+        fromPassSnapshot: true,
+      });
+    }
     const capturedAt = Date.now();
     return boundedRead("host process listing", read, deadlineMs).then(
       (result) =>
@@ -593,9 +626,9 @@ export class Resolution {
     );
   }
 
-  /** Pre-warm one host's process snapshot during its host pass. */
+  /** Pre-warm one host's process snapshot during its host pass (or host-side cleanup lane). */
   primePassProcesses(hostId: string): Promise<PassProcessRead> {
-    return this.readPassProcesses(hostId);
+    return this.readPassProcesses(hostId, { allowMissFetch: true });
   }
 
   /** Drop one host's cached process snapshot after reaping processes in this pass. */
@@ -618,6 +651,13 @@ export class Resolution {
     const snapshot = this.currentPassSnapshot();
     if (snapshot)
       return snapshot.timeline(key, agentId, limit, read, deadlineMs);
+    if (currentTaskQuantumScope()?.inTaskQuantum) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "agent timeline was not captured in a host pass; waiting for the next pass",
+      });
+    }
     return boundedRead("agent timeline", read, deadlineMs);
   }
 
@@ -658,6 +698,14 @@ export class Resolution {
         deadlineMs,
         options,
       );
+    if (currentTaskQuantumScope()?.inTaskQuantum) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "agent timeline page was not captured in a host pass; waiting for the next pass",
+        fromPassSnapshot: true,
+      });
+    }
     const capturedAt = Date.now();
     return boundedRead("agent timeline page", read, deadlineMs).then(
       (result) => ({
@@ -694,12 +742,24 @@ export class Resolution {
     );
   }
 
-  /** Only a routable or unverified candidate can be picked; `unroutable` never is. */
-  private static pickable(candidate: ResponsibleCandidate): boolean {
-    return (
-      candidate.observation?.state === "routable" ||
-      candidate.observation?.state === "unverified"
-    );
+  /**
+   * The last observation of each project's shortlist that finished, kept even
+   * when an invalidation (a candidate's own call, a notice to it) discarded it
+   * before routing could use it. Routing never reads it; planner authority may.
+   */
+  private readonly lastConfirmed = new Map<string, ConfirmedResponsibleRead>();
+
+  /** How old a finished read planner authority may fall back to (tests shorten it). */
+  plannerAuthorityMaxAgeMs = PLANNER_AUTHORITY_MAX_AGE_MS;
+
+  /** The last confirmed read of a project's shortlist, while it is within the authority bound. */
+  lastConfirmedResponsible(
+    projectKey: string,
+  ): ConfirmedResponsibleRead | null {
+    const read = this.lastConfirmed.get(projectKey);
+    return read && Date.now() - read.finishedAt <= this.plannerAuthorityMaxAgeMs
+      ? read
+      : null;
   }
 
   private static threadOf(candidate: ResponsibleCandidate): ResponsibleThread {
@@ -716,7 +776,7 @@ export class Resolution {
     return cached
       ? (this.confirmedResponsible
           .get(cached)
-          ?.find((candidate) => Resolution.pickable(candidate))?.agentId ??
+          ?.find((candidate) => responsiblePickable(candidate))?.agentId ??
           null)
       : null;
   }
@@ -753,16 +813,18 @@ export class Resolution {
           exclude!.hostId,
         );
       const senderIsCandidate = confirmed.candidates.some(
-        (candidate) => isSender(candidate) && Resolution.pickable(candidate),
+        (candidate) => isSender(candidate) && responsiblePickable(candidate),
       );
       const pick = confirmed.candidates.find(
-        (candidate) => !isSender(candidate) && Resolution.pickable(candidate),
+        (candidate) => !isSender(candidate) && responsiblePickable(candidate),
       );
       return {
         thread: pick ? Resolution.threadOf(pick) : null,
         observedAt: confirmed.shortlist.observedAt,
         senderIsCandidate,
+        confirmed: true,
         incomplete: Boolean(confirmed.shortlist.incomplete),
+        unreadHosts: confirmed.shortlist.unreadHosts ?? [],
         shortlist: confirmed.candidates,
       };
     }
@@ -772,7 +834,9 @@ export class Resolution {
       thread: null,
       observedAt: Date.now(),
       senderIsCandidate: false,
+      confirmed: false,
       incomplete: true,
+      unreadHosts: cached?.unreadHosts ?? [],
       shortlist: (cached?.threads ?? []).map((thread) => ({
         ...thread,
         observation: null,
@@ -915,15 +979,6 @@ export class Resolution {
       shortlist.threads.map((thread) => this.observeCandidate(thread)),
     )
       .then((reads) => {
-        if (cache.peek(projectKey) !== shortlist) return null;
-        const closed = new Set(
-          reads
-            .filter((read) => read.state === "gone")
-            .map((read) => read.thread.agentId),
-        );
-        const current = closed.size
-          ? cache.discardClosed(projectKey, shortlist, closed)
-          : shortlist;
         const candidates: ResponsibleCandidate[] = reads.flatMap((read) =>
           read.state === "gone"
             ? []
@@ -938,6 +993,26 @@ export class Resolution {
                 },
               ],
         );
+        // Recorded before the currency check: an invalidation that lands while
+        // the reads run makes routing discard them, but they still finished.
+        const previous = this.lastConfirmed.get(projectKey);
+        if (!previous || previous.inventoriedAt <= shortlist.observedAt)
+          this.lastConfirmed.set(projectKey, {
+            candidates,
+            incomplete: Boolean(shortlist.incomplete),
+            unreadHosts: shortlist.unreadHosts ?? [],
+            inventoriedAt: shortlist.observedAt,
+            finishedAt: Date.now(),
+          });
+        if (cache.peek(projectKey) !== shortlist) return null;
+        const closed = new Set(
+          reads
+            .filter((read) => read.state === "gone")
+            .map((read) => read.thread.agentId),
+        );
+        const current = closed.size
+          ? cache.discardClosed(projectKey, shortlist, closed)
+          : shortlist;
         this.confirmedResponsible.set(current, candidates);
         return { shortlist: current, candidates };
       })
@@ -1113,6 +1188,7 @@ export class Resolution {
       "readPassTimeline",
       "recordStop",
       "recovery",
+      "releaseDeadParticipant",
       "saveIncident",
       "store",
       "update",
@@ -1329,6 +1405,7 @@ export class Resolution {
       "hostAvailable",
       "hostReadTransientFailure",
       "clearHostReadTransient",
+      "deliverLaunchRun",
       "inventoryHostMatches",
       "launchingRuns",
       "onTaskHost",
@@ -1336,6 +1413,7 @@ export class Resolution {
       "paused",
       "reconcileStalledTurnStop",
       "recoverRefusedReviewer",
+      "releaseDeadParticipant",
       "remindStoppedRun",
       "resolveIncident",
       "resumeTransientProviderThread",
@@ -1441,6 +1519,8 @@ export class Resolution {
       "lease",
       "leaseDeclineText",
       "openPlannerEscalation",
+      "graceMs",
+      "onTaskHost",
       "ordinaryRoundCustody",
       "ownedToolHold",
       "recordBlockedPrIdentity",
@@ -1528,6 +1608,7 @@ export class Resolution {
       "responsibleJointQuestion",
       "retainedProfileIssue",
       "retainedWorkerProfileIssue",
+      "retireGoneRetainedWorker",
       "reviewerCapabilityIssue",
       "retryContext",
       "reviewerSetting",
@@ -2718,6 +2799,7 @@ export class Resolution {
       runIds?: string[];
       taskId?: string;
       workspaceId?: string;
+      deadlineAt?: number;
     } = {},
   ): Promise<string | null> {
     return this.ownedTools.ownedToolHold(agentId, options);
@@ -3743,6 +3825,17 @@ export class Resolution {
   reapplyPendingReview(t: Task): Promise<"none" | "applied" | "blocked"> {
     return this.resultApplication.reapplyPendingReview(t);
   }
+  /**
+   * Engine-provided (Spec 068 §3): release the participant whose agent is
+   * provably dead, through the ordinary `run.release` plan. A `Resolution` built
+   * without an engine reports no release.
+   */
+  releaseDeadParticipant?: (task: Task, run: Run | null) => Promise<boolean>;
+  /**
+   * Engine-provided (Spec 068 §3): retire a retained worker whose thread its host
+   * positively reports gone, so the revision continues on a fresh worker.
+   */
+  retireGoneRetainedWorker?: (task: Task) => Promise<boolean>;
   gitTransientFailure?: (task: Task, error: unknown) => boolean;
   hostReadTransientFailure?: (
     task: Task,
@@ -3776,6 +3869,16 @@ export class Resolution {
         !proofWaitApplies(task)
       )
         return this.blockerLadderStep(task).then(() => undefined);
+      // The refusal names the owner that must act before this verdict applies.
+      // It is the task's visible typed wait, never a stale lifecycle sentence
+      // such as "waiting for thread release" with nothing left to release. A
+      // live run or another owner's stop keeps its own reason.
+      if (
+        (!task.resolution.stop ||
+          task.resolution.stop.reason === "lifecycle") &&
+        !this.store.runs(task.id).some((run) => !run.released)
+      )
+        this.waiting(task, published.refusal, "lifecycle");
       return Promise.resolve();
     }
     return this.resultApplication

@@ -1,3 +1,4 @@
+import { settleWorkerCreation } from "../recovery/creation-lookup";
 import { stopClearedPatch } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
@@ -6,7 +7,12 @@ import {
   sweepSettledRunProcesses,
 } from "../machine/run-process-cleanup";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
-import { QUANTUM_READ_DEADLINE_MS, boundedRead } from "./pass-snapshot";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  QUANTUM_TOTAL_READ_BUDGET_MS,
+  boundedRead,
+  runInTaskQuantumScope,
+} from "./pass-snapshot";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileUsageGate } from "../dispatch/usage-gate";
 import { reconcileUnavailablePreference } from "../dispatch/unavailable-preference";
@@ -83,12 +89,18 @@ export type TaskQuantumContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
+    | "adapter"
     | "advance"
     | "beginValidationScanPass"
+    | "graceMs"
+    | "hostAvailable"
+    | "onTaskHost"
+    | "store"
     | "clearHostReadTransient"
     | "holdProofOnlyGoWait"
     | "ownedToolHold"
     | "owns"
+    | "quantumReadBudgetMs"
     | "quantumReadTimeoutMs"
     | "raiseOperatorQuestions"
     | "reconcileHoldUntil"
@@ -221,20 +233,25 @@ export class TaskQuantum {
   }
 
   async taskQuantum(taskId: string): Promise<void> {
-    const task = this.reconcileProfileAdmission(
-      this.context.store.task(taskId),
-    );
-    const quantum = { pausedForPrerequisiteWait: false };
-    // One pass, one worktree-validation scan: every read this quantum makes for
-    // the same task worktree and selector argv shares it, and the next quantum
-    // reads again (task 450).
-    this.context.resolution.beginValidationScanPass();
-    try {
-      await this.context.quantumSteps(taskId, task, quantum);
-    } finally {
-      if (!quantum.pausedForPrerequisiteWait)
-        await this.context.quantumFinish(taskId);
-    }
+    const budgetMs =
+      this.context.resolution.quantumReadBudgetMs ??
+      QUANTUM_TOTAL_READ_BUDGET_MS;
+    return runInTaskQuantumScope(budgetMs, async () => {
+      const task = this.reconcileProfileAdmission(
+        this.context.store.task(taskId),
+      );
+      const quantum = { pausedForPrerequisiteWait: false };
+      // One pass, one worktree-validation scan: every read this quantum makes for
+      // the same task worktree and selector argv shares it, and the next quantum
+      // reads again (task 450).
+      this.context.resolution.beginValidationScanPass();
+      try {
+        await this.context.quantumSteps(taskId, task, quantum);
+      } finally {
+        if (!quantum.pausedForPrerequisiteWait)
+          await this.context.quantumFinish(taskId);
+      }
+    });
   }
 
   async quantumSteps(
@@ -521,7 +538,17 @@ export class TaskQuantum {
             ? await this.context.recoverExistingWorkspace(task)
             : false;
         const latest = this.context.store.task(task.id);
-        if (!bound && !latest.resolution.stop) {
+        // Spec 068 §3: the initial worker's uncertain creation settles by lookup
+        // (bind, release for one relaunch, or a named wait) like every role's.
+        const settled =
+          !bound && latest.agentIntent && !latest.agentId && latest.workspaceId
+            ? await settleWorkerCreation(this.context.resolution, latest)
+            : "skipped";
+        if (settled === "relaunched")
+          this.context.cleanContext(() => {
+            void this.context.wakeRepository(latest.repoPath);
+          });
+        if (!bound && settled === "skipped" && !latest.resolution.stop) {
           this.context.resolution.waiting(
             latest,
             latest.agentIntent && !latest.agentId

@@ -1,3 +1,4 @@
+import { threadGoneError } from "../recovery/dead-participant";
 import type { Resolution } from "../resolution";
 import type { Profile, Run, Task } from "../../shared/contracts";
 import {
@@ -257,9 +258,10 @@ function planWorkerFailover(
   const pool = store.pool();
   const usage = store.usageLevel();
   const pending = task.replacementProfile;
-  const requested = pending && isWorkerRouteAllowed(task, pending.profileId, pool, usage)
-    ? pending
-    : null;
+  const requested =
+    pending && isWorkerRouteAllowed(task, pending.profileId, pool, usage)
+      ? pending
+      : null;
   // An errored process is not evidence against its profile. Profile failures
   // are represented by the durable exclusions that an owner can inspect/lift.
   const profiles = facts.profiles.filter(
@@ -322,10 +324,10 @@ function planWorkerFailover(
     replacementTask,
     profiles,
     selectionPool,
-    store.counts(),
+    store.rotationCounts("worker").counts,
     unavailable,
     "worker",
-    store.recentCounts(),
+    store.rotationCounts("worker").recent,
     store.usageLevel(),
   );
   if (!selected) {
@@ -369,10 +371,10 @@ function planWorkerFailover(
         replacementTask,
         restoredProfiles,
         selectionPool,
-        store.counts(),
+        store.rotationCounts("worker").counts,
         new Set(),
         "worker",
-        store.recentCounts(),
+        store.rotationCounts("worker").recent,
         store.usageLevel(),
       )
     ) {
@@ -540,9 +542,11 @@ export type WorkerFailoverContext = Pick<
     | "clearTransportWait"
     | "graceMs"
     | "recordStop"
+    | "releaseDeadParticipant"
     | "resumeTransientProviderThread"
     | "resumeTransientWorker"
     | "retainedWorkerProfileIssue"
+    | "retireGoneRetainedWorker"
     | "suppressAutomaticRetry"
     | "transportDeferred"
     | "waiting"
@@ -1156,6 +1160,21 @@ export class WorkerFailover {
             error,
           );
           continue;
+        }
+        // Spec 068 §3: the host's answer that the retained worker's thread is
+        // gone is not a task fault to park. On a complete read that proves it,
+        // a revision continues on a fresh worker and a dead run is released for
+        // ordinary admission; anything short of that proof is noted as before.
+        if (threadGoneError(error) && !this.store.getMeta("paused")) {
+          const latest = this.store.task(original.id);
+          const settled =
+            latest.phase === "changes_requested" && !revision
+              ? await this.resolution.retireGoneRetainedWorker?.(latest)
+              : await this.resolution.releaseDeadParticipant?.(
+                  latest,
+                  revision ? (this.store.run(revision.id) ?? null) : null,
+                );
+          if (settled) continue;
         }
         if (!this.store.getMeta("paused"))
           this.engine.note(

@@ -140,7 +140,8 @@ owner to the rules it enforces.
 - `core/verbs/owner-verbs.ts` owns the owner verb registry, `task.next` and
   `currentReviewOutcome` ([Spec 050](specs/050-owner-task-controls.md)).
 - `core/dispatch/routing.ts` applies eligibility gates, keeps every profile that meets
-  demand, then rotates by the weight stop's share and balances by group
+  demand, then rotates each role by the weight stop's share over that role's own
+  recent and lifetime use, with groups balanced across roles
   ([Spec 053](specs/053-demand-based-selection.md)). Its `RoleSelection` decides
   who may take a reviewer, coordinator or executor role; `Resolution` delegates
   to it. `reviewerIndependence` is the pure Spec 036/050 rule those sites share,

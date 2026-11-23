@@ -22,21 +22,33 @@ export type Scope = z.infer<typeof scopeSchema>;
  * capability is the four brackets below). Unset stays neutral: selection never
  * infers a rating from a model name or notes (Tom 2026-10-12).
  */
-export const capabilityLevels = ["very_low", "low", "medium", "high", "very_high"] as const;
+export const capabilityLevels = [
+  "very_low",
+  "low",
+  "medium",
+  "high",
+  "very_high",
+] as const;
 
 export const capabilityLevelSchema = z.enum(capabilityLevels);
 
 export type CapabilityLevel = z.infer<typeof capabilityLevelSchema>;
 
 /**
- * A pool entry's rotation weight (Spec 053, Tom 2026-11-21): five named stops
- * with Default at the centre. Each stop moves the profile's relative rotation
- * share by one fixed additive step from Default (80%, 90%, 100%, 110%, 120%).
- * A share only orders rotation among profiles already eligible; it never
- * admits or excludes one, and it is not a percentage of all work. The retired
- * integer weight and the retired Cost rating read through `poolRecordFromLegacy`.
+ * A pool entry's rotation weight (Spec 053, Tom 2026-11-21, steeper stops Tom
+ * 2026-11-22): five named stops with Default at the centre. Each stop sets the
+ * profile's relative rotation share (50%, 75%, 100%, 150%, 200% of Default). A
+ * share only orders rotation among profiles already eligible; it never admits
+ * or excludes one, and it is not a percentage of all work. The retired integer
+ * weight and the retired Cost rating read through `poolRecordFromLegacy`.
  */
-export const profileWeightLevels = ["fewest", "fewer", "default", "more", "most"] as const;
+export const profileWeightLevels = [
+  "fewest",
+  "fewer",
+  "default",
+  "more",
+  "most",
+] as const;
 
 export const profileWeightSchema = z.enum(profileWeightLevels);
 
@@ -44,15 +56,18 @@ export type ProfileWeight = z.infer<typeof profileWeightSchema>;
 
 export const DEFAULT_PROFILE_WEIGHT: ProfileWeight = "default";
 
-/** One notch moves the relative share by this much of Default's share. */
-export const WEIGHT_SHARE_STEP = 0.1;
-
-/** The relative rotation share of a weight stop: 0.8, 0.9, 1, 1.1, 1.2. */
-export const weightShare = (weight: ProfileWeight): number => {
-  const centre = Math.floor(profileWeightLevels.length / 2);
-  // Round away float noise so equal stops compare equal and diagnostics read cleanly.
-  return Math.round((1 + (profileWeightLevels.indexOf(weight) - centre) * WEIGHT_SHARE_STEP) * 100) / 100;
+/** The relative rotation share of each weight stop: 50%, 75%, 100%, 150% and 200% of Default's share. */
+export const WEIGHT_SHARES: Readonly<Record<ProfileWeight, number>> = {
+  fewest: 0.5,
+  fewer: 0.75,
+  default: 1,
+  more: 1.5,
+  most: 2,
 };
+
+/** The relative rotation share of a weight stop (`WEIGHT_SHARES`). */
+export const weightShare = (weight: ProfileWeight): number =>
+  WEIGHT_SHARES[weight];
 
 /**
  * The retired integer weight read as a stop (Tom, 2026-11-21): the old default 1
@@ -60,8 +75,15 @@ export const weightShare = (weight: ProfileWeight): number => {
  * is returned unchanged so validation still refuses it.
  */
 export const legacyWeightStop = (value: unknown): unknown =>
-  typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 10
-    ? value === 1 ? "default" : value === 2 ? "more" : "most"
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 1 &&
+  value <= 10
+    ? value === 1
+      ? "default"
+      : value === 2
+        ? "more"
+        : "most"
     : value;
 
 /**
@@ -70,7 +92,12 @@ export const legacyWeightStop = (value: unknown): unknown =>
  * what were `medium` and `high`; Heavyweight was `very_high`; Frontier stays.
  * A Frontier profile is request-only below Extra high.
  */
-export const profileCapabilityLevels = ["mechanical", "worker", "heavyweight", "frontier"] as const;
+export const profileCapabilityLevels = [
+  "mechanical",
+  "worker",
+  "heavyweight",
+  "frontier",
+] as const;
 
 export type ProfileCapability = (typeof profileCapabilityLevels)[number];
 
@@ -79,13 +106,24 @@ export type ProfileCapability = (typeof profileCapabilityLevels)[number];
  * each became (Tom, 2026-11-19). The store migrates stored rows once; the
  * schemas read a stale writer's value the same way at the wire boundary.
  */
-export const LEGACY_CAPABILITY_BRACKETS: Readonly<Record<string, ProfileCapability>> = {
-  very_low: "mechanical", low: "mechanical", medium: "worker", high: "worker", very_high: "heavyweight",
+export const LEGACY_CAPABILITY_BRACKETS: Readonly<
+  Record<string, ProfileCapability>
+> = {
+  very_low: "mechanical",
+  low: "mechanical",
+  medium: "worker",
+  high: "worker",
+  very_high: "heavyweight",
 };
 export const legacyBracket = (value: unknown): unknown =>
-  typeof value === "string" && Object.hasOwn(LEGACY_CAPABILITY_BRACKETS, value) ? LEGACY_CAPABILITY_BRACKETS[value] : value;
+  typeof value === "string" && Object.hasOwn(LEGACY_CAPABILITY_BRACKETS, value)
+    ? LEGACY_CAPABILITY_BRACKETS[value]
+    : value;
 
-export const profileCapabilitySchema = z.preprocess(legacyBracket, z.enum(profileCapabilityLevels));
+export const profileCapabilitySchema = z.preprocess(
+  legacyBracket,
+  z.enum(profileCapabilityLevels),
+);
 
 /** A run's demand is a bracket: the task's complexity moved by the usage level and the step-up (Spec 053). */
 export type DemandLevel = ProfileCapability;
@@ -99,7 +137,13 @@ export const demandLevelSchema = profileCapabilitySchema;
  * capability brackets, whether climbing back to the task's own requested tier is
  * allowed, and which profiles require a request. `normal` is the default.
  */
-export const usageLevels = ["low", "normal", "high", "extra_high", "maximum"] as const;
+export const usageLevels = [
+  "low",
+  "normal",
+  "high",
+  "extra_high",
+  "maximum",
+] as const;
 
 /**
  * Spec 052 naming migration (Tom, 2026-11-17): `minimal` is removed and its
@@ -107,6 +151,9 @@ export const usageLevels = ["low", "normal", "high", "extra_high", "maximum"] as
  * and `extra_high` joins between `high` and `maximum`. The preprocess reads a
  * stale writer's value at the wire boundary exactly as a stored row reads it.
  */
-export const usageLevelSchema = z.preprocess(value => value === "minimal" ? "low" : value, z.enum(usageLevels));
+export const usageLevelSchema = z.preprocess(
+  (value) => (value === "minimal" ? "low" : value),
+  z.enum(usageLevels),
+);
 
 export type UsageLevel = z.infer<typeof usageLevelSchema>;

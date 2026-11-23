@@ -57,8 +57,10 @@ import {
   identity,
   intentKindOf,
   intentThreadId,
+  type EffectOptions,
   type T3IntentLedger,
 } from "./intents";
+import { HostUnknownDeliveryError } from "../../core/host";
 import { canonical, type T3State, type T3StateFile } from "./state";
 import { labelRole, labelTask } from "./one-row";
 
@@ -477,6 +479,22 @@ export class T3Nesting {
       // live parent, even if this process dies before that dispose lands.
       completionWake: "settled_only",
     };
+    // Spec 068 §3: a relaunch under the same command id. While this process still
+    // awaits the original command's late reply it stays unknown. Otherwise T3 is
+    // read first (the live shell inside its bound, then one exact read of the
+    // derived child id): a thread T3 has is adopted below, never created again,
+    // and only a complete read proving it absent resends the same command.
+    const priorIntent = this.core.state.read().intents[commandId];
+    let resend: EffectOptions = {};
+    if (priorIntent?.status === "unknown") {
+      if (this.core.intents.lateReplyPossible(commandId))
+        throw new HostUnknownDeliveryError(priorIntent.diagnostic);
+      await this.core.reads.readShell();
+      // Only absence is proof: a tombstoned child means the create did land, so
+      // it is never resent (the lookup names that thread as removed instead).
+      if (!(await this.knownThread(threadId)))
+        resend = { resendUnknownAfterRead: true, absentOnCompleteRead: true };
+    }
     // Record the child's identity before the send, so a lost reply cannot produce an
     // unowned thread: the id is derived from the command id, never from an answer.
     this.core.state.update((state) => {
@@ -513,6 +531,8 @@ export class T3Nesting {
           if (input.spec.guard && !input.spec.guard.stillAllowed())
             throw new ProvenPreSendRefusalError("T3Code launch guard changed");
         },
+        undefined,
+        resend,
       );
     } catch (error) {
       if (await this.adoptChild(parent, commandId))

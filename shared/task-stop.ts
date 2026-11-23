@@ -236,6 +236,12 @@ export const taskDecisionFactSchema = z
       "consult",
       "review_delivery",
       "origin_error",
+      // Spec 068 §3: a participant whose agent is provably gone, past the
+      // automatic relaunch bound; its subject is the run (or retained worker).
+      "participant_gone",
+      // Spec 068 §3: the host may still answer the run's own create command, so
+      // the creation waits for that answer; nothing replaces it meanwhile.
+      "creation_in_flight",
     ]),
     subject: z.string().min(1).max(240).optional(),
   })
@@ -581,3 +587,30 @@ export const taskStopKindSchema = z.enum([
 ]);
 
 export type TaskStopKind = z.infer<typeof taskStopKindSchema>;
+
+/**
+ * A stop that names this run as its subject: an uncertain-creation wait, or a
+ * stalled-turn stop bound to it. Once the run is released the stop describes
+ * history, so the release clears it (Spec 068 §5; bovine-accelerator#6863 kept
+ * "Uncertain reviewer creation <old run>" after its replacement).
+ */
+export function stopNamesRun(
+  task: {
+    resolution: {
+      stop: TaskStopRecord | null;
+      incident?: { runId?: string | null } | null;
+      stalledTurnStop?: { runId: string } | null;
+    };
+  },
+  runId: string,
+): boolean {
+  const stop = task.resolution.stop;
+  if (!stop) return false;
+  if (stop.fact?.subject === runId) return true;
+  return (
+    stop.reason === "run_stalled" &&
+    (task.resolution.incident?.runId === runId ||
+      task.resolution.stalledTurnStop?.runId === runId)
+  );
+}
+

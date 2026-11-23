@@ -42,6 +42,23 @@ import {
   occupiesSlot,
 } from "../dispatch/capacity";
 import { LANE_PRIORITY_TASK } from "./lane-priorities";
+import {
+  HOST_PASS_WARM_BUDGET_MS,
+  HOST_PASS_WARM_CANDIDATE_CAP,
+  PASS_PROCESS_READ_DEADLINE_MS,
+  PassSnapshot,
+  QUANTUM_READ_DEADLINE_MS,
+  QUANTUM_TOTAL_READ_BUDGET_MS,
+  boundedRead,
+  runInTaskQuantumScope,
+  runOutsideTaskQuantumScope,
+} from "./pass-snapshot";
+import { knownExecutionParticipantIds } from "../machine/execution-participants";
+import {
+  TOOL_TIMELINE_LIMIT,
+  TOOL_TIMELINE_READ_BUDGET,
+  liveToolIssueFact,
+} from "../recovery/stall";
 import { now, type Store } from "../store/store";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 import { markPhaseFact } from "./phase-latency";
@@ -197,6 +214,8 @@ export {
  */
 export type TaskWakesContext = Pick<
   Engine,
+  | "adapter"
+  | "host"
   | "resolution"
   | "admission"
   | "applyDeferredOwnerVerbs"
@@ -769,69 +788,334 @@ export class TaskWakes {
     }
   }
 
+  /**
+   * Whether a wake-triggered quantum for `taskId` needs a host-side snapshot
+   * prefetch before acquiring `task:<taskId>`. Returning false keeps trivial
+   * wakes (e.g. queued tasks or live in-flight turns) on a single hop while
+   * `TaskQuantumReadScope` still forbids any direct expensive read inside the
+   * task lane.
+   */
+  private needsWakePrefetch(taskId: string): boolean {
+    if (this.engine.stopped) return false;
+    const task = this.store.taskOrNull(taskId);
+    if (
+      !task ||
+      task.removedAt ||
+      ["queued", "working", "reviewing", "done", "cancelled"].includes(
+        task.phase,
+      ) ||
+      !task.hostId ||
+      !this.engine.taskHostAvailable(task)
+    )
+      return false;
+    const adapter = this.engine.adapter;
+    if (!adapter.agentTimelinePage && !adapter.hostProcessListing) return false;
+    const runs = this.store.runs(taskId);
+    return knownExecutionParticipantIds(task, runs).length > 0;
+  }
+
+  /**
+   * Spec 068 §6: host-side snapshot priming for wake-triggered quanta outside
+   * `auditPass`. Runs BEFORE acquiring the exclusive `task:<taskId>` lane so
+   * expensive timeline and process reads never run inside a task lane; the host
+   * is sealed before the snapshot is handed to `scheduleTaskQuantum`.
+   */
+  private primeWakeSnapshot(taskId: string): Promise<PassSnapshot | undefined> {
+    if (!this.needsWakePrefetch(taskId)) return Promise.resolve(undefined);
+    return runOutsideTaskQuantumScope(() => this.runPrimeWakeSnapshot(taskId));
+  }
+
+  private async runPrimeWakeSnapshot(
+    taskId: string,
+  ): Promise<PassSnapshot | undefined> {
+    if (this.engine.stopped) return undefined;
+    const task = this.store.taskOrNull(taskId);
+    if (
+      !task ||
+      task.removedAt ||
+      ["done", "cancelled"].includes(task.phase) ||
+      !task.hostId ||
+      !this.engine.taskHostAvailable(task)
+    )
+      return undefined;
+    const adapter = this.engine.adapter;
+    if (!adapter.agentTimelinePage && !adapter.hostProcessListing)
+      return undefined;
+    const runs = this.store.runs(taskId);
+    const participants = knownExecutionParticipantIds(task, runs).slice(
+      0,
+      HOST_PASS_WARM_CANDIDATE_CAP,
+    );
+    if (!participants.length) return undefined;
+
+    const hostId = task.hostId;
+    const snapshot = new PassSnapshot();
+    const budgetMs =
+      this.resolution.hostPassWarmBudgetMs ?? HOST_PASS_WARM_BUDGET_MS;
+    const perReadMs =
+      this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const processDeadlineMs =
+      this.resolution.passProcessReadTimeoutMs ?? PASS_PROCESS_READ_DEADLINE_MS;
+    const deadlineAt = Date.now() + Math.max(0, budgetMs);
+    const remaining = () => Math.max(0, deadlineAt - Date.now());
+
+    try {
+      await this.engine.withHost(hostId, async () => {
+        let needsProcesses = false;
+        for (const { agentId, workspaceId } of participants) {
+          if (this.engine.stopped || remaining() <= 0) break;
+          let obs: Awaited<ReturnType<Engine["host"]["observe"]>> | null = null;
+          try {
+            const read = await boundedRead(
+              "participant observation",
+              () => this.engine.host.observe(agentId),
+              Math.min(remaining(), perReadMs),
+            );
+            if (read.state === "ok") obs = read.value;
+          } catch {
+            if (adapter.originAgent && remaining() > 0) {
+              const originRead = await boundedRead(
+                "origin agent observation",
+                () => this.engine.host.originAgent(agentId),
+                Math.min(remaining(), perReadMs),
+              ).catch(() => ({
+                state: "unknown" as const,
+                reason: "origin read failed",
+              }));
+              if (originRead.state === "ok") {
+                const origin = originRead.value;
+                if (!origin || origin.deleted === true) {
+                  obs = {
+                    id: agentId,
+                    workspaceId: origin?.workspaceId ?? workspaceId ?? "",
+                    status: "gone",
+                    active: false,
+                    activeTurnId: null,
+                    permissions: false,
+                    error: "",
+                    archived: true,
+                  };
+                } else if (origin.archived === true) {
+                  obs = {
+                    id: agentId,
+                    workspaceId: origin.workspaceId,
+                    status: "closed",
+                    active: false,
+                    activeTurnId: null,
+                    permissions: false,
+                    error: "",
+                    archived: true,
+                  };
+                }
+              }
+            }
+          }
+          if (!obs) continue;
+          snapshot.recordHostObservation(hostId, agentId, obs);
+          const inactive =
+            Boolean(
+              !obs.active &&
+                !obs.permissions &&
+                !obs.activeTurnId &&
+                ["idle", "error", "closed", "gone"].includes(obs.status ?? ""),
+            ) || obs.archived === true;
+          if (
+            obs.status === "closed" ||
+            obs.status === "gone" ||
+            obs.archived === true
+          )
+            needsProcesses = true;
+          if (adapter.agentTimelinePage && inactive && remaining() > 0) {
+            const pageRead = await snapshot
+              .timelinePage(
+                hostId,
+                agentId,
+                TOOL_TIMELINE_LIMIT,
+                () =>
+                  this.engine.host.agentTimelinePage(
+                    agentId,
+                    TOOL_TIMELINE_LIMIT,
+                  ),
+                Math.min(remaining(), perReadMs),
+                {
+                  coveredObservation: {
+                    updatedAt: obs.updatedAt ?? null,
+                    status: obs.status,
+                    archived: obs.archived,
+                  },
+                },
+              )
+              .catch(() => null);
+            let page = pageRead?.state === "ok" ? pageRead.value : null;
+            if (
+              page &&
+              page.hasOlder &&
+              !page.gap &&
+              !page.staleCursor &&
+              !page.reset &&
+              page.projection !== "bounded" &&
+              remaining() > 0
+            ) {
+              let limit = TOOL_TIMELINE_LIMIT;
+              while (
+                limit < TOOL_TIMELINE_READ_BUDGET &&
+                page &&
+                page.hasOlder &&
+                !page.gap &&
+                !page.staleCursor &&
+                !page.reset &&
+                page.projection !== "bounded" &&
+                remaining() > 0
+              ) {
+                const nextLimit = Math.min(
+                  limit * 2,
+                  TOOL_TIMELINE_READ_BUDGET,
+                );
+                const expanded = await boundedRead(
+                  "agent timeline page",
+                  () => this.engine.host.agentTimelinePage(agentId, nextLimit),
+                  Math.min(remaining(), perReadMs),
+                ).catch(() => ({
+                  state: "unknown" as const,
+                  reason: "expanded timeline read failed",
+                }));
+                if (expanded.state !== "ok") break;
+                page = expanded.value;
+                snapshot.storeTimelinePage(hostId, agentId, nextLimit, {
+                  state: "ok",
+                  value: page,
+                  capturedAt: Date.now(),
+                  fromPassSnapshot: true,
+                  coveredObservation: {
+                    updatedAt: obs.updatedAt ?? null,
+                    status: obs.status,
+                    archived: obs.archived,
+                  },
+                });
+                limit = nextLimit;
+              }
+            }
+            if (
+              page &&
+              (page.projection === "bounded" ||
+                liveToolIssueFact(page.entries ?? []) !== null)
+            )
+              needsProcesses = true;
+          }
+        }
+        if (needsProcesses && adapter.hostProcessListing && remaining() > 0) {
+          await snapshot.processes(
+            hostId,
+            async () => {
+              try {
+                const listed = await adapter.hostProcessListing!();
+                return listed
+                  ? { state: "listed", processes: listed }
+                  : {
+                      state: "unknown",
+                      reason: "the host process listing is unreadable",
+                    };
+              } catch (error) {
+                return {
+                  state: "unknown",
+                  reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+                };
+              }
+            },
+            Math.min(remaining(), processDeadlineMs),
+          );
+        }
+      });
+    } catch {
+      /* a host-side wake prefetch failure leaves the sealed snapshot empty; task quantum defers */
+    }
+    snapshot.sealHost(hostId);
+    return snapshot;
+  }
+
   /** One bounded lifecycle quantum for a task on its exclusive lane key. */
-  scheduleTaskQuantum(taskId: string): Promise<void> {
+  scheduleTaskQuantum(
+    taskId: string,
+    passSnapshot?: PassSnapshot,
+  ): Promise<void> {
     return this.engine.scheduleLane(
       `task:${taskId}`,
       LANE_PRIORITY_TASK,
       async () => {
-        const task = this.store.task(taskId);
-        if (!task.hostId) return;
-        return this.engine.withHost(task.hostId, async () => {
-          if (this.engine.gitTransientWaiting(taskId)) return;
-          const transientBefore =
-            this.store.getMeta<GitTransientEpisode | null>(
-              this.engine.transientKey(taskId),
-            );
-          const before = this.store.task(taskId);
-          if (!this.engine.taskHostAvailable(before)) return;
-          const heldIntegration = this.resolution.holdsIntegrationTurn(before);
-          const beforeRuns = this.store.runs(taskId);
-          const threadWorkBefore = this.engine.terminalThreadsPending(
-            before,
-            beforeRuns,
+        try {
+          const task = this.store.task(taskId);
+          if (!task.hostId) return;
+          const budgetMs =
+            this.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS;
+          return await runInTaskQuantumScope(
+            budgetMs,
+            () =>
+              this.engine.withHost(task.hostId!, async () => {
+                if (this.engine.gitTransientWaiting(taskId)) return;
+                const transientBefore =
+                  this.store.getMeta<GitTransientEpisode | null>(
+                    this.engine.transientKey(taskId),
+                  );
+                const before = this.store.task(taskId);
+                if (!this.engine.taskHostAvailable(before)) return;
+                const heldIntegration =
+                  this.resolution.holdsIntegrationTurn(before);
+                const beforeRuns = this.store.runs(taskId);
+                const threadWorkBefore = this.engine.terminalThreadsPending(
+                  before,
+                  beforeRuns,
+                );
+                const occupied = occupiesSlot(before, beforeRuns);
+                // The sweep observes retained runs separately; a callback or status hint must
+                // be able to observe its own reported run without waiting for that pass.
+                if (
+                  !settlementHeld(this.store, this.engine.stopped) &&
+                  beforeRuns.some(
+                    (run) =>
+                      !run.released &&
+                      run.role !== "recovery" &&
+                      (run.completion ||
+                        (run.active &&
+                          Date.now() -
+                            Date.parse(run.lastObservedAt ?? run.createdAt) >=
+                            16000)),
+                  )
+                )
+                  await this.resolution.observe(null, taskId);
+                for (const previous of beforeRuns) {
+                  const current = this.store.run(previous.id);
+                  if (
+                    !previous.released &&
+                    current?.released &&
+                    current.completion
+                  )
+                    markPhaseFact(
+                      this.store,
+                      taskId,
+                      `release:${current.id}:${current.completion.eventId}`,
+                      `${current.role} result released; next step awaiting admission`,
+                    );
+                }
+                await this.resolution.integrationQuantum(taskId, () =>
+                  this.engine.taskQuantum(taskId),
+                );
+                if (settlementHeld(this.store, this.engine.stopped)) return;
+                this.engine.completionFollowUps.finishQuantum(
+                  taskId,
+                  before,
+                  beforeRuns,
+                  transientBefore,
+                  heldIntegration,
+                  threadWorkBefore,
+                  occupied,
+                );
+              }),
+            passSnapshot,
+            true,
           );
-          const occupied = occupiesSlot(before, beforeRuns);
-          // The sweep observes retained runs separately; a callback or status hint must
-          // be able to observe its own reported run without waiting for that pass.
-          if (
-            !settlementHeld(this.store, this.engine.stopped) &&
-            beforeRuns.some(
-              (run) =>
-                !run.released &&
-                run.role !== "recovery" &&
-                (run.completion ||
-                  (run.active &&
-                    Date.now() -
-                      Date.parse(run.lastObservedAt ?? run.createdAt) >=
-                      16000)),
-            )
-          )
-            await this.resolution.observe(null, taskId);
-          for (const previous of beforeRuns) {
-            const current = this.store.run(previous.id);
-            if (!previous.released && current?.released && current.completion)
-              markPhaseFact(
-                this.store,
-                taskId,
-                `release:${current.id}:${current.completion.eventId}`,
-                `${current.role} result released; next step awaiting admission`,
-              );
-          }
-          await this.resolution.integrationQuantum(taskId, () =>
-            this.engine.taskQuantum(taskId),
-          );
-          if (settlementHeld(this.store, this.engine.stopped)) return;
-          this.engine.completionFollowUps.finishQuantum(
-            taskId,
-            before,
-            beforeRuns,
-            transientBefore,
-            heldIntegration,
-            threadWorkBefore,
-            occupied,
-          );
-        });
+        } finally {
+          passSnapshot?.expire();
+        }
       },
       { coalesce: "task-quantum" },
     );
@@ -979,6 +1263,7 @@ export class TaskWakes {
     this.lifecycleFollowUps.add(taskId);
     const queuedAt = now();
     setImmediate(() => {
+      let handedOff = false;
       try {
         if (settlementHeld(this.store, this.engine.stopped)) return;
         let task: Task;
@@ -998,24 +1283,36 @@ export class TaskWakes {
         // AsyncLocalStorage propagates through setImmediate. Exit the old lane
         // context so this queues behind it instead of taking the inline path.
         this.engine.cleanContext(() => {
-          void this.engine
-            .scheduleTaskQuantum(taskId)
-            .catch((error) =>
+          handedOff = true;
+          void this.primeWakeSnapshot(taskId)
+            .then((wakeSnapshot) => {
+              const scheduled = this.engine
+                .scheduleTaskQuantum(taskId, wakeSnapshot)
+                .finally(() => wakeSnapshot?.expire());
+              this.lifecycleFollowUps.delete(taskId);
+              this.engine.scheduleDispatch();
+              return scheduled;
+            })
+            .catch((error) => {
+              this.lifecycleFollowUps.delete(taskId);
+              this.engine.scheduleDispatch();
               recordWakeFailure(
                 this.store,
                 this.engine.stopped,
                 taskId,
                 "Lifecycle follow-up",
                 error,
-              ),
-            );
+              );
+            });
         });
       } finally {
         // Keep the id in the set until the lane is queued (or this turn
         // no-ops) so quiesce cannot observe an empty engine in the gap
         // between "accepted follow-up" and "enqueued quantum".
-        this.lifecycleFollowUps.delete(taskId);
-        this.engine.scheduleDispatch();
+        if (!handedOff) {
+          this.lifecycleFollowUps.delete(taskId);
+          this.engine.scheduleDispatch();
+        }
       }
     });
     return true;
@@ -1068,8 +1365,23 @@ export class TaskWakes {
     // A discarded quantum at shutdown has no caller with a durable decision to
     // make: the task lane records its own faults, so callers stay fire-and-forget.
     // A wake that fails with the engine still running is recorded on the task.
-    return this.engine
-      .scheduleTaskQuantum(taskId)
+    // Spec 068 §6: host-side snapshot priming runs on a separate coalesced
+    // `wake-prefetch:<taskId>` lane (never holding `task:<taskId>`) so bursts
+    // coalesce and `quiesce()` tracks the entire wake synchronously.
+    const runQuantum = this.needsWakePrefetch(taskId)
+      ? this.engine.scheduleLane(
+          `wake-prefetch:${taskId}`,
+          LANE_PRIORITY_TASK,
+          async () => {
+            const wakeSnapshot = await this.primeWakeSnapshot(taskId);
+            return this.engine
+              .scheduleTaskQuantum(taskId, wakeSnapshot)
+              .finally(() => wakeSnapshot?.expire());
+          },
+          { coalesce: "wake-prefetch" },
+        )
+      : this.engine.scheduleTaskQuantum(taskId);
+    return runQuantum
       .then(() => {
         if (
           this.store.taskOrNull(taskId)?.resolution.deferredVerb?.input

@@ -253,10 +253,10 @@ export class TransientResume {
         routeTask,
         candidates,
         pool,
-        this.store.counts(),
+        this.store.rotationCounts("worker").counts,
         unavailable,
         "worker",
-        this.store.recentCounts(),
+        this.store.rotationCounts("worker").recent,
         this.store.usageLevel(),
         false,
       );

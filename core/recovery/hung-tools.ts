@@ -1,5 +1,6 @@
 import type { Run, Task } from "../../shared/contracts";
 import type { ParticipantActivity } from "../../shared/schema/task-activity";
+import type { HostProcessFact } from "../host/types";
 import type { Resolution } from "../resolution";
 import {
   HUNG_TOOL_GRACE_MS,
@@ -35,7 +36,8 @@ export type HungToolVerdict = "none" | "terminated" | "unterminated";
 export const HUNG_TOOL_TERMINATED = "hung_tool_terminated";
 export const HUNG_TOOL_UNTERMINATED = "hung_tool_unterminated";
 
-type HungToolContext = Pick<Resolution, "adapter" | "store">;
+type HungToolContext = Pick<Resolution, "adapter" | "store"> &
+  Partial<Pick<Resolution, "readPassProcesses">>;
 
 /**
  * Spec 068 §4 and Decision 3: a participant's shell command with no output for
@@ -103,9 +105,21 @@ export class HungTools {
     };
     const listing = this.context.adapter.hostProcessListing;
     if (!listing) return unterminated("this host offers no process listing");
-    const processes = await listing
-      .call(this.context.adapter)
-      .catch(() => null);
+    let processes: readonly HostProcessFact[] | null;
+    if (this.context.readPassProcesses) {
+      const read = await this.context.readPassProcesses(
+        run?.hostId ?? task.hostId,
+      );
+      if (read.state === "unknown") {
+        // Spec 068 §6: an unreadable, timed-out, or unprimed process snapshot
+        // defers hung-tool termination without recording `hung_tool_unterminated`
+        // or unblocking stall detection.
+        return "none";
+      }
+      processes = read.processes;
+    } else {
+      processes = await listing.call(this.context.adapter).catch(() => null);
+    }
     const thread = bbThreadForAgent(agentId, run?.hostId ?? task.hostId);
     const runtime = participantRuntime({
       dataHome: storeDataHome(store),

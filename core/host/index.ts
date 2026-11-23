@@ -15,6 +15,7 @@ export type { HostPolicyPort, HostPolicyConstructor } from "./policy";
 export { readHostProcessTable } from "./process-table";
 export {
   ArchiveNotDeliveredError,
+  HostCreateInFlightError,
   HostReadRefusalError,
   ProvenPreSendRefusalError,
   HostSnapshotPendingError,

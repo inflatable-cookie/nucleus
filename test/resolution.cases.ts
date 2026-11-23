@@ -6842,28 +6842,41 @@ test("closeout recovery waits for normal merge synchronization before reading th
     await f.close();
   }
 });
-test("an uncertain reviewer creation stays owned after repeated empty lookups", async () => {
+test("an uncertain reviewer creation absent on complete lookups relaunches under its own run a bounded number of times, then stops with its command", async () => {
+  // Spec 068 §3 (supersedes Spec 067's "stays owned"): an absent thread on a
+  // complete lookup, after the creation call ended and its grace passed,
+  // relaunches the same run (so the host's create command keeps its id); three
+  // relaunches per role and head, then a typed stop.
   const f = fixture();
   try {
     let calls = 0;
-    f.adapter.createRun = async () => {
+    const created = new Set<string>();
+    f.adapter.createRun = async (_task, run) => {
       calls++;
+      created.add(run.id);
       throw new Error("Transport lost");
     };
-    await f.engine.wake();
-    const run = f.store.runs(f.task.id).find((r) => r.role === "reviewer")!;
-    await f.engine.wake();
+    for (let index = 0; index < 10; index++) await f.engine.wake();
+    const reviewers = f.store.runs(f.task.id).filter((r) => r.role === "reviewer");
+    assert.equal(calls, 4, "the first creation and three relaunches");
+    assert.equal(reviewers.length, 1, "every relaunch is the same run");
+    assert.deepEqual([...created], [reviewers[0]!.id]);
+    assert.equal(
+      f.store.eventsAll(f.task.id).filter((event) => event.kind === "creation_relaunched")
+        .length,
+      3,
+    );
+    const run = reviewers[0]!;
+    assert.equal(run.released, false, "the creation stays owned");
+    assert.equal(f.current().resolution.stop?.reason, "operator_needed");
+    assert.match(
+      f.current().reason,
+      new RegExp(`run.start reviewer fresh replacing=${run.id}`),
+    );
     const events = f.store.eventsAll(f.task.id).length;
     await f.engine.wake();
-    assert.equal(calls, 1);
-    assert.equal(
-      f.store.runs(f.task.id).filter((r) => r.role === "reviewer").length,
-      1,
-    );
-    assert.equal(f.store.run(run.id)?.released, false);
-    assert.ok(!f.store.run(run.id)?.absentProvenAt);
-    assert.equal(f.store.eventsAll(f.task.id).length, events);
-    assert.match(f.current().reason, /still uncertain/);
+    assert.equal(calls, 4, "the stop launches nothing more");
+    assert.equal(f.store.eventsAll(f.task.id).length, events, "and writes nothing");
   } finally {
     await f.close();
   }

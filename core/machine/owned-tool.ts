@@ -75,6 +75,7 @@ export class OwnedTools {
   private timelineHost(
     hostId?: string | null,
     onRead?: (read: PassTimelinePageRead) => void,
+    deadlineMs?: number,
   ) {
     if (!this.resolution.readPassTimelinePage) return this.resolution.host;
     return {
@@ -83,7 +84,7 @@ export class OwnedTools {
           id,
           limit,
           hostId,
-          this.readDeadlineMs,
+          deadlineMs ?? this.readDeadlineMs,
           { requireCoveredObservation: true },
         );
         onRead?.(read);
@@ -261,8 +262,16 @@ export class OwnedTools {
       runIds?: string[];
       taskId?: string;
       workspaceId?: string;
+      deadlineAt?: number;
     } = {},
   ): Promise<string | null> {
+    const remainingMs = (): number =>
+      options.deadlineAt !== undefined
+        ? Math.min(
+            this.readDeadlineMs,
+            Math.max(0, options.deadlineAt - Date.now()),
+          )
+        : this.readDeadlineMs;
     const task = options.taskId ? this.store.task(options.taskId) : null;
     const taskRuns = task ? this.store.runs(task.id) : [];
     const boundRun = options.runId ? this.store.run(options.runId) : null;
@@ -277,7 +286,11 @@ export class OwnedTools {
       (task?.agentId === agentId ? task.workspaceId : undefined) ??
       undefined;
     if (options.allowRetired) {
-      const custody = await this.classifyRetiredCustody(agentId, workspaceId);
+      const custody = await this.classifyRetiredCustody(
+        agentId,
+        workspaceId,
+        remainingMs(),
+      );
       if (custody.kind === "refuse") return custody.reason;
       if (custody.kind === "retired" || custody.kind === "gone") {
         if (
@@ -293,6 +306,8 @@ export class OwnedTools {
               workspaceId,
               options.runId,
               custody.observation,
+              undefined,
+              remainingMs(),
             );
           if (
             processIssue &&
@@ -321,12 +336,17 @@ export class OwnedTools {
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
     let lastPageRead: PassTimelinePageRead | null = null;
     try {
+      const timelineDeadlineMs = remainingMs();
       read = await readToolTimeline(
-        this.timelineHost(boundRun?.hostId ?? task?.hostId, (pageRead) => {
-          lastPageRead = pageRead;
-        }),
+        this.timelineHost(
+          boundRun?.hostId ?? task?.hostId,
+          (pageRead) => {
+            lastPageRead = pageRead;
+          },
+          timelineDeadlineMs,
+        ),
         agentId,
-        this.readDeadlineMs,
+        timelineDeadlineMs,
       );
     } catch (error) {
       if (
@@ -358,8 +378,9 @@ export class OwnedTools {
             options.runId,
             observed,
             read.entries,
+            remainingMs(),
           ),
-        this.readDeadlineMs,
+        remainingMs(),
       );
       if (
         hold &&
@@ -387,7 +408,7 @@ export class OwnedTools {
         const freshTurn = await observedTurnState(
           this.resolution.host,
           agentId,
-          this.readDeadlineMs,
+          remainingMs(),
         );
         const freshInactive = Boolean(
           freshTurn &&
@@ -427,7 +448,7 @@ export class OwnedTools {
     const turn = await observedTurnState(
       this.resolution.host,
       agentId,
-      this.readDeadlineMs,
+      remainingMs(),
     );
     const issue = liveToolIssueFact(read.entries, turn);
     let hold = issue ? formatLiveToolIssue(issue) : null;
@@ -551,17 +572,19 @@ export class OwnedTools {
   private async classifyRetiredCustody(
     agentId: string,
     workspaceId: string | undefined,
+    deadlineMs: number = this.readDeadlineMs,
   ): Promise<
     | { kind: "live" }
     | { kind: "retired" | "gone"; observation?: ObservedTurnState | null }
     | { kind: "refuse"; reason: string }
   > {
+    const deadlineAt = Date.now() + Math.max(0, deadlineMs);
     let observeError: unknown;
     try {
       const read = await boundedRead(
         "participant observation",
         () => this.resolution.host.observe(agentId),
-        this.readDeadlineMs,
+        Math.max(0, deadlineAt - Date.now()),
       );
       if (read.state === "unknown")
         return {
@@ -608,7 +631,7 @@ export class OwnedTools {
         const read = await boundedRead(
           "origin agent observation",
           () => this.resolution.host.originAgent(agentId),
-          this.readDeadlineMs,
+          Math.max(0, deadlineAt - Date.now()),
         );
         if (read.state === "unknown")
           return {
@@ -666,6 +689,7 @@ export class OwnedTools {
     boundRunId: string | undefined,
     turn?: ObservedTurnState | null,
     entries?: TimelineEntry[],
+    deadlineMs: number = this.readDeadlineMs,
   ): Promise<string | null> {
     if (
       !task ||
@@ -712,7 +736,7 @@ export class OwnedTools {
           runtime,
           processes,
         ),
-      this.readDeadlineMs,
+      deadlineMs,
     );
     if (workspaceRead.state === "unknown") return workspaceRead.reason;
     const workspaceIssue = workspaceRead.value;

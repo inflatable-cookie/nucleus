@@ -2,10 +2,33 @@ import type { LaunchReserveContext } from '../launch';
 import type { LaunchMachinePorts } from './machine';
 import type { Run, Task } from '../../../shared/contracts';
 import { currentBrief } from '../../planning/brief';
-import { taskPrNumber } from '../../forge/index';
-import { now } from '../../store/store';
+import { taskPrNumber, type ReviewerSetting } from '../../forge/index';
+import { now, type Store } from '../../store/store';
 import { proofExecutor } from '../../recovery/task-reasons';
 import type { ReservationSource } from './reservation-source';
+
+/**
+ * How one reviewer run delivers its verdict: the review reason it consumes, the
+ * publication form the repository's policy requires, and whether its report must
+ * carry review responsibility. Every path that creates a reviewer run records
+ * these from here, so a reviewer started by an explicit command is told to
+ * publish the same way the policy later demands at application.
+ */
+export function reviewerRunDelivery(
+  store: Pick<Store, 'runs'>,
+  t: Task,
+  reviewer: ReviewerSetting | null,
+  agentId: string | null,
+): Pick<Run, 'reviewReason' | 'formalReview' | 'reviewResponsibilityRequired'> {
+  return {
+    reviewReason: t.resolution.pendingReviewReason,
+    formalReview: Boolean(reviewer),
+    // sendRun only rotates a binding, not a retained agent's MCP catalog.
+    // Require the field only for a fresh bridge or its proven retained lineage.
+    reviewResponsibilityRequired: !agentId
+      || store.runs(t.id).some(prior => prior.agentId === agentId && prior.reviewResponsibilityRequired === true),
+  };
+}
 
 /**
  * The run intent one reservation records: the review round or proof it
@@ -40,14 +63,8 @@ export function runIntent(input: { task: Task; role: Run['role']; resolution: La
   const head = role === 'closeout' ? t.resolution.syncedCommit! : s.prePrWorkerResume ? s.retainedPrePrHead! : s.source.continuedPr?.head ?? t.proofOnly?.commit ?? t.prHead ?? t.planningBase;
   const base = s.prePrWorkerResume ? t.planningBase : role === 'reviewer' ? s.roundBase : t.resolution.mergeBase ?? t.planningBase;
   // A reviewer's reason, publication form and responsibility requirement belong to that role alone.
-  const reviewDelivery = role === 'reviewer' ? {
-    reviewReason: t.resolution.pendingReviewReason,
-    formalReview: Boolean(resolution.reviewerSetting(t)),
-    // sendRun only rotates a binding, not a retained agent's MCP catalog.
-    // Require the field only for a fresh bridge or its proven retained lineage.
-    reviewResponsibilityRequired: !s.selection.agentId
-      || resolution.store.runs(t.id).some(prior => prior.agentId === s.selection.agentId && prior.reviewResponsibilityRequired === true),
-  } : {};
+  const reviewDelivery = role === 'reviewer'
+    ? reviewerRunDelivery(resolution.store, t, resolution.reviewerSetting(t), s.selection.agentId) : {};
   const profileGroup = s.selection.group
     ?? resolution.store.runs(t.id).findLast(run => run.agentId === s.selection.agentId && run.profileGroup)?.profileGroup
     ?? (s.selection.profile ? resolution.store.pool().find(entry => entry.profileId === s.selection.profile!.id)?.group ?? null : null);

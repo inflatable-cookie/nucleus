@@ -34,6 +34,7 @@ export type WorkerReconcileContext = Pick<
     | "withHost"
     | "reconcileStalledTurnStop"
     | "recovery"
+    | "releaseDeadParticipant"
     | "remindStoppedWorker"
     | "resolveIncident"
     | "responsiblePrReportRefused"

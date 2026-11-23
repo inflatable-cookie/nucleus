@@ -32,9 +32,9 @@ the 2026-11-04 ruling (cost leans, it does not exclude) is kept only as history.
 - **Stops.** `weight` is the enum `fewest`, `fewer`, `default`, `more`, `most`,
   Default at the centre and for every new profile. The control shows plain words
   (Fewest, Fewer, Default, More, Most), marks the centre, and carries no number.
-- **Share.** One notch is one fixed additive step of 10 points of Default's
-  share: 80%, 90%, 100%, 110% and 120% (`weightShare` in
-  `shared/schema/settings/capability.ts`). A share orders rotation among profiles
+- **Share.** Each stop sets its relative share of Default: 50%, 75%, 100%, 150% and
+  200% (`weightShare` in `shared/schema/settings/capability.ts`; steeper stops, Tom,
+  2026-11-22, replacing the earlier 80% to 120% steps). A share orders rotation among profiles
   already eligible for the run. It is never an admission criterion and never a
   promised percentage of all work. Equal weights get equal rotation opportunity
   whatever a profile's prior cost.
@@ -122,15 +122,19 @@ Selection for a run then:
    permitted bracket above or the most capable permitted profile rather than
    wait ([Spec 052](052-usage-level.md)).
 3. Gives each kept profile its **share**: the weight stop's relative share,
-   80%, 90%, 100%, 110% or 120% of Default (Tom, 2026-11-21). Tom, 2026-11-22:
-   steeper stops of 50%, 75%, 100%, 150% and 200%, with rotation counted within
-   each role. Until nucleus#1558 lands, the code still uses the earlier stops. A share only
+   50%, 75%, 100%, 150% or 200% of Default (Tom, 2026-11-22). A share only
    orders rotation; it never removes a kept profile. `weightShare` lives with
    the weight enum and `rotationShare` in `shared/demand.ts`.
-4. Rotates among them over the last 50 assignments: the profile with the lowest
-   recent use over its share goes first. The subscription group's recent count
-   paces without deciding; lifetime use over share and then the profile id
-   break ties.
+4. Rotates among them within each role (Tom, 2026-11-22, nucleus#1558). A
+   selection for a role reads that role's own last 50 assignments
+   (`recentRoleUsage(role)`) and that role's lifetime charges, so a reviewer
+   run never counts against a worker turn or the reverse. The profile with the
+   lowest use over its share goes first. The subscription group's recent count,
+   across every role, breaks ties without deciding; lifetime role use over share
+   comes next, then the group's lifetime count and the profile id. Every
+   `chooseProfile` caller (first dispatch, revision source, failover, route,
+   non-delivery route and transient resume) reads the same role-scoped counts
+   from `store.rotationCounts(role)`.
 5. If no profile meets the demand, keeps the most capable eligible profiles and
    rotates among them the same way; the board shows the shortfall
    ("demand Heavyweight, best available Worker").
@@ -243,10 +247,12 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | 8 | Author escalation history (rows stripped 2026-11-09, task 989) | No demand change |
 | 9 | Signed-off request | Used for that role whatever the demand |
 | 10 | Pool entry limited to one role or scope | Still selectable for every role and task scope |
-| 11 | Two profiles at the same capability, weights More and Default | Share follows the stops (110:100); Most and Fewest give 120:80 |
+| 11 | Two profiles at the same capability, weights More and Default | Share follows the stops (150:100); Most and Fewest give 200:50, so 160:40 over 200 picks |
 | 12 | Same capability, equal weight, differently rated legacy costs | Equal rotation; the legacy cost is discarded on read |
 | 13 | Unavailable subscription group in the set | Skipped; the rest of the set rotates |
 | 14 | Worker `route` (`now` or queued), `restart fresh`, or required-profile check for a profile launchable only on another online host | Evaluates every online host catalog in the task's mode; raises unavailability only when no online host can launch it, and moves the task (`basis: "worker_profile"`) to the capable host while keeping branch and PR |
 | 15 | Unbound worker on a repository with an explicit hostKind whose host is offline, reconnecting, or has no read catalog, while another online host has the profile | Stays queued with `Waiting for repository host <label>`, no workspace, profile charge or slot; a healthy project dispatches in the same pass; the same task dispatches through ordinary scheduling once the host answers |
 | 16 | Same repository, the host drops between selection and commit, or the setting changes while queued | Commit holds before any intent; clearing the kind releases the wait on the next pass |
 | 17 | Repository hostKind with no registered host of that kind | Visible wait `Repository host <label> is not registered; waiting for its configuration`; no workspace |
+| 18 | Most-weighted profile with many reviewer runs, against a Fewer worker-only profile with a recent worker turn | Most is picked: reviewer runs never count against its worker rotation |
+| 19 | Most against Fewer over 60 worker picks | Converges near 200:75, about 44 and 16 |

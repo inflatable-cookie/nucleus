@@ -92,7 +92,7 @@ No command changes anything it does not name.
 
 | Command | Does exactly | Warnings (overridable) |
 | --- | --- | --- |
-| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. Phase unchanged. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (replacement ceiling or revision cap), `route_policy` (Low submission gate, reserved for the planner or operator board) |
+| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. Phase unchanged. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (replacement ceiling or revision cap), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
 | `run.release run=<id> [archive]` | Stops treating the run as live: best-effort cancel of its turn and its recorded process group, `released=true`, revokes its credential, clears pointers to it, settles its delivery effects. Optionally archives its thread. Never launches or changes phase. | `live_turn` (agent may be mid-turn; a worker's uncommitted changes may be lost), `unreported_result` (its report will be refused) |
 | `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|effect\|host_wait\|owner_stop\|deferred_verb> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). | `hold_owner` (overrides another owner's hold; planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing) |
 | `phase.set to=<working\|changes_requested\|awaiting_review\|reviewing\|verifying\|needs_attention\|blocked>` | Writes the phase and reason only. | `live_runs` (unreleased runs see an unexpected phase) |
@@ -108,12 +108,24 @@ No command changes anything it does not name.
 - `merge.now` refuses while an earlier merge request's outcome is unknown,
   unless a GitHub read in the same call shows the PR unmerged.
 
-**Authority.** The operator board: every command. The task's live responsible
-planner, resolved the way project-addressed messages resolve (not only the
-stored `project.planner.agentId`; Tom, 2026-11-19, no singleton planners): every
-command. The task's coordinator (its recovery run): every command, including
+**Authority.** The operator board: every command. Any live responsible planner
+of the task's project (Tom, 2026-11-19, no singleton planners): every command.
+That is any confirmed candidate on the shortlist project-addressed messages
+resolve from that is the registered planner, dispatched or owns project tasks
+(so the task's own planner and its origin thread while they are candidates), or
+is a named agent, plus the routing pick itself; not only the one thread a message
+would reach. An incomplete shortlist proves no absence, so it keeps only the
+routing pick and the registered planner. When a call gets no confirmed read
+(an invalidation, such as the caller's own activity or a notice to it, discarded
+it mid-read), the last read that finished within 10 minutes stands in for the
+registered planner or a dispatcher, each re-checked against the current
+registry; with none, every caller is refused. An `unroutable` candidate never
+holds authority. A refusal names its reason: an incomplete read and its unread
+hosts, an unconfirmed read, or a caller that is not a responsible planner for
+the project. The task's coordinator (its recovery run): every command, including
 `merge.now` and `closeout.now` (Tom, 2026-11-21: "Coordinators should get merge
-and closeout"), except accepting `hold_owner`, `route_policy` or `two_writers`.
+and closeout"), except accepting `hold_owner`, `route_policy`, `two_writers` or
+`creation_in_flight` (Spec 068 batch A follow-up).
 The hard gates bind every caller. Workers and reviewers ask instead. A `critical` task: planner
 and operator only. Authority comes from the authenticated caller matching the registered thread;
 host observation (`routable`, `unverified`) never gates it, and only decides where a message is
@@ -210,7 +222,7 @@ replacement.
 | Order | Change | Deletes in the same batch |
 | --- | --- | --- |
 | 1 (delivered in nucleus#1519) | Typed fields for every prose-matched decision. The command contract (warnings, `accept`, `owner_resolution` event, version-only check) and authority by live responsible planner. `run.release` and `record.clear`, settling the underlying fact. | `retry_effect force` settle-only path; force's stored-planner match |
-| 2 (delivered in nucleus#1520) | `run.start`, `phase.set`, `message.send`. `next`, stop text and refusals name the explicit command. Coordinators launch for mechanical stalls. | `core/recovery/absent-creation/**`, creation gates in `route`/`restart`/`reviewer-report`, responsible-fault fallback |
+| 2 (delivered in nucleus#1520) | `run.start`, `phase.set`, `message.send`. `next`, stop text and refusals name the explicit command. Coordinators launch for mechanical stalls. Since [Spec 068](068-self-healing.md) batch A the sweep itself settles an uncertain creation by lookup (bind, or release and relaunch once after a complete absent read), so the explicit command is the fallback, not the only exit; `run.start` also warns `discard_reported_verdict` before replacing a reviewer whose exact-head verdict is not applied yet. | `core/recovery/absent-creation/**`, creation gates in `route`/`restart`/`reviewer-report`, responsible-fault fallback |
 | 3 (delivered in nucleus#1521) | `turn.take`/`turn.release`, `merge.now`, `closeout.now`. Prerequisite wait releases the turn. | `merge-occurrence`, restart-to-closeout path, turn-lever refusals (nucleus#1513 retired in favour of this batch) |
 | 4 (core delivered in nucleus#1522; command-option answers and cause-based auto-close split to follow-up leads) | Plain escalation answers apply at the current task version without binding-hash or offer-availability refusals; terminal tasks close open escalations and linked decisions in one transaction (`record.clear kind=escalation` stays the manual close). | escalation binding-hash and offer-availability refusals in `escalation-settlement`; restart-as-escalation-answer path in `owner-restart`/`restart` |
 | 5 (absorbed by [Spec 069](069-scheduler.md) batch 2) | Host availability from health readings, not one call. | host-wide timeout stamping |

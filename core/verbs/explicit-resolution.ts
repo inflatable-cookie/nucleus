@@ -1,4 +1,4 @@
-import { sameCallerIdentity } from "../../shared/agent-identity";
+import { parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
 import {
   holdsOf,
   OPERATOR_BOARD_CALLER,
@@ -15,13 +15,23 @@ import type {
 import {
   TASK_PROGRESSING_REASON,
   isWaitingTaskStop,
+  stopNamesRun,
 } from "../../shared/task-stop";
+import type { ResponsibleThreadReason } from "../../shared/responsible-thread";
 import type { Engine } from "../engine";
 import { signalProcessGroupByLeader } from "../machine/process-group";
 import {
   reattachRefusal,
   reattachStoredTaskCheckout,
 } from "../git/checkout-reattach";
+import {
+  responsiblePickable,
+  type ResponsibleCandidate,
+} from "../questions/responsible-thread-cache";
+import {
+  dispatchedBy,
+  registeredAs,
+} from "../questions/responsible-thread-resolver";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
@@ -68,6 +78,9 @@ const plannerWarnings = new Set<ResolutionWarningId>([
   "hold_owner",
   "route_policy",
   "two_writers",
+  // Spec 068 §3: a coordinator started before the wait could otherwise accept
+  // a second thread beside a create the host may still answer.
+  "creation_in_flight",
 ]);
 const missing = (kind: string, id: string): never => {
   throw Error(`No current ${kind} ${id} belongs to this task`);
@@ -106,55 +119,140 @@ function settleOperation(
 }
 
 /**
- * Planner authority comes from the registered thread and the caller's
- * authenticated identity. Host observation only decides where a message is
- * delivered, so an `unverified` planner (its host not yet proven after a roll)
- * still holds authority; the delivery route waits for the host on its own.
+ * The reasons that make a confirmed candidate one of the project's planners:
+ * registered, dispatching or owning its tasks (a task's own recorded planner and
+ * its origin thread are dispatchers by construction), or named on the project.
+ * A thread that only works in a checkout acts only while it is the routing pick.
  */
-export async function livePlannerMatches(
+const PLANNER_REASONS: ReadonlySet<ResponsibleThreadReason> = new Set([
+  "registered-planner",
+  "dispatcher",
+  "registered-agent",
+]);
+
+export type PlannerAuthority = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Planner authority comes from the caller's authenticated identity matching a
+ * confirmed responsible planner of the task's project (Tom, 2026-11-19: no
+ * singleton planners). Host observation only decides delivery, so an
+ * `unverified` planner (its host not yet proven after a roll) still holds
+ * authority; an `unroutable` one never does.
+ *
+ * - A complete read accepts any planner on it, not only the routing pick.
+ * - An incomplete read proves no absence, so it accepts only the routing pick
+ *   and the registered planner.
+ * - With no confirmed read in this call (an invalidation, such as the caller's
+ *   own activity or a notice to it, discarded both attempts), the last finished
+ *   read within `plannerAuthorityMaxAgeMs` stands in, for the registered planner
+ *   or a dispatcher only, each re-checked against the current registry.
+ *
+ * Every refusal names its reason, so a transient read failure reads differently
+ * from a caller that is not a planner.
+ */
+export async function plannerAuthority(
   engine: Engine,
   task: Task,
   caller: string,
   queue = false,
-): Promise<boolean> {
+): Promise<PlannerAuthority> {
   const project = queue
     ? engine.store.queueProject()
     : engine.store.projectFor(
         task.repoPath,
         normalizeRepositoryOrigin(task.repository ?? ""),
       );
-  if (!project) return false;
-  const { thread, shortlist } =
-    await engine.resolution.responsibleThread(project);
-  return Boolean(
-    thread &&
-      shortlist.some((candidate) =>
-        sameCallerIdentity(
-          thread.agentId,
+  if (!project)
+    return {
+      ok: false,
+      reason: queue
+        ? "no Nucleus project is registered"
+        : "no project holds this task's repository",
+    };
+  const isCaller = (candidate: ResponsibleCandidate) =>
+    responsiblePickable(candidate) &&
+    plannerIdMatches(
+      candidate.agentId,
+      caller,
+      candidate.hostId,
+      engine.legacyPaseoHostId(),
+    );
+  const incomplete = (hosts: string[]) => ({
+    ok: false as const,
+    reason: `the responsible-planner read for project ${project.name} is incomplete (${
+      hosts.length ? `host ${hosts.join(", ")} unread` : "no confirmed observation"
+    })`,
+  });
+  const notPlanner = {
+    ok: false as const,
+    reason: `this caller is not one of them: it is not a responsible planner for project ${project.name}`,
+  };
+  const read = await engine.resolution.responsibleThread(project);
+  if (read.confirmed) {
+    const accepted = read.shortlist.some(
+      (candidate) =>
+        isCaller(candidate) &&
+        (sameCallerIdentity(
+          read.thread?.agentId,
           candidate.agentId,
-          thread.hostId,
+          read.thread?.hostId,
           candidate.hostId,
-        ),
-      ) &&
-      plannerIdMatches(
-        thread.agentId,
-        caller,
-        thread.hostId,
-        engine.legacyPaseoHostId(),
-      ),
-  );
+        ) ||
+          candidate.reasons.includes("registered-planner") ||
+          (!read.incomplete &&
+            candidate.reasons.some((reason) => PLANNER_REASONS.has(reason)))),
+    );
+    if (accepted) return { ok: true };
+    return read.incomplete ? incomplete(read.unreadHosts) : notPlanner;
+  }
+  const last = engine.resolution.lastConfirmedResponsible(project.key);
+  if (!last)
+    return {
+      ok: false,
+      reason: `the responsible-planner read for project ${project.name} is unconfirmed, and no confirmed read finished in the last ${Math.round(
+        engine.resolution.plannerAuthorityMaxAgeMs / 60_000,
+      )} minutes`,
+    };
+  const tasks =
+    engine.resolution.responsibleThreads.taskIndex().byProject.get(
+      project.key,
+    ) ?? [];
+  const accepted = last.candidates.some((candidate) => {
+    if (!isCaller(candidate)) return false;
+    const native =
+      parseAgentId(candidate.agentId)?.nativeAgentId ?? candidate.agentId;
+    return (
+      (candidate.reasons.includes("registered-planner") &&
+        registeredAs(project.planner?.agentId, native, candidate.hostId)) ||
+      (candidate.reasons.includes("dispatcher") &&
+        tasks.some((owned) => dispatchedBy(owned, native, candidate.hostId)))
+    );
+  });
+  if (accepted) return { ok: true };
+  return last.incomplete ? incomplete(last.unreadHosts) : notPlanner;
+}
+
+/** Whether the caller holds planner authority for this task; `plannerAuthority` says why not. */
+export async function livePlannerMatches(
+  engine: Engine,
+  task: Task,
+  caller: string,
+  queue = false,
+): Promise<boolean> {
+  return (await plannerAuthority(engine, task, caller, queue)).ok;
 }
 
 /** Names the real reason an explicit command's caller lacks authority. */
 function explicitAuthorityRefusal(
   task: Task,
   caller: string | undefined,
+  reason?: string,
 ): string {
   const who = task.critical
     ? "its live responsible planner or the operator board"
     : "this task's coordinator, its live responsible planner or the operator board";
   const why = caller
-    ? "this caller is not one of them"
+    ? (reason ?? "this caller is not one of them")
     : "no authenticated caller was given";
   return task.critical
     ? `A critical task requires ${who}; ${why}`
@@ -167,8 +265,10 @@ async function authority(
   caller: string | undefined,
 ): Promise<Source> {
   if (caller === OPERATOR_BOARD_CALLER) return "operator_board";
-  if (caller && (await livePlannerMatches(engine, task, caller)))
-    return "project_planner";
+  const planner = caller
+    ? await plannerAuthority(engine, task, caller)
+    : null;
+  if (planner?.ok) return "project_planner";
   const recovery = task.resolution.recovery;
   const run = recovery?.runId ? engine.store.run(recovery.runId) : null;
   if (
@@ -186,7 +286,13 @@ async function authority(
     )
   )
     return "coordinator";
-  throw Error(explicitAuthorityRefusal(task, caller));
+  throw Error(
+    explicitAuthorityRefusal(
+      task,
+      caller,
+      planner && !planner.ok ? planner.reason : undefined,
+    ),
+  );
 }
 
 /** Each command reads and applies its own records within the same transaction. */
@@ -240,7 +346,7 @@ export async function resolveExplicitly(
       input.accept.some((id) => plannerWarnings.has(id))
     )
       throw Error(
-        "Only the live responsible planner or operator board can accept hold_owner, route_policy or two_writers",
+        "Only the live responsible planner or operator board can accept hold_owner, route_policy, two_writers or creation_in_flight",
       );
     if (
       source !== "operator_board" &&
@@ -340,8 +446,15 @@ export async function resolveExplicitly(
   };
 }
 
+/**
+ * The engine ports the ordinary release plan needs. Narrow deliberately, so the
+ * same plan serves an owner `run.release` and the sweep's own release of a
+ * provably dead participant (Spec 068 §3; nucleus#1552).
+ */
+export type ReleasePlanContext = Pick<Engine, "store" | "host" | "withHost">;
+
 export function releasePlan(
-  engine: Engine,
+  engine: ReleasePlanContext,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.release" }>,
 ): Plan {
@@ -422,6 +535,11 @@ export function releasePlan(
       }
       if (resolution.restartSlotHold?.fromRunId === input.run)
         resolution.restartSlotHold = null;
+      if (stopNamesRun(task, input.run)) {
+        if (task.reason === task.resolution.stop?.detail)
+          patch.reason = TASK_PROGRESSING_REASON;
+        resolution.stop = null;
+      }
       const recovery = resolution.recovery;
       if (recovery?.runId === input.run && !completion) {
         resolution.recoveryActive = false;

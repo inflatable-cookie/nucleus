@@ -2182,3 +2182,428 @@ test("stable idle tool backlog does not starve shell peeks, and unknown shell pe
     snap2.expire();
   }
 });
+
+test("hung-tool path shares the host-pass process snapshot and defers on a slow listing", async (t) => {
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  const quietAt = new Date(Date.now() - 40 * 60_000).toISOString();
+  let processCalls = 0;
+  let slowListing = true;
+  const f = engineFixture(t, {
+    observationInventory: async () =>
+      new Map<string, AgentObservation>([
+        [
+          "agent-hung-tool",
+          {
+            id: "agent-hung-tool",
+            workspaceId: "ws-hung-tool",
+            status: "running",
+            active: true,
+            activeTurnId: "turn-hung-1",
+            permissions: false,
+            error: "",
+            turnStartedAt: quietAt,
+            updatedAt: quietAt,
+          },
+        ],
+      ]),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-hung-tool",
+      status: "running",
+      active: true,
+      activeTurnId: "turn-hung-1",
+      permissions: false,
+      error: "",
+      turnStartedAt: quietAt,
+      updatedAt: quietAt,
+    }),
+    agentTimeline: async () => [
+      {
+        timestamp: quietAt,
+        turnId: "turn-hung-1",
+        item: {
+          type: "tool_call",
+          callId: "call-quiet-1",
+          status: "running",
+          name: "Bash",
+          detail: {
+            type: "shell",
+            command: "sleep 999",
+            startedAt: quietAt,
+            lastOutputAt: quietAt,
+          },
+        },
+      },
+    ],
+    hostProcessListing: () => {
+      processCalls++;
+      if (!slowListing) return Promise.resolve([]);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve([]), 60_000);
+        timer.unref?.();
+        timers.push(timer);
+      });
+    },
+  });
+  f.engine.resolution.passProcessReadTimeoutMs = 40;
+  f.engine.resolution.quantumReadTimeoutMs = 40;
+
+  const task = f.store.insert(
+    submission({
+      submissionId: "sub-hung-tool-slow",
+      title: "Hung tool slow process listing",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  f.store.update(task.id, {
+    phase: "working",
+    workspaceId: "ws-hung-tool",
+    directory: "/tmp/synthetic-hung-tool",
+    agentId: "agent-hung-tool",
+    runId: "run-hung-tool",
+  });
+
+  // 1. With a slow hostProcessListing, the host pass bounds the read once and
+  // HungTools.settle reuses the unknown snapshot without starting a second direct
+  // listing, recording hung_tool_unterminated, or raising stalled_turn attention.
+  await f.engine.auditPass(true);
+  assert.equal(
+    processCalls,
+    1,
+    "HostPass reads hostProcessListing once; HungTools.settle must not start its own direct listing",
+  );
+  assert.equal(
+    f.store
+      .eventsAll(task.id)
+      .filter((e) => e.kind === "hung_tool_unterminated").length,
+    0,
+    "timed-out process snapshot must defer hung-tool settlement rather than recording hung_tool_unterminated",
+  );
+  assert.equal(
+    f.store.task(task.id).resolution.attention,
+    false,
+    "deferred hung-tool check must not unblock stalled_turn attention",
+  );
+
+  // 2. When hostProcessListing answers cleanly in a later pass, HungTools.settle
+  // still shares the single host-pass snapshot (1 listing call for the pass).
+  slowListing = false;
+  f.engine.resolution.stalls.peekTtlMs = 0;
+  const callsBeforeFastPass = processCalls;
+  await f.engine.auditPass(true);
+  assert.equal(
+    processCalls - callsBeforeFastPass,
+    1,
+    "normal hung-tool pass must reuse the host-pass process snapshot rather than re-listing",
+  );
+});
+
+test("wake-triggered task quantum primes expensive reads outside the task lane and defers on missing or slow evidence", async (t) => {
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  let observeCalls = 0;
+  let processCalls = 0;
+  let timelineCalls = 0;
+  let timelinePageCalls = 0;
+  let timelinePageCallsInQuantum = 0;
+  let processCallsInQuantum = 0;
+  let inQuantum = false;
+  let mergeCalls = 0;
+  let slowTimelinePage = false;
+
+  const f = engineFixture(t, {
+    observe: async (id: string) => {
+      observeCalls++;
+      return {
+        id,
+        workspaceId: "ws-wake-defer",
+        status: "idle",
+        active: false,
+        activeTurnId: null,
+        permissions: false,
+        error: "",
+        updatedAt: idleAt,
+      };
+    },
+    hostProcessListing: async () => {
+      processCalls++;
+      if (inQuantum) processCallsInQuantum++;
+      return [];
+    },
+    agentTimeline: async () => {
+      timelineCalls++;
+      return [];
+    },
+    agentTimelinePage: async () => {
+      timelinePageCalls++;
+      if (inQuantum) timelinePageCallsInQuantum++;
+      if (slowTimelinePage) {
+        return new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(toolTimelinePage([])), 60_000);
+          timer.unref?.();
+          timers.push(timer);
+        });
+      }
+      return toolTimelinePage([]);
+    },
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "",
+    }),
+    createRun: async () => {
+      throw new Error("unexpected createRun during wake defer test");
+    },
+    merge: async () => {
+      mergeCalls++;
+      return "merged-commit";
+    },
+  });
+  const origTaskQuantum = f.engine.taskQuantum.bind(f.engine);
+  f.engine.taskQuantum = async (id: string) => {
+    inQuantum = true;
+    try {
+      return await origTaskQuantum(id);
+    } finally {
+      inQuantum = false;
+    }
+  };
+  f.store.setMeta("paused", false);
+  f.engine.hostHealth.answered(HOST);
+  f.engine.resolution.quantumReadTimeoutMs = 40;
+  f.engine.resolution.hostPassWarmBudgetMs = 60;
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-wake-defer",
+      title: "Wake defer task",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const task = f.store.update(inserted.id, {
+    phase: "merging",
+    workspaceId: "ws-wake-defer",
+    directory: "/tmp/synthetic-wake-defer",
+    agentId: "agent-wake-defer",
+    runId: "run-wake-defer",
+    prHead: HEAD,
+    prUrl: "https://github.com/example/repo/pull/91",
+    reason: "Ready to merge",
+    resolution: {
+      ...inserted.resolution,
+      integrationTurn: { sequence: 1, acceptedAt: idleAt },
+      mergeIntent: true,
+      mergeHead: HEAD,
+      mergeRequestedAt: idleAt,
+      review: {
+        eventId: "ev-wake-defer",
+        taskId: inserted.id,
+        runId: "rev-wake-defer",
+        reviewId: 91,
+        status: "ready_to_merge",
+        head: HEAD,
+        summary: "ok",
+      },
+    },
+  });
+
+  // 1. Direct scheduleTaskQuantum without a host pass performs zero direct
+  // process/timeline reads and defers the merge cleanly.
+  await f.engine.scheduleTaskQuantum(task.id);
+  assert.ok(observeCalls >= 1, "scheduleTaskQuantum must enter executionLease");
+  assert.equal(processCalls, 0);
+  assert.equal(timelineCalls, 0);
+  assert.equal(timelinePageCalls, 0);
+  assert.equal(mergeCalls, 0);
+  assert.match(
+    f.store.task(task.id).reason,
+    /was not captured in a host pass|inconclusive/i,
+  );
+
+  // 2. Callback wake (`wakeTask`) with a slow 60 s timeline page runs its
+  // bounded prefetch OUTSIDE the exclusive task lane, seals the host, and
+  // executes zero timeline/process reads inside taskQuantum.
+  slowTimelinePage = true;
+  await f.engine.wakeTask(task.id);
+  assert.equal(
+    timelinePageCallsInQuantum,
+    0,
+    "wakeTask must never start agentTimelinePage inside the exclusive task lane",
+  );
+  assert.equal(
+    processCallsInQuantum,
+    0,
+    "wakeTask must never start hostProcessListing inside the exclusive task lane",
+  );
+  assert.equal(
+    mergeCalls,
+    0,
+    "merge must defer when wake host-side prefetch times out",
+  );
+});
+
+test("task quantum shares one read-phase budget across serial participant observations and nested ownedToolHold", async (t) => {
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  let observeCalls = 0;
+  let mergeCalls = 0;
+
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-serial-budget",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt: idleAt,
+          },
+        ]),
+      ),
+    observe: async (id: string) => {
+      observeCalls++;
+      // Each individual observation succeeds inside quantumReadTimeoutMs (150 ms),
+      // so per-read timeouts alone cannot cap a task with many participants.
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return {
+        id,
+        workspaceId: "ws-serial-budget",
+        status: "idle",
+        active: false,
+        activeTurnId: null,
+        permissions: false,
+        error: "",
+        updatedAt: idleAt,
+      };
+    },
+    agentTimelinePage: async () => toolTimelinePage([]),
+    hostProcessListing: async () => [],
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "",
+    }),
+    createRun: async () => {
+      throw new Error("unexpected createRun during wake defer test");
+    },
+    merge: async () => {
+      mergeCalls++;
+      return "merged-commit";
+    },
+  });
+  // Per-read timeout (150 ms) allows each 60 ms observe to succeed, while the
+  // quantum-wide read budget (200 ms) caps the cumulative read phase well before
+  // all 6 participants * 2 reads (12 * 60 ms = 720 ms) can run.
+  f.engine.resolution.quantumReadTimeoutMs = 150;
+  f.engine.resolution.quantumReadBudgetMs = 200;
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-serial-budget",
+      title: "Serial budget task",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  f.store.setMeta("paused", false);
+  const task = f.store.update(inserted.id, {
+    phase: "merging",
+    workspaceId: "ws-serial-budget",
+    directory: "/tmp/synthetic-serial-budget",
+    agentId: "agent-serial-main",
+    runId: "run-serial-main",
+    retiredWorkers: Array.from({ length: 5 }, (_, i) => ({
+      agentId: `agent-serial-${i}`,
+      runId: `run-serial-${i}`,
+      profile: {
+        id: "claude:sonnet",
+        name: "Claude Sonnet",
+        provider: "claude",
+        model: "sonnet",
+        notes: "",
+        available: true,
+        problem: "",
+        supportedThinking: [],
+      },
+      reason: "rotated",
+      hostId: HOST,
+    })),
+    prHead: HEAD,
+    prUrl: "https://github.com/example/repo/pull/92",
+    reason: "Ready to merge",
+    resolution: {
+      ...inserted.resolution,
+      integrationTurn: { sequence: 1, acceptedAt: idleAt },
+      mergeIntent: true,
+      mergeHead: HEAD,
+      mergeRequestedAt: idleAt,
+      review: {
+        eventId: "ev-serial-budget",
+        taskId: inserted.id,
+        runId: "rev-serial-budget",
+        reviewId: 92,
+        status: "ready_to_merge",
+        head: HEAD,
+        summary: "ok",
+      },
+    },
+  });
+
+  // Prime all 6 participants' complete tool pages inside a host pass, then run
+  // the task quantum so executionLease + nested ownedToolHold share one budget.
+  const snap = f.engine.resolution.beginPassSnapshot();
+  try {
+    for (const id of [
+      "agent-serial-main",
+      "agent-serial-0",
+      "agent-serial-1",
+      "agent-serial-2",
+      "agent-serial-3",
+      "agent-serial-4",
+    ]) {
+      await f.engine.resolution.primePassTimelinePage(id, 200, HOST, {
+        coveredObservation: {
+          updatedAt: idleAt,
+          status: "idle",
+          archived: false,
+        },
+      });
+    }
+    f.engine.resolution.sealPassHost(HOST);
+    await f.engine.taskQuantum(task.id);
+  } finally {
+    snap.expire();
+  }
+
+  assert.equal(
+    mergeCalls,
+    0,
+    "exhausting the quantum read budget must hold the merge conservatively",
+  );
+  assert.match(
+    f.store.task(task.id).reason,
+    /Merge waits for participant/i,
+    "executionLease must record the participant wait when the quantum read budget expires",
+  );
+  assert.ok(
+    observeCalls > 0 && observeCalls < 12,
+    `quantum-wide read budget must stop serial observations well before all 12 participant/tool reads, ran ${observeCalls}`,
+  );
+});

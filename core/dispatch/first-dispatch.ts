@@ -126,9 +126,9 @@ export class FirstDispatch {
         task,
         hosts,
         this.store.pool(),
-        this.store.counts(),
+        this.store.rotationCounts("worker").counts,
         unavailableGroupNames(this.store.availability()),
-        this.store.recentCounts(),
+        this.store.rotationCounts("worker").recent,
         this.store.usageLevel(),
         [
           this.store.repositoryFor(task.repoPath)?.hostKind,
@@ -204,7 +204,9 @@ export class FirstDispatch {
       this.context.transientKey(taskId),
     );
     const onHost = (candidate: Task) =>
-      firstSelection ? { ...candidate, hostId: firstSelection.hostId } : candidate;
+      firstSelection
+        ? { ...candidate, hostId: firstSelection.hostId }
+        : candidate;
     // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait), read at the
     // boundary since Spec 069 §1: a queued task on an unavailable host, or with no
     // proven host identity, waits without a write. The board and `next` name that
@@ -305,10 +307,10 @@ export class FirstDispatch {
             task,
             workerProfiles,
             this.store.pool(),
-            this.store.counts(),
+            this.store.rotationCounts("worker").counts,
             unavailable,
             "worker",
-            this.store.recentCounts(),
+            this.store.rotationCounts("worker").recent,
             this.store.usageLevel(),
             true,
           ));

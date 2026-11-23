@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   HostObservation,
   HostTimelineEntry,
@@ -18,6 +19,66 @@ export const PASS_PROCESS_READ_DEADLINE_MS = 15_000;
  * `unknown` when missed instead of hanging the quantum.
  */
 export const QUANTUM_READ_DEADLINE_MS = 10_000;
+
+/**
+ * Default total read-phase budget for one task quantum (Spec 068 §6).
+ * Caps the cumulative time spent on serial participant observations and nested
+ * reads inside a single quantum well inside the 120 s task-lane bound.
+ */
+export const QUANTUM_TOTAL_READ_BUDGET_MS = 30_000;
+
+/**
+ * Shared read-phase scope carried across one exclusive task quantum (`task:<id>`).
+ * Every `boundedRead` inside the quantum shares `deadlineAt`, and expensive
+ * reads (process tables and timelines) never start directly on the task lane.
+ */
+export interface TaskQuantumReadScope {
+  readonly deadlineAt: number;
+  readonly inTaskQuantum: boolean;
+  readonly snapshot?: PassSnapshot;
+}
+
+const quantumReadScope = new AsyncLocalStorage<
+  TaskQuantumReadScope | undefined
+>();
+
+/**
+ * Execute `work` inside one task quantum's shared read-phase scope.
+ * Re-entrant by default: if already inside a quantum scope, preserves the
+ * outer deadline unless `fresh: true` starts a brand-new quantum scope.
+ */
+export function runInTaskQuantumScope<T>(
+  budgetMs: number,
+  work: () => Promise<T>,
+  snapshot?: PassSnapshot,
+  fresh = false,
+): Promise<T> {
+  const existing = fresh ? undefined : quantumReadScope.getStore();
+  if (existing) {
+    if (snapshot && !existing.snapshot) {
+      return quantumReadScope.run({ ...existing, snapshot }, work);
+    }
+    return work();
+  }
+  return quantumReadScope.run(
+    {
+      deadlineAt: Date.now() + Math.max(0, budgetMs),
+      inTaskQuantum: true,
+      ...(snapshot ? { snapshot } : {}),
+    },
+    work,
+  );
+}
+
+/** Exit any inherited task-quantum scope (e.g. for host-side wake prefetch). */
+export function runOutsideTaskQuantumScope<T>(work: () => T): T {
+  return quantumReadScope.run(undefined, work);
+}
+
+/** The active task quantum's read scope, or undefined outside a task quantum. */
+export function currentTaskQuantumScope(): TaskQuantumReadScope | undefined {
+  return quantumReadScope.getStore();
+}
 
 /**
  * Total per-host budget for warming timeline snapshots during one host pass.
@@ -80,7 +141,24 @@ export async function boundedRead<T>(
   work: () => Promise<T>,
   deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
 ): Promise<BoundedReadResult<T>> {
-  const boundMs = Math.max(0, deadlineMs);
+  const scope = quantumReadScope.getStore();
+  let boundMs = Math.max(0, deadlineMs);
+  if (scope) {
+    const remaining = scope.deadlineAt - Date.now();
+    if (remaining <= 0) {
+      return {
+        state: "unknown",
+        reason: `${label} skipped: task quantum read budget exhausted`,
+      };
+    }
+    boundMs = Math.min(boundMs, remaining);
+  }
+  if (boundMs <= 0) {
+    return {
+      state: "unknown",
+      reason: `${label} timed out after 0 ms`,
+    };
+  }
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // Invoke `work()` synchronously so caller stack frames stay intact and no
@@ -156,6 +234,7 @@ export class PassSnapshot {
   >();
   private readonly timelineBudgetExhausted = new Map<string, string>();
   private readonly sealedHosts = new Set<string>();
+  private readonly reapInvalidatedHosts = new Set<string>();
 
   /** True only while the owning sweep pass is still running. */
   get active(): boolean {
@@ -171,6 +250,7 @@ export class PassSnapshot {
     this.timelinePageReads.clear();
     this.timelineBudgetExhausted.clear();
     this.sealedHosts.clear();
+    this.reapInvalidatedHosts.clear();
   }
 
   /**
@@ -251,6 +331,7 @@ export class PassSnapshot {
     hostId: string | null | undefined,
     read: () => Promise<HostProcessListRead>,
     deadlineMs: number = PASS_PROCESS_READ_DEADLINE_MS,
+    options: { allowMissFetch?: boolean } = {},
   ): Promise<PassProcessRead> {
     const run = (fromPassSnapshot: boolean): Promise<PassProcessRead> => {
       const capturedAt = Date.now();
@@ -276,7 +357,17 @@ export class PassSnapshot {
     const key = hostKeyOf(hostId);
     const existing = this.processReads.get(key);
     if (existing) return existing;
-    const promise = run(true);
+    const postReap = this.reapInvalidatedHosts.delete(key);
+    if (this.sealedHosts.has(key) && !postReap && !options.allowMissFetch) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "host process listing was not captured in this host pass; waiting for the next pass",
+        capturedAt: Date.now(),
+        fromPassSnapshot: true,
+      });
+    }
+    const promise = run(!postReap);
     this.processReads.set(key, promise);
     return promise;
   }
@@ -287,7 +378,9 @@ export class PassSnapshot {
    * process state.
    */
   invalidateProcesses(hostId?: string | null): void {
-    this.processReads.delete(hostKeyOf(hostId));
+    const key = hostKeyOf(hostId);
+    this.processReads.delete(key);
+    if (this.isActive) this.reapInvalidatedHosts.add(key);
   }
 
   /**

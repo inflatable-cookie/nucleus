@@ -29,6 +29,7 @@ import {
   reviewerIndependence,
 } from "../dispatch/routing";
 import { usageGateBlocked } from "../dispatch/usage-gate";
+import { reviewerRunDelivery } from "../dispatch/run-launch/run-intent";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
 import { queueCheckoutStatus } from "../git/index";
@@ -46,6 +47,7 @@ import {
   assertOrdinaryReviewIdentity,
   ordinaryReviewSource,
 } from "../review/ordinary-review";
+import { reviewerSettingOf } from "../review/reviewer-setting";
 import { digest, now } from "../store/store";
 import type {
   ExplicitFinishResult,
@@ -53,6 +55,7 @@ import type {
   ExplicitWarning,
 } from "./explicit-resolution";
 import { releasePlan } from "./explicit-resolution";
+import { reportedUnappliedVerdict } from "../intake/applied-result";
 
 export type MessageTarget = {
   agentId: string | null;
@@ -378,10 +381,10 @@ function selectProfileForStart(
       task,
       allProfiles,
       pool,
-      store.counts(),
+      store.rotationCounts(role).counts,
       unavailable,
       role,
-      store.recentCounts(),
+      store.rotationCounts(role).recent,
       usage,
       false,
     );
@@ -389,8 +392,15 @@ function selectProfileForStart(
   }
   if (!profile) {
     const entry = pool.find(
-      (item) => item.enabled && item.roles.includes(role) &&
-        !requestOnly(item, usage, requestedTier(task.complexity), climbedTier(task)),
+      (item) =>
+        item.enabled &&
+        item.roles.includes(role) &&
+        !requestOnly(
+          item,
+          usage,
+          requestedTier(task.complexity),
+          climbedTier(task),
+        ),
     );
     profile =
       (entry
@@ -398,7 +408,15 @@ function selectProfileForStart(
         : null) ??
       allProfiles.find((candidate) => {
         const entry = pool.find((item) => item.profileId === candidate.id);
-        return !entry || !requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task));
+        return (
+          !entry ||
+          !requestOnly(
+            entry,
+            usage,
+            requestedTier(task.complexity),
+            climbedTier(task),
+          )
+        );
       }) ??
       null;
   }
@@ -654,6 +672,47 @@ export function runStartPlan(
     }
   }
 
+  // A reviewer that already reported a verdict at the current head is a finished
+  // review: replacing it, or starting another reviewer over it, would drop that
+  // verdict (bovine-accelerator#6863). The lifecycle applies it on its own, so the
+  // start waits unless the caller explicitly discards it.
+  const displaced =
+    replacedRun ??
+    (runRole === "reviewer" && task.resolution.currentRunId
+      ? (store.run(task.resolution.currentRunId) ?? null)
+      : null);
+  const reported = displaced ? reportedUnappliedVerdict(store, task, displaced) : null;
+  if (reported)
+    warn(
+      "discard_reported_verdict",
+      `Reviewer run ${displaced!.id} already reported ${reported.status} at ${reported.head.slice(0, 12)}; it is applied on the next pass. Accept discard_reported_verdict to replace it anyway.`,
+    );
+
+  // Spec 068 §3: the host may still answer this role's uncertain create. A new
+  // run for the role (a replacement or not) could stand beside the thread that
+  // late answer brings, so only the planner or operator may accept it.
+  const inFlight =
+    task.resolution.stop?.fact?.code === "creation_in_flight"
+      ? task.resolution.stop.fact.subject
+      : undefined;
+  const inFlightRun = inFlight ? store.run(inFlight) : null;
+  const inFlightRole = inFlightRun
+    ? inFlightRun.role === "revision"
+      ? "worker"
+      : inFlightRun.role === "reviewer"
+        ? "reviewer"
+        : inFlightRun.role === "recovery"
+          ? "coordinator"
+          : null
+    : inFlight && inFlight === task.runId
+      ? "worker"
+      : null;
+  if (inFlightRole === input.role)
+    warn(
+      "creation_in_flight",
+      `The host may still answer the create command of ${input.role} run ${inFlight}; a new ${input.role} could stand beside the thread it brings. Nucleus binds or relaunches it once the host answers or its wait ends.`,
+    );
+
   const unreleasedRoleRuns = runs.filter(
     (r) => r.role === runRole && !r.released,
   );
@@ -740,16 +799,23 @@ export function runStartPlan(
       "The task's replacement ceiling, revision cap or execution budget is reached.",
     );
   }
-  const entry = engine.store.pool().find((item) => item.profileId === profile?.id);
+  const entry = engine.store
+    .pool()
+    .find((item) => item.profileId === profile?.id);
   const usage = engine.store.usageLevel();
   if (
     entry &&
     task.profileRequests?.[input.role]?.profileId !== entry.profileId &&
     requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task))
   )
-    throw Error(`Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`);
+    throw Error(
+      `Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`,
+    );
   if (input.role === "worker" && usageGateBlocked(task, usage))
-    warn("route_policy", "The Low usage level requires approval to admit this high-complexity task.");
+    warn(
+      "route_policy",
+      "The Low usage level requires approval to admit this high-complexity task.",
+    );
 
   let createdRun: Run | null = null;
   let token = "";
@@ -796,6 +862,17 @@ export function runStartPlan(
         completion: null,
         released: false,
         ...(temporaryDirectory ? { temporaryDirectory } : {}),
+        // The same publication form, reason and responsibility requirement a
+        // scheduled reviewer records: a formal-review repository's verdict is
+        // only applied with a review ID, so the reviewer must be told so.
+        ...(runRole === "reviewer"
+          ? reviewerRunDelivery(
+              store,
+              task,
+              reviewerSettingOf(store, task),
+              agentMode === "retained" ? retainedAgentId : null,
+            )
+          : {}),
       });
       token = randomBytes(24).toString("hex");
       store.setCredential(runId, token);

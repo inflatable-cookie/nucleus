@@ -1066,7 +1066,7 @@ test("Spec 053 rotation (Tom, 2026-11-21): equal weights rotate equally within t
   );
 });
 
-test("Spec 053 rotation: one notch is a fixed share step from Default (80/90/100/110/120), never a promised percentage of all work", () => {
+test("Spec 053 rotation: a stop is a fixed share of Default (50/75/100/150/200), never a promised percentage of all work", () => {
   const profiles = [profile("heavy"), profile("light")];
   const pool = [
     poolSchema.parse({
@@ -1090,8 +1090,8 @@ test("Spec 053 rotation: one notch is a fixed share step from Default (80/90/100
   ];
   assert.deepEqual(
     simulate(taskOf({ complexity: "high" }), profiles, pool, 210),
-    { heavy: 110, light: 100 },
-    "More (110%) to Default (100%)",
+    { heavy: 126, light: 84 },
+    "More (150%) to Default (100%)",
   );
   const ends = [
     poolSchema.parse({
@@ -1115,8 +1115,8 @@ test("Spec 053 rotation: one notch is a fixed share step from Default (80/90/100
   ];
   assert.deepEqual(
     simulate(taskOf({ complexity: "high" }), profiles, ends, 200),
-    { heavy: 120, light: 80 },
-    "Most (120%) to Fewest (80%)",
+    { heavy: 160, light: 40 },
+    "Most (200%) to Fewest (50%)",
   );
 });
 test("Spec 053 rotation: an unavailable group leaves the set and the rest rotate; the level permission still excludes", () => {

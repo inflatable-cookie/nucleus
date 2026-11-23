@@ -1,3 +1,4 @@
+import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
 import { taskDetailView } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
@@ -616,6 +617,17 @@ function explicitCommandsFor(
     }
   };
 
+  // A reviewer that reported a verdict at the current head which is not applied
+  // yet is a finished review (bovine-accelerator#6863): any offer to replace it
+  // says so plainly, and the command itself warns `discard_reported_verdict`.
+  const reportedNote = (runId: string): string => {
+    const run = runs.find((candidate) => candidate.id === runId);
+    const reported = run ? reportedUnappliedVerdict(facts.store, task, run) : null;
+    return reported
+      ? ` Reviewer run ${runId} already reported ${reported.status} at ${reported.head.slice(0, 12)}; Nucleus applies it on its own, and replacing it discards that verdict (accept discard_reported_verdict).`
+      : "";
+  };
+
   const startRoleFor = (
     runRole: Run["role"],
   ): "worker" | "reviewer" | "coordinator" | null =>
@@ -627,9 +639,16 @@ function explicitCommandsFor(
           ? "coordinator"
           : null;
 
+  // Spec 068 §3: a create the host may still answer offers no replacement and no
+  // release: either would let a second thread stand beside the late one.
+  const inFlight =
+    task.resolution.stop?.fact?.code === "creation_in_flight"
+      ? task.resolution.stop.fact.subject
+      : undefined;
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
+    if (run.id === inFlight) continue;
     const role = startRoleFor(run.role);
     if (role) {
       push({
@@ -653,7 +672,7 @@ function explicitCommandsFor(
     });
   }
 
-  if (task.agentIntent && !task.agentId) {
+  if (task.agentIntent && !task.agentId && task.runId !== inFlight) {
     push({
       action: "run.start",
       args: {
@@ -694,7 +713,7 @@ function explicitCommandsFor(
             replacing: stalledRunId,
           },
           fill: ["reason"],
-          note: `Replace stalled ${role} run ${stalledRunId} with a fresh run.`,
+          note: `Replace stalled ${role} run ${stalledRunId} with a fresh run.${reportedNote(stalledRunId)}`,
         });
       }
     }
@@ -729,20 +748,34 @@ function explicitCommandsFor(
         replacing: unreported.id,
       },
       fill: ["reason"],
-      note: `Replace reviewer run ${unreported.id} with a fresh reviewer.`,
+      note: `Replace reviewer run ${unreported.id} with a fresh reviewer.${reportedNote(unreported.id)}`,
     });
   }
 
   if (
     task.phase === "changes_requested" &&
-    task.agentId &&
     !runs.some((r) => r.role === "revision" && !r.released && !r.completion)
   ) {
+    // Spec 068 §3: a retained worker whose thread is gone (recorded as a
+    // `participant_gone` stop, or already retired) can only continue fresh.
+    const workerGone =
+      !task.agentId ||
+      (task.resolution.stop?.fact?.code === "participant_gone" &&
+        task.resolution.stop.fact.subject === task.agentId);
+    if (!workerGone)
+      push({
+        action: "run.start",
+        args: { action: "run.start", ...base, role: "worker", agent: "retained" },
+        fill: ["reason"],
+        note: "Start a revision run on the retained worker thread.",
+      });
     push({
       action: "run.start",
-      args: { action: "run.start", ...base, role: "worker", agent: "retained" },
+      args: { action: "run.start", ...base, role: "worker", agent: "fresh" },
       fill: ["reason"],
-      note: "Start a revision run on the retained worker thread.",
+      note: workerGone
+        ? "The retained worker thread is gone; continue the revision on a fresh worker."
+        : "Continue the revision on a fresh worker when the retained worker thread cannot take it.",
     });
   }
 
