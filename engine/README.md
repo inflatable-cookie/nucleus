@@ -135,6 +135,9 @@ apply to manual commands.
 
 ## T3, reports and GitHub
 
+T3 is the engine's only supported host. The host interface describes the reads
+and effects the task engine needs.
+
 - Get a ticket with `POST /api/auth/websocket-ticket/rpc`, then open `/ws`
   with `orchestrationProtocol=2`. Use `server.getConfig` to check the configured
   provider and model. Pre-register the single fixture project for milestone 1.
@@ -143,21 +146,26 @@ apply to manual commands.
   sending. The task assigns a monotonic launch instance and derives a fresh
   bearer from it. Derive native IDs from the persisted instance and freeze the
   exact payload. Before any send, read that exact native thread and message.
-  Adopt a matching delivery that already exists. Persist the possible send time
-  before writing. After ten minutes with no confirmed delivery, replay the
-  identical payload under the same native receipt ID. T3 checks the receipt
+  Adopt a matching delivery that already exists. Once an exact read authorizes
+  a send, persist the possible send time before writing. A replay also requires
+  ten minutes since the last possible send. Keep the payload and native receipt
+  ID on every attempt. T3 checks the receipt
   under its dispatch lock. Launch uses the same receipt path for the thread
   claim and first message.
   [Dispatch receipts](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L16305)
   [Launch receipts](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/ThreadLaunchService.ts#L1389)
-- `orchestration.subscribeThread` with `requestCompletionMarker` and
-  `acceptBoundedSnapshot` supplies the complete run roster, pending requests
-  and provider background work. The transcript can be paged. Control decisions
-  use the exact thread, project, branch and checkout, followed by a direct,
-  bounded `lsof` listing of that checkout when the turn looks settled. A warning,
-  timeout or partial listing cannot prove quiescence. Milestone 1 runs on the
-  local T3 host. The process check sees references to the checkout through open
-  files or a working directory. An inherited hold is still needed for a pool.
+- `orchestration.subscribeThread` requests a synchronized, full snapshot of the
+  exact thread. Settlement requires coverage of all provider sessions and turn
+  items. Pending tasks and active command, tool and subagent items keep the
+  thread busy. An omitted or windowed roster leaves settlement unknown.
+  [T3's background-work derivation](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/shared/src/orchestrationV2PendingBackgroundWork.ts#L225)
+- A pass shares one bounded process inventory across checkout checks. The Mac
+  adapter cross-checks `lsof` against a PID enumeration of the local T3 user.
+  An open file or working directory under the checkout is busy. An unaccounted
+  live PID, incomplete listing or warning leaves settlement unknown. Run the
+  engine and T3 under the same local user with private task checkout roots.
+  Use a fresh pass after a launch can have started new processes. Barge pools
+  require the host-side inherited hold.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
   a retained, idle thread. Reopen an archived thread before reusing it. On
   revocation, clear an unsent request directly and stop a confirmed delivery

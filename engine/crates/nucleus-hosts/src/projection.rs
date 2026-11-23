@@ -13,6 +13,7 @@ struct Snapshot {
     has_more_history: Option<bool>,
     history_cursor: Option<String>,
     id_table: Option<bool>,
+    turn_items_omit_local_visible: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -22,8 +23,10 @@ pub(crate) struct Projection {
     runs: Vec<Run>,
     messages: Vec<Message>,
     runtime_requests: Vec<Request>,
-    #[serde(default)]
-    provider_threads: Vec<ProviderThread>,
+    provider_threads: Option<Vec<ProviderThread>>,
+    turn_items: Option<Vec<TurnItem>>,
+    #[serde(skip)]
+    windowed: bool,
 }
 
 #[derive(Deserialize)]
@@ -62,7 +65,23 @@ struct Request {
 #[serde(rename_all = "camelCase")]
 struct ProviderThread {
     #[serde(default)]
-    pending_background_tasks: Vec<Value>,
+    pending_background_tasks: Vec<BackgroundTask>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackgroundTask {
+    task_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnItem {
+    #[serde(rename = "type")]
+    kind: String,
+    status: String,
+    run_id: Option<String>,
+    input: Option<Value>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -106,10 +125,11 @@ impl Status {
 impl Projection {
     pub(crate) fn parse(value: Value, binding: &Binding, id: &str) -> Result<Self, HostError> {
         let Snapshot {
-            projection,
+            mut projection,
             has_more_history,
             history_cursor,
             id_table,
+            turn_items_omit_local_visible,
             ..
         } = serde_json::from_value(value).map_err(|_| HostError::Protocol)?;
         if id_table.is_some() || (has_more_history == Some(true)) != history_cursor.is_some() {
@@ -125,22 +145,47 @@ impl Projection {
         {
             return Err(HostError::Binding);
         }
+        projection.windowed =
+            has_more_history == Some(true) || turn_items_omit_local_visible == Some(true);
         Ok(projection)
     }
 
-    pub(crate) fn retained(&self) -> RetainedThread {
+    pub(crate) fn retained(&self) -> Result<RetainedThread, HostError> {
         if self.thread.deleted_at.is_some() {
-            RetainedThread::Gone
-        } else if self.thread_active()
-            || self
-                .provider_threads
-                .iter()
-                .any(|provider| !provider.pending_background_tasks.is_empty())
-        {
-            RetainedThread::Busy
-        } else {
-            RetainedThread::Idle
+            return Ok(RetainedThread::Gone);
         }
+        if self.thread_active() || self.background_work() {
+            return Ok(RetainedThread::Busy);
+        }
+        if self.windowed || self.provider_threads.is_none() || self.turn_items.is_none() {
+            return Err(HostError::Uncertain);
+        }
+        Ok(RetainedThread::Idle)
+    }
+
+    // Equivalent presence tests to T3's pending background work derivation.
+    // Keep every active item that could be a writer, including unawaited work.
+    fn background_work(&self) -> bool {
+        self.provider_threads.iter().flatten().any(|thread| {
+            thread
+                .pending_background_tasks
+                .iter()
+                .any(|task| !task.task_id.is_empty())
+        }) || self.turn_items.iter().flatten().any(|item| {
+            matches!(
+                item.kind.as_str(),
+                "command_execution" | "dynamic_tool" | "subagent"
+            ) && matches!(item.status.as_str(), "pending" | "running" | "waiting")
+                && !(item.kind == "dynamic_tool"
+                    && item
+                        .input
+                        .as_ref()
+                        .is_some_and(|input| input["persistent"] == true))
+                && !self.runs.iter().any(|run| {
+                    matches!(run.status, Status::RolledBack)
+                        && item.run_id.as_ref() == Some(&run.id)
+                })
+        })
     }
 
     pub(crate) fn run(&self, message_id: &str) -> Result<RunState, HostError> {
@@ -155,7 +200,7 @@ impl Projection {
             if message.is_some() {
                 return Ok(RunState::Starting);
             }
-            if self.retained() != RetainedThread::Idle {
+            if self.retained()? != RetainedThread::Idle {
                 return Err(HostError::Uncertain);
             }
             return Ok(RunState::ReadyToSend);

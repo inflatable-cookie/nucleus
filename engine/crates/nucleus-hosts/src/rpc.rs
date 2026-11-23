@@ -17,6 +17,10 @@ const MAX_FRAME: usize = 16 * 1024 * 1024;
 const MAX_TICKET: usize = 64 * 1024;
 const MAX_MESSAGES: usize = 10_000;
 
+// The WebSocket server requires its one-use ticket in the URL. Tungstenite
+// traces raw upgrade requests, so do not compile those log statements in.
+const _: () = assert!(log::STATIC_MAX_LEVEL as usize <= log::LevelFilter::Debug as usize);
+
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 pub(crate) enum Reply {

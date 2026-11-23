@@ -4,19 +4,28 @@ mod launch;
 mod process;
 mod projection;
 mod rpc;
+#[cfg(test)]
+mod t3_tests;
 
-use std::{future::Future, path::Path};
+use std::{
+    future::Future,
+    path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub use launch::{Binding, Dispatch, RoleProfile, RunRequest};
 use launch::{Method, Wire, message_id};
 use nucleus_core::{Host, RetainedThread, Run, RunState};
+use process::{Activity, Inventory};
 use projection::Projection;
 use rpc::{Read, Reply, Rpc};
 use serde_json::{Value, json};
+use tokio::sync::OnceCell;
 
 const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Copy, Debug, thiserror::Error)]
 pub enum HostError {
     #[error("the host endpoint, credential or role profile is invalid")]
     Configuration,
@@ -49,8 +58,35 @@ pub enum StopProgress {
     Settled(Host),
 }
 
+/// A single exact send, scoped to the run and timestamp that authorized it.
+pub struct ReplayAuthorization {
+    instance: String,
+    prior_send: Option<u64>,
+    send_at: u64,
+    revoked: bool,
+}
+
+impl ReplayAuthorization {
+    /// Apply the marker to the exact task used to prepare the authorization.
+    /// Persist the resulting task before using the authorization on the wire.
+    ///
+    /// # Errors
+    /// Returns an error if the run or its delivery state changed after authorization.
+    pub fn record(&self, task: &mut nucleus_core::Task) -> Result<(), HostError> {
+        let run = task.run().ok_or(HostError::Binding)?;
+        if run.launch().instance != self.instance
+            || run.revoked() != self.revoked
+            || run.last_send_at_ms() != self.prior_send
+        {
+            return Err(HostError::Binding);
+        }
+        task.record_send(&self.instance, self.send_at)
+            .map_err(|_| HostError::Binding)
+    }
+}
+
 /// The service serializes commands and effects for each task and persists
-/// `Task::record_send` immediately before passing the saved run to `send`.
+/// the authorized send marker immediately before using it on the wire.
 pub trait TaskHost: Send + Sync {
     fn observe_retained(
         &self,
@@ -64,7 +100,16 @@ pub trait TaskHost: Send + Sync {
         now_ms: u64,
     ) -> impl Future<Output = Result<Host, HostError>> + Send;
 
-    fn send(&self, run: &Run) -> impl Future<Output = Result<SendOutcome, HostError>> + Send;
+    fn authorize_send(
+        &self,
+        run: &Run,
+    ) -> impl Future<Output = Result<ReplayAuthorization, HostError>> + Send;
+
+    fn send(
+        &self,
+        run: &Run,
+        authorization: ReplayAuthorization,
+    ) -> impl Future<Output = Result<SendOutcome, HostError>> + Send;
 
     /// Reconcile the revoked run. Request archival for a replay at a superseded
     /// review head. Unsent reservations and deleted threads need no archive.
@@ -80,6 +125,13 @@ pub struct T3 {
     rpc: Rpc,
 }
 
+/// Exact T3 reads share a single bounded process inventory within each pass.
+pub struct T3Pass<'a> {
+    host: &'a T3,
+    processes: OnceCell<Result<Inventory, HostError>>,
+    sent: AtomicBool,
+}
+
 impl T3 {
     /// Construct a client for a local version-2 T3 RPC endpoint.
     ///
@@ -89,6 +141,15 @@ impl T3 {
         Ok(Self {
             rpc: Rpc::new(endpoint, bearer)?,
         })
+    }
+
+    #[must_use]
+    pub fn pass(&self) -> T3Pass<'_> {
+        T3Pass {
+            host: self,
+            processes: OnceCell::new(),
+            sent: AtomicBool::new(false),
+        }
     }
 
     /// Check the host protocol and the configured role profiles before admission.
@@ -126,7 +187,7 @@ impl T3 {
             .rpc
             .call(
                 "orchestration.subscribeThread",
-                json!({"threadId": id, "requestCompletionMarker": true, "acceptBoundedSnapshot": true}),
+                json!({"threadId": id, "requestCompletionMarker": true, "acceptBoundedSnapshot": false}),
                 Read::Snapshot,
             )
             .await?;
@@ -164,13 +225,42 @@ impl T3 {
     }
 }
 
-impl TaskHost for T3 {
+impl T3Pass<'_> {
+    async fn quiet(
+        &self,
+        binding: &Binding,
+        projection: Option<&Projection>,
+    ) -> Result<bool, HostError> {
+        if let Some(projection) = projection
+            && projection.retained()? == RetainedThread::Busy
+        {
+            return Ok(false);
+        }
+        if self.sent.load(Ordering::Acquire) {
+            // A fresh launch may have started processes after this inventory.
+            return Err(HostError::Uncertain);
+        }
+        let inventory = self
+            .processes
+            .get_or_init(Inventory::capture)
+            .await
+            .as_ref()
+            .map_err(|error| *error)?;
+        match inventory.activity(Path::new(&binding.worktree_path))? {
+            Activity::Busy => Ok(false),
+            Activity::Quiet => Ok(true),
+            Activity::Unknown => Err(HostError::Uncertain),
+        }
+    }
+}
+
+impl TaskHost for T3Pass<'_> {
     async fn observe_retained(&self, binding: &Binding, thread: &str) -> Result<Host, HostError> {
-        let projection = self.thread(binding, thread).await?;
-        let state = if quiet(binding, projection.as_ref()).await? {
+        let projection = self.host.thread(binding, thread).await?;
+        let state = if self.quiet(binding, projection.as_ref()).await? {
             projection
                 .as_ref()
-                .map_or(RetainedThread::Gone, Projection::retained)
+                .map_or(Ok(RetainedThread::Gone), Projection::retained)?
         } else {
             RetainedThread::Busy
         };
@@ -185,12 +275,12 @@ impl TaskHost for T3 {
             return Err(HostError::Binding);
         }
         let wire = Wire::read(run)?;
-        let (thread, state) = self.delivery(run, &wire).await?;
+        let (thread, state) = self.host.delivery(run, &wire).await?;
         if state == RunState::ReadyToSend && awaiting_reply(run, now_ms) {
             return Err(HostError::Uncertain);
         }
         let state = if matches!(state, RunState::Ended | RunState::Gone)
-            && !quiet(&wire.binding, thread.as_ref()).await?
+            && !self.quiet(&wire.binding, thread.as_ref()).await?
         {
             RunState::Running
         } else {
@@ -199,15 +289,43 @@ impl TaskHost for T3 {
         Ok(current(run, state))
     }
 
-    async fn send(&self, run: &Run) -> Result<SendOutcome, HostError> {
-        if run.last_send_at_ms().is_none() {
+    async fn authorize_send(&self, run: &Run) -> Result<ReplayAuthorization, HostError> {
+        let elapsed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| HostError::Uncertain)?;
+        let now_ms = u64::try_from(elapsed.as_millis()).map_err(|_| HostError::Uncertain)?;
+        if awaiting_reply(run, now_ms) || (run.revoked() && run.last_send_at_ms().is_none()) {
+            return Err(HostError::Uncertain);
+        }
+        let wire = Wire::read(run)?;
+        let (thread, state) = self.host.delivery(run, &wire).await?;
+        if state != RunState::ReadyToSend || !self.quiet(&wire.binding, thread.as_ref()).await? {
+            return Err(HostError::Uncertain);
+        }
+        Ok(ReplayAuthorization {
+            instance: run.launch().instance.clone(),
+            prior_send: run.last_send_at_ms(),
+            send_at: now_ms,
+            revoked: run.revoked(),
+        })
+    }
+
+    async fn send(
+        &self,
+        run: &Run,
+        authorization: ReplayAuthorization,
+    ) -> Result<SendOutcome, HostError> {
+        let launch = run.launch();
+        if run.last_send_at_ms() != Some(authorization.send_at)
+            || launch.instance != authorization.instance
+            || run.revoked() != authorization.revoked
+        {
             return Err(HostError::Binding);
         }
-        let launch = run.launch();
         let wire = Wire::read(run)?;
-        let (thread, state) = self.delivery(run, &wire).await?;
+        let (thread, state) = self.host.delivery(run, &wire).await?;
         match state {
-            RunState::ReadyToSend if quiet(&wire.binding, thread.as_ref()).await? => {}
+            RunState::ReadyToSend if self.quiet(&wire.binding, thread.as_ref()).await? => {}
             RunState::Starting
             | RunState::Running
             | RunState::Permission
@@ -218,21 +336,23 @@ impl TaskHost for T3 {
             _ => return Err(HostError::Uncertain),
         }
         if wire.method == Method::Continue && thread.is_some_and(|thread| thread.archived()) {
-            self.thread_command(json!({
+            self.host.thread_command(json!({
                 "type": "thread.unarchive", "commandId": format!("{}-unarchive", launch.instance), "threadId": launch.thread,
             })).await?;
-            let (thread, state) = self.delivery(run, &wire).await?;
+            let (thread, state) = self.host.delivery(run, &wire).await?;
             if state != RunState::ReadyToSend || thread.is_none_or(|thread| thread.archived()) {
                 return Err(HostError::Uncertain);
             }
         }
+        self.sent.store(true, Ordering::Release);
         match self
+            .host
             .rpc
             .call(wire.method.rpc(), wire.payload.as_ref(), Read::One)
             .await?
         {
             Reply::Value(_) => Ok(SendOutcome::Sent),
-            Reply::Failure(cause) if rejected(&cause, wire.method, &launch.instance) => {
+            Reply::Failure(cause) if rejected(&cause, &wire, &launch.instance) => {
                 Ok(SendOutcome::Rejected)
             }
             Reply::Failure(_) => Err(HostError::Uncertain),
@@ -248,26 +368,29 @@ impl TaskHost for T3 {
         }
         let launch = run.launch();
         let wire = Wire::read(run)?;
-        let (thread, state) = self.delivery(run, &wire).await?;
+        let (thread, state) = self.host.delivery(run, &wire).await?;
         if let Some((command, target)) = thread
             .as_ref()
             .and_then(|thread| thread.stop_command(&message_id(&launch.instance)))
         {
-            self.thread_command(json!({
-                "type": command, "commandId": format!("{}-{command}", launch.instance),
-                "threadId": launch.thread, "runId": target,
-            }))
-            .await?;
+            self.host
+                .thread_command(json!({
+                    "type": command, "commandId": format!("{}-{command}", launch.instance),
+                    "threadId": launch.thread, "runId": target,
+                }))
+                .await?;
             return Ok(StopProgress::Waiting);
         }
         match state {
             RunState::ReadyToSend if !awaiting_reply(run, now_ms) => Ok(StopProgress::ReplayDue),
-            RunState::Ended | RunState::Gone if quiet(&wire.binding, thread.as_ref()).await? => {
+            RunState::Ended | RunState::Gone
+                if self.quiet(&wire.binding, thread.as_ref()).await? =>
+            {
                 if archive
                     && state == RunState::Ended
                     && thread.is_some_and(|thread| !thread.archived())
                 {
-                    self.thread_command(json!({
+                    self.host.thread_command(json!({
                         "type": "thread.archive", "commandId": format!("{}-archive", launch.instance), "threadId": launch.thread,
                     })).await?;
                     return Ok(StopProgress::Waiting);
@@ -291,13 +414,6 @@ fn awaiting_reply(run: &Run, now_ms: u64) -> bool {
         .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS)
 }
 
-async fn quiet(binding: &Binding, projection: Option<&Projection>) -> Result<bool, HostError> {
-    if projection.is_some_and(|projection| projection.retained() == RetainedThread::Busy) {
-        return Ok(false);
-    }
-    Ok(!process::busy(Path::new(&binding.worktree_path)).await?)
-}
-
 fn available(provider: &Value, profile: &RoleProfile) -> bool {
     provider["instanceId"] == profile.instance_id
         && provider["enabled"] == true
@@ -317,7 +433,7 @@ fn available(provider: &Value, profile: &RoleProfile) -> bool {
             .is_some_and(|models| models.iter().any(|model| model["slug"] == profile.model))
 }
 
-fn rejected(cause: &Value, method: Method, instance: &str) -> bool {
+fn rejected(cause: &Value, wire: &Wire, instance: &str) -> bool {
     let Some([reason]) = cause.as_array().map(Vec::as_slice) else {
         return false;
     };
@@ -325,14 +441,117 @@ fn rejected(cause: &Value, method: Method, instance: &str) -> bool {
         return false;
     }
     let error = &reason["error"];
-    let rejection = &error["cause"];
-    let (wrapper, command) = match method {
-        Method::Create => ("ThreadLaunchError", "thread.create"),
-        Method::Continue => ("OrchestrationV2DispatchCommandError", "message.dispatch"),
-    };
-    error["_tag"] == wrapper
-        && error["commandId"] == instance
-        && rejection["_tag"] == "OrchestratorCommandPreviouslyRejectedError"
-        && rejection["commandId"] == instance
-        && rejection["commandType"] == command
+    if error["commandId"] != instance {
+        return false;
+    }
+    let defect = &error["cause"];
+    match wire.method {
+        Method::Continue => {
+            error["_tag"] == "OrchestrationV2DispatchCommandError"
+                && error["commandType"] == "message.dispatch"
+                && rejected_command(defect, instance, "message.dispatch")
+        }
+        Method::Create => {
+            error["_tag"] == "OrchestrationV2ThreadLaunchError"
+                && error["projectId"] == wire.binding.project_id
+                && defect_named(defect, "ThreadLaunchError")
+                && [
+                    ("create-thread", instance.to_owned(), "thread.create"),
+                    (
+                        "dispatch-message",
+                        format!("{instance}:initial-message"),
+                        "message.dispatch",
+                    ),
+                ]
+                .iter()
+                .any(|(operation, command_id, command)| {
+                    (defect["operation"] == *operation
+                        || defect["message"]
+                            == format!("Thread launch {instance} failed during {operation}."))
+                        && rejected_command(&defect["cause"], command_id, command)
+                })
+        }
+    }
+}
+
+fn defect_named(value: &Value, name: &str) -> bool {
+    value["name"] == name || value["_tag"] == name
+}
+
+fn rejected_command(value: &Value, id: &str, command: &str) -> bool {
+    defect_named(value, "OrchestratorCommandPreviouslyRejectedError")
+        && value["commandId"]
+            .as_str()
+            .is_none_or(|actual| actual == id)
+        && value["commandType"]
+            .as_str()
+            .is_none_or(|actual| actual == command)
+        && (value["commandId"] == id
+            || value["message"].as_str().is_some_and(|message| {
+                message.starts_with(&format!("Command {id} was previously rejected: "))
+            }))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::value::to_raw_value;
+
+    use super::*;
+
+    #[test]
+    fn effect_defects_identify_only_the_rejected_reserved_command() {
+        let instance = "task-fixture-run-2";
+        let binding = Binding {
+            project_id: "fixture-project".into(),
+            worktree_path: "/fixture".into(),
+            branch: "fixture-branch".into(),
+        };
+        let wire = |method| Wire {
+            binding: binding.clone(),
+            method,
+            payload: to_raw_value(&json!({})).expect("fixture wire"),
+        };
+        let defect = |command: &str, command_type: &str| {
+            json!({
+                "name": "OrchestratorCommandPreviouslyRejectedError",
+                "message": format!("Command {command} was previously rejected: Failed to dispatch orchestration command {command_type} ({command})."),
+            })
+        };
+        let continuation = json!([{"_tag":"Fail","error":{
+            "_tag":"OrchestrationV2DispatchCommandError",
+            "commandId":instance,
+            "commandType":"message.dispatch",
+            "message": defect(instance, "message.dispatch")["message"],
+            "cause":defect(instance, "message.dispatch"),
+        }}]);
+        assert!(rejected(&continuation, &wire(Method::Continue), instance));
+        assert!(!rejected(
+            &continuation,
+            &wire(Method::Continue),
+            "different-command"
+        ));
+        for (stage, command, kind) in [
+            ("create-thread", instance.to_owned(), "thread.create"),
+            (
+                "dispatch-message",
+                format!("{instance}:initial-message"),
+                "message.dispatch",
+            ),
+        ] {
+            let mut launch = json!([{"_tag":"Fail","error":{
+                "_tag":"OrchestrationV2ThreadLaunchError",
+                "commandId":instance,
+                "projectId":binding.project_id,
+                "message":"Failed to launch thread",
+                "cause":{
+                    "name":"ThreadLaunchError",
+                    "message":format!("Thread launch {instance} failed during {stage}."),
+                    "cause":defect(&command, kind),
+                },
+            }}]);
+            assert!(rejected(&launch, &wire(Method::Create), instance));
+            launch[0]["error"]["cause"]["cause"] = defect("different-command", kind);
+            assert!(!rejected(&launch, &wire(Method::Create), instance));
+        }
+    }
 }

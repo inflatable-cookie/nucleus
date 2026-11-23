@@ -1,12 +1,13 @@
-use std::path::Path;
+use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
 
+use crate::{
+    Binding, Dispatch, HostError, RoleProfile, RunRequest, SendOutcome, StopProgress, T3, T3Pass,
+    TaskHost, process::Inventory,
+};
 use futures_util::{SinkExt, StreamExt};
 use nucleus_core::{
     Authority, CheckState, Command, Entry, Forge, Host, Identity, Observation, Observed, Phase,
     PullRequest, RetainedThread, RunState, Task, Workspace,
-};
-use nucleus_hosts::{
-    Binding, Dispatch, HostError, RoleProfile, RunRequest, SendOutcome, StopProgress, T3, TaskHost,
 };
 use serde::Deserialize;
 use serde_json::{Value, json, value::RawValue};
@@ -29,6 +30,19 @@ use tokio_tungstenite::{
 const THREAD: &str = "fixture-thread";
 const NATIVE_RUN: &str = "fixture-native-turn";
 const LATE_REPLY_MS: u64 = 600_000;
+
+fn quiet_pass(client: &T3) -> T3Pass<'_> {
+    let pass = client.pass();
+    assert!(pass.processes.set(Ok(Inventory::quiet_fixture())).is_ok());
+    pass
+}
+
+fn checkout_fixture() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .permissions(Permissions::from_mode(0o700))
+        .tempdir()
+        .expect("checkout")
+}
 
 #[derive(Deserialize)]
 struct Request {
@@ -136,7 +150,7 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                     serde_json::from_str(request.payload.get()).expect("subscribe body");
                 assert_eq!(
                     payload,
-                    json!({"threadId":THREAD,"requestCompletionMarker":true,"acceptBoundedSnapshot":true})
+                    json!({"threadId":THREAD,"requestCompletionMarker":true,"acceptBoundedSnapshot":false})
                 );
             }
             seen.push(request);
@@ -209,14 +223,14 @@ fn snapshot(binding: &Binding, instance: &str, state: &str, archived: bool) -> V
     json!({
         "kind": "snapshot",
         "snapshotSequence": 16,
-        "hasMoreHistory": true,
-        "historyCursor": "omitted-timeline",
         "projection": {
             "thread": { "id": THREAD, "projectId": binding.project_id, "worktreePath": binding.worktree_path, "branch": binding.branch,
                 "archivedAt": archived.then_some("2026-11-23T16:00:00Z") },
             "runs": [{ "id": NATIVE_RUN, "status": state, "userMessageId": format!("{instance}-message") }],
             "messages": [],
             "runtimeRequests": [],
+            "providerThreads": [],
+            "turnItems": [],
         }
     })
 }
@@ -239,15 +253,25 @@ fn revoke(task: &mut Task, observation: &Observation) {
     .expect("cancel");
 }
 
+async fn send(pass: &impl TaskHost, task: &mut Task) -> Result<SendOutcome, HostError> {
+    let permit = pass
+        .authorize_send(task.run().expect("reserved run"))
+        .await?;
+    permit.record(task)?;
+    pass.send(task.run().expect("run after marker"), permit)
+        .await
+}
+
 #[tokio::test]
 async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
-    let checkout = tempfile::tempdir().expect("checkout");
+    let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, _, instance) = reserve(binding.clone());
     task.record_send(&instance, 1).expect("record send");
     let terminal = snapshot(&binding, &instance, "completed", false);
     let probe = "orchestration.subscribeThread";
     let (client, server) = server(vec![
+        (probe, Response::Snapshot(terminal.clone())),
         (probe, Response::Snapshot(terminal.clone())),
         (probe, Response::Snapshot(terminal)),
     ])
@@ -262,8 +286,9 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
         .spawn()
         .expect("fixture child");
     let run = task.run().expect("run");
+    let pass = client.pass();
     assert_eq!(
-        client.observe_run(run, 2).await.expect("busy checkout"),
+        pass.observe_run(run, 2).await.expect("busy checkout"),
         Host::Current {
             instance: instance.clone(),
             state: RunState::Running
@@ -271,7 +296,81 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
     );
     process.kill().await.expect("stop fixture child");
     assert_eq!(
-        client.observe_run(run, 3).await.expect("quiet checkout"),
+        pass.observe_run(run, 3).await.expect("same inventory"),
+        Host::Current {
+            instance: instance.clone(),
+            state: RunState::Running
+        }
+    );
+    assert_eq!(
+        quiet_pass(&client)
+            .observe_run(run, 3)
+            .await
+            .expect("quiet checkout"),
+        Host::Current {
+            instance,
+            state: RunState::Ended
+        }
+    );
+    server.await.expect("scripted host");
+}
+
+#[tokio::test]
+async fn settlement_needs_every_provider_and_background_turn_item() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (task, _, instance) = reserve(binding.clone());
+    let terminal = snapshot(&binding, &instance, "completed", false);
+    let mut omitted = terminal.clone();
+    omitted["projection"]
+        .as_object_mut()
+        .expect("projection")
+        .remove("providerThreads");
+    let mut windowed = terminal.clone();
+    windowed["hasMoreHistory"] = json!(true);
+    windowed["historyCursor"] = json!("prior-session-not-in-window");
+    let mut old_provider = terminal.clone();
+    old_provider["projection"]["providerThreads"] = json!([
+        {"id":"older-session", "pendingBackgroundTasks":[{"taskId":"still-executing","kind":"command"}]},
+        {"id":"latest-session", "pendingBackgroundTasks":[]},
+    ]);
+    let mut live_item = terminal.clone();
+    live_item["projection"]["turnItems"] = json!([
+        {"type":"command_execution","status":"running","runId":NATIVE_RUN},
+    ]);
+    let probe = "orchestration.subscribeThread";
+    let (client, server) = server(vec![
+        (probe, Response::Snapshot(omitted)),
+        (probe, Response::Snapshot(windowed)),
+        (probe, Response::Snapshot(old_provider)),
+        (probe, Response::Snapshot(live_item)),
+        (probe, Response::Snapshot(terminal)),
+    ])
+    .await;
+
+    let pass = quiet_pass(&client);
+    assert!(matches!(
+        pass.observe_retained(&binding, THREAD).await,
+        Err(HostError::Uncertain)
+    ));
+    let run = task.run().expect("run");
+    assert!(matches!(
+        pass.observe_run(run, 2).await,
+        Err(HostError::Uncertain)
+    ));
+    for _ in 0..2 {
+        assert_eq!(
+            pass.observe_run(run, 2)
+                .await
+                .expect("active background work"),
+            Host::Current {
+                instance: instance.clone(),
+                state: RunState::Running
+            }
+        );
+    }
+    assert_eq!(
+        pass.observe_run(run, 3).await.expect("covered and quiet"),
         Host::Current {
             instance,
             state: RunState::Ended
@@ -282,12 +381,12 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
 
 #[tokio::test]
 async fn an_unsent_revoked_reservation_clears_without_contacting_t3() {
-    let checkout = tempfile::tempdir().expect("checkout");
+    let checkout = checkout_fixture();
     let (mut task, observation, instance) = reserve(binding(checkout.path()));
     revoke(&mut task, &observation);
     let client = T3::new("http://127.0.0.1:9", "fixture-key").expect("client");
     assert_eq!(
-        client
+        quiet_pass(&client)
             .stop(task.run().expect("run"), 2, true)
             .await
             .expect("unsent settled"),
@@ -310,7 +409,7 @@ async fn superseded_review_replay_archives_after_exact_stop() {
 
 #[tokio::test]
 async fn next_review_resumes_the_same_thread_after_archival() {
-    let checkout = tempfile::tempdir().expect("checkout");
+    let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, mut observation, previous) = reserve(binding.clone());
     revoke(&mut task, &observation);
@@ -334,13 +433,15 @@ async fn next_review_resumes_the_same_thread_after_archival() {
     let command = "orchestration.dispatchCommand";
     let (client, server) = server(vec![
         (probe, Response::Snapshot(archived.clone())),
+        (probe, Response::Snapshot(archived.clone())),
         (probe, Response::Snapshot(archived)),
         (command, Response::Success),
         (probe, Response::Snapshot(restored)),
         (command, Response::Success),
     ])
     .await;
-    let retained = client
+    let pass = quiet_pass(&client);
+    let retained = pass
         .observe_retained(&binding, THREAD)
         .await
         .expect("retained thread");
@@ -363,17 +464,13 @@ async fn next_review_resumes_the_same_thread_after_archival() {
     let _ = task
         .reserve_launch(&observation, inputs, &[4; 32])
         .expect("reserve continuation");
-    task.record_send(&instance, 2).expect("record continuation");
     assert_eq!(
-        client
-            .send(task.run().expect("continued run"))
-            .await
-            .expect("send continuation"),
+        send(&pass, &mut task).await.expect("send continuation"),
         SendOutcome::Sent
     );
     let sent = server.await.expect("scripted host");
-    let unarchive: Value = serde_json::from_str(sent[2].payload.get()).expect("unarchive payload");
-    let message: Value = serde_json::from_str(sent[4].payload.get()).expect("continuation payload");
+    let unarchive: Value = serde_json::from_str(sent[3].payload.get()).expect("unarchive payload");
+    let message: Value = serde_json::from_str(sent[5].payload.get()).expect("continuation payload");
     assert_eq!(
         unarchive,
         json!({"type":"thread.unarchive", "threadId":THREAD, "commandId":format!("{instance}-unarchive")})
@@ -383,24 +480,27 @@ async fn next_review_resumes_the_same_thread_after_archival() {
     assert_eq!(message["messageId"], format!("{instance}-message"));
 }
 
-async fn revoked_replay(archive: bool) {
-    let checkout = tempfile::tempdir().expect("checkout");
-    let binding = binding(checkout.path());
-    let (mut task, observation, instance) = reserve(binding.clone());
+fn replay_script(
+    binding: &Binding,
+    instance: &str,
+    archive: bool,
+) -> Vec<(&'static str, Response)> {
     let probe = "orchestration.subscribeThread";
     let launch = "orchestration.launchThread";
     let command = "orchestration.dispatchCommand";
-    let ended = snapshot(&binding, &instance, "interrupted", false);
+    let ended = snapshot(binding, instance, "interrupted", false);
     let mut steps = vec![
         (probe, absent()),
+        (probe, absent()),
         (launch, Response::Failure(json!([]))),
+        (probe, absent()),
         (probe, absent()),
         (probe, absent()),
         (probe, absent()),
         (launch, Response::Success),
         (
             probe,
-            Response::Snapshot(snapshot(&binding, &instance, "running", false)),
+            Response::Snapshot(snapshot(binding, instance, "running", false)),
         ),
         (command, Response::Success),
         (probe, Response::Snapshot(ended)),
@@ -410,48 +510,80 @@ async fn revoked_replay(archive: bool) {
             (command, Response::Success),
             (
                 probe,
-                Response::Snapshot(snapshot(&binding, &instance, "interrupted", true)),
+                Response::Snapshot(snapshot(binding, instance, "interrupted", true)),
             ),
         ]);
     }
-    let (client, server) = server(steps).await;
+    steps
+}
 
-    task.record_send(&instance, 1).expect("record first send");
+async fn revoked_replay(archive: bool) {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (mut task, observation, instance) = reserve(binding.clone());
+    let (client, server) = server(replay_script(&binding, &instance, archive)).await;
+
     assert!(matches!(
-        client.send(task.run().expect("run")).await,
+        send(&quiet_pass(&client), &mut task).await,
+        Err(HostError::Uncertain)
+    ));
+    let sent_at = task
+        .run()
+        .expect("run")
+        .last_send_at_ms()
+        .expect("first send time");
+    assert!(matches!(
+        client.pass().authorize_send(task.run().expect("run")).await,
         Err(HostError::Uncertain)
     ));
     revoke(&mut task, &observation);
     assert_eq!(
-        client
-            .stop(task.run().expect("run"), LATE_REPLY_MS, archive)
+        quiet_pass(&client)
+            .stop(
+                task.run().expect("run"),
+                sent_at + LATE_REPLY_MS - 1,
+                archive
+            )
             .await
             .expect("late reply window"),
         StopProgress::Waiting
     );
-    let expired = LATE_REPLY_MS + 1;
+    // Restore the same durable reservation after the late-reply window has elapsed.
+    let mut stored = serde_json::to_value(&task).expect("persist task");
+    stored["run"]["last_send_at_ms"] = json!(sent_at - LATE_REPLY_MS);
+    let mut task: Task = serde_json::from_value(stored).expect("restore task");
+    let expired = sent_at;
     assert_eq!(
-        client
+        quiet_pass(&client)
             .stop(task.run().expect("run"), expired, archive)
             .await
             .expect("expired window"),
         StopProgress::ReplayDue
     );
-    task.record_send(&instance, expired).expect("record replay");
-    let run = task.run().expect("run");
-    assert_eq!(client.send(run).await.expect("replay"), SendOutcome::Sent);
+    let pass = quiet_pass(&client);
     assert_eq!(
-        client.stop(run, expired, archive).await.expect("interrupt"),
+        send(&pass, &mut task).await.expect("replay"),
+        SendOutcome::Sent
+    );
+    let run = task.run().expect("run");
+    assert_eq!(
+        pass.stop(run, expired, archive).await.expect("interrupt"),
         StopProgress::Waiting
     );
     if archive {
         assert_eq!(
-            client.stop(run, expired, true).await.expect("archive"),
+            quiet_pass(&client)
+                .stop(run, expired, true)
+                .await
+                .expect("archive"),
             StopProgress::Waiting
         );
     }
     assert_eq!(
-        client.stop(run, expired, archive).await.expect("settled"),
+        quiet_pass(&client)
+            .stop(run, expired, archive)
+            .await
+            .expect("settled"),
         StopProgress::Settled(Host::Current {
             instance: instance.clone(),
             state: RunState::Ended
@@ -460,16 +592,16 @@ async fn revoked_replay(archive: bool) {
 
     let sent = server.await.expect("scripted host");
     assert_eq!(
-        sent[1].payload.get().as_bytes(),
-        sent[5].payload.get().as_bytes()
+        sent[2].payload.get().as_bytes(),
+        sent[7].payload.get().as_bytes()
     );
-    let stop: Value = serde_json::from_str(sent[7].payload.get()).expect("stop payload");
+    let stop: Value = serde_json::from_str(sent[9].payload.get()).expect("stop payload");
     assert_eq!(
         stop,
         json!({"type":"run.interrupt", "threadId":THREAD, "commandId":format!("{instance}-run.interrupt"), "runId": NATIVE_RUN})
     );
     if archive {
-        let archive: Value = serde_json::from_str(sent[9].payload.get()).expect("archive payload");
+        let archive: Value = serde_json::from_str(sent[11].payload.get()).expect("archive payload");
         assert_eq!(
             archive,
             json!({"type":"thread.archive", "threadId":THREAD, "commandId":format!("{instance}-archive")})

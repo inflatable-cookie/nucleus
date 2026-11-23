@@ -1026,8 +1026,10 @@ name = "nucleus-hosts"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "log",
  "nucleus-core",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
