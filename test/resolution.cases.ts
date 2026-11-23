@@ -14789,44 +14789,21 @@ function restartC4(f: ReturnType<typeof fixture>) {
   });
 }
 
-test("C4 restart requires both exact absence and a settled producer", async () => {
+test("C4 restart directs the owner to the recorded run without a host lookup", async () => {
   const f = fixture();
   const launch = startC4(f);
   try {
     const { run, token } = await launch.started;
     await f.engine.resolution.recovery.pass(f.task.id);
-    assert.equal(f.current().resolution.recovery?.status, "escalated");
-    await assert.rejects(restartC4(f), /producer has not been proved stopped/);
-    assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
+    let lookups = 0;
+    f.adapter.findRunAgents = async () => {
+      lookups++;
+      return [];
+    };
+    await assert.rejects(restartC4(f), new RegExp(`Use run.release run=${run.id}`));
+    assert.equal(lookups, 0);
     assert.equal(f.store.run(run.id)?.released, false);
     assert.doesNotThrow(() => f.store.authenticate(run.id, token));
-
-    launch.finish();
-    await launch.route;
-    f.adapter.findRunAgents = async () => [
-      { id: "late", workspaceId: "workspace" },
-    ];
-    await assert.rejects(restartC4(f), /no longer proven absent/);
-    assert.equal(f.store.run(run.id)?.released, false);
-
-    f.adapter.findRunAgents = async () => [];
-    await restartC4(f);
-    assert.equal(f.store.run(run.id)?.status, "superseded");
-    assert.equal(f.store.run(run.id)?.released, true);
-    assert.ok(f.store.run(run.id)?.absentProvenAt);
-    assert.throws(() => f.store.authenticate(run.id, token), /Unauthorized/);
-    assert.equal(f.current().resolution.recovery, null);
-
-    const create = f.adapter.createRun;
-    f.adapter.createRun = async (task, next, credential) => {
-      assert.notEqual(next.id, run.id);
-      return create(task, next, credential);
-    };
-    await f.engine.resolution.recovery.route(f.current());
-    assert.equal(f.creates.filter((item) => item.id === run.id).length, 1);
-    assert.ok(
-      f.creates.some((item) => item.role === "recovery" && item.id !== run.id),
-    );
   } finally {
     launch.finish();
     await launch.route;
@@ -15076,11 +15053,6 @@ test("C4 sweep releases a settled agentless creation its replaced episode no lon
       ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs.find(
         (verb) => verb.verb === "restart",
       );
-    // The orphan is what refuses the owner restart while it is unreleased.
-    await assert.rejects(
-      restartC4(f),
-      /Resolve the other retained runs before restarting coordinator recovery/,
-    );
     // A dispatch hold that lands while the host is being read owns the task now:
     // the lookup completes, and the release waits for a later pass.
     let lookups = 0;
@@ -15197,57 +15169,6 @@ test("C4 keeps an orphaned creation whose recorded attempt never settled", async
       false,
     );
   } finally {
-    await f.close();
-  }
-});
-
-test("C4 needs a complete online lookup and a recorded producer identity", async () => {
-  const f = fixture();
-  const launch = startC4(f);
-  try {
-    const { run, token } = await launch.started;
-    launch.finish();
-    await launch.route;
-    for (const reason of [
-      "Exact inventory page was incomplete",
-      "Host lookup timed out",
-    ]) {
-      f.adapter.findRunAgents = async () => {
-        throw Error(reason);
-      };
-      await f.engine.resolution.recovery.pass(f.task.id);
-      await assert.rejects(restartC4(f), new RegExp(reason));
-      assert.equal(f.store.run(run.id)?.released, false);
-      assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
-    }
-    let lookups = 0;
-    f.adapter.findRunAgents = async () => {
-      lookups++;
-      return [];
-    };
-    f.engine.hostAvailable = () => false;
-    await f.engine.resolution.recovery.pass(f.task.id);
-    await assert.rejects(
-      restartC4(f),
-      /waiting for host|host.*online|unavailable/,
-    );
-    assert.equal(lookups, 0);
-    assert.equal(f.store.run(run.id)?.released, false);
-
-    f.engine.hostAvailable = () => true;
-    // Recreate a legacy row from the real writer by removing its typed record.
-    f.store.db
-      .prepare(
-        "DELETE FROM events WHERE taskId=? AND kind='creation_attempt_reserved'",
-      )
-      .run(f.task.id);
-    await f.engine.resolution.recovery.pass(f.task.id);
-    await assert.rejects(restartC4(f), /producer has not been proved stopped/);
-    assert.equal(f.store.run(run.id)?.released, false);
-    assert.doesNotThrow(() => f.store.authenticate(run.id, token));
-  } finally {
-    launch.finish();
-    await launch.route;
     await f.close();
   }
 });

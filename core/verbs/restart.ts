@@ -64,6 +64,11 @@ export class RestartControls {
   }
   private async restartCoordinator({ task, input, reason }: RestartRequest): Promise<Task> {
     const episodeRunId = task.resolution.recovery?.runId;
+    const episodeRun = episodeRunId ? this.store.run(episodeRunId) : undefined;
+    if (episodeRun && !episodeRun.released && !episodeRun.agentId)
+      throw new RestartRefusal(
+        `Use run.release run=${episodeRun.id} or run.start coordinator fresh replacing=${episodeRun.id}`,
+      );
     const finished = await this.engine.collectVerbFinishedRuns(
       task.id, (run) => run.id === episodeRunId,
     );
@@ -83,20 +88,36 @@ export class RestartControls {
       if (
         !this.engine.coordinatorActionRunId.getStore() &&
         episode?.status === "escalated" &&
-        !this.store.runs(task.id).some((run) => !run.released) &&
-        coordinatorBoundExhausted(this.store, task.id) !== null
+        !this.store.runs(task.id).some((run) => !run.released)
       ) {
-        this.store.event(task.id, "coordinator_rearm", JSON.stringify({
-          verb: "restart", role: "coordinator", caller: input.caller ?? null,
-          at: now(), reason: reason.slice(0, 2000),
-        }));
-        return this.resolution.operatorReturn(
-          current,
-          { recoveryActive: false, recovery: { ...episode, status: "resolved", summary: reason } },
-          {},
-          "coordinator_rearmed",
-          reason,
-        );
+        if (coordinatorBoundExhausted(this.store, task.id) !== null) {
+          this.store.event(task.id, "coordinator_rearm", JSON.stringify({
+            verb: "restart", role: "coordinator", caller: input.caller ?? null,
+            at: now(), reason: reason.slice(0, 2000),
+          }));
+          return this.resolution.operatorReturn(
+            current,
+            { recoveryActive: false, recovery: { ...episode, status: "resolved", summary: reason } },
+            {},
+            "coordinator_rearmed",
+            reason,
+          );
+        }
+        const run = episode.runId ? this.store.run(episode.runId) : undefined;
+        if (
+          run?.taskId === task.id &&
+          run.role === "recovery" &&
+          run.released &&
+          !run.agentId &&
+          run.status === "superseded"
+        )
+          return this.resolution.operatorReturn(
+            current,
+            { recoveryActive: false, recovery: null, recoveryAttempts: 0 },
+            {},
+            "coordinator_rearmed",
+            reason,
+          );
       }
       return this.resolution.retry(current, false, undefined, true);
     }), `task:${task.id}`);

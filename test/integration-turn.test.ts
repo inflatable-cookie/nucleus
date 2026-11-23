@@ -1192,14 +1192,13 @@ test("a rejoining earlier task cannot preempt a successor awaiting integration w
       f.store.update(task.id, { phase: "verifying" });
       f.engine.resolution.assignIntegrationTurn(f.current(task.id));
     }
-    const key = `reviewPublication:${first.runId}`;
-    f.store.setMeta(key, { status: "uncertain" });
+    f.store.update(first.id, { phase: "needs_attention", reason: "Waiting for the owner" });
     await f.engine.resolution.integrationQuantum(second.id, async () => {
       assert.equal(
         f.engine.resolution.claimIntegrationTurn(f.current(second.id)),
         true,
       );
-      f.store.deleteMeta(key);
+      f.store.update(first.id, { phase: "verifying" });
       await Promise.resolve();
       assert.equal(
         f.engine.resolution.holdsIntegrationTurn(f.current(second.id)),
@@ -1226,8 +1225,7 @@ test("a recovered earlier task cannot race a successor whose merge request is aw
     const first = f.add(),
       second = f.add();
     await f.engine.wake();
-    const key = `reviewPublication:${first.runId}`;
-    f.store.setMeta(key, { status: "uncertain" });
+    f.store.update(first.id, { held: true, mergeHold: true });
     await f.report(first.id, "ready_to_merge");
     const entered = new Promise<void>((resolve) => {
       const merge = f.adapter.merge!;
@@ -1244,7 +1242,7 @@ test("a recovered earlier task cannot race a successor whose merge request is aw
     });
     const reporting = f.report(second.id, "ready_to_merge");
     await entered;
-    f.store.deleteMeta(key);
+    f.store.update(first.id, { held: false, mergeHold: false });
     assert.equal(
       f.engine.resolution.holdsIntegrationTurn(f.current(first.id)),
       false,

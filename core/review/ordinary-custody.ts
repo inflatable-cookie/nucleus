@@ -1,9 +1,8 @@
 /**
- * The ordinary review round's custody proof. One detached reviewer round runs in
- * the task's own workspace, so before it is sent every participant must be
- * idle and permission-free, every tool hold proven complete, no other run may
- * own the checkout, and the task reservation must not have moved. The snapshot
- * re-read at the end is what makes the proof hold inside the send guard.
+ * Guard a retained review round's checkout. The prior round must have
+ * released it, no other run may own it, and the retained reviewer must be
+ * idle and permission-free before a new send. Recheck the reservation after
+ * the host observation.
  */
 import {
   isDispositionActive,

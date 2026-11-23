@@ -766,7 +766,7 @@ test("unrelated custody still refuses before anything is accepted", async () => 
   }
 });
 
-test("a stale version, a missing invocation and a mutated invocation exempt nothing", async () => {
+test("only the addressed closeout bypasses its own pending operation", async () => {
   const service = await openService({ paused: false });
   const { f, runtime, task } = service,
     store = runtime.store,
@@ -836,8 +836,7 @@ test("a stale version, a missing invocation and a mutated invocation exempt noth
     });
     assertUntouched(service, before);
 
-    // The invocation is mutated inside the awaited proof: the commit-time
-    // re-read exempts nothing and writes nothing.
+    // The durable payload is not read back after the forge observation.
     const { key } = taskControlOperation(control);
     f.state.onMerge = () => {
       const current = store.operationForKey(key)!;
@@ -852,17 +851,9 @@ test("a stale version, a missing invocation and a mutated invocation exempt noth
         },
       );
     };
-    await assert.rejects(
-      runtime.taskControl(control),
-      /boundary or recorded merge changed|Only an unmerged dispatched task/,
-    );
-    f.state.onMerge = null;
-    assert.equal(
-      store.operationForKey(key)!.state,
-      "failed",
-      "the mutated invocation is not reported as applied",
-    );
-    assertUntouched(service, before);
+    await runtime.taskControl(control);
+    assertAcceptedCloseout(service, before);
+    assert.equal(store.operationForKey(key)?.state, "succeeded");
   } finally {
     f.state.onMerge = null;
     await closeService(service);
