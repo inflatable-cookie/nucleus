@@ -63,14 +63,15 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 
 | Field | Meaning |
 |---|---|
-| `id`, `reference`, `repository`, `base` | Identity. |
+| `id`, `reference`, `repository`, `base`, `entry` | Identity. Entry is `brief` or `review_entry`, fixed at admission. |
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. |
-| `run` | The current run: role (`worker` or `reviewer`), thread ID, credential, label and start time. Absent when no run is live. |
+| `threads` | Retained worker and reviewer thread IDs and a monotonic launch sequence. Reuse each role's thread when it is idle. Replace its ID only after the host confirms the thread is gone. |
+| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds immutable launch inputs and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
 | `pr` | URL and head SHA. |
 | `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. |
-| `attempts` | Failed launches or silent ends at the current phase and head. |
-| `question` | At most one open question to the task's planner, with its options. |
+| `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
+| `question` | At most one open question to the task's planner, with its options and the head it was asked at. Observing a new head clears it. |
 | `hold` | An optional operator or planner hold, with its reason. |
 
 Anything else is observed, never stored as a record that something must clear.
@@ -107,6 +108,9 @@ A pure function, `decide(task, observation) -> Action`, written as one exhaustiv
 Every action is idempotent:
 
 - Launches and sends use a deterministic label, `task-{id}-{phase}-{head}-{attempt}`.
+  The task assigns each reservation a distinct launch instance and bearer. Revisiting
+  the same phase and head after `move` uses new native command and message IDs.
+  Only the current, unrevoked reservation can be replayed.
 - Before any create, the engine looks up the label. An unknown outcome is simply
   looked up on the next pass. Nothing is ever resent blindly.
 - A merge is the guarded GitHub merge at the exact head.
@@ -119,6 +123,10 @@ Every action is idempotent:
   planner.
 - **Timeouts, deferrals, unreadable state and uncertain launches** are not faults.
   The engine waits and looks again on the next pass.
+- A prepared review can send only with a fresh clean checkout at the open PR's
+  exact head. A reservation that no longer fits proceeds to reconciliation
+  without charging a failed attempt. A failed attempt counts only when the
+  required head observation is known.
 - **A task needs a person only when the question is about the work itself.**
 
 ### Commands
@@ -126,7 +134,7 @@ Every action is idempotent:
 | Command | Effect |
 |---|---|
 | `move to=<phase>` | Ends any live run (revokes its credential, stops its turn), clears `attempts` and `question`, and sets the phase. Always applies, apart from the two gates. |
-| `answer` | Answers the open question. |
+| `answer` | Answers the open question. Work guidance becomes a new brief version, retry clears the capped count, and authorized acceptance binds to the exact observed head. |
 | `cancel` | Ends any live run and sets `cancelled`. Leaves the worktree if it is dirty. |
 | `amend` | Replaces the brief and records the new version. |
 | `hold` / `release` | Pause or unpause one task. |
@@ -140,8 +148,8 @@ the commands above.
 There are only two:
 
 1. **Merging needs an exact-head `approve` verdict, or a recorded acceptance of that
-   head.** For an externally merged, unreviewed PR, the task's planner can accept it
-   (Tom, 2026-11-23). For a never-dispatched review entry, only the operator can.
+   head.** The task's planner can accept an externally merged, unreviewed `brief`
+   task (Tom, 2026-11-23). For a `review_entry`, only the operator can accept it.
 2. **A worktree with uncommitted work is never deleted.**
 
 ## Engine shape
@@ -185,9 +193,13 @@ Cargo builds" rule for the `engine/` workspace only:
 ## Migration
 
 1. **Milestone 1:** one task runs work → review → merge → close through the new engine
-   on T3, behind a setting, and is checked by hand.
+   on T3, behind a setting, and is checked by hand. Tom, 2026-11-23: "Yes, you can
+   create a throwaway repo on inflatable-cookie". The live proof uses the private,
+   synthetic `inflatable-cookie/nucleus-fixture` repository and its own T3 project.
+   For this proof the engine uses standalone role threads and its default worktree
+   allocator.
 2. **Milestone 2:** the board reads the new engine's API. New tasks for one project go
-   to the new engine.
+   to the new engine. T3 must show one row per task before the first real project.
 3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
    takes no new work.
 4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the
