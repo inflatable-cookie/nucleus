@@ -51,6 +51,7 @@ import { plannerIdMatches } from "../recovery/task-reasons";
 import { reviewPublicationKey } from "../review/review-publication";
 import { matchingInactiveParticipant } from "../intake/run-settlement";
 import { now, type Store } from "../store/store";
+import { creationProducerId, readCreationAttempt } from "../store/store-task-funnel";
 import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
 import { threadServesAnotherTask } from "../workspaces/thread-ownership";
 import { collectOwnerVerbFacts, type OwnerVerbFacts } from "./owner-facts";
@@ -435,6 +436,8 @@ export async function resolveExplicitly(
     if (input.version !== task.version) return reply("stale");
     if (task.removedAt) throw Error("Task was removed from the queue");
     requireWarningAuthority(source, input.accept);
+    if (input.action === "run.release" && runCreationInFlight(store, task, input.run))
+      throw Error(creationInFlightRefusal(input.run));
 
     const plan = engine.onTaskHost(task, () =>
       input.action === "run.release"
@@ -605,6 +608,43 @@ export function releaseWarnings(
 ): Warning[] {
   return previewRunRelease(store, task, runId)?.warnings ?? [];
 }
+
+/** The exact unbound run still has a creation that the host may deliver. */
+export function runCreationInFlight(
+  store: Store,
+  task: Task,
+  runId: string,
+): boolean {
+  const run = store.run(runId);
+  if (
+    run
+      ? run.taskId !== task.id || run.agentId || run.completion || run.released
+      : task.runId !== runId || task.agentId || task.completion
+  )
+    return false;
+  const fact = task.resolution.stop?.fact;
+  if (fact?.code === "creation_in_flight" && fact.subject === runId)
+    return true;
+  const attempt = readCreationAttempt(
+    store,
+    run ?? {
+      id: runId,
+      taskId: task.id,
+      hostId: task.hostId,
+      workspaceId: task.workspaceId,
+      role: "worker",
+    },
+  );
+  return (
+    attempt !== null &&
+    (attempt.settlement?.outcome === "returned" ||
+      (attempt.settlement === null &&
+        attempt.producerId === creationProducerId))
+  );
+}
+
+const creationInFlightRefusal = (runId: string): string =>
+  `Creation for run ${runId} may still bind a thread. Wait for the host to settle it.`;
 
 /** Read the named run and its local release facts without contacting its host. */
 export function previewRunRelease(store: Store, task: Task, runId: string) {
@@ -847,6 +887,14 @@ export function previewRecordClear(
 ): ClearPlan | { refusal: string } | null {
   const r = task.resolution;
   const stop = r.stop;
+  if (
+    (kind === "stop" || kind === "wait") &&
+    stop?.since === id &&
+    stop.fact?.code === "creation_in_flight" &&
+    stop.fact.subject &&
+    runCreationInFlight(store, task, stop.fact.subject)
+  )
+    return { refusal: creationInFlightRefusal(stop.fact.subject) };
   const patch = (
     before: unknown,
     fields: Partial<Task>,
@@ -1184,9 +1232,29 @@ function clearEffect(
         retry: r.mergeRetryOutcome,
       },
       { mergeAutoRetryExhausted: true },
+      mergeClearOccurrence(store, task),
     );
   }
   return null;
+}
+
+/** The initial guarded send has one durable event, even across observation retries. */
+function mergeClearOccurrence(store: Store, task: Task): string {
+  const origin = store.db
+    .prepare(
+      `
+    SELECT id FROM events WHERE taskId=? AND CASE
+      WHEN kind='merge_intent' THEN 1
+      WHEN kind='owner_resolution' AND json_valid(detail)
+        THEN json_extract(detail,'$.command')='merge.now'
+      WHEN kind='owner_force_move' AND json_valid(detail)
+        THEN json_extract(detail,'$.to')='merge'
+      ELSE 0 END
+    ORDER BY id DESC LIMIT 1
+  `,
+    )
+    .get(task.id);
+  return JSON.stringify([task.resolution.mergeHead, origin?.id ?? null]);
 }
 
 /** Retire the local wait while the original GitHub write still owns observation. */
@@ -1196,9 +1264,9 @@ function clearWriteWait(
   caller: string | undefined,
   before: unknown,
   change: Partial<Task["resolution"]>,
+  occurrence = recoverySettlementKey(task, effect),
 ): ClearPlan | null {
   const key = `${effect.kind}.${effect.identity}`;
-  const occurrence = recoverySettlementKey(task, effect);
   const state = task.resolution;
   if (
     state.ownerSettlements.some(

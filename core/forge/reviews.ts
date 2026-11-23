@@ -291,6 +291,9 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
   const key = reviewPublicationKey(run.id), hash = digest(body);
   const previous = store.getMeta<PublicationRecord>(key);
   if (previous && previous.hash !== hash) throw new Error('This run already has a different review publication');
+  const observeOnly = () => store.taskOrNull(t.id)?.resolution.ownerSettlements.some(
+    entry => entry.effect === `publication.${run.id}`,
+  ) === true;
   const { name, org, token, gh } = await formalIdentity(t, reviewer, runtime);
   const marker = reviewMarker(t, run.id, run.head, status);
   const taskChanged = (message: string): TaskChangedRefusal => {
@@ -309,7 +312,7 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
     const inventory = await formalCall(org, token, () => listFormalReviews(t, name, token, gh));
     // A marker under any login is evidence of an existing side effect.
     const marked = inventory.filter(review => String(review.body).includes(marker));
-    if (marked.length || (!recoveryReason && !previous.transientFailure)) {
+    if (marked.length || observeOnly() || (!recoveryReason && !previous.transientFailure)) {
       // Two exact-marker reviews are the real outcome of a publication race:
       // the earliest is the record and the later one stays on GitHub.
       const review = uniqueMarkedReview(inventory, reviewer.login, marker);
@@ -334,6 +337,9 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
       return { id: review.id, published: false };
     }
     if (!allowed()) throw taskChanged('Task changed before review publication recovery');
+    // The publication wait may have been cleared while either inventory was in flight.
+    if (observeOnly())
+      throw new Error('Review publication is uncertain; waiting to observe the original GitHub review');
     store.setMeta(attemptKey, { hash, head: run.head, login: reviewer.login, reason: recoveryReason, attemptedAt: new Date().toISOString() });
   }
   if (!allowed()) throw new Error('Paused before review publication');

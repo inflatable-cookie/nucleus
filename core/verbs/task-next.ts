@@ -3,6 +3,7 @@ import { activityReadContext } from "../telemetry/task-activity-observation";
 import {
   previewRecordClear,
   previewRunRelease,
+  runCreationInFlight,
   type RecordClearTarget,
 } from "./explicit-resolution";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
@@ -716,12 +717,10 @@ function explicitCommandsFor(
       commands.push(command);
     }
   };
-  const inFlight =
-    task.resolution.stop?.fact?.code === "creation_in_flight"
-      ? task.resolution.stop.fact.subject
-      : undefined;
+  const inFlight = (runId: string | null) =>
+    runId !== null && runCreationInFlight(facts.store, task, runId);
   const offerRelease = (runId: string, note: string) => {
-    if (runId === inFlight) return;
+    if (inFlight(runId)) return;
     const preview = previewRunRelease(facts.store, task, runId);
     if (!preview || preview.run?.explicitlyReleasedAt) return;
     push({
@@ -811,7 +810,7 @@ function explicitCommandsFor(
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
-    if (run.id === inFlight) continue;
+    if (inFlight(run.id)) continue;
     const role = startRoleFor(run.role);
     if (role) {
       push({
@@ -833,7 +832,7 @@ function explicitCommandsFor(
     );
   }
 
-  if (task.agentIntent && !task.agentId && task.runId !== inFlight) {
+  if (task.agentIntent && !task.agentId && !inFlight(task.runId)) {
     push({
       action: "run.start",
       args: {
@@ -857,7 +856,7 @@ function explicitCommandsFor(
       task.resolution.stalledTurnStop?.runId ??
       task.resolution.currentRunId ??
       task.runId;
-    if (stalledRunId && stalledRunId !== inFlight) {
+    if (stalledRunId && !inFlight(stalledRunId)) {
       const stored = runs.find((r) => r.id === stalledRunId);
       const role = stored ? startRoleFor(stored.role) : "worker";
       const label = role ?? stored?.role ?? "worker";

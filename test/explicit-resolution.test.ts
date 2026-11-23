@@ -16,6 +16,7 @@ import { mergeGate } from "../core/forge/merge";
 import {
   publishFormalReview,
   publishReviewOnce,
+  reconcileFormalReviewPublication,
   verifyFormalReview,
   type FormalReviewRuntime,
 } from "../core/forge/reviews";
@@ -3805,7 +3806,9 @@ test("clearing a publication wait preserves the receipt-backed verdict and recon
           commit_id: task.prHead,
           state: "CHANGES_REQUESTED",
         };
-        throw Error("GitHub accepted the review, but the response was lost");
+        throw Error(
+          "HTTP 503: GitHub accepted the review, but the response was lost",
+        );
       }
       if (args.includes("--paginate")) {
         await observation;
@@ -3888,7 +3891,10 @@ test("clearing a publication wait preserves the receipt-backed verdict and recon
       digest(JSON.stringify(completion)),
       JSON.stringify({ accepted: true }),
     );
-  const journal = () => store.getMeta(reviewPublicationKey(runId));
+  const journal = () =>
+    store.getMeta<{ hash: string; transientFailure?: boolean }>(
+      reviewPublicationKey(runId),
+    );
   await assert.rejects(
     publishFormalReview(
       store,
@@ -3904,7 +3910,7 @@ test("clearing a publication wait preserves the receipt-backed verdict and recon
   );
   assert.equal(posts, 1);
   const original = journal();
-  assert.ok(original);
+  assert.equal(original?.transientFailure, true);
   const offer = runtime
     .taskNext({ taskId: task.id })
     .explicitCommands?.find((item) => item.args.id === `publication.${runId}`);
@@ -3925,6 +3931,42 @@ test("clearing a publication wait preserves the receipt-backed verdict and recon
           item.available && item.args?.effect === `review_publication.${runId}`,
       ),
     );
+    const hiddenReview: FormalReviewRuntime = {
+      ...forge,
+      runGh: async (task, endpoint, args, token) =>
+        args.includes("--paginate")
+          ? [[]]
+          : forge.runGh!(task, endpoint, args, token),
+    };
+    // A complete inventory may lag the POST. Neither the scheduled publication
+    // path nor an explicit retry may POST again after this clear.
+    await assert.rejects(
+      publishFormalReview(
+        store,
+        current(),
+        run,
+        completion.status,
+        completion.reviewText!,
+        reviewer,
+        () => true,
+        hiddenReview,
+      ),
+      /exact-marker match; found 0/,
+    );
+    await assert.rejects(
+      reconcileFormalReviewPublication(
+        store,
+        current(),
+        run,
+        reviewer,
+        "Check the original review",
+        () => true,
+        hiddenReview,
+      ),
+      /exact-marker match; found 0/,
+    );
+    assert.equal(posts, 1);
+    assert.deepEqual(journal(), original);
     store.setMeta("paused", false);
   } finally {
     allowObservation();
@@ -3938,4 +3980,170 @@ test("clearing a publication wait preserves the receipt-backed verdict and recon
     store.getMeta<{ reviewId?: number }>(reviewPublicationKey(runId))?.reviewId,
     505,
   );
+});
+
+test("next and run.release respect the initial worker's pending native create", async (t) => {
+  let entered = () => {};
+  const creating = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let respond = () => {};
+  const reply = new Promise<void>((resolve) => {
+    respond = resolve;
+  });
+  let creates = 0;
+  let token = "";
+  const f = await fixture(t, {
+    verifyWorkspace: async (task: Task) => task.branch,
+    createAgent: async (_task: Task, credential: string) => {
+      creates++;
+      token = credential;
+      entered();
+      await reply;
+      return { id: "original-worker", workspaceId: "workspace" };
+    },
+  });
+  const { store, runtime, current, command, root } = f;
+  await attachGitCheckout(root, store, current().id, "delayed-worker-create");
+  const task = store.update(current().id, {
+    phase: "dispatching",
+    profile: profile("worker"),
+    prHead: null,
+    prUrl: null,
+  });
+  store.setMeta("paused", false);
+  const wake = runtime.engine.wakeTask(task.id);
+  let runId: string | null = null;
+  try {
+    await Promise.race([
+      creating,
+      wake.then(() => {
+        throw Error(current().reason);
+      }),
+    ]);
+    const pending = current();
+    runId = pending.runId;
+    assert.ok(runId);
+    assert.equal(pending.agentId, null);
+    assert.equal(pending.agentIntent, true);
+    assert.notEqual(pending.resolution.stop?.fact?.code, "creation_in_flight");
+    const next = () => runtime.taskNext({ taskId: task.id });
+    assert.ok(
+      !next().explicitCommands?.some(
+        (offer) => offer.args.run === runId || offer.args.replacing === runId,
+      ),
+    );
+    const release = {
+      action: "run.release",
+      run: runId,
+      accept: ["live_turn", "unreported_result", "creation_in_flight"],
+    };
+    await assert.rejects(command(release), /may still bind a thread/);
+    assert.equal(store.credentialRunForToken(token), runId);
+    assert.equal(current().runId, runId);
+
+    runtime.engine.resolution.waiting(
+      current(),
+      "The original create can still answer",
+      "lifecycle",
+      {
+        fact: { code: "creation_in_flight", subject: runId },
+      },
+    );
+    const stop = current().resolution.stop;
+    assert.ok(stop);
+    assert.ok(
+      !next().explicitCommands?.some((offer) => offer.args.id === stop.since),
+    );
+    await assert.rejects(
+      command({ action: "record.clear", kind: "stop", id: stop.since }),
+      /may still bind a thread/,
+    );
+    await assert.rejects(command(release), /may still bind a thread/);
+    assert.equal(f.audit().length, 0);
+  } finally {
+    respond();
+    await wake;
+    await runtime.engine.quiesce();
+  }
+  assert.equal(creates, 1);
+  assert.equal(current().runId, runId);
+  assert.equal(current().agentId, "original-worker");
+});
+
+test("an outage or retry keeps the same merge clear identity, and a new same-head send gets its own", async (t) => {
+  const { store, current, runtime, command } = await fixture(t);
+  const id = current().id;
+  const clearId = "merge-response.merge-response";
+  const requestedAt = "2026-11-23T10:00:00.000Z";
+  const start = (at: string) =>
+    store.update(
+      id,
+      {
+        phase: "merging",
+        resolution: {
+          ...current().resolution,
+          mergeIntent: true,
+          mergeHead: head,
+          mergeRequestedAt: at,
+          mergeResponseOutcome: "uncertain",
+          mergeRetryAt: null,
+          mergeRetryOutcome: null,
+          mergeAutoRetryExhausted: false,
+        },
+      },
+      "merge_intent",
+    );
+  const offer = () =>
+    runtime
+      .taskNext({ taskId: id })
+      .explicitCommands?.find(
+        (item) => item.action === "record.clear" && item.args.id === clearId,
+      );
+  start(requestedAt);
+  const first = offer();
+  assert.ok(first);
+  const input = {
+    action: "record.clear",
+    kind: "effect",
+    id: clearId,
+    accept: first.warnings,
+  };
+  const result = await command(input);
+  assert.equal(result.explicitResolution?.status, "applied");
+  await runtime.engine.quiesce();
+
+  // A forge outage restarts the proof clock. A pending reissue updates its
+  // own response but leaves the initial guarded send as the same occurrence.
+  const outageAt = "2026-11-23T10:01:00.000Z";
+  store.update(
+    id,
+    { resolution: { ...current().resolution, mergeRequestedAt: outageAt } },
+    "uncertain_merge_outage_wait",
+  );
+  assert.equal(offer(), undefined);
+  await assert.rejects(command(input), /No current effect/);
+  store.update(
+    id,
+    {
+      resolution: {
+        ...current().resolution,
+        mergeRetryAt: outageAt,
+        mergeRetryOutcome: "uncertain",
+      },
+    },
+    "merge_retry_uncertain",
+  );
+  assert.equal(offer(), undefined);
+  assert.ok(
+    blockingRecoveryEffects(store, current()).some(
+      (effect) => effect.kind === "merge-response",
+    ),
+  );
+  assert.equal(current().resolution.mergeAutoRetryExhausted, true);
+
+  start("2026-11-23T10:02:00.000Z");
+  assert.ok(offer());
+  assert.equal((await command(input)).explicitResolution?.status, "applied");
+  await runtime.engine.quiesce();
 });

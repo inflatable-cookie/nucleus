@@ -105,11 +105,16 @@ After an applied settlement, the response lists remaining records, runs
 and the visible stop. Nucleus schedules a pass for the affected task and
 wakes repository dispatch if the task is queued. Publication and merge
 response clears preserve the original GitHub write for reconciliation.
-Clearing a merge response stops automatic reissue while the outcome is unknown.
+After a publication clear, reconciliation only looks for the original review.
+Clearing an uncertain merge response stops automatic reissue. The clear
+belongs to the initial guarded request and survives changes to the
+observation clock and retry status.
 Before `run.release` removes an unfinished initial worker, Nucleus
 confirms that the worker's turn has ended. If the host cannot confirm it,
-the binding and callback credential remain. The preview uses local facts
-and supplies no result for a process, host or forge operation.
+the binding and callback credential remain. An unbound creation that may
+still deliver a thread keeps its run binding and has no `run.release` offer.
+The preview uses local facts and supplies no result for a process, host or
+forge operation.
 
 | Command | Does exactly | Warnings (overridable) |
 | --- | --- | --- |
