@@ -9,7 +9,7 @@ import type { VerifiedPr } from '../host/types';
 import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, requiredCheckRequirements, branchUpdateRequired, observeCheckClassification, type CheckClassification, requiredChecks } from './checks';
 import { api, repo } from './github-client';
 import { requestServiceRollAfterRepositorySync } from './roll-request';
-import { gitFastForward } from '../git/git-command';
+import { gitFastForward, requireGitAncestry } from '../git/git-command';
 
 export function classifyGithubMerge(p: {mergeable: string; mergeStateStatus: string}, updateBranchRequired: boolean, options: {advisoryChecks?: boolean} = {}): {wait: string; needsRebase?: true} {
   if (p.mergeable === 'CONFLICTING' || p.mergeStateStatus === 'DIRTY') return {wait: MERGE_CONFLICT_REASON, needsRebase: true};
@@ -126,6 +126,8 @@ export async function merge(t: Task, allowed: () => boolean = () => true) {
   const response = await api(t, `repos/${name}/pulls/${taskPrNumber(t)}/merge`, ['-X', 'PUT', '-f', `sha=${t.resolution.mergeHead}`, '-f', 'merge_method=merge']);
   if (!response.merged) throw new Error(response.message || 'GitHub did not confirm merge');
 }
+export class ExternalMergeProofRefusal extends Error {}
+
 export async function merged(t: Task, options?: { externalOnly: boolean }) {
   const name = await repo(t), number = taskPrNumber(t);
   const p = await api(t, `repos/${name}/pulls/${number}`);
@@ -136,8 +138,25 @@ export async function merged(t: Task, options?: { externalOnly: boolean }) {
       || p.base?.repo?.full_name?.toLowerCase() !== name.toLowerCase()
       || p.head?.repo?.full_name?.toLowerCase() !== name.toLowerCase()
       || (t.prUrl && p.html_url !== t.prUrl))
-      throw Error('External merge identity does not match the task PR, repository and branches');
-    return { merged: true, commit: String(p.merge_commit_sha ?? ''), head: String(p.head.sha), base: String(p.base.ref) };
+      throw new ExternalMergeProofRefusal('External merge identity does not match the task PR, repository and branches');
+    const head = String(p.head.sha ?? ''), commit = String(p.merge_commit_sha ?? '');
+    if (!/^[a-f0-9]{40}$/.test(head) || !/^[a-f0-9]{40}$/.test(commit))
+      throw new ExternalMergeProofRefusal('External merge requires an exact PR head and merge commit');
+
+    const source = t.resolution.mergedCommit ? t.resolution.mergeHead : t.prHead;
+    const descendsFrom = source && source !== head ? source : undefined;
+    try {
+      await git(t.repoPath, 'fetch', 'origin', t.baseBranch);
+      const base = await git(t.repoPath, 'rev-parse', `refs/remotes/origin/${t.baseBranch}`);
+      await requireGitAncestry(t.repoPath, commit, base, 'The merge commit is not on the task base');
+      if (descendsFrom) {
+        await requireGitAncestry(t.directory ?? t.repoPath, descendsFrom, head,
+          'The merged head does not descend from the recorded task source');
+      }
+    } catch (error) {
+      throw new ExternalMergeProofRefusal(error instanceof Error ? error.message : String(error));
+    }
+    return { merged: true, commit, head, base: t.baseBranch, descendsFrom };
   }
   if (p.merged) return { merged: true, commit: p.merge_commit_sha as string, head: String(p.head.sha), base: String(p.base.ref) };
   const commit=await exactIntendedMerge(t);

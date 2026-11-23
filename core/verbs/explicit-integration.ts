@@ -16,6 +16,7 @@ import type {
 import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
+import { ExternalMergeProofRefusal } from "../forge/merge";
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { unreviewedExternalMergeCause } from "../merge/external-merge-check";
 import { nextMergeRequestAt, sendGuardedMerge } from "../merge/merge-phase";
@@ -84,19 +85,25 @@ export function unreviewedCloseoutWarning(
   merge: { head: string; commit: string },
 ) {
   if (
-    externalCloseoutHead(task) !== merge.head ||
+    !externalCloseoutHead(task) ||
     mergeReviewEvidenceAt(task, merge.head) ||
     externalMergeSourceAcceptance(task)
   ) return null;
   const runs = store.runs(task.id);
   const atHead = { id: task.id, prHead: merge.head };
   if (runs.some((run) => reportedUnappliedVerdict(store, atHead, run))) return null;
+  const review = task.resolution.review;
   const evidence = acceptanceEvidenceAt(task, runs, merge.head);
-  if (!evidence.available || evidence.acceptance !== "operator_source") return null;
+  const missingEvidence = review?.status === "changes_required" && review.head === merge.head
+    ? "The recorded changes_required verdict at the merged head is still outstanding"
+    : evidence.available && evidence.acceptance === "operator_source"
+      ? evidence.missingEvidence
+      : null;
+  if (!missingEvidence) return null;
   return {
     id: "unreviewed_merge" as const,
-    text: `The PR merged outside Nucleus at ${merge.head} (merge commit ${merge.commit}). ${evidence.missingEvidence}. Accepting records a source disposition for closeout.`,
-    missingEvidence: evidence.missingEvidence,
+    text: `The PR merged outside Nucleus at ${merge.head} (merge commit ${merge.commit}). ${missingEvidence}. Accepting records a source disposition for closeout.`,
+    missingEvidence,
   };
 }
 
@@ -229,7 +236,7 @@ export async function preflightExplicitIntegration(
   const externalHead = externalCloseoutHead(task);
   if (
     externalHead &&
-    !mergeReviewEvidenceAt(task, externalHead) &&
+    (!task.resolution.mergedCommit || !mergeReviewEvidenceAt(task, externalHead)) &&
     !externalMergeSourceAcceptance(task) &&
     (task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber) &&
     engine.resolution.adapter.merged
@@ -238,10 +245,11 @@ export async function preflightExplicitIntegration(
       const observed = await engine.resolution.adapter.merged(task, { externalOnly: true });
       const recorded = task.resolution.unreviewedMerge;
       const expectedCommit = task.resolution.mergedCommit ?? recorded?.commit;
-      const exact =
+      const verified =
         observed.merged &&
         observed.base === task.baseBranch &&
-        observed.head === externalHead &&
+        (observed.head === externalHead ||
+          (!task.resolution.mergedCommit && observed.descendsFrom === externalHead)) &&
         /^[a-f0-9]{40}$/.test(observed.head) &&
         observed.commit &&
         /^[a-f0-9]{40}$/.test(observed.commit) &&
@@ -249,12 +257,14 @@ export async function preflightExplicitIntegration(
         (!recorded || (recorded.prNumber === taskPrNumber(task) && recorded.head === observed.head));
       return {
         observedMerge: observed,
-        ...(exact && observed.commit
+        ...(verified && observed.commit
           ? { externalMerge: { head: observed.head, commit: observed.commit } }
           : {}),
       };
     } catch (error) {
-      return { observedMerge: null, mergeReadError: String(error) };
+      return error instanceof ExternalMergeProofRefusal
+        ? { prIdentityError: error.message }
+        : { observedMerge: null, mergeReadError: String(error) };
     }
   }
   if (task.resolution.mergedCommit) {
@@ -677,6 +687,9 @@ export function closeoutNowPlan(
 ): ExplicitPlan {
   const store = engine.store;
   const r = task.resolution;
+  if (preflight?.prIdentityError) {
+    throw Error(`closeout.now refused: ${preflight.prIdentityError}`);
+  }
   let mergedCommit: string;
   let mergeHead: string | null;
   let unverified = false;

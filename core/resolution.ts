@@ -374,6 +374,8 @@ export interface ResolutionAdapter {
     commit: string | null;
     head: string;
     base: string;
+    /** externalOnly: the recorded source proven to be an ancestor of the observed head. */
+    descendsFrom?: string;
     proof?: { proven: boolean; detail: string };
   }>;
   syncMain(

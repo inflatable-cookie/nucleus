@@ -148,13 +148,17 @@ Tom, 2026-11-23:
 >
 > I'm saying that the compli-me scenario shouldn't need me to decide on it. I didn't make that rule, it was written by an earlier agent
 
-For a dispatched task with missing review evidence, the responsible planner
-or operator board can run `closeout.now` with `accept: ["unreviewed_merge"]`
-and a reason. Nucleus verifies the bound PR, head and merge commit on GitHub
-and records an `external_merge_source` disposition with the actor, authority,
-reason and missing evidence. The disposition applies only to that external
-merge during closeout. It carries no review verdict or authority to merge code.
-`next` shows the warning and missing evidence for a recorded unreviewed merge.
+For a dispatched task whose externally merged PR lacks approval at the merged
+head, the responsible planner or operator board can run `closeout.now` with
+`accept: ["unreviewed_merge"]` and a reason. Nucleus verifies the task's own
+PR and confirms that the merge commit is on its base branch. The actual merged
+head must match or descend from the recorded source. Nucleus records that head
+in an `external_merge_source` disposition with the actor, authority, reason and
+missing evidence. The disposition applies only to closeout of that merge and
+carries no authority to merge code. `next` shows the warning for a parked merge
+and names any outstanding `changes_required` verdict at the merged head. The
+verdict remains recorded, and the closeout prompt names the recorded actor and
+command.
 
 ## Normal flow keeps working, and stops being a lever
 

@@ -4,7 +4,7 @@
  * basis of an external merge, the durable worker exclusions, the interactive
  * session block, and the brief's report-only policy as a typed record.
  */
-import { mergeReviewEvidenceAt, type Task } from '../../../shared/contracts';
+import { externalMergeSourceAcceptance, mergeReviewEvidenceAt, type Task } from '../../../shared/contracts';
 import { currentBrief } from '../../planning/brief';
 import { heldBriefQueuePolicy } from '../../planning/handoff';
 
@@ -24,13 +24,20 @@ export function revisionReviewFindings(task: Pick<Task, 'resolution'>): string |
  * Task 993: the code gate, not this prompt, decides whether an observed
  * external merge counts. The prompt describes the recorded basis the gate
  * accepted the merge on — review evidence at the merged head, or the recorded
- * no-verdict basis for an explicitly skipped-review submission or an operator
- * `move to=closeout` acceptance — and asks the coordinator to close out
+ * basis for an explicit source acceptance or skipped-review submission —
+ * and asks the coordinator to close out
  * against that record; a contradiction between the record and the forge stays
  * a blocked report. The no-evidence bases are the gate's own accepted routes
  * (review 5829659690): a closeout must never block on their absence.
  */
 export function externalMergeCloseoutBlock(task: Task): string {
+  const acceptance = externalMergeSourceAcceptance(task);
+  if (acceptance) {
+    const actor = acceptance.actor.role === 'planner'
+      ? `planner (${acceptance.actor.agentId})`
+      : 'operator at the board';
+    return `This PR was merged outside the plugin. Nucleus recorded the ${actor} accepting its exact merged source through closeout.now. ${acceptance.missingEvidence}. Record the acceptance and review status in the closeout summary. Report blocked if the task's records or the repository contradict the recorded acceptance. `;
+  }
   const head = task.resolution.mergeHead ?? task.prHead;
   const evidence = head ? mergeReviewEvidenceAt(task, head) : null;
   if (evidence) return `This PR was merged outside the plugin. The merge is an observed fact, not review or acceptance approval by itself. Nucleus accepted it only because recorded review evidence binds the merged head: ${evidence.detail}. Record that evidence faithfully in the closeout summary; do not infer approval from merged status, and report blocked if the recorded evidence contradicts the repository. `;
