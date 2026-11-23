@@ -5,7 +5,7 @@ mod volume;
 
 use std::{collections::BTreeMap, time::Duration};
 
-use nucleus_core::Task;
+use nucleus_core::{Phase, Task};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, named_params,
     params,
@@ -16,11 +16,17 @@ pub use settings::{EngineSettings, EngineStorage, SettingsFile, StorageError};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
+const ACP_SESSIONS: &str = "CREATE TABLE acp_sessions (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+  reader BLOB NOT NULL CHECK (length(reader) = 32),
+  writer BLOB CHECK (length(writer) = 32),
+  controller BLOB NOT NULL CHECK (length(controller) = 32)
+) STRICT";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -55,6 +61,13 @@ pub struct Event {
 pub struct TaskRow {
     pub task: Task,
     pub version: i64,
+}
+
+/// Task-scoped credential digests. The database never holds raw ACP keys.
+pub struct AcpSession {
+    pub reader: [u8; 32],
+    pub writer: Option<[u8; 32]>,
+    pub controller: [u8; 32],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,16 +107,20 @@ impl Store {
             {
                 tx.execute_batch(include_str!("schema.sql"))?;
                 tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+                tx.execute(ACP_SESSIONS, [])?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
-            (APPLICATION_ID, 1 | 2) => {
+            (APPLICATION_ID, 1..=3) => {
                 if version == 1 {
                     tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
                     tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
                 }
-                tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+                if version < 3 {
+                    tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+                }
+                tx.execute(ACP_SESSIONS, [])?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -257,9 +274,50 @@ impl Store {
             return Err(StoreError::StaleTask);
         }
         persist(&tx, task, true)?;
+        if task.phase() == Phase::Done {
+            tx.execute(
+                "UPDATE acp_sessions SET writer = NULL WHERE task_id = ?1",
+                [&task.identity().id],
+            )?;
+        }
         append(&tx, &task.identity().id, event)?;
         tx.commit()?;
         Ok(row.version + 1)
+    }
+
+    /// Rotate the session credentials attached to an existing task.
+    ///
+    /// # Errors
+    /// Returns an error if the task is missing or the session cannot be saved.
+    pub fn bind_acp(&self, id: &str, session: &AcpSession) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO acp_sessions (task_id, reader, writer, controller)
+             VALUES (?1, ?2, ?3, ?4) ON CONFLICT(task_id) DO UPDATE
+               SET reader = excluded.reader, writer = excluded.writer, controller = excluded.controller",
+            params![id, session.reader, session.writer, session.controller],
+        )?;
+        Ok(())
+    }
+
+    /// Read the session's verifiers for this exact task.
+    ///
+    /// # Errors
+    /// Returns an error if the credential record is unreadable.
+    pub fn acp_session(&self, id: &str) -> Result<Option<AcpSession>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT reader, writer, controller FROM acp_sessions WHERE task_id = ?1",
+                [id],
+                |row| {
+                    Ok(AcpSession {
+                        reader: row.get(0)?,
+                        writer: row.get(1)?,
+                        controller: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
     }
 
     /// Read a page of display history, newest first.

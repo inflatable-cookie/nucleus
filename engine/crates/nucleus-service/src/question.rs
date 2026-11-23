@@ -60,7 +60,10 @@ impl Service {
         Ok(wait)
     }
 
-    async fn responsible_planner(&self, task: &Task) -> Result<Option<String>, ServiceError> {
+    pub(super) async fn responsible_planner(
+        &self,
+        task: &Task,
+    ) -> Result<Option<String>, ServiceError> {
         if let Some(origin) = &task.identity().origin_thread
             && self.host.planner_routable(origin).await?
         {

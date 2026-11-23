@@ -80,6 +80,12 @@ enum Action {
     Next { id: String },
     /// Read the task's recent activity.
     History { id: String },
+    /// Mint an owner-only ACP binding for a task.
+    BindAcp {
+        id: String,
+        #[arg(long)]
+        read_only: bool,
+    },
     /// Read the active storage roots and role profiles.
     Settings,
     /// Move to a phase subject to the engine's hard gates.
@@ -315,6 +321,11 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::History { id } => (
             Method::GET,
             format!("/v1/tasks/{}/history", segment(&id)?),
+            None,
+        ),
+        A::BindAcp { id, read_only } => (
+            Method::POST,
+            format!("/v1/tasks/{}/acp?readOnly={read_only}", segment(&id)?),
             None,
         ),
         A::Settings => (Method::GET, "/v1/settings".into(), None),

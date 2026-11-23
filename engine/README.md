@@ -322,6 +322,26 @@ It follows task invalidations and sends the same typed commands as the CLI,
 including answers. A committed command wakes the task. The agent keeps its
 presentation cache in memory and has no access to the engine store.
 
+Use `nucleus-engine bind-acp <task>` with a controller credential. This returns
+the binding path and stable session ID. Start `nucleus-acp` with
+`NUCLEUS_ACP_SESSION` set to that file, or set `NUCLEUS_ACP_BINDINGS` to the
+binding directory so the agent finds the task by checkout. The service writes
+the binding outside the checkout with owner-only permissions. Worker and
+reviewer processes receive their own report credentials.
+
+Use `bind-acp --read-only <task>` for a session that can only read the task,
+its history and its event stream. A writable binding has a separate command
+credential. The service checks that its controller still has access and the
+scheduler resolves the current responsible planner before applying a planner
+command. Rebinding keeps the session ID and rotates the credentials. Reaching
+Done revokes command access and keeps the final view readable. The live turn follows the
+task's invalidations, including changes within a row version. Attach and load
+read the committed view and history locally. A stream interruption reconnects
+with backoff. After the opening prompt, enter commands such as
+`hold <reason>`, `move reviewing`, `answer work <guidance>` or `release`.
+`NUCLEUS_ACP_HOLD_PATTERN` and `NUCLEUS_ACP_IGNORE_PATTERN` configure silent
+re-entry and wake prompts.
+
 Preserve the stdio protocol from [Spec 065](../docs/knowledge/specs/065-acp-task-session.md).
 `initialize` advertises `loadSession: true`. An unbound `session/new` is inert;
 it refuses prompts locally. An unbound `session/load` refuses the attachment.

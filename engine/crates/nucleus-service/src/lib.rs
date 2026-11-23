@@ -1,5 +1,6 @@
 //! Service entry points for the isolated Rust task engine.
 
+mod acp;
 mod pass;
 mod presentation;
 mod project;
@@ -58,6 +59,10 @@ pub enum ServiceError {
     ProfileLock,
     #[error("the callback configuration or ticket is invalid")]
     Ticket,
+    #[error("the ACP binding could not be saved")]
+    AcpBinding,
+    #[error("authentication failed")]
+    AcpUnauthorized,
     #[error("local I/O failed")]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -101,6 +106,7 @@ struct State {
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
     activity: BTreeMap<String, presentation::ActivityAt>,
+    acp_commands: BTreeMap<String, acp::PendingCommand>,
     thread_tasks: BTreeMap<String, BTreeMap<String, Option<ThreadHint>>>,
 }
 
@@ -176,6 +182,7 @@ impl Service {
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
                 activity: BTreeMap::new(),
+                acp_commands: BTreeMap::new(),
                 thread_tasks: BTreeMap::new(),
             }),
             pass_lock: Mutex::new(()),
@@ -257,29 +264,38 @@ impl Service {
                 let mut state = self.state.lock().await;
                 track(&mut state, &row.task);
             }
-            let profile_check = if row.task.phase() == Phase::Queued
-                && row.task.run().is_none()
-                && row.task.hold().is_none()
-                && row.task.question().is_none()
-            {
-                *profiles
-                    .get_or_init(|| async {
-                        self.host
-                            .check(&[&self.project.worker, &self.project.reviewer])
-                            .await
-                    })
-                    .await
+            let result = if self.apply_acp_command(&row).await {
+                let wait = self.state.lock().await.waits.get(&id).copied();
+                Ok(wait.map_or(Action::Nothing, Action::Wait))
             } else {
-                Ok(())
-            };
-            let result = match profile_check {
-                Ok(()) => Box::pin(self.advance(&row, &host)).await,
-                Err(error) => Err(ServiceError::Host(error)),
+                Box::pin(self.advance_due_task(&row, &host, &profiles)).await
             };
             self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });
         }
         Ok(results)
+    }
+
+    async fn advance_due_task(
+        &self,
+        row: &TaskRow,
+        host: &impl nucleus_hosts::TaskHost,
+        profiles: &OnceCell<Result<(), HostError>>,
+    ) -> Result<Action, ServiceError> {
+        if row.task.phase() == Phase::Queued
+            && row.task.run().is_none()
+            && row.task.hold().is_none()
+            && row.task.question().is_none()
+        {
+            (*profiles
+                .get_or_init(|| async {
+                    self.host
+                        .check(&[&self.project.worker, &self.project.reviewer])
+                        .await
+                })
+                .await)?;
+        }
+        self.advance(row, host).await
     }
 
     /// Use native thread changes to advance due times. Exact reads still own
@@ -462,10 +478,34 @@ impl Service {
         authority: &Authority,
         command: Command,
     ) -> Result<CommandOutcome, ServiceError> {
+        self.command_with_session(id, authority, command, None)
+            .await
+    }
+
+    async fn command_with_session(
+        &self,
+        id: &str,
+        authority: &Authority,
+        command: Command,
+        session: Option<acp::WriteCheck<'_>>,
+    ) -> Result<CommandOutcome, ServiceError> {
         let _fence = self.fence(id).await;
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let prior = self.lookup(&state, id)?;
+        if let Some(session) = session {
+            if acp::writer_controller(&state, id, &session.access.credential)
+                != Some(session.access.controller)
+            {
+                return Err(ServiceError::AcpUnauthorized);
+            }
+            if session
+                .planner
+                .is_some_and(|pending| !pending.current(&prior))
+            {
+                return Err(StoreError::StaleTask.into());
+            }
+        }
         let observation = state.command_observation(&prior);
         let mut task = prior.task.clone();
         let explicit_move = matches!(command, Command::Move(_));
