@@ -2016,13 +2016,17 @@ review or merge credit; live participants and unsettled effects remain fences.
   at once through the host's own permission answer, and the agent is told to
   carry on without it or report the blocker
   ([Spec 068](../specs/068-self-healing.md) Decision 4). The intent is recorded
-  before the send (`permission_denial_intent`, then `permission_denied`); an
-  unknown outcome is never resent, and a proven pre-send refusal is retried on a
-  later pass. A native question is not a permission and keeps its own route, and
-  an interactive task's worker session is never answered. Nothing is ever
-  approved automatically. T3, BB and Paseo all answer permissions natively, so
-  every host keeps its profile's runtime mode; a host that could not answer would
-  launch task runs in its provider's non-interactive approval mode instead.
+  before the send (`permission_denial_intent`, then `permission_denied`). A
+  proven pre-send refusal is retried on a later pass. An unknown outcome, or an
+  intent with no recorded outcome, is never resent: if the host still lists the
+  request, it goes to ordinary stall detection, which names it. A confirmed
+  decline gets one minute to leave the host's list. A native question is not a
+  permission and keeps its own route, and an interactive task's worker session
+  is never answered. Nothing is ever approved automatically. T3, BB and Paseo all
+  answer permissions natively, so every host keeps its profile's runtime mode.
+  Paseo's decline carries the message itself; T3 and BB get it as a steer into
+  the live turn. A host that could not answer would launch task runs in its
+  provider's non-interactive approval mode instead.
 - A stalled turn stays attached to its exact identities until `restart`; Nucleus
   rechecks identities and fences before cancelling, and starts nothing
   automatically ([Spec 016](../specs/016-live-evidence-before-recovery.md) rule
@@ -2031,30 +2035,44 @@ review or merge credit; live participants and unsettled effects remain fences.
   in the event ledger so it clears across restarts.
 - A shell command with no output for the repository's `toolQuietLimitMinutes`
   (default 30) is terminated ([Spec 068](../specs/068-self-healing.md)
-  Decision 3). Its process is the topmost process under the run's provider (the
-  parent of the run's own MCP report helper) whose command line carries the
-  tool's command; exactly one must match. The helper, the provider and its
-  standing tool runtimes are never targets, so the turn continues and the agent
-  sees a failed tool call. A command that leads its own process group is
-  signalled as that group, otherwise pid by pid: SIGTERM, then SIGKILL after a
-  short grace, each signal only after a fresh start-identity read of the exact
-  pid or group leader, so a reused pid is never signalled. Each call records one
-  `hung_tool_terminated` or `hung_tool_unterminated` event and is never
-  signalled twice. A command past the limit that could not be stopped no longer
-  fences stall detection.
+  Decision 3). Silence is known only when the host showed that call's output at
+  least once, or the host declares `streamsRunningToolOutput` (none does today).
+  A call whose output was never shown is unknown, never quiet, because many
+  providers return shell output only when the command ends. The process is the
+  topmost process under the run's provider (the parent of the run's own MCP
+  report helper) whose command line carries the tool's command; exactly one must
+  match. The helper, the provider and its standing tool runtimes are never
+  targets, so the turn continues and the agent sees a failed tool call. A
+  command that leads its own process group is signalled as that group,
+  otherwise pid by pid: SIGTERM, then SIGKILL after a short grace, each signal
+  only after a fresh start-identity read of the exact pid or group leader, so a
+  reused pid is never signalled. A call records `hung_tool_terminated` once and
+  is never signalled twice; each distinct reason it could not be stopped records
+  one `hung_tool_unterminated`. A command past the limit that could not be
+  stopped no longer fences stall detection.
+- A tool call the host reports `interrupted` (T3's "Stopped by user") is
+  finished once the turn is proven over. A kind that can outlive its turn, such
+  as a shell command, still takes the owned-process proof, so a background child
+  that survived the interrupt still holds (bovine#6928).
 - A non-terminal `working`, `changes_requested`, `awaiting_review` or
   `reviewing` task with no live run, no stop, no hold and no recovery, whose
-  activity reads `unclassified` for five minutes with nothing changing, returns
-  to ordinary admission for its role through the owner's own verb: worker phases
-  through `move to=work`, review phases through `move to=review`
-  (`orphan_phase_readmitted`). A released revision whose authenticated report
-  nothing applied decides by that report: `ready_for_review` goes on to its
-  reviewer, any other status records the typed stop. A move that refuses, or a
-  fourth readmission with no participant started, records an `operator_needed`
-  stop with fact `orphan_phase` naming the cause and `move` or `run.start`.
-  Pause, holds, owner stops, dispositions, prerequisite waits, an unavailable
-  host and a spent revision allowance are never orphans
-  ([Spec 068](../specs/068-self-healing.md) §4).
+  activity (as the board reads it) is `unclassified` for five minutes with
+  nothing changing, returns to ordinary admission for its role through the
+  owner's own verb: worker phases through `move to=work`, review phases through
+  `move to=review` (`orphan_phase_readmitted`). A released revision whose
+  authenticated report nothing applied goes back through ordinary result
+  application (`orphan_result_rebound` when nothing else was bound), so a pushed
+  head goes to review and a blocked report climbs the blocker ladder. A move that
+  refuses, a result application that changes nothing, or a fourth readmission in
+  one episode (since the last participant started, at most two hours) records an
+  `operator_needed` stop with fact `orphan_phase` naming the cause and `move` or
+  `run.start`. Never orphans: pause, holds, owner stops, dispositions,
+  prerequisite waits, an unavailable host, an armed worker replacement or
+  failover, a provider retry, a blocking side effect and a spent revision
+  allowance ([Spec 068](../specs/068-self-healing.md) §4).
+- A participant still in its turn that holds a result's application records the
+  same visible wait as a launch's lease decline, naming the participant and the
+  verbs that exit it, never a silent return (bovine-accelerator#6935).
 - Owner `restart role=worker` may supersede a stopped unreleased revision whose
   validation is still running, so the same worker can report when it finishes.
 - Transport and login-session deferrals during a prerequisite wait are recorded

@@ -167,13 +167,18 @@ export interface Host {
     request: RequestId,
     answers: Record<string, string>,
   ): Promise<void>;
-  /** Optional native permission response; an absent method grants no permission capability. */
+  /**
+   * Optional native permission response; an absent method grants no permission
+   * capability. A host whose answer carries a message to the agent (Paseo's
+   * deny) sends `message`; others leave it to a separate send.
+   */
   answerNativePermission?(
     agent: AgentId,
     workspace: WorkspaceId,
     request: RequestId,
     decision: HostPermissionDecision,
     intentId: RequestId,
+    message?: string,
   ): Promise<void>;
   /** Dismiss one pending native question; never used for tool or bash permissions. */
   dismissNativeQuestion(
@@ -226,6 +231,14 @@ export interface HostCapabilities {
   perThreadEnvironment?: boolean;
   /** One workspace archive retires the registration every task in the repository shares (T3Code projects). */
   repositorySharedWorkspaces?: boolean;
+  /**
+   * Spec 068 Decision 3: every provider on this host shows a running shell
+   * command's output as it prints, so a call with no output shown yet is known
+   * quiet. No host declares it today: on T3, BB and Paseo some providers return
+   * shell output only when the command ends, so only a call whose output was
+   * shown at least once can be judged quiet.
+   */
+  streamsRunningToolOutput?: boolean;
 }
 
 /** A workspace the host holds: its identity and the folder it lives in. */

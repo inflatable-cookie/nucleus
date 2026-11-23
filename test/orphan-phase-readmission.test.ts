@@ -11,6 +11,7 @@ import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import { ORPHAN_PHASE_READMITTED, ORPHAN_PHASE_STOPPED, ORPHAN_READMISSION_BOUND, orphanPhase } from "../core/recovery/orphan-phase";
 import { taskActivity } from "../shared/task-activity";
 import { activityReadContext } from "../core/telemetry/task-activity-observation";
+import { OPERATOR_WORKER_REMAP_REASON } from "../core/recovery/task-reasons";
 import { running, selfHealingFixture, type SelfHealingFixture } from "./support/self-healing-fixture";
 
 const idle = running({ status: "idle", active: false, activeTurnId: null, updatedAt: new Date().toISOString() });
@@ -131,12 +132,12 @@ test("awaiting_review with nothing dispatched readmits the reviewer", async (t) 
  * applied result. These are the recorded shapes: the revision run row, its
  * `run_completion` event and `run_released_from_recorded_completion`.
  */
-function releasedRevision(f: SelfHealingFixture, status: "ready_for_review" | "blocked", summary: string, head: string) {
+function releasedRevision(f: SelfHealingFixture, status: "ready_for_review" | "blocked", summary: string, head: string, bound = true) {
   const task = f.store.update(f.task.id, {
     phase: "changes_requested", agentActive: false, lastAgentStatus: "idle",
     prUrl: "https://github.com/example/repo/pull/11", prHead: f.head,
     completion: { eventId: "initial-ready", taskId: f.task.id, runId: "initial", status: "ready_for_review", summary: "Ready", prNumber: 11, head: f.head },
-    resolution: { ...f.store.task(f.task.id).resolution, stop: null, currentRunId: "revision-1", attention: false, revisionRuns: 1 },
+    resolution: { ...f.store.task(f.task.id).resolution, stop: null, currentRunId: bound ? "revision-1" : null, attention: false, revisionRuns: 1 },
   } as Partial<Task>);
   const createdAt = new Date(Date.now() - 25 * 60_000).toISOString();
   const receivedAt = new Date(Date.now() - 21 * 60_000).toISOString();
@@ -154,58 +155,85 @@ function releasedRevision(f: SelfHealingFixture, status: "ready_for_review" | "b
   return run;
 }
 
-test("a released revision that pushed a new head goes on to its reviewer", async (t) => {
+test("bovine-accelerator#6935: a released revision whose worker is still in its turn shows a wait, then applies", async (t) => {
+  const f = await selfHealingFixture(t);
+  const head = await f.pushRevision();
+  releasedRevision(f, "ready_for_review", "Addressed review findings", head);
+  // The live cause: the worker's thread kept an active turn after it reported,
+  // so result application's lease declined, and declined silently.
+  f.setObservation(running({ updatedAt: new Date().toISOString() }));
+  quantum(f).graceMs = 0;
+  await f.engine.scheduleTaskQuantum(f.task.id);
+  let task = f.store.task(f.task.id);
+  assert.equal(task.phase, "changes_requested");
+  assert.equal(task.resolution.stop?.reason, "lifecycle", JSON.stringify({ reason: task.reason, stop: task.resolution.stop }));
+  assert.match(task.resolution.stop?.detail ?? "", /still owns its turn/);
+  assert.equal(orphanPhase(f.store, task, false), null, "a recorded wait is never an orphan");
+  assert.equal(events(f, ORPHAN_PHASE_READMITTED).length + events(f, ORPHAN_PHASE_STOPPED).length, 0);
+  // The worker's turn ends: the next pass applies the result and starts the reviewer.
+  f.setObservation(idle);
+  for (let pass = 0; pass < 3 && !f.createdRuns.includes("reviewer"); pass++) await f.engine.scheduleTaskQuantum(f.task.id);
+  task = f.store.task(f.task.id);
+  assert.ok(f.createdRuns.includes("reviewer"), `the reviewer was admitted: ${JSON.stringify({ phase: task.phase, reason: task.reason, stop: task.resolution.stop, runs: f.createdRuns })}`);
+  assert.equal(f.createdRuns.includes("revision"), false, "the worker is never sent another revision");
+});
+
+test("a released revision nothing binds goes through ordinary result application, never a move", async (t) => {
   const f = await selfHealingFixture(t);
   f.setObservation(idle);
   const head = await f.pushRevision();
-  releasedRevision(f, "ready_for_review", "Addressed review findings", head);
+  releasedRevision(f, "ready_for_review", "Addressed review findings", head, false);
   const orphan = orphanPhase(f.store, f.store.task(f.task.id), false);
-  assert.equal(orphan?.role, "reviewer");
-  assert.equal(orphan?.move, "review");
-  // The live case's passes applied nothing for 20 minutes; the sweep's finish
-  // step is what runs past the grace.
+  assert.equal(orphan?.move, "result");
+  assert.equal(orphan?.result?.id, "revision-1");
   quantum(f).graceMs = 0;
   await quantum(f).settle(f.task.id, false);
   assert.equal(events(f, ORPHAN_PHASE_STOPPED).length, 0, JSON.stringify(events(f, ORPHAN_PHASE_STOPPED)));
   const readmitted = events(f, ORPHAN_PHASE_READMITTED);
   assert.equal(readmitted.length, 1, JSON.stringify(f.store.eventsAll(f.task.id).map((event) => event.kind)));
-  assert.deepEqual(JSON.parse(readmitted[0]!.detail), { phase: "changes_requested", move: "review", attempt: 1, result: "revision-1" });
+  assert.deepEqual(JSON.parse(readmitted[0]!.detail), { phase: "changes_requested", move: "result", result: "revision-1" });
+  assert.equal(events(f, "orphan_result_rebound").length, 1);
+  assert.ok(events(f, "run_result_applied").some((event) => event.detail === "revision-1"), "the revision's own result was applied");
+  assert.notEqual(f.store.task(f.task.id).phase, "changes_requested");
   assert.equal(f.createdRuns.includes("revision"), false, "the worker is never sent another revision");
-  quantum(f).graceMs = 60_000;
-  for (let pass = 0; pass < 2 && !f.createdRuns.includes("reviewer"); pass++) await f.engine.scheduleTaskQuantum(f.task.id);
-  const task = f.store.task(f.task.id);
-  assert.ok(f.createdRuns.includes("reviewer"), `the reviewer was admitted: ${JSON.stringify({ phase: task.phase, reason: task.reason, runs: f.createdRuns })}`);
 });
 
-test("a released revision that reported blocked raises its typed stop", async (t) => {
+test("a released blocked revision nothing applied climbs the ordinary blocker path, never an operator stop", async (t) => {
   const f = await selfHealingFixture(t);
   f.setObservation(idle);
-  releasedRevision(f, "blocked", "Cannot push: the branch is protected", f.head);
+  releasedRevision(f, "blocked", "Cannot push: the branch is protected", f.head, false);
   quantum(f).graceMs = 0;
   await quantum(f).settle(f.task.id, false);
   const task = f.store.task(f.task.id);
-  assert.equal(events(f, ORPHAN_PHASE_READMITTED).length, 0);
-  assert.equal(events(f, ORPHAN_PHASE_STOPPED).length, 1);
-  assert.equal(task.phase, "changes_requested");
-  assert.equal(task.resolution.stop?.reason, "operator_needed");
-  assert.deepEqual(task.resolution.stop?.fact, { code: "orphan_phase", subject: "changes_requested" });
-  assert.match(task.resolution.stop?.detail ?? "", /Worker run revision-1 reported blocked .*Cannot push: the branch is protected.*move to=work/s);
+  assert.equal(events(f, ORPHAN_PHASE_STOPPED).length, 0, JSON.stringify(events(f, ORPHAN_PHASE_STOPPED)));
+  assert.equal(task.resolution.stop?.fact?.code === "orphan_phase", false);
+  assert.ok(events(f, "run_result_applied").some((event) => event.detail === "revision-1"), "result application took the blocked report");
+  assert.equal(task.phase, "blocked");
   assert.deepEqual(f.createdRuns, [], "nothing is launched over an unanswered blocked report");
 });
 
-for (const status of ["ready_for_review", "blocked"] as const)
-  test(`a released ${status} revision never sits in changes_requested after a full pass`, async (t) => {
-    const f = await selfHealingFixture(t);
-    f.setObservation(idle);
-    const head = status === "ready_for_review" ? await f.pushRevision() : f.head;
-    releasedRevision(f, status, status === "blocked" ? "Cannot push" : "Addressed review findings", head);
-    quantum(f).graceMs = 0;
-    await f.engine.scheduleTaskQuantum(f.task.id);
-    const task = f.store.task(f.task.id);
-    assert.ok(task.phase !== "changes_requested" || task.resolution.stop || events(f, ORPHAN_PHASE_READMITTED).length,
-      `the task moved on: ${JSON.stringify({ phase: task.phase, reason: task.reason, stop: task.resolution.stop })}`);
-    assert.equal(orphanPhase(f.store, task, false)?.key === `changes_requested|worker|initial|revision-1|1`, false);
-  });
+test("an owner-armed replacement is the fleet's, never an orphan", async (t) => {
+  const f = await selfHealingFixture(t);
+  f.setObservation(idle);
+  // changes_requested with the excluded initial worker still bound (nucleus#033).
+  const task = strand(f, { phase: "changes_requested", failoverReason: `${OPERATOR_WORKER_REMAP_REASON}. Continue the existing task` });
+  assert.equal(orphanPhase(f.store, task, false), null);
+});
+
+test("readmissions count per episode: a worker started since resets the bound", async (t) => {
+  const f = await selfHealingFixture(t);
+  await releaseWorker(f);
+  for (let attempt = 1; attempt <= ORPHAN_READMISSION_BOUND; attempt++)
+    f.store.event(f.task.id, ORPHAN_PHASE_READMITTED, JSON.stringify({ phase: "working", move: "work", attempt }));
+  // A fresh author is a task-row worker, not a Run row.
+  const later = new Date(Date.now() + 1_000).toISOString();
+  f.store.event(f.task.id, "agent_created", "fresh-worker");
+  f.store.db.prepare("UPDATE events SET at=? WHERE taskId=? AND kind='agent_created'").run(later, f.task.id);
+  quantum(f).graceMs = 0;
+  await quantum(f).settle(f.task.id, false);
+  assert.equal(events(f, ORPHAN_PHASE_STOPPED).length, 0);
+  assert.equal(events(f, ORPHAN_PHASE_READMITTED).length, ORPHAN_READMISSION_BOUND + 1);
+});
 
 test("an orphan that cannot be readmitted records a typed stop with its explicit command", async (t) => {
   const f = await selfHealingFixture(t);

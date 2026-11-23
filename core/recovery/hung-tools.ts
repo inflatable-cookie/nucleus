@@ -51,20 +51,27 @@ export class HungTools {
     const tool = peek.tool;
     if (!tool || !peek.shellCall) return "none";
     const store = this.context.store;
-    const quietSince = Date.parse(tool.lastOutputAt ?? tool.startedAt);
+    // No output is known only when the host showed this call's output at least
+    // once, or declares it streams a running tool's output. Otherwise a long
+    // command that prints (a test lane, a build) reads as silent, because many
+    // providers return shell output only when the command ends: that is
+    // unknown, never quiet.
+    const streams = this.context.adapter.capabilities?.().streamsRunningToolOutput === true;
+    const quietFrom = tool.lastOutputAt ?? (streams ? tool.startedAt : null);
+    if (!quietFrom) return "none";
+    const quietSince = Date.parse(quietFrom);
     const limitMs = store.toolQuietLimitMsFor(task);
     if (!Number.isFinite(quietSince) || Date.now() - quietSince < limitMs) return "none";
     // A call already stopped once is never signalled again. Until a timeline
     // read a provider-report window after the stop, it reads as stopped; still
     // running after that, the turn is judged by ordinary stall detection.
     const recorded = this.recorded(task.id, runId, tool.callId);
-    const stoppedAt = recorded.get(HUNG_TOOL_TERMINATED);
-    if (stoppedAt !== undefined)
-      return (peek.at ?? Date.now()) < stoppedAt + HUNG_TOOL_REPORT_WINDOW_MS ? "terminated" : "unterminated";
+    if (recorded.stoppedAt !== null)
+      return (peek.at ?? Date.now()) < recorded.stoppedAt + HUNG_TOOL_REPORT_WINDOW_MS ? "terminated" : "unterminated";
     const quietMinutes = Math.floor((Date.now() - quietSince) / 60_000);
     const base = { runId, agentId, callId: tool.callId, command: tool.name, quietMinutes, limitMinutes: Math.round(limitMs / 60_000) };
     const unterminated = (reason: string): HungToolVerdict => {
-      if (!recorded.has(HUNG_TOOL_UNTERMINATED))
+      if (!recorded.reasons.has(reason))
         store.event(task.id, HUNG_TOOL_UNTERMINATED, JSON.stringify({ ...base, reason }).slice(0, 4000));
       return "unterminated";
     };
@@ -91,19 +98,20 @@ export class HungTools {
     return "terminated";
   }
 
-  /** The hung-tool outcomes already recorded for this exact call, with when each was first recorded. */
-  private recorded(taskId: string, runId: string, callId: string): Map<string, number> {
-    const kinds = new Map<string, number>();
+  /** What is already recorded for this exact call: when it was stopped, and each distinct reason it could not be. */
+  private recorded(taskId: string, runId: string, callId: string): { stoppedAt: number | null; reasons: Set<string> } {
+    const found = { stoppedAt: null as number | null, reasons: new Set<string>() };
     for (const event of this.context.store.eventsAll(taskId)) {
       if (event.kind !== HUNG_TOOL_TERMINATED && event.kind !== HUNG_TOOL_UNTERMINATED) continue;
       try {
-        const detail = JSON.parse(event.detail) as { runId?: unknown; callId?: unknown };
-        if (detail.runId === runId && detail.callId === callId && !kinds.has(event.kind))
-          kinds.set(event.kind, Date.parse(event.at) || 0);
+        const detail = JSON.parse(event.detail) as { runId?: unknown; callId?: unknown; reason?: unknown };
+        if (detail.runId !== runId || detail.callId !== callId) continue;
+        if (event.kind === HUNG_TOOL_TERMINATED) found.stoppedAt ??= Date.parse(event.at) || 0;
+        else if (typeof detail.reason === "string") found.reasons.add(detail.reason);
       } catch {
         /* a truncated detail names no call */
       }
     }
-    return kinds;
+    return found;
   }
 }

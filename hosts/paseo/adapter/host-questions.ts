@@ -46,12 +46,12 @@ export class PaseoQuestionHost {
    * store, so the request must still be pending on the exact thread; an answered
    * one refuses rather than answering twice.
    */
-  async answerNativePermission(agentId: string, workspaceId: string, requestId: string, decision: HostPermissionDecision) {
+  async answerNativePermission(agentId: string, workspaceId: string, requestId: string, decision: HostPermissionDecision, message?: string) {
     const agent = this.owner.api.agents.ref(agentId);
     if (!await agent.refresh() || agent.archivedAt || agent.workspaceId !== workspaceId) throw new ProvenPreSendRefusalError('Permission thread identity changed', 'Permission answer');
     if (!(agent.pendingPermissions ?? []).some(request => request.id === requestId && request.kind !== 'question'))
       throw new ProvenPreSendRefusalError('Permission is no longer pending', 'Permission answer');
-    await agent.respondToPermission({ requestId, response: decision === 'decline' || decision === 'cancel' ? { behavior: 'deny' } : { behavior: 'allow' } });
+    await agent.respondToPermission({ requestId, response: decision === 'decline' || decision === 'cancel' ? { behavior: 'deny', ...(message ? { message } : {}) } : { behavior: 'allow' } });
   }
   async dismissNativeQuestion(agentId: string, workspaceId: string, requestId: string) {
     const agent = this.owner.api.agents.ref(agentId);

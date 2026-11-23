@@ -159,23 +159,42 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
   ordinary admission for its role, or records a typed stop. Built (batch 5b): a
   `working`, `changes_requested`, `awaiting_review` or `reviewing` task whose
   activity reads `unclassified` with no participant for five unchanged minutes
-  goes through the owner's own `move to=work` or `move to=review`. A released
-  revision whose authenticated report nothing applied decides by that report
-  (bovine-accelerator#6935): a pushed head goes to its reviewer, any other
-  status is the typed stop. A refused move, or a fourth readmission with nothing
-  started, records `operator_needed` with fact `orphan_phase`.
+  goes through the owner's own `move to=work` or `move to=review`. States other
+  owners hold are never orphans, including an armed worker replacement or
+  failover, a provider retry and a blocking side effect. A released revision
+  whose authenticated report nothing applied goes back through ordinary result
+  application, so a pushed head goes to review and a blocked report climbs the
+  blocker ladder. A refused move, a result application that changes nothing, or
+  a fourth readmission in one episode with nothing started records
+  `operator_needed` with fact `orphan_phase`. The readmission is the backstop: a
+  state that reaches it is some owner deferring silently, and the cause is fixed
+  in that owner. bovine-accelerator#6935's was result application's participant
+  lease. While the worker's thread stayed in its turn after reporting, the lease
+  declined without a word; it now records the same visible wait every launch's
+  lease decline does.
 - **Hung tool.** Past the tool limit with no output, Nucleus terminates that
   command's own process. It identifies the process by PID and start identity, and
   never kills the turn. The agent sees a failed tool call and continues. Built
   (batch 5b): the command is the topmost process under the run's provider whose
   command line carries the tool's command; its own group, else its own pids, get
   SIGTERM then SIGKILL, each after a fresh start-identity read. A command that
-  cannot be stopped no longer fences stall detection.
+  cannot be stopped no longer fences stall detection. Silence is known only when
+  the host showed that call's output at least once, or declares
+  `streamsRunningToolOutput`. Many providers return shell output only when the
+  command ends, so a call with no output shown is unknown and never terminated.
+  No host declares the capability today.
+- **Interrupted tool.** A call the host reports `interrupted` with its turn
+  (bovine#6928: T3's "Stopped by user") is finished once the turn is proven
+  over. A kind that can outlive its turn, such as a shell command, still takes the
+  owned-process proof, so a background child that survived the interrupt holds.
+  Built in batch 5b.
 - **Permission prompt.** A pending permission request in a task run follows the
   policy under [Decisions](#decisions). Built (batch 5b) for worker, revision
   and reviewer runs on T3, BB and Paseo, which all answer permissions natively
-  (Paseo gained the answer in this batch); coordinator runs are outside the stall
-  observer and keep their profile's mode.
+  (Paseo gained the answer, with its message, in this batch). A decline with an
+  unknown outcome is never resent, and a request still listed after it goes to
+  ordinary stall detection. Coordinator runs are outside the stall observer and
+  keep their profile's mode.
 - **Coordinator cap.** The cap charges only repairs that applied nothing. A
   hard ceiling of six coordinator launches per head remains.
 

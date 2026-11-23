@@ -20,6 +20,7 @@ import {
 import type { Resolution } from "../resolution";
 import {
   formatLiveToolIssue,
+  INTERRUPTED_TOOL_STATUSES,
   liveToolIssueFact,
   noTurnLive,
   observedTurnState,
@@ -215,10 +216,12 @@ export class OwnedTools {
       (entry) => entry.item.type === "tool_call" && !turnBoundTool(entry),
     );
     const processIssue = liveToolIssueFact(processEntries, turn);
-    // A call that is still running and is not turn-bound is the only shape the
-    // process tree can settle; a turn-bound call never outlives its turn.
+    // A call that is still running or was interrupted with its turn, and is not
+    // turn-bound, is the only shape the process tree can settle; a turn-bound
+    // call never outlives its turn.
     const processOwnsWork =
-      (processIssue?.kind === "live" && processIssue.status === "running") ||
+      (processIssue?.kind === "live" &&
+        (processIssue.status === "running" || INTERRUPTED_TOOL_STATUSES.has(processIssue.status))) ||
       (processIssue?.kind === "conflicting-identity" && processIssue.running);
     const turnBoundOnly = read.entries.filter(
       (entry) => !processEntries.includes(entry),

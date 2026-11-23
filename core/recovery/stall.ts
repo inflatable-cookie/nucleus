@@ -884,6 +884,12 @@ export const TERMINAL_TOOL_STATUSES = new Set([
   "cancelled",
 ]);
 /**
+ * A call the host reports interrupted with its turn. It is terminal only once
+ * the turn is proven over, and a kind that can outlive a turn still needs the
+ * owned-process proof, as a running one does.
+ */
+export const INTERRUPTED_TOOL_STATUSES: ReadonlySet<string> = new Set(["interrupted"]);
+/**
  * The oldest tool call whose latest observed state is still running, or null.
  *
  * This is positive evidence only: a call whose latest state is terminal, whose
@@ -1352,6 +1358,14 @@ export function formatLiveToolIssue(issue: LiveToolIssue): string {
 export function liveToolIssueFact(
   entries: TimelineEntry[],
   owner?: ObservedTurnState | null,
+  options: {
+    /**
+     * The caller proves the turn is over and that no owned process survived
+     * after this read (the bounded window's turn and process proofs), so a
+     * host-reported `interrupted` call needs neither here.
+     */
+    interruptedSettles?: boolean;
+  } = {},
 ): LiveToolIssue | null {
   const calls = new Map<string, TimelineEntry[]>();
   for (const entry of entries) {
@@ -1384,11 +1398,18 @@ export function liveToolIssueFact(
     const status = [...statuses][0];
     const conflicting = names.size > 1 || commands.size > 1;
     const allTurnBound = states.every(turnBoundTool);
+    // A host-reported interrupted call ended with its turn (T3's "Stopped by
+    // user"). Once the turn is proven over, it is terminal for its own kind; a
+    // kind that can outlive the turn still takes the process proof below, so a
+    // background child that survived the interrupt still holds (bovine#6928).
+    const interrupted = INTERRUPTED_TOOL_STATUSES.has(status);
+    if (interrupted && options.interruptedSettles) continue;
     if (
       conflicting &&
       !(
         turnOver &&
         (TERMINAL_TOOL_STATUSES.has(status) ||
+          interrupted ||
           (status === "running" && allTurnBound))
       )
     )
@@ -1402,7 +1423,7 @@ export function liveToolIssueFact(
       // Queue's own MCP tools (nucleus_report, ask, tell) answer inside the agent's turn;
       // a running entry left behind by a finished turn is settled like other turn-bound kinds.
       const entry = latest[0]!;
-      if (turnOver && status === "running" && turnBoundTool(entry)) continue;
+      if (turnOver && (status === "running" || interrupted) && turnBoundTool(entry)) continue;
       return {
         kind: "live",
         callId,

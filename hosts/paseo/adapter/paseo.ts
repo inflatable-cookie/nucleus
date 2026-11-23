@@ -790,12 +790,15 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
       workspaceId: string,
       requestId: string,
       decision: HostPermissionDecision,
+      _intentId?: string,
+      message?: string,
     ) {
       return this.questionHost.answerNativePermission(
         agentId,
         workspaceId,
         requestId,
         decision,
+        message,
       );
     }
     answerNativeQuestion(

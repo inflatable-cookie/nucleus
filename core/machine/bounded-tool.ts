@@ -16,7 +16,9 @@ export async function boundedToolHold(
   processProof: () => Promise<string | null>,
 ): Promise<string | null> {
   // Positive live evidence always holds, even when another signal is unknown.
-  const tool = liveToolIssueFact(read.entries);
+  // An interrupted call needs no more here: the turn and owned-process proofs
+  // below decide it, so a child that survived the interrupt still holds.
+  const tool = liveToolIssueFact(read.entries, null, { interruptedSettles: true });
   if (tool) {
     const live = tool.kind === 'live' && ['pending', 'running', 'waiting'].includes(tool.status);
     return `${live ? 'an owned tool is still live' : 'owned tool evidence is inconclusive'}: ${formatLiveToolIssue(tool)}`;

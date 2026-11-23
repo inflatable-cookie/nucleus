@@ -14,7 +14,7 @@ import { readProcessSubset } from "../core/machine/host-process-listing";
 import { pidAlive } from "../core/machine/pid";
 import { selectHungTool, terminateHungTool } from "../core/machine/hung-tool";
 import { HUNG_TOOL_TERMINATED, HUNG_TOOL_UNTERMINATED } from "../core/recovery/hung-tools";
-import { PERMISSION_DENIAL_INTENT, PERMISSION_DENIED } from "../core/recovery/permission-policy";
+import { PERMISSION_DENIAL_INTENT, PERMISSION_DENIAL_UNKNOWN, PERMISSION_DENIED } from "../core/recovery/permission-policy";
 import type { TimelineEntry } from "../core/recovery/stall";
 import type { HostProcessFact } from "../core/host/types";
 import { minutesAgo, running, selfHealingFixture, type SelfHealingFixture } from "./support/self-healing-fixture";
@@ -82,8 +82,12 @@ const shellCall = (command: string, startedMinutesAgo: number, lastOutputAt: str
   },
 });
 
-/** The worker's turn is 40 minutes old and quiet for 35: past the stall threshold and the 30-minute tool limit. */
-function quietTurn(f: SelfHealingFixture, tree: ProviderTree, lastOutputAt: string | null = null) {
+/**
+ * The worker's turn is 40 minutes old and quiet for 35: past the stall
+ * threshold and the 30-minute tool limit. By default the host showed the
+ * call's output once, 35 minutes ago, so its silence since is known.
+ */
+function quietTurn(f: SelfHealingFixture, tree: ProviderTree, lastOutputAt: string | null = minutesAgo(35)) {
   f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(40) }));
   f.setTimeline([shellCall(tree.command, 35, lastOutputAt)]);
   f.setProcesses(tree.read);
@@ -140,6 +144,30 @@ test("a command that produced output inside the limit is left alone", async (t) 
   assert.equal(events(f, HUNG_TOOL_UNTERMINATED).length, 0);
   assert.equal(pidAlive(tree.pids.command), true);
   assert.equal(pidAlive(tree.pids.shell), true);
+});
+
+test("a running command whose output the host never showed is unknown, never quiet, and is left alone", async (t) => {
+  const f = await selfHealingFixture(t);
+  const tree = await providerTree(t, f, true);
+  // A provider that returns shell output only when the command ends shows none
+  // while a 35-minute test lane prints all along.
+  quietTurn(f, tree, null);
+  await f.engine.wake();
+  assert.equal(events(f, HUNG_TOOL_TERMINATED).length, 0);
+  assert.equal(events(f, HUNG_TOOL_UNTERMINATED).length, 0);
+  assert.equal(pidAlive(tree.pids.command), true);
+  assert.equal(pidAlive(tree.pids.shell), true);
+});
+
+test("a host that declares it streams running output makes a call with no output shown quiet", async (t) => {
+  const f = await selfHealingFixture(t);
+  const tree = await providerTree(t, f, true);
+  f.adapter.capabilities = () => ({ reportingViaMcp: true, supportsCoordinatorRecovery: true, streamsRunningToolOutput: true });
+  quietTurn(f, tree, null);
+  await f.engine.wake();
+  assert.equal(events(f, HUNG_TOOL_TERMINATED).length, 1);
+  assert.equal(pidAlive(tree.pids.command), false);
+  assert.equal(pidAlive(tree.pids.provider), true);
 });
 
 test("the repository's toolQuietLimitMinutes raises the limit", async (t) => {
@@ -218,6 +246,39 @@ test("a pending permission in a task run is declined with a message and an event
   await f.engine.wake();
   assert.equal(f.permissionAnswers.length, 1);
   assert.equal(f.messages.length, 1);
+});
+
+const pendingPermission = () => running({
+  permissions: true, updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(40),
+  pendingRequest: { id: "request-1", kind: "command", firstLine: null }, pendingPermissionKinds: ["command"],
+});
+
+test("a decline with an unknown outcome is never resent, and a request still listed goes to stall detection", async (t) => {
+  const f = await selfHealingFixture(t);
+  let sends = 0;
+  f.adapter.answerNativePermission = async () => { sends++; throw new Error("socket closed mid-send"); };
+  f.setObservation(pendingPermission());
+  await f.engine.wake();
+  assert.equal(sends, 1);
+  assert.equal(events(f, PERMISSION_DENIAL_UNKNOWN).length, 1);
+  const task = f.store.task(f.task.id);
+  assert.ok(task.resolution.stop || task.resolution.attention, "the unanswered request is raised, not silenced");
+  assert.match(task.reason, /request-1/);
+  await f.engine.wake();
+  assert.equal(sends, 1, "an unknown decline is never resent");
+});
+
+test("a decline intent with no recorded outcome is never resent, and the request goes to stall detection", async (t) => {
+  const f = await selfHealingFixture(t);
+  // The service stopped between writing the intent and sending.
+  f.store.event(f.task.id, PERMISSION_DENIAL_INTENT,
+    `ns-permission-deny-initial-request-1: ${JSON.stringify({ runId: "initial", agentId: "worker", requestId: "request-1", kind: "command" })}`);
+  f.setObservation(pendingPermission());
+  await f.engine.wake();
+  assert.equal(f.permissionAnswers.length, 0);
+  const task = f.store.task(f.task.id);
+  assert.ok(task.resolution.stop || task.resolution.attention, "the unanswered request is raised, not silenced");
+  assert.match(task.reason, /request-1/);
 });
 
 test("a native question is not a permission and is never declined", async (t) => {
