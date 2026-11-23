@@ -14,7 +14,11 @@ import {
   settleCreationAttempt,
 } from "../core/store/store-task-funnel";
 import { runStartPlan } from "../core/verbs/explicit-run-start";
-import { AGENT_NOT_FOUND, HostReadRefusalError } from "../core/host/errors";
+import {
+  AGENT_NOT_FOUND,
+  HostCreateInFlightError,
+  HostReadRefusalError,
+} from "../core/host/errors";
 import {
   runSchema,
   submissionSchema,
@@ -978,6 +982,44 @@ test("uncertain creation: a failed lookup keeps waiting with its reason named", 
     assert.equal(f.current().resolution.stop?.fact?.subject, run.id);
     assert.match(f.current().reason, /lookup could not complete/);
     assert.equal(f.createdRuns.filter((candidate) => candidate.role === "reviewer").length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("uncertain creation: a create the host may still answer waits on its own cause, with no replacement and no coordinator", async () => {
+  const f = fixture();
+  try {
+    const run = uncertainReviewer(f);
+    f.lookups.set(
+      run.id,
+      new HostCreateInFlightError("the host may still answer this run's create command"),
+    );
+
+    for (let index = 0; index < 3; index++) await f.engine.wake();
+
+    assert.equal(f.store.run(run.id)!.released, false);
+    assert.equal(f.store.run(run.id)!.agentId, null);
+    assert.equal(f.current().resolution.stop?.fact?.code, "creation_in_flight");
+    assert.equal(f.current().resolution.stop?.fact?.subject, run.id);
+    assert.doesNotMatch(f.current().reason, /run\.start/, "no replacement is suggested");
+    assert.equal(
+      f.createdRuns.some((candidate) => candidate.role === "recovery"),
+      false,
+      "no coordinator is admitted to start another thread",
+    );
+    assert.equal(f.createdRuns.filter((candidate) => candidate.role === "reviewer").length, 0);
+    const offers = (f.next().explicitCommands ?? []).filter(
+      (command) =>
+        (command.args as { replacing?: string; run?: string }).replacing === run.id ||
+        (command.args as { run?: string }).run === run.id,
+    );
+    assert.deepEqual(offers, [], "next offers neither a replacement nor a release");
+
+    // Once the host answers, the ordinary lookup binds the late thread.
+    f.lookups.set(run.id, [{ id: "late-agent", workspaceId: "workspace" }]);
+    await f.engine.wake();
+    assert.equal(f.store.run(run.id)!.agentId, "late-agent");
   } finally {
     await f.close();
   }

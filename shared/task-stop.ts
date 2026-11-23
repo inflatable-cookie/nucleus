@@ -239,6 +239,9 @@ export const taskDecisionFactSchema = z
       // Spec 068 §3: a participant whose agent is provably gone, past the
       // automatic relaunch bound; its subject is the run (or retained worker).
       "participant_gone",
+      // Spec 068 §3: the host may still answer the run's own create command, so
+      // the creation waits for that answer; nothing replaces it meanwhile.
+      "creation_in_flight",
     ]),
     subject: z.string().min(1).max(240).optional(),
   })

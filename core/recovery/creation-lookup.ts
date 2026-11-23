@@ -12,6 +12,7 @@ import { dispatchBlocked } from "../dispatch/capacity";
 import { coordinative } from "./task-reasons";
 import type { Run, Task } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
+import { HostCreateInFlightError } from "../host/errors";
 
 /**
  * Spec 068 §3: an uncertain creation settles by lookup, for every role.
@@ -62,6 +63,7 @@ export type CreationSettlement =
   | "skipped";
 
 type Lookup =
+  | { kind: "in_flight" }
   | { kind: "bound"; agentId: string }
   | { kind: "absent" }
   | { kind: "unknown"; why: string }
@@ -89,6 +91,7 @@ async function lookUp(
       find.call(ctx.adapter, binding as unknown as Run),
     );
   } catch (error) {
+    if (error instanceof HostCreateInFlightError) return { kind: "in_flight" };
     return {
       kind: "unreadable",
       why: `the lookup could not complete (${(error instanceof Error ? error.message : String(error)).slice(0, 200)})`,
@@ -105,8 +108,9 @@ async function lookUp(
     return { kind: "bound", agentId: only!.id };
   return {
     kind: "unknown",
-    why:
-      found.length > 1
+    why: found.some((candidate) => candidate.hostConfirmed === false)
+      ? "its created thread was removed on its host"
+      : found.length > 1
         ? `the lookup found ${found.length} threads for it`
         : "the lookup found a thread outside its workspace",
   };
@@ -156,6 +160,30 @@ function waitOn(
         code: role === "worker" ? "worker_lookup" : "creation_lookup",
         subject: runId,
       },
+    });
+  return "waiting";
+}
+
+/**
+ * The host may still answer the run's own create command: the creation waits for
+ * that answer. No replacement is offered and no coordinator is admitted for it,
+ * because another thread for the run could stand beside the one the late reply
+ * brings.
+ */
+function waitInFlight(
+  ctx: CreationLookupContext,
+  task: Task,
+  role: string,
+  runId: string,
+): CreationSettlement {
+  const reason = `Uncertain ${role} creation ${runId}: its host may still answer the create command, so Nucleus waits for that answer before looking it up again`;
+  const current = ctx.store.task(task.id);
+  const stop = current.resolution.stop;
+  if (stop && stop.fact?.subject !== runId && stop.reason !== "lifecycle")
+    return "waiting";
+  if (current.reason !== reason || stop?.fact?.code !== "creation_in_flight")
+    ctx.waiting(current, reason, "lifecycle", {
+      fact: { code: "creation_in_flight", subject: runId },
     });
   return "waiting";
 }
@@ -226,6 +254,8 @@ export async function settleRunCreation(
   const latest = store.run(run.id);
   if (!uncertainRun(latest)) return "skipped";
   const current = store.task(task.id);
+  if (lookup.kind === "in_flight")
+    return waitInFlight(ctx, current, run.role, run.id);
   if (lookup.kind === "unreadable" || lookup.kind === "unknown")
     return waitOn(ctx, current, run.role, run.id, lookup.why);
   if (lookup.kind === "absent" && !ended)
@@ -290,6 +320,10 @@ export async function settleRunCreation(
   const relaunched = store.transaction(() => {
     const fresh = store.run(run.id);
     if (!uncertainRun(fresh)) return null;
+    // The attempt the lookup proved ended must still be the run's latest: a
+    // newer attempt (another pass, an owner start) owns the creation now.
+    if (readCreationAttempt(store, fresh)?.attemptId !== ended!.attemptId)
+      return null;
     reserveCreationAttempt(store, {
       id: fresh.id,
       taskId: fresh.taskId,
@@ -371,6 +405,8 @@ export async function settleWorkerCreation(
     current.workspaceId !== task.workspaceId
   )
     return "skipped";
+  if (lookup.kind === "in_flight")
+    return waitInFlight(ctx, current, "worker", runId);
   if (lookup.kind === "unreadable" || lookup.kind === "unknown")
     return waitOn(ctx, current, "worker", runId, lookup.why);
   if (lookup.kind === "absent" && !ended)
@@ -398,7 +434,15 @@ export async function settleWorkerCreation(
   const head = current.prHead ?? current.planningCommit ?? null;
   if (relaunchesAtHead(store, current.id, "worker", head) >= CREATION_LOOKUP_ATTEMPTS)
     return stopOn(ctx, current, "worker", runId);
-  store.transaction(() => {
+  const relaunched = store.transaction(() => {
+    const latest = store.task(current.id);
+    if (
+      !latest.agentIntent ||
+      latest.agentId ||
+      latest.runId !== runId ||
+      readCreationAttempt(store, binding)?.attemptId !== ended!.attemptId
+    )
+      return false;
     store.deleteCredential(runId);
     store.update(
       current.id,
@@ -430,6 +474,7 @@ export async function settleWorkerCreation(
         terminatedBy: ended!.terminatedBy,
       }),
     );
+    return true;
   });
-  return "relaunched";
+  return relaunched ? "relaunched" : "skipped";
 }

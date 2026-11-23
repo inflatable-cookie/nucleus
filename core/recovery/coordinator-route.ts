@@ -263,6 +263,10 @@ export class CoordinatorRoute {
     // the planner ladder. Its `extend_budget` suggestion is an owner verb, not work
     // a coordinator can settle, so it never opens a coordinator episode.
     if (t.resolution.stop?.reason === "budget") return null;
+    // Spec 068 §3: a create the host may still answer owns its own outcome. A
+    // coordinator could only start another thread beside the one a late reply
+    // brings, so it is not admitted for that wait.
+    if (t.resolution.stop?.fact?.code === "creation_in_flight") return null;
     let mechanicalStallDue = false;
     // Spec 068 §3 (nucleus#1552): a `run_stalled` stop names its own subject.
     // That participant can never pass an idleness lease while its host still

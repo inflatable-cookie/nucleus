@@ -2191,8 +2191,13 @@ review or merge credit; live participants and unsettled effects remain fences.
   sent (`ns-run-<run>`, `ns-agent-<run>` and their socket retries), so a lost
   reply is still found and a command never sent costs no read. While a create
   command may still return a late reply (a timed-out call on a live
-  connection) the lookup refuses, so the run waits: an empty read is never
-  absence while the host may still answer. Exactly one match in the run's own
+  connection, for at most `LATE_REPLY_WAIT_MS`, ten minutes) the lookup refuses
+  with its own cause (`HostCreateInFlightError`), and the run keeps a
+  `lifecycle` wait with fact `creation_in_flight`: no replacement or release is
+  offered in `next` and no coordinator is admitted, because either could start a
+  thread beside the one the late reply brings. An empty read is never absence
+  while the host may still answer. A child T3 reports removed proves the create
+  landed, so it is never resent; the lookup names it instead. Exactly one match in the run's own
   workspace binds it (`creation_bound_by_lookup`). No match on a complete read,
   once the attempt has ended (its call settled or its service was replaced),
   the grace has passed and no reply can land, relaunches the creation once
@@ -2202,6 +2207,8 @@ review or merge credit; live participants and unsettled effects remain fences.
   ledger only after a complete read proves the derived child absent, and a
   child T3 does hold is adopted instead, so a create T3 did receive never
   becomes a second thread (the child thread id derives from the command id).
+  The resend carries the payload the create is built with now (the parent's
+  current live run and the current prompt), recorded under the same command id.
   A partial or failed read, a match outside the workspace or several matches
   keeps a `lifecycle` wait (fact `creation_lookup` or `worker_lookup`) whose
   reason names why and when the grace ends, and the coordinator may be

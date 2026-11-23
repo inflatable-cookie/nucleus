@@ -271,7 +271,9 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   one; a dead initial worker with a PR continues it the same way. `next` offers
   `run.start worker fresh`.
 - **Uncertain creation settles by lookup for every role.** A create that may
-  still answer (a late reply on a live connection) keeps the run waiting; a
+  still answer (a late reply on a live connection, for at most ten minutes)
+  keeps the run waiting on its own cause, with no replacement offered and no
+  coordinator admitted; a
   complete absent read after that relaunches the same run under the same host
   command id, which T3 resends only after reading the derived child absent, so a
   received create never becomes a second thread. Three relaunches per role and

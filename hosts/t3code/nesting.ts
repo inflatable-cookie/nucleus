@@ -490,12 +490,10 @@ export class T3Nesting {
       if (this.core.intents.lateReplyPossible(commandId))
         throw new HostUnknownDeliveryError(priorIntent.diagnostic);
       await this.core.reads.readShell();
-      const known = await this.knownThread(threadId);
-      if (!known || known.deletedAt)
-        resend = {
-          resendUnknownAfterRead: true,
-          resendTimedOutAfterAbsentRead: true,
-        };
+      // Only absence is proof: a tombstoned child means the create did land, so
+      // it is never resent (the lookup names that thread as removed instead).
+      if (!(await this.knownThread(threadId)))
+        resend = { resendUnknownAfterRead: true, absentOnCompleteRead: true };
     }
     // Record the child's identity before the send, so a lost reply cannot produce an
     // unowned thread: the id is derived from the command id, never from an answer.

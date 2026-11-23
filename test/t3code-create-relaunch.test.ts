@@ -11,7 +11,8 @@ import {
   childThreadId,
 } from "../hosts/t3code/nesting";
 import type { AcpSessionSurface } from "../shared/acp/surface";
-import { HostReadRefusalError } from "../core/host";
+import { HostCreateInFlightError } from "../core/host";
+import { LATE_REPLY_WAIT_MS } from "../hosts/t3code/intents";
 import type { HostAgentSpec } from "../shared/host";
 import type { Profile } from "../shared/contracts";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
@@ -105,7 +106,7 @@ async function fixture(t: TestContext) {
     directory: root,
     project: { projectId: "synthetic-project" },
   });
-  const spec = (requestId: string): HostAgentSpec => ({
+  const spec = (requestId: string, prompt = "Do the work"): HostAgentSpec => ({
     workspaceId: workspace.id,
     profile,
     title: "Synthetic task",
@@ -113,7 +114,7 @@ async function fixture(t: TestContext) {
     mcpBindingPath: null,
     attempt: () => ({
       requestId,
-      prompt: "Do the work",
+      prompt,
       labels: storedT3Labels("worker", { runId: "worker-run" }),
       environment: {},
     }),
@@ -132,7 +133,7 @@ const requests = (server: Awaited<ReturnType<typeof t3Fake>>) =>
       command.type === "delegated_task.request" && command.commandId === COMMAND,
   );
 
-async function until(check: () => boolean, ms = 5_000) {
+async function until(check: () => boolean, ms = 10_000) {
   const deadline = Date.now() + ms;
   while (!check()) {
     if (Date.now() > deadline) throw new Error("condition not reached");
@@ -140,58 +141,120 @@ async function until(check: () => boolean, ms = 5_000) {
   }
 }
 
-test("a create whose reply is late waits for it and yields exactly one thread", async (t) => {
-  const { server, host, spec } = await fixture(t);
-  server.controls.lateDelegatedLaunchMs = 1_600;
-  await assert.rejects(host.createAgent(spec(COMMAND)));
-  assert.equal(host.state.read().intents[COMMAND]?.status, "unknown");
-
-  // While the reply can still land the lookup refuses: an empty answer is not absence.
-  await assert.rejects(
-    host.findRunAgents(labels),
-    (error: unknown) => error instanceof HostReadRefusalError,
-  );
-  // And a relaunch under the same command id sends nothing.
-  await assert.rejects(host.createAgent(spec(COMMAND)));
-  assert.equal(requests(server).length, 0, "nothing reached T3 yet");
-
-  await until(() => host.state.read().intents[COMMAND]?.status === "settled");
-  const child = childThreadId(COMMAND);
-  const found = await host.findRunAgents(labels);
-  assert.deepEqual(
-    found.map((agent) => agent.id),
-    [child],
-    "the late reply's child is the run's one thread",
-  );
-  assert.equal(requests(server).length, 1, "T3 received the create once");
-  assert.equal(
-    [...server.threads.keys()].filter((id) => id === child).length,
-    1,
-  );
-});
-
-test("a create T3 never received is resent under its own command id once no reply can land", async (t) => {
-  const { server, host, spec } = await fixture(t);
+/** A create T3 never received, then the connection that sent it ends. */
+async function lostCreate(
+  server: Awaited<ReturnType<typeof t3Fake>>,
+  host: T3CodeHost,
+  spec: (requestId: string, prompt?: string) => HostAgentSpec,
+) {
   server.controls.timeoutDelegatedLaunch = true;
   await assert.rejects(host.createAgent(spec(COMMAND)));
-  const child = childThreadId(COMMAND);
-  assert.equal(server.threads.has(child), false, "T3 made no child");
-  // The connection that sent it ends, so no reply can land on it any more.
+  assert.equal(server.threads.has(childThreadId(COMMAND)), false, "T3 made no child");
   server.dropSockets();
   host.close();
   await new Promise((resolve) => setTimeout(resolve, 50));
   await host.connect();
-
   assert.deepEqual(await host.findRunAgents(labels), [], "a complete read finds nothing");
-  const created = await host.createAgent(spec(COMMAND));
-  assert.equal(created.id, child, "the same command id, so the same child id");
-  assert.equal(server.threads.has(child), true);
-  assert.equal(
-    server.commands.filter(
-      (command) =>
-        command.type === "delegated_task.request" && command.commandId === COMMAND,
-    ).length,
-    2,
-    "the lost command was sent again, under the same id",
+}
+
+const oneChild = (server: Awaited<ReturnType<typeof t3Fake>>) =>
+  [...server.threads.keys()].filter((id) => id === childThreadId(COMMAND)).length;
+
+test("a create whose reply is late waits for it and yields exactly one thread", async (t) => {
+  const { server, host, spec } = await fixture(t);
+  // T3 holds the command unanswered until the test releases it: the caller's
+  // deadline passes first, with no wall-clock race.
+  server.controls.holdDelegatedLaunch = true;
+  await assert.rejects(host.createAgent(spec(COMMAND)));
+  assert.equal(host.state.read().intents[COMMAND]?.status, "unknown");
+
+  // While the reply can still land the lookup refuses with its own cause: an
+  // empty answer is not absence, and nothing replaces the create meanwhile.
+  await assert.rejects(
+    host.findRunAgents(labels),
+    (error: unknown) => error instanceof HostCreateInFlightError,
   );
+  await assert.rejects(host.createAgent(spec(COMMAND)));
+  assert.equal(requests(server).length, 0, "nothing reached T3 yet");
+
+  server.releaseHeldLaunches();
+  await until(() => host.state.read().intents[COMMAND]?.status === "settled");
+  const found = await host.findRunAgents(labels);
+  assert.deepEqual(
+    found.map((agent) => agent.id),
+    [childThreadId(COMMAND)],
+    "the late reply's child is the run's one thread",
+  );
+  assert.equal(requests(server).length, 1, "T3 received the create once");
+  assert.equal(oneChild(server), 1);
+});
+
+test("a late reply's wait is bounded, after which the read decides", async (t) => {
+  const { server, host, spec } = await fixture(t);
+  server.controls.holdDelegatedLaunch = true;
+  await assert.rejects(host.createAgent(spec(COMMAND)));
+  assert.equal(host.intents.lateReplyPossible(COMMAND), true);
+  assert.equal(
+    host.intents.lateReplyPossible(COMMAND, Date.now() + LATE_REPLY_WAIT_MS + 1),
+    false,
+    "past its bound a late reply no longer holds the create back",
+  );
+  assert.deepEqual(await host.findRunAgents(labels), [], "the read decides");
+});
+
+test("a create T3 never received is resent under its own command id once no reply can land", async (t) => {
+  const { server, host, spec } = await fixture(t);
+  await lostCreate(server, host, spec);
+  const created = await host.createAgent(spec(COMMAND));
+  assert.equal(created.id, childThreadId(COMMAND), "the same command id, so the same child id");
+  assert.equal(requests(server).length, 2, "the lost command was sent again, under the same id");
+  assert.equal(oneChild(server), 1);
+});
+
+test("a resend after the parent's turn ended anchors on the new turn and heals to one thread", async (t) => {
+  const { server, host, spec } = await fixture(t);
+  await lostCreate(server, host, spec);
+  // The held parent turn is gone, as after a restart: the relaunch re-enters the
+  // parent, so the resent create names a different parent run.
+  const parent = Object.values(host.state.read().parents ?? {})[0]!;
+  for (const run of server.threads.get(parent.threadId)!.runs)
+    if (["preparing", "starting", "running", "waiting"].includes(run.status))
+      run.status = "completed";
+  const created = await host.createAgent(spec(COMMAND));
+  const [first, second] = requests(server);
+  assert.notEqual(second!.parentRunId, first!.parentRunId, "a new parent turn");
+  assert.equal(created.id, childThreadId(COMMAND));
+  assert.equal(oneChild(server), 1);
+});
+
+test("a resend with a different prompt render heals to one thread", async (t) => {
+  const { server, host, spec } = await fixture(t);
+  await lostCreate(server, host, spec);
+  const created = await host.createAgent(spec(COMMAND, "Do the work, re-rendered"));
+  const [first, second] = requests(server);
+  assert.notEqual(second!.task, first!.task, "the resend carries the new render");
+  assert.equal(created.id, childThreadId(COMMAND));
+  assert.equal(oneChild(server), 1);
+});
+
+test("a removed child is never resent: the create landed", async (t) => {
+  const { server, host, spec } = await fixture(t);
+  await host.createAgent(spec(COMMAND));
+  const child = childThreadId(COMMAND);
+  // The ledger keeps the create unknown (its reply lost), and T3 later removed the child.
+  host.state.update((state) => {
+    state.intents[COMMAND] = { ...state.intents[COMMAND]!, status: "unknown" };
+  });
+  // A nightly that keeps the tombstone in its shell, so T3 itself answers "removed".
+  server.controls.shellTombstones = true;
+  server.threads.get(child)!.thread.deletedAt = "2026-11-23T00:00:00.000Z";
+  host.reads.live.close();
+  assert.deepEqual(
+    (await host.findRunAgents(labels)).map((agent) => [agent.id, agent.hostConfirmed]),
+    [[child, false]],
+    "the lookup names the removed child rather than calling it absent",
+  );
+  const before = requests(server).length;
+  await assert.rejects(host.createAgent(spec(COMMAND)));
+  assert.equal(requests(server).length, before, "nothing is resent");
 });

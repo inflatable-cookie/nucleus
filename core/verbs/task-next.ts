@@ -639,9 +639,16 @@ function explicitCommandsFor(
           ? "coordinator"
           : null;
 
+  // Spec 068 §3: a create the host may still answer offers no replacement and no
+  // release: either would let a second thread stand beside the late one.
+  const inFlight =
+    task.resolution.stop?.fact?.code === "creation_in_flight"
+      ? task.resolution.stop.fact.subject
+      : undefined;
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
+    if (run.id === inFlight) continue;
     const role = startRoleFor(run.role);
     if (role) {
       push({
@@ -665,7 +672,7 @@ function explicitCommandsFor(
     });
   }
 
-  if (task.agentIntent && !task.agentId) {
+  if (task.agentIntent && !task.agentId && task.runId !== inFlight) {
     push({
       action: "run.start",
       args: {

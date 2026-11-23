@@ -1087,6 +1087,10 @@ export class T3Reads {
           workspaceId: this.workspaceFor(record.row),
           hostConfirmed: true,
         });
+      // A removed child of a create this host sent proves the create landed: it
+      // is never absence, so it is answered unconfirmed rather than left out.
+      else if (record && derived.includes(id))
+        found.push({ id, workspaceId: null, hostConfirmed: false });
     }
     return found;
   }

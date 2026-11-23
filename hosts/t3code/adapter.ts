@@ -20,6 +20,7 @@ import type { TaskAttention } from "../../shared/task-attention";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import {
   ArchiveNotDeliveredError,
+  HostCreateInFlightError,
   HostReadRefusalError,
   HostSnapshotPendingError,
   ProvenPreSendRefusalError,
@@ -610,7 +611,7 @@ export class T3CodeHost implements Host {
   async findRunAgents(labels: Record<string, string>) {
     const sent = this.sentCreateCommands(labels[WIRE_LABEL_KEYS.run]);
     if (sent.some((command) => this.intents.lateReplyPossible(command)))
-      throw new HostReadRefusalError(
+      throw new HostCreateInFlightError(
         "T3Code may still answer this run's create command; its lookup waits",
       );
     return await this.reads.findRunAgents(

@@ -231,17 +231,22 @@ export interface T3IntentContext {
   forgetRead?(threadId: string): void;
 }
 
+/** How long a late reply holds a same-id resend back (Spec 068 §3). */
+export const LATE_REPLY_WAIT_MS = 10 * 60_000;
+
 export interface EffectOptions {
   /** Caller completed a fresh positive read that reconciles the unknown remote effect. */
   resendUnknownAfterRead?: boolean;
   /**
    * Spec 068 §3: the caller proved on a complete read (the live shell inside its
    * bound plus an exact read by id) that the thread this command creates is
-   * absent. A timed-out command whose late reply can no longer land may then be
-   * resent under its own command id. A reply still awaited in this process
-   * always keeps the command unknown.
+   * absent, and no late reply can land. The command may then be resent under its
+   * own command id even after a timeout, carrying the payload it is built with
+   * now: a create re-renders its prompt and anchors on the parent's current live
+   * run, and the thread it creates still derives from the same command id. A
+   * reply still awaited in this process always keeps the command unknown.
    */
-  resendTimedOutAfterAbsentRead?: boolean;
+  absentOnCompleteRead?: boolean;
   /** Retry only a recorded local pre-send refusal, keeping the same payload and command identity. */
   retryRefusedBeforeSend?: boolean;
   /** Guidance that rides an unknown delivery when the remote text names no known method. */
@@ -268,12 +273,22 @@ export interface ResponseEffect {
  * an unknown outcome stays unknown.
  */
 export class T3IntentLedger {
-  private readonly awaitingLate = new Set<string>();
+  /** Commands whose reply may still arrive, by when the wait for it began. */
+  private readonly awaitingLate = new Map<string, number>();
   constructor(private readonly core: T3IntentContext) {}
 
-  /** Whether this process still awaits a late reply for this command (Spec 068 §3). */
-  lateReplyPossible(key: string): boolean {
-    return this.awaitingLate.has(key);
+  /**
+   * Whether this process still awaits a late reply for this command (Spec 068
+   * §3). The wait is bounded: past `LATE_REPLY_WAIT_MS` the reply no longer
+   * holds a resend back. A reply that still arrives settles the record as usual,
+   * and a resend keeps the command id, so T3 can never make a second child.
+   */
+  lateReplyPossible(key: string, now = Date.now()): boolean {
+    const since = this.awaitingLate.get(key);
+    if (since === undefined) return false;
+    if (now - since < LATE_REPLY_WAIT_MS) return true;
+    this.awaitingLate.delete(key);
+    return false;
   }
 
   /** Only our recorded delete can retire presentation work; external disappearance cannot. */
@@ -396,12 +411,14 @@ export class T3IntentLedger {
       } else if (
         old &&
         !sameWire(old, encoded) &&
-        !projectCreateRouteMigrated(old.payload, encoded)
+        !projectCreateRouteMigrated(old.payload, encoded) &&
+        !(old.status === "unknown" && options.absentOnCompleteRead)
       )
         throw new ProvenPreSendRefusalError("T3Code intent payload changed");
       if (
         !old ||
-        (old.status === "refused" && options.retryRefusedBeforeSend)
+        (old.status === "refused" && options.retryRefusedBeforeSend) ||
+        (old.status === "unknown" && options.absentOnCompleteRead)
       ) {
         if (response || !options.retryRefusedBeforeSend)
           this.core.requireConnection();
@@ -413,6 +430,10 @@ export class T3IntentLedger {
           status: "unknown",
           ...(response ? { response: response.binding } : {}),
         };
+        // A resend after a complete absent read is a new delivery attempt: the
+        // earlier timeout no longer describes it.
+        if (old?.status === "unknown" && options.absentOnCompleteRead)
+          delete current.intents[boundKey].timedOut;
       } else if (
         response &&
         (!this.core.hostId() || current.hostId !== this.core.hostId())
@@ -432,8 +453,8 @@ export class T3IntentLedger {
       );
     if (
       prior?.status === "unknown" &&
-      (this.awaitingLate.has(key) ||
-        (prior.timedOut && !options.resendTimedOutAfterAbsentRead))
+      (this.lateReplyPossible(key) ||
+        (prior.timedOut && !options.absentOnCompleteRead))
     )
       throw new HostUnknownDeliveryError(prior.diagnostic);
     if (
@@ -460,7 +481,7 @@ export class T3IntentLedger {
       // live shell may not list it for a moment, so it is read by id until it does.
       const child = delegatedChildOfPayload(payload);
       if (child) this.core.forgetRead?.(child);
-      this.awaitingLate.add(key);
+      this.awaitingLate.set(key, Date.now());
       const result = await rpc.call(method, payload);
       this.awaitingLate.delete(key);
       state.update((current) => {
@@ -544,7 +565,7 @@ export class T3IntentLedger {
       if (error instanceof T3RpcError && error.code === "timeout")
         unknown.cause = error;
       if (error instanceof T3RpcError && error.late) {
-        this.awaitingLate.add(key);
+        if (!this.awaitingLate.has(key)) this.awaitingLate.set(key, Date.now());
         unknown.lateDelivery = error.command === "message.dispatch";
         unknown.late = error.late.then((result) => {
           state.update((current) => {
