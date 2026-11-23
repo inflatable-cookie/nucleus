@@ -95,7 +95,10 @@ permanent self-handling when no candidate is picked) until a complete inventory
 answers (nucleus#1518); automatic recovery for a chosen fallback archived
 between shortlist observation and send while another host's inventory is
 incomplete is out of scope, and the existing no-replay fence for unknown
-delivery stays unchanged. Nucleus ranks a live registered planner first,
+delivery stays unchanged. A pass that cannot use an online host (the sweep,
+after that host's own pass failed) neither queries it nor reads the shortlist
+without it, so it never replaces the shared shortlist with one that knows less
+or invalidates other callers' reads in flight. Nucleus ranks a live registered planner first,
 then a thread that dispatched or owns project tasks, then a named agent, then a
 thread that only works in the checkout, breaking ties by the most recent host
 activity or Nucleus call (Tom, 2026-11-19; nucleus#1379). A design or support

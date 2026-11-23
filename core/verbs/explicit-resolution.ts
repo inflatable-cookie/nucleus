@@ -139,13 +139,21 @@ export type PlannerAuthority = { ok: true } | { ok: false; reason: string };
  * `unverified` planner (its host not yet proven after a roll) still holds
  * authority; an `unroutable` one never does.
  *
- * - A complete read accepts any planner on it, not only the routing pick.
- * - An incomplete read proves no absence, so it accepts only the routing pick
- *   and the registered planner.
- * - With no confirmed read in this call (an invalidation, such as the caller's
- *   own activity or a notice to it, discarded both attempts), the last finished
- *   read within `plannerAuthorityMaxAgeMs` stands in, for the registered planner
- *   or a dispatcher only, each re-checked against the current registry.
+ * Registration is a durable fact, so it needs no live read: the project's
+ * registered planner and the task's own recorded or origin planner hold
+ * authority from the stored record and the caller's identity alone, whatever
+ * state the hosts are in.
+ *
+ * Every other planner's candidacy is decided by its own host's inventory:
+ * another host that is offline or unread cannot add or remove it.
+ *
+ * - When this call's read answered for the caller's host, any planner on it
+ *   holds authority (registered, dispatching or named), and the routing pick.
+ * - When it did not (the host is offline or unread, or an invalidation such as
+ *   the caller's own activity or a notice to it discarded the read), that
+ *   host's last finished read within `plannerAuthorityMaxAgeMs` stands in, for
+ *   the registered planner or a dispatcher only, each re-checked against the
+ *   current registry.
  *
  * Every refusal names its reason, so a transient read failure reads differently
  * from a caller that is not a planner.
@@ -177,59 +185,92 @@ export async function plannerAuthority(
       candidate.hostId,
       engine.legacyPaseoHostId(),
     );
-  const incomplete = (hosts: string[]) => ({
-    ok: false as const,
-    reason: `the responsible-planner read for project ${project.name} is incomplete (${
-      hosts.length ? `host ${hosts.join(", ")} unread` : "no confirmed observation"
-    })`,
-  });
   const notPlanner = {
     ok: false as const,
     reason: `this caller is not one of them: it is not a responsible planner for project ${project.name}`,
   };
+  const callerRef = parseAgentId(caller);
+  const callerHost = callerRef?.hostId ?? engine.legacyPaseoHostId() ?? null;
+  const callerNative = callerRef?.nativeAgentId ?? caller;
+  if (
+    callerHost &&
+    (registeredAs(project.planner?.agentId, callerNative, callerHost) ||
+      (!queue && dispatchedBy(task, callerNative, callerHost)))
+  )
+    return { ok: true };
   const read = await engine.resolution.responsibleThread(project);
-  if (read.confirmed) {
-    const accepted = read.shortlist.some(
+  const isPick = (candidate: ResponsibleCandidate) =>
+    sameCallerIdentity(
+      read.thread?.agentId,
+      candidate.agentId,
+      read.thread?.hostId,
+      candidate.hostId,
+    );
+  if (read.confirmed && callerHost && read.readHosts.includes(callerHost))
+    return read.shortlist.some(
       (candidate) =>
         isCaller(candidate) &&
-        (sameCallerIdentity(
-          read.thread?.agentId,
-          candidate.agentId,
-          read.thread?.hostId,
-          candidate.hostId,
-        ) ||
-          candidate.reasons.includes("registered-planner") ||
-          (!read.incomplete &&
-            candidate.reasons.some((reason) => PLANNER_REASONS.has(reason)))),
-    );
-    if (accepted) return { ok: true };
-    return read.incomplete ? incomplete(read.unreadHosts) : notPlanner;
-  }
-  const last = engine.resolution.lastConfirmedResponsible(project.key);
-  if (!last)
+        (isPick(candidate) ||
+          candidate.reasons.some((reason) => PLANNER_REASONS.has(reason))),
+    )
+      ? { ok: true }
+      : notPlanner;
+  if (!callerHost) {
+    // A bare caller with no host to read it on: only a complete read decides.
+    if (read.confirmed && !read.incomplete)
+      return read.shortlist.some(
+        (candidate) =>
+          isCaller(candidate) &&
+          (isPick(candidate) ||
+            candidate.reasons.some((reason) => PLANNER_REASONS.has(reason))),
+      )
+        ? { ok: true }
+        : notPlanner;
     return {
       ok: false,
-      reason: `the responsible-planner read for project ${project.name} is unconfirmed, and no confirmed read finished in the last ${Math.round(
-        engine.resolution.plannerAuthorityMaxAgeMs / 60_000,
-      )} minutes`,
+      reason: `the responsible-planner read for project ${project.name} is unconfirmed or incomplete, and this caller names no host`,
     };
-  const tasks =
-    engine.resolution.responsibleThreads.taskIndex().byProject.get(
-      project.key,
-    ) ?? [];
-  const accepted = last.candidates.some((candidate) => {
-    if (!isCaller(candidate)) return false;
-    const native =
-      parseAgentId(candidate.agentId)?.nativeAgentId ?? candidate.agentId;
-    return (
-      (candidate.reasons.includes("registered-planner") &&
-        registeredAs(project.planner?.agentId, native, candidate.hostId)) ||
-      (candidate.reasons.includes("dispatcher") &&
-        tasks.some((owned) => dispatchedBy(owned, native, candidate.hostId)))
-    );
-  });
-  if (accepted) return { ok: true };
-  return last.incomplete ? incomplete(last.unreadHosts) : notPlanner;
+  }
+  const last = engine.resolution.lastConfirmedResponsible(
+    project.key,
+    callerHost,
+  );
+  if (last) {
+    const tasks =
+      engine.resolution.responsibleThreads.taskIndex().byProject.get(
+        project.key,
+      ) ?? [];
+    const accepted = last.candidates.some((candidate) => {
+      if (!isCaller(candidate)) return false;
+      const native =
+        parseAgentId(candidate.agentId)?.nativeAgentId ?? candidate.agentId;
+      return (
+        (candidate.reasons.includes("registered-planner") &&
+          registeredAs(project.planner?.agentId, native, candidate.hostId)) ||
+        (candidate.reasons.includes("dispatcher") &&
+          tasks.some((owned) => dispatchedBy(owned, native, candidate.hostId)))
+      );
+    });
+    return accepted ? { ok: true } : notPlanner;
+  }
+  const state = engine.resolution.responsibleHostState(callerHost);
+  if (state === "unregistered")
+    return {
+      ok: false,
+      reason: `this caller is not one of them: its host ${callerHost} is not a registered host`,
+    };
+  const hostState =
+    state === "offline"
+      ? `is incomplete (host ${callerHost} offline)`
+      : read.unreadHosts.includes(callerHost)
+        ? `is incomplete (host ${callerHost} unread)`
+        : `is unconfirmed (host ${callerHost} not read in this call)`;
+  return {
+    ok: false,
+    reason: `the responsible-planner read for project ${project.name} ${hostState}, and no read of that host finished in the last ${Math.round(
+      engine.resolution.plannerAuthorityMaxAgeMs / 60_000,
+    )} minutes`,
+  };
 }
 
 /** Whether the caller holds planner authority for this task; `plannerAuthority` says why not. */

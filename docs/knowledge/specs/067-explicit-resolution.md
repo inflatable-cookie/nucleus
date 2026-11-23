@@ -110,19 +110,21 @@ No command changes anything it does not name.
 
 **Authority.** The operator board: every command. Any live responsible planner
 of the task's project (Tom, 2026-11-19, no singleton planners): every command.
-That is any confirmed candidate on the shortlist project-addressed messages
-resolve from that is the registered planner, dispatched or owns project tasks
-(so the task's own planner and its origin thread while they are candidates), or
-is a named agent, plus the routing pick itself; not only the one thread a message
-would reach. An incomplete shortlist proves no absence, so it keeps only the
-routing pick and the registered planner. When a call gets no confirmed read
-(an invalidation, such as the caller's own activity or a notice to it, discarded
-it mid-read), the last read that finished within 10 minutes stands in for the
-registered planner or a dispatcher, each re-checked against the current
-registry; with none, every caller is refused. An `unroutable` candidate never
-holds authority. A refusal names its reason: an incomplete read and its unread
-hosts, an unconfirmed read, or a caller that is not a responsible planner for
-the project. The task's coordinator (its recovery run): every command, including
+The project's registered planner and the task's own recorded or origin
+planner hold it from the stored registration and the caller's identity alone,
+with no live read: registration is durable. Any other planner is a confirmed
+candidate on the shortlist project-addressed messages resolve from that is a
+dispatcher (dispatched or owns project tasks) or a named agent, or the routing
+pick itself; its candidacy is decided by its own host's inventory, so another
+host that is offline or unread neither adds nor removes it. When this call
+could not read the caller's host (offline, unread, or the read was discarded
+mid-read by an invalidation such as the caller's own activity), that host's
+last read that finished within 10 minutes stands in for a dispatcher,
+re-checked against the current tasks; with none, the caller is refused. An
+`unroutable` candidate never holds authority. A refusal names its reason: the
+caller's host offline, unread or not read in this call, an unregistered host,
+or a caller that is not a responsible planner for the project. The task's
+coordinator (its recovery run): every command, including
 `merge.now` and `closeout.now` (Tom, 2026-11-21: "Coordinators should get merge
 and closeout"), except accepting `hold_owner`, `route_policy`, `two_writers` or
 `creation_in_flight` (Spec 068 batch A follow-up).
