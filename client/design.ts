@@ -86,19 +86,24 @@ export const wash = {
   tone: 0.1,
 } as const;
 
+export const navigationTextOpacity = { normal: 0.85, dimmed: 0.72 } as const;
+
 /**
- * The detail pane uses `canvas`. The header and navigation can supply their own
- * fills, as can the list pane. Cards on the canvas use `section`, and controls
- * and cards on a section use `raised`. Hover and selection default to foreground
- * washes. `hairline` is the barely visible edge for a floating surface or an otherwise
+ * The detail pane uses `canvas`. A host navigation shade fills both the header
+ * and menu, and the list shares the canvas in that layout. Cards on the canvas
+ * use `section`, and controls and cards on a section use `raised`.
+ * Hover and selection default to foreground washes. `hairline` is the barely
+ * visible edge for a floating surface or an otherwise
  * ambiguous boundary. `border` stays for editable fields only. Dark is the first
  * mapping; light derives from the same theme colours.
  */
 export function roles(c: Colors) {
+  const navigation = c.surfaceNavigation ?? c.surface0;
   return {
     canvas: c.surface0,
-    header: c.surfaceHeader ?? c.surface0,
-    navigation: c.surfaceNavigation ?? c.surface0,
+    header: navigation,
+    navigation,
+    list: c.surfaceNavigation === undefined ? c.surface1 : c.surface0,
     section: c.surface1,
     raised: c.surface2,
     hover: c.surfaceHover ?? toneSurface(c.foreground, c.surface2, wash.hover),

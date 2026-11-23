@@ -25,6 +25,7 @@ const themeRoles = z.object({
   error: themeColorSchema.optional(),
   warning: themeColorSchema.optional(),
   success: themeColorSchema.optional(),
+  sidebar: themeColorSchema.optional(),
   sidebarRowHover: themeColorSchema.optional(),
   sidebarRowSelected: themeColorSchema.optional(),
 });
@@ -62,6 +63,7 @@ function boardColors(
     statusDanger: roles.error,
     statusWarning: roles.warning,
     statusSuccess: roles.success,
+    surfaceNavigation: roles.sidebar,
     surfaceHover: roles.sidebarRowHover,
     surfaceSelected: roles.sidebarRowSelected,
   };

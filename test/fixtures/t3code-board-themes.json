@@ -21,6 +21,7 @@
       "error": "#fa9487",
       "warning": "#f9c66d",
       "success": "#a9ca8c",
+      "sidebar": "#2b211d",
       "sidebarRowHover": "#4a372d",
       "sidebarRowSelected": "#624333"
     },
