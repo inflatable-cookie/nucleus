@@ -11,6 +11,7 @@ import { resumeDispositions } from "../verbs/disposition";
 import { completionReportsPr } from "../recovery/worker-reconcile";
 import { LANE_PRIORITY_AUDIT, LANE_PRIORITY_TASK } from "./lane-priorities";
 import { TASK_QUANTUM_BOUND_MS, boundQuantum } from "./quantum-bound";
+import { isQuantumDeadlineExceeded } from "./pass-snapshot";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
 import { HostPass } from "./host-pass";
@@ -86,6 +87,7 @@ export type SweepContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
+    | "beginPassSnapshot"
     | "checkpoints"
     | "delegation"
     | "delegateNativeQuestions"
@@ -95,10 +97,20 @@ export type SweepContext = Pick<
     | "deliverHostOutageNotices"
     | "deliverNotices"
     | "deliverQueuedMessages"
+    | "endPassSnapshot"
+    | "hostPassWarmBudgetMs"
+    | "markPassTimelineBudgetExhausted"
     | "observationTargets"
     | "observe"
     | "origins"
+    | "primePassProcesses"
+    | "primePassTimeline"
+    | "primePassTimelinePage"
     | "raiseOperatorQuestions"
+    | "recordPassHostInventory"
+    | "recordPassHostObservation"
+    | "sealPassHost"
+    | "storePassTimelinePage"
     | "recovery"
     | "resumeAskQuestions"
     | "resumeResponsibleAnsweredQuestions"
@@ -126,7 +138,18 @@ export class Sweep {
           "stopped",
           "store",
         ],
-        ["observationTargets"],
+        [
+          "hostPassWarmBudgetMs",
+          "markPassTimelineBudgetExhausted",
+          "observationTargets",
+          "primePassProcesses",
+          "primePassTimeline",
+          "primePassTimelinePage",
+          "recordPassHostInventory",
+          "recordPassHostObservation",
+          "sealPassHost",
+          "storePassTimelinePage",
+        ],
       ),
     ));
   }
@@ -417,6 +440,7 @@ export class Sweep {
     drain: boolean,
     visited: Set<string> = new Set(),
   ): Promise<{ fault: Error | null; covered: boolean; visited: Set<string> }> {
+    const passSnapshot = this.engine.resolution.beginPassSnapshot?.();
     try {
       this.engine.store.setMeta("engineError", "");
       // One diagnostic slot per pass for the per-host steps a fleet sweep must
@@ -653,7 +677,8 @@ export class Sweep {
               try {
                 await this.engine.reconcile(this.engine.store.task(task.id));
               } catch (error) {
-                this.engine.noteStepFailure(task.id, error);
+                if (!isQuantumDeadlineExceeded(error))
+                  this.engine.noteStepFailure(task.id, error);
               }
               // The quantum records its own faults; a lane-level failure here means
               // shutdown discarded the queued quantum, so the audit simply stops.
@@ -874,6 +899,8 @@ export class Sweep {
         covered: false,
         visited,
       };
+    } finally {
+      this.engine.resolution.endPassSnapshot?.(passSnapshot);
     }
   }
 }

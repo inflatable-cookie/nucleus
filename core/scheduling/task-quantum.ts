@@ -7,6 +7,14 @@ import {
   sweepSettledRunProcesses,
 } from "../machine/run-process-cleanup";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  QUANTUM_TOTAL_READ_BUDGET_MS,
+  boundedRead,
+  isQuantumDeadlineExceeded,
+  runInTaskQuantumScope,
+  runOutsideTaskQuantumScope,
+} from "./pass-snapshot";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileUsageGate } from "../dispatch/usage-gate";
 import { reconcileUnavailablePreference } from "../dispatch/unavailable-preference";
@@ -95,6 +103,8 @@ export type TaskQuantumContext = Pick<
     | "holdProofOnlyGoWait"
     | "ownedToolHold"
     | "owns"
+    | "quantumReadBudgetMs"
+    | "quantumReadTimeoutMs"
     | "raiseOperatorQuestions"
     | "reconcileHoldUntil"
     | "reconcileUncertainRunDelivery"
@@ -117,20 +127,40 @@ export class TaskQuantum {
   constructor(readonly context: TaskQuantumContext) {
     this.orphanPhases = new OrphanPhases(context);
   }
+  private readonly deliveryOffset = new Map<string, number>();
+
   private async observeReleasedRunDeliveries(taskId: string): Promise<void> {
     const { adapter, resolution, store } = this.context;
     if (!adapter.originAgent || !adapter.agentTimelinePage) return;
-    for (const run of store.runs(taskId)) {
-      if (
-        !run.released ||
-        run.status !== "uncertain" ||
-        !run.agentId ||
-        !run.workspaceId ||
-        releasedRunDeliveryEvidence(store, run)
-      )
-        continue;
+    const eligible = store
+      .runs(taskId)
+      .filter(
+        (run) =>
+          run.released &&
+          run.status === "uncertain" &&
+          Boolean(run.agentId) &&
+          Boolean(run.workspaceId) &&
+          !releasedRunDeliveryEvidence(store, run),
+      );
+    if (!eligible.length) return;
+    const offset = this.deliveryOffset.get(taskId) ?? 0;
+    this.deliveryOffset.set(taskId, (offset + 1) % eligible.length);
+    const start = offset % eligible.length;
+    const ordered =
+      start === 0
+        ? eligible
+        : [...eligible.slice(start), ...eligible.slice(0, start)];
+    const budgetMs =
+      resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const deadlineAt = Date.now() + budgetMs;
+    for (const run of ordered) {
+      if (Date.now() >= deadlineAt) return;
       try {
-        await resolution.reconcileUncertainRunDelivery(taskId, run.id);
+        await resolution.reconcileUncertainRunDelivery(
+          taskId,
+          run.id,
+          deadlineAt,
+        );
       } catch {
         /* An unreadable or changed timeline leaves this occurrence unknown. */
       }
@@ -170,15 +200,19 @@ export class TaskQuantum {
     if (!hostOwesRunProcessCleanup(store, hostId)) return;
     void this.context
       .cleanContext(() =>
-        this.context.scheduleLane(
-          `cleanup:${hostId}`,
-          LANE_PRIORITY_AUDIT,
-          () =>
-            sweepSettledRunProcesses(store, hostId, {
-              pendingOnly: true,
-              readProcesses: () => adapter.hostProcessListing!(),
-            }),
-          { coalesce: "settled-run-process-cleanup" },
+        runOutsideTaskQuantumScope(() =>
+          this.context.scheduleLane(
+            `cleanup:${hostId}`,
+            LANE_PRIORITY_AUDIT,
+            () =>
+              runOutsideTaskQuantumScope(() =>
+                sweepSettledRunProcesses(store, hostId, {
+                  pendingOnly: true,
+                  readProcesses: () => adapter.hostProcessListing!(),
+                }),
+              ),
+            { coalesce: "settled-run-process-cleanup" },
+          ),
         ),
       )
       .catch(() => {
@@ -207,18 +241,25 @@ export class TaskQuantum {
   }
 
   async taskQuantum(taskId: string): Promise<void> {
-    const task = this.reconcileProfileAdmission(this.context.store.task(taskId));
-    const quantum = { pausedForPrerequisiteWait: false };
-    // One pass, one worktree-validation scan: every read this quantum makes for
-    // the same task worktree and selector argv shares it, and the next quantum
-    // reads again (task 450).
-    this.context.resolution.beginValidationScanPass();
-    try {
-      await this.context.quantumSteps(taskId, task, quantum);
-    } finally {
-      if (!quantum.pausedForPrerequisiteWait)
-        await this.context.quantumFinish(taskId);
-    }
+    const budgetMs =
+      this.context.resolution.quantumReadBudgetMs ??
+      QUANTUM_TOTAL_READ_BUDGET_MS;
+    return runInTaskQuantumScope(budgetMs, async () => {
+      const task = this.reconcileProfileAdmission(
+        this.context.store.task(taskId),
+      );
+      const quantum = { pausedForPrerequisiteWait: false };
+      // One pass, one worktree-validation scan: every read this quantum makes for
+      // the same task worktree and selector argv shares it, and the next quantum
+      // reads again (task 450).
+      this.context.resolution.beginValidationScanPass();
+      try {
+        await this.context.quantumSteps(taskId, task, quantum);
+      } finally {
+        if (!quantum.pausedForPrerequisiteWait)
+          await this.context.quantumFinish(taskId);
+      }
+    });
   }
 
   async quantumSteps(
@@ -309,11 +350,20 @@ export class TaskQuantum {
         task.phase === "needs_attention" &&
         task.completion?.status === "ready_for_review" &&
         task.workspaceId &&
-        this.context.adapter.workspaceAvailable &&
-        !(await this.context.adapter.workspaceAvailable(task.workspaceId))
+        this.context.adapter.workspaceAvailable
       ) {
-        await this.context.resolution.advance(task);
-        return;
+        const deadlineMs =
+          this.context.resolution.quantumReadTimeoutMs ??
+          QUANTUM_READ_DEADLINE_MS;
+        const avail = await boundedRead(
+          "workspace availability",
+          () => this.context.adapter.workspaceAvailable!(task.workspaceId!),
+          deadlineMs,
+        );
+        if (avail.state === "ok" && !avail.value) {
+          await this.context.resolution.advance(task);
+          return;
+        }
       }
       task = this.context.store.task(taskId);
       const probeExternalMerge = !["done", "cancelled"].includes(task.phase);
@@ -541,6 +591,7 @@ export class TaskQuantum {
         else await this.context.launchAgent(current);
       }
     } catch (error) {
+      if (isQuantumDeadlineExceeded(error)) return;
       this.context.noteStepFailure(task.id, error);
     }
   }
@@ -660,10 +711,11 @@ export class TaskQuantum {
             Boolean(this.context.store.getMeta("paused")),
           );
       } catch (error) {
-        this.context.noteStepFailure(taskId, error);
+        if (!isQuantumDeadlineExceeded(error)) {
+          this.context.noteStepFailure(taskId, error);
+        }
       }
     }
-    this.scheduleRunProcessCleanup(taskId);
     await archiveFinishedThreads(
       this.context.store,
       this.context.adapter,
@@ -672,15 +724,17 @@ export class TaskQuantum {
         const task = this.context.store.task(taskId),
           runs = this.context.store.runs(taskId);
         const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
-        return this.context.resolution.ownedToolHold(agentId, {
+        const hold = await this.context.resolution.ownedToolHold(agentId, {
           requireCompleteEvidence: true,
           runId: runIds[0],
           runIds,
           taskId,
           workspaceId,
         });
+        return hold.kind === "clear" ? null : hold.reason;
       },
     ).catch((error) => {
+      if (isQuantumDeadlineExceeded(error)) return;
       this.context.store.event(
         taskId,
         "thread_archive_reconcile_error",
@@ -695,12 +749,17 @@ export class TaskQuantum {
       this.context.adapter,
       taskId,
     ).catch((error) => {
+      if (isQuantumDeadlineExceeded(error)) return;
       this.context.store.event(
         taskId,
         "thread_archive_reconcile_error",
         String(error),
       );
     });
+    // Queue any pending settled-run / retired-thread process cleanup onto the
+    // host cleanup lane AFTER archive steps so newly retired scratch is covered
+    // without ever scanning processes inside the task quantum (Spec 068 §6).
+    this.scheduleRunProcessCleanup(taskId);
     // Title projection is enqueued on its own serial lane: a slow Paseo
     // rename can never hold this task's delivery lane.
     this.context.enqueueTitle(taskId);

@@ -1,37 +1,96 @@
-import type { Run, Task } from '../../shared/contracts';
+import type { Run, Task } from "../../shared/contracts";
 
 /** Task execution bindings, including retained history whose tools may still run.
  * Planning and coordination identities do not themselves establish a binding.
  */
-export function executionParticipants(task: Task, runs: Run[]): Map<string, string> {
+export function executionParticipants(
+  task: Task,
+  runs: Run[],
+): Map<string, string> {
   const participants = new Map<string, string>();
   const add = (agentId: string | null, workspaceId: string | null) => {
-    if (!agentId || !workspaceId) throw Error('Participant identity or workspace is unknown');
+    if (!agentId || !workspaceId)
+      throw Error("Participant identity or workspace is unknown");
     const previous = participants.get(agentId);
-    if (previous && previous !== workspaceId) throw Error('Participant workspace identity conflicts');
+    if (previous && previous !== workspaceId)
+      throw Error("Participant workspace identity conflicts");
     participants.set(agentId, workspaceId);
   };
   if (task.agentId) add(task.agentId, task.workspaceId);
   for (const worker of task.retiredWorkers) {
-    const run = runs.find(item => item.id === worker.runId);
-    if (run && (run.taskId !== task.id || run.role !== 'revision' || run.agentId !== worker.agentId))
-      throw Error('Retired worker run identity conflicts');
+    const run = runs.find((item) => item.id === worker.runId);
+    if (
+      run &&
+      (run.taskId !== task.id ||
+        run.role !== "revision" ||
+        run.agentId !== worker.agentId)
+    )
+      throw Error("Retired worker run identity conflicts");
     if (run?.explicitlyReleasedAt) continue;
     add(worker.agentId, run?.workspaceId || task.workspaceId);
   }
   for (const run of runs) {
-    if (!['revision', 'reviewer', 'executor'].includes(run.role)) continue;
-    if (run.taskId !== task.id) throw Error('Participant run belongs to another task');
+    if (!["revision", "reviewer", "executor"].includes(run.role)) continue;
+    if (run.taskId !== task.id)
+      throw Error("Participant run belongs to another task");
     if (run.explicitlyReleasedAt) continue;
     if (!run.agentId && run.released && !run.active) continue;
     add(run.agentId, run.workspaceId);
   }
   for (const proof of task.proofExecutions) {
-    const run = runs.find(item => item.id === proof.runId);
-    if (!run || run.taskId !== task.id || run.role !== 'executor' || run.agentId !== proof.agentId || run.workspaceId !== proof.workspaceId)
-      throw Error('Proof executor run identity conflicts');
+    const run = runs.find((item) => item.id === proof.runId);
+    if (
+      !run ||
+      run.taskId !== task.id ||
+      run.role !== "executor" ||
+      run.agentId !== proof.agentId ||
+      run.workspaceId !== proof.workspaceId
+    )
+      throw Error("Proof executor run identity conflicts");
     if (run.explicitlyReleasedAt) continue;
     add(proof.agentId, proof.workspaceId);
   }
   return participants;
+}
+
+/**
+ * Best-effort participant projection for host-pass prefetching: collects every
+ * known agent ID (with its recorded workspace ID, if any) without throwing on
+ * unbound launch reservations or incomplete bindings. Lease gates must still
+ * call `executionParticipants`.
+ */
+export function knownExecutionParticipantIds(
+  task: Task,
+  runs: Run[],
+): Array<{ agentId: string; workspaceId: string | null }> {
+  const byAgent = new Map<string, string | null>();
+  const add = (
+    agentId: string | null | undefined,
+    workspaceId: string | null | undefined,
+  ) => {
+    if (!agentId) return;
+    if (!byAgent.has(agentId) || (!byAgent.get(agentId) && workspaceId))
+      byAgent.set(agentId, workspaceId ?? null);
+  };
+  add(task.agentId, task.workspaceId);
+  for (const worker of task.retiredWorkers) {
+    const run = runs.find((item) => item.id === worker.runId);
+    if (run?.explicitlyReleasedAt) continue;
+    add(worker.agentId, run?.workspaceId || task.workspaceId);
+  }
+  for (const run of runs) {
+    if (!["revision", "reviewer", "executor"].includes(run.role)) continue;
+    if (run.taskId !== task.id) continue;
+    if (run.explicitlyReleasedAt) continue;
+    add(run.agentId, run.workspaceId);
+  }
+  for (const proof of task.proofExecutions) {
+    const run = runs.find((item) => item.id === proof.runId);
+    if (run?.explicitlyReleasedAt) continue;
+    add(proof.agentId, proof.workspaceId);
+  }
+  return [...byAgent.entries()].map(([agentId, workspaceId]) => ({
+    agentId,
+    workspaceId,
+  }));
 }

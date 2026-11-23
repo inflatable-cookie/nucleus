@@ -30,10 +30,7 @@ import {
 import { T3CompatibilityError, shellThread } from "../hosts/t3code/contracts";
 import { isHostConnectionRefusal } from "../core/host/errors";
 import { typedPreSendRefusal } from "../core/planning/operation-failure";
-import {
-  activeStatuses,
-  shellThreadStatus,
-} from "../hosts/t3code/reads";
+import { activeStatuses, shellThreadStatus } from "../hosts/t3code/reads";
 import {
   workspaceThreadFacts,
   type WorkspaceThreadInventoryHost,
@@ -1413,7 +1410,9 @@ test("native tool evidence is judged by its own kind and state, never ignored", 
       input: "synthetic waiting command",
     }),
   ];
-  const owner = await observedTurnState(host, created.id);
+  const ownerRead = await observedTurnState(host, created.id);
+  assert.equal(ownerRead.kind, "observed", "the run observation succeeded");
+  const owner = ownerRead.kind === "observed" ? ownerRead.state : null;
   assert.equal(owner?.active, false, "the run has finished");
   const page = (await host.agentTimelinePage(created.id))!;
   assert.deepEqual(
@@ -1598,7 +1597,9 @@ test("a native background subagent is never settled by its finished parent turn"
       result: null,
     }),
   ];
-  const owner = await observedTurnState(host, created.id);
+  const ownerRead = await observedTurnState(host, created.id);
+  assert.equal(ownerRead.kind, "observed", "the parent observation succeeded");
+  const owner = ownerRead.kind === "observed" ? ownerRead.state : null;
   assert.equal(owner?.active, false, "the parent run has finished");
   const page = (await host.agentTimelinePage(created.id))!;
   const child = page.entries[1]!.item;

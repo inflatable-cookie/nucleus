@@ -44,6 +44,11 @@ import {
 import { releaseRunFromRecordedCompletion } from "./fence-settlement";
 import { settleRunCreation } from "./creation-lookup";
 import { threadGoneError } from "./dead-participant";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+  isQuantumDeadlineExceeded,
+} from "../scheduling/pass-snapshot";
 
 export type ObservationContext = Pick<
   Resolution,
@@ -63,6 +68,7 @@ export type ObservationContext = Pick<
   | "onTaskHost"
   | "orphanRuns"
   | "paused"
+  | "quantumReadTimeoutMs"
   | "reconcileStalledTurnStop"
   | "recoverRefusedReviewer"
   | "releaseDeadParticipant"
@@ -104,11 +110,19 @@ export class Observation {
       if (!latest || JSON.stringify(latest) !== JSON.stringify(run))
         return true;
       const task = this.store.task(run.taskId);
-      if (isDispositionActive(task) || isDispositionComplete(task)) return false;
+      if (isDispositionActive(task) || isDispositionComplete(task))
+        return false;
       const reported = timestampCompletion(this.store, run, at);
       if (!reported.completionReceivedAt) return false;
       if (reported !== run) this.store.putRun(reported);
-      if (completedTurnCanRelease(reported, { kind: "unobservable", error }, at, this.graceMs))
+      if (
+        completedTurnCanRelease(
+          reported,
+          { kind: "unobservable", error },
+          at,
+          this.graceMs,
+        )
+      )
         releaseRunFromRecordedCompletion(this.store, task.id, reported);
       return true;
     });
@@ -196,6 +210,7 @@ export class Observation {
             ),
           );
         } catch (error) {
+          if (isQuantumDeadlineExceeded(error)) return;
           // One failed host read fails only this host's observation step (Spec 069
           // §2): its health takes the sample, no run on it is written, and the next
           // pass observes them again.
@@ -276,13 +291,28 @@ export class Observation {
         // Its new turn needs a narrow read started against the delivered state.
         let state: AgentObservation;
         try {
-          state =
-            (run.completion || reviewInProgress(run) ? null : inventory?.get(run.agentId)) ??
-            (await this.resolution.onTaskHost(run, () =>
-              this.resolution.host.observe(run.agentId!),
-            ));
+          const cached =
+            run.completion || reviewInProgress(run)
+              ? null
+              : (inventory?.get(run.agentId) ?? null);
+          if (cached) {
+            state = cached;
+          } else {
+            const read = await boundedRead(
+              "retained run observation",
+              () =>
+                this.resolution.onTaskHost(run, () =>
+                  this.resolution.host.observe(run.agentId!),
+                ),
+              this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
+            );
+            if (read.state === "unknown") continue;
+            state = read.value;
+          }
         } catch (error) {
-          if (this.settleUnobservableCompletion(run, observationStartedAt, error))
+          if (
+            this.settleUnobservableCompletion(run, observationStartedAt, error)
+          )
             continue;
           throw error;
         }
@@ -329,13 +359,36 @@ export class Observation {
             "Observed agent or workspace differs from the recorded run lease",
           );
         const busy = active(state) || Boolean(state.activeTurnId);
-        const reported = timestampCompletion(this.store, run, observationStartedAt);
+        const reported = timestampCompletion(
+          this.store,
+          run,
+          observationStartedAt,
+        );
         const releaseReported =
-          completedTurnCanRelease(reported, { kind: "observed", state }, observationStartedAt, this.graceMs) &&
-          !(run.completion?.providerUnavailable && isQuotaExhaustion(state.error));
-        if (!releaseReported && !busy && !["idle", "error", "closed"].includes(state.status)) {
+          completedTurnCanRelease(
+            reported,
+            { kind: "observed", state },
+            observationStartedAt,
+            this.graceMs,
+          ) &&
+          !(
+            run.completion?.providerUnavailable &&
+            isQuotaExhaustion(state.error)
+          );
+        if (
+          !releaseReported &&
+          !busy &&
+          !["idle", "error", "closed"].includes(state.status)
+        ) {
           if (state.status === "gone")
-            this.store.putRun({ ...run, participantActivity: runActivityObservation(run, state, observationStartedAt) });
+            this.store.putRun({
+              ...run,
+              participantActivity: runActivityObservation(
+                run,
+                state,
+                observationStartedAt,
+              ),
+            });
           throw new Error("Run state is unknown");
         }
         if (
@@ -372,7 +425,11 @@ export class Observation {
           active: busy,
           lastObservedAt: observationStartedAt,
           lastActivityAt: state.updatedAt || null,
-          participantActivity: runActivityObservation(run, state, observationStartedAt),
+          participantActivity: runActivityObservation(
+            run,
+            state,
+            observationStartedAt,
+          ),
           idleSince: busy ? null : (run.idleSince ?? observationStartedAt),
         };
         this.store.putRun(run);

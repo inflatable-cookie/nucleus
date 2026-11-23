@@ -20,6 +20,10 @@ import type {
 import type { ExplicitResolution } from "../../shared/schema/task-control";
 import type { Engine } from "../engine";
 import { isAgentGoneRefusal, ThreadUnobservedError } from "../host/errors";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+} from "../scheduling/pass-snapshot";
 
 /**
  * Spec 068 §3: a participant whose agent is provably dead is not work.
@@ -122,9 +126,16 @@ export async function threadDeathEvidence(
 ): Promise<ThreadDeathEvidence | null> {
   if (!ctx.resolution.hostAvailable(task, run ?? undefined)) return null;
   try {
-    const origin = await ctx.resolution.onTaskHost(run ?? task, () =>
-      ctx.host.originAgent(agentId),
+    const read = await boundedRead(
+      "origin agent observation",
+      () =>
+        ctx.resolution.onTaskHost(run ?? task, () =>
+          ctx.host.originAgent(agentId),
+        ),
+      ctx.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
     );
+    if (read.state === "unknown") return null;
+    const origin = read.value;
     if (!origin) return "thread_absent";
     if (origin.deleted) return "thread_deleted";
     return null;
@@ -381,29 +392,26 @@ export async function releaseDeadParticipant(
       } else {
         // A published PR continues on a fresh worker through the ordinary
         // revision admission, with the worker's own continuation.
-        const retired = store.update(
-          released.id,
-          {
-            ...(latest.agentId && latest.profile && latest.runId
-              ? {
-                  retiredWorkers: [
-                    ...released.retiredWorkers,
-                    {
-                      agentId: latest.agentId,
-                      runId: latest.runId,
-                      profile: latest.profile,
-                      reason: detail,
-                      ...(latest.hostId ? { hostId: latest.hostId } : {}),
-                    },
-                  ],
-                }
-              : {}),
-            resumePrNumber:
-              released.resumePrNumber ??
-              released.completion?.prNumber ??
-              prNumberOf(released.prUrl),
-          },
-        );
+        const retired = store.update(released.id, {
+          ...(latest.agentId && latest.profile && latest.runId
+            ? {
+                retiredWorkers: [
+                  ...released.retiredWorkers,
+                  {
+                    agentId: latest.agentId,
+                    runId: latest.runId,
+                    profile: latest.profile,
+                    reason: detail,
+                    ...(latest.hostId ? { hostId: latest.hostId } : {}),
+                  },
+                ],
+              }
+            : {}),
+          resumePrNumber:
+            released.resumePrNumber ??
+            released.completion?.prNumber ??
+            prNumberOf(released.prUrl),
+        });
         const action = ctx.resolution.workerContinuation(retired);
         ctx.resolution.update(
           retired,
@@ -414,7 +422,10 @@ export async function releaseDeadParticipant(
             pendingWorkerInstruction: action,
             stop: null,
           },
-          { phase: "changes_requested", reason: `Worker action requested: ${action}` },
+          {
+            phase: "changes_requested",
+            reason: `Worker action requested: ${action}`,
+          },
           "worker_gone_fresh_continuation",
           detail,
         );

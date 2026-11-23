@@ -30,6 +30,30 @@ import { OrphanRuns } from "./recovery/orphan-runs";
 import { ProgressContinuation } from "./review/progress-continuation";
 import { proofWaitApplies } from "./qa/proof-wait";
 import { SchedulingLifecycle } from "./scheduling/lifecycle";
+import {
+  HOST_PASS_WARM_BUDGET_MS,
+  PASS_PROCESS_READ_DEADLINE_MS,
+  PassSnapshot,
+  QUANTUM_READ_DEADLINE_MS,
+  QUANTUM_TOTAL_READ_BUDGET_MS,
+  boundedRead,
+  currentTaskQuantumScope,
+  isQuantumDeadlineExceeded,
+  type BoundedReadResult,
+  type CoveredObservationSnapshot,
+  type PassProcessRead,
+  type PassTimelinePageRead,
+  type ProvenTerminalSnapshot,
+} from "./scheduling/pass-snapshot";
+import {
+  readHostUidProcesses,
+  type HostProcessListRead,
+} from "./machine/host-process-listing";
+import type {
+  HostObservation,
+  HostTimelineEntry,
+  HostTimelinePage,
+} from "../shared/host";
 
 import { ContinuedPrs, type ContinuedPrBinding } from "./review/continued-pr";
 import { OrdinaryCustody } from "./review/ordinary-custody";
@@ -433,6 +457,304 @@ export class Resolution {
   >();
   /** The read budget per shortlisted thread; a read over it is unverified, never gone (tests shorten it). */
   responsibleObservationMs = RESPONSIBLE_OBSERVATION_MS;
+  /** The read budget per read inside a task quantum; a miss returns unknown (tests shorten it). */
+  quantumReadTimeoutMs = QUANTUM_READ_DEADLINE_MS;
+  /** The cumulative read-phase budget for one task quantum; caps serial observations (tests shorten it). */
+  quantumReadBudgetMs = QUANTUM_TOTAL_READ_BUDGET_MS;
+  /** The read budget per host process-table snapshot; a miss returns unknown (tests shorten it). */
+  passProcessReadTimeoutMs = PASS_PROCESS_READ_DEADLINE_MS;
+  /** Total per-host budget for timeline warming inside one host pass (tests shorten it). */
+  hostPassWarmBudgetMs = HOST_PASS_WARM_BUDGET_MS;
+  private passSnapshot: PassSnapshot | null = null;
+
+  /** Start one sweep pass's shared observation snapshot; any previous snapshot is expired. */
+  beginPassSnapshot(): PassSnapshot {
+    this.passSnapshot?.expire();
+    this.passSnapshot = new PassSnapshot();
+    return this.passSnapshot;
+  }
+
+  /** End the active sweep pass's observation snapshot so stale reads never cross passes. */
+  endPassSnapshot(snapshot?: PassSnapshot): void {
+    if (snapshot && this.passSnapshot !== snapshot) {
+      snapshot.expire();
+      return;
+    }
+    this.passSnapshot?.expire();
+    this.passSnapshot = null;
+  }
+
+  /** The currently active pass snapshot (sweep pass or wake-scoped), or null outside a pass. */
+  currentPassSnapshot(): PassSnapshot | null {
+    const scoped = currentTaskQuantumScope()?.snapshot;
+    if (scoped?.active) return scoped;
+    return this.passSnapshot?.active ? this.passSnapshot : null;
+  }
+
+  /** Record one host's pre-process observation inventory for freshness checks in this pass. */
+  recordPassHostInventory(
+    hostId: string,
+    inventory: ReadonlyMap<string, HostObservation> | null,
+  ): void {
+    this.currentPassSnapshot()?.recordHostInventory(
+      this.passHostKey(hostId),
+      inventory,
+    );
+  }
+
+  /** Record one exact pre-process observation (e.g. an archived participant) before `processSnapshot`. */
+  recordPassHostObservation(
+    hostId: string,
+    agentId: string,
+    observation: HostObservation,
+  ): void {
+    this.currentPassSnapshot()?.recordHostObservation(
+      this.passHostKey(hostId),
+      agentId,
+      observation,
+    );
+  }
+
+  /** Seal one host after its `HostPass` finishes warming so task-lane timeline misses return unknown. */
+  sealPassHost(hostId: string): void {
+    this.currentPassSnapshot()?.sealHost(this.passHostKey(hostId));
+  }
+
+  /** Store an already-expanded timeline page into the active pass snapshot. */
+  storePassTimelinePage(
+    hostId: string,
+    agentId: string,
+    limit: number | undefined,
+    pageRead: PassTimelinePageRead,
+  ): void {
+    this.currentPassSnapshot()?.storeTimelinePage(
+      this.passHostKey(hostId),
+      agentId,
+      limit,
+      pageRead,
+    );
+  }
+
+  /** The pre-process observation captured for `agentId` on `hostId` in this pass, if any. */
+  passObservedBeforeProcesses(
+    hostId: string | null | undefined,
+    agentId: string,
+  ): HostObservation | null {
+    return (
+      this.currentPassSnapshot()?.observedBeforeProcessSnapshot(
+        this.passHostKey(hostId),
+        agentId,
+      ) ?? null
+    );
+  }
+
+  /** Mark one host's timeline warming budget spent for this pass. */
+  markPassTimelineBudgetExhausted(hostId: string, reason: string): void {
+    this.currentPassSnapshot()?.markTimelineBudgetExhausted(
+      this.passHostKey(hostId),
+      reason,
+    );
+  }
+
+  /** Run one task-quantum read under its deadline; a timeout resolves as `{ state: "unknown", reason }`. */
+  boundedQuantumRead<T>(
+    label: string,
+    work: () => Promise<T>,
+    deadlineMs: number = this.quantumReadTimeoutMs,
+  ): Promise<BoundedReadResult<T>> {
+    return boundedRead(label, work, deadlineMs);
+  }
+
+  private passHostKey(hostId?: string | null): string {
+    return hostId ?? (this.adapter as { hostId?: string }).hostId ?? "";
+  }
+
+  /**
+   * Read the host's process table through this pass's shared snapshot (when
+   * inside a sweep pass) or under a bounded deadline (outside a pass). A slow
+   * or unreadable table resolves as `{ state: "unknown", reason }`, never a hang.
+   */
+  readPassProcesses(
+    hostId?: string | null,
+    options: { allowMissFetch?: boolean } = {},
+  ): Promise<PassProcessRead> {
+    const key = this.passHostKey(hostId);
+    const deadlineMs = this.passProcessReadTimeoutMs;
+    const read = async (): Promise<HostProcessListRead> => {
+      if (this.adapter.hostProcessListing) {
+        try {
+          const listed = await this.adapter.hostProcessListing();
+          return listed
+            ? { state: "listed", processes: listed }
+            : {
+                state: "unknown",
+                reason: "the host process listing is unreadable",
+              };
+        } catch (error) {
+          if (isQuantumDeadlineExceeded(error)) throw error;
+          return {
+            state: "unknown",
+            reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      }
+      return readHostUidProcesses({ deadlineMs });
+    };
+    const inQuantum = Boolean(currentTaskQuantumScope()?.inTaskQuantum);
+    const snapshot = this.currentPassSnapshot();
+    if (snapshot)
+      return snapshot.processes(key, read, deadlineMs, {
+        ...options,
+        cacheOnly: inQuantum && !options.allowMissFetch,
+      });
+    if (inQuantum) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "host process listing was not captured in a host pass; waiting for the next pass",
+        capturedAt: Date.now(),
+        fromPassSnapshot: true,
+        deferred: true,
+      });
+    }
+    const capturedAt = Date.now();
+    return boundedRead("host process listing", read, deadlineMs).then(
+      (result) =>
+        result.state === "ok"
+          ? { ...result.value, capturedAt, fromPassSnapshot: false }
+          : {
+              state: "unknown",
+              reason: result.reason,
+              capturedAt,
+              fromPassSnapshot: false,
+              deferred: true,
+            },
+      (error) => ({
+        state: "unknown",
+        reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+        capturedAt,
+        fromPassSnapshot: false,
+        ...(isQuantumDeadlineExceeded(error) ? { deferred: true } : {}),
+      }),
+    );
+  }
+
+  /** Pre-warm one host's process snapshot during its host pass (or host-side cleanup lane). */
+  primePassProcesses(hostId: string): Promise<PassProcessRead> {
+    return this.readPassProcesses(hostId, { allowMissFetch: true });
+  }
+
+  /** Drop one host's cached process snapshot after reaping processes in this pass. */
+  invalidatePassProcesses(hostId?: string | null): void {
+    this.passSnapshot?.invalidateProcesses(this.passHostKey(hostId));
+  }
+
+  /**
+   * Read one agent's timeline through this pass's shared snapshot (when inside
+   * a sweep pass) or under the quantum read deadline.
+   */
+  readPassTimeline(
+    agentId: string,
+    hostId?: string | null,
+    limit?: number,
+    deadlineMs: number = this.quantumReadTimeoutMs,
+  ): Promise<BoundedReadResult<HostTimelineEntry[] | null>> {
+    const key = this.passHostKey(hostId);
+    const read = () => this.host.agentTimeline(agentId, limit);
+    const inQuantum = Boolean(currentTaskQuantumScope()?.inTaskQuantum);
+    const snapshot = this.currentPassSnapshot();
+    if (snapshot)
+      return snapshot.timeline(key, agentId, limit, read, deadlineMs, {
+        cacheOnly: inQuantum,
+      });
+    if (inQuantum) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "agent timeline was not captured in a host pass; waiting for the next pass",
+      });
+    }
+    return boundedRead("agent timeline", read, deadlineMs);
+  }
+
+  /** Pre-warm one agent's timeline snapshot during its host pass. */
+  primePassTimeline(
+    agentId: string,
+    hostId: string,
+    limit?: number,
+    deadlineMs: number = this.quantumReadTimeoutMs,
+  ): Promise<BoundedReadResult<HostTimelineEntry[] | null>> {
+    return this.readPassTimeline(agentId, hostId, limit, deadlineMs);
+  }
+
+  /**
+   * Read one agent's timeline page through this pass's shared snapshot (when
+   * inside a sweep pass) or under the quantum read deadline.
+   */
+  readPassTimelinePage(
+    agentId: string,
+    limit?: number,
+    hostId?: string | null,
+    deadlineMs: number = this.quantumReadTimeoutMs,
+    options: {
+      provenTerminal?: ProvenTerminalSnapshot;
+      coveredObservation?: CoveredObservationSnapshot;
+      requireCoveredObservation?: boolean;
+    } = {},
+  ): Promise<PassTimelinePageRead> {
+    const key = this.passHostKey(hostId);
+    const read = () => this.host.agentTimelinePage(agentId, limit);
+    const inQuantum = Boolean(currentTaskQuantumScope()?.inTaskQuantum);
+    const snapshot = this.currentPassSnapshot();
+    if (snapshot)
+      return snapshot.timelinePage(key, agentId, limit, read, deadlineMs, {
+        ...options,
+        cacheOnly: inQuantum,
+      });
+    if (inQuantum) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "agent timeline page was not captured in a host pass; waiting for the next pass",
+        fromPassSnapshot: true,
+      });
+    }
+    const capturedAt = Date.now();
+    return boundedRead("agent timeline page", read, deadlineMs).then(
+      (result) => ({
+        ...result,
+        capturedAt,
+        fromPassSnapshot: false,
+        ...(options.provenTerminal
+          ? { provenTerminal: options.provenTerminal }
+          : {}),
+        ...(options.coveredObservation
+          ? { coveredObservation: options.coveredObservation }
+          : {}),
+      }),
+    );
+  }
+
+  /** Pre-warm one agent's timeline page snapshot during its host pass. */
+  primePassTimelinePage(
+    agentId: string,
+    limit: number,
+    hostId: string,
+    options: {
+      provenTerminal?: ProvenTerminalSnapshot;
+      coveredObservation?: CoveredObservationSnapshot;
+      deadlineMs?: number;
+    } = {},
+  ): Promise<PassTimelinePageRead> {
+    return this.readPassTimelinePage(
+      agentId,
+      limit,
+      hostId,
+      options.deadlineMs ?? this.quantumReadTimeoutMs,
+      options,
+    );
+  }
+
   /**
    * The last finished observation of each project's shortlist, per host whose
    * inventory answered, kept even when an invalidation (a candidate's own call,
@@ -462,7 +784,10 @@ export class Resolution {
   /** Whether this host is registered, and whether it has a live connection now. */
   responsibleHostState(hostId: string): "online" | "offline" | "unregistered" {
     const ambient = (this.adapter as { hostId?: string }).hostId;
-    const known = [...(this.hostPorts.ids?.() ?? []), ...(ambient ? [ambient] : [])];
+    const known = [
+      ...(this.hostPorts.ids?.() ?? []),
+      ...(ambient ? [ambient] : []),
+    ];
     if (!known.includes(hostId)) return "unregistered";
     return this.hostPorts.online(hostId) ? "online" : "offline";
   }
@@ -904,6 +1229,8 @@ export class Resolution {
       "onTaskHost",
       "paused",
       "profiles",
+      "readPassProcesses",
+      "readPassTimeline",
       "recordStop",
       "recovery",
       "releaseDeadParticipant",
@@ -1098,6 +1425,7 @@ export class Resolution {
         "host",
         "openPlannerEscalation",
         "paused",
+        "quantumReadTimeoutMs",
         "resolveIncident",
         "reviewRequired",
         "store",
@@ -1128,6 +1456,7 @@ export class Resolution {
       "onTaskHost",
       "orphanRuns",
       "paused",
+      "quantumReadTimeoutMs",
       "reconcileStalledTurnStop",
       "recoverRefusedReviewer",
       "releaseDeadParticipant",
@@ -1164,6 +1493,8 @@ export class Resolution {
       "adapter",
       "deliveryInTimeline",
       "host",
+      "quantumReadTimeoutMs",
+      "readPassTimelinePage",
       "reconcileReviewDelivery",
       "reconcileReviewDeliveryOperations",
       "settleReviewDelivery",
@@ -1316,6 +1647,8 @@ export class Resolution {
       "paused",
       "profiles",
       "progressEffectsPending",
+      "quantumReadTimeoutMs",
+      "readPassProcesses",
       "recordCriticalReviewFallback",
       "requiredRouteNote",
       "reserveLaunchRun",
@@ -2518,12 +2851,16 @@ export class Resolution {
       runIds?: string[];
       taskId?: string;
       workspaceId?: string;
+      deadlineAt?: number;
     } = {},
-  ): Promise<string | null> {
+  ) {
     return this.ownedTools.ownedToolHold(agentId, options);
   }
   /** Positive evidence that the agent's own detached job is still running, or null. */
-  ownedJobWait(agentId: string, binding?: { taskId: string; runId: string }): Promise<string | null> {
+  ownedJobWait(
+    agentId: string,
+    binding?: { taskId: string; runId: string },
+  ): Promise<string | null> {
     return this.ownedTools.ownedJobWait(agentId, binding);
   }
 
@@ -2566,8 +2903,13 @@ export class Resolution {
   reconcileUncertainRunDelivery(
     taskId: string,
     runId: string,
+    deadlineAt?: number,
   ): Promise<boolean> {
-    return this.effectReconcile.reconcileUncertainRunDelivery(taskId, runId);
+    return this.effectReconcile.reconcileUncertainRunDelivery(
+      taskId,
+      runId,
+      deadlineAt,
+    );
   }
   reconcileReviewDeliveryOperations(
     taskId: string,
@@ -3597,7 +3939,13 @@ export class Resolution {
     if (published.kind === "blocked" && published.permanent) {
       // A report no later fact can apply stops governing: it is superseded,
       // never applied, and the phase's ordinary next step runs in this pass.
-      if (this.resultApplication.supersedeRefusedReport(task, published.run, published.refusal))
+      if (
+        this.resultApplication.supersedeRefusedReport(
+          task,
+          published.run,
+          published.refusal,
+        )
+      )
         return this.advance(this.store.task(task.id));
       return Promise.resolve();
     }
@@ -3617,7 +3965,8 @@ export class Resolution {
       // such as "waiting for thread release" with nothing left to release. A
       // live run or another owner's stop keeps its own reason.
       if (
-        (!task.resolution.stop || task.resolution.stop.reason === "lifecycle") &&
+        (!task.resolution.stop ||
+          task.resolution.stop.reason === "lifecycle") &&
         !this.store.runs(task.id).some((run) => !run.released)
       )
         this.waiting(task, published.refusal, "lifecycle");

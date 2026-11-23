@@ -8,6 +8,10 @@ import { EngineStop } from "./recovery/engine-stop";
 import { ProjectLifecycle } from "./planning/project-lifecycle";
 
 import { PrerequisiteReleases } from "./scheduling/prerequisites";
+import {
+  QUANTUM_TOTAL_READ_BUDGET_MS,
+  runInTaskQuantumScope,
+} from "./scheduling/pass-snapshot";
 import { TaskQuantum } from "./scheduling/task-quantum";
 
 import { unavailableGroupNames } from "../shared/pool";
@@ -334,6 +338,8 @@ export class Engine {
         "holdProofOnlyGoWait",
         "ownedToolHold",
         "owns",
+        "quantumReadBudgetMs",
+        "quantumReadTimeoutMs",
         "raiseOperatorQuestions",
         "reconcileHoldUntil",
         "reconcileUncertainRunDelivery",
@@ -589,6 +595,7 @@ export class Engine {
           "withHost",
         ],
         [
+          "beginPassSnapshot",
           "checkpoints",
           "delegateNativeQuestions",
           "delegation",
@@ -598,10 +605,20 @@ export class Engine {
           "deliverNotices",
           "deliverRowHiddenNotices",
           "deliverQueuedMessages",
+          "endPassSnapshot",
+          "hostPassWarmBudgetMs",
+          "markPassTimelineBudgetExhausted",
           "observationTargets",
           "observe",
           "origins",
+          "primePassProcesses",
+          "primePassTimeline",
+          "primePassTimelinePage",
           "raiseOperatorQuestions",
+          "recordPassHostInventory",
+          "recordPassHostObservation",
+          "sealPassHost",
+          "storePassTimelinePage",
           "recovery",
           "resumeAskQuestions",
           "resumeResponsibleAnsweredQuestions",
@@ -712,6 +729,8 @@ export class Engine {
   private get taskWakes(): TaskWakes {
     return (this.taskWakesOwner ??= new TaskWakes(
       portsContext(this, [
+        "adapter",
+        "host",
         "resolution",
         "admission",
         "applyDeferredOwnerVerbs",
@@ -1200,6 +1219,7 @@ export class Engine {
           "heavyRunAlive",
           "identifyOriginHost",
           "plannerRungsFor",
+          "quantumReadTimeoutMs",
           "responsibleThreads",
           "withHost",
           "reconcileStalledTurnStop",
@@ -1624,10 +1644,20 @@ export class Engine {
     options: { coalesce?: string } = {},
   ): Promise<void> {
     const hostId = this.laneHost(key);
+    // Spec 068 §6: every quantum scheduled onto an exclusive `task:<id>` lane
+    // carries the task quantum deadline scope, whoever scheduled it (audit
+    // branch-PR recovery, wake follow-up, dispatch, or full taskQuantum).
+    const scoped = key.startsWith("task:")
+      ? () =>
+          runInTaskQuantumScope(
+            this.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS,
+            () => Promise.resolve(work()),
+          )
+      : work;
     return this.laneScheduler.scheduleLane(
       key,
       priority,
-      hostId ? () => this.withHost(hostId, work) : work,
+      hostId ? () => this.withHost(hostId, scoped) : scoped,
       options,
     );
   }
@@ -1692,8 +1722,11 @@ export class Engine {
   neverDispatched(task: Task): boolean {
     return this.taskControlDispatcher.neverDispatched(task);
   }
-  scheduleTaskQuantum(taskId: string): Promise<void> {
-    return this.taskWakes.scheduleTaskQuantum(taskId);
+  scheduleTaskQuantum(
+    taskId: string,
+    passSnapshot?: import("./scheduling/pass-snapshot").PassSnapshot,
+  ): Promise<void> {
+    return this.taskWakes.scheduleTaskQuantum(taskId, passSnapshot);
   }
   wakeIntegrationSuccessor(repoPath: string): void {
     this.taskWakes.wakeIntegrationSuccessor(repoPath);
@@ -3165,15 +3198,19 @@ export class Engine {
     );
     if (reason) this.note(taskId, reason, "classify");
   }
-  supersededIdleFence(run: Run): Promise<string | null> {
-    return this.runRelease.supersededIdleFence(run);
+  supersededIdleFence(run: Run, deadlineAt?: number): Promise<string | null> {
+    return this.runRelease.supersededIdleFence(run, deadlineAt);
   }
   ownedToolHold(
     agentId: string,
     runId?: string,
     taskId?: string,
-    options?: { requireCompleteEvidence?: boolean; allowRetired?: boolean },
-  ): Promise<string | null> {
+    options?: {
+      requireCompleteEvidence?: boolean;
+      allowRetired?: boolean;
+      deadlineAt?: number;
+    },
+  ) {
     return this.runRelease.ownedToolHold(agentId, runId, taskId, options);
   }
   observedRunLiveness(run: Run): Promise<boolean | null> {

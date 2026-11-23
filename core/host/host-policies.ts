@@ -1,7 +1,10 @@
 import type { WorkerPromptMeasurement } from "../dispatch/prompt-text/measure";
 import { AgentPolicy } from "../dispatch/agent-policy";
 import { ReviewPolicy } from "../review/review-policy";
-import { createHostedReviewEntryWorkspace, type ReviewEntryAdapter } from "../review/review-entry";
+import {
+  createHostedReviewEntryWorkspace,
+  type ReviewEntryAdapter,
+} from "../review/review-entry";
 import {
   OwnedWorkspaceArchive,
   type WorkspaceArchiveOptions,
@@ -203,7 +206,9 @@ export abstract class HostPolicies extends MachinePorts {
     return this.workspaceLifecycle.createWorkspace(task, options);
   }
 
-  createReviewEntryWorkspace(spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0]) {
+  createReviewEntryWorkspace(
+    spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0],
+  ) {
     return createHostedReviewEntryWorkspace(this, spec);
   }
 
@@ -240,11 +245,13 @@ export abstract class HostPolicies extends MachinePorts {
     workspaceId: string,
     runIds: readonly string[],
     runtime?: ParticipantRuntime,
+    processes?: import("./types").HostProcessFact[] | null,
   ): Promise<string | null> {
     return this.workspaceContinuation.noLiveWorkspaceProcesses(
       workspaceId,
       runIds,
       runtime,
+      processes,
     );
   }
 

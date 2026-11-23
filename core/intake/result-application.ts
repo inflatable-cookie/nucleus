@@ -298,15 +298,19 @@ export function publishedReviewDecision(
     permanent: true,
     run,
   });
-  const later = runs
-    .slice(runs.indexOf(run) + 1)
-    .find((item) =>
+  const later = runs.slice(runs.indexOf(run) + 1).find(
+    (item) =>
       item.role === "revision" ||
       (item.role === "reviewer" &&
         // Re-adoption binds the result as current and settles the reportless
         // replacement. Its history cannot block publication reconciliation.
-        !(currentRunId === run.id && item.released && !item.completion && item.status === "superseded")),
-    );
+        !(
+          currentRunId === run.id &&
+          item.released &&
+          !item.completion &&
+          item.status === "superseded"
+        )),
+  );
   if (later)
     return blocked(
       `The ${later.role} run ${later.id} is newer than this verdict. The retained participants own the current source`,
@@ -584,10 +588,17 @@ export class ResultApplication {
    * (bovine-accelerator#6935, Spec 068 §4).
    */
   private leaseDeclineWait(taskId: string) {
-    return (agentId: string, state: Parameters<ResultApplicationContext["leaseDeclineText"]>[2]) => {
+    return (
+      agentId: string,
+      state: Parameters<ResultApplicationContext["leaseDeclineText"]>[2],
+    ) => {
       if (settlementHeld(this.store, this.resolution.stopped())) return;
       const current = this.store.task(taskId);
-      this.resolution.waiting(current, this.resolution.leaseDeclineText(current, agentId, state), "lifecycle");
+      this.resolution.waiting(
+        current,
+        this.resolution.leaseDeclineText(current, agentId, state),
+        "lifecycle",
+      );
     };
   }
   /**
@@ -601,19 +612,30 @@ export class ResultApplication {
   supersedeRefusedReport(task: Task, run: Run, refusal: string): boolean {
     return this.store.transaction(() => {
       const current = this.store.task(task.id);
-      if (current.version !== task.version || resultApplied(this.store, task.id, run.id)) return false;
+      if (
+        current.version !== task.version ||
+        resultApplied(this.store, task.id, run.id)
+      )
+        return false;
       const { resolution } = current;
-      const ownStop = resolution.stop?.reason === "lifecycle" && resolution.stop.detail === refusal;
+      const ownStop =
+        resolution.stop?.reason === "lifecycle" &&
+        resolution.stop.detail === refusal;
       this.resolution.update(
         current,
         {
           ...(resolution.currentRunId === run.id ? { currentRunId: null } : {}),
-          ...(resolution.reviewerAgentId === run.agentId ? { reviewerAgentId: null, reviewerProfile: null } : {}),
+          ...(resolution.reviewerAgentId === run.agentId
+            ? { reviewerAgentId: null, reviewerProfile: null }
+            : {}),
           ...(ownStop ? { stop: null } : {}),
         },
         {},
         "reported_verdict_superseded",
-        `${run.id} ${run.completion?.status ?? "report"} at ${run.head}: ${refusal}. The report is never applied; a fresh review is admitted`.slice(0, 4000),
+        `${run.id} ${run.completion?.status ?? "report"} at ${run.head}: ${refusal}. The report is never applied; a fresh review is admitted`.slice(
+          0,
+          4000,
+        ),
       );
       recordResultApplied(this.store, task.id, run.id);
       return true;
@@ -721,9 +743,9 @@ export class ResultApplication {
           requireCompleteEvidence: true,
           allowRetired: agentId !== t.agentId && agentId !== run.agentId,
         });
-        if (issue)
+        if (issue.kind !== "clear")
           return blocked(
-            `Participant ${agentId} must release its owned tools: ${issue}`,
+            `Participant ${agentId} must release its owned tools: ${issue.reason}`,
           );
       }
     }

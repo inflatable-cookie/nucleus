@@ -298,11 +298,7 @@ export class ReviewContinuations {
         );
       const verifyPr = run.ordinaryDetached
         ? async (task: Task, number: number) => {
-            await reattachStoredTaskCheckout(
-              this.store,
-              run.taskId,
-              run.id,
-            );
+            await reattachStoredTaskCheckout(this.store, run.taskId, run.id);
             await ordinaryReviewSource(task, run.head);
             if (!this.adapter.verifyPrIdentity)
               throw Error(
@@ -347,9 +343,9 @@ export class ReviewContinuations {
           taskId: task.id,
         });
         recheck();
-        if (held)
+        if (held.kind !== "clear")
           throw new Error(
-            `The stopped reviewer cannot be shown to hold no live tool (${held}); no resumed continuation was sent`,
+            `The stopped reviewer cannot be shown to hold no live tool (${held.reason}); no resumed continuation was sent`,
           );
       }
       return { ...checkpoint, number, verifyPr, continueReviewer };

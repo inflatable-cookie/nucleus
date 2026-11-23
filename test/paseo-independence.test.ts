@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
+import {
+  spawnSync,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -18,7 +22,10 @@ import { Store } from "../core/store/store";
 import { ExternalWorkspaceArchive } from "../core/workspaces/external-workspace-archive-policy";
 import { OwnedWorkspaceArchive } from "../core/workspaces/owned-workspace-archive";
 import { runHostChannel } from "../hosts/bb/plugin/channel";
-import { createHostOperations, type BbHostSdk } from "../hosts/bb/plugin/operations";
+import {
+  createHostOperations,
+  type BbHostSdk,
+} from "../hosts/bb/plugin/operations";
 import { integrate } from "../service/install/install.mjs";
 import { submissionSchema, type Run, type Task } from "../shared/contracts";
 import {
@@ -66,7 +73,10 @@ test("CLI usage text names --via-paseo as an optional bridge route without bridg
     { cwd: repoRoot, encoding: "utf8" },
   );
   assert.equal(help.status, 0, help.stderr);
-  assert.match(help.stdout, /--via-paseo routes through the Paseo plugin bridge/);
+  assert.match(
+    help.stdout,
+    /--via-paseo routes through the Paseo plugin bridge/,
+  );
   assert.doesNotMatch(help.stdout, /bridge-only/);
   assert.match(help.stdout, /service-state/);
 });
@@ -103,7 +113,10 @@ test("BB-only daemon launcher starts one detached daemon when an installed packa
     });
     assert.deepEqual(started, { status: "started", pid: 5150 });
     assert.equal(calls.length, 1);
-    assert.equal(calls[0]!.command, join(realpathSync(versionDir), "runtime/node"));
+    assert.equal(
+      calls[0]!.command,
+      join(realpathSync(versionDir), "runtime/node"),
+    );
     assert.ok(calls[0]!.args.includes(`--data-dir=${dataDir}`));
     assert.ok(existsSync(join(dataDir, BB_LAUNCH_CLAIM_FILE)));
 
@@ -203,7 +216,10 @@ test("integrate supports paseo, t3code (and t3) and bb, and refuses unknown host
         bb: { server: "./dist/server.js" },
       }),
     );
-    writeFileSync(join(pluginDir, "dist/server.js"), "export default async () => {};\n");
+    writeFileSync(
+      join(pluginDir, "dist/server.js"),
+      "export default async () => {};\n",
+    );
     writeFileSync(
       join(pluginDir, "dist/server.meta.json"),
       JSON.stringify({ pluginId: "nucleus" }),
@@ -244,7 +260,10 @@ test("integrate supports paseo, t3code (and t3) and bb, and refuses unknown host
 
     // Verify `integrate("bb", ...)` dispatches through `bin/nucleus-bb.mjs` and returns its parsed report.
     const bbState = join(dir, "bb-state.json");
-    writeFileSync(bbState, JSON.stringify({ plugins: [], serviceDataDir: null }));
+    writeFileSync(
+      bbState,
+      JSON.stringify({ plugins: [], serviceDataDir: null }),
+    );
     writeFileSync(
       fakeBb,
       `#!${process.execPath}\nconst fs = require("node:fs");\nconst args = process.argv.slice(2);\nconst stateFile = ${JSON.stringify(bbState)};\nconst state = JSON.parse(fs.readFileSync(stateFile, "utf8"));\nif (args[0] === "plugin" && args[1] === "list") { console.log(JSON.stringify({ plugins: state.plugins })); process.exit(0); }\nif (args[0] === "plugin" && args[1] === "install") { const dir = args[2].replace(/^path:/, ""); state.plugins = [{ id: "nucleus", version: "0.1.0", enabled: true, status: "active", rootDir: dir }]; fs.writeFileSync(stateFile, JSON.stringify(state)); console.log("{}"); process.exit(0); }\nif (args[0] === "plugin" && args[1] === "config" && args[3] === "set") { state.serviceDataDir = args[5]; fs.writeFileSync(stateFile, JSON.stringify(state)); console.log("{}"); process.exit(0); }\nif (args[0] === "plugin" && args[1] === "config" && args[3] === "--json") { console.log(JSON.stringify({ values: { serviceDataDir: state.serviceDataDir } })); process.exit(0); }\nif (args[0] === "plugin" && args[1] === "reload") { console.log("{}"); process.exit(0); }\nprocess.exit(1);\n`,
@@ -290,7 +309,7 @@ test("workspace archive and review continuation refusals use the host-kind label
         }),
       } as never,
       observe: async () => null,
-      classifyOrphan: () => ({ orphaned: false } as never),
+      classifyOrphan: () => ({ orphaned: false }) as never,
       ownedDataDirFor: async () => null,
       dataDir: () => dir,
       workspaceAllocationBridge: {
@@ -404,23 +423,24 @@ test("workspace archive and review continuation refusals use the host-kind label
       store,
       adapter: { hostId: "t3code:env-1" } as never,
       onTaskHost: (_owner, work) => work(),
-      host: { observe: async () => ({ status: "idle" } as never) },
+      host: { observe: async () => ({ status: "idle" }) as never },
       paused: () => false,
-      ownedToolHold: async () => null,
+      ownedToolHold: async () => ({ kind: "clear" }),
       settleVerbFences: () => {},
       settleReviewDelivery: () => {},
-      reconcileReviewDelivery: async () => ({ status: "none" } as never),
+      reconcileReviewDelivery: async () => ({ status: "none" }) as never,
       assertReviewProfileIndependent: () => {},
       stopResumeState: () => ({ kind: "none" }),
-      reviewContinuationGate: () => ({
-        task: { ...updatedTask, resumePrNumber: 1 },
-        run,
-        checkpoint: { ordinal: 1 },
-        resumeStop: false,
-      }) as never,
+      reviewContinuationGate: () =>
+        ({
+          task: { ...updatedTask, resumePrNumber: 1 },
+          run,
+          checkpoint: { ordinal: 1 },
+          resumeStop: false,
+        }) as never,
       assertIdleReviewerObservation: () => {},
-      inspectReviewContinuation: async () => ({} as never),
-      admitReviewContinuation: async () => ({} as never),
+      inspectReviewContinuation: async () => ({}) as never,
+      admitReviewContinuation: async () => ({}) as never,
       assertReviewCheckpointProvenance: () => "",
     });
     await assert.rejects(

@@ -71,7 +71,8 @@ export type LaunchThreadContext = Pick<
   | "update"
   | "usageCeilingNote"
   | "waiting"
->;
+> &
+  Partial<Pick<Resolution, "quantumReadTimeoutMs" | "readPassProcesses">>;
 export type LaunchReserveContext = Pick<
   Resolution,
   | "adapter"
@@ -144,7 +145,10 @@ export class DispatchLaunch {
     const store = this.context.store;
     const revisionRuns = task.resolution.revisionRuns;
     const cause = revisionCapCauseId(task.id, revisionRuns);
-    const open = findOpenPlannerEscalation(store.eventsAll(task.id) as LadderEvent[], cause);
+    const open = findOpenPlannerEscalation(
+      store.eventsAll(task.id) as LadderEvent[],
+      cause,
+    );
     if (open) {
       if (task.resolution.stop?.reason !== "escalated")
         this.context.waiting(
@@ -155,9 +159,18 @@ export class DispatchLaunch {
       return;
     }
     const findings =
-      store.runs(task.id).findLast((run) => run.role === "reviewer" && run.completion?.status === "changes_required")
-        ?.completion?.summary ?? "not recorded";
-    const question = revisionCapEscalationQuestion(task, revisionRuns, findings);
+      store
+        .runs(task.id)
+        .findLast(
+          (run) =>
+            run.role === "reviewer" &&
+            run.completion?.status === "changes_required",
+        )?.completion?.summary ?? "not recorded";
+    const question = revisionCapEscalationQuestion(
+      task,
+      revisionRuns,
+      findings,
+    );
     this.context.openPlannerEscalation(task, {
       cause,
       runId: null,

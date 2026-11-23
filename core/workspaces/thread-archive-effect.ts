@@ -1,11 +1,15 @@
 import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
-import type { Adapter, OriginAgent } from '../host/adapter';
-import { HostFacade } from '../host/host-facade';
-import { Store, now } from '../store/store';
-import { AdmissionDeferred } from '../host/admission';
-import { ArchiveNotDeliveredError } from './archive-delivery';
-import { isTransportOrConnectionLoss } from '../../shared/transport';
-import { formatAgentId } from '../../shared/agent-identity';
+import {
+  currentTaskQuantumScope,
+  isQuantumDeadlineExceeded,
+} from "../scheduling/pass-snapshot";
+import type { Adapter, OriginAgent } from "../host/adapter";
+import { HostFacade } from "../host/host-facade";
+import { Store, now } from "../store/store";
+import { AdmissionDeferred } from "../host/admission";
+import { ArchiveNotDeliveredError } from "./archive-delivery";
+import { isTransportOrConnectionLoss } from "../../shared/transport";
+import { formatAgentId } from "../../shared/agent-identity";
 
 /**
  * The durable thread archive effect: observe, then archive or remove a thread
@@ -19,79 +23,220 @@ import { formatAgentId } from '../../shared/agent-identity';
  */
 
 /** The recorded effect for one thread: what was asked, what was proved. */
-export type ArchiveEffect = { status: 'intent' | 'ready' | 'archived' | 'uncertain'; at: string; detail?: string; retries?: number; nextRetryAt?: number; retryable?: boolean;
+export type ArchiveEffect = {
+  status: "intent" | "ready" | "archived" | "uncertain";
+  at: string;
+  detail?: string;
+  retries?: number;
+  nextRetryAt?: number;
+  retryable?: boolean;
   /** The cleanup this record names: archive the thread, or remove it (nucleus#1155). */
-  op?: 'archive' | 'delete' };
+  op?: "archive" | "delete";
+};
 
 /** Observe, then archive or remove at most once, one thread whose cleanup intent is recorded. */
-export async function settleArchive(store: Store, adapter: Adapter, taskId: string, agentId: string, key: string, fresh: boolean, effect: ArchiveEffect, retry = false): Promise<void> {
+export async function settleArchive(
+  store: Store,
+  adapter: Adapter,
+  taskId: string,
+  agentId: string,
+  key: string,
+  fresh: boolean,
+  effect: ArchiveEffect,
+  retry = false,
+): Promise<void> {
   const host = new HostFacade({ adapter });
   if (!adapter.originAgent) return;
   // The record names the operation: an intent keeps the operation that may
   // already have been sent, so a recorded archive is never reissued as a delete.
-  const op = effect.op ?? 'archive';
-  const remove = op === 'delete';
-  const done = remove ? 'Observed deleted or absent' : 'Observed archived or absent';
+  const op = effect.op ?? "archive";
+  const remove = op === "delete";
+  const done = remove
+    ? "Observed deleted or absent"
+    : "Observed archived or absent";
   let sent = false;
+  let mutationCompleted = false;
   try {
     const observed = await host.originAgent(agentId);
     if (cleanupComplete(observed, op)) {
-      store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: done, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
+      store.putThreadArchiveEffect(key, agentId, {
+        status: "archived",
+        at: now(),
+        detail: done,
+        ...(effect.op ? { op: effect.op } : {}),
+      } satisfies ArchiveEffect);
       store.deleteMeta(archiveProbeKey(store, taskId, agentId));
-      store.event(taskId, 'thread_archive_observed', agentId);
+      store.event(taskId, "thread_archive_observed", agentId);
       store.retireThreadScratch(taskId, agentId);
-      if (adapter.hostProcessListing) await sweepSettledRunProcesses(store, store.task(taskId).hostId, { taskId, pendingOnly: true, readProcesses: () => adapter.hostProcessListing!() });
+      // Spec 068 §6: inside a task quantum, never run a full process scan
+      // inline; the durable scratch retirement leaves cleanup to `cleanup:<host>`.
+      if (
+        adapter.hostProcessListing &&
+        !currentTaskQuantumScope()?.inTaskQuantum
+      )
+        await sweepSettledRunProcesses(store, store.task(taskId).hostId, {
+          taskId,
+          pendingOnly: true,
+          readProcesses: () => adapter.hostProcessListing!(),
+        });
       return;
     }
     // An intent from a previous process has an unknown outcome. Observe it,
     // but do not issue the archive again merely because it still looks live.
-    if (!fresh && effect.status !== 'ready' && !retry) {
-      if (effect.status === 'intent') {
-        store.putThreadArchiveEffect(key, agentId, { status: 'uncertain', at: now(), detail: 'Prior archive intent still appears live', retryable: false, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
-        store.event(taskId, 'thread_archive_uncertain', `${agentId}: prior archive intent still appears live`);
+    if (!fresh && effect.status !== "ready" && !retry) {
+      if (effect.status === "intent") {
+        store.putThreadArchiveEffect(key, agentId, {
+          status: "uncertain",
+          at: now(),
+          detail: "Prior archive intent still appears live",
+          retryable: false,
+          ...(effect.op ? { op: effect.op } : {}),
+        } satisfies ArchiveEffect);
+        store.event(
+          taskId,
+          "thread_archive_uncertain",
+          `${agentId}: prior archive intent still appears live`,
+        );
       }
       return;
     }
     // Persist the delivery fence again before the call, including a safe retry.
     const retries = (effect.retries ?? 0) + (retry ? 1 : 0);
-    store.putThreadArchiveEffect(key, agentId, { status: 'intent', at: now(), retries, nextRetryAt: Date.now() + 2000 * 2 ** Math.max(0, retries - 1), ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
+    store.putThreadArchiveEffect(key, agentId, {
+      status: "intent",
+      at: now(),
+      retries,
+      nextRetryAt: Date.now() + 2000 * 2 ** Math.max(0, retries - 1),
+      ...(effect.op ? { op: effect.op } : {}),
+    } satisfies ArchiveEffect);
     sent = true;
     // A retry only reaches here after the caller re-proved the same identity,
     // workspace, idleness and owned tools, so the identical command may be sent
     // again under its own identity; the host replays its recorded receipt.
     if (remove) await host.deleteAgent(agentId);
     else await host.archiveAgent(agentId);
+    mutationCompleted = true;
     const after = await host.originAgent(agentId);
-    if (!cleanupComplete(after, op)) throw Error(remove ? 'Thread deletion was not confirmed' : 'Archive was not confirmed');
-    store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: remove ? 'Deletion observed' : 'Archive observed', ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
+    if (!cleanupComplete(after, op))
+      throw Error(
+        remove
+          ? "Thread deletion was not confirmed"
+          : "Archive was not confirmed",
+      );
+    store.putThreadArchiveEffect(key, agentId, {
+      status: "archived",
+      at: now(),
+      detail: remove ? "Deletion observed" : "Archive observed",
+      ...(effect.op ? { op: effect.op } : {}),
+    } satisfies ArchiveEffect);
     store.deleteMeta(archiveProbeKey(store, taskId, agentId));
-    store.event(taskId, 'thread_archive_observed', agentId);
+    store.event(taskId, "thread_archive_observed", agentId);
     // The thread can take no further turn, so the leaves its tools started with
     // are done: removal goes through the same recorded-leaf path release uses.
     store.retireThreadScratch(taskId, agentId);
-    if (adapter.hostProcessListing) await sweepSettledRunProcesses(store, store.task(taskId).hostId, { taskId, pendingOnly: true, readProcesses: () => adapter.hostProcessListing!() });
+    if (adapter.hostProcessListing && !currentTaskQuantumScope()?.inTaskQuantum)
+      await sweepSettledRunProcesses(store, store.task(taskId).hostId, {
+        taskId,
+        pendingOnly: true,
+        readProcesses: () => adapter.hostProcessListing!(),
+      });
   } catch (error) {
+    // Spec 068 §6 / Spec 066 R1: a quantum deadline expiry is an unknown read
+    // or deferred wait — preserve the durable archive intent without burning
+    // retries or recording an error stop.
+    if (isQuantumDeadlineExceeded(error)) {
+      // Definite pre-send deferral (`!sent || (!mutationCompleted && error.preSend)`):
+      // no archive or delete crossed the send boundary, so keep `ready` without
+      // burning retries. Once the mutation has started and either timed out in
+      // flight (`!error.preSend`) or returned (`mutationCompleted`) before
+      // confirmation expired, leave the durable `intent` in place so the next
+      // pass observes first and never re-sends.
+      if (
+        (!sent || (!mutationCompleted && error.preSend)) &&
+        (fresh || effect.status === "ready")
+      ) {
+        store.putThreadArchiveEffect(key, agentId, {
+          status: "ready",
+          at: now(),
+          detail: error.message,
+          retries: effect.retries ?? 0,
+          retryable: effect.retryable,
+          ...(effect.op ? { op: effect.op } : {}),
+        } satisfies ArchiveEffect);
+      }
+      return;
+    }
     // A breaker deferral reached no Paseo call. Deferred is a wait, not
     // uncertainty: the withdrawn intent stays retryable, and the unchanged wait
     // is recorded once instead of a `thread_archive_uncertain` every few seconds.
     if (error instanceof AdmissionDeferred) {
       const detail = String(error);
-      if (effect.detail !== detail) store.event(taskId, 'thread_archive_wait', `${agentId}: Archive deferred: ${detail}`);
-      store.putThreadArchiveEffect(key, agentId, { status: 'ready', at: now(), detail, retries: effect.retries ?? 0, retryable: effect.retryable, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
+      if (effect.detail !== detail)
+        store.event(
+          taskId,
+          "thread_archive_wait",
+          `${agentId}: Archive deferred: ${detail}`,
+        );
+      store.putThreadArchiveEffect(key, agentId, {
+        status: "ready",
+        at: now(),
+        detail,
+        retries: effect.retries ?? 0,
+        retryable: effect.retryable,
+        ...(effect.op ? { op: effect.op } : {}),
+      } satisfies ArchiveEffect);
       return;
     }
-    if (remove && error instanceof ArchiveNotDeliveredError && (fresh || effect.status === 'ready')) {
+    if (
+      remove &&
+      error instanceof ArchiveNotDeliveredError &&
+      (fresh || effect.status === "ready")
+    ) {
       // The adapter proved this occurrence never reached the host. Keep the
       // existing terminal lane ready; no prior unknown delivery is reopened.
-      store.putThreadArchiveEffect(key, agentId, { status: 'ready', at: now(), detail: String(error),
-        retries: effect.retries ?? 0, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
-      store.event(taskId, 'thread_archive_wait', `${agentId}: ${String(error)}`);
+      store.putThreadArchiveEffect(key, agentId, {
+        status: "ready",
+        at: now(),
+        detail: String(error),
+        retries: effect.retries ?? 0,
+        ...(effect.op ? { op: effect.op } : {}),
+      } satisfies ArchiveEffect);
+      store.event(
+        taskId,
+        "thread_archive_wait",
+        `${agentId}: ${String(error)}`,
+      );
       return;
     }
     // A failed read before delivery is safe to try again; after delivery starts
     // its outcome remains unknown and may only be observed.
-    store.putThreadArchiveEffect(key, agentId, { status: sent && !(error instanceof ArchiveNotDeliveredError) ? 'uncertain' : effect.status === 'uncertain' || !fresh && effect.status === 'intent' ? 'uncertain' : 'ready', at: now(), detail: String(error), retries: (effect.retries ?? 0) + (retry ? 1 : 0), nextRetryAt: retry ? Date.now() + 2000 * 2 ** (effect.retries ?? 0) : undefined, retryable: sent && !(error instanceof ArchiveNotDeliveredError) && isTransportOrConnectionLoss(error) ? true : effect.retryable, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
-    store.event(taskId, 'thread_archive_uncertain', `${agentId}: ${String(error)}`);
+    store.putThreadArchiveEffect(key, agentId, {
+      status:
+        sent && !(error instanceof ArchiveNotDeliveredError)
+          ? "uncertain"
+          : effect.status === "uncertain" ||
+              (!fresh && effect.status === "intent")
+            ? "uncertain"
+            : "ready",
+      at: now(),
+      detail: String(error),
+      retries: (effect.retries ?? 0) + (retry ? 1 : 0),
+      nextRetryAt: retry
+        ? Date.now() + 2000 * 2 ** (effect.retries ?? 0)
+        : undefined,
+      retryable:
+        sent &&
+        !(error instanceof ArchiveNotDeliveredError) &&
+        isTransportOrConnectionLoss(error)
+          ? true
+          : effect.retryable,
+      ...(effect.op ? { op: effect.op } : {}),
+    } satisfies ArchiveEffect);
+    store.event(
+      taskId,
+      "thread_archive_uncertain",
+      `${agentId}: ${String(error)}`,
+    );
   }
 }
 
@@ -100,17 +245,28 @@ export async function settleArchive(store: Store, adapter: Adapter, taskId: stri
  * the same probe record the terminal lane uses. An unchanged wait is not a new
  * event.
  */
-export function archiveWait(store: Store, taskId: string, agentId: string, detail: string): void {
+export function archiveWait(
+  store: Store,
+  taskId: string,
+  agentId: string,
+  detail: string,
+): void {
   const key = archiveProbeKey(store, taskId, agentId);
-  if (store.getMeta<string>(key) !== detail) store.event(taskId, 'thread_archive_wait', `${agentId}: ${detail}`);
+  if (store.getMeta<string>(key) !== detail)
+    store.event(taskId, "thread_archive_wait", `${agentId}: ${detail}`);
   store.setMeta(key, detail);
 }
 
-export function archiveProbeKey(store: Store, taskId: string, agentId: string): string {
+export function archiveProbeKey(
+  store: Store,
+  taskId: string,
+  agentId: string,
+): string {
   const hostId = store.task(taskId).hostId;
-  return hostId ? `threadArchiveQualifiedProbe:${formatAgentId(hostId, agentId)}` : `threadArchiveUnknownProbe:${JSON.stringify([taskId, agentId])}`;
+  return hostId
+    ? `threadArchiveQualifiedProbe:${formatAgentId(hostId, agentId)}`
+    : `threadArchiveUnknownProbe:${JSON.stringify([taskId, agentId])}`;
 }
-
 
 /**
  * Whether the host itself reports this thread archived or gone: the proof the
@@ -118,14 +274,18 @@ export function archiveProbeKey(store: Store, taskId: string, agentId: string): 
  * per-agent answer counts. An unsupported or unreadable read proves nothing, and
  * a list that does not mention the identity is never read as absence.
  */
-export async function threadArchivedOrGone(adapter: Adapter, agentId: string): Promise<boolean> {
+export async function threadArchivedOrGone(
+  adapter: Adapter,
+  agentId: string,
+): Promise<boolean> {
   if (!adapter.originAgent) return false;
   const observed = await new HostFacade({ adapter }).originAgent(agentId);
   return !observed || observed.archived === true || observed.deleted === true;
 }
 
 /** A host that can remove a thread keeps a task's support threads settled and removed at closeout. */
-export const removesThreads = (adapter: Adapter): boolean => typeof adapter.deleteAgent === 'function';
+export const removesThreads = (adapter: Adapter): boolean =>
+  typeof adapter.deleteAgent === "function";
 
 /**
  * The host's own answer that the recorded cleanup finished. A removed or absent
@@ -133,7 +293,10 @@ export const removesThreads = (adapter: Adapter): boolean => typeof adapter.dele
  * a removal still owes the thread's deletion. Only a direct per-agent answer
  * counts.
  */
-export function cleanupComplete(origin: OriginAgent | null, op: 'archive' | 'delete' = 'archive'): boolean {
+export function cleanupComplete(
+  origin: OriginAgent | null,
+  op: "archive" | "delete" = "archive",
+): boolean {
   if (!origin || origin.deleted === true) return true;
-  return op === 'archive' && origin.archived === true;
+  return op === "archive" && origin.archived === true;
 }

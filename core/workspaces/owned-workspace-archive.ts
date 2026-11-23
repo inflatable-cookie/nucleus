@@ -1,10 +1,6 @@
 import { existsSync } from "node:fs";
 import { removeTree } from "./tree-removal";
-import type {
-  Run,
-  Task,
-  WorkspaceAllocation,
-} from "../../shared/contracts";
+import type { Run, Task, WorkspaceAllocation } from "../../shared/contracts";
 import { commonDirMatchesTask, safeRealpathSync } from "../git/git-identity";
 import {
   returnBargeAllocation,
@@ -130,7 +126,8 @@ export class OwnedWorkspaceArchive {
       HOST_KIND_LABELS[hostKindOf(this.host.hostId ?? task.hostId)];
     const isTaskCheckout = id === task.workspaceId || Boolean(displacedBranch);
     const matchingBargeAllocation = (): WorkspaceAllocation | null => {
-      const latest = this.host.workspaceAllocationBridge?.task?.(task.id) ?? task;
+      const latest =
+        this.host.workspaceAllocationBridge?.task?.(task.id) ?? task;
       const targetDir = safeRealpathSync(directory);
       const candidates = [
         latest.workspaceAllocation,
@@ -145,8 +142,8 @@ export class OwnedWorkspaceArchive {
         )
         .sort(
           (a, b) =>
-            (b.state !== "returned" ? 1 : 0) - (a.state !== "returned" ? 1 : 0) ||
-            b.sequence - a.sequence,
+            (b.state !== "returned" ? 1 : 0) -
+              (a.state !== "returned" ? 1 : 0) || b.sequence - a.sequence,
         );
       return candidates[0] ?? null;
     };
@@ -318,10 +315,15 @@ export class OwnedWorkspaceArchive {
       if (!existsSync(directory)) {
         if (activeBarge && activeBarge.state !== "returned") {
           if (current) {
-            if (!allowed()) throw Error("Workspace archive cancelled before missing Barge cleanup");
+            if (!allowed())
+              throw Error(
+                "Workspace archive cancelled before missing Barge cleanup",
+              );
             const res = await workspace.archive(`ns-archive-${task.id}-${id}`);
             if (res.error)
-              throw Error(`${hostLabel} workspace.archive failed: ${res.error}`);
+              throw Error(
+                `${hostLabel} workspace.archive failed: ${res.error}`,
+              );
             if (!res.archivedAt)
               throw Error(`${hostLabel} workspace.archive was not confirmed`);
           }
@@ -419,70 +421,91 @@ export class OwnedWorkspaceArchive {
           // The participant observation above also proves no turn is live, so a
           // running call of a turn-bound kind is settled before its checkout goes.
           const issue =
-            "issue" in read
-              ? read.issue
+            read.kind !== "ok"
+              ? read.reason
               : read.coverage === "bounded"
-                ? await boundedToolHold(
-                    read,
-                    this.host,
-                    agentId,
-                    id,
-                    async () => {
-                      if (!participantRuns)
-                        return "participant run inventory is unavailable";
-                      const runs = participantRuns();
-                      const runIds = participantToolRunIds(
-                        task,
-                        runs,
-                        agentId,
-                        id,
-                      );
-                      if (!runIds.length)
-                        return "participant run process identity is unavailable";
-                      const temporaryDirectories = runIds.map((runId) =>
-                        participantTemporaryDirectory(task, runs, runId),
-                      );
-                      if (temporaryDirectories.some((root) => !root))
-                        return "a participant run temporary directory is unrecorded";
-                      const processes = await this.host.hostProcessListing();
-                      if (!processes)
-                        return "the host process listing is unreadable";
-                      const bbThreads = bbWorkspaceThreads(task, runs, id, {
-                        includeAllRuns: true,
-                      });
-                      const ownThread = bbThreadForAgent(
-                        agentId,
-                        runs.find((run) => runIds.includes(run.id))?.hostId ??
-                          task.hostId,
-                      );
-                      if (ownThread && !bbThreads.includes(ownThread))
-                        bbThreads.push(ownThread);
-                      // The task's own host runtime — a T3 ACP parent and its
-                      // role sessions — is not a tool of any participant.
-                      const runtime = participantRuntime({
-                        dataHome: this.host.dataDir(),
-                        tasks: [task],
-                        runs,
-                        bbThreads,
-                      });
-                      for (const root of new Set([
-                        directory,
-                        ...temporaryDirectories,
-                      ])) {
-                        const why = workspaceToolProcessIssue(
-                          processes,
-                          root!,
-                          runIds,
-                          runtime,
+                ? (() => {
+                    return boundedToolHold(
+                      read,
+                      this.host,
+                      agentId,
+                      id,
+                      async () => {
+                        if (!participantRuns)
+                          return {
+                            kind: "hold",
+                            reason: "participant run inventory is unavailable",
+                          };
+                        const runs = participantRuns();
+                        const runIds = participantToolRunIds(
+                          task,
+                          runs,
+                          agentId,
+                          id,
                         );
-                        if (why) return why;
-                      }
-                      return null;
-                    },
-                  )
+                        if (!runIds.length)
+                          return {
+                            kind: "hold",
+                            reason:
+                              "participant run process identity is unavailable",
+                          };
+                        const temporaryDirectories = runIds.map((runId) =>
+                          participantTemporaryDirectory(task, runs, runId),
+                        );
+                        if (temporaryDirectories.some((root) => !root))
+                          return {
+                            kind: "hold",
+                            reason:
+                              "a participant run temporary directory is unrecorded",
+                          };
+                        const processes = await this.host.hostProcessListing();
+                        if (!processes)
+                          return {
+                            kind: "hold",
+                            reason: "the host process listing is unreadable",
+                          };
+                        const bbThreads = bbWorkspaceThreads(task, runs, id, {
+                          includeAllRuns: true,
+                        });
+                        const ownThread = bbThreadForAgent(
+                          agentId,
+                          runs.find((run) => runIds.includes(run.id))?.hostId ??
+                            task.hostId,
+                        );
+                        if (ownThread && !bbThreads.includes(ownThread))
+                          bbThreads.push(ownThread);
+                        // The task's own host runtime — a T3 ACP parent and its
+                        // role sessions — is not a tool of any participant.
+                        const runtime = participantRuntime({
+                          dataHome: this.host.dataDir(),
+                          tasks: [task],
+                          runs,
+                          bbThreads,
+                        });
+                        for (const root of new Set([
+                          directory,
+                          ...temporaryDirectories,
+                        ])) {
+                          const why = workspaceToolProcessIssue(
+                            processes,
+                            root!,
+                            runIds,
+                            runtime,
+                          );
+                          if (why) return { kind: "hold", reason: why };
+                        }
+                        return { kind: "clear" };
+                      },
+                    ).then((result) =>
+                      result.kind === "clear" ? null : result.reason,
+                    );
+                  })()
                 : liveToolIssue(read.entries, state);
-          if (issue)
-            throw Error(`Preserving workspace: owned tool evidence: ${issue}`);
+          const resolvedIssue = await issue;
+          if (resolvedIssue)
+            throw Error(
+              `Preserving workspace: owned tool evidence: ${resolvedIssue}`,
+            );
         }
       }
       const orphan = await orphanOf();

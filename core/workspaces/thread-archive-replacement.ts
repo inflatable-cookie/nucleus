@@ -90,7 +90,13 @@ export async function archiveReplacedReviewer(
       `reviewer: ${run.agentId}`,
     );
   }
-  if (effect.status === "ready" && !(await stoppedAndIdle())) return false;
+  if (effect.status === "ready") {
+    try {
+      if (!(await stoppedAndIdle())) return false;
+    } catch {
+      return false;
+    }
+  }
   if (effect.status !== "archived")
     await settleArchive(
       store,

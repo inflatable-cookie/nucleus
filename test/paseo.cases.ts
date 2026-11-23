@@ -2163,12 +2163,12 @@ weighted(4)(
       payload = { ...complete };
       delete payload[key];
       const read = await readToolTimeline(adapter, "worker");
-      assert.ok("issue" in read, key);
+      assert.equal(read.kind, "hold", key);
     }
     for (const key of ["gap", "staleCursor", "reset", "hasNewer"]) {
       payload = { ...complete, [key]: true };
       const read = await readToolTimeline(adapter, "worker");
-      assert.ok("issue" in read, key);
+      assert.equal(read.kind, "hold", key);
     }
     payload = { ...complete, error: "read failed" };
     assert.equal(await adapter.agentTimelinePage("worker"), null);

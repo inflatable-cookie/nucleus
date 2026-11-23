@@ -1,7 +1,5 @@
 import { MISSING_CALLBACK_CAUSE } from "../../shared/incident";
-import {
-  stages,
-} from "../recovery/task-reasons";
+import { stages } from "../recovery/task-reasons";
 import {
   blockingRecoveryEffects,
   recoveryEffectsRefusal,
@@ -18,6 +16,7 @@ import {
 import { staleChangesRequestedPhase } from "../intake/current-binding";
 import { isProviderFailure } from "../questions/ladder";
 import { isMergeCloseoutPhase } from "../closeout/closeout";
+import { isQuantumDeadlineExceeded } from "./pass-snapshot";
 import type { Resolution } from "../resolution";
 import { TASK_PROGRESSING_REASON, stopNamesRun } from "../../shared/task-stop";
 
@@ -183,6 +182,7 @@ export class SchedulingLifecycle {
         await this.context.advancePhase(t);
       });
     } catch (error) {
+      if (isQuantumDeadlineExceeded(error)) return;
       if (!this.context.paused())
         this.context.settleAdvanceFailure(
           t,
@@ -220,7 +220,8 @@ export class SchedulingLifecycle {
     // pass asks that owner whether the recorded reason is one of them.
     const missingCallback =
       completed &&
-      ((t.reasonFact?.subject === completed.role && ["callback_missing", "callback_expired"].includes(t.reasonFact.code)) ||
+      ((t.reasonFact?.subject === completed.role &&
+        ["callback_missing", "callback_expired"].includes(t.reasonFact.code)) ||
         (t.resolution.incident?.runId === completed.id &&
           (t.resolution.incident.cause === MISSING_CALLBACK_CAUSE ||
             t.resolution.incident.action === "callback_reminder")));

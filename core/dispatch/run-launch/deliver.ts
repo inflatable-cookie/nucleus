@@ -12,6 +12,7 @@ import {
 import { unreviewedMergeRoute } from "../../../shared/task-view";
 import { ownerReviewContext } from "../../review/owner-review-context";
 import type { Adapter } from "../../host/adapter";
+import { isQuantumDeadlineExceeded } from "../../scheduling/pass-snapshot";
 import {
   proofExecutionRecord,
   recordProofExecution,
@@ -403,7 +404,11 @@ export class RunLaunchDeliver {
         );
         agentId = created.id;
         if (this.store.run(run.id)?.explicitlyReleasedAt) {
-          this.store.event(t.id, "released_run_delivery_observed", `${run.id}: ${agentId}`);
+          this.store.event(
+            t.id,
+            "released_run_delivery_observed",
+            `${run.id}: ${agentId}`,
+          );
           return;
         }
         recordPromptSize(
@@ -551,7 +556,11 @@ export class RunLaunchDeliver {
         }
       }
       if (this.store.run(run.id)?.explicitlyReleasedAt) return;
-      this.store.putRun({ ...this.store.run(run.id)!, agentId, status: "running" });
+      this.store.putRun({
+        ...this.store.run(run.id)!,
+        agentId,
+        status: "running",
+      });
       this.resolution.clearHostReadTransient?.(t.id, "task");
       this.resolution.waiting(
         this.store.task(t.id),
@@ -560,6 +569,35 @@ export class RunLaunchDeliver {
       );
     } catch (error) {
       if (this.store.run(run.id)?.explicitlyReleasedAt) return;
+      // Spec 068 §6 / Spec 066 R1: a quantum deadline expiry defers cleanly.
+      // Definite pre-send deferral (`!dispatchInvoked || error.preSend`) never
+      // crossed the send boundary, so release the unsent reservation cleanly
+      // without marking `uncertain`, recording `exact_lookup`, or writing a
+      // stop. Post-send timeouts preserve the durable `uncertain` run without
+      // writing a stop so the next pass reconciles it.
+      if (isQuantumDeadlineExceeded(error)) {
+        if (!dispatchInvoked || error.preSend) {
+          this.store.transaction(() => {
+            const latestRun = this.store.run(run.id);
+            if (latestRun && !latestRun.released)
+              this.store.putRun({
+                ...latestRun,
+                status: "superseded",
+                released: true,
+                active: false,
+              });
+            if (!agentId) this.store.deleteCredential(run.id);
+            const latest = this.store.task(t.id);
+            if (latest.resolution.currentRunId === run.id)
+              this.resolution.update(latest, { currentRunId: null });
+          });
+          return;
+        }
+        const latestRun = this.store.run(run.id);
+        if (latestRun && !latestRun.released)
+          this.store.putRun({ ...latestRun, status: "uncertain" });
+        return;
+      }
       if (error instanceof BlockingRecoveryEffectsError) {
         const waitReason = `${run.ordinaryDetached ? "Ordinary review" : "Review-entry"} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`;
         this.store.transaction(() => {
@@ -581,9 +619,17 @@ export class RunLaunchDeliver {
               recoveryEffectsRefusal(error.effects) ?? "",
             );
         });
-        this.resolution.waiting(this.store.task(t.id), waitReason, "lifecycle", {
-          fact: { code: "review_effect_wait", subject: reviewEffectWaitKey(error.effects) },
-        });
+        this.resolution.waiting(
+          this.store.task(t.id),
+          waitReason,
+          "lifecycle",
+          {
+            fact: {
+              code: "review_effect_wait",
+              subject: reviewEffectWaitKey(error.effects),
+            },
+          },
+        );
         return;
       }
       // A host that has not settled its model options has not refused this run:

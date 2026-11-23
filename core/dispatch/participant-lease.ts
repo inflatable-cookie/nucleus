@@ -1,21 +1,44 @@
-import { assignedThreadWaitReason, coordinative, participantToolRunIds } from '../recovery/task-reasons';
-import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
-import { executionParticipants } from '../machine/execution-participants';
-import { runBindsCurrentWork, type Run, type Task } from '../../shared/contracts';
-import { isStaleIntegrationBaseRefusal } from '../hooks/hooks';
-import { agentSettled } from '../machine/agent-settled';
-import { isAgentGoneRefusal } from '../host/errors';
-import { formatHostProcessSweepEvent, reapHostProcesses } from '../machine/host-process-reap';
-import { recordedProcessGroupsForTask } from '../machine/host-process-select';
-import type { Adapter } from '../host/adapter';
-import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation';
-import type { Resolution } from '../resolution';
+import {
+  assignedThreadWaitReason,
+  coordinative,
+  participantToolRunIds,
+} from "../recovery/task-reasons";
+import {
+  blockingRecoveryEffects,
+  recoveryEffectsRefusal,
+} from "../recovery/recovery-effects";
+import { executionParticipants } from "../machine/execution-participants";
+import {
+  runBindsCurrentWork,
+  type Run,
+  type Task,
+} from "../../shared/contracts";
+import { isStaleIntegrationBaseRefusal } from "../hooks/hooks";
+import { agentSettled } from "../machine/agent-settled";
+import { isAgentGoneRefusal } from "../host/errors";
+import {
+  formatHostProcessSweepEvent,
+  reapHostProcesses,
+} from "../machine/host-process-reap";
+import { recordedProcessGroupsForTask } from "../machine/host-process-select";
+import type { Adapter } from "../host/adapter";
+import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
+import type { Resolution } from "../resolution";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+  currentTaskQuantumScope,
+} from "../scheduling/pass-snapshot";
 
 /** Proves a task's participants are settled before its work, merge or closeout goes on. */
 export class ParticipantLease {
   constructor(readonly resolution: Resolution) {}
-  get store() { return this.resolution.store; }
-  get adapter() { return this.resolution.adapter; }
+  get store() {
+    return this.resolution.store;
+  }
+  get adapter() {
+    return this.resolution.adapter;
+  }
 
   /**
    * One participant's owned-tool refusal, and whether the merge can clear it
@@ -28,32 +51,101 @@ export class ParticipantLease {
    * after its tree was proved empty — so it is the owner's, not a quiet wait. A
    * participant that resumed during the grace is live again, which is transient.
    */
-  private async settleStrayTool(t: Task, agentId: string, workspaceId: string, runIds: string[], issue: string): Promise<{ issue: string; needsOwner: boolean } | null> {
+  private async settleStrayTool(
+    t: Task,
+    agentId: string,
+    workspaceId: string,
+    runIds: string[],
+    issue: string,
+  ): Promise<
+    | { kind: "deferred"; issue: string }
+    | { kind: "hold"; issue: string; needsOwner: boolean }
+    | null
+  > {
     const runId = runIds[0];
-    if (!runId) return { issue, needsOwner: true };
-    const hold = this.store.eventsAll(t.id).findLast(event => event.kind === 'owned_tool_hold' && (() => {
-      try { return JSON.parse(event.detail).runId === runId; } catch { return false; }
-    })());
-    if (!hold) return { issue, needsOwner: true };
+    if (!runId) return { kind: "hold", issue, needsOwner: true };
+    const hold = this.store.eventsAll(t.id).findLast(
+      (event) =>
+        event.kind === "owned_tool_hold" &&
+        (() => {
+          try {
+            return JSON.parse(event.detail).runId === runId;
+          } catch {
+            return false;
+          }
+        })(),
+    );
+    if (!hold) return { kind: "hold", issue, needsOwner: true };
     const deadline = Date.parse(hold.at) + Math.max(0, this.resolution.graceMs);
-    if (Date.now() < deadline) return { issue: `${issue}; stray-tool grace ends at ${new Date(deadline).toISOString()}`, needsOwner: false };
+    if (Date.now() < deadline)
+      return {
+        kind: "hold",
+        issue: `${issue}; stray-tool grace ends at ${new Date(deadline).toISOString()}`,
+        needsOwner: false,
+      };
 
     // A live turn owns its tools. Recheck immediately before the host sweep so
     // a turn that resumed during the grace is never stopped.
     // The task process sweep can cover the shared task worktree and recorded
     // run groups, so all bound participants must still be settled before it is
     // allowed to stop anything.
-    for (const [id, workspace] of executionParticipants(t, this.store.runs(t.id))) {
-      let state: Awaited<ReturnType<Adapter['observe']>>;
-      try { state = await this.resolution.host.observe(id); }
-      catch { return { issue: `${issue}; participant ${id} identity could not be rechecked before reaping`, needsOwner: true }; }
-      if (state.id !== id || state.workspaceId !== workspace || !agentSettled(state))
-        return { issue: `${issue}; participant ${id} resumed or its identity changed before reaping`, needsOwner: false };
+    for (const [id, workspace] of executionParticipants(
+      t,
+      this.store.runs(t.id),
+    )) {
+      let state: Awaited<ReturnType<Adapter["observe"]>>;
+      try {
+        const read = await boundedRead(
+          "participant observation",
+          () => this.resolution.host.observe(id),
+          this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
+        );
+        if (read.state === "unknown")
+          return {
+            kind: "deferred",
+            issue: `${issue}; participant ${id} identity could not be rechecked before reaping (${read.reason})`,
+          };
+        state = read.value;
+      } catch {
+        return {
+          kind: "hold",
+          issue: `${issue}; participant ${id} identity could not be rechecked before reaping`,
+          needsOwner: true,
+        };
+      }
+      if (
+        state.id !== id ||
+        state.workspaceId !== workspace ||
+        !agentSettled(state)
+      )
+        return {
+          kind: "hold",
+          issue: `${issue}; participant ${id} resumed or its identity changed before reaping`,
+          needsOwner: false,
+        };
     }
 
-    let processes: Awaited<ReturnType<NonNullable<Adapter['hostProcessListing']>>> | undefined;
-    try { processes = this.adapter.hostProcessListing ? await this.adapter.hostProcessListing() : undefined; }
-    catch { processes = null; }
+    let processes:
+      | Awaited<ReturnType<NonNullable<Adapter["hostProcessListing"]>>>
+      | undefined;
+    if (this.adapter.hostProcessListing) {
+      try {
+        const listing = this.resolution.readPassProcesses
+          ? await this.resolution.readPassProcesses(t.hostId)
+          : null;
+        if (listing) {
+          if (listing.state === "unknown" && listing.deferred) {
+            return {
+              kind: "deferred",
+              issue: `${issue}; ${listing.reason}`,
+            };
+          }
+          processes = listing.state === "listed" ? listing.processes : null;
+        } else processes = await this.adapter.hostProcessListing();
+      } catch {
+        processes = null;
+      }
+    }
     let result: Awaited<ReturnType<typeof reapHostProcesses>>;
     try {
       result = await reapHostProcesses({
@@ -62,35 +154,101 @@ export class ParticipantLease {
         processes,
       });
     } catch (error) {
-      return { issue: `${issue}; host-process reap failed: ${error instanceof Error ? error.message : String(error)}`, needsOwner: true };
+      return {
+        kind: "hold",
+        issue: `${issue}; host-process reap failed: ${error instanceof Error ? error.message : String(error)}`,
+        needsOwner: true,
+      };
     }
-    if (result.unavailable) return { issue: `${issue}; host-process reap could not read the host: ${result.unavailable.reason}`, needsOwner: true };
-    if (result.failed.length) return { issue: `${issue}; host-process reap could not prove or stop every target: ${result.failed.map(target => target.reason).join('; ')}`, needsOwner: true };
+    if (result.unavailable)
+      return {
+        kind: "hold",
+        issue: `${issue}; host-process reap could not read the host: ${result.unavailable.reason}`,
+        needsOwner: true,
+      };
+    if (result.failed.length)
+      return {
+        kind: "hold",
+        issue: `${issue}; host-process reap could not prove or stop every target: ${result.failed.map((target) => target.reason).join("; ")}`,
+        needsOwner: true,
+      };
     if (result.skippedProtected.length) {
-      const skipped = `Skipped ${result.skippedProtected.length} protected host-runtime process${result.skippedProtected.length === 1 ? '' : 'es'}: ${result.skippedProtected.map(target => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || '-'} command=${target.command || '-'}`).join('; ')}`;
-      this.store.event(t.id, 'participant_tool_reap_skipped', skipped);
-      return { issue: `${issue}; host-process reap ${skipped}`, needsOwner: true };
+      const skipped = `Skipped ${result.skippedProtected.length} protected host-runtime process${result.skippedProtected.length === 1 ? "" : "es"}: ${result.skippedProtected.map((target) => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || "-"} command=${target.command || "-"}`).join("; ")}`;
+      this.store.event(t.id, "participant_tool_reap_skipped", skipped);
+      return {
+        kind: "hold",
+        issue: `${issue}; host-process reap ${skipped}`,
+        needsOwner: true,
+      };
     }
-    if (result.terminated.length) this.store.event(t.id, 'participant_tool_reaped',
-      `Stopped participant ${agentId} after its reported turn ended and stray-tool grace elapsed: ${formatHostProcessSweepEvent(result)}`);
-    else this.store.event(t.id, 'participant_tool_reap_empty',
-      `Participant ${agentId} still reported ${issue}, but the host-process reap found no live task process after the grace`);
+    if (result.terminated.length) {
+      this.resolution.invalidatePassProcesses?.(t.hostId);
+      this.store.event(
+        t.id,
+        "participant_tool_reaped",
+        `Stopped participant ${agentId} after its reported turn ended and stray-tool grace elapsed: ${formatHostProcessSweepEvent(result)}`,
+      );
+      // Spec 068 §6: inside a task quantum, never re-scan the full host process
+      // table inline after reaping; hold the lease on a lifecycle wait so the
+      // next host pass captures a fresh pre-process observation and table.
+      if (currentTaskQuantumScope()?.inTaskQuantum) {
+        return {
+          kind: "hold",
+          issue:
+            "reaped stray participant process; waiting for the next host pass to verify the process tree is clear",
+          needsOwner: false,
+        };
+      }
+    } else
+      this.store.event(
+        t.id,
+        "participant_tool_reap_empty",
+        `Participant ${agentId} still reported ${issue}, but the host-process reap found no live task process after the grace`,
+      );
     const remaining = await this.resolution.ownedToolHold(agentId, {
-      requireCompleteEvidence: true, runId, runIds, taskId: t.id, workspaceId,
+      requireCompleteEvidence: true,
+      runId,
+      runIds,
+      taskId: t.id,
+      workspaceId,
     });
-    return remaining ? { issue: remaining, needsOwner: true } : null;
+    if (remaining.kind === "clear") return null;
+    if (remaining.kind === "deferred")
+      return { kind: "deferred", issue: remaining.reason };
+    return { kind: "hold", issue: remaining.reason, needsOwner: true };
   }
 
   private yieldIntegrationTurn(t: Task): void {
     // A merge request with unknown delivery must retain its turn. Before merge
     // intent, a participant wait yields its FIFO place so another task can land.
-    if (!t.resolution.integrationTurn || t.resolution.mergeIntent || t.resolution.mergedCommit) return;
-    this.resolution.update(t, { integrationTurn: null }, { reason: t.reason }, 'integration_turn_yielded_for_participant');
+    if (
+      !t.resolution.integrationTurn ||
+      t.resolution.mergeIntent ||
+      t.resolution.mergedCommit
+    )
+      return;
+    this.resolution.update(
+      t,
+      { integrationTurn: null },
+      { reason: t.reason },
+      "integration_turn_yielded_for_participant",
+    );
   }
 
-  async idle(agentId: string, workspaceId?: string, onBusy?: (state: Awaited<ReturnType<Adapter['observe']>>) => void) {
-    const state = await this.resolution.host.observe(agentId);
-    if (workspaceId && state.workspaceId !== workspaceId) throw new Error('Agent workspace changed; lease is not safe');
+  async idle(
+    agentId: string,
+    workspaceId?: string,
+    onBusy?: (state: Awaited<ReturnType<Adapter["observe"]>>) => void,
+  ) {
+    const read = await boundedRead(
+      "participant observation",
+      () => this.resolution.host.observe(agentId),
+      this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
+    );
+    if (read.state === "unknown") return false;
+    const state = read.value;
+    if (workspaceId && state.workspaceId !== workspaceId)
+      throw new Error("Agent workspace changed; lease is not safe");
     const idle = agentSettled(state);
     if (!idle) onBusy?.(state);
     return idle;
@@ -111,26 +269,39 @@ export class ParticipantLease {
    * `runDurableFence` in owner verbs, the episode's own observation), never by
    * this liveness read.
    */
-  async lease(t: Task, onBusy?: (agentId: string, state: Awaited<ReturnType<Adapter['observe']>>) => void,
-    supersededRunId?: string) {
+  async lease(
+    t: Task,
+    onBusy?: (
+      agentId: string,
+      state: Awaited<ReturnType<Adapter["observe"]>>,
+    ) => void,
+    supersededRunId?: string,
+  ) {
     const runs = this.store.runs(t.id);
     // Expected workspace per identity; null means the identity has no recorded
     // workspace yet, so its idle proof is not workspace-constrained.
     const expected = new Map<string, string | null>();
-    const record = (id: string | null | undefined, workspace: string | null | undefined) => {
+    const record = (
+      id: string | null | undefined,
+      workspace: string | null | undefined,
+    ) => {
       if (!id) return;
       const current = expected.get(id);
-      if (current === undefined || current === null) expected.set(id, workspace ?? null);
+      if (current === undefined || current === null)
+        expected.set(id, workspace ?? null);
     };
-    const currentRun = t.resolution.currentRunId && t.resolution.currentRunId !== supersededRunId
-      ? runs.find(r => r.id === t.resolution.currentRunId) : null;
+    const currentRun =
+      t.resolution.currentRunId && t.resolution.currentRunId !== supersededRunId
+        ? runs.find((r) => r.id === t.resolution.currentRunId)
+        : null;
     // The retained worker lives in the task workspace. An assigned coordinator or
     // reviewer enters this set through its own run, so a coordinator that has not
     // been launched yet is bound by the launcher instead of polled here.
     record(t.agentId, t.workspaceId);
     record(currentRun?.agentId, currentRun?.workspaceId ?? t.workspaceId);
     for (const run of runs) {
-      if (run.released || run.completion || run.id === supersededRunId) continue;
+      if (run.released || run.completion || run.id === supersededRunId)
+        continue;
       record(run.agentId, run.workspaceId ?? t.workspaceId);
     }
     // A persisted incident or recovery episode names the exact run whose result
@@ -138,22 +309,36 @@ export class ParticipantLease {
     // still binds the current work. A record naming a released run is
     // superseded history and never adds a participant the current work must
     // wait for (papercuts 89643af2, 6ff5e903).
-    for (const runId of [t.resolution.recovery?.runId, t.resolution.incident?.runId]) {
+    for (const runId of [
+      t.resolution.recovery?.runId,
+      t.resolution.incident?.runId,
+    ]) {
       if (runId && runId === supersededRunId) continue;
       if (!runBindsCurrentWork(runs, runId)) continue;
-      const named = runId ? runs.find(r => r.id === runId) : null;
+      const named = runId ? runs.find((r) => r.id === runId) : null;
       if (named?.completion) continue;
       record(named?.agentId, named?.workspaceId);
     }
     for (const [id, workspace] of expected) {
       const proofWorkspace = workspace ?? t.workspaceId!;
-      try{if (!await this.resolution.idle(id,workspace ?? undefined,state=>onBusy?.(id,state))) return false;}
-      catch (error) {
+      try {
+        if (
+          !(await this.resolution.idle(id, workspace ?? undefined, (state) =>
+            onBusy?.(id, state),
+          ))
+        )
+          return false;
+      } catch (error) {
         // A thread the host reports gone is not a participant any more, but only
         // an already-merged task whose workspace still exists may pass on that
         // fact; anything else keeps its own fault.
-        if (!isAgentGoneRefusal(error) || !t.resolution.mergedCommit) throw error;
-        if (!this.adapter.workspaceAvailable || await this.adapter.workspaceAvailable(proofWorkspace)) throw error;
+        if (!isAgentGoneRefusal(error) || !t.resolution.mergedCommit)
+          throw error;
+        if (
+          !this.adapter.workspaceAvailable ||
+          (await this.adapter.workspaceAvailable(proofWorkspace))
+        )
+          throw error;
       }
     }
     return true;
@@ -166,11 +351,20 @@ export class ParticipantLease {
    */
   participantBinding(t: Task, agentId: string): Run | null {
     const runs = this.store.runs(t.id);
-    const current = t.resolution.currentRunId ? runs.find(run => run.id === t.resolution.currentRunId && run.agentId === agentId) : null;
-    const episode = [t.resolution.recovery?.runId, t.resolution.incident?.runId]
-      .map(id => (id ? runs.find(run => run.id === id) : null))
-      .find(run => run && run.agentId === agentId) ?? null;
-    const latest = runs.findLast(run => !run.released && !run.completion && run.agentId === agentId) ?? null;
+    const current = t.resolution.currentRunId
+      ? runs.find(
+          (run) =>
+            run.id === t.resolution.currentRunId && run.agentId === agentId,
+        )
+      : null;
+    const episode =
+      [t.resolution.recovery?.runId, t.resolution.incident?.runId]
+        .map((id) => (id ? runs.find((run) => run.id === id) : null))
+        .find((run) => run && run.agentId === agentId) ?? null;
+    const latest =
+      runs.findLast(
+        (run) => !run.released && !run.completion && run.agentId === agentId,
+      ) ?? null;
     return current ?? episode ?? latest;
   }
 
@@ -180,9 +374,13 @@ export class ParticipantLease {
    * still owns work, what the observation shows, and the owner verbs that exit
    * the wait — so a launch that starts nothing never reads as silent success.
    */
-  declineText(t: Task, agentId: string, state: Awaited<ReturnType<Adapter['observe']>>): string {
+  declineText(
+    t: Task,
+    agentId: string,
+    state: Awaited<ReturnType<Adapter["observe"]>>,
+  ): string {
     const run = this.participantBinding(t, agentId);
-    const owner = run ? `${run.role} run ${run.id}` : 'the retained worker';
+    const owner = run ? `${run.role} run ${run.id}` : "the retained worker";
     // The exits name verbs that actually clear the hold: `restart
     // role=coordinator` settles only finished runs and refuses while the run is
     // unreleased, so a live coordinator turn is stopped or routed now; a live
@@ -191,7 +389,7 @@ export class ParticipantLease {
       ? coordinative(run)
         ? `stop role=coordinator settles it sooner (it stops that turn), or route role=coordinator with now`
         : `an owner stop of run ${run.id}, or a route with now, settles it sooner`
-      : 'an owner restart or route with now settles it sooner';
+      : "an owner restart or route with now settles it sooner";
     return `${owner} (agent ${agentId}) still owns its turn: ${assignedThreadWaitReason(state)}; the dispatch proceeds once that thread settles, ${exit}`;
   }
 
@@ -203,10 +401,18 @@ export class ParticipantLease {
    * the way `unreleasedLaunchFence` already does.
    */
   async declineReason(t: Task): Promise<string | null> {
-    const captured: { agentId: string; state: Awaited<ReturnType<Adapter['observe']>> }[] = [];
+    const captured: {
+      agentId: string;
+      state: Awaited<ReturnType<Adapter["observe"]>>;
+    }[] = [];
     let passed: boolean;
-    try { passed = await this.lease(t, (agentId, state) => captured.push({ agentId, state })); }
-    catch { return null; }
+    try {
+      passed = await this.lease(t, (agentId, state) =>
+        captured.push({ agentId, state }),
+      );
+    } catch {
+      return null;
+    }
     const declined = passed ? undefined : captured[0];
     if (!declined) return null;
     return this.declineText(t, declined.agentId, declined.state);
@@ -214,80 +420,219 @@ export class ParticipantLease {
 
   refreshingCloseoutHook(t: Task, syncing: boolean) {
     return syncing && t.reasonFact?.code === "closeout_base_refresh"
-      ? this.store.hookEvents(t.id).findLast(record => record.event === 'task.closeout' && record.state === 'blocked'
-        && isStaleIntegrationBaseRefusal(record.error))
+      ? this.store
+          .hookEvents(t.id)
+          .findLast(
+            (record) =>
+              record.event === "task.closeout" &&
+              record.state === "blocked" &&
+              isStaleIntegrationBaseRefusal(record.error),
+          )
       : undefined;
   }
   /** Merge and closeout observe execution bindings, including retained runs. */
-  async executionLease(t: Task, enclosing?: VerifiedEnclosingOperation, syncing = false, probe = false): Promise<boolean> {
+  async executionLease(
+    t: Task,
+    enclosing?: VerifiedEnclosingOperation,
+    syncing = false,
+    probe = false,
+  ): Promise<boolean> {
     const refreshing = this.resolution.refreshingCloseoutHook(t, syncing);
-    const blocking = blockingRecoveryEffects(this.store,t,{enclosing,kinds:['operation','hook','run-delivery','review-delivery','publication','attention-notice']})
-      .filter(item => !(refreshing && item.kind === 'hook' && item.identity === refreshing.id));
+    const blocking = blockingRecoveryEffects(this.store, t, {
+      enclosing,
+      kinds: [
+        "operation",
+        "hook",
+        "run-delivery",
+        "review-delivery",
+        "publication",
+        "attention-notice",
+      ],
+    }).filter(
+      (item) =>
+        !(
+          refreshing &&
+          item.kind === "hook" &&
+          item.identity === refreshing.id
+        ),
+    );
     if (blocking.length) {
       // A speculative probe (an external-merge read on a task that is nowhere near
       // a merge) records no wait: its fence is a silent no, and the owning phase
       // keeps its own reason. Real merge gates name what they wait for.
-      if (!probe) this.resolution.waiting(t, `Merge waits for ${recoveryEffectsRefusal(blocking)}; settle each with retry_effect or an owner control that supersedes it`, 'lifecycle');
+      if (!probe)
+        this.resolution.waiting(
+          t,
+          `Merge waits for ${recoveryEffectsRefusal(blocking)}; settle each with retry_effect or an owner control that supersedes it`,
+          "lifecycle",
+        );
       return false;
     }
-    const runs=this.store.runs(t.id);
+    const runs = this.store.runs(t.id);
     for (const [id, workspace] of executionParticipants(t, runs)) {
       // The owner explicitly superseded these exact identities to close an already merged PR.
-      if (syncing && t.resolution.externalMerge && t.resolution.mergedCommit
-        && t.resolution.ownerCloseoutParticipants.some(item => item.agentId === id && item.workspaceId === workspace)) continue;
+      if (
+        syncing &&
+        t.resolution.externalMerge &&
+        t.resolution.mergedCommit &&
+        t.resolution.ownerCloseoutParticipants.some(
+          (item) => item.agentId === id && item.workspaceId === workspace,
+        )
+      )
+        continue;
       // Archived and removed participants may no longer have a readable live
       // timeline. Their existing custody proof checks the exact binding and both
       // workspace and run-rooted processes before releasing this lease.
-      let state: Awaited<ReturnType<Adapter['observe']>> | undefined;
-      try { state = await this.resolution.host.observe(id); }
-      catch {
+      let state: Awaited<ReturnType<Adapter["observe"]>> | undefined;
+      try {
+        const read = await boundedRead(
+          "participant observation",
+          () => this.resolution.host.observe(id),
+          this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
+        );
+        if (read.state === "unknown") {
+          if (!probe)
+            this.store.update(t.id, {
+              reason: `Merge waits for participant ${id} in workspace ${workspace}: ${read.reason}`,
+            });
+          return false;
+        }
+        state = read.value;
+      } catch {
         const runIds = participantToolRunIds(t, runs, id, workspace);
-        const issue = await this.resolution.ownedToolHold(id, {
-          requireCompleteEvidence: true, allowRetired: true,
-          runId: runIds[0], runIds, taskId: t.id, workspaceId: workspace,
+        const holdResult = await this.resolution.ownedToolHold(id, {
+          requireCompleteEvidence: true,
+          allowRetired: true,
+          runId: runIds[0],
+          runIds,
+          taskId: t.id,
+          workspaceId: workspace,
         });
-        if (!issue) continue;
-        if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id}: ${issue}`, 'operator_needed', { suggestedVerbs: ['retry_effect'] });
+        if (holdResult.kind === "clear") continue;
+        if (!probe) {
+          if (holdResult.kind === "deferred") {
+            this.store.update(t.id, {
+              reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
+            });
+          } else {
+            this.resolution.waiting(
+              t,
+              `Merge waits for participant ${id}: ${holdResult.reason}`,
+              "operator_needed",
+              { suggestedVerbs: ["retry_effect"] },
+            );
+          }
+        }
         return false;
       }
       if (state.id !== id || state.workspaceId !== workspace) {
-        if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id} in workspace ${workspace}: current identity, activity or status does not prove it is settled`, 'lifecycle');
+        if (!probe)
+          this.resolution.waiting(
+            t,
+            `Merge waits for participant ${id} in workspace ${workspace}: current identity, activity or status does not prove it is settled`,
+            "lifecycle",
+          );
         return false;
       }
-      if ((!agentSettled(state) && state.status !== 'gone') || state.active || state.permissions || state.activeTurnId) {
-        if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id} in workspace ${workspace}: ${assignedThreadWaitReason(state)}`, 'lifecycle');
+      if (
+        (!agentSettled(state) && state.status !== "gone") ||
+        state.active ||
+        state.permissions ||
+        state.activeTurnId
+      ) {
+        if (!probe)
+          this.resolution.waiting(
+            t,
+            `Merge waits for participant ${id} in workspace ${workspace}: ${assignedThreadWaitReason(state)}`,
+            "lifecycle",
+          );
         return false;
       }
-      if (state.status === 'closed' || state.status === 'gone' || state.archived === true) {
+      if (
+        state.status === "closed" ||
+        state.status === "gone" ||
+        state.archived === true
+      ) {
         const runIds = participantToolRunIds(t, runs, id, workspace);
-        const issue = await this.resolution.ownedToolHold(id, {
-          requireCompleteEvidence: true, allowRetired: true,
-          runId: runIds[0], runIds, taskId: t.id, workspaceId: workspace,
+        const holdResult = await this.resolution.ownedToolHold(id, {
+          requireCompleteEvidence: true,
+          allowRetired: true,
+          runId: runIds[0],
+          runIds,
+          taskId: t.id,
+          workspaceId: workspace,
         });
-        if (issue) {
-          if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id}: ${issue}`, 'operator_needed', { suggestedVerbs: ['retry_effect'] });
+        if (holdResult.kind !== "clear") {
+          if (!probe) {
+            if (holdResult.kind === "deferred") {
+              this.store.update(t.id, {
+                reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
+              });
+            } else {
+              this.resolution.waiting(
+                t,
+                `Merge waits for participant ${id}: ${holdResult.reason}`,
+                "operator_needed",
+                { suggestedVerbs: ["retry_effect"] },
+              );
+            }
+          }
           return false;
         }
         continue;
       }
       if (!syncing) {
-        const participantRunIds=participantToolRunIds(t,runs,id,workspace);
-        const why=await this.resolution.ownedToolHold(id,{requireCompleteEvidence:true,runId:participantRunIds[0],runIds:participantRunIds,taskId:t.id,workspaceId:workspace});
-        if (why) {
+        const participantRunIds = participantToolRunIds(t, runs, id, workspace);
+        const holdResult = await this.resolution.ownedToolHold(id, {
+          requireCompleteEvidence: true,
+          runId: participantRunIds[0],
+          runIds: participantRunIds,
+          taskId: t.id,
+          workspaceId: workspace,
+        });
+        if (holdResult.kind === "deferred") {
+          if (!probe) {
+            this.store.update(t.id, {
+              reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
+            });
+          }
+          return false;
+        }
+        if (holdResult.kind === "hold") {
           // While a merge intent is recorded the stray-tool settlement is not
           // attempted; a participant still holding it has already been through
           // its grace in an earlier pass, so the owner's exit is the one left.
-          const stray = !probe && !t.resolution.mergeIntent && !t.resolution.mergedCommit
-            ? await this.settleStrayTool(t, id, workspace, participantRunIds, why)
-            : { issue: why, needsOwner: !probe };
+          const stray =
+            !probe && !t.resolution.mergeIntent && !t.resolution.mergedCommit
+              ? await this.settleStrayTool(
+                  t,
+                  id,
+                  workspace,
+                  participantRunIds,
+                  holdResult.reason,
+                )
+              : {
+                  kind: "hold" as const,
+                  issue: holdResult.reason,
+                  needsOwner: !probe,
+                };
           if (!stray) continue;
+          if (stray.kind === "deferred") {
+            if (!probe) {
+              this.store.update(t.id, {
+                reason: `Merge waits for participant ${id}: ${stray.issue}`,
+              });
+            }
+            return false;
+          }
           if (!probe) this.yieldIntegrationTurn(t);
-          if (!probe) this.resolution.waiting(
-            t,
-            `Merge waits for participant ${id}: ${stray.issue}`,
-            stray.needsOwner ? 'operator_needed' : 'lifecycle',
-            stray.needsOwner ? { suggestedVerbs: ['retry_effect'] } : {},
-          );
+          if (!probe)
+            this.resolution.waiting(
+              t,
+              `Merge waits for participant ${id}: ${stray.issue}`,
+              stray.needsOwner ? "operator_needed" : "lifecycle",
+              stray.needsOwner ? { suggestedVerbs: ["retry_effect"] } : {},
+            );
           return false;
         }
       }
@@ -295,9 +640,25 @@ export class ParticipantLease {
     return true;
   }
   /** Settle a finished-turn shell only when the live host process scan also proves its run and workspace are quiet. */
-  async participantToolIssue(taskId: string, agentId: string, workspaceId: string): Promise<string | null> {
+  async participantToolIssue(
+    taskId: string,
+    agentId: string,
+    workspaceId: string,
+  ): Promise<string | null> {
     const task = this.store.task(taskId);
-    const runIds=participantToolRunIds(task,this.store.runs(taskId),agentId,workspaceId);
-    return this.resolution.ownedToolHold(agentId,{requireCompleteEvidence:true,runId:runIds[0],runIds,taskId,workspaceId});
+    const runIds = participantToolRunIds(
+      task,
+      this.store.runs(taskId),
+      agentId,
+      workspaceId,
+    );
+    const result = await this.resolution.ownedToolHold(agentId, {
+      requireCompleteEvidence: true,
+      runId: runIds[0],
+      runIds,
+      taskId,
+      workspaceId,
+    });
+    return result.kind === "clear" ? null : result.reason;
   }
 }

@@ -28,6 +28,7 @@ import {
   isHostOperationTimeout,
 } from "../host";
 import { waitOnUncertainCreation } from "../recovery/creation-lookup";
+import { isQuantumDeadlineExceeded } from "../scheduling/pass-snapshot";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { agentSettled } from "../machine/agent-settled";
 import { dirname } from "node:path";
@@ -502,6 +503,48 @@ export class WorkerLauncher {
           return;
         }
       }
+      // Spec 068 §6 / Spec 066 R1: a quantum deadline expiry defers cleanly.
+      // Definite pre-send deferral (`error.preSend`) releases the unsent
+      // worker reservation without recording `exact_lookup` or a stop. A
+      // post-send timeout preserves durable `agentIntent` / `runId` without
+      // recording an `exact_lookup` incident or stop.
+      if (isQuantumDeadlineExceeded(error)) {
+        if (error.preSend) {
+          const current = this.store.task(task.id);
+          if (
+            current.agentIntent &&
+            !current.agentId &&
+            current.runId === runId
+          ) {
+            this.store.transaction(() => {
+              this.store.deleteCredential(runId);
+              this.store.update(task.id, {
+                agentIntent: false,
+                restartRunId: runId,
+                runId: null,
+                ...(current.reasonFact?.code === "creating_worker"
+                  ? { reason: task.reason }
+                  : {}),
+                ...(!current.resolution.stop && task.resolution.stop
+                  ? {
+                      resolution: {
+                        ...current.resolution,
+                        stop: task.resolution.stop,
+                      },
+                    }
+                  : {}),
+                briefRuns: current.briefRuns.filter(
+                  (item) => item.runId !== runId,
+                ),
+                laneDocumentRuns: (current.laneDocumentRuns ?? []).filter(
+                  (item) => item.runId !== runId,
+                ),
+              });
+            });
+          }
+        }
+        return;
+      }
       // Record the exact-lookup window now: automatic reconciliation owns the fault before any coordinator can engage.
       this.resolution.ensureIncident(
         this.store.task(task.id),
@@ -523,7 +566,13 @@ export class WorkerLauncher {
         !current.agentId &&
         current.runId === runId
       ) {
-        waitOnUncertainCreation(this.resolution, current, "worker", runId, error);
+        waitOnUncertainCreation(
+          this.resolution,
+          current,
+          "worker",
+          runId,
+          error,
+        );
         return;
       }
       const failure = classifyWorkerLaunchFailure(detail);

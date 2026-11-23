@@ -1,6 +1,7 @@
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
 import { ProvenPreSendRefusalError } from "../host/errors";
+import { isQuantumDeadlineExceeded } from "../scheduling/pass-snapshot";
 import type { Resolution } from "../resolution";
 
 /**
@@ -39,7 +40,8 @@ export async function denyPendingPermission(
   state: AgentObservation,
 ): Promise<boolean> {
   const pending = state.pendingRequest;
-  if (!state.permissions || !pending || pending.kind === "question") return false;
+  if (!state.permissions || !pending || pending.kind === "question")
+    return false;
   if (task.interactive && !run) return false;
   const answer = context.adapter.answerNativePermission;
   if (!answer) return false;
@@ -48,11 +50,19 @@ export async function denyPendingPermission(
   if (!runId || !workspaceId) return false;
   const store = context.store;
   const intentId = `ns-permission-deny-${runId}-${pending.id}`.slice(0, 500);
-  let denials = 0, settledDenialAt = 0, intents = 0, refusals = 0;
+  let denials = 0,
+    settledDenialAt = 0,
+    intents = 0,
+    refusals = 0;
   for (const event of store.eventsAll(task.id)) {
     if (!event.detail.startsWith(`${intentId}:`)) continue;
-    if (event.kind === PERMISSION_DENIED) settledDenialAt = Date.parse(event.at) || 0;
-    if (event.kind === PERMISSION_DENIED || event.kind === PERMISSION_DENIAL_UNKNOWN) denials++;
+    if (event.kind === PERMISSION_DENIED)
+      settledDenialAt = Date.parse(event.at) || 0;
+    if (
+      event.kind === PERMISSION_DENIED ||
+      event.kind === PERMISSION_DENIAL_UNKNOWN
+    )
+      denials++;
     if (event.kind === PERMISSION_DENIAL_INTENT) intents++;
     if (event.kind === PERMISSION_DENIAL_REFUSED) refusals++;
   }
@@ -60,19 +70,41 @@ export async function denyPendingPermission(
   // confirmed gets one report window to leave the list. A decline with an
   // unknown outcome, or an intent no proven refusal settled, is never resent:
   // the request is left to ordinary stall detection, which names it.
-  if (settledDenialAt && Date.now() - settledDenialAt < PERMISSION_REPORT_WINDOW_MS) return true;
+  if (
+    settledDenialAt &&
+    Date.now() - settledDenialAt < PERMISSION_REPORT_WINDOW_MS
+  )
+    return true;
   if (denials || intents > refusals) return false;
   const detail = (extra: Record<string, unknown> = {}) =>
-    `${intentId}: ${JSON.stringify({ runId, agentId: state.id, requestId: pending.id, kind: pending.kind, ...extra })}`.slice(0, 4000);
+    `${intentId}: ${JSON.stringify({ runId, agentId: state.id, requestId: pending.id, kind: pending.kind, ...extra })}`.slice(
+      0,
+      4000,
+    );
   const message = permissionDenialMessage(pending.kind);
   store.event(task.id, PERMISSION_DENIAL_INTENT, detail());
   try {
     await context.onTaskHost(task, () =>
-      answer.call(context.adapter, state.id, workspaceId, pending.id, "decline", intentId, message),
+      answer.call(
+        context.adapter,
+        state.id,
+        workspaceId,
+        pending.id,
+        "decline",
+        intentId,
+        message,
+      ),
     );
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    store.event(task.id, error instanceof ProvenPreSendRefusalError ? PERMISSION_DENIAL_REFUSED : PERMISSION_DENIAL_UNKNOWN, detail({ reason }));
+    const preSend =
+      error instanceof ProvenPreSendRefusalError ||
+      (isQuantumDeadlineExceeded(error) && error.preSend);
+    store.event(
+      task.id,
+      preSend ? PERMISSION_DENIAL_REFUSED : PERMISSION_DENIAL_UNKNOWN,
+      detail({ reason }),
+    );
     return false;
   }
   // A host that steers into the live turn gets the message there; a host whose
@@ -81,10 +113,16 @@ export async function denyPendingPermission(
   let delivered = "carried by the host's decline";
   if (send)
     try {
-      await context.onTaskHost(task, () => send.call(context.adapter, state.id, `${intentId}-message`, message));
+      await context.onTaskHost(task, () =>
+        send.call(context.adapter, state.id, `${intentId}-message`, message),
+      );
       delivered = "delivered";
     } catch (error) {
-      delivered = `unknown: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1000);
+      delivered =
+        `unknown: ${error instanceof Error ? error.message : String(error)}`.slice(
+          0,
+          1000,
+        );
     }
   store.event(task.id, PERMISSION_DENIED, detail({ message: delivered }));
   return true;

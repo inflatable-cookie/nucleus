@@ -64,7 +64,9 @@ export interface HostPolicyPort
       | "continueReviewer"
     >
   > {
-  createReviewEntryWorkspace(spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0]): Promise<{ id: string }>;
+  createReviewEntryWorkspace(
+    spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0],
+  ): Promise<{ id: string }>;
   creationOwner(): CreationOwner;
   binding(key: string, task: Task, runId: string, token: string): string;
   dataDir(): string;
@@ -94,6 +96,7 @@ export interface HostPolicyPort
     workspaceId: string,
     runIds: readonly string[],
     runtime?: ParticipantRuntime,
+    processes?: import("./types").HostProcessFact[] | null,
   ): Promise<string | null>;
   createCloseoutWorkspace(
     task: Task,

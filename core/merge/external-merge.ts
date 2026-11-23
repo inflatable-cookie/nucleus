@@ -23,6 +23,10 @@ import {
 } from "../git/index";
 import { commonDirMatchesTask, readGitCheckout } from "../git/git-identity";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+} from "../scheduling/pass-snapshot";
 import type {
   ReviewEntryExternalMerge,
   RetainedSourceExternalMerge,
@@ -63,6 +67,7 @@ export type ExternalMergeContext = Pick<
   | "host"
   | "openPlannerEscalation"
   | "paused"
+  | "quantumReadTimeoutMs"
   | "resolveIncident"
   | "reviewRequired"
   | "store"
@@ -608,7 +613,13 @@ export class ExternalMerge {
     const witness = retained
       ? await this.proveRetainedExternalMergeSource(t)
       : null;
-    const observed = await this.adapter.externalMerge(t, true, retained);
+    const observedRead = await boundedRead(
+      "external merge check",
+      () => this.adapter.externalMerge!(t, true, retained),
+      this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
+    );
+    if (observedRead.state === "unknown") return null;
+    const observed = observedRead.value;
     if (
       retained &&
       ((await this.proveRetainedExternalMergeSource(t)) !== witness ||
@@ -700,7 +711,17 @@ export class ExternalMerge {
       )
         return false;
       const observed = this.externalCheckIdentity(this.store.task(t.id));
-      const result = await this.adapter.externalMerge(t);
+      const resultRead = await boundedRead(
+        "external merge check",
+        () => this.adapter.externalMerge!(t),
+        this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
+      );
+      if (resultRead.state === "unknown") {
+        // Spec 066 R1: a timed-out forge probe is unknown, never "PR is open".
+        this.noteExternalMergeProbe(t);
+        return false;
+      }
+      const result = resultRead.value;
       this.noteExternalMergeProbe(t);
       if (this.resolution.paused()) return false;
       if (!result) {

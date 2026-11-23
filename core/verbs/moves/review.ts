@@ -300,12 +300,12 @@ export async function moveToReview(
           taskId: task.id,
           workspaceId: task.workspaceId,
         });
-        if (hold)
+        if (hold.kind !== "clear")
           throw Error(
-            hold ===
+            hold.reason ===
               "participant is not idle and permission-free in the recorded workspace"
               ? "Move to review requires the retained workers to be observably inactive in the task workspace"
-              : `Move to review requires retired worker ${agentId} to clear owned tools: ${hold}`,
+              : `Move to review requires retired worker ${agentId} to clear owned tools: ${hold.reason}`,
           );
       } else {
         const observed = await engine.host.observe(agentId);

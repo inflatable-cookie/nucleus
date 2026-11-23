@@ -17,8 +17,12 @@ import {
   reviewContinuationWait,
   reviewInProgress,
 } from "../review/review-continuation";
-import { readToolTimeline } from "./stall";
+import { readToolTimeline, type OwnedToolHoldResult } from "./stall";
 import { participantToolRunIds } from "./task-reasons";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+} from "../scheduling/pass-snapshot";
 
 /** What one fence settlement changed, for its audit event. */
 export interface SettledFences {
@@ -472,7 +476,12 @@ export function releaseRunFromRecordedCompletion(
 ): void {
   const latest = store.run(run.id);
   if (!latest || latest.released || !latest.completion) return;
-  store.putRun({ ...latest, status: "finished", released: true, active: false });
+  store.putRun({
+    ...latest,
+    status: "finished",
+    released: true,
+    active: false,
+  });
   store.event(
     taskId,
     "run_released_from_recorded_completion",
@@ -531,7 +540,11 @@ export class RunRelease {
           !run.mergeRetirement &&
           (task.resolution.recovery?.runId !== run.id ||
             (!run.completionReceivedAt &&
-              !this.store.receiptHash(run.completion.eventId, task.id, run.id))) &&
+              !this.store.receiptHash(
+                run.completion.eventId,
+                task.id,
+                run.id,
+              ))) &&
           run.completion.status === "escalate",
       );
     if (!runs.length) return;
@@ -628,7 +641,17 @@ export class RunRelease {
       runIdentity = JSON.stringify(this.store.runs(taskId));
     let observed: Awaited<ReturnType<Adapter["observe"]>>;
     try {
-      observed = await this.engine.host.observe(run.agentId);
+      const deadlineMs =
+        this.engine.resolution?.quantumReadTimeoutMs ??
+        QUANTUM_READ_DEADLINE_MS;
+      const pending = this.engine.host.observe(run.agentId!);
+      const read = await boundedRead(
+        "retained reviewer observation",
+        () => pending,
+        deadlineMs,
+      );
+      if (read.state === "unknown") return;
+      observed = read.value;
     } catch {
       return;
     }
@@ -941,18 +964,37 @@ export class RunRelease {
    * Holds write nothing, so a pass with nothing settleable leaves the task
    * untouched. Returns how many runs released.
    */
+  private readonly supersededOffset = new Map<string, number>();
+
   async settleSupersededIdleRuns(
     taskId: string,
     detail: string,
   ): Promise<number> {
     let settled = 0;
     if (this.store.task(taskId).removedAt) return settled;
-    for (const run of this.store
+    const eligible = this.store
       .runs(taskId)
-      .filter((candidate) => !candidate.released)) {
+      .filter(
+        (candidate) =>
+          !candidate.released &&
+          supersededIdleBinding(this.store, taskId, candidate).superseded,
+      );
+    if (!eligible.length) return settled;
+    const offset = this.supersededOffset.get(taskId) ?? 0;
+    this.supersededOffset.set(taskId, (offset + 1) % eligible.length);
+    const start = offset % eligible.length;
+    const ordered =
+      start === 0
+        ? eligible
+        : [...eligible.slice(start), ...eligible.slice(0, start)];
+    const budgetMs =
+      this.engine.resolution?.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const deadlineAt = Date.now() + budgetMs;
+    for (const run of ordered) {
       if (settlementHeld(this.store, this.stopped)) return settled;
-      if (!supersededIdleBinding(this.store, taskId, run).superseded) continue;
-      if ((await this.engine.supersededIdleFence(run)) !== null) continue;
+      if (Date.now() >= deadlineAt) return settled;
+      if ((await this.engine.supersededIdleFence(run, deadlineAt)) !== null)
+        continue;
       if (settlementHeld(this.store, this.stopped)) return settled;
       let done = false;
       this.store.transaction(() => {
@@ -984,8 +1026,12 @@ export class RunRelease {
   ): Promise<number> {
     let settled = 0;
     if (this.store.task(taskId).removedAt) return settled;
+    const budgetMs =
+      this.engine.resolution?.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const deadlineAt = Date.now() + budgetMs;
     for (const run of this.store.runs(taskId)) {
       if (settlementHeld(this.store, this.stopped)) return settled;
+      if (Date.now() >= deadlineAt) return settled;
       if (run.role !== "executor" || !run.proofExecution) continue;
       const record = (this.store.task(taskId).proofExecutions ?? []).find(
         (item) => item.runId === run.id,
@@ -999,7 +1045,25 @@ export class RunRelease {
       if (!run.agentId || !this.adapter.agentTimelinePage) continue;
       let read: Awaited<ReturnType<typeof readToolTimeline>>;
       try {
-        read = await readToolTimeline(this.engine.host, run.agentId);
+        const remainingMs = Math.max(0, deadlineAt - Date.now());
+        if (remainingMs <= 0) return settled;
+        const timelineHost = this.engine.resolution?.readPassTimelinePage
+          ? {
+              agentTimelinePage: async (id: string, limit?: number) => {
+                const pageRead =
+                  await this.engine.resolution.readPassTimelinePage(
+                    id,
+                    limit,
+                    run.hostId ?? this.store.task(taskId).hostId,
+                    Math.max(0, deadlineAt - Date.now()),
+                  );
+                if (pageRead.state === "unknown")
+                  throw new Error(pageRead.reason);
+                return pageRead.value;
+              },
+            }
+          : this.engine.host;
+        read = await readToolTimeline(timelineHost, run.agentId, remainingMs);
       } catch {
         continue;
       }
@@ -1056,18 +1120,31 @@ export class RunRelease {
    * and no ambiguous or uncertain effect on the run. A hold
    * writes nothing.
    */
-  async supersededIdleFence(run: Run): Promise<string | null> {
+  async supersededIdleFence(
+    run: Run,
+    deadlineAt?: number,
+  ): Promise<string | null> {
+    const budgetMs =
+      this.engine.resolution?.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const effectiveDeadlineAt = deadlineAt ?? Date.now() + budgetMs;
+    const observeRemaining = Math.max(0, effectiveDeadlineAt - Date.now());
+    if (observeRemaining <= 0) return "its agent observation budget expired";
     let state: Awaited<ReturnType<Adapter["observe"]>> | null = null;
     try {
-      state = await this.engine.host.observe(run.agentId!);
+      const read = await boundedRead(
+        "superseded run observation",
+        () => this.engine.host.observe(run.agentId!),
+        observeRemaining,
+      );
+      state = read.state === "ok" ? read.value : null;
     } catch {
       state = null;
     }
     if (!state) {
-      // A missing or throwing live observation is unobservable. A thread its
-      // host reports archived or gone is the stopped proof the ordinary archive
-      // path accepts, so that one case no longer holds it.
-      if (!(await this.threadArchivedOrGone(run.agentId!)))
+      // A missing, timed-out, or throwing live observation is unobservable. A
+      // thread its host reports archived or gone is the stopped proof the
+      // ordinary archive path accepts, so that one case no longer holds it.
+      if (!(await this.threadArchivedOrGone(run.agentId!, effectiveDeadlineAt)))
         return "its agent is unobservable";
     } else {
       if (!state.id || state.id !== run.agentId)
@@ -1080,12 +1157,15 @@ export class RunRelease {
       if (!["idle", "error", "closed"].includes(state.status))
         return `its agent is ${state.status}`;
       if (state.status !== "closed") {
+        if (Date.now() >= effectiveDeadlineAt)
+          return "its owned-tool observation budget expired";
         const tools = await this.engine.ownedToolHold(
           run.agentId!,
           run.id,
           run.taskId,
+          { deadlineAt: effectiveDeadlineAt },
         );
-        if (tools) return tools;
+        if (tools.kind !== "clear") return tools.reason;
       }
     }
     // The archive proves the thread cannot take a turn; it never settles the
@@ -1099,10 +1179,27 @@ export class RunRelease {
     return null;
   }
 
-  /** The host's own answer that this thread is archived or gone; an unreadable one proves nothing. */
-  async threadArchivedOrGone(agentId: string): Promise<boolean> {
+  /** The host's own answer that this thread is archived or gone; an unreadable or timed-out one proves nothing. */
+  async threadArchivedOrGone(
+    agentId: string,
+    deadlineAt?: number,
+  ): Promise<boolean> {
     try {
-      const origin = await this.engine.host.originAgent(agentId);
+      const budgetMs =
+        this.engine.resolution?.quantumReadTimeoutMs ??
+        QUANTUM_READ_DEADLINE_MS;
+      const remainingMs =
+        deadlineAt !== undefined
+          ? Math.max(0, deadlineAt - Date.now())
+          : budgetMs;
+      if (remainingMs <= 0) return false;
+      const read = await boundedRead(
+        "origin agent observation",
+        () => this.engine.host.originAgent(agentId),
+        remainingMs,
+      );
+      if (read.state === "unknown") return false;
+      const origin = read.value;
       return !origin || origin.archived === true;
     } catch {
       return false;
@@ -1122,15 +1219,23 @@ export class RunRelease {
     agentId: string,
     runId?: string,
     taskId?: string,
-    options: { requireCompleteEvidence?: boolean; allowRetired?: boolean } = {},
-  ): Promise<string | null> {
+    options: {
+      requireCompleteEvidence?: boolean;
+      allowRetired?: boolean;
+      deadlineAt?: number;
+    } = {},
+  ): Promise<OwnedToolHoldResult> {
     if (!taskId || !runId)
       return this.resolution.ownedToolHold(agentId, options);
     const task = this.store.task(taskId),
       runs = this.store.runs(taskId);
     const boundRun = runs.find((run) => run.id === runId);
     const workspaceId = boundRun?.workspaceId ?? task.workspaceId;
-    if (!workspaceId) return "owned tool run workspace identity is unavailable";
+    if (!workspaceId)
+      return {
+        kind: "hold",
+        reason: "owned tool run workspace identity is unavailable",
+      };
     const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
     if (!runIds.includes(runId)) runIds.unshift(runId);
     return this.resolution.ownedToolHold(agentId, {

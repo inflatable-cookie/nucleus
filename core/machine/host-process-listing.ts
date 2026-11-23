@@ -29,15 +29,22 @@ import {
   darwinBbThreadEnvironments,
   runProcessEnvironments,
 } from "./run-process-identity";
+import { boundedPromise } from "./bounded-promise";
 
 /** The longest command a process fact retains; the tail carries the arguments a proof reads. */
 export const HOST_PROCESS_COMMAND_MAX = 4096;
+/** Overall deadline for a full uid process-table read (`ps` + `lsof` + env/image checks). */
+export const HOST_PROCESS_LISTING_DEADLINE_MS = 15_000;
 const PS_TIMEOUT_MS = 5_000;
 const execFileAsync = promisify(execFile);
 
 /** What a host process-table read proved: the table, or why there is none. */
 export type HostProcessListRead =
-  | { state: "listed"; processes: HostProcessFact[]; enumeratedPids?: ReadonlySet<number> }
+  | {
+      state: "listed";
+      processes: HostProcessFact[];
+      enumeratedPids?: ReadonlySet<number>;
+    }
   | { state: "unknown"; reason: string };
 
 /**
@@ -138,7 +145,8 @@ async function linuxCommand(pid: number): Promise<ProcCommandLine> {
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     return code === "ENOENT" || code === "ESRCH"
-      ? { state: "gone" } : { state: "unreadable" };
+      ? { state: "gone" }
+      : { state: "unreadable" };
   }
 }
 
@@ -155,33 +163,50 @@ async function linuxProcesses(
       reason: `the /proc listing is unreadable: ${String(error)}`,
     };
   }
-  const bootId = await readFile("/proc/sys/kernel/random/boot_id", "utf8").then(value => value.trim() || null, () => null);
+  const bootId = await readFile("/proc/sys/kernel/random/boot_id", "utf8").then(
+    (value) => value.trim() || null,
+    () => null,
+  );
   const listed: HostProcessFact[] = [];
   for (let offset = 0; offset < entries.length; offset += 64) {
-    const facts = await Promise.all(entries.slice(offset, offset + 64).map(async entry => {
-      if (!/^\d+$/.test(entry)) return null;
-      const pid = Number(entry);
-      if (await linuxUid(pid) !== uid) return null;
-      const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => null);
-      if (!stat) return null;
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      const [command, cwd] = await Promise.all([linuxCommand(pid), linuxCwd(pid)]);
-      // Exits during the walk are absent. Other inspection failures stay unknown.
-      if (inspectedProcessGone(command, cwd)) return null;
-      return {
-        pid,
-        ppid: Number(fields[1]),
-        state: fields[0] || null,
-        pgid: Number(fields[2]),
-        uid,
-        startIdentity: linuxStartIdentity(pid, stat, bootId),
-        command: command.state === "read" ? truncateCommand(command.line) : "",
-        cwd: cwd.state === "read" ? cwd.path : null,
-      };
-    }));
+    const facts = await Promise.all(
+      entries.slice(offset, offset + 64).map(async (entry) => {
+        if (!/^\d+$/.test(entry)) return null;
+        const pid = Number(entry);
+        if ((await linuxUid(pid)) !== uid) return null;
+        const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(
+          () => null,
+        );
+        if (!stat) return null;
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        const [command, cwd] = await Promise.all([
+          linuxCommand(pid),
+          linuxCwd(pid),
+        ]);
+        // Exits during the walk are absent. Other inspection failures stay unknown.
+        if (inspectedProcessGone(command, cwd)) return null;
+        return {
+          pid,
+          ppid: Number(fields[1]),
+          state: fields[0] || null,
+          pgid: Number(fields[2]),
+          uid,
+          startIdentity: linuxStartIdentity(pid, stat, bootId),
+          command:
+            command.state === "read" ? truncateCommand(command.line) : "",
+          cwd: cwd.state === "read" ? cwd.path : null,
+        };
+      }),
+    );
     for (const fact of facts) if (fact) listed.push(fact);
   }
-  return { state: "listed", processes: listed, enumeratedPids: new Set(entries.filter(entry => /^\d+$/.test(entry)).map(Number)) };
+  return {
+    state: "listed",
+    processes: listed,
+    enumeratedPids: new Set(
+      entries.filter((entry) => /^\d+$/.test(entry)).map(Number),
+    ),
+  };
 }
 
 async function darwinProcesses(
@@ -251,17 +276,26 @@ async function darwinProcesses(
 /**
  * Every host process owned by this uid, or the reason the table is unknown.
  *
- * An absent uid or an unsupported platform is unknown, not empty: nothing here
- * proves that no process is running, so no caller may read it that way.
+ * An absent uid, an unsupported platform, or a read that misses its overall
+ * deadline is unknown, not empty: nothing here proves that no process is
+ * running, so no caller may read it that way.
  */
-export async function readHostUidProcesses(): Promise<HostProcessListRead> {
+export async function readHostUidProcesses(
+  options: { deadlineMs?: number } = {},
+): Promise<HostProcessListRead> {
   const at = Date.now();
-  const read = await readUidProcesses();
-  rememberParticipantProcessTable(read.state === "listed" ? read.processes : null, at, read.state === "listed" ? read.enumeratedPids : undefined);
+  const read = await readUidProcesses(options);
+  rememberParticipantProcessTable(
+    read.state === "listed" ? read.processes : null,
+    at,
+    read.state === "listed" ? read.enumeratedPids : undefined,
+  );
   return read;
 }
 
-async function readUidProcesses(): Promise<HostProcessListRead> {
+async function readUidProcesses(
+  options: { deadlineMs?: number } = {},
+): Promise<HostProcessListRead> {
   const uid = uidOf();
   if (uid < 0)
     return {
@@ -269,15 +303,23 @@ async function readUidProcesses(): Promise<HostProcessListRead> {
       reason: "the host process owner cannot be read on this platform",
     };
   if (process.platform === "linux" || process.platform === "darwin") {
-    const read =
-      process.platform === "linux"
-        ? await linuxProcesses(uid)
-        : await darwinProcesses(uid);
-    if (read.state === "listed") {
-      await readBbSessionEnvironments(read.processes);
-      await markTrustedCuaProcesses(read.processes);
-    }
-    return read;
+    const deadlineMs = options.deadlineMs ?? HOST_PROCESS_LISTING_DEADLINE_MS;
+    const work = (async (): Promise<HostProcessListRead> => {
+      const read =
+        process.platform === "linux"
+          ? await linuxProcesses(uid)
+          : await darwinProcesses(uid);
+      if (read.state === "listed") {
+        await readBbSessionEnvironments(read.processes);
+        await markTrustedCuaProcesses(read.processes);
+      }
+      return read;
+    })();
+    work.catch(() => {});
+    return boundedPromise(work, deadlineMs, () => ({
+      state: "unknown" as const,
+      reason: `host process listing timed out after ${deadlineMs} ms`,
+    }));
   }
   return {
     state: "unknown",
@@ -385,7 +427,7 @@ export async function markTrustedCuaProcesses(
         );
         if (
           image &&
-          await realpath(image) === trusted &&
+          (await realpath(image)) === trusted &&
           identity.kind === "identity" &&
           startIdentityMatches(fact.startIdentity, identity.identity)
         )

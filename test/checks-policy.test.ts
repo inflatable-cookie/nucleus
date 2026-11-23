@@ -1496,7 +1496,6 @@ function fixture(uncertainMergeRetryMs?: number) {
       weight: "default",
       scopes: ["general"],
       capability: "worker",
-      
     },
     {
       profileId: reviewer.id,
@@ -1506,7 +1505,6 @@ function fixture(uncertainMergeRetryMs?: number) {
       weight: "default",
       scopes: ["general"],
       capability: "worker",
-      
     },
     {
       profileId: coordinator.id,
@@ -1516,7 +1514,6 @@ function fixture(uncertainMergeRetryMs?: number) {
       weight: "default",
       scopes: ["general"],
       capability: "mechanical",
-      
     },
   ]);
   const submitted = store.insert(
@@ -1565,6 +1562,7 @@ function fixture(uncertainMergeRetryMs?: number) {
       active: false,
       permissions: false,
       error: "",
+      updatedAt: "2026-01-01T00:00:00.000Z",
     });
   idle("worker");
   const tokens = new Map<string, string>(),

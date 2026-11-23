@@ -1333,14 +1333,14 @@ test("owned-tool tails refuse missing or unsafe coverage facts", async () => {
       { agentTimelinePage: async () => ({ ...base, ...patch }) },
       "worker",
     );
-    assert.ok("issue" in result, JSON.stringify(patch));
-    assert.match(result.issue, issue);
+    assert.equal(result.kind, "hold", JSON.stringify(patch));
+    if (result.kind === "hold") assert.match(result.reason, issue);
   }
   const empty = await readToolTimeline(
     { agentTimelinePage: async () => toolTimelinePage([]) },
     "worker",
   );
-  assert.deepEqual(empty, { entries: [] });
+  assert.deepEqual(empty, { kind: "ok", entries: [] });
 });
 
 test("owned-tool expansion refuses changed, duplicated, skipped or unadvanced segments", async () => {
@@ -1391,7 +1391,7 @@ test("owned-tool expansion refuses changed, duplicated, skipped or unadvanced se
       },
       "worker",
     );
-    assert.ok("issue" in result, kind);
+    assert.equal(result.kind, "hold", kind);
     assert.equal(reads, 2, kind);
   }
 });
@@ -1408,8 +1408,9 @@ test("owned-tool retrieval has a finite budget and fails closed on read failures
     },
     "worker",
   );
-  assert.ok("issue" in exhausted);
-  assert.match(exhausted.issue, /partial after 6 reads/);
+  assert.equal(exhausted.kind, "hold");
+  if (exhausted.kind === "hold")
+    assert.match(exhausted.reason, /partial after 6 reads/);
   assert.equal(reads, TOOL_TIMELINE_READ_BUDGET);
   for (const failure of ["throw", "null"] as const) {
     reads = 0;
@@ -1423,8 +1424,9 @@ test("owned-tool retrieval has a finite budget and fails closed on read failures
       },
       "worker",
     );
-    assert.ok("issue" in result);
-    assert.match(result.issue, /read 2.*failed|read 2.*unavailable/);
+    assert.equal(result.kind, "hold");
+    if (result.kind === "hold")
+      assert.match(result.reason, /read 2.*failed|read 2.*unavailable/);
     assert.equal(reads, 2);
   }
 });
@@ -1443,11 +1445,13 @@ test("owned-tool reads time out without accepting a late response", async (t) =>
   );
   t.mock.timers.tick(TOOL_TIMELINE_READ_TIMEOUT_MS);
   const result = await pending;
-  assert.ok("issue" in result);
-  assert.match(result.issue, /read 1 failed: read timed out/);
+  assert.equal(result.kind, "deferred");
+  if (result.kind === "deferred")
+    assert.match(result.reason, /read 1 failed: read timed out/);
   finish(toolTimelinePage([]));
-  assert.ok(
-    "issue" in result,
+  assert.equal(
+    result.kind,
+    "deferred",
     "a late empty response cannot turn the refusal into proof",
   );
 });

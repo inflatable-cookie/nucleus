@@ -16,6 +16,10 @@ import {
   HostCreateInFlightError,
   HostUnknownDeliveryError,
 } from "../host/errors";
+import {
+  QUANTUM_READ_DEADLINE_MS,
+  boundedRead,
+} from "../scheduling/pass-snapshot";
 
 /**
  * Spec 068 §3: an uncertain creation settles by lookup, for every role.
@@ -52,7 +56,8 @@ export type CreationLookupContext = Pick<
   | "store"
   | "waiting"
   | "update"
->;
+> &
+  Partial<Pick<Resolution, "quantumReadTimeoutMs">>;
 
 /** A run relaunches under its own id, through the ordinary delivery path. */
 export type RunCreationContext = CreationLookupContext &
@@ -84,15 +89,32 @@ const roleCommand = (role: Run["role"] | "worker"): string | null =>
 async function lookUp(
   ctx: CreationLookupContext,
   owner: Run | Task,
-  binding: { id: string; taskId: string; hostId?: string | null; workspaceId: string },
+  binding: {
+    id: string;
+    taskId: string;
+    hostId?: string | null;
+    workspaceId: string;
+  },
 ): Promise<Lookup> {
   const find = ctx.adapter.findRunAgents;
   if (!find) return { kind: "unreadable", why: "this host has no run lookup" };
-  let found: { id: string; workspaceId: string | null; hostConfirmed?: boolean }[];
+  let found: {
+    id: string;
+    workspaceId: string | null;
+    hostConfirmed?: boolean;
+  }[];
   try {
-    found = await ctx.onTaskHost(owner, () =>
-      find.call(ctx.adapter, binding as unknown as Run),
+    const read = await boundedRead(
+      "creation lookup",
+      () =>
+        ctx.onTaskHost(owner, () =>
+          find.call(ctx.adapter, binding as unknown as Run),
+        ),
+      ctx.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
     );
+    if (read.state === "unknown")
+      return { kind: "unreadable", why: read.reason };
+    found = read.value;
   } catch (error) {
     if (error instanceof HostCreateInFlightError) return { kind: "in_flight" };
     return {
@@ -238,9 +260,14 @@ function stopOn(
 }
 
 /** Why an absent creation is not released yet, in words stable across passes. */
-function pendingWhy(store: Store, binding: CreationBinding, graceMs: number): string {
+function pendingWhy(
+  store: Store,
+  binding: CreationBinding,
+  graceMs: number,
+): string {
   const attempt = readCreationAttempt(store, binding);
-  if (!attempt) return "no thread yet, and its creation attempt is not journaled";
+  if (!attempt)
+    return "no thread yet, and its creation attempt is not journaled";
   if (!attempt.settlement && attempt.producerId === creationProducerId)
     return "no thread yet, and its creation call has not answered";
   const since = Date.parse(attempt.settlement?.at ?? attempt.reservedAt);
@@ -289,7 +316,13 @@ export async function settleRunCreation(
   if (lookup.kind === "unreadable" || lookup.kind === "unknown")
     return waitOn(ctx, current, run.role, run.id, lookup.why);
   if (lookup.kind === "absent" && !ended)
-    return waitOn(ctx, current, run.role, run.id, pendingWhy(store, run, ctx.graceMs));
+    return waitOn(
+      ctx,
+      current,
+      run.role,
+      run.id,
+      pendingWhy(store, run, ctx.graceMs),
+    );
   if (lookup.kind === "bound") {
     const agentId = lookup.agentId;
     store.transaction(() => {
@@ -303,7 +336,11 @@ export async function settleRunCreation(
           reviewerAgentId: agentId,
           ...(fresh.profile ? { reviewerProfile: fresh.profile } : {}),
         });
-      else if (run.role === "revision" && owned && latestTask.agentId !== agentId)
+      else if (
+        run.role === "revision" &&
+        owned &&
+        latestTask.agentId !== agentId
+      )
         latestTask = store.update(latestTask.id, {
           agentId,
           runId: run.id,
@@ -328,13 +365,19 @@ export async function settleRunCreation(
         coordinative(fresh) &&
         latestTask.coordinatorGeneration === fresh.generation
       )
-        latestTask = store.update(latestTask.id, { coordinatorAgentId: agentId });
+        latestTask = store.update(latestTask.id, {
+          coordinatorAgentId: agentId,
+        });
       store.event(
         task.id,
         "creation_bound_by_lookup",
         JSON.stringify({ runId: run.id, role: run.role, agentId }),
       );
-      ctx.waiting(store.task(task.id), threadRunningReason(run.role), "lifecycle");
+      ctx.waiting(
+        store.task(task.id),
+        threadRunningReason(run.role),
+        "lifecycle",
+      );
     });
     return "bound";
   }
@@ -440,7 +483,13 @@ export async function settleWorkerCreation(
   if (lookup.kind === "unreadable" || lookup.kind === "unknown")
     return waitOn(ctx, current, "worker", runId, lookup.why);
   if (lookup.kind === "absent" && !ended)
-    return waitOn(ctx, current, "worker", runId, pendingWhy(store, binding, ctx.graceMs));
+    return waitOn(
+      ctx,
+      current,
+      "worker",
+      runId,
+      pendingWhy(store, binding, ctx.graceMs),
+    );
   if (lookup.kind === "bound") {
     store.update(
       current.id,
@@ -462,7 +511,10 @@ export async function settleWorkerCreation(
     return "bound";
   }
   const head = current.prHead ?? current.planningCommit ?? null;
-  if (relaunchesAtHead(store, current.id, "worker", head) >= CREATION_LOOKUP_ATTEMPTS)
+  if (
+    relaunchesAtHead(store, current.id, "worker", head) >=
+    CREATION_LOOKUP_ATTEMPTS
+  )
     return stopOn(ctx, current, "worker", runId);
   const relaunched = store.transaction(() => {
     const latest = store.task(current.id);
