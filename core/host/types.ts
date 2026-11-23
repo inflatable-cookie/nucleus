@@ -75,7 +75,7 @@ export type WorkspaceCreationState =
   | { kind: "conflicting"; evidence: string };
 
 export type HostProcessTable = HostProcessFact[] & {
-  /** False if the scan could not establish cwd coverage. */
+  /** False if the scan could not establish cwd coverage for the service UID. */
   cwdComplete?: boolean;
 };
 

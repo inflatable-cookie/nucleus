@@ -1785,8 +1785,8 @@ request identities and stored committed-handoff rows are not rewritten.
   Scratch removal follows the stop attempt and the existing volume proof. Every
   release, including `run.release`, leaves scratch cleanup pending while a run
   process still has its cwd or an open file in the workspace or scratch, or
-  remains in the run's process tree. Incomplete cwd or open-file coverage
-  also leaves the intent pending. The
+  remains in the run's process tree. Incomplete cwd or open-file coverage for
+  live processes owned by the service UID also leaves the intent pending. The
   hourly host sweep applies the same ownership proof to settled historical runs,
   including runs settled before this rule, and retries missed cleanup.
   A live non-init ancestor is an absolute protection: nothing below a live

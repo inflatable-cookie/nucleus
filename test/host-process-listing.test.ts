@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import type { HostProcessFact } from '../core/host/types';
 import type { CwdState } from '../core/workspaces/worktree-validation';
-import { dropExitedProcesses, inspectedProcessGone } from '../core/machine/host-process-listing';
+import { dropExitedProcesses, inspectedProcessGone, readHostUidProcesses } from '../core/machine/host-process-listing';
 
 test('only a read that proves the process exited drops it from the table', () => {
   assert.equal(inspectedProcessGone({ state: 'gone' }, { state: 'gone' }), true);
@@ -28,4 +31,38 @@ test('darwin rows whose lsof pass proves them gone leave the table', () => {
   assert.deepEqual(dropExitedProcesses([fact(7), exitedChild], cwds).map(entry => entry.pid), [7]);
   assert.equal(dropExitedProcesses([fact(7), exitedChild], null).length, 2,
     'an unusable lsof pass keeps every row unknown instead of proving absence');
+});
+
+test('darwin process coverage survives a PID exiting after ps', { skip: process.platform !== 'darwin' }, async (t) => {
+  assert.ok(process.getuid);
+  const uid = process.getuid();
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'host-process-listing-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, 'held output');
+  const start = 'Mon Nov 23 18:30:00 2026';
+  const otherUid = uid === 0 ? 501 : 0;
+  // Freeze the ps snapshot, then run the real lsof against it. The first
+  // PID cannot exist on Darwin, so PID selection exits nonzero.
+  await writeFile(join(root, 'ps'), `#!/bin/sh
+cat <<'ROWS'
+${uid} 2147483647 1 1 S ${start} exited-command
+${uid} ${process.pid} 1 1 S ${start} live-command
+${otherUid} 1 0 1 S ${start} system-command
+ROWS
+`, { mode: 0o755 });
+  const handle = await open(file, 'w');
+  const path = process.env.PATH ?? '';
+  process.env.PATH = `${root}${delimiter}${path}`;
+  try {
+    const read = await readHostUidProcesses();
+    assert.equal(read.state, 'listed');
+    assert.equal(read.cwdComplete, true);
+    assert.deepEqual(read.processes.map(({ pid, uid }) => ({ pid, uid })), [{ pid: process.pid, uid }]);
+    const files = read.processes[0]?.openFiles;
+    assert.equal(files?.complete, true);
+    assert.ok(files.paths.includes(file));
+  } finally {
+    process.env.PATH = path;
+    await handle.close();
+  }
 });

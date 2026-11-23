@@ -331,8 +331,11 @@ async function darwinProcesses(
     });
   }
   const pids = facts.filter((fact) => !fact.state?.startsWith("Z")).map((fact) => fact.pid);
+  // A host-wide read selects the same owner as ps. Selecting each PID makes
+  // lsof exit nonzero if a single process (even ps itself) has already exited.
+  const selection = requested ? ["-p", pids.join(",")] : ["-u", String(uid)];
   const listingFiles = pids.length ? await processListing("lsof", [
-    "-nP", "-a", "-p", pids.join(","), "-F0pfn",
+    "-nP", ...selection, "-F0pfn",
   ]) : { status: 0, stdout: "", stderr: "" };
   const paths = darwinOpenFiles(listingFiles.stdout);
   const complete = listingFiles.status === 0 && !listingFiles.stderr.trim();

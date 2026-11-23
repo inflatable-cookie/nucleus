@@ -1,0 +1,1 @@
+Complete, release and archive can proceed when process coverage is complete for the service user and no process holds the run. On macOS, processes exiting during the scan no longer invalidate coverage for the surviving processes.
