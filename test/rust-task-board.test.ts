@@ -95,6 +95,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   const streams = new Set<ServerResponse>();
   let activity = "Editing the fixture";
   let moveReadiness: "pending" | "ready" = "pending";
+  let authorityCold = false;
   const engine = createServer(async (req, res) => {
     const path = req.url ?? "";
     calls.push({
@@ -129,6 +130,13 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       return;
     }
     if (req.method === "POST" && route === "commands") {
+      if (authorityCold) {
+        json(
+          { error: "planner authority is not yet known. Retry shortly." },
+          503,
+        );
+        return;
+      }
       const parts: Uint8Array[] = [];
       for await (const part of req) parts.push(part);
       const command: unknown = JSON.parse(Buffer.concat(parts).toString());
@@ -455,6 +463,11 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     404,
   );
   assert.equal(posts.length, 3);
+  authorityCold = true;
+  await assert.rejects(
+    createRustBoardTransport(fetcher).command("running", { hold: "Fixture" }),
+    { message: "planner authority is not yet known. Retry shortly." },
+  );
   assert.ok(
     calls.every(
       (call) =>

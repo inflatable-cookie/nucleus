@@ -14,6 +14,9 @@ export function configuredRustBoard(
 const prefix = "/api/engine";
 const requestTimeoutMs = 10_000;
 const streamTimeoutMs = 45_000;
+const plannerAuthorityPending = JSON.stringify({
+  error: "planner authority is not yet known. Retry shortly.",
+});
 
 /** Only the task board surface can use the paired session's controller. */
 export function rustBoardRoute(
@@ -150,8 +153,15 @@ export class RustBoardProxy {
         }
         await pipeline(chunks(stream), response, { signal: controller.signal });
       } else {
-        if (upstream.status >= 500) throw new Error("Engine unavailable");
+        const couldBePlannerRetry =
+          target.method === "POST" && upstream.status === 503;
+        if (upstream.status >= 500 && !couldBePlannerRetry) {
+          throw new Error("Engine unavailable");
+        }
         const json = await upstream.text();
+        if (couldBePlannerRetry && json !== plannerAuthorityPending) {
+          throw new Error("Engine unavailable");
+        }
         response.writeHead(upstream.status, {
           ...headers,
           "content-type": "application/json; charset=utf-8",
