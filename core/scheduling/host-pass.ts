@@ -1123,14 +1123,17 @@ export class HostPass {
                 state: "unknown" as const,
                 reason: "observe failed",
               }));
-              if (obsRead.state === "ok") {
-                const s = obsRead.value;
-                coveredObservation = {
-                  updatedAt: s.updatedAt ?? null,
-                  status: s.status,
-                  archived: s.archived,
-                };
+              if (obsRead.state !== "ok") {
+                if (budgetRemaining() <= 0) return;
+                continue;
               }
+              const s = obsRead.value;
+              if (s.active || s.permissions || s.activeTurnId) continue;
+              coveredObservation = {
+                updatedAt: s.updatedAt ?? null,
+                status: s.status,
+                archived: s.archived,
+              };
             }
             const pageCap = perCandidateCap(orderedTools.length);
             if (pageCap <= 0) return;

@@ -393,6 +393,8 @@ export class PassSnapshot {
     const match = entries.find((entry) => {
       if (options.provenTerminal && !entry.settled?.provenTerminal)
         return false;
+      if (options.coveredObservation && !entry.settled?.coveredObservation)
+        return false;
       if (entry.limit === limit) return true;
       if (
         limit !== undefined &&
@@ -434,9 +436,13 @@ export class PassSnapshot {
         fromPassSnapshot: true,
       }),
     };
-    const promise = run(true).then(
+    const promise = run(false).then(
       (settled) => {
-        entry.settled = settled;
+        const cached: PassTimelinePageRead = {
+          ...settled,
+          fromPassSnapshot: true,
+        };
+        entry.settled = cached;
         return settled;
       },
       (error) => {
@@ -449,8 +455,14 @@ export class PassSnapshot {
         throw error;
       },
     );
-    entry.promise = promise;
-    entries.push(entry);
+    entry.promise = promise.then((settled) => ({
+      ...settled,
+      fromPassSnapshot: true,
+    }));
+    void entry.promise.catch(() => {});
+    if (options.coveredObservation || options.provenTerminal)
+      entries.unshift(entry);
+    else entries.push(entry);
     this.timelinePageReads.set(agentKey, entries);
     return promise;
   }
