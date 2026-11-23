@@ -1,5 +1,5 @@
 use nucleus_core::{CheckState, Forge, Head, PullRequest};
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::ForgeError;
 
@@ -66,14 +66,14 @@ struct GraphError {
 }
 
 #[derive(Deserialize)]
-struct Data {
-    repository: Option<Repository>,
+struct Data<T> {
+    repository: Option<Repository<T>>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Repository {
-    pull_request: Option<Checks>,
+struct Repository<T> {
+    pull_request: Option<T>,
 }
 
 #[derive(Deserialize)]
@@ -94,6 +94,20 @@ struct Rollup {
     state: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MergedPull {
+    head_ref_oid: Head,
+    base_ref_name: String,
+    state: String,
+    merge_commit: Option<MergeCommit>,
+}
+
+#[derive(Deserialize)]
+struct MergeCommit {
+    oid: Head,
+}
+
 impl GraphReply {
     pub(crate) fn rate_limited(&self) -> bool {
         self.errors
@@ -102,23 +116,51 @@ impl GraphReply {
     }
 
     pub(crate) fn checks(self, head: &Head, base: &str) -> Result<CheckState, ForgeError> {
-        if !self.errors.is_empty() {
-            return Err(ForgeError::Incomplete);
-        }
-        let data = self.data.ok_or(ForgeError::Incomplete)?;
-        let data: Data = serde_json::from_value(data).map_err(|_| ForgeError::Incomplete)?;
-        let checks = data
-            .repository
-            .and_then(|repository| repository.pull_request)
-            .ok_or(ForgeError::Incomplete)?;
-        if checks.base_ref_name != base {
-            return Err(ForgeError::BaseChanged);
-        }
-        if checks.head_ref_oid != *head || checks.state != "OPEN" {
+        let checks: Checks = self.pull_request()?;
+        verify_graph_pull(head, base, &checks.head_ref_oid, &checks.base_ref_name)?;
+        if checks.state != "OPEN" {
             return Err(ForgeError::Incomplete);
         }
         Ok(checks.state())
     }
+
+    pub(crate) fn merge_commit(self, head: &Head, base: &str) -> Result<Head, ForgeError> {
+        let merged: MergedPull = self.pull_request()?;
+        verify_graph_pull(head, base, &merged.head_ref_oid, &merged.base_ref_name)?;
+        if merged.state != "MERGED" {
+            return Err(ForgeError::Incomplete);
+        }
+        merged
+            .merge_commit
+            .map(|commit| commit.oid)
+            .ok_or(ForgeError::Incomplete)
+    }
+
+    fn pull_request<T: DeserializeOwned>(self) -> Result<T, ForgeError> {
+        if !self.errors.is_empty() {
+            return Err(ForgeError::GraphQlRejected);
+        }
+        let data = self.data.ok_or(ForgeError::Incomplete)?;
+        let data: Data<T> = serde_json::from_value(data).map_err(|_| ForgeError::Incomplete)?;
+        data.repository
+            .and_then(|repository| repository.pull_request)
+            .ok_or(ForgeError::Incomplete)
+    }
+}
+
+fn verify_graph_pull(
+    head: &Head,
+    base: &str,
+    actual_head: &Head,
+    actual_base: &str,
+) -> Result<(), ForgeError> {
+    if actual_base != base {
+        return Err(ForgeError::BaseChanged);
+    }
+    if actual_head != head {
+        return Err(ForgeError::Incomplete);
+    }
+    Ok(())
 }
 
 impl Checks {

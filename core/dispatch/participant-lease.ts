@@ -10,10 +10,8 @@ import {
 } from "../machine/participant-runtime";
 import {
   incompleteRunProcessScan,
-  isLiveProcess,
   readRunProcessCustody,
 } from "../machine/run-process-custody";
-import { readOpenFileFacts } from "../machine/host-process-listing";
 import {
   runBindsCurrentWork,
   type Run,
@@ -245,6 +243,7 @@ export class ParticipantLease {
     task: Task,
     agentId: string,
     workspaceId: string,
+    options: { direct?: boolean } = {},
   ): Promise<string | null> {
     const deadline =
       this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
@@ -276,38 +275,30 @@ export class ParticipantLease {
 
     const scan = await this.resolution.readPassProcesses(task.hostId, {
       participant: { agentId, observation: state },
+      direct: options.direct,
     });
     if (scan.state === "unknown") return scan.reason;
     const complete =
       scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
     if (complete !== true)
       return "the host process listing has incomplete working-directory coverage";
-    // Open files are read only under this participant's scratch roots, never host-wide.
-    const opened = await readOpenFileFacts(
-      scan.processes.filter(isLiveProcess),
-      [...roots],
-    );
-    if (opened.state === "unknown") return opened.reason;
-    if (
-      incompleteRunProcessScan({
-        processes: opened.processes,
-        cwdComplete: scan.cwdComplete,
-      })
-    )
+    if (incompleteRunProcessScan(scan))
       return "the host process listing has incomplete working-directory or open-file coverage";
-    const beforeScan =
-      scan.directBeforeScan === undefined
-        ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
-        : scan.directBeforeScan;
-    const observedAt = Date.parse(state.updatedAt ?? "");
-    if (
-      !Number.isFinite(observedAt) ||
-      observedAt > scan.capturedAt ||
-      (scan.fromPassSnapshot &&
-        (!noTurnLive(beforeScan) || beforeScan?.updatedAt !== state.updatedAt))
-    ) {
-      this.resolution.requestPassProof(task.hostId, agentId);
-      return "the process listing does not cover the participant's latest inactivity";
+    if (scan.fromPassSnapshot) {
+      const beforeScan =
+        scan.directBeforeScan === undefined
+          ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
+          : scan.directBeforeScan;
+      const observedAt = Date.parse(state.updatedAt ?? "");
+      if (
+        !Number.isFinite(observedAt) ||
+        observedAt > scan.capturedAt ||
+        !noTurnLive(beforeScan) ||
+        beforeScan?.updatedAt !== state.updatedAt
+      ) {
+        this.resolution.requestPassProof(task.hostId, agentId);
+        return "the process listing does not cover the participant's latest inactivity";
+      }
     }
 
     const runtime = participantRuntime({
@@ -334,7 +325,7 @@ export class ParticipantLease {
       );
     for (const root of roots) {
       const issue = workspaceToolProcessIssue(
-        opened.processes,
+        scan.processes,
         root!,
         runIds,
         runtime,

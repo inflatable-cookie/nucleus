@@ -73,20 +73,7 @@ import {
   removeRecordedRunScratchDirectory,
   runTemporaryEnvironment,
 } from "../core/workspaces/run-scratch";
-import {
-  readOpenFileFacts,
-  readProcessSubset,
-  type HostOpenFileRead,
-  type HostProcessListRead,
-} from "../core/machine/host-process-listing";
-/** The custody read fills open files for a subset listing; this fixture reads them the same way. */
-async function withOpenFiles(
-  read: HostProcessListRead,
-): Promise<HostOpenFileRead> {
-  if (read.state !== "listed") return read;
-  return readOpenFileFacts(read.processes);
-}
-
+import { readProcessSubset } from "../core/machine/host-process-listing";
 import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
@@ -690,7 +677,16 @@ test("run.release cancels a current revision on the retained worker thread", asy
   assert.equal(result.resolution.currentRunId, null);
 });
 
-test("unknown custody warns live_turn instead of releasing the worker", async (t) => {
+/**
+ * An inactive worker whose live child holds a file in the run scratch. The
+ * child's working directory is `cwd`, so only the open-file read can see the
+ * holder when `cwd` is outside the run scratch.
+ */
+async function releaseWithScratchChild(
+  t: TestContext,
+  cwd: "scratch" | "root",
+  shimOpenFiles: string | null,
+) {
   let pid: number | undefined;
   const scan = async () => {
     if (!pid) return [];
@@ -757,34 +753,34 @@ test("unknown custody warns live_turn instead of releasing the worker", async (t
       },
     },
   });
-  // The child's cwd is outside every guarded root, and it holds a file in the
-  // run scratch. Only an open-file read can see it, and that read overruns.
   const file = join(scratch, "held output");
   const fd = openSync(file, "w");
   const child = spawn(
     process.execPath,
     ["-e", "console.log('ready'); setInterval(() => {}, 1000)"],
     {
-      cwd: f.root,
+      cwd: cwd === "scratch" ? scratch : f.root,
       stdio: ["ignore", "pipe", "inherit", fd],
     },
   );
   closeSync(fd);
   const exited = once(child, "exit");
-  const shimDir = join(f.root, "lsof-shim");
-  mkdirSync(shimDir);
-  writeFileSync(
-    join(shimDir, "lsof"),
-    `#!/bin/sh
+  const path = process.env.PATH ?? "";
+  if (shimOpenFiles !== null) {
+    const shimDir = join(f.root, "lsof-shim");
+    mkdirSync(shimDir);
+    writeFileSync(
+      join(shimDir, "lsof"),
+      `#!/bin/sh
 case "$*" in
-  *"+D"*) exec sleep 6 ;;
+  *"-F0pfn"*) exec sleep ${shimOpenFiles} ;;
   *) exec /usr/sbin/lsof "$@" ;;
 esac
 `,
-    { mode: 0o755 },
-  );
-  const path = process.env.PATH ?? "";
-  process.env.PATH = `${shimDir}${delimiter}${path}`;
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${shimDir}${delimiter}${path}`;
+  }
   try {
     assert.ok(child.stdout);
     await once(child.stdout, "data");
@@ -797,149 +793,47 @@ esac
       caller: formatAgentId(host, "coordinator"),
       accept: ["unreported_result"],
     });
-    assert.equal(refused.explicitResolution?.status, "warnings");
-    assert.ok(
-      refused.explicitResolution?.warnings.some(
-        (warning) => warning.id === "live_turn",
-      ),
-    );
-    assert.equal(f.current().runId, runId);
+    return { f, runId, refused };
   } finally {
     process.env.PATH = path;
     child.kill();
     await exited;
   }
+}
+
+test("a live process whose working directory is the run scratch holds custody without an open-file read", async (t) => {
+  const { f, runId, refused } = await releaseWithScratchChild(
+    t,
+    "scratch",
+    null,
+  );
+  assert.equal(refused.explicitResolution?.status, "warnings");
+  assert.ok(
+    refused.explicitResolution?.warnings.some(
+      (warning) => warning.id === "live_turn",
+    ),
+  );
+  assert.equal(f.current().runId, runId);
 });
 
-test("an open-file deadline does not hide a live process the cwd listing already shows", async (t) => {
-  let pid: number | undefined;
-  const scan = async () => {
-    if (!pid) return [];
-    const result = await readProcessSubset([pid]);
-    return result.state === "listed" ? result.processes : null;
-  };
-  const f = await fixture(t, { hostProcessListing: scan });
-  const directory = join(f.root, "worktree");
-  mkdirSync(directory);
-  const runId = "initial-worker";
-  const observe = () => ({
-    MountPoint: f.root,
-    VolumeUUID: "fixture",
-    Internal: false,
-    Writable: true,
-    WritableVolume: true,
-  });
-  const placement = checkoutRunScratchPlacement({
-    mount: f.root,
-    uuid: "fixture",
-    observe,
-  });
-  const scratch = runTemporaryEnvironment(runId, placement).TMPDIR;
-  mkdirSync(scratch, { recursive: true });
-  (
-    f.store as unknown as { runScratchRemover: (path: string) => boolean }
-  ).runScratchRemover = (path) =>
-    removeRecordedRunScratchDirectory(path, {
-      mount: f.root,
-      uuid: "fixture",
-      observe,
-    });
-  const coordinator = f.run("recovery-run", "recovery", "coordinator");
-  f.store.putRun(coordinator);
-  const task = f.current();
-  f.store.update(task.id, {
-    phase: "needs_attention",
-    workspaceId: "workspace",
-    directory,
-    temporaryDirectory: scratch,
-    runId,
-    agentId: "worker",
-    agentActive: true,
-    resolution: {
-      ...task.resolution,
-      stop: taskStopRecord(
-        "run_stalled",
-        "Stalled worker",
-        null,
-        new Date().toISOString(),
-        ["restart"],
-      ),
-      recoveryActive: true,
-      recovery: {
-        id: "episode",
-        key: "key",
-        generation: 1,
-        runId: coordinator.id,
-        agentId: coordinator.agentId,
-        status: "running",
-        summary: "Mechanical stop",
-        idleSince: null,
-        incidentId: null,
-      },
-    },
-  });
-  const file = join(scratch, "held output");
-  const fd = openSync(file, "w");
-  // The child's working directory is the run scratch, so the cwd listing alone
-  // observes it. Every open-file read overruns; only the cwd-only read answers.
-  const child = spawn(
-    process.execPath,
-    ["-e", "console.log('ready'); setInterval(() => {}, 1000)"],
-    {
-      cwd: scratch,
-      stdio: ["ignore", "pipe", "inherit", fd],
-    },
+test("unknown custody warns live_turn instead of releasing the worker", async (t) => {
+  // The child's cwd is outside the run scratch and only its open file is in
+  // scratch. The open-file read outlives its 12 s deadline, so custody is unknown.
+  const { f, runId, refused } = await releaseWithScratchChild(t, "root", "13");
+  assert.equal(refused.explicitResolution?.status, "warnings");
+  assert.ok(
+    refused.explicitResolution?.warnings.some(
+      (warning) => warning.id === "live_turn",
+    ),
   );
-  closeSync(fd);
-  const exited = once(child, "exit");
-  const shimDir = join(f.root, "lsof-shim");
-  mkdirSync(shimDir);
-  writeFileSync(
-    join(shimDir, "lsof"),
-    `#!/bin/sh
-case "$*" in
-  *"-a -d cwd"*) exec /usr/sbin/lsof "$@" ;;
-  *) exec sleep 6 ;;
-esac
-`,
-    { mode: 0o755 },
-  );
-  const path = process.env.PATH ?? "";
-  process.env.PATH = `${shimDir}${delimiter}${path}`;
-  try {
-    assert.ok(child.stdout);
-    await once(child.stdout, "data");
-    pid = child.pid;
-    assert.ok(pid);
-    const fact = (await scan())?.find((process) => process.pid === pid);
-    assert.ok(fact);
-    assert.equal(fact.cwd, scratch);
-    f.store.update(task.id, { agentActive: false });
-    const refused = await f.command({
-      action: "run.release",
-      run: runId,
-      caller: formatAgentId(host, "coordinator"),
-      accept: ["unreported_result"],
-    });
-    assert.equal(refused.explicitResolution?.status, "warnings");
-    assert.ok(
-      refused.explicitResolution?.warnings.some(
-        (warning) => warning.id === "live_turn",
-      ),
-    );
-    assert.equal(f.current().runId, runId);
-  } finally {
-    process.env.PATH = path;
-    child.kill();
-    await exited;
-  }
+  assert.equal(f.current().runId, runId);
 });
 
 test("a coordinator must accept live_turn before releasing an inactive worker with a live process", async (t) => {
   let pid: number | undefined;
   const scan = async () => {
     if (!pid) return [];
-    const result = await withOpenFiles(await readProcessSubset([pid]));
+    const result = await readProcessSubset([pid]);
     return result.state === "listed" ? result.processes : null;
   };
   const f = await fixture(t, { hostProcessListing: scan });

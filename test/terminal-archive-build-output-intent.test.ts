@@ -7,20 +7,7 @@ import { appendFile, mkdir, open, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Lifecycle } from "../core/closeout/workspace-lifecycle";
 import { git } from "../core/git/index";
-import {
-  readOpenFileFacts,
-  readProcessSubset,
-  type HostOpenFileRead,
-  type HostProcessListRead,
-} from "../core/machine/host-process-listing";
-/** The custody read fills open files for a subset listing; this fixture reads them the same way. */
-async function withOpenFiles(
-  read: HostProcessListRead,
-): Promise<HostOpenFileRead> {
-  if (read.state !== "listed") return read;
-  return readOpenFileFacts(read.processes);
-}
-
+import { readProcessSubset } from "../core/machine/host-process-listing";
 import { terminalArchiveFixture as fixture } from "./support/terminal-archive-fixture";
 
 /** Build output is ignored by its checkout, as in a real repository; the exclude file lives in the shared Git directory. */
@@ -118,13 +105,9 @@ test("a merged workspace archives on retry after the process using its build out
     await handle.close();
     await once(child.stdout, "data");
     assert.ok(child.pid);
-    const read = await withOpenFiles(await readProcessSubset([child.pid]));
+    const read = await readProcessSubset([child.pid]);
     assert.equal(read.state, "listed");
-    assert.ok(
-      read.processes.some(
-        (fact) => fact.cwd === f.root && fact.openFiles?.paths.includes(file),
-      ),
-    );
+    assert.ok(read.processes.some((fact) => fact.cwd === f.root && fact.openFiles?.paths.includes(file)));
     f.adapter.hostProcessListing = async () => read.processes;
     f.updateResolution({ workspaceArchiveRetries: [], cleanupReason: "" });
 
@@ -132,20 +115,15 @@ test("a merged workspace archives on retry after the process using its build out
     assert.ok(existsSync(file));
     assert.equal(f.remote.archives.length, 0);
     const retries = f.task().resolution.workspaceArchiveRetries;
-    assert.match(
-      retries.find((retry) => retry.workspaceId === "ws")?.error ?? "",
-      /still uses the workspace or run scratch/,
-    );
+    assert.match(retries.find((retry) => retry.workspaceId === "ws")?.error ?? "", /still uses the workspace or run scratch/);
 
     child.kill();
     await exit;
     f.adapter.hostProcessListing = async () => [];
-    f.updateResolution({
-      workspaceArchiveRetries: retries.map((retry) => ({
-        ...retry,
-        nextAttemptAt: new Date(0).toISOString(),
-      })),
-    });
+    f.updateResolution({ workspaceArchiveRetries: retries.map((retry) => ({
+      ...retry,
+      nextAttemptAt: new Date(0).toISOString(),
+    })) });
     await new Lifecycle(f.engine).pass();
     assert.equal(existsSync(output), false);
     assert.deepEqual(f.task().resolution.archivedWorkspaceIds, ["ws"]);

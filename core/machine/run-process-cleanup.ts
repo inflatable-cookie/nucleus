@@ -3,10 +3,7 @@ import { setImmediate as yieldToLoop } from "node:timers/promises";
 import type { Store } from "../store/store";
 import type { HostProcessFact, HostProcessTable } from "../host/types";
 import type { Run, Task } from "../../shared/contracts";
-import {
-  readHostUidProcesses,
-  readOpenFileFacts,
-} from "./host-process-listing";
+import { readHostUidProcesses } from "./host-process-listing";
 import { pidAlive } from "./pid";
 import {
   runProcessEnvironments,
@@ -251,10 +248,7 @@ function cleanupRuns(store: Store, hostId: string) {
     const run: Run = JSON.parse(String(row.data));
     const task = byTask.get(run.taskId) ?? store.task(run.taskId);
     if (settledRun(run, task)) {
-      settled.set(run.id, {
-        ...run,
-        directory: runWorkspaceDirectory(task, run),
-      });
+      settled.set(run.id, { ...run, directory: runWorkspaceDirectory(task, run) });
       live.delete(run.id);
     } else {
       live.set(run.id, run);
@@ -495,6 +489,10 @@ async function sweep(
   const tableLiveness = listedProcessLiveness(facts);
   const dataHome = dirname(store.path);
   const live = facts.filter(isLiveProcess);
+  const incomplete = incompleteRunProcessScan({
+    processes: facts,
+    cwdComplete: facts.cwdComplete,
+  });
   // The one ownership question this table answers: what init owns outright.
   const rooted = new Set(
     live
@@ -821,30 +819,13 @@ async function sweep(
       if (!store.getMeta<CleanupRun>(key(run.id)))
         store.queueRunProcessCleanup({ ...run, hostId });
       const provider = records.get(run.id)?.provider;
-      const runDirectories = [run.directory, run.temporaryDirectory];
-      const holdersOf = (processes: readonly HostProcessFact[]) =>
-        runWorkProcesses({
-          live: processes,
-          byPid: table.byPid,
-          directories: runDirectories,
-          infrastructure,
-          providers:
-            provider && !providerHosts.has(provider.pid) ? [provider] : [],
-        });
-      // Working directories first: a holder they show needs no open-file read,
-      // so an open-file deadline never hides a live process. Otherwise open
-      // files are read only under this run's own directories.
-      let openLive = live;
-      let holders = holdersOf(live);
-      if (!holders.length) {
-        const opened = await readOpenFileFacts(live, runDirectories);
-        if (opened.state === "unknown") {
-          deferReason(store, run, opened.reason);
-          continue;
-        }
-        openLive = opened.processes;
-        holders = holdersOf(openLive);
-      }
+      const holders = runWorkProcesses({
+        live,
+        byPid: table.byPid,
+        directories: [run.directory, run.temporaryDirectory],
+        infrastructure,
+        providers: provider && !providerHosts.has(provider.pid) ? [provider] : [],
+      });
       if (holders.length) {
         deferReason(
           store,
@@ -853,17 +834,8 @@ async function sweep(
         );
         continue;
       }
-      if (
-        incompleteRunProcessScan({
-          processes: openLive,
-          cwdComplete: facts.cwdComplete,
-        })
-      ) {
-        deferReason(
-          store,
-          run,
-          "process working-directory or open-file coverage is incomplete",
-        );
+      if (incomplete) {
+        deferReason(store, run, "process working-directory or open-file coverage is incomplete");
         continue;
       }
       if (!store.removeRunScratchAfterProcesses(run.temporaryDirectory)) {
@@ -903,7 +875,7 @@ function recordStop(
     hostId,
     agentId: run.agentId,
     temporaryDirectory: run.temporaryDirectory,
-    directory: run.directory,
+      directory: run.directory,
     pending: true,
   };
   store.setMeta(key(run.id), {

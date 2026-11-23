@@ -1,0 +1,1 @@
+- Owner `complete` now uses an exact per-task process custody read rather than reusing a sweep pass snapshot, so finished report tasks with idle or archived worker threads can complete on a busy host. (#1564)

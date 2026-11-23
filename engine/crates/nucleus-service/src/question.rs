@@ -39,6 +39,7 @@ impl Service {
         }
         if authorization.needs_unsettle() {
             self.host.unsettle_notice(&authorization).await?;
+            self.recheck_effect(row, WaitReason::Question).await;
             return Ok(wait);
         }
         let dispatch = authorization.record(&mut attempt)?;

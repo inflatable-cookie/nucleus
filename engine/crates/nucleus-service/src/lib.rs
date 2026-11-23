@@ -1,6 +1,7 @@
 //! Service entry points for the isolated Rust task engine.
 
 mod pass;
+mod presentation;
 mod project;
 mod question;
 mod schedule;
@@ -10,7 +11,7 @@ mod ticket;
 mod web;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     net::SocketAddr,
     os::fd::OwnedFd,
     path::PathBuf,
@@ -23,19 +24,19 @@ use std::{
 
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
-    Action, Authority, Command, CommandError, Entry, Forge, Identity, Observation, Observed,
+    Action, Authority, Command, CommandError, Entry, Forge, Identity, Observation, Observed, Phase,
     Report, Task, WaitReason,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
-use nucleus_hosts::{HostError, T3};
+use nucleus_hosts::{HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
 use nucleus_store::{
     EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError, TaskRow,
 };
 use nucleus_work::{WorkError, Worktrees};
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
-use schedule::Schedule;
+use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
-    sync::{Mutex, Notify, OwnedMutexGuard, broadcast, mpsc},
+    sync::{Mutex, Notify, OnceCell, OwnedMutexGuard, broadcast, mpsc},
     time::Instant,
 };
 
@@ -81,9 +82,12 @@ pub struct Service {
     callback: SocketAddr,
     report_command: PathBuf,
     state: Mutex<State>,
+    pass_lock: Mutex<()>,
+    watch_lock: Mutex<()>,
     changes: broadcast::Sender<TaskChange>,
     wake: Notify,
     forge_until: AtomicU64,
+    forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
     _profile: OwnedFd,
 }
@@ -93,8 +97,11 @@ struct State {
     schedule: Schedule,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, WaitReason>,
+    capacity_waiters: VecDeque<String>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
-    thread_tasks: BTreeMap<String, Vec<String>>,
+    forge_requested: BTreeSet<String>,
+    activity: BTreeMap<String, presentation::ActivityAt>,
+    thread_tasks: BTreeMap<String, BTreeMap<String, Option<ThreadHint>>>,
 }
 
 pub enum CommandOutcome {
@@ -165,12 +172,18 @@ impl Service {
                 schedule: Schedule::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                capacity_waiters: VecDeque::new(),
                 observed_forge: BTreeMap::new(),
+                forge_requested: BTreeSet::new(),
+                activity: BTreeMap::new(),
                 thread_tasks: BTreeMap::new(),
             }),
+            pass_lock: Mutex::new(()),
+            watch_lock: Mutex::new(()),
             changes,
             wake: Notify::new(),
             forge_until: AtomicU64::new(0),
+            forge_retry_secs: AtomicU64::new(0),
             _profile: profile,
         })
     }
@@ -178,8 +191,7 @@ impl Service {
     /// Admit a brief on the configured synthetic project.
     ///
     /// # Errors
-    /// Returns an error for malformed or duplicate input, an unavailable
-    /// role profile, or a storage failure.
+    /// Returns an error for malformed or duplicate input or a storage failure.
     pub async fn admit(
         &self,
         id: String,
@@ -203,14 +215,10 @@ impl Service {
             return Err(ServiceError::Input);
         }
         self.storage.database().verify()?;
-        self.check_project().await?;
-        self.host
-            .check(&[&self.project.worker, &self.project.reviewer])
-            .await?;
         let task = Task::new(identity, brief, None);
         let mut state = self.state.lock().await;
         state.store.create(&task, &event("admitted"))?;
-        self.wake_task(&mut state, &task.identity().id, 1);
+        self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
         Ok(task)
     }
 
@@ -219,11 +227,27 @@ impl Service {
     /// # Errors
     /// Returns an error if the engine cannot verify its volume or read its rows.
     pub async fn pass(&self) -> Result<Vec<PassOutcome>, ServiceError> {
+        let _cycle = self.pass_lock.lock().await;
         self.storage.database().verify()?;
-        let ids = self.due_tasks().await?;
+        let mut first = Some(self.wait_due_task().await?);
         let host = self.host.pass(self.storage.scratch().path());
-        let mut results = Vec::with_capacity(ids.len());
-        for id in ids {
+        let profiles = OnceCell::new();
+        let mut results = Vec::with_capacity(PASS_BATCH);
+        let mut visited = BTreeSet::new();
+        for _ in 0..PASS_BATCH {
+            let next = match first.take() {
+                Some(first) => Some(first),
+                None => self
+                    .state
+                    .lock()
+                    .await
+                    .schedule
+                    .take_ready(Instant::now(), &visited),
+            };
+            let Some(DueTask { id, priority }) = next else {
+                break;
+            };
+            visited.insert(id.clone());
             let row = match self.task(&id).await {
                 Ok(row) => row,
                 Err(ServiceError::Missing) => continue,
@@ -233,8 +257,26 @@ impl Service {
                 let mut state = self.state.lock().await;
                 track(&mut state, &row.task);
             }
-            let result = Box::pin(self.advance(&row, &host)).await;
-            self.schedule_result(&row, &result).await?;
+            let profile_check = if row.task.phase() == Phase::Queued
+                && row.task.run().is_none()
+                && row.task.hold().is_none()
+                && row.task.question().is_none()
+            {
+                *profiles
+                    .get_or_init(|| async {
+                        self.host
+                            .check(&[&self.project.worker, &self.project.reviewer])
+                            .await
+                    })
+                    .await
+            } else {
+                Ok(())
+            };
+            let result = match profile_check {
+                Ok(()) => Box::pin(self.advance(&row, &host)).await,
+                Err(error) => Err(ServiceError::Host(error)),
+            };
+            self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });
         }
         Ok(results)
@@ -243,6 +285,7 @@ impl Service {
     /// Use native thread changes to advance due times. Exact reads still own
     /// every decision, and the due queue stays live across stream failures.
     pub async fn watch_host(&self) {
+        let _subscription = self.watch_lock.lock().await;
         loop {
             let (sender, mut hints) = mpsc::channel(128);
             let watch = self.host.watch_threads(&sender);
@@ -250,25 +293,29 @@ impl Service {
             loop {
                 tokio::select! {
                     _ = &mut watch => break,
-                    Some(thread) = hints.recv() => {
-                        let mut state = self.state.lock().await;
-                        let ids: Vec<_> = state.thread_tasks.iter().filter(|(_, threads)| threads.contains(&thread)).map(|(id, _)| id.clone()).collect();
-                        for id in ids {
-                            state.schedule.wake(&id, Instant::now());
-                            self.wake.notify_one();
-                        }
-                    }
+                    Some(hint) = hints.recv() => self.wake_from_host(hint).await,
                 }
             }
+            tokio::time::sleep(T3_RETRY_DELAY).await;
+        }
+    }
+
+    async fn wake_from_host(&self, hint: ThreadHint) {
+        let mut state = self.state.lock().await;
+        let State {
+            thread_tasks,
+            schedule,
+            ..
+        } = &mut *state;
+        let now = Instant::now();
+        for (id, threads) in thread_tasks {
+            if let Some(prior) = threads.get_mut(&hint.thread)
+                && prior.as_ref() != Some(&hint)
             {
-                let mut state = self.state.lock().await;
-                let ids: Vec<_> = state.thread_tasks.keys().cloned().collect();
-                for id in ids {
-                    state.schedule.wake(&id, Instant::now());
-                }
+                *prior = Some(hint.clone());
+                schedule.wake(id, now, Priority::Decision);
                 self.wake.notify_one();
             }
-            tokio::time::sleep(Duration::from_secs(3)).await;
         }
     }
 
@@ -295,7 +342,7 @@ impl Service {
                 .is_some_and(|value| value.is_finite() && value >= 0.0 && value <= budget.max_load))
     }
 
-    async fn due_tasks(&self) -> Result<Vec<String>, ServiceError> {
+    async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {
         loop {
             let next;
             {
@@ -305,8 +352,7 @@ impl Service {
                     store, schedule, ..
                 } = &mut *state;
                 schedule.seed(store, now)?;
-                let ready = schedule.ready(now);
-                if !ready.is_empty() {
+                if let Some(ready) = schedule.take_ready(now, &BTreeSet::new()) {
                     return Ok(ready);
                 }
                 next = schedule.next();
@@ -322,6 +368,7 @@ impl Service {
         &self,
         row: &TaskRow,
         result: &Result<Action, ServiceError>,
+        previous: Priority,
     ) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
         let wait = match result {
@@ -333,28 +380,40 @@ impl Service {
         };
         let mut state = self.state.lock().await;
         let current = self.lookup(&state, id)?;
-        if !active(&current.task) {
-            state.waits.remove(id);
+        if !active(&current.task) && !state.forge_requested.contains(id) {
+            state.set_wait(id, None);
             return Ok(());
         }
         if current.version != row.version {
-            state.schedule.wake(id, Instant::now());
+            if state.schedule.due(id).is_none() {
+                state.schedule.wake(id, Instant::now(), Priority::Decision);
+            }
             return Ok(());
         }
-        let millis = if wait == Some(WaitReason::ForgeUnknown) {
-            self.forge_until
-                .load(Ordering::Relaxed)
-                .saturating_sub(now_ms())
-                .max(3000)
+        let now = Instant::now();
+        let (delay, priority) = schedule::retry(wait);
+        let due = match result {
+            Err(ServiceError::Host(HostError::Deferred { until })) => *until,
+            _ if wait == Some(WaitReason::ForgeUnknown) => now + self.forge_backoff().max(delay),
+            _ => now + delay,
+        };
+        let priority = if wait == Some(WaitReason::Capacity) {
+            priority
+        } else if row
+            .task
+            .run()
+            .is_some_and(|run| run.revoked() || run.last_send_at_ms().is_none())
+            || (previous == Priority::Effect && result.is_err())
+            || (row.task.phase() == Phase::Merging && wait == Some(WaitReason::ForgeUnknown))
+        {
+            Priority::Effect
+        } else if state.forge_requested.contains(id) {
+            Priority::Wake
         } else {
-            3000
+            priority
         };
-        let due = Instant::now() + Duration::from_millis(millis);
-        state.schedule.wake(id, due);
-        let prior = match wait {
-            Some(reason) => state.waits.insert(id.clone(), reason),
-            None => state.waits.remove(id),
-        };
+        state.schedule.wake(id, due, priority);
+        let prior = state.set_wait(id, wait);
         if prior != wait {
             self.publish(id, current.version);
         }
@@ -413,16 +472,26 @@ impl Service {
         match preflight(&mut task, authority, &observation, command)? {
             Preflight::Ready => {
                 let version = if explicit_move || prior.task != task {
-                    self.commit(&mut state, &prior, &task, &event("command"))?
+                    let mut audit = event("command");
+                    if prior.task.phase() != task.phase()
+                        && matches!(
+                            task.phase(),
+                            nucleus_core::Phase::Closing | nucleus_core::Phase::Done
+                        )
+                    {
+                        presentation::note_merge(&mut audit, &observation.forge);
+                    }
+                    self.commit(&mut state, &prior, &task, &audit)?
                 } else {
                     prior.version
                 };
                 Ok(CommandOutcome::Applied(Box::new(TaskRow { task, version })))
             }
             Preflight::Pending => {
-                let deadline = self.forge_until.load(Ordering::Relaxed);
-                let delay = Duration::from_millis(deadline.saturating_sub(now_ms()));
-                state.schedule.wake(id, Instant::now() + delay);
+                state.forge_requested.insert(id.into());
+                state
+                    .schedule
+                    .wake(id, Instant::now() + self.forge_backoff(), Priority::Wake);
                 self.wake.notify_one();
                 Ok(CommandOutcome::Pending {
                     version: prior.version,
@@ -536,11 +605,22 @@ impl Service {
         audit: &EventDraft,
     ) -> Result<i64, ServiceError> {
         let id = &task.identity().id;
-        let version = state.store.save_row(prior, task, audit)?;
+        let audit = presentation::decorate(&prior.task, task, audit, &state.store);
+        let version = state.store.save_row(prior, task, &audit)?;
         track(state, task);
-        state.waits.remove(id);
+        state.set_wait(id, None);
         state.observed_forge.remove(id);
-        self.wake_task(state, id, version);
+        state.forge_requested.remove(id);
+        state.activity.remove(id);
+        if occupied_slot(&prior.task) && !occupied_slot(task) {
+            state.wake_capacity(Instant::now());
+        }
+        self.wake_task(
+            state,
+            id,
+            version,
+            commit_priority(&prior.task, task, &audit),
+        );
         Ok(version)
     }
 
@@ -555,9 +635,12 @@ impl Service {
             return Err(StoreError::StaleTask.into());
         }
         let prior = match forge {
-            Observed::Known(forge) => state
-                .observed_forge
-                .insert(id.clone(), (row.version, forge.clone())),
+            Observed::Known(forge) => {
+                state.forge_requested.remove(id);
+                state
+                    .observed_forge
+                    .insert(id.clone(), (row.version, forge.clone()))
+            }
             Observed::Unknown => state.observed_forge.remove(id),
         };
         if prior.as_ref() != state.observed_forge.get(id) {
@@ -566,8 +649,60 @@ impl Service {
         Ok(())
     }
 
-    fn wake_task(&self, state: &mut State, id: &str, version: i64) {
-        state.schedule.wake(id, Instant::now());
+    fn forge_backoff(&self) -> Duration {
+        Duration::from_millis(
+            self.forge_until
+                .load(Ordering::Relaxed)
+                .saturating_sub(now_ms()),
+        )
+    }
+
+    async fn recheck_effect(&self, row: &TaskRow, wait: WaitReason) {
+        let (delay, _) = schedule::retry(Some(wait));
+        self.state.lock().await.schedule.wake(
+            &row.task.identity().id,
+            Instant::now() + delay,
+            Priority::Effect,
+        );
+        self.wake.notify_one();
+    }
+
+    async fn observe_activity(
+        &self,
+        row: &TaskRow,
+        activity: Option<RunActivity>,
+    ) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let mut state = self.state.lock().await;
+        let current = self.lookup(&state, id)?;
+        let instance = |row: &TaskRow| row.task.run().map(|run| run.launch().instance.clone());
+        if current.version != row.version || instance(&current) != instance(row) {
+            return Err(StoreError::StaleTask.into());
+        }
+        let observed =
+            activity
+                .zip(instance(row))
+                .map(|(activity, instance)| presentation::ActivityAt {
+                    version: row.version,
+                    instance,
+                    activity,
+                });
+        if state.activity.get(id) != observed.as_ref() {
+            match observed {
+                Some(observed) => {
+                    state.activity.insert(id.clone(), observed);
+                }
+                None => {
+                    state.activity.remove(id);
+                }
+            }
+            self.publish(id, row.version);
+        }
+        Ok(())
+    }
+
+    fn wake_task(&self, state: &mut State, id: &str, version: i64, priority: Priority) {
+        state.schedule.wake(id, Instant::now(), priority);
         self.wake.notify_one();
         self.publish(id, version);
     }
@@ -580,7 +715,51 @@ impl Service {
     }
 }
 
+fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
+    if (task.phase() != prior.phase() && matches!(task.phase(), Phase::Merging | Phase::Closing))
+        || (task.run().is_some_and(nucleus_core::Run::revoked)
+            && !prior.run().is_some_and(nucleus_core::Run::revoked))
+    {
+        return Priority::Effect;
+    }
+    match audit.kind.as_str() {
+        "command" | "reported" => Priority::Wake,
+        "run_reserved"
+        | "host_send"
+        | "run_revoked"
+        | "review_rejected_awaiting_archive"
+        | "question_asked"
+        | "question_delivery" => Priority::Effect,
+        _ => Priority::Decision,
+    }
+}
+
 impl State {
+    fn set_wait(&mut self, id: &str, wait: Option<WaitReason>) -> Option<WaitReason> {
+        let prior = match wait {
+            Some(reason) => self.waits.insert(id.into(), reason),
+            None => self.waits.remove(id),
+        };
+        if prior != wait {
+            if prior == Some(WaitReason::Capacity) {
+                self.capacity_waiters.retain(|waiting| waiting != id);
+            } else if wait == Some(WaitReason::Capacity) {
+                self.capacity_waiters.push_back(id.into());
+            }
+        }
+        prior
+    }
+
+    fn wake_capacity(&mut self, now: Instant) {
+        if let Some(id) = self
+            .capacity_waiters
+            .iter()
+            .find(|id| !self.schedule.effect_ready(id, now))
+        {
+            self.schedule.wake(id, now, Priority::Effect);
+        }
+    }
+
     fn command_observation(&self, row: &TaskRow) -> Observation {
         let forge = self
             .observed_forge
@@ -597,20 +776,38 @@ impl State {
     }
 }
 
+fn occupied_slot(task: &Task) -> bool {
+    task.run()
+        .and_then(nucleus_core::Run::last_send_at_ms)
+        .is_some()
+}
+
 fn track(state: &mut State, task: &Task) {
     let id = &task.identity().id;
     if !active(task) {
         state.thread_tasks.remove(id);
         return;
     }
-    let mut threads: Vec<_> = [nucleus_core::Role::Worker, nucleus_core::Role::Reviewer]
-        .into_iter()
-        .filter_map(|role| task.threads().get(role).map(str::to_owned))
-        .collect();
+    let thread = task
+        .run()
+        .map(|run| run.launch().thread.as_str())
+        .or_else(|| {
+            let role = match task.phase() {
+                Phase::Working => nucleus_core::Role::Worker,
+                Phase::Reviewing => nucleus_core::Role::Reviewer,
+                _ => return None,
+            };
+            task.threads().get(role)
+        });
+    let mut threads: Vec<_> = thread.into_iter().map(str::to_owned).collect();
     if let Some(binding) = task.question_delivery() {
         threads.push(binding.thread.clone());
     }
-    state.thread_tasks.insert(id.clone(), threads);
+    let tracked = state.thread_tasks.entry(id.clone()).or_default();
+    tracked.retain(|thread, _| threads.contains(thread));
+    for thread in threads {
+        tracked.entry(thread).or_insert(None);
+    }
 }
 
 fn active(task: &Task) -> bool {

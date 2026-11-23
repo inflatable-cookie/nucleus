@@ -26,6 +26,7 @@ import {
   type ReviewEntryAdapter,
 } from "../review/review-entry";
 import { now } from "../store/store";
+import { isQuantumDeadlineExceeded } from "../scheduling/pass-snapshot";
 import { nextMergeRequestAt, sendGuardedMerge } from "./merge-phase";
 import { mergeFenceReason } from "../recovery/task-reasons";
 import { recordedSlotWait } from "../recovery/wait-context";
@@ -443,6 +444,9 @@ export class MergeGates {
           return "the open PR no longer matches the accepted reviewed head";
         return null;
       } catch (error) {
+        // A read that ran out of quantum budget is deferred, not failed: the
+        // next pass reads the PR again. Only a real answer reaches attention.
+        if (isQuantumDeadlineExceeded(error)) throw error;
         return error instanceof Error ? error.message : String(error);
       }
     };

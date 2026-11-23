@@ -5,12 +5,13 @@ mod process;
 mod projection;
 mod questions;
 mod rpc;
+mod runtime;
 #[cfg(test)]
 mod t3_tests;
 
 use std::{
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -20,14 +21,18 @@ use launch::{Method, Wire, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
 use process::{Activity, Inventory};
 use projection::Projection;
+pub use projection::RunActivity;
 pub use questions::{
     NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, NoticeTarget, PlannerThread,
 };
+pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc};
+use runtime::ServerRuntime;
 use serde_json::{Value, json};
 use tokio::sync::OnceCell;
 
 const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
+pub const T3_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub struct LaunchRequest<'a> {
     pub binding: Binding,
@@ -47,12 +52,16 @@ pub enum HostError {
     Unavailable,
     #[error("the host read or mutation timed out")]
     Timeout,
+    #[error("the host deferred requests until {until:?}")]
+    Deferred { until: tokio::time::Instant },
     #[error("the host reply could not be confirmed")]
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
     Binding,
     #[error("the host observation or mutation outcome is unknown")]
     Uncertain,
+    #[error("the local process census could not confirm workspace custody")]
+    ProcessCoverage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +152,13 @@ impl ReplayAuthorization {
     }
 }
 
+/// Decision evidence and optional presentation from the same exact native read.
+#[derive(Debug)]
+pub struct RunObservation {
+    pub host: Host,
+    pub activity: Option<RunActivity>,
+}
+
 /// The service serializes commands and effects for each task and persists
 /// the authorized send marker immediately before using it on the wire.
 pub trait TaskHost: Send + Sync {
@@ -161,7 +177,7 @@ pub trait TaskHost: Send + Sync {
         &self,
         run: &Run,
         now_ms: u64,
-    ) -> impl Future<Output = Result<Host, HostError>> + Send;
+    ) -> impl Future<Output = Result<RunObservation, HostError>> + Send;
 
     fn authorize_send(
         &self,
@@ -192,6 +208,7 @@ pub trait TaskHost: Send + Sync {
 
 pub struct T3 {
     rpc: Rpc,
+    runtime_descriptor: Option<PathBuf>,
 }
 
 /// Exact T3 reads share a single bounded process inventory within each pass.
@@ -210,7 +227,15 @@ impl T3 {
     pub fn new(endpoint: &str, bearer: &str) -> Result<Self, HostError> {
         Ok(Self {
             rpc: Rpc::new(endpoint, bearer)?,
+            runtime_descriptor: None,
         })
+    }
+
+    /// Use the connected T3 server's own runtime descriptor for custody checks.
+    #[must_use]
+    pub fn with_runtime_descriptor(mut self, path: PathBuf) -> Self {
+        self.runtime_descriptor = Some(path);
+        self
     }
 
     #[must_use]
@@ -240,12 +265,12 @@ impl T3 {
     /// Returns an error on disconnect or if the listener missed a hint.
     pub async fn watch_threads(
         &self,
-        hints: &tokio::sync::mpsc::Sender<String>,
+        hints: &tokio::sync::mpsc::Sender<ThreadHint>,
     ) -> Result<(), HostError> {
         self.rpc.watch_threads(hints).await
     }
 
-    /// Check the host protocol and the configured role profiles before admission.
+    /// Check the host protocol and configured role profiles for queued tasks.
     ///
     /// # Errors
     /// Returns an error if the configuration is unreadable or a profile is unavailable.
@@ -349,6 +374,7 @@ impl T3Pass<'_> {
     async fn quiet(
         &self,
         binding: &Binding,
+        thread: &str,
         projection: Option<&Projection>,
     ) -> Result<bool, HostError> {
         if let Some(projection) = projection
@@ -362,19 +388,29 @@ impl T3Pass<'_> {
         }
         let inventory = self
             .processes
-            .get_or_init(Inventory::capture)
+            .get_or_init(|| async {
+                let server = self
+                    .host
+                    .runtime_descriptor
+                    .as_deref()
+                    .and_then(|path| ServerRuntime::read(path, self.host.rpc.endpoint()));
+                Inventory::capture(server).await
+            })
             .await
             .as_ref()
-            .map_err(|error| *error)?;
+            .map_err(|_| HostError::ProcessCoverage)?;
         let checkout = Path::new(&binding.worktree_path);
         let activity = match self.scratch {
-            Some(scratch) => inventory.activity_for(checkout, scratch).await?,
-            None => inventory.activity(checkout)?,
+            Some(scratch) => inventory
+                .activity_for(checkout, scratch, thread)
+                .await
+                .map_err(|_| HostError::ProcessCoverage)?,
+            None => inventory.activity(checkout, &std::collections::HashSet::new())?,
         };
         match activity {
             Activity::Busy => Ok(false),
             Activity::Quiet => Ok(true),
-            Activity::Unknown => Err(HostError::Uncertain),
+            Activity::Unknown => Err(HostError::ProcessCoverage),
         }
     }
 }
@@ -401,7 +437,7 @@ impl TaskHost for T3Pass<'_> {
     }
     async fn observe_retained(&self, binding: &Binding, thread: &str) -> Result<Host, HostError> {
         let projection = self.host.thread(binding, thread).await?;
-        let state = if self.quiet(binding, projection.as_ref()).await? {
+        let state = if self.quiet(binding, thread, projection.as_ref()).await? {
             projection
                 .as_ref()
                 .map_or(Ok(RetainedThread::Gone), Projection::retained)?
@@ -414,7 +450,7 @@ impl TaskHost for T3Pass<'_> {
         })
     }
 
-    async fn observe_run(&self, run: &Run, now_ms: u64) -> Result<Host, HostError> {
+    async fn observe_run(&self, run: &Run, now_ms: u64) -> Result<RunObservation, HostError> {
         if run.revoked() {
             return Err(HostError::Binding);
         }
@@ -424,13 +460,20 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         let state = if matches!(state, RunState::Ended | RunState::Gone)
-            && !self.quiet(&wire.binding, thread.as_ref()).await?
+            && !self
+                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+                .await?
         {
             RunState::Running
         } else {
             state
         };
-        Ok(current(run, state))
+        let activity =
+            thread.and_then(|thread| thread.activity(&message_id(&run.launch().instance)));
+        Ok(RunObservation {
+            host: current(run, state),
+            activity,
+        })
     }
 
     async fn authorize_send(&self, run: &Run) -> Result<ReplayAuthorization, HostError> {
@@ -442,7 +485,11 @@ impl TaskHost for T3Pass<'_> {
         }
         let wire = Wire::read(run)?;
         let (thread, state) = self.host.delivery(run, &wire).await?;
-        if state != RunState::ReadyToSend || !self.quiet(&wire.binding, thread.as_ref()).await? {
+        if state != RunState::ReadyToSend
+            || !self
+                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+                .await?
+        {
             return Err(HostError::Uncertain);
         }
         Ok(ReplayAuthorization {
@@ -516,7 +563,9 @@ impl TaskHost for T3Pass<'_> {
         match state {
             RunState::ReadyToSend if !awaiting_reply(run, now_ms) => Ok(StopProgress::ReplayDue),
             RunState::Ended | RunState::Gone
-                if self.quiet(&wire.binding, thread.as_ref()).await? =>
+                if self
+                    .quiet(&wire.binding, &launch.thread, thread.as_ref())
+                    .await? =>
             {
                 if archive
                     && state == RunState::Ended
@@ -548,7 +597,10 @@ impl T3Pass<'_> {
         if thread.retained()? == RetainedThread::Gone {
             return Ok(settled);
         }
-        if !self.quiet(&wire.binding, Some(&thread)).await? {
+        if !self
+            .quiet(&wire.binding, &run.launch().thread, Some(&thread))
+            .await?
+        {
             return Ok(StopProgress::Waiting);
         }
         Ok(if thread.archived() {

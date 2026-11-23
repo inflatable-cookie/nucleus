@@ -103,6 +103,22 @@ fn checks(head: char, state: &str) -> Value {
     }}}})
 }
 
+fn merged_without_commit() -> Value {
+    let mut merged = pull('a', true);
+    merged
+        .as_object_mut()
+        .expect("REST pull")
+        .remove("merge_commit_sha");
+    merged
+}
+
+fn merged_graph(head: char, base: &str, state: &str, commit: Option<Head>) -> Value {
+    json!({"data": {"repository": {"pullRequest": {
+        "headRefOid": sha(head), "baseRefName": base, "state": state,
+        "mergeCommit": commit.map(|oid| json!({"oid": oid}))
+    }}}})
+}
+
 struct Request {
     method_and_path: String,
     body: Option<Value>,
@@ -192,6 +208,17 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
     };
     assert!(read.method_and_path.starts_with(&format!("GET {PR_PATH} ")));
     assert!(graph.method_and_path.starts_with("POST /graphql "));
+    let query = graph.body.as_ref().expect("GraphQL body")["query"]
+        .as_str()
+        .expect("GraphQL query");
+    let tokens =
+        query.split(|character: char| !character.is_ascii_alphanumeric() && character != '_');
+    for field in ["reviewDecision", "statusCheckRollup"] {
+        assert!(
+            tokens.clone().any(|token| token == field),
+            "separate GraphQL field {field}"
+        );
+    }
     assert!(
         merge
             .method_and_path
@@ -203,6 +230,78 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
     );
     for read in [preflight, readback, replay] {
         assert!(read.method_and_path.starts_with(&format!("GET {PR_PATH} ")));
+    }
+}
+
+#[tokio::test]
+async fn a_missing_rest_merge_commit_uses_the_exact_graphql_merge() {
+    let graph = merged_graph('a', "main", "MERGED", Some(sha('f')));
+    let (forge, calls) = server(vec![
+        Some(pull('a', false)),
+        Some(checks('a', "SUCCESS")),
+        Some(pull('a', false)),
+        None,
+        Some(merged_without_commit()),
+        Some(graph.clone()),
+        Some(merged_without_commit()),
+        Some(graph),
+    ]);
+    let target = branches().target(PR_URL).expect("target");
+    let task = task_with_approval();
+    for write in [MergeWrite::Unknown, MergeWrite::Skipped] {
+        let attempt = forge.merge(&task, &target).await.expect("confirm merge");
+        assert_eq!(attempt.write, write);
+        assert!(matches!(
+            attempt.observed, Ok(Forge::Merged { pr, commit }) if pr.head == sha('a') && commit == sha('f')
+        ));
+    }
+    let requests = calls.join().expect("HTTP trace");
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.method_and_path.starts_with("PUT "))
+            .count(),
+        1
+    );
+    for index in [5, 7] {
+        let request = &requests[index];
+        assert!(request.method_and_path.starts_with("POST /graphql "));
+        let body = request.body.as_ref().expect("GraphQL body");
+        assert_eq!(
+            body["variables"],
+            json!({"owner":"example","repo":"fixture","number":7})
+        );
+        assert!(
+            body["query"]
+                .as_str()
+                .expect("query")
+                .contains("mergeCommit{oid}")
+        );
+    }
+}
+
+#[tokio::test]
+async fn graphql_must_confirm_the_merged_head_base_and_commit() {
+    let target = branches().target(PR_URL).expect("target");
+    for (head, base, state, commit) in [
+        ('b', "main", "MERGED", Some(sha('f'))),
+        ('a', "other", "MERGED", Some(sha('f'))),
+        ('a', "main", "OPEN", Some(sha('f'))),
+        ('a', "main", "MERGED", None),
+    ] {
+        let (forge, calls) = server(vec![
+            Some(merged_without_commit()),
+            Some(merged_graph(head, base, state, commit)),
+        ]);
+        let error = forge
+            .observe(&target)
+            .await
+            .expect_err("merge proof is incomplete");
+        assert!(matches!(
+            error,
+            ForgeError::Incomplete | ForgeError::BaseChanged
+        ));
+        assert_eq!(calls.join().expect("proof reads").len(), 2);
     }
 }
 
@@ -399,6 +498,19 @@ async fn a_graphql_rate_error_uses_the_reset_before_interpreting_partial_data() 
             Err(ForgeError::Deferred { until }) if until == UNIX_EPOCH + Duration::from_secs(2_000_000_000)));
         assert_eq!(calls.join().expect("no further calls").len(), 2);
     }
+}
+
+#[tokio::test]
+async fn a_graphql_problem_names_the_failed_read_without_copying_the_body() {
+    let target = branches().target(PR_URL).expect("target");
+    let (forge, calls) = server(vec![
+        Some(pull('a', false)),
+        Some(json!({"errors":[{"message":"synthetic-value", "type":"INVALID_QUERY"}]})),
+    ]);
+    let error = forge.observe(&target).await.expect_err("query rejected");
+    assert!(matches!(error, ForgeError::GraphQlRejected));
+    assert!(!format!("{error:?} {error}").contains("synthetic-value"));
+    assert_eq!(calls.join().expect("exact requests").len(), 2);
 }
 
 #[tokio::test]

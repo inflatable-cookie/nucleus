@@ -13,8 +13,8 @@ export type { HostProcessFact } from "../host/types";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
-import { readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute, join } from "node:path";
+import { readFile, readdir, readlink, realpath } from "node:fs/promises";
 import type { CwdState } from "../workspaces/worktree-validation";
 import { parseProcCommandLine, type ProcCommandLine } from "./process-identity";
 import { linuxStartIdentity, macStartIdentity } from "./start-identity";
@@ -46,6 +46,13 @@ const LISTING_MAX_BUFFER = 96 * 1024 * 1024;
 /** Overall deadline for a full uid process-table read (`ps` + `lsof` + env/image checks). */
 export const HOST_PROCESS_LISTING_DEADLINE_MS = 15_000;
 const PS_TIMEOUT_MS = 5_000;
+/**
+ * The host-wide open-file read lists every open file of the user's processes
+ * (about 19 MB on a busy workstation). Under heavy load it outlived the 5 s ps
+ * limit, its output was cut off, every process then looked cwd-less and every
+ * custody proof refused. It gets most of the listing deadline instead.
+ */
+export const LSOF_TIMEOUT_MS = 12_000;
 const execFileAsync = promisify(execFile);
 
 /** What a host process-table read proved: the table, or why there is none. */
@@ -87,20 +94,17 @@ export function dropExitedProcesses(
   });
 }
 
-/**
- * Preserve command failure and partial output; never turn an OS error into absence.
- * A command killed at its deadline is `timedOut`, so the caller reports the
- * deadline as its own unknown reason instead of as missing coverage.
- */
+/** Preserve command failure and partial output; never turn an OS error into absence. */
 async function processListing(
   command: string,
   args: string[],
   env = process.env,
+  timeout = PS_TIMEOUT_MS,
 ) {
   try {
     const { stdout, stderr } = await execFileAsync(command, args, {
       encoding: "utf8",
-      timeout: PS_TIMEOUT_MS,
+      timeout,
       killSignal: "SIGKILL",
       maxBuffer: LISTING_MAX_BUFFER,
       env,
@@ -120,6 +124,7 @@ async function processListing(
       stderr: failure.stderr ?? "",
       error,
       signal: failure.signal,
+      // Killed at its deadline, not a command that failed on its own.
       timedOut:
         failure.killed === true &&
         failure.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
@@ -352,7 +357,7 @@ async function darwinProcesses(
   if (listing.timedOut)
     return {
       state: "unknown",
-      reason: `the process table read timed out after ${PS_TIMEOUT_MS} ms`,
+      reason: `the process listing timed out after ${PS_TIMEOUT_MS} ms`,
     };
   if (listing.status !== 0 || !listing.stdout)
     return {
@@ -384,40 +389,38 @@ async function darwinProcesses(
   // A host-wide read selects the same owner as ps. Selecting each PID makes
   // lsof exit nonzero if a single process (even ps itself) has already exited.
   const selection = requested ? ["-p", pids.join(",")] : ["-u", String(uid)];
-  // Working directories are the coverage every listing needs. This pass prints
-  // only cwd descriptors (about 40 KB on a busy workstation). The host-wide
-  // open-file read is about 18 MB, so it runs only where a custody decision
-  // asks for open files (see readOpenFileFacts), never on every listing.
-  const cwdPass = pids.length
-    ? await processListing("lsof", [
-        "-nP",
-        ...selection,
-        "-a",
-        "-d",
-        "cwd",
-        "-F0pfn",
-      ])
+  const listingFiles = pids.length
+    ? await processListing(
+        "lsof",
+        ["-nP", ...selection, "-F0pfn"],
+        process.env,
+        LSOF_TIMEOUT_MS,
+      )
     : { status: 0, stdout: "", stderr: "", timedOut: false };
-  // A pass killed at its deadline is unknown, not missing working directories.
-  if (cwdPass.timedOut)
+  // A file scan killed at its deadline is unknown, never missing working directories.
+  if (listingFiles.timedOut)
     return {
       state: "unknown",
-      reason: `the working-directory listing timed out after ${PS_TIMEOUT_MS} ms`,
+      reason: `the open-file listing timed out after ${LSOF_TIMEOUT_MS} ms`,
     };
-  const cwdFiles = darwinOpenFiles(cwdPass.stdout);
-  const complete = cwdPass.status === 0 && !cwdPass.stderr.trim();
+  const paths = darwinOpenFiles(listingFiles.stdout);
+  const complete = listingFiles.status === 0 && !listingFiles.stderr.trim();
   const cwds = new Map<number, CwdState>();
   const missing = new Map<number, HostProcessFact>();
   for (const fact of facts) {
     if (fact.state?.startsWith("Z")) continue;
-    const cwd = cwdFiles.get(fact.pid)?.cwd ?? null;
-    if (cwd) {
-      fact.cwd = cwd;
-      cwds.set(fact.pid, { state: "read", path: cwd });
+    const files = paths.get(fact.pid);
+    if (files?.cwd) {
+      fact.cwd = files.cwd;
+      cwds.set(fact.pid, { state: "read", path: files.cwd });
     } else if (pidAlive(fact.pid)) {
       cwds.set(fact.pid, { state: "unreadable" });
       if (complete) missing.set(fact.pid, fact);
     } else cwds.set(fact.pid, { state: "gone" });
+    fact.openFiles = {
+      paths: files ? [...files.paths] : [],
+      complete: complete && Boolean(files?.complete && files.cwd),
+    };
   }
   // A process can exit after ps and remain as a zombie. A successful lsof
   // omits its cwd, while a PID existence check still sees it until it is reaped.
@@ -451,127 +454,6 @@ async function darwinProcesses(
     processes,
     cwdComplete: processes.every(
       (fact) => fact.cwd !== null || fact.state?.startsWith("Z"),
-    ),
-  };
-}
-
-export type HostOpenFileRead =
-  | { state: "listed"; processes: HostProcessFact[] }
-  | { state: "unknown"; reason: string };
-
-/**
- * Fill open files for the facts a custody decision examines. On macOS a plain
- * listing carries working directories only, so open files come from here. With
- * `roots`, the read covers only those directories (one `lsof +D` pass per
- * existing directory), which is what completion and release decisions need. A
- * call without roots reads every open file the uid holds, for the background
- * sweep only. A deadline is its own unknown reason. A fact that already carries
- * open files (Linux /proc, or a caller's own read) keeps them.
- */
-export async function readOpenFileFacts(
-  processes: readonly HostProcessFact[],
-  roots?: readonly (string | null | undefined)[],
-): Promise<HostOpenFileRead> {
-  const needsFiles = (fact: HostProcessFact) =>
-    fact.openFiles === undefined && !fact.state?.startsWith("Z");
-  if (process.platform !== "darwin" || !processes.some(needsFiles))
-    return { state: "listed", processes: [...processes] };
-  if (roots) return readOpenFilesUnder(processes, roots, needsFiles);
-  const pass = await processListing("lsof", [
-    "-nP",
-    "-u",
-    String(uidOf()),
-    "-F0pfn",
-  ]);
-  if (pass.timedOut)
-    return {
-      state: "unknown",
-      reason: `the open-file listing timed out after ${PS_TIMEOUT_MS} ms`,
-    };
-  const files = darwinOpenFiles(pass.stdout);
-  const complete = pass.status === 0 && !pass.stderr.trim();
-  const read: HostProcessFact[] = [];
-  for (const fact of processes) {
-    if (!needsFiles(fact)) {
-      read.push(fact);
-      continue;
-    }
-    const entry = files.get(fact.pid);
-    if (!entry && !pidAlive(fact.pid)) continue;
-    read.push({
-      ...fact,
-      openFiles: {
-        paths: entry ? [...entry.paths] : [],
-        complete: complete && Boolean(entry?.complete && entry.cwd),
-      },
-    });
-  }
-  return { state: "listed", processes: read };
-}
-
-/**
- * Open files under the given directories. `lsof +D` takes one directory per
- * call, so each existing root is one pass, and its cost follows the tree's size.
- * A missing root holds no open files, so it is skipped. Exit status 1 means "no
- * match" or "a match" here, so only stderr or a timeout marks a pass incomplete.
- */
-async function readOpenFilesUnder(
-  processes: readonly HostProcessFact[],
-  roots: readonly (string | null | undefined)[],
-  needsFiles: (fact: HostProcessFact) => boolean,
-): Promise<HostOpenFileRead> {
-  const directories = [
-    ...new Set(roots.flatMap((root) => (root ? [resolve(root)] : []))),
-  ];
-  const uid = String(uidOf());
-  const found = new Map<number, Set<string>>();
-  // Complete only for roots this read inspected: a directory an lsof pass
-  // covered, or a path confirmed absent. A root that is not a directory, or
-  // that cannot be stat'd, is not inspected, so the read is not complete.
-  let complete = true;
-  const existing: string[] = [];
-  for (const directory of directories) {
-    const status = await stat(directory).then(
-      (entry) => (entry.isDirectory() ? "directory" : "other"),
-      (error: NodeJS.ErrnoException) =>
-        error.code === "ENOENT" ? "missing" : "unreadable",
-    );
-    if (status === "directory") existing.push(directory);
-    else if (status !== "missing") complete = false;
-  }
-  for (const directory of existing) {
-    const pass = await processListing("lsof", [
-      "-nP",
-      "-u",
-      uid,
-      "-a",
-      "+D",
-      directory,
-      "-F0pfn",
-    ]);
-    if (pass.timedOut)
-      return {
-        state: "unknown",
-        reason: `the open-file listing timed out after ${PS_TIMEOUT_MS} ms`,
-      };
-    if (pass.stderr.trim() || (pass.status !== 0 && pass.status !== 1))
-      complete = false;
-    for (const [pid, entry] of darwinOpenFiles(pass.stdout)) {
-      if (!entry.complete) complete = false;
-      const paths = found.get(pid) ?? new Set<string>();
-      for (const path of entry.paths) paths.add(path);
-      found.set(pid, paths);
-    }
-  }
-  return {
-    state: "listed",
-    processes: processes.map((fact) =>
-      needsFiles(fact)
-        ? {
-            ...fact,
-            openFiles: { paths: [...(found.get(fact.pid) ?? [])], complete },
-          }
-        : fact,
     ),
   };
 }

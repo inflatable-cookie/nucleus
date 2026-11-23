@@ -17,7 +17,7 @@ use axum::{
 use futures_util::{Stream, stream};
 use nucleus_core::{
     Answer, Authority, Brief, Command, Hold, Identity, Observation, Phase, PullRequest, Question,
-    Report, Role, Task, Verdict, WaitReason,
+    Report, Task, Verdict, WaitReason,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -25,6 +25,7 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     CommandOutcome, Preflight, Service, ServiceError, State as EngineState, now_ms, preflight,
+    presentation::{HistoryEvent, RunView},
 };
 
 #[cfg(test)]
@@ -177,20 +178,7 @@ async fn detail(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<D
     let row = api.service.lookup(&state, &id)?;
     let task = &row.task;
     let summary = Summary::read(task, row.version, &state);
-    let run = task.run().map(|run| {
-        let launch = run.launch();
-        RunView {
-            role: launch.role,
-            thread: launch.thread.clone(),
-            instance: launch.instance.clone(),
-            purpose: purpose(task, launch.role),
-            reserved_at: launch.started_at,
-            last_send_at: run.last_send_at_ms(),
-            review_head: launch.review_head.clone(),
-            reported: run.report().is_some(),
-            revoked: run.revoked(),
-        }
-    });
+    let run = RunView::read(&row, state.activity.get(&id), &state.store);
     Ok(Json(Detail {
         summary,
         brief: task.brief().clone(),
@@ -273,22 +261,6 @@ fn command_options(
         .collect()
 }
 
-fn purpose(task: &Task, role: Role) -> String {
-    match role {
-        Role::Worker => task
-            .brief()
-            .text
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .map_or_else(
-                || "Implement the brief".into(),
-                |line| line.chars().take(100).collect(),
-            ),
-        Role::Reviewer => "Review the exact PR head".into(),
-    }
-}
-
 async fn command(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
@@ -317,11 +289,14 @@ async fn history(
     State(api): State<Api>,
     Path(id): Path<String>,
     Query(page): Query<Page>,
-) -> Result<Json<Vec<nucleus_store::Event>>, ApiError> {
+) -> Result<Json<Vec<HistoryEvent>>, ApiError> {
     Ok(Json(
         api.service
             .history(&id, page.before, page.limit.unwrap_or(30))
-            .await?,
+            .await?
+            .into_iter()
+            .map(HistoryEvent::from)
+            .collect(),
     ))
 }
 
@@ -417,20 +392,6 @@ struct Detail {
     pull_request: Option<PullRequest>,
     verdict: Option<Verdict>,
     run: Option<RunView>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RunView {
-    role: Role,
-    thread: String,
-    instance: String,
-    purpose: String,
-    reserved_at: u64,
-    last_send_at: Option<u64>,
-    review_head: Option<nucleus_core::Head>,
-    reported: bool,
-    revoked: bool,
 }
 
 #[derive(Serialize)]

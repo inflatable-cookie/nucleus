@@ -80,6 +80,29 @@ Append audit history in the state transaction. The pass loop schedules active
 rows. API history
 and live notifications may read the event log.
 
+Admission and edits commit locally and wake the scheduler. The scheduler
+checks role profiles once in a batch that contains due queued tasks. One
+cycle runs at a time, with at most one GitHub request and one exact T3 RPC
+in flight. A separate T3 shell subscription supplies shared wake hints.
+Repeated transcript updates and reconnects leave existing deadlines in place.
+Running turns have a 45-second exact-read backstop. A lifecycle change,
+callback or command can wake the task sooner.
+
+The scheduler chooses the next task when the current one releases its slot.
+Native writes and their readbacks come first, then command and callback
+wakes, due decisions, and routine refreshes. Within each tier, the oldest
+due task goes first. Wakes for the same task coalesce into one queue entry.
+
+An exact read that still shows a live turn needs no forge read unless a
+command is waiting on forge evidence. Launches, settlement and native writes
+still use fresh evidence. T3 transport failures defer requests for 15 seconds.
+GitHub transport and server failures pause requests across all tasks for 30
+seconds, doubling up to four minutes until a read succeeds. Rate limits retain
+their supplied deadline. A settled run that held a launch slot wakes the oldest
+capacity waiter. Capacity also has a 60-second backstop for changes in local
+load. The launch budget is loaded when the service starts.
+The API serves task views from the store and memory and pushes invalidations.
+
 Normalize the relevant observations to one signal per phase. The bound run
 takes precedence over downstream work until its turn is quiescent. A required
 unknown read yields a wait before any action that depends on it. Optional and
@@ -191,6 +214,11 @@ also check the open PR and clean checkout after native authorization.
   engine and T3 under the same local user with private task checkout roots.
   Use a fresh pass after a launch can have started new processes. Barge pools
   require the host-side inherited hold.
+- Set `NUCLEUS_ENGINE_T3_RUNTIME_DESCRIPTOR` to the connected T3 server's
+  `userdata/server-runtime.json` to recognise standing provider processes.
+  Each pass verifies the descriptor origin and server PID, then follows only
+  direct app-server and helper ancestry. Shells and work spawned by a helper
+  keep custody. Unreadable process facts and conflicting bindings also hold.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
   a retained, idle thread. Reopen an archived thread before reusing it. On
   revocation, clear an unsent request directly and stop a confirmed delivery
@@ -251,6 +279,8 @@ without spending an attempt. A fresh pass checks process custody after launch.
 A definite GitHub head mismatch retires approval and keeps the bound PR in
 Merging until a read shows a new head. A refusal followed by incomplete
 readback waits for fresh evidence and honours any forge retry deadline.
+A failed forge read keeps its retry and reports the safe failure category to
+the service log.
 A confirmed rejection of a superseded review stays in the revoked run slot
 until T3 confirms archival or absence. Later passes only reconcile that
 disposition. They never replay the rejected launch.
@@ -299,7 +329,7 @@ A bound attach rebuilds the full current `plan`, `tool_call` list, status and op
 question. One plan covers Queued, Working, Review (with its round), Merge and
 Close. A persistent wait updates the current step's status. Each worker or
 reviewer run gets one tool call keyed by its launch instance. The service view
-provides its purpose from the brief's first line or the review step, with the
+provides its purpose from the brief's title or the review round, with the
 current tool, command, file or test and its observed start time when available.
 These are display facts from the exact native turn. Use a redacted tool summary
 and compute elapsed time at display. The agent updates the call in place.
@@ -320,6 +350,13 @@ its completion delivery with `delegated_task.completion-delivery.dispose`.
 The service continues to see its role thread and exact run. Verify reattach
 after closeout and checkout removal in the parenting fixtures. ACP and T3
 parenting follow the milestone 1 proof and precede the first real project.
+In the parenting slice, reaching Done schedules archival through the same
+native write gate. Confirm the children are archived or gone, then take a
+fresh, complete parent read that proves its turn and background work have ended.
+Busy or unknown reads schedule a recheck. Confirm that the parent is archived
+or gone and append an audit receipt for that Done revision. Restart recovery
+can skip rows with matching receipts without contacting T3. The engine never
+settles a task thread.
 
 ## Board
 
@@ -335,6 +372,17 @@ and optional pool controls follow their migration milestones.
 interval invalidates the list and visible task views. Task commands use the configured control
 credential. Each run has its own callback credential, including its task and
 role checks. The API exposes the run's progress without its ticket or wire.
+Task detail includes a run's current activity label and optional start time
+in Unix milliseconds. T3 derives it from running items belonging to the
+launch's exact native run. Command labels omit arguments and shell input.
+Activity is in memory, scoped to the row revision and run instance. A change
+can invalidate a task at the same version, so clients refetch on each notice.
+History pages include display records for run starts and ends, PR links,
+verdicts, questions, confirmed merges and finish. Replays of the same launch
+reuse its instance. The audit sequence and record order are enough to rebuild
+the feed on attach. Decisions never read these display records.
+Review rounds count applied reviewer verdicts in history. Replays and
+unsuccessful launches stay in the same round.
 
 The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
 --enable` with an existing profile on the pinned volume. Start `serve` with

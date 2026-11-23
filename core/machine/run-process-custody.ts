@@ -4,7 +4,6 @@ import type { HostProcessFact } from "../host/types";
 import type { Resolution } from "../resolution";
 import type { PassProcessRead } from "../scheduling/pass-snapshot";
 import type { Store } from "../store/store";
-import { readOpenFileFacts } from "./host-process-listing";
 import { bbThreadForAgent, RunProcessTable } from "./run-process-tree";
 import {
   participantTemporaryDirectory,
@@ -33,27 +32,16 @@ export function runWorkProcesses(input: {
   const roots = input.directories.flatMap((root) =>
     root ? [resolve(root)] : [],
   );
-  const providerPids = new Set(
-    input.providers?.flatMap((recorded) => {
-      const provider = input.byPid.get(recorded.pid);
-      return provider &&
-        isLiveProcess(provider) &&
-        startIdentityMatches(recorded.startIdentity, provider.startIdentity)
-        ? [provider.pid]
-        : [];
-    }),
-  );
+  const providerPids = new Set(input.providers?.flatMap((recorded) => {
+    const provider = input.byPid.get(recorded.pid);
+    return provider && isLiveProcess(provider) &&
+      startIdentityMatches(recorded.startIdentity, provider.startIdentity)
+      ? [provider.pid] : [];
+  }));
   if (!roots.length && !providerPids.size) return [];
-  const prefixes = roots.map((root) =>
-    root.endsWith(sep) ? root : root + sep,
-  );
-  const inRoots = (path: string) =>
-    roots.includes(path) || prefixes.some((prefix) => path.startsWith(prefix));
-  const rooted = new Set(
-    input.live.flatMap((fact) =>
-      fact.cwd && inRoots(fact.cwd) ? [fact.pid] : [],
-    ),
-  );
+  const prefixes = roots.map((root) => root.endsWith(sep) ? root : root + sep);
+  const inRoots = (path: string) => roots.includes(path) || prefixes.some((prefix) => path.startsWith(prefix));
+  const rooted = new Set(input.live.flatMap((fact) => fact.cwd && inRoots(fact.cwd) ? [fact.pid] : []));
   return input.live.filter((fact) => {
     // An open file is direct custody even when the holder is standing runtime.
     if (fact.openFiles?.paths.some(inRoots)) return true;
@@ -79,12 +67,9 @@ export function incompleteRunProcessScan(
   const uid = process.getuid?.();
   return (
     scan.cwdComplete === false ||
-    scan.processes.some(
-      (fact) =>
-        (uid === undefined || fact.uid === uid) &&
-        isLiveProcess(fact) &&
-        (fact.cwd === null || fact.openFiles?.complete === false),
-    )
+    scan.processes.some((fact) => (uid === undefined || fact.uid === uid) &&
+      isLiveProcess(fact) &&
+      (fact.cwd === null || fact.openFiles?.complete === false))
   );
 }
 
@@ -106,8 +91,8 @@ export async function readRunProcessCustody(input: {
   const hostId = run?.hostId ?? task.hostId;
   const scan = await input.readProcesses(hostId, { allowMissFetch: true });
   if (scan.state === "unknown") return scan;
-  const liveScan = scan.processes.filter(isLiveProcess);
-  const table = new RunProcessTable(liveScan);
+  const live = scan.processes.filter(isLiveProcess);
+  const table = new RunProcessTable(live);
   const taskRuns = store.runs(task.id);
   const thread = bbThreadForAgent(run?.agentId ?? task.agentId, hostId);
   const runtime = participantRuntime({
@@ -122,43 +107,26 @@ export async function readRunProcessCustody(input: {
       ?.provider ??
     recordedRunProvider(store, { taskId: task.id, runId }) ??
     (activity?.runId === runId ? activity.process : null);
-  const directories = [
-    input.directory ?? runWorkspaceDirectory(task, run),
-    participantTemporaryDirectory(task, taskRuns, runId),
-    store.getMeta<{ temporaryDirectory?: string }>(`runProcessCleanup:${runId}`)
-      ?.temporaryDirectory,
-  ];
-  const holdersOf = (processes: readonly HostProcessFact[]) =>
-    runWorkProcesses({
-      live: processes,
-      byPid: table.byPid,
-      directories,
-      infrastructure: table.infrastructurePids(runtime),
-      providers:
-        provider && !table.providerHostPids().has(provider.pid)
-          ? [provider]
-          : [],
-    });
-  // A working directory that already shows custody needs no open-file read, so
-  // an open-file deadline cannot hide a live process the listing has observed.
-  let live = liveScan;
-  let work = holdersOf(live);
-  if (!work.length) {
-    const opened = await readOpenFileFacts(liveScan, directories);
-    if (opened.state === "unknown") return opened;
-    live = opened.processes;
-    work = holdersOf(live);
-  }
+  const work = runWorkProcesses({
+    live,
+    byPid: table.byPid,
+    directories: [
+      input.directory ?? runWorkspaceDirectory(task, run),
+      participantTemporaryDirectory(task, taskRuns, runId),
+      store.getMeta<{ temporaryDirectory?: string }>(
+        `runProcessCleanup:${runId}`,
+      )?.temporaryDirectory,
+    ],
+    infrastructure: table.infrastructurePids(runtime),
+    providers: provider && !table.providerHostPids().has(provider.pid) ? [provider] : [],
+  });
   const process = work.find(
     (fact) =>
       fact.startIdentity.startsWith(`${fact.pid}@`) &&
       startIdentityProves(fact.startIdentity),
   );
   if (process) return { state: "live", process };
-  if (
-    work.length ||
-    incompleteRunProcessScan({ processes: live, cwdComplete: scan.cwdComplete })
-  )
+  if (work.length || incompleteRunProcessScan(scan))
     return {
       state: "unknown",
       reason:

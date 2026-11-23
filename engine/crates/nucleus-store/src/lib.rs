@@ -287,6 +287,21 @@ impl Store {
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
+    /// Count applied reviewer verdicts for the display's review round.
+    ///
+    /// # Errors
+    /// Returns an error if the database cannot read the display history.
+    pub fn completed_reviews(&self, id: &str) -> Result<i64, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT count(*) FROM events
+              JOIN json_each(CASE WHEN json_valid(detail) THEN detail END, '$.presentation') AS item
+             WHERE task_id = ?1 AND kind = 'phase_reconciled'
+               AND json_type(CASE WHEN item.type = 'object' THEN item.value END, '$.verdict.reviewed') = 'object'",
+            [id],
+            |row| row.get(0),
+        )?)
+    }
 }
 
 fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> {

@@ -17,8 +17,8 @@ use nucleus_core::{
     PullRequest, Run, Workspace,
 };
 use nucleus_hosts::{
-    Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, SendOutcome,
-    StopProgress, TaskHost,
+    Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
+    SendOutcome, StopProgress, TaskHost,
 };
 use nucleus_store::{EngineSettings, PinnedVolume};
 use serde_json::{Value, json};
@@ -136,7 +136,7 @@ pub(super) fn reservation(
             entry,
             origin_thread: None,
         },
-        "Synthetic change".into(),
+        "---\ncomplexity: normal\n---\n\nFixture introduction.\n\n# Synthetic change\n\nFixture details.".into(),
         (entry == Entry::ReviewEntry).then(|| pr.clone()),
     );
     let observation = Observation {
@@ -229,7 +229,7 @@ impl TaskHost for Due {
     async fn observe_retained(&self, _: &Binding, _: &str) -> Result<Host, HostError> {
         unreachable!("only replay gate is exercised")
     }
-    async fn observe_run(&self, _: &Run, _: u64) -> Result<Host, HostError> {
+    async fn observe_run(&self, _: &Run, _: u64) -> Result<RunObservation, HostError> {
         unreachable!("only revoked runs are exercised")
     }
 
@@ -331,8 +331,14 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
     assert_eq!(moved.version, stale.version + 1);
     assert_eq!(service.task(id).await.expect("current row"), *moved);
     assert_eq!(
-        service.state.lock().await.schedule.ready(Instant::now()),
-        [id]
+        service
+            .state
+            .lock()
+            .await
+            .schedule
+            .take_ready(Instant::now(), &BTreeSet::new())
+            .map(|task| task.id),
+        Some(id.into())
     );
     let worktrees = service.worktrees().expect("worktree root");
     let checkout = worktrees
@@ -343,6 +349,79 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         Workspace::Absent
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn a_settled_run_wakes_the_oldest_slot_waiter() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    for id in ["z-first", "a-second"] {
+        let (task, _, _) = reservation(id, Entry::Brief, &service.project.start);
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .expect("seed waiter");
+        let row = service.task(id).await.expect("waiter");
+        service
+            .schedule_result(
+                &row,
+                &Ok(Action::Wait(WaitReason::Capacity)),
+                Priority::Effect,
+            )
+            .await
+            .expect("schedule capacity backstop");
+    }
+    let (mut holder, _, _) = reservation("holder", Entry::Brief, &service.project.start);
+    let instance = holder
+        .run()
+        .expect("reserved run")
+        .launch()
+        .instance
+        .clone();
+    holder.record_send(&instance, 1).expect("slot occupied");
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&holder, &event("fixture"))
+        .expect("seed holder");
+    let actor = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let CommandOutcome::Applied(revoked) = service
+        .command("holder", &actor, Command::Cancel)
+        .await
+        .expect("cancel")
+    else {
+        panic!("cancel must commit");
+    };
+    {
+        let now = Instant::now();
+        let state = service.state.lock().await;
+        assert!(!state.schedule.effect_ready("z-first", now));
+        assert!(state.schedule.due("z-first").expect("backstop") > now + Duration::from_secs(55));
+    }
+    let mut settled = revoked.task.clone();
+    settled.reconcile(&Observation {
+        host: Observed::Known(Host::Current {
+            instance,
+            state: nucleus_core::RunState::Ended,
+        }),
+        forge: Observed::Unknown,
+        workspace: Observed::Unknown,
+    });
+    assert!(settled.run().is_none());
+    service
+        .save(&revoked, settled, &event("phase_reconciled"))
+        .await
+        .expect("release slot");
+    let state = service.state.lock().await;
+    let now = Instant::now();
+    assert!(state.schedule.effect_ready("z-first", now));
+    assert!(!state.schedule.effect_ready("a-second", now));
 }
 
 pub(super) async fn native_fixture(

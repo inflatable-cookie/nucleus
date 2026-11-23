@@ -15,11 +15,25 @@ use wire::{GraphReply, Pull, PullState};
 
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
 const API_VERSION: &str = "2026-03-10";
-const CHECKS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
-  repository(owner:$owner,name:$repo){pullRequest(number:$number){\
-  headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision\
-  statusCheckRollup{state}\
-  }}}";
+const CHECKS_QUERY: &str = "
+  query($owner:String!,$repo:String!,$number:Int!){
+    repository(owner:$owner,name:$repo){
+      pullRequest(number:$number){
+        headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision
+        statusCheckRollup{state}
+      }
+    }
+  }
+";
+const MERGE_COMMIT_QUERY: &str = "
+  query($owner:String!,$repo:String!,$number:Int!){
+    repository(owner:$owner,name:$repo){
+      pullRequest(number:$number){
+        headRefOid baseRefName state mergeCommit{oid}
+      }
+    }
+  }
+";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ForgeError {
@@ -35,11 +49,13 @@ pub enum ForgeError {
     Credential,
     #[error("GitHub returned an incomplete or inconsistent response")]
     Incomplete,
+    #[error("GitHub rejected the GraphQL checks query")]
+    GraphQlRejected,
     #[error("GitHub response exceeded the read limit")]
     Oversize,
     #[error("GitHub deferred requests until {until:?}")]
     Deferred { until: SystemTime },
-    #[error("GitHub request failed")]
+    #[error("GitHub request failed ({kind})", kind = http_failure(.0))]
     Http(#[from] reqwest::Error),
     #[error("GitHub returned HTTP {0}")]
     Status(StatusCode),
@@ -49,6 +65,16 @@ pub enum ForgeError {
         line: usize,
         column: usize,
     },
+}
+
+fn http_failure(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connection"
+    } else {
+        "transport"
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,24 +294,47 @@ impl GitHub {
     /// Returns an error when evidence is unreadable, incomplete, or bound to
     /// another branch, repository or head. The engine treats errors as unknown.
     pub async fn observe(&self, target: &PullTarget) -> Result<Forge, ForgeError> {
-        let pull = self.pull(target).await?;
+        let pull = self
+            .confirm_merge_commit(target, self.pull(target).await?)
+            .await?;
         let checks = if !pull.merged && pull.state == PullState::Open {
-            let response = self.client.post(format!("{}/graphql", self.origin)).json(&json!({
-                "query": CHECKS_QUERY,
-                "variables": { "owner": target.branches.owner, "repo": target.branches.repository, "number": target.number },
-            })).send().await?;
-            let now = SystemTime::now();
-            let deadline =
-                deadline_hint(response.headers(), now).unwrap_or(now + Duration::from_mins(1));
-            let graph: GraphReply = decode(response).await?;
-            if graph.rate_limited() {
-                return Err(ForgeError::Deferred { until: deadline });
-            }
-            graph.checks(&pull.head.sha, &target.branches.base)?
+            self.query_pull(target, CHECKS_QUERY)
+                .await?
+                .checks(&pull.head.sha, &target.branches.base)?
         } else {
             CheckState::Unknown
         };
         pull.forge(checks)
+    }
+
+    async fn confirm_merge_commit(
+        &self,
+        target: &PullTarget,
+        mut pull: Pull,
+    ) -> Result<Pull, ForgeError> {
+        if pull.merged && pull.state == PullState::Closed && pull.merge_commit_sha.is_none() {
+            pull.merge_commit_sha = Some(
+                self.query_pull(target, MERGE_COMMIT_QUERY)
+                    .await?
+                    .merge_commit(&pull.head.sha, &target.branches.base)?,
+            );
+        }
+        Ok(pull)
+    }
+
+    async fn query_pull(&self, target: &PullTarget, query: &str) -> Result<GraphReply, ForgeError> {
+        let response = self.client.post(format!("{}/graphql", self.origin)).json(&json!({
+            "query": query,
+            "variables": { "owner": target.branches.owner, "repo": target.branches.repository, "number": target.number },
+        })).send().await?;
+        let now = SystemTime::now();
+        let deadline =
+            deadline_hint(response.headers(), now).unwrap_or(now + Duration::from_mins(1));
+        let graph: GraphReply = decode(response).await?;
+        if graph.rate_limited() {
+            return Err(ForgeError::Deferred { until: deadline });
+        }
+        Ok(graph)
     }
 
     async fn pull(&self, target: &PullTarget) -> Result<Pull, ForgeError> {
@@ -338,7 +387,10 @@ impl GitHub {
         if latest.head.sha != head || latest.merged || latest.state != PullState::Open {
             return Ok(MergeAttempt {
                 write: MergeWrite::Skipped,
-                observed: latest.forge(CheckState::Unknown),
+                observed: self
+                    .confirm_merge_commit(target, latest)
+                    .await
+                    .and_then(|pull| pull.forge(CheckState::Unknown)),
             });
         }
         let url = format!("{}/{}/merge", self.origin, target.path());
