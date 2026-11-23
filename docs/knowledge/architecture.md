@@ -191,11 +191,10 @@ owner to the rules it enforces.
   every caller imports. It's a leaf, so importing it never closes a cycle through
   `core/resolution.ts`. `core/dispatch/retained-work.ts` reads the retained
   author's receipted results.
-- `core/machine/owned-tool.ts` proves no live tool holds a run and records the
-  `owned_tool_*` events. It decides on the typed tool-issue facts in
-  `core/recovery/stall.ts` and on `core/machine/owned-tool-process-proof.ts`,
-  which owns the provider-runtime and descendant proof and answers with its own
-  reason code. `Resolution.ownedToolHold` delegates to it.
+- `core/machine/run-process-tree.ts` identifies provider runtime and
+  descendants for stall diagnosis and identity-safe process cleanup.
+  Callback reminders use positive tool activity as wait evidence.
+
 - `core/machine/` keeps one owner per process mechanism:
   `host-process-listing.ts` reads the host process table and answers `unknown`
   with its reason rather than an empty list, `host-process-select.ts` makes the
@@ -647,7 +646,7 @@ owner to the rules it enforces.
   inventory and the ownership and idleness facts read from it.
   They read native workspace and thread observations through the host at their
   original call sites and retain adapter overrides for internal policy seams.
-  Uncertain native archive outcomes do not authorize another archive call.
+  Archive attempts refresh the catalog and reuse the workspace-specific request ID.
 - `hosts/paseo/adapter/host-messages.ts` owns Paseo's retained-agent handles, idle delivery
   queue and interrupt-and-continue call. `core/review/review-policy.ts` owns registration
   and review-entry decisions, review independence, retained binding, workspace

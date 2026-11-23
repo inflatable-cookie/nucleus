@@ -663,10 +663,6 @@ stopped-worker check is `matchingInactiveParticipant`, read through
 [PR identity from reports](#pr-identity-from-reports). Delegates remain on
 Resolution.
 
-**OwnedTools** (`core/machine/owned-tool.ts`). Proves no live tool holds a run and
-records the `owned_tool_*` events. Enforces
-[Owned-tool evidence](#owned-tool-evidence). Delegates remain on Resolution.
-
 **SlotAdmission** (`core/dispatch/capacity.ts`). Slot occupancy and fair-share order,
 and why a task has no slot now, for one dispatch pass or one board batch.
 Enforces [Admission, limits and priority](#admission-limits-and-priority).
@@ -3710,7 +3706,7 @@ after the task finishes.
 | `thread_archive_intent` | `archiveFinishedThreads` and replacement archive writers | Thread cleanup observes the exact native identity. Terminal catch-up revisits archive-only and deletion-capable hosts, recording a direct observation of an already archived or absent thread. Exhausted matching retries can be rearmed through `retry_effect workspace_archive.<id>`. | Done and completed cancellation where supported |
 | `transient_provider_resume_intent` | `TransientResume` worker and run paths | Worker and run observation re-enter the provider resume path using the retained binding and bounded episode. A terminal row receives no continuation. | No |
 | `unused_workspace_archive_intent` | `archiveUnusedWorkspace` | `retry_effect workspace_archive.<id>` observes the catalog or re-proves local teardown. The duplicate retains its own evidence. | Owner action |
-| `workspace_archive_intent` | `ArchiveProof.archiveProvedWorkspace` and `TaskRemoval.removeTask` | Lifecycle uses `reconcileGoneWorkspace` and the existing archive proofs. An unreadable binding remains a named `retry_effect workspace_archive.<id>` observation. | Done, plus observation of an outstanding removal intent |
+| `workspace_archive_intent` | `Lifecycle` and `TaskRemoval.removeTask` | Terminal cleanup uses the recorded workspace and the current catalog to archive it. Archive and local teardown keep the same identity, ownership and source checks. | Done |
 | `workspace_retirement_intent` | `progressWorkspaceRetirement` via `recordWorkspaceRetirement` | The terminal lifecycle schedules the same retirement on the task lane. It reads the catalog before continuing under recorded authority and current proofs. | Cancelled with recorded authorization |
 
 ## Cleanup
@@ -3727,8 +3723,7 @@ after the task finishes.
   its own projection accounting and durable retry state.
 - Up to two terminal thread pipelines overlap under shared Paseo admission.
   A lost archive answer is observed first. A terminal task can reissue for the
-  same idle, owned thread only after fresh identity, workspace and complete
-  owned-tool proof; three durable retries use backoff, then leave a visible
+  same idle, owned thread after checking identity and workspace; three durable retries use backoff, then leave a visible
   wait. A breaker deferral that reached no Paseo call is a wait, not
   uncertainty: it records one `thread_archive_wait` per distinct reason, keeps
   the intent retryable, and the thread archives on the first admitted pass. The
@@ -3740,7 +3735,7 @@ after the task finishes.
   idempotent move to a target state on a terminal task's own thread, so the
   side effect that matters is 'this thread ends up archived'." The ruling
   requires the same identity and workspace, idle or closed state, no active
-  turn, permission or live owned tools, and at most three durable retries.
+  turn or permission, and at most three durable retries.
 
 - T3 task threads stay settled while the task is open; none is archived or
   deleted, including a reviewer or coordinator displaced by replacement or a
@@ -3895,23 +3890,18 @@ after the task finishes.
   owed. A settled manifest discovery per checkout and commit is cached.
 - `next` lists a done task's failed or unconfirmed archive as
   `workspace_archive.<id>`. Owner `retry_effect` bypasses only that deadline,
-  waits for its own cleanup occurrence and re-proves custody, ownership, source,
-  publication, idleness, retention and build-output state.
+  waits for its own cleanup occurrence and checks custody, ownership, clean published source, retention and
+  build-output state.
 - While paused, the retry runs nothing, refuses naming the pause and reports
   the stored failure as history; a validly recorded discard stays durable.
-- An outstanding archive intent is observation, not authority: it owes one
-  catalog observation per retry interval, and before any further removal
-  obsolescence (for a view) or ownership is re-derived. An automatic pass never
-  re-sends an unknown request; the owner's `retry_effect` re-runs the same
-  idempotent request after observing.
-- Archive intent is persisted at the adapter's final permission callback;
-  catalog absence with a retained checkout enters guarded local teardown, and
-  catalog plus directory absence settles it. A failed observation permits no
-  replay.
+- Archive intent is persisted at the adapter's permission callback. Each
+  attempt uses the same workspace-specific request ID and refreshes its
+  registration before sending. Catalog absence with a retained checkout
+  enters guarded local teardown. When the catalog and directory both show
+  absence, cleanup records the workspace as already gone.
 - The thread inventory follows every page (200 at a time) and narrows to the
   workspace's `prj_` project id only when the first pass read it; a
-  contradiction scans daemon-wide for the rest of the attempt. A missing cursor
-  or missing known participant refuses as incomplete.
+  contradiction scans daemon-wide for the rest of the attempt. A missing cursor refuses as incomplete.
 
 ### Pinned review views
 
@@ -3991,56 +3981,13 @@ after the task finishes.
 
 ### Owned-tool evidence
 
-- The shared stopped-run and cleanup reader proves coverage through widening
-  tail reads: 200 entries, then doubling, at most six reads with a 10-second
-  deadline each, retaining every earlier entry as the suffix.
-- The same reader answers the waiting question: `runningOwnedTool` returns the
-  oldest call whose latest state is still `running` and whose kind can outlive
-  its turn, and `ownedJobWait` turns that into the task's visible wait. It never
-  settles anything; a turn-bound kind, a terminal or unrecognised status,
-  ambiguous simultaneous states or an unreadable page returns no job.
-- Every response needs coverage flags, an epoch and matching cursors. Gaps,
-  resets, missing facts, read failures and exhausted budgets refuse. Partial
-  history needs turn IDs and a dated boundary into an earlier turn; a partial
-  tail never hides a live or unknown tool. A T3Code bounded window is explicitly
-  marked `bounded`, and is not complete-history proof. Owned tools clear only
-  with three positive signals: no active run or pending request, no live tool
-  or provider background task in that window, and no owned workspace or run
-  scratch process. Any live or unknown signal holds. The adapter spec records
-  the residual T3 limitation for idle provider tasks outside the window.
-- A host translates its own native execution records into these tool entries; a
-  record it leaves untranslated is evidence the reader cannot judge. T3Code's
-  `command_execution` is a non-turn-bound shell, its edit, search and fetch records
-  are turn-bound; its native subagent can outlive its parent run, and its `dynamic_tool` or any native state the
-  reader does not know is never settled. A page is built from the host's rendered
-  window, not from a list that also carries rows retained from outside it, so a
-  boundary between turns is never manufactured across a gap.
-- Merge, external-merge, closeout, superseded-run, cleanup and author
-  capability-upgrade gates read this proof. In fixtures
-  `observedParticipantTimeline` in `test/support/tool-timeline.ts` supplies
-  complete empty history only for participants the fixture observes.
-- A call is live by its own turn, not by its label. When the same agent's own
-  fresh observation proves no turn is live — `active: false`, the positively
-  reported `activeTurnId: null`, no pending permission and a finished-session
-  status — a running call of a kind that cannot outlive its turn is settled: a
-  provider sub-agent call that a completed turn left running owns no effect once
-  that turn is over (effigy#524). Every one of those facts is read positively, so
-  an observation that omits one settles nothing. A shell command or a worktree
-  setup — the processes a turn detaches, the background shells and terminals
-  that genuinely outlive it — keeps the fence, as does an unknown or missing
-  kind without process proof, a status-less or ambiguous entry,
-  and conflicting identity unless the turn is over and the latest state is terminal
-  or every observed kind is turn-bound. An explicit process-owning kind takes
-  precedence over a turn-bound tool name. Unreadable observations and partial
-  history also hold. A fresh clear observation settles the recorded owned-tool
-  hold for each run bound to that participant. Any non-turn-bound tool left
-  running after a positively finished turn (including an unknown-kind edit)
-  settles only when the host process listing uniquely finds that run's
-  `mcp-report.mjs` ticket helper, identifies its parent provider process, and
-  proves that process has no descendant except the Nucleus helper (or its own
-  descendants) and — once that same fresh observation proves no turn is live —
-  the provider's own standing tool runtimes, which outlive every turn by design
-  (Queue #683).
+- A positive running-job observation can extend a callback wait.
+  Timeline and process activity also inform stall and hung-tool diagnosis.
+  `run.release` stops the recorded process group when the leader still
+  matches, then revokes the run's credential. Historical tool holds can
+  be cleared with `record.clear kind=effect id=owned_tool.<run>` after
+  accepting `owned_tool`.
+- Process identity still protects unrelated sessions from termination.
   A canonical ticket helper for another run still goes through cwd and ancestry
   proof: it blocks inside the task workspace or beneath a workspace process.
   A malformed or truncated helper ticket is unknown only when that helper is
@@ -4088,8 +4035,7 @@ after the task finishes.
   hold, and a command a session's tools start (`node build.mjs`) is work: a shell
   is never a runtime. The same recognition protects these processes from run
   cleanup — which also preserves a plausible ACP parent whose identity it cannot
-  read — and lets the owned-tool proof, review and closeout workspace proof pass
-  while the task is idle (nucleus#1343's host-qualified runtime set, extended per
+  read — and keeps those sessions out of a task process sweep (nucleus#1343's host-qualified runtime set, extended per
   host rather than a second path).
   The provider app-servers that same server hosts are runtime with the standing
   helpers each keeps (nucleus#1397). T3 starts a thread's provider as
@@ -4128,30 +4074,8 @@ after the task finishes.
   bundled application the agent launched, a bundled interpreter running a
   workspace script, and a script in the agent's own temporary directory are all
   commands. Those runtimes' own children are judged one
-  by one, so a command a kernel spawned is still real work and still holds. A
-  live descendant keeps the hold and names its PID; a missing
-  helper, ambiguous match or unreadable process listing keeps the hold as
-  unknown. The evidence is recorded on the task. `next` exposes the hold as
-  `owned_tool.<runId>` and `retry_effect` rechecks the same process tree. The
-  turn proof is read after the evidence it settles, so a turn that started
-  during pagination still holds. Nucleus never reads provider files to settle a
-  call.
-- A participant's non-turn-bound tool keeps a pre-merge lease only for the
-  configured `graceMs` after its first durable hold. Once that grace expires,
-  Nucleus rechecks that the same participant is idle in the same workspace,
-  then uses the host-process reap path and records the stopped processes on the
-  task. While the participant wait is open, the task yields its repository
-  integration turn; after the wait clears it rejoins through the existing FIFO
-  turn mechanism. A live or changed participant is never reaped, and an
-  uncertain merge intent continues to retain its turn.
-- The participant wait says which of the two it is. The grace window and a
-  participant that resumed during it are timed waits that clear on their own
-  (`lifecycle`). What the grace and the reap cannot answer — an unreadable
-  listing, an unrecorded root, a live protected host-runtime process, or a proof
-  that still refuses after its tree was proved empty — is a recorded
-  `operator_needed` stop
-  whose exit is `retry_effect` on the `owned_tool.<runId>` occurrence, so a merge
-  that cannot settle its own participant is visible instead of waiting forever.
+  by one, so a command a kernel spawned is still work. A missing helper,
+  ambiguous match or unreadable process listing remains unknown evidence.
 
 ### History retention
 

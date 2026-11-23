@@ -334,7 +334,6 @@ export class Engine {
         "onTaskHost",
         "store",
         "holdProofOnlyGoWait",
-        "ownedToolHold",
         "owns",
         "quantumReadBudgetMs",
         "quantumReadTimeoutMs",
@@ -2537,9 +2536,6 @@ export class Engine {
       publication,
     );
   }
-  retryOwnedToolHold(task: Task, ownedTool: OwnerEffect): Promise<Task> {
-    return this.ordinaryEffectRetries.retryOwnedToolHold(task, ownedTool);
-  }
   retryCancelledWorkspaceRetirement(
     task: Task,
     input: TaskControlInput,
@@ -3116,18 +3112,6 @@ export class Engine {
   }
   supersededIdleFence(run: Run, deadlineAt?: number): Promise<string | null> {
     return this.runRelease.supersededIdleFence(run, deadlineAt);
-  }
-  ownedToolHold(
-    agentId: string,
-    runId?: string,
-    taskId?: string,
-    options?: {
-      requireCompleteEvidence?: boolean;
-      allowRetired?: boolean;
-      deadlineAt?: number;
-    },
-  ) {
-    return this.runRelease.ownedToolHold(agentId, runId, taskId, options);
   }
   observedRunLiveness(run: Run): Promise<boolean | null> {
     return this.runRelease.observedRunLiveness(run);

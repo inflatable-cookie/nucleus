@@ -10,18 +10,15 @@ import {
   type Run,
   type Task,
 } from "../../shared/contracts";
-import { participantToolRunIds } from "../recovery/task-reasons";
 import { matchingInactiveParticipant } from "../intake/run-settlement";
 import { taskPrNumber } from "../forge/index";
 import { currentBrief } from "../planning/brief";
 import type { Store } from "../store/store";
 import type { HostFacade } from "../host/host-facade";
-import type { OwnedTools } from "../machine/owned-tool";
 
 export interface OrdinaryCustodyContext {
   readonly store: Store;
   readonly host: Pick<HostFacade, "observe">;
-  ownedToolHold: OwnedTools["ownedToolHold"];
   startsNoRuns(): boolean;
 }
 
@@ -89,32 +86,6 @@ export class OrdinaryCustody {
           throw Error(
             "Ordinary review participant is not idle and permission-free in the recorded workspace",
           );
-      }
-      const participantRunIds = participantToolRunIds(
-        t,
-        this.context.store.runs(t.id),
-        id,
-        workspaceId,
-      );
-      const held = await this.context.ownedToolHold(id, {
-        requireCompleteEvidence: true,
-        allowRetired,
-        runId: participantRunIds[0],
-        runIds: participantRunIds,
-        taskId: t.id,
-        workspaceId,
-      });
-      if (held.kind !== "clear") {
-        if (
-          held.reason ===
-          "participant is not idle and permission-free in the recorded workspace"
-        )
-          throw Error(
-            "Ordinary review participant is not idle and permission-free in the recorded workspace",
-          );
-        throw Error(
-          `Ordinary review participant has live or unknown tools: ${held.reason}`,
-        );
       }
     }
     const latest = this.context.store.task(t.id);

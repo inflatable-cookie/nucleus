@@ -2540,64 +2540,6 @@ test("records that cannot prove their order refuse the resume instead of inferri
   }
 });
 
-weighted(2)(
-  "a stop-backed resume needs positive owned-tool evidence",
-  async () => {
-    const f = fixture();
-    try {
-      await f.checkpoint("Reading the diff");
-      await restartReviewer(f, "Continue the saved checkpoint");
-      await f.ownerStop("The reviewer wedged");
-
-      // A live tool on the stopped turn refuses before any send.
-      f.setTimeline([
-        {
-          timestamp: new Date().toISOString(),
-          item: {
-            type: "tool_call",
-            callId: "shell-1",
-            name: "exec",
-            status: "running",
-            detail: { type: "shell", command: "npm test" },
-          },
-        },
-      ]);
-      await assert.rejects(
-        restartReviewer(f, "Resume the stopped turn"),
-        /live tool|no live tool/i,
-      );
-      assert.equal(f.reviewerDeliveries.length, 1);
-
-      // Complete evidence with no live tool lets the one authorized resume land.
-      f.setTimeline([]);
-      await restartReviewer(f, "Resume the stopped turn");
-      assert.equal(f.reviewerDeliveries.length, 2);
-    } finally {
-      await f.close();
-    }
-
-    // An adapter that offers no tool timeline cannot prove the condition: it
-    // refuses rather than treating missing evidence as clear.
-    const blind = fixture({ toolTimeline: false });
-    try {
-      await blind.checkpoint("Reading the diff");
-      await restartReviewer(blind, "Continue the saved checkpoint");
-      await blind.ownerStop("The reviewer wedged");
-      await assert.rejects(
-        restartReviewer(blind, "Resume the stopped turn"),
-        /tool evidence is unavailable|no live tool/i,
-      );
-      assert.equal(
-        blind.reviewerDeliveries.length,
-        1,
-        "no turn was sent without tool evidence",
-      );
-    } finally {
-      await blind.close();
-    }
-  },
-);
-
 test("a later checkpoint or verdict supersedes the stopped intent", async () => {
   const f = fixture();
   try {

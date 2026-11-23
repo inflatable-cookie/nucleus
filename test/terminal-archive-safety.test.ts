@@ -10,7 +10,7 @@ import { submissionSchema } from "../shared/contracts";
 import { archiveFinishedThreads } from "../core/workspaces/thread-archive";
 import type { Adapter } from "../core/host";
 
-for (const condition of ["busy", "wrong workspace", "tool hold", "limit"])
+for (const condition of ["busy", "wrong workspace", "limit"])
   test(`unknown archive waits for ${condition}`, async (t) => {
     const { store } = tempStore(t);
     store.setMeta("paused", false);
@@ -30,6 +30,7 @@ for (const condition of ["busy", "wrong workspace", "tool hold", "limit"])
     store.setMeta(qualifiedThreadArchiveEffectKey("host", "worker"), {
       status: "uncertain",
       at: new Date().toISOString(),
+      retryable: true,
       retries: condition === "limit" ? 3 : 0,
     });
     let sends = 0;
@@ -53,9 +54,7 @@ for (const condition of ["busy", "wrong workspace", "tool hold", "limit"])
         sends++;
       },
     } as unknown as Adapter;
-    await archiveFinishedThreads(store, adapter, task.id, async () =>
-      condition === "tool hold" ? "live shell" : null,
-    );
+    await archiveFinishedThreads(store, adapter, task.id);
     assert.equal(sends, 0);
     assert.ok(
       store

@@ -24,7 +24,6 @@ import { runTicketPath } from "../../dispatch/agent-creation";
 import type { AgentObservation } from "../../host/adapter";
 import type { Adapter } from "../../host/adapter";
 import type { HostFacade } from "../../host/host-facade";
-import type { OwnedTools } from "../../machine/owned-tool";
 import type { ContinuationFences } from "../../verbs/verb-fences";
 import { reviewerRuntimeChanged } from "../reviewer-runtime";
 import { matchingInactiveParticipant } from "../../intake/run-settlement";
@@ -69,7 +68,6 @@ export interface ReviewContinuationContext {
   ) => T;
   readonly host: Pick<HostFacade, "observe">;
   paused(): boolean;
-  ownedToolHold: OwnedTools["ownedToolHold"];
   settleVerbFences: ContinuationFences["settleContinuationFences"];
   assertReviewProfileIndependent(task: Task, run: Run): void;
   stopResumeState: ReviewContinuations["stopResumeState"];
@@ -306,21 +304,6 @@ export class ReviewContinuations {
       );
       recheck();
       this.resolution.assertIdleReviewerObservation(task, run, observed);
-      // A stop-backed resume is the one continuation that follows a delivered
-      // turn, so it carries the same owned-tool proof every displaced run needs:
-      // a live tool on the stopped turn is not a stopped turn.
-      if (checkpoint.resumeStop) {
-        const held = await this.resolution.ownedToolHold(run.agentId!, {
-          requireCompleteEvidence: true,
-          runId: run.id,
-          taskId: task.id,
-        });
-        recheck();
-        if (held.kind !== "clear")
-          throw new Error(
-            `The stopped reviewer cannot be shown to hold no live tool (${held.reason}); no resumed continuation was sent`,
-          );
-      }
       return { ...checkpoint, number, verifyPr, continueReviewer };
     } catch (error) {
       throw error instanceof ProvenPreSendRefusalError

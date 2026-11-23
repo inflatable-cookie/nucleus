@@ -12,19 +12,6 @@ import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import type { TimelinePage } from "../recovery/stall";
-import { participantToolRunIds } from "../recovery/task-reasons";
-import { boundedToolHold } from "../machine/bounded-tool";
-import {
-  bbThreadForAgent,
-  bbWorkspaceThreads,
-} from "../machine/owned-tool-process-proof";
-import { participantRuntime } from "../machine/participant-runtime";
-import { participantTemporaryDirectory } from "../machine/participant-roots";
-import {
-  readToolTimeline,
-  liveToolIssue,
-  workspaceToolProcessIssue,
-} from "../recovery/stall";
 import { verifyReviewSourceView } from "../review/review-source";
 import {
   verifyRecordedOrigin,
@@ -75,8 +62,6 @@ export interface WorkspaceArchiveOptions {
   discard?: WorkspaceDiscard | null;
   /** The primary workspace's own archive result, when this is a secondary view. */
   primaryArchived?: () => boolean;
-  /** Fresh run inventory for every participant workspace/scratch process proof. */
-  participantRuns?: () => Run[];
   /** Nucleus #1397: branch on a host workspace displaced by a cross-host move. */
   displacedBranch?: string;
 }
@@ -119,7 +104,6 @@ export class OwnedWorkspaceArchive {
       reviewRun,
       discard = null,
       primaryArchived,
-      participantRuns,
       displacedBranch,
     } = options;
     const hostLabel =
@@ -165,27 +149,6 @@ export class OwnedWorkspaceArchive {
       return [];
     }
     const workspace = this.host.workspaceHost.workspaceRef(id);
-    const terminal =
-      task.phase === "done" ||
-      (task.phase === "cancelled" && task.disposition?.status === "complete");
-    const participantDeleted = async (agentId: string) => {
-      if (!terminal || !this.host.deleteAgent || !this.host.originAgent)
-        return false;
-      // A terminal cleanup can delete a participant after the caller built its
-      // attached set. Only the host's authoritative origin read proves that
-      // race complete; a missing projection or a `gone` status alone does not.
-      const origin = await this.host.originAgent(agentId);
-      return (
-        origin === null || (origin.id === agentId && origin.deleted === true)
-      );
-    };
-    const proofOnlyDone = Boolean(
-      task.phase === "done" &&
-        task.entrypoint === "proof" &&
-        task.proofOnly &&
-        task.proofOnlyResult &&
-        task.proofOnlyResult.commit === task.proofOnly.commit,
-    );
     // A proof-only checkout is detached at its commit with no branch, however the task
     // ended, including an owner's acceptance of an interrupted run (effigy#666).
     const proofOnlyCheckout = Boolean(
@@ -345,8 +308,7 @@ export class OwnedWorkspaceArchive {
       }
       // The inventory itself, its completeness proof and its ownership facts are one
       // owner (`owned-workspace-threads`); this pass reads the typed result.
-      const projectKeys = projectBinding ? [projectBinding] : undefined,
-        includeArchived = localTeardown || !current;
+      const includeArchived = localTeardown || !current;
       const entries = await workspaceThreadEntries(
         this.host,
         id,
@@ -359,153 +321,12 @@ export class OwnedWorkspaceArchive {
         attachedAgentIds,
         allowIdleForeignThreads,
       );
-      // A released pinned view is Queue-owned scratch whose declared participants
-      // must still be idle and free of a live owned tool before its checkout goes,
-      // exactly like a Queue-owned task checkout: catalog membership alone does
-      // not prove that no reader or helper still holds it.
       if (localTeardown || !current || ownedCheckout || reviewRun) {
-        for (const agentId of new Set([
-          ...attachedAgentIds,
-          ...entries.map((entry) => entry.agent.id),
-        ])) {
-          let state: AgentObservation | null;
-          try {
-            state = await this.host.observe(agentId);
-          } catch (error) {
-            if (await participantDeleted(agentId)) continue;
-            throw error;
-          }
-          if (state?.status === "gone" && (await participantDeleted(agentId)))
-            continue;
-          if (!state || state.id !== agentId)
-            throw Error(
-              "Preserving workspace: participant observation is unreadable",
-            );
-          if (state.workspaceId !== id) {
-            if (
-              entries.some((entry) => entry.agent.id === agentId) ||
-              (id === task.workspaceId && agentId === task.agentId)
-            )
-              throw Error(
-                "Preserving workspace: participant ownership changed",
-              );
-            continue; // Attached task roles can belong to a separate review/closeout workspace.
-          }
-          // Corroboration only: a narrowed inventory that includes archived
-          // threads must hold every participant this pass observes in the workspace.
-          if (
-            projectKeys &&
-            includeArchived &&
-            !entries.some((entry) => entry.agent.id === agentId)
-          )
-            throw Error("Workspace thread inventory is incomplete");
-          if (
-            state.active ||
-            state.activeTurnId ||
-            state.permissions ||
-            !["idle", "error", "closed"].includes(state.status)
-          )
+        for (const agentId of attachedAgentIds) {
+          const state = await this.host.observe(agentId).catch(() => null);
+          if (state?.id === agentId && state.workspaceId === id &&
+            (state.active || state.activeTurnId || state.permissions))
             throw Error("Waiting for workspace participants to become idle");
-          // Native closed means session shutdown succeeded. Historical tool labels
-          // cannot establish current managed liveness after that terminal boundary.
-          if (state.status === "closed") continue;
-          // Once a task is merged it is free to archive (Tom, 2026-10-19): its
-          // threads are owed nothing, so a stray running tool label on an idle
-          // participant no longer preserves the workspace.
-          if (
-            task.phase === "done" &&
-            (task.resolution.mergedCommit || proofOnlyDone)
-          )
-            continue;
-          const read = await readToolTimeline(this.host, agentId);
-          // The participant observation above also proves no turn is live, so a
-          // running call of a turn-bound kind is settled before its checkout goes.
-          const issue =
-            read.kind !== "ok"
-              ? read.reason
-              : read.coverage === "bounded"
-                ? (() => {
-                    return boundedToolHold(
-                      read,
-                      this.host,
-                      agentId,
-                      id,
-                      async () => {
-                        if (!participantRuns)
-                          return {
-                            kind: "hold",
-                            reason: "participant run inventory is unavailable",
-                          };
-                        const runs = participantRuns();
-                        const runIds = participantToolRunIds(
-                          task,
-                          runs,
-                          agentId,
-                          id,
-                        );
-                        if (!runIds.length)
-                          return {
-                            kind: "hold",
-                            reason:
-                              "participant run process identity is unavailable",
-                          };
-                        const temporaryDirectories = runIds.map((runId) =>
-                          participantTemporaryDirectory(task, runs, runId),
-                        );
-                        if (temporaryDirectories.some((root) => !root))
-                          return {
-                            kind: "hold",
-                            reason:
-                              "a participant run temporary directory is unrecorded",
-                          };
-                        const processes = await this.host.hostProcessListing();
-                        if (!processes)
-                          return {
-                            kind: "hold",
-                            reason: "the host process listing is unreadable",
-                          };
-                        const bbThreads = bbWorkspaceThreads(task, runs, id, {
-                          includeAllRuns: true,
-                        });
-                        const ownThread = bbThreadForAgent(
-                          agentId,
-                          runs.find((run) => runIds.includes(run.id))?.hostId ??
-                            task.hostId,
-                        );
-                        if (ownThread && !bbThreads.includes(ownThread))
-                          bbThreads.push(ownThread);
-                        // The task's own host runtime — a T3 ACP parent and its
-                        // role sessions — is not a tool of any participant.
-                        const runtime = participantRuntime({
-                          dataHome: this.host.dataDir(),
-                          tasks: [task],
-                          runs,
-                          bbThreads,
-                        });
-                        for (const root of new Set([
-                          directory,
-                          ...temporaryDirectories,
-                        ])) {
-                          const why = workspaceToolProcessIssue(
-                            processes,
-                            root!,
-                            runIds,
-                            runtime,
-                          );
-                          if (why) return { kind: "hold", reason: why };
-                        }
-                        return { kind: "clear" };
-                      },
-                    ).then((result) =>
-                      result.kind === "clear" ? null : result.reason,
-                    );
-                  })()
-                : liveToolIssue(read.entries, state);
-          const resolvedIssue = await issue;
-          if (resolvedIssue)
-            throw Error(
-              `Preserving workspace: owned tool evidence: ${resolvedIssue}`,
-            );
         }
       }
       const orphan = await orphanOf();

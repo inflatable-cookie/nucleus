@@ -305,7 +305,7 @@ test("narrow reads share parent projection under archive churn and recover after
   );
 });
 
-test("#1448 ordinary reviewer admission's custody check waits boundedly on T3TransientReadError, resumes on clear, and still blocks live or unknown tools", async (t) => {
+test("#1448 ordinary reviewer admission's custody check waits boundedly on T3TransientReadError, resumes on clear", async (t) => {
   const { directory, server, host, workspace, spec } = await makeT3Fixture(t);
   execFileSync("git", ["init", "-b", "main", directory], { stdio: "ignore" });
   execFileSync("git", ["-C", directory, "config", "user.name", "Fixture"], {
@@ -490,7 +490,7 @@ test("#1448 ordinary reviewer admission's custody check waits boundedly on T3Tra
 
   // After ordinary move to review is accepted, ordinary reviewer admission's custody check
   // also enters a recoverable wait on T3TransientReadError (and T3 archive churn), resumes
-  // without consuming launches, and still blocks positively live tool custody.
+  // without consuming launches.
   const reviewTask = f.store.task(workingTask.id);
   f.store.setCompletionReceipt(
     workerRun.completion!.eventId,
@@ -555,42 +555,6 @@ test("#1448 ordinary reviewer admission's custody check waits boundedly on T3Tra
     detachedReviewerRun,
   );
 
-  // Positively live or genuinely unknown tool custody still blocks ordinary reviewer admission (no exemption).
-  overrides.agentTimelinePage = async () =>
-    toolTimelinePage(
-      [
-        {
-          timestamp: stamp,
-          item: {
-            type: "tool_call",
-            callId: "tool-1",
-            name: "bash",
-            status: "running",
-          },
-        },
-      ],
-      { projection: "bounded", pendingBackgroundTasks: [] },
-    );
-  await assert.rejects(
-    f.engine.resolution.ordinaryRoundCustody(
-      f.store.task(reviewTask.id),
-      detachedReviewerRun,
-    ),
-    /live or unknown tools|still live/i,
-  );
-  overrides.agentTimelinePage = async () =>
-    toolTimelinePage([], {
-      gap: true,
-      projection: "projected",
-      hasOlder: false,
-    });
-  await assert.rejects(
-    f.engine.resolution.ordinaryRoundCustody(
-      f.store.task(reviewTask.id),
-      detachedReviewerRun,
-    ),
-    /live or unknown tools|gap|inconclusive/i,
-  );
 });
 
 test("#1431 in-place parent restore and external archive refusal stay intact under split inventory churn", async (t) => {

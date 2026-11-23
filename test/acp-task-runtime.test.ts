@@ -32,9 +32,9 @@ import {
   possibleAcpRuntimePids,
 } from "../core/machine/acp-task-runtime";
 import {
-  ownedToolProcessTreeVerdict,
+  runProcessActivity,
   possibleParticipantRuntimePids,
-} from "../core/machine/owned-tool-process-proof";
+} from "../core/machine/run-process-tree";
 import {
   participantRuntime,
   storeDataHome,
@@ -374,7 +374,7 @@ test("a report helper's live ticket still settles through the owned-tool proof",
     ),
   ];
   assert.deepEqual(
-    ownedToolProcessTreeVerdict(RUN, processes, {
+    runProcessActivity(RUN, processes, {
       noTurnLive: true,
       runtime,
     }),

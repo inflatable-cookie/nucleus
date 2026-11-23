@@ -993,55 +993,6 @@ test("move closeout refuses an unmerged PR with nothing settled", async () => {
   }
 });
 
-test("move closeout refuses missing task participant tool coverage before the forge read", async () => {
-  const f = fixture();
-  try {
-    dispatched(f);
-    f.observations.set("worker-agent", {
-      id: "worker-agent",
-      workspaceId: "workspace",
-      status: "idle",
-      active: false,
-      permissions: false,
-      error: "",
-    });
-    f.adapter.agentTimelinePage = undefined;
-    let reads = 0;
-    f.adapter.externalMerge = async () => {
-      reads++;
-      return { head, commit: "c".repeat(40) };
-    };
-    const before = f.task(),
-      runs = f.store.runs(f.taskId);
-    await assert.rejects(
-      f.engine.performTaskControl(
-        taskControlInputSchema.parse({
-          action: "move",
-          to: "closeout",
-          taskId: f.taskId,
-          version: before.version,
-          reason: "Merged externally",
-          caller: CALLER,
-        }),
-      ),
-      /execution participants or effects are not settled/,
-    );
-    assert.equal(reads, 0);
-    assert.notEqual(
-      f.task().version,
-      before.version,
-      "the failed lease check records a visible wait",
-    );
-    assert.match(
-      f.task().reason,
-      /Merge waits for participant worker-agent: owned tool evidence is unavailable: this adapter offers no tool timeline/,
-    );
-    assert.deepEqual(f.store.runs(f.taskId), runs);
-  } finally {
-    await f.close();
-  }
-});
-
 test("move closeout releases a finished recovery run with its accepted action recorded not applied", async () => {
   const f = fixture();
   try {

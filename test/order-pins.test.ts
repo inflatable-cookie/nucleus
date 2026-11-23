@@ -1316,34 +1316,6 @@ test("retryEffect: a publication reconciles before any settlement", async (t) =>
   assert.deepEqual(log, ["reconcileReviewPublication"]);
 });
 
-test("retryEffect: an owned-tool hold settles only after its proof clears, and a live hold settles nothing", async (t) => {
-  for (const hold of [null, "still running"]) {
-    const f = fixture(t);
-    const task = f.add({ phase: "needs_attention" });
-    const run = putRun(f.store, task.id);
-    f.store.event(
-      task.id,
-      "owned_tool_hold",
-      JSON.stringify({ runId: run.id, reason: "Tool" }),
-    );
-    const log = retrySpies(f);
-    spy(log, f.internals, "ownedToolHold", () =>
-      hold ? { kind: "hold", reason: hold } : { kind: "clear" },
-    );
-    if (hold) {
-      await assert.rejects(
-        retry(f, task, `owned_tool.${run.id}`),
-        /remains: still running/,
-      );
-      assert.deepEqual(log, ["ownedToolHold"]);
-    } else {
-      await retry(f, task, `owned_tool.${run.id}`);
-      assert.deepEqual(log, ["ownedToolHold", "settleObservedIdleRuns"]);
-      assert.equal(fenceSettled(f, task), false);
-    }
-  }
-});
-
 test("retryEffect: a cancelled workspace retirement goes straight to its settlement", async (t) => {
   const f = fixture(t);
   const task = f.add({

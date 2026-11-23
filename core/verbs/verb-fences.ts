@@ -439,12 +439,6 @@ export class VerbFences {
       };
     if (!matchingInactiveParticipant(run, state))
       return { outcome: "cancel", observation: state };
-    if (
-      state.status !== "closed" &&
-      (await this.engine.ownedToolHold(run.agentId, run.id, run.taskId))
-        .kind !== "clear"
-    )
-      return { outcome: "cancel", observation: state };
     return { outcome: "settle", observation: state };
   }
 

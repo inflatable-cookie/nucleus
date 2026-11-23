@@ -12,7 +12,8 @@ are ready. A host failure stays with that host and its tasks.
 
 Spec 050 put owner verbs over the lifecycle. This proposal finishes the
 settlement side of that work. The [holding records](#holding-records) describe
-the current code. Tom approved the design on 2026-11-18; implementation follows the batch plan below.
+the code at the time of this audit. Tom approved the design on 2026-11-18.
+[Spec 067](067-explicit-resolution.md) later retired the owned-tool and archive proof gates.
 
 ## What a sweep decides
 

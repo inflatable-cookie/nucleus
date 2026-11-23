@@ -191,10 +191,14 @@ test(
         note: "Worker also plans the project",
       });
       const before = store.task(task.id);
-      f.setTool();
+      const observe = f.adapter.observe.bind(f.adapter);
+      f.adapter.observe = async (id) => {
+        const state = await observe(id);
+        return id === task.agentId ? { ...state, status: "running", active: true } : state;
+      };
       await assert.rejects(
         f.runtime.taskControl(f.control()),
-        /live or unknown tool effects/,
+        /active, permission-holding or unobservable/,
       );
       assert.deepEqual(store.task(task.id), before);
     } finally {
@@ -232,86 +236,16 @@ test(
   },
 );
 
-// The same seam still refuses the tool kinds that genuinely outlive a turn: a
-// background shell is a process the finished turn detached.
 test(
-  "a background shell left by a finished turn still fences the external acceptance",
+  "an unreadable timeline does not prevent retained external merge acceptance",
   { timeout: 90000 },
   async () => {
     const f = await fixture(true, true);
     try {
-      const store = f.runtime.store,
-        before = store.task(f.taskId);
-      f.adapter.noLiveWorkspaceProcesses = async () =>
-        "process 123 remains in the task workspace process tree";
-      f.setTool({
-        type: "tool_call",
-        callId: "left-behind",
-        name: "Bash",
-        status: "running",
-        detail: { type: "shell", command: "effigy qa" },
-      });
-      await assert.rejects(
-        f.runtime.taskControl(f.control()),
-        /live or unknown tool effects: an owned tool is still live: observed tool Bash \(shell\) is running; process 123 remains in the task workspace process tree/,
-      );
-      assert.deepEqual(store.task(f.taskId), before);
-    } finally {
-      await f.close();
-    }
-  },
-);
-
-test(
-  "an idle pi-style participant with a stale shell item settles after a no-process proof",
-  { timeout: 90000 },
-  async () => {
-    const f = await fixture(true, true);
-    try {
-      const task = f.runtime.store.task(f.taskId);
-      const checkedRunIds: string[][] = [];
-      f.adapter.noLiveWorkspaceProcesses = async (_workspaceId, runIds) => {
-        checkedRunIds.push([...runIds]);
-        return null;
-      };
-      f.setTool({
-        type: "tool_call",
-        callId: "left-behind",
-        name: "Bash",
-        status: "running",
-        detail: { type: "shell", command: "effigy qa" },
-      });
-      const response = await f.runtime.taskControl(f.control());
-      let result: Task;
-      if ("accepted" in response && response.accepted) {
-        const deadline = Date.now() + 60_000;
-        let operation = f.runtime.operationStatus({
-          operationId: response.operation.id,
-        });
-        while (
-          (operation.state === "pending" || operation.state === "running") &&
-          Date.now() < deadline
-        ) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          operation = f.runtime.operationStatus({
-            operationId: response.operation.id,
-          });
-        }
-        assert.equal(operation.state, "succeeded", operation.diagnostic);
-        result = f.runtime.store.task(f.taskId);
-      } else {
-        assert.ok(
-          "resolution" in response,
-          "task control returned a task or accepted operation",
-        );
-        result = response as Task;
-      }
+      f.adapter.agentTimelinePage = async () => { throw Error("timeline unavailable"); };
+      const result = (await f.runtime.taskControl(f.control())) as Task;
       assert.equal(result.resolution.mergeHead, f.final);
-      assert.ok(
-        task.runId &&
-          checkedRunIds.some((runIds) => runIds.includes(task.runId!)),
-        "initial task-row run identity is included in the process proof",
-      );
+      assert.equal(f.counts().mergeCalls, 0);
     } finally {
       await f.close();
     }

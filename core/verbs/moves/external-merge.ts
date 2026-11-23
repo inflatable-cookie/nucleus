@@ -87,10 +87,6 @@ export async function reconcileRetainedExternalMerge(engine: Engine, input: Exte
       if (!observed.workspaceId || (workspaceId && observed.workspaceId !== workspaceId) || observed.id !== id || observed.active !== false
         || observed.permissions !== false || observed.activeTurnId || !['idle', 'error', 'closed'].includes(observed.status))
         throw Error(`Participant ${id} is active, permission-holding or unobservable`);
-      // The shared owned-tool proof reads the timeline, then freshly observes
-      // the participant and applies the provider-tree or no-process proof.
-      const issue = await engine.resolution.participantToolIssue(task.id, id, workspaceId);
-      if (issue) throw Error(`Participant ${id} has live or unknown tool effects: ${issue}`);
     }
     assertState();
   };
@@ -161,8 +157,6 @@ export async function reconcileReviewEntryExternalMerge(engine: Engine, input: E
       if (observed.id !== id || observed.workspaceId !== workspaceId || observed.status !== 'idle' || observed.active !== false || observed.activeTurnId
         || observed.permissions !== false || store.unreleasedRunsForAgent(id, task.hostId).some(run => run.taskId !== task.id))
         throw Error(`Participant ${id} has observed activity, a permission or unknown identity`);
-      const issue = await engine.resolution.participantToolIssue(task.id, id, workspaceId);
-      if (issue) throw Error(`Participant ${id} has running or unknown tool effects (${issue})`);
     }
   };
   try {

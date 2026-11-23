@@ -133,7 +133,6 @@ import {
 } from "./review/review-continuation";
 
 import { Stalls } from "./recovery/stall";
-import { OwnedTools } from "./machine/owned-tool";
 import { PrAdoption } from "./review/pr-adoption";
 import {
   ProviderRefusals,
@@ -1131,7 +1130,6 @@ export class Resolution {
       "adapter",
       "host",
       "onTaskHost",
-      "ownedToolHold",
       "progressEffectsPending",
       "startsNoRuns",
       "store",
@@ -1285,13 +1283,12 @@ export class Resolution {
       "waiting",
     ]),
   );
-  readonly ownedTools = new OwnedTools(this);
   readonly holds = new Holds(portsContext(this, ["reviewRequired", "store"]));
   readonly continuedPrs = new ContinuedPrs(
     portsContext(this, ["adapter", "continuedPrBinding", "store"]),
   );
   readonly ordinaryCustody = new OrdinaryCustody(
-    portsContext(this, ["host", "ownedToolHold", "startsNoRuns", "store"]),
+    portsContext(this, ["host", "startsNoRuns", "store"]),
   );
   readonly reviewAdvances = new ReviewAdvances(
     portsContext(this, [
@@ -1349,7 +1346,7 @@ export class Resolution {
       "heavyRunAlive",
       "host",
       "onTaskHost",
-      "ownedJobWait",
+      "readPassTimelinePage",
       "saveIncident",
       "store",
       "validationEvidence",
@@ -1543,7 +1540,6 @@ export class Resolution {
       "host",
       "inspectReviewContinuation",
       "onTaskHost",
-      "ownedToolHold",
       "paused",
       "reviewContinuationGate",
       "settleVerbFences",
@@ -1598,7 +1594,6 @@ export class Resolution {
       "graceMs",
       "onTaskHost",
       "ordinaryRoundCustody",
-      "ownedToolHold",
       "recordBlockedPrIdentity",
       "responsibleBlockerLadder",
       "responsiblePrReportRefused",
@@ -2382,17 +2377,6 @@ export class Resolution {
   ): Promise<boolean> {
     return this.participantLease.executionLease(t, enclosing, syncing, probe);
   }
-  participantToolIssue(
-    taskId: string,
-    agentId: string,
-    workspaceId: string,
-  ): Promise<string | null> {
-    return this.participantLease.participantToolIssue(
-      taskId,
-      agentId,
-      workspaceId,
-    );
-  }
   retry(
     t: Task,
     revise = false,
@@ -2866,28 +2850,6 @@ export class Resolution {
 
   assertReviewProfileIndependent(task: Task, run: Run) {
     return this.selection.assertReviewProfileIndependent(task, run);
-  }
-
-  ownedToolHold(
-    agentId: string,
-    options: {
-      requireCompleteEvidence?: boolean;
-      allowRetired?: boolean;
-      runId?: string;
-      runIds?: string[];
-      taskId?: string;
-      workspaceId?: string;
-      deadlineAt?: number;
-    } = {},
-  ) {
-    return this.ownedTools.ownedToolHold(agentId, options);
-  }
-  /** Positive evidence that the agent's own detached job is still running, or null. */
-  ownedJobWait(
-    agentId: string,
-    binding?: { taskId: string; runId: string },
-  ): Promise<string | null> {
-    return this.ownedTools.ownedJobWait(agentId, binding);
   }
 
   assertIdleReviewerObservation(

@@ -71,7 +71,6 @@ import { reviewRecordFor } from "../review/review-verdicts";
 import { digest, now, type Store } from "../store/store";
 import {
   coordinative,
-  participantToolRunIds,
   proofExecutor,
 } from "../recovery/task-reasons";
 import {
@@ -558,7 +557,6 @@ export type ResultApplicationContext = Pick<
   | "graceMs"
   | "onTaskHost"
   | "ordinaryRoundCustody"
-  | "ownedToolHold"
   | "recordBlockedPrIdentity"
   | "responsibleBlockerLadder"
   | "responsiblePrReportRefused"
@@ -720,34 +718,6 @@ export class ResultApplication {
         return blocked(
           "The review lifecycle owner must prove custody from the preceding ordinary round",
         );
-      const participants = new Map([
-        [t.agentId, t.workspaceId!],
-        [run.agentId, run.workspaceId],
-        [prior.agentId, run.workspaceId],
-      ]);
-      for (const worker of t.retiredWorkers)
-        if (!participants.has(worker.agentId))
-          participants.set(
-            worker.agentId,
-            runs.find((item) => item.id === worker.runId)?.workspaceId ??
-              t.workspaceId!,
-          );
-      for (const [agentId, workspaceId] of participants) {
-        if (!agentId) continue;
-        const runIds = participantToolRunIds(t, runs, agentId, workspaceId);
-        const issue = await this.resolution.ownedToolHold(agentId, {
-          runId: runIds[0],
-          runIds,
-          taskId: t.id,
-          workspaceId,
-          requireCompleteEvidence: true,
-          allowRetired: agentId !== t.agentId && agentId !== run.agentId,
-        });
-        if (issue.kind !== "clear")
-          return blocked(
-            `Participant ${agentId} must release its owned tools: ${issue.reason}`,
-          );
-      }
     }
     for (const agentId of new Set([t.agentId, run.agentId])) {
       if (!agentId) continue;

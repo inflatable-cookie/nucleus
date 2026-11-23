@@ -1,4 +1,3 @@
-import { participantToolRunIds } from "../recovery/task-reasons";
 import {
   retainedProgressRun,
   retainedWorkHeads,
@@ -22,7 +21,6 @@ export type ProgressContinuationContext = Pick<
   | "adapter"
   | "host"
   | "onTaskHost"
-  | "ownedToolHold"
   | "progressEffectsPending"
   | "startsNoRuns"
   | "store"
@@ -136,20 +134,6 @@ export class ProgressContinuation {
           )
         )
           return `participant ${id} is not idle`;
-        const participantRunIds = participantToolRunIds(
-          t,
-          this.context.store.runs(t.id),
-          id,
-          t.workspaceId!,
-        );
-        const issue = await this.context.ownedToolHold(id, {
-          requireCompleteEvidence: true,
-          runId: participantRunIds[0],
-          runIds: participantRunIds,
-          taskId: t.id,
-          workspaceId: t.workspaceId!,
-        });
-        if (issue.kind !== "clear") return `participant ${id}: ${issue.reason}`;
       }
       return null;
     };

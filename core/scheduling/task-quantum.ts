@@ -46,7 +46,6 @@ import { holdsOf, taskHasUnreleasedRun } from "../../shared/contracts";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { isDispositionActive } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
-import { participantToolRunIds } from "../recovery/task-reasons";
 import { proofExecutionRunning } from "../qa/proof-admission";
 import { hookHoldReason } from "../hooks/hooks";
 import { OrphanPhases } from "../recovery/orphan-phase";
@@ -103,7 +102,6 @@ export type TaskQuantumContext = Pick<
     | "store"
     | "clearHostReadTransient"
     | "holdProofOnlyGoWait"
-    | "ownedToolHold"
     | "owns"
     | "quantumReadBudgetMs"
     | "quantumReadTimeoutMs"
@@ -700,24 +698,7 @@ export class TaskQuantum {
         }
       }
     }
-    await archiveFinishedThreads(
-      this.context.store,
-      this.context.adapter,
-      taskId,
-      async (agentId, workspaceId) => {
-        const task = this.context.store.task(taskId),
-          runs = this.context.store.runs(taskId);
-        const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
-        const hold = await this.context.resolution.ownedToolHold(agentId, {
-          requireCompleteEvidence: true,
-          runId: runIds[0],
-          runIds,
-          taskId,
-          workspaceId,
-        });
-        return hold.kind === "clear" ? null : hold.reason;
-      },
-    ).catch((error) => {
+    await archiveFinishedThreads(this.context.store, this.context.adapter, taskId).catch((error) => {
       if (isQuantumDeadlineExceeded(error)) return;
       this.context.store.event(
         taskId,

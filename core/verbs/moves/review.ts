@@ -14,15 +14,11 @@ import { verifyEnclosingOperationMatching } from "../../planning/enclosing-opera
 import { runsUnchangedSince } from "../../recovery/observation-advance";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { operatorReplacementPending } from "../../recovery/task-reasons";
-import { participantToolRunIds } from "../../recovery/task-reasons/participants";
 import { reviewerIdentityAtHead } from "../../review/review-continuation";
 import { proofOnlyReceiptAwaitingReview } from "../../qa/proof-records";
 import {
-  collectOwnerVerbFacts,
   currentReadyPrEvidence,
-  ownerPendingEffects,
 } from "../owner-verbs";
-import { reconcileOwnedToolHold } from "../retry-effect-ordinary";
 import {
   MOVE_REVIEW_PR_REFUSAL,
   MOVE_REVIEW_WORKSPACE_REFUSAL,
@@ -280,47 +276,22 @@ export async function moveToReview(
       throw Error(
         "Move to review requires the retained workers to be observably inactive in the task workspace",
       );
-    const runs = store.runs(task.id);
     for (const agentId of new Set(
       task.retiredWorkers.map((worker) => worker.agentId),
     )) {
       if (agentId === task.agentId) continue;
-      if (adapter.noLiveWorkspaceProcesses && adapter.hostProcessListing) {
-        const runIds = participantToolRunIds(
-          task,
-          runs,
-          agentId,
-          task.workspaceId,
+      const observed = await engine.host.observe(agentId);
+      if (
+        observed.id !== agentId ||
+        observed.workspaceId !== task.workspaceId ||
+        observed.active ||
+        observed.activeTurnId ||
+        observed.permissions ||
+        !["idle", "error", "closed"].includes(observed.status)
+      )
+        throw Error(
+          "Move to review requires the retained workers to be observably inactive in the task workspace",
         );
-        const hold = await engine.resolution.ownedToolHold(agentId, {
-          allowRetired: true,
-          requireCompleteEvidence: true,
-          runId: runIds[0],
-          runIds,
-          taskId: task.id,
-          workspaceId: task.workspaceId,
-        });
-        if (hold.kind !== "clear")
-          throw Error(
-            hold.reason ===
-              "participant is not idle and permission-free in the recorded workspace"
-              ? "Move to review requires the retained workers to be observably inactive in the task workspace"
-              : `Move to review requires retired worker ${agentId} to clear owned tools: ${hold.reason}`,
-          );
-      } else {
-        const observed = await engine.host.observe(agentId);
-        if (
-          observed.id !== agentId ||
-          observed.workspaceId !== task.workspaceId ||
-          observed.active ||
-          observed.activeTurnId ||
-          observed.permissions ||
-          !["idle", "error", "closed"].includes(observed.status)
-        )
-          throw Error(
-            "Move to review requires the retained workers to be observably inactive in the task workspace",
-          );
-      }
     }
   };
   const checkRetainedEffects = () => {
@@ -335,11 +306,6 @@ export async function moveToReview(
     });
     if (refusal) throw Error(refusal);
   };
-  for (const ownedTool of ownerPendingEffects(
-    collectOwnerVerbFacts(store, store.task(task.id)),
-  ).filter((effect) => effect.kind === "owned_tool")) {
-    await reconcileOwnedToolHold(engine, store.task(task.id), ownedTool);
-  }
   checkRetainedEffects();
   await observeRetainedWorkers();
   // Spec 050 (#3569): finished runs settle by observation before the run
