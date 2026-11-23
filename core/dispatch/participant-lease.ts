@@ -30,6 +30,26 @@ import {
   currentTaskQuantumScope,
 } from "../scheduling/pass-snapshot";
 
+/**
+ * Whether an `ownedToolHold` / lease issue reflects an unknown or deferred read
+ * (quantum deadline expiry, uncaptured pass snapshot, or unreadable/timed-out
+ * process/timeline/observation probe) rather than a positive live-tool or
+ * retired-custody refusal. Deferred reads must hold the lease without recording
+ * an `operator_needed` stop (Spec 068 §6, Spec 066 R1).
+ */
+function isDeferredToolEvidence(issue: string): boolean {
+  return (
+    /task quantum (?:deadline exceeded|read budget exhausted)/i.test(issue) ||
+    /was not captured in a host pass/i.test(issue) ||
+    /owned tool custody observation is unknown/i.test(issue) ||
+    /owned tool evidence is unreadable/i.test(issue) ||
+    /process tree is unreadable:.*(?:timed out|deadline|budget|not captured|unavailable|unknown|unreadable|disallowed)/i.test(
+      issue,
+    ) ||
+    /timed out after \d+ ms/i.test(issue)
+  );
+}
+
 /** Proves a task's participants are settled before its work, merge or closeout goes on. */
 export class ParticipantLease {
   constructor(readonly resolution: Resolution) {}
@@ -471,11 +491,9 @@ export class ParticipantLease {
         );
         if (read.state === "unknown") {
           if (!probe)
-            this.resolution.waiting(
-              t,
-              `Merge waits for participant ${id} in workspace ${workspace}: ${read.reason}`,
-              "lifecycle",
-            );
+            this.store.update(t.id, {
+              reason: `Merge waits for participant ${id} in workspace ${workspace}: ${read.reason}`,
+            });
           return false;
         }
         state = read.value;
@@ -490,13 +508,20 @@ export class ParticipantLease {
           workspaceId: workspace,
         });
         if (!issue) continue;
-        if (!probe)
-          this.resolution.waiting(
-            t,
-            `Merge waits for participant ${id}: ${issue}`,
-            "operator_needed",
-            { suggestedVerbs: ["retry_effect"] },
-          );
+        if (!probe) {
+          if (isDeferredToolEvidence(issue)) {
+            this.store.update(t.id, {
+              reason: `Merge waits for participant ${id}: ${issue}`,
+            });
+          } else {
+            this.resolution.waiting(
+              t,
+              `Merge waits for participant ${id}: ${issue}`,
+              "operator_needed",
+              { suggestedVerbs: ["retry_effect"] },
+            );
+          }
+        }
         return false;
       }
       if (state.id !== id || state.workspaceId !== workspace) {
@@ -537,13 +562,20 @@ export class ParticipantLease {
           workspaceId: workspace,
         });
         if (issue) {
-          if (!probe)
-            this.resolution.waiting(
-              t,
-              `Merge waits for participant ${id}: ${issue}`,
-              "operator_needed",
-              { suggestedVerbs: ["retry_effect"] },
-            );
+          if (!probe) {
+            if (isDeferredToolEvidence(issue)) {
+              this.store.update(t.id, {
+                reason: `Merge waits for participant ${id}: ${issue}`,
+              });
+            } else {
+              this.resolution.waiting(
+                t,
+                `Merge waits for participant ${id}: ${issue}`,
+                "operator_needed",
+                { suggestedVerbs: ["retry_effect"] },
+              );
+            }
+          }
           return false;
         }
         continue;
@@ -558,6 +590,14 @@ export class ParticipantLease {
           workspaceId: workspace,
         });
         if (why) {
+          if (isDeferredToolEvidence(why)) {
+            if (!probe) {
+              this.store.update(t.id, {
+                reason: `Merge waits for participant ${id}: ${why}`,
+              });
+            }
+            return false;
+          }
           // While a merge intent is recorded the stray-tool settlement is not
           // attempted; a participant still holding it has already been through
           // its grace in an earlier pass, so the owner's exit is the one left.
@@ -572,6 +612,14 @@ export class ParticipantLease {
                 )
               : { issue: why, needsOwner: !probe };
           if (!stray) continue;
+          if (isDeferredToolEvidence(stray.issue)) {
+            if (!probe) {
+              this.store.update(t.id, {
+                reason: `Merge waits for participant ${id}: ${stray.issue}`,
+              });
+            }
+            return false;
+          }
           if (!probe) this.yieldIntegrationTurn(t);
           if (!probe)
             this.resolution.waiting(

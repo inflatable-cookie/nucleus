@@ -1462,6 +1462,11 @@ test("timing: sweep merge quantum with a 60 s process double records unknown hol
     "production merge path did not merge past an unknown process proof",
   );
   assert.equal(after.phase, "merging");
+  assert.equal(
+    after.resolution.stop,
+    null,
+    "unknown/timed-out process read in executionLease must defer without recording an operator_needed stop",
+  );
   assert.match(
     after.reason,
     /Merge waits for participant agent-timing-merge:.*unreadable|unknown|timed out/i,
@@ -4270,6 +4275,7 @@ test("settleArchive preserves durable intent when confirmation expires after mut
     runTemporaryDirectory: (runId: string) => `/synthetic/scratch/${runId}`,
     scratchNamespaceFor: (taskArg: Task) => `ns-${taskArg.id}`,
     isConnected: () => true,
+    worktreeValidation: () => ({ state: "missing" as const, reason: "none" }),
   });
 
   const inserted = f.store.insert(
@@ -4349,5 +4355,316 @@ test("settleArchive preserves durable intent when confirmation expires after mut
       `ns-${inserted.id}`,
     );
     assert.equal(f.engine.adapter.isConnected?.(), true);
+    assert.deepEqual(
+      f.engine.adapter.worktreeValidation?.("/tmp/synthetic", [
+        ["effigy", "check"],
+      ]),
+      { state: "missing", reason: "none" },
+    );
   });
+});
+
+test("launch delivery, worker creation, and permission denial handle pre-send and post-send quantum deadline expiries cleanly", async (t) => {
+  const {
+    denyPendingPermission,
+    PERMISSION_DENIAL_REFUSED,
+    PERMISSION_DENIED,
+  } = await import("../core/recovery/permission-policy");
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  let createAgentCalls = 0;
+  let createRunCalls = 0;
+  let sendRunCalls = 0;
+  let answerPermissionCalls = 0;
+  let slowCreateRun = false;
+
+  let expireBeforeCreateAgent = false;
+  const f = engineFixture(t, {
+    verifyWorkspace: async () => "ns-worker-presend",
+    readStash: async () => {
+      if (expireBeforeCreateAgent) {
+        const until = Date.now() + 220;
+        while (Date.now() < until) {
+          /* advance past 200 ms scope so createAgent itself hits preSend: true */
+        }
+      }
+      return [];
+    },
+    createAgent: async () => {
+      createAgentCalls++;
+      return { id: "agent-created", workspaceId: "ws-launch-defer" };
+    },
+    createRun: () => {
+      createRunCalls++;
+      if (slowCreateRun) {
+        return new Promise((resolve) => {
+          const timer = setTimeout(
+            () =>
+              resolve({ id: "agent-run-late", workspaceId: "ws-launch-defer" }),
+            60_000,
+          );
+          timer.unref?.();
+          timers.push(timer);
+        });
+      }
+      return Promise.resolve({
+        id: "agent-run-fast",
+        workspaceId: "ws-launch-defer",
+      });
+    },
+    sendRun: async () => {
+      sendRunCalls++;
+    },
+    answerNativePermission: async () => {
+      answerPermissionCalls++;
+    },
+  });
+  f.store.setMeta("paused", false);
+  f.engine.hostHealth.answered(HOST);
+
+  // Part A: RunLaunchDeliver with pre-send expired scope on sendRun releases
+  // the unsent run cleanly without marking `uncertain`, `exact_lookup`, or stop.
+  const sendInserted = f.store.insert(
+    submission({
+      submissionId: "sub-deliver-presend",
+      title: "Deliver pre-send expired",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const sendTask = f.store.update(sendInserted.id, {
+    phase: "reviewing",
+    workspaceId: "ws-launch-defer",
+    directory: "/tmp/synthetic-launch-defer",
+    agentId: "agent-worker-defer",
+    runId: "run-worker-defer",
+    prHead: HEAD,
+    prUrl: "https://github.com/example/repo/pull/105",
+  });
+  const sendRun = runSchema.parse({
+    id: "run-send-presend",
+    taskId: sendTask.id,
+    role: "reviewer",
+    generation: 1,
+    head: HEAD,
+    base: HEAD,
+    agentId: "agent-rev-existing",
+    workspaceId: "ws-launch-defer",
+    hostId: HOST,
+    profile: null,
+    status: "intent",
+    createdAt: new Date().toISOString(),
+    lastObservedAt: null,
+    active: false,
+    idleSince: null,
+    completion: null,
+    released: false,
+  });
+  f.store.putRun(sendRun);
+  f.store.update(sendTask.id, {
+    resolution: { ...sendTask.resolution, currentRunId: sendRun.id },
+  });
+
+  await runInTaskQuantumScope(0, async () => {
+    await f.engine.resolution.dispatchLaunch.deliver.deliverLaunchRun(
+      f.store.task(sendTask.id),
+      "reviewer",
+      {
+        agentId: "agent-rev-existing",
+        profile: null,
+        group: null,
+        workspaceId: "ws-launch-defer",
+        firstReviewEntryWorker: false,
+        nonDeliveryReplacement: false,
+        run: sendRun,
+        token: "tok-send",
+      },
+    );
+  });
+  assert.equal(sendRunCalls, 0, "expired scope must not invoke native sendRun");
+  const sendRunAfter = f.store.run(sendRun.id)!;
+  assert.equal(
+    sendRunAfter.status,
+    "superseded",
+    "pre-send expired sendRun releases the unsent run instead of marking uncertain",
+  );
+  assert.equal(sendRunAfter.released, true);
+  assert.equal(f.store.task(sendTask.id).resolution.currentRunId, null);
+  assert.equal(f.store.task(sendTask.id).resolution.stop, null);
+  assert.equal(f.store.task(sendTask.id).resolution.incident, null);
+
+  // Part B: RunLaunchDeliver with post-send timeout on createRun preserves
+  // durable `uncertain` status WITHOUT recording a stop.
+  slowCreateRun = true;
+  const createRunRow = runSchema.parse({
+    id: "run-create-postsend",
+    taskId: sendTask.id,
+    role: "reviewer",
+    generation: 1,
+    head: HEAD,
+    base: HEAD,
+    agentId: null,
+    workspaceId: "ws-launch-defer",
+    hostId: HOST,
+    profile: null,
+    status: "intent",
+    createdAt: new Date().toISOString(),
+    lastObservedAt: null,
+    active: false,
+    idleSince: null,
+    completion: null,
+    released: false,
+  });
+  f.store.putRun(createRunRow);
+  f.store.update(sendTask.id, {
+    resolution: {
+      ...f.store.task(sendTask.id).resolution,
+      currentRunId: createRunRow.id,
+    },
+  });
+
+  await runInTaskQuantumScope(40, async () => {
+    await f.engine.resolution.dispatchLaunch.deliver.deliverLaunchRun(
+      f.store.task(sendTask.id),
+      "reviewer",
+      {
+        agentId: null,
+        profile: null,
+        group: null,
+        workspaceId: "ws-launch-defer",
+        firstReviewEntryWorker: false,
+        nonDeliveryReplacement: false,
+        run: createRunRow,
+        token: "tok-create",
+      },
+    );
+  });
+  assert.equal(createRunCalls, 1, "post-send createRun started before expiry");
+  assert.equal(
+    f.store.run(createRunRow.id)?.status,
+    "uncertain",
+    "post-send createRun timeout preserves durable uncertain run",
+  );
+  assert.equal(
+    f.store.task(sendTask.id).resolution.stop,
+    null,
+    "post-send createRun timeout must not record a stop",
+  );
+
+  // Part C: denyPendingPermission hitting a pre-send expired scope records
+  // PERMISSION_DENIAL_REFUSED (not UNKNOWN), so a subsequent pass retries and succeeds.
+  const permInserted = f.store.insert(
+    submission({
+      submissionId: "sub-perm-presend",
+      title: "Permission denial pre-send expired",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const permTask = f.store.update(permInserted.id, {
+    phase: "working",
+    workspaceId: "ws-perm-defer",
+    directory: "/tmp/synthetic-perm-defer",
+    agentId: "agent-perm-defer",
+    runId: "run-perm-defer",
+  });
+  const permState: AgentObservation = {
+    id: "agent-perm-defer",
+    workspaceId: "ws-perm-defer",
+    status: "running",
+    active: true,
+    activeTurnId: "turn-1",
+    permissions: true,
+    pendingRequest: { id: "req-1", kind: "permission", firstLine: null },
+    error: "",
+  };
+  await runInTaskQuantumScope(0, async () => {
+    const ok = await denyPendingPermission(
+      f.engine.resolution,
+      permTask,
+      null,
+      permState,
+    );
+    assert.equal(ok, false);
+  });
+  assert.equal(
+    answerPermissionCalls,
+    0,
+    "expired scope must not invoke native answerNativePermission",
+  );
+  assert.equal(
+    f.store
+      .events(permTask.id)
+      .filter((e) => e.kind === PERMISSION_DENIAL_REFUSED).length,
+    1,
+    "pre-send expired scope records PERMISSION_DENIAL_REFUSED instead of permanently blocking with UNKNOWN",
+  );
+
+  // Subsequent pass with budget succeeds and sends the denial once.
+  const retriedOk = await denyPendingPermission(
+    f.engine.resolution,
+    f.store.task(permTask.id),
+    null,
+    permState,
+  );
+  assert.equal(retriedOk, true, "next pass retries and succeeds");
+  assert.equal(answerPermissionCalls, 1);
+  assert.equal(
+    f.store.events(permTask.id).filter((e) => e.kind === PERMISSION_DENIED)
+      .length,
+    1,
+  );
+
+  // Part D: WorkerLauncher hitting a pre-send expired scope on createAgent
+  // releases the unsent worker reservation without recording `exact_lookup` or a stop.
+  const workerProfile = {
+    id: "claude:sonnet",
+    name: "Claude Sonnet",
+    provider: "claude",
+    model: "sonnet",
+    notes: "",
+    available: true,
+    problem: "",
+    supportedThinking: [],
+  };
+  f.engine.profiles = [workerProfile];
+  const workerInserted = f.store.insert(
+    submission({
+      submissionId: "sub-worker-presend",
+      title: "Worker createAgent pre-send expired",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const workerTask = f.store.update(workerInserted.id, {
+    phase: "dispatching",
+    workspaceId: "ws-launch-defer",
+    directory: "/tmp/synthetic-launch-defer",
+    branch: "ns-worker-presend",
+    profile: workerProfile,
+  });
+  expireBeforeCreateAgent = true;
+  await runInTaskQuantumScope(200, async () => {
+    await f.engine.launchAgent(workerTask);
+  });
+  assert.equal(
+    createAgentCalls,
+    0,
+    "expired scope must not invoke native createAgent",
+  );
+  const workerAfter = f.store.task(workerTask.id);
+  assert.equal(
+    workerAfter.agentIntent,
+    false,
+    "pre-send expired createAgent releases agentIntent cleanly",
+  );
+  assert.equal(workerAfter.runId, null);
+  assert.equal(workerAfter.resolution.incident, null);
+  assert.equal(workerAfter.resolution.stop, null);
 });

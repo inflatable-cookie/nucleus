@@ -148,6 +148,7 @@ const SYNC_ADAPTER_METHODS = new Set<PropertyKey>([
   "beginHostPass",
   "endHostPass",
   "workspaceCreationProgress",
+  "worktreeValidation",
 ]);
 
 /**
