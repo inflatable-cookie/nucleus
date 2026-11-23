@@ -1,4 +1,5 @@
 import { endsStopOnReason } from "../../shared/task-stop";
+import { recordAcceptedRevisionRound } from "./author-revision-cap";
 import {
   forceCallerRefusal,
   FORCE_MOVE_REFUSAL,
@@ -738,6 +739,9 @@ export class ForceVerbs {
         input.version,
         "Task changed during the move; read next",
       );
+      // A forced move to work at the revision cap accepts the round in its own
+      // transaction, so a refused force grants nothing.
+      recordAcceptedRevisionRound(this.engine, task.id);
       const pending = ownerPendingEffects(
         collectOwnerVerbFacts(this.store, current, operationId),
       ).filter(

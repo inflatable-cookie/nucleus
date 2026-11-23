@@ -405,7 +405,8 @@ operator receipt acceptance, `budget-extension.ts` applies an authorized
 extension, `no-automatic-retry-record.ts` records the durable retry rule, and
 `author-revision-cap.ts` holds the authority over the exhausted author-revision
 allowance and records the planner's or operator's acceptance of one more round
-(the revision launch gate enforces the cap). Enforces
+inside the applying verb's own transaction (the revision launch gate enforces
+the cap). Enforces
 [Verbs](#verbs). Delegates remain on Engine.
 
 **ForceVerbs** (`core/verbs/force.ts`). Applies `force: true` on
@@ -2463,15 +2464,18 @@ archive the same decider again. An unknown send is never blindly retried. See
   the task stops for the planner's delegated decision and proceeds one round at
   a time. The revision launch is the one enforcement point: while the allowance
   is exhausted (`revisionAllowanceExhausted`: the cap park with no author round
-  since and no `revision_cap_accepted` since), a revision launch holds with an
-  `operator_needed` stop worded as the cap, however the task reached
-  `changes_requested` (`phase.set`, an orphan readmission or a verb). A planner's,
-  the operator's or a delegated answer's author-round control (`move to=work`,
-  `restart role=worker`, `route role=worker`) records `revision_cap_accepted`
-  before it applies; a coordinator's is refused. The explicit `run.start` for the
-  worker, with `budget` accepted (planner or operator board only), creates the
-  revision run itself. The cap park stays the visible stop and its planner
-  escalation
+  since and no `revision_cap_accepted` since), a revision launch holds, however
+  the task reached `changes_requested` (`phase.set`, an orphan readmission or a
+  verb). The hold goes straight to the planner ladder: it joins the cap's open
+  escalation (`revisionCapCauseId`), or opens a new occurrence when the last one
+  was settled without a round, and its `escalated` stop admits no coordinator.
+  The explicit `run.start` for the worker, with `budget` accepted (planner or
+  operator board only), creates the revision run itself. A planner's, the
+  operator's or a delegated answer's author-round control (`move to=work`,
+  `restart role=worker`, `route role=worker`, or a forced `move to=work`) records
+  `revision_cap_accepted` inside its own transaction, at its commit point, so a
+  refused control grants nothing; a coordinator's is refused. The cap park stays
+  the visible stop and its planner escalation
   ([vision](../vision.md#reviewer-choice-review-loop-caps-and-coordinators-that-act)).
 - Historical author-escalation rows are stripped from task rows (schema 54, task 989;
   the live rows held only empty defaults, so there was nothing of theirs to archive)
@@ -3275,7 +3279,8 @@ movement invalidates source approval and preserves the normal readiness gates.
   budget counts only in a phase whose next step is a run, and a first spend not at
   all: the sweep extends it once there, and the launch gate wherever a run would
   start. Only the planner or the operator board may accept `budget`; a
-  coordinator is refused and its snapshot omits that command. The
+  coordinator is refused, and its snapshot omits every command whose preset
+  accept or expected warnings name a planner-only warning. The
   `run.start` `budget` warning reads the same conditions: the measured budget, the
   revision allowance (a cap stop with no author round since, never six rounds
   alone) and, for a fresh worker, the replacement ceiling.

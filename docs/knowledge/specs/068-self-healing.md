@@ -310,7 +310,8 @@ Built as a direct PR (Tom, 2026-11-23: "fill the gaps using subagents"):
   window from that stamp into the history (`serviceDowntimeHistory`). Each beat
   also records sleep: wall time past monotonic time since the last beat, when over
   a minute. An event-loop stall advances both clocks and records nothing. The
-  history keeps 30 days of entries.
+  history keeps 30 days of entries. The macOS sleep behaviour still needs one
+  real sleep check after the roll.
 - **Automatic extension.** The first spend of either limit is extended once by
   one default increment, by the launch gate or the sweep's settle pass, recorded
   as `budget_extended` with the detail `automatic: <policy>; <figures>`. The sweep
@@ -325,17 +326,23 @@ Built as a direct PR (Tom, 2026-11-23: "fill the gaps using subagents"):
   stop for a person, and `next` lists `run.start … accept ["budget"]` (for a spent
   budget, only in a phase whose next step is a run). Only the planner or the
   operator board may accept `budget`; a coordinator is refused, and its snapshot
-  leaves the command out. The revision launch gate, the
+  leaves out any command whose preset accept or expected warnings name a
+  planner-only warning. The revision launch gate, the
   `run.start` `budget` warning, the author-round rule and the activity reading
   share one cap condition (`revisionAllowanceExhausted`: a cap park with no author
   round, and no accepted round, since).
 - **Revision cap at the launch.** A revision launch holds while the allowance is
   exhausted, however the task reached `changes_requested` (planner ruling,
-  2026-11-23: `phase.set` passed the cap). A planner's, the operator's or a
-  delegated author-round control records `revision_cap_accepted` before it
-  applies; a coordinator's is refused. The planner's or operator's `run.start`
-  accepting `budget` creates the round's run itself. The cap park stays the stop
-  and the planner escalation.
+  2026-11-23: `phase.set` passed the cap). The hold goes straight to the planner
+  ladder, as the cap park does: it joins the cap's open escalation, or opens a new
+  occurrence when the last was settled without a round. Its `escalated` stop is a
+  waiting stop, so no coordinator is launched for it. The planner's or operator's
+  `run.start` for the worker accepting `budget` creates the round's run itself. An
+  author-round control (`move to=work`, `restart role=worker`, `route
+  role=worker`, or a forced `move to=work`) by an authorized caller records
+  `revision_cap_accepted` inside its own transaction, so only a control that
+  applies grants the round (planner ruling, 2026-11-23); a coordinator's is
+  refused. The cap park stays the stop and the planner escalation.
 - **Round 3.** The third non-converging round records `review_round_continued`
   and tells the task's planner with the reviewer's findings; it asks nothing. A
   tell that sent nothing (the service stopped before its intent, or no planner or

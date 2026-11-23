@@ -90,7 +90,7 @@ export function revisionAllowanceExhausted(task: Pick<Task, "resolution">, runs:
 /** The stop a revision launch held at the cap records. */
 export function revisionCapHoldDetail(task: Pick<Task, "resolution">): string {
   return `Revision cap reached: ${task.resolution.revisionRuns} of ${REVISION_BUDGET} review rounds, and no author round has started since the cap stopped the task. `
-    + "The revision launch holds until the planner decides: move to=work with direction starts one more round, or the explicit run.start for the worker accepting the budget warning.";
+    + "The revision launch holds until the planner decides: the explicit run.start for the worker with accept [\"budget\"] starts one more round (planner or operator board), as does the ladder's answer to the cap escalation.";
 }
 
 function boundActivity(runId: string | null, agentId: string | null, observation?: ParticipantActivity | null) {

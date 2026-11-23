@@ -9,6 +9,13 @@ import {
   revisionAllowanceExhausted,
   revisionCapHoldDetail,
 } from "../../shared/task-activity";
+import {
+  escalationWaitDetail,
+  findOpenPlannerEscalation,
+  revisionCapCauseId,
+  revisionCapEscalationQuestion,
+  type LadderEvent,
+} from "../questions/ladder";
 import { proofExecutor } from "../recovery/task-reasons";
 import { dispatchBlocked, DISPATCH_HELD_REASON } from "./capacity";
 import {
@@ -108,6 +115,7 @@ export type DispatchLaunchContext = Pick<
   | "launch"
   | "lease"
   | "leaseDeclineText"
+  | "openPlannerEscalation"
   | "paused"
   | "responsibleJointQuestion"
   | "retireGoneRetainedWorker"
@@ -127,6 +135,39 @@ export class DispatchLaunch {
   readonly reserve = new RunLaunchReserve(this.context);
   readonly deliver = new RunLaunchDeliver(this.context);
   constructor(readonly context: DispatchLaunchContext) {}
+  /**
+   * A revision launch held at the cap goes straight to the planner ladder, as the
+   * cap park does: it joins the cap's open escalation, or opens a new occurrence of
+   * it when the last one was settled without a round. The escalated stop is a
+   * waiting stop, so no coordinator is launched for a decision only the planner
+   * can make.
+   */
+  private holdAtRevisionCap(task: Task): void {
+    const store = this.context.store;
+    const revisionRuns = task.resolution.revisionRuns;
+    const cause = revisionCapCauseId(task.id, revisionRuns);
+    const open = findOpenPlannerEscalation(store.eventsAll(task.id) as LadderEvent[], cause);
+    if (open) {
+      if (task.resolution.stop?.reason !== "escalated")
+        this.context.waiting(
+          task,
+          `${escalationWaitDetail.planner(open.id)}; reported cause: ${revisionCapHoldDetail(task)}`,
+          "escalated",
+        );
+      return;
+    }
+    const findings =
+      store.runs(task.id).findLast((run) => run.role === "reviewer" && run.completion?.status === "changes_required")
+        ?.completion?.summary ?? "not recorded";
+    const question = revisionCapEscalationQuestion(task, revisionRuns, findings);
+    this.context.openPlannerEscalation(task, {
+      cause,
+      runId: null,
+      question,
+      payload: { cause, runId: null, revisionCap: revisionRuns, question },
+      causeDetail: revisionCapHoldDetail(task),
+    });
+  }
   async launch(
     t: Task,
     role: Run["role"],
@@ -188,7 +229,6 @@ export class DispatchLaunch {
     // cap holds, however the task reached changes_requested (phase.set, an orphan
     // readmission or a verb), until an author round starts or a planner, the
     // operator or a delegated answer accepts one (`revisionAllowanceExhausted`).
-    // The cap park stays the visible stop and its planner escalation.
     if (role === "revision") {
       const current = this.context.store.task(t.id);
       if (
@@ -198,9 +238,7 @@ export class DispatchLaunch {
           this.context.store.eventsAll(t.id),
         )
       ) {
-        this.context.waiting(current, revisionCapHoldDetail(current), "operator_needed", {
-          suggestedVerbs: ["move"],
-        });
+        this.holdAtRevisionCap(current);
         return;
       }
     }

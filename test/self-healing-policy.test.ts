@@ -401,27 +401,39 @@ test("a round-3 tell missed for want of a planner is retried on a later pass; it
   } finally { await f.close(); }
 });
 
-test("a revision launch past the cap holds however the task reached changes_requested, until a planner or the operator accepts a round", async () => {
+test("a revision launch past the cap holds and goes to the planner ladder, never a coordinator, until a planner or the operator accepts a round", async () => {
   const f = fixture({ responsible: true });
   try {
     await f.reviews(7);
     await f.settle(2);
     assert.equal(f.events("revision_budget_exhausted").length, 1);
     const revisions = () => f.store.runs(f.current().id).filter(run => run.role === "revision").length;
+    const escalations = () => f.events("planner_escalation");
+    const capCoordinators = () => f.events("telemetry_recovery").filter(event => /Revision cap/.test(event.detail));
     const atCap = revisions();
+    assert.equal(escalations().length, 1, "the cap park escalated to the planner");
+    const capEscalation = escalations()[0]!.detail.split(":", 1)[0]!;
     const phaseSet = (caller: string) => resolveExplicitly(f.engine, explicitResolutionSchema.parse({
       action: "phase.set", taskId: f.current().id, version: f.current().version, to: "changes_requested",
       reason: "Send it back to the worker", caller, accept: ["live_runs"],
     }), () => "");
 
-    // The operator board, without accepting the cap, moves the phase: the launch holds.
+    // The operator board, without accepting the cap, moves the phase: the launch holds
+    // and joins the cap's open escalation.
     assert.equal((await phaseSet(OPERATOR_BOARD_CALLER)).explicitResolution?.status, "applied");
     await f.settle(3);
     assert.equal(revisions(), atCap, "no seventh revision run starts");
-    assert.equal(f.current().resolution.stop?.reason, "operator_needed");
-    assert.match(f.current().resolution.stop?.detail ?? "", /^Revision cap reached: 6 of 6 review rounds.*The revision launch holds/);
+    assert.equal(f.current().resolution.stop?.reason, "escalated", f.current().resolution.stop?.detail);
+    assert.ok(f.current().resolution.stop?.detail.includes(capEscalation), "the hold waits on the cap's open escalation");
+    assert.equal(escalations().length, 1, "no second question while the first is open");
+    assert.equal(capCoordinators().length, 0, "no coordinator is launched for the hold");
 
-    // A coordinator does the same: still held.
+    // The escalation is settled without a round; a coordinator then moves the phase.
+    const cleared = await resolveExplicitly(f.engine, explicitResolutionSchema.parse({
+      action: "record.clear", taskId: f.current().id, version: f.current().version, kind: "escalation", id: capEscalation,
+      reason: "Clear the escalation", caller: OPERATOR_BOARD_CALLER,
+    }), () => "");
+    assert.equal(cleared.explicitResolution?.status, "applied", JSON.stringify(cleared.explicitResolution));
     const coordinator = runSchema.parse({
       id: "cap-coordinator", taskId: f.current().id, role: "recovery", generation: 1, head: f.current().prHead,
       base: f.current().prHead, agentId: "cap-coordinator-agent", workspaceId: "workspace", profile: null,
@@ -434,10 +446,19 @@ test("a revision launch past the cap holds however the task reached changes_requ
         status: "running", summary: "Cap", idleSince: null, incidentId: null } } });
     const caller = formatAgentId(f.current().hostId ?? "host", coordinator.agentId!);
     assert.equal((await phaseSet(caller)).explicitResolution?.status, "applied");
+    // While its run is unreleased, the coordinator's snapshot offers no command it would be refused.
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
+    assert.ok(next.explicitCommands?.some(command => command.warnings?.includes("budget")), JSON.stringify(next.explicitCommands));
+    const snapshot = recoveryDispatchSnapshot(collectOwnerVerbFacts(f.store, f.current()),
+      { cause: "cap", target: "worker", recoveryRunId: coordinator.id });
+    assert.equal((snapshot.explicitCommands ?? []).some(command =>
+      (command.warnings ?? []).some(id => (PLANNER_ONLY_WARNINGS as ReadonlySet<string>).has(id))), false, JSON.stringify(snapshot.explicitCommands));
     f.store.putRun({ ...f.store.run(coordinator.id)!, released: true, active: false, status: "finished" });
     await f.settle(3);
     assert.equal(revisions(), atCap, "the coordinator's phase.set starts no revision either");
-    assert.match(f.current().resolution.stop?.detail ?? "", /^Revision cap reached/);
+    assert.equal(f.current().resolution.stop?.reason, "escalated");
+    assert.equal(escalations().length, 2, "the hold opens a new cap escalation for the planner");
+    assert.equal(capCoordinators().length, 0);
 
     // The operator board accepts the round through run.start: it launches.
     const accepted = await resolveExplicitly(f.engine, explicitResolutionSchema.parse({
@@ -448,6 +469,42 @@ test("a revision launch past the cap holds however the task reached changes_requ
     assert.equal(accepted.explicitResolution?.status, "applied", JSON.stringify(accepted.explicitResolution));
     assert.equal(revisions(), atCap + 1, "the accepted round's revision starts");
   } finally { await f.close(); }
+});
+
+test("an author-round control at the cap records its acceptance only when it applies, a forced move included", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    await f.reviews(7);
+    await f.settle(2);
+    const accepted = () => f.events("revision_cap_accepted");
+    const move = (extra: Record<string, unknown> = {}) => f.engine.performTaskControl(taskControlInputSchema.parse({
+      action: "move", to: "work", taskId: f.current().id, version: f.current().version,
+      instruction: "One more round", reason: "The planner approved one round", caller: OPERATOR_BOARD_CALLER, ...extra,
+    }));
+    // The retained worker is busy, so the move refuses after its authority passed.
+    const worker = f.current().agentId!;
+    f.states.set(worker, { ...f.states.get(worker)!, status: "running", active: true });
+    await assert.rejects(move(), /not positively idle/);
+    assert.equal(accepted().length, 0, "a refused move grants nothing");
+    f.idle(worker);
+    await move();
+    assert.equal(accepted().length, 1, "the applied move records the acceptance");
+    assert.match(accepted()[0]!.detail, /^move to=work by /);
+  } finally { await f.close(); }
+
+  const g = fixture({ responsible: true });
+  try {
+    await g.reviews(7);
+    await g.settle(2);
+    await g.engine.performTaskControl(taskControlInputSchema.parse({
+      action: "move", to: "work", force: true, taskId: g.current().id, version: g.current().version,
+      instruction: "One more round", reason: "Force one more round", caller: OPERATOR_BOARD_CALLER,
+    }));
+    assert.equal(g.events("revision_cap_accepted").length, 1, "a forced move at the cap records the acceptance");
+    assert.match(g.events("revision_cap_accepted")[0]!.detail, /^force move to=work/);
+    await g.settle(2);
+    assert.equal(g.run().role, "revision", "the forced round's revision launches");
+  } finally { await g.close(); }
 });
 
 test("a coordinator run that only sent messages is charged; one whose command changed state is not", () => {

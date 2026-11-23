@@ -2,6 +2,7 @@ import {
   DurableFenceRefusal,
   matchingInactiveParticipant,
 } from "../intake/run-settlement";
+import { recordAcceptedRevisionRound } from "./author-revision-cap";
 import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { archiveReplacedReviewer } from "../workspaces/thread-archive-replacement";
 import { routeStateRefusal } from "./control-refusals";
@@ -521,6 +522,9 @@ export class RouteControls {
           task.version,
           "Task changed during route",
         );
+        // An authorized route role=worker at the revision cap accepts the round in
+        // this transaction, so a route that refuses below grants nothing.
+        recordAcceptedRevisionRound(this.engine, task.id);
         if (recoveryObservation) {
           const released =
             this.resolution.recovery.releaseAbsent(recoveryObservation);

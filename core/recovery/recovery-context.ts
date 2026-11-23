@@ -77,15 +77,16 @@ export function recoveryDispatchSnapshot(
         summary: bounded(outcome.authorResult.summary),
       }
     : null;
-  // A command whose preset `accept` names a planner-only warning (the `budget`
-  // run.start) would be refused for the coordinator, so its snapshot leaves it out.
+  // A command whose preset `accept` or expected warnings name a planner-only
+  // warning (`budget`, `two_writers`, `creation_in_flight` …) would be refused for
+  // the coordinator, so its snapshot leaves it out.
+  const plannerOnly = (ids: unknown): boolean =>
+    Array.isArray(ids) &&
+    ids.some((id) => (PLANNER_ONLY_WARNINGS as ReadonlySet<unknown>).has(id));
   const explicitCommands = (next.explicitCommands ?? [])
     .filter(
       (command) =>
-        !(Array.isArray(command.args.accept) ? command.args.accept : []).some(
-          (id) =>
-            (PLANNER_ONLY_WARNINGS as ReadonlySet<unknown>).has(id),
-        ),
+        !plannerOnly(command.args.accept) && !plannerOnly(command.warnings),
     )
     .map((command) => ({
     action: command.action,

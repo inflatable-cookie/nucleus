@@ -3,6 +3,7 @@ import { recordedLegacyPaseoHost } from "./host/host-registry";
 import { enginePorts, portsContext } from "./port-context";
 import { onOwnerHost } from "./host/host-ports";
 import { TaskControlLifecycle } from "./verbs/task-control-lifecycle";
+import { recordAcceptedRevisionRound } from "./verbs/author-revision-cap";
 import { EngineStop } from "./recovery/engine-stop";
 import { ProjectLifecycle } from "./planning/project-lifecycle";
 
@@ -651,6 +652,9 @@ export class Engine {
   }
   get coordinatorActionRunId() {
     return this.controlContext.coordinatorActionRunId;
+  }
+  get revisionCapAcceptance() {
+    return this.controlContext.revisionCapAcceptance;
   }
   get replayingDeferredVerb() {
     return this.controlContext.replayingDeferredVerb;
@@ -1751,8 +1755,15 @@ export class Engine {
   }
   control<T>(operation: () => Promise<T> | T, key: string): Promise<T> {
     const hostId = this.laneHost(key);
+    // A lane runs its work in a clean async context. An authorized author round
+    // at the revision cap carries its acceptance into its own commit, so that one
+    // value is handed across explicitly, to this operation only.
+    const acceptance = this.revisionCapAcceptance.getStore();
+    const carried = acceptance
+      ? () => this.revisionCapAcceptance.run(acceptance, operation)
+      : operation;
     return this.laneScheduler.control(
-      hostId ? () => this.withHost(hostId, operation) : operation,
+      hostId ? () => this.withHost(hostId, carried) : carried,
       key,
     );
   }
@@ -3245,6 +3256,10 @@ export class Engine {
     },
   ): void {
     this.verbFences.settleVerbFences(taskId, settle);
+    // The commit boundary of every author-round verb that settles fences (move
+    // to=work, restart role=worker): an accepted round past the revision cap is
+    // recorded here, in the verb's own transaction, so only an applied verb grants it.
+    recordAcceptedRevisionRound(this, taskId);
   }
   releaseDisplacedRunsInTx(
     taskId: string,

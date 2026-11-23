@@ -533,10 +533,10 @@ export function ownerPolicyStop(facts: OwnerVerbFacts): TaskStopRecord | null {
     const capAt = facts.events.findLast((event) => event.kind === "revision_budget_exhausted")?.at ?? task.updatedAt;
     return taskStopRecord(
       "operator_needed",
-      `Revision cap reached: ${task.resolution.revisionRuns} of ${REVISION_BUDGET} review rounds, and no author round has started since the cap stopped the task. The planner decides the next approach: move to=work with direction starts one more round, and the explicit run.start for the worker names the budget warning to accept.`,
+      `Revision cap reached: ${task.resolution.revisionRuns} of ${REVISION_BUDGET} review rounds, and no author round has started since the cap stopped the task. The planner decides the next approach: the explicit run.start for the worker with accept ["budget"] starts one more round (planner or operator board), as does the ladder's answer to the cap escalation.`,
       null,
       capAt,
-      ["move"],
+      [],
     );
   }
   return null;
