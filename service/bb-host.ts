@@ -22,7 +22,11 @@
  */
 import { composeBbAdapter } from "./bb-adapter";
 import type { BbWorkspaceRecord } from "../hosts/bb";
-import { ProvenPreSendRefusalError } from "../core/host";
+import {
+  HOST_CONNECTION_REFUSAL,
+  ProvenPreSendRefusalError,
+  type HostConnectionRefusal,
+} from "../core/host";
 import { Admission, admitAdapter } from "../core/host/admission";
 import type { Adapter } from "../core/host/adapter";
 import type { HostRegistry } from "../core/host/host-registry";
@@ -129,7 +133,16 @@ const refusal = (capability: string): never => {
   );
 };
 
-class BbHostOperationNotSentError extends Error {
+/**
+ * The executor was offline or the service connection failed before the request
+ * was written: a connection precondition refusal, so it carries the host brand
+ * and a failed operation settles it as a proven pre-send refusal.
+ */
+class BbHostOperationNotSentError
+  extends Error
+  implements HostConnectionRefusal
+{
+  readonly [HOST_CONNECTION_REFUSAL] = true as const;
   constructor(reason: string) {
     super(`BB host operation was not sent: ${reason}`);
     this.name = "BbHostOperationNotSentError";

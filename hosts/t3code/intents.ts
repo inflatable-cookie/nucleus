@@ -344,6 +344,10 @@ export class T3IntentLedger {
             throw new ProvenPreSendRefusalError(
               "T3Code connection unavailable before effect reservation",
             );
+          // A settled intent was delivered earlier, so this refusal proves
+          // nothing about the effect: it keeps the unbranded compatibility class.
+          if (error instanceof T3CompatibilityError)
+            throw new T3CompatibilityError(error.field);
           throw error;
         }
       }

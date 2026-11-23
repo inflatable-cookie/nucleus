@@ -48,6 +48,33 @@ export class ProvenPreSendRefusalError extends Error {
   }
 }
 /**
+ * The brand a host error class carries when the adapter's own connection
+ * precondition refused the call before any request left it: no authenticated
+ * connection, the host executor offline, or a changed durable host identity.
+ * Such a refusal proves this call sent nothing, the same proof a
+ * `ProvenPreSendRefusalError` carries, so a durable operation that fails on it
+ * settles failed with a reconciled effect. The brand exists because those
+ * classes keep their own host base class (a T3 compatibility error, BB's
+ * not-sent error), which their callers and transport classification read.
+ * A failure after a call started (a response-shape check, a transport error)
+ * never carries it.
+ */
+export const HOST_CONNECTION_REFUSAL: unique symbol = Symbol.for(
+  "nucleus.host.connectionRefusal",
+);
+export interface HostConnectionRefusal {
+  readonly [HOST_CONNECTION_REFUSAL]: true;
+}
+/** True when a host call was refused by its connection precondition before any send. */
+export function isHostConnectionRefusal(
+  error: unknown,
+): error is Error & HostConnectionRefusal {
+  return (
+    error instanceof Error &&
+    (error as Partial<HostConnectionRefusal>)[HOST_CONNECTION_REFUSAL] === true
+  );
+}
+/**
  * The host's own catalogue is not settled yet: a provider is still probing, or it
  * reports no model options at all. Nothing was sent, so a launch waits for the
  * next pass to read a settled snapshot instead of refusing the profile
