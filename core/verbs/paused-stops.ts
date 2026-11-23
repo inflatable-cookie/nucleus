@@ -119,7 +119,12 @@ export class PausedStops {
           continue;
         if (!(observed.active || observed.activeTurnId || observed.permissions))
           continue;
-        const cancel = this.adapter.stopAgentTurn;
+        // The control runs on a queue lane with no host context: read and call the
+        // cancel port on the task's own host, where the unbound fallback never answers.
+        const cancel = this.engine.onTaskHost(
+          { hostId: task.hostId },
+          () => this.adapter.stopAgentTurn,
+        );
         if (!cancel) {
           const host = HOST_KIND_LABELS[hostKindOf(task.hostId)];
           failures.push(
@@ -138,7 +143,9 @@ export class PausedStops {
         };
         this.store.event(task.id, "paused_stop_intent", JSON.stringify(intent));
         try {
-          await cancel.call(this.adapter, agentId);
+          await this.engine.onTaskHost({ hostId: task.hostId }, () =>
+            cancel.call(this.adapter, agentId),
+          );
         } catch (error) {
           const message =
             error instanceof Error ? error.message : String(error);

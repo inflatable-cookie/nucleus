@@ -623,22 +623,30 @@ export class Sweep {
       // queue-owned branch PR. Reconcile that exact identity before recovery
       // spends a coordinator run. The retained worker still owes an
       // authenticated ready_for_review callback on a newly minted run.
-      for (const task of (this.engine.adapter.findOpenBranchPr
-        ? this.engine.store.activeCapacityTasks()
-        : []
-      ).filter(
-        (task) =>
-          this.engine.taskHostAvailable(task) &&
-          task.agentId &&
-          !completionReportsPr(task) &&
-          !task.prUrl &&
-          !task.prHead &&
-          !task.resumePrNumber &&
-          !this.engine.resolution.recovery.busy(task) &&
-          ["working", "blocked", "error", "needs_attention"].includes(
-            task.phase,
-          ),
-      )) {
+      // The pass itself runs in no host context: the forge port and the host's
+      // availability are read on the task's own host, or every task on a host
+      // other than the legacy primary is skipped.
+      for (const task of this.engine.store
+        .activeCapacityTasks()
+        .filter(
+          (task) =>
+            task.hostId &&
+            task.agentId &&
+            !completionReportsPr(task) &&
+            !task.prUrl &&
+            !task.prHead &&
+            !task.resumePrNumber &&
+            ["working", "blocked", "error", "needs_attention"].includes(
+              task.phase,
+            ) &&
+            !this.engine.resolution.recovery.busy(task) &&
+            this.engine.withHost(
+              task.hostId,
+              () =>
+                Boolean(this.engine.adapter.findOpenBranchPr) &&
+                this.engine.taskHostAvailable(task),
+            ),
+        )) {
         await this.boundTaskQuantum(
           this.engine
             .scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, async () => {

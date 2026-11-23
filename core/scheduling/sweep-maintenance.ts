@@ -135,7 +135,21 @@ export class SweepMaintenance {
         // Task 1496: compact telemetry for still-present finished history, bounded per pass.
         this.store.seedRetainedTelemetry(at);
         this.store.purgeOldTasks(at, (taskId, runIds) => {
-          this.context.adapter.purgeReportingFiles?.(taskId, runIds);
+          // Retention runs in no host context; the reporting files belong to the
+          // task's own host, whose adapter is the one that knows their paths.
+          const hostId = this.store.task(taskId).hostId;
+          let purge: ((taskId: string, runIds: string[]) => void) | undefined;
+          try {
+            purge = hostId
+              ? this.context.withHost(
+                  hostId,
+                  () => this.context.adapter.purgeReportingFiles,
+                )
+              : this.context.adapter.purgeReportingFiles;
+          } catch {
+            purge = undefined; // A host that is not connected keeps its files.
+          }
+          purge?.(taskId, runIds);
           void this.context.removeSiblings(taskId);
           try {
             removeTaskProofFiles(this.store.task(taskId));

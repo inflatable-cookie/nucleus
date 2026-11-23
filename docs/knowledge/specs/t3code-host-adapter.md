@@ -260,6 +260,17 @@ other lane keeps the host its scheduling call ran on. Without that, an
 agent-naming call inside the quantum resolved the default host and the review
 answered `Agent was not found` (swallowtail#226).
 
+The same rule covers work that runs in no host context at all: the sweep's fleet
+steps, operator controls on a queue lane (stop active threads, bulk disposition)
+and retention. Outside a context the routed adapter is the unbound fallback,
+which has no forge or agent ports, and host availability answers only for the
+legacy Paseo primary, so a port or availability read made there skips every task
+on T3 or BB without a word. Such a step reads both inside the task's own host
+context (`withHost(task.hostId, …)` or `onTaskHost`), and an operator control is
+gated on any connected host, not the Paseo connection (2026-11-23 audit). In
+tests, `Engine.unboundPortRead` reports each port a registered host serves that
+was read with no host context; production leaves it unset.
+
 T3's project and existing Git worktree form its workspace handle. Persist their
 mapping through the service's durable intent boundary, including the canonical
 directory, project ID, task/run ownership and native thread ID. Do not recover
