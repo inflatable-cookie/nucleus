@@ -17,7 +17,6 @@ import {
   eventKindLabel,
 } from "../../shared/task-events";
 import {
-  control,
   radius,
   roles,
   space,
@@ -354,7 +353,7 @@ export function TaskDetailTabs({
             c={c}
             corner={radius.control}
             style={{
-              minHeight: control.height,
+              minHeight: touchTarget,
               flexDirection: "row",
               alignItems: "center",
               gap: space.xxs,
