@@ -489,7 +489,9 @@ export class T3Reads {
    * subscription and sends T3 nothing. `undefined` means "ask T3", never absent.
    */
   async heldShellRow(threadId: string): Promise<ShellRow | undefined> {
-    if (this.pendingThreadShape) return undefined;
+    // A thread Nucleus just sent a command to may still show its pre-command
+    // row in the live shell, so it takes the admitted read instead.
+    if (this.pendingThreadShape || this.written.has(threadId)) return undefined;
     return await this.live.liveRow(threadId);
   }
   /**
