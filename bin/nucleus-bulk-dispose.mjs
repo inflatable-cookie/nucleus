@@ -7,9 +7,11 @@ const viaPaseo=process.argv.includes('--via-paseo');
 process.argv=process.argv.filter(arg=>arg!=='--via-paseo');
 import { readFileSync } from 'node:fs';
 
+const usage = 'Usage: nucleus helper bulk-dispose start REQUEST.json | status OPERATION_ID | retry OPERATION_ID';
+if (process.argv.slice(2).some(arg => arg === '--help' || arg === '-h')) { console.log(usage); process.exit(0); }
 const [command, value] = process.argv.slice(2);
 if (!['start', 'status', 'retry'].includes(command) || !value)
-  throw new Error('Usage: nucleus helper bulk-dispose start REQUEST.json | status OPERATION_ID | retry OPERATION_ID');
+  throw new Error(usage);
 const input = command === 'start' ? JSON.parse(readFileSync(value, 'utf8')) : { operationId: value };
 const method = command === 'start' ? 'queue.bulk-disposition' : command === 'status' ? 'queue.bulk-disposition-detail' : 'queue.bulk-disposition-retry';
 const client=await queueClient({viaPaseo});

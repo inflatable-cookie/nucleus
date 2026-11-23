@@ -39,7 +39,13 @@ try {
       'bulk-dispose': './nucleus-bulk-dispose.mjs',
       subscribe: './nucleus-subscribe.mjs',
     };
-    if (!Object.hasOwn(helpers, name) && name !== 'report') throw Error('Choose a helper: submit, reparent, detach, review-entry, bulk-dispose, subscribe, or report');
+    const helperList = 'Choose a helper: submit, reparent, detach, review-entry, bulk-dispose, subscribe, or report';
+    const wantsHelp = helperArgs.some(arg => arg === '--help' || arg === '-h');
+    // Help never spawns the report helper: that helper reads stdin, and an agent shell's
+    // stdin is a pipe that never closes. The other helpers answer --help themselves.
+    if (name === undefined || name === '--help' || name === '-h') { console.log(`${helperList}. Each takes --help.`); process.exit(0); }
+    if (name === 'report' && wantsHelp) { console.log((await import('../shared/service/report-usage.mjs')).REPORT_USAGE); process.exit(0); }
+    if (!Object.hasOwn(helpers, name) && name !== 'report') throw Error(helperList);
     const script = name === 'report' ? (process.env.NUCLEUS_HELPER || join(dataHome(), 'worker-report.mjs')) : fileURLToPath(new URL(helpers[name], import.meta.url));
     const ticket = name === 'report' ? (await import('./run-ticket.mjs')).runTicketPath() : null;
     // A retained shell can name a ticket that a release already deleted (nucleus#1392). Say which

@@ -15,6 +15,7 @@ const usage='Usage: nucleus helper reparent TO_AGENT_ID --task TASK_ID [--task T
  +'nucleus helper reparent TO_AGENT_ID --project PROJECT --from AGENT_ID --reason TEXT | '
  +'nucleus helper reparent --inventory AGENT_ID [--project PROJECT]';
 const args=process.argv.slice(2);
+if(args.some(arg=>arg==='--help'||arg==='-h')){console.log(usage);process.exit(0);}
 // The reparent forms name the new owner as their one positional; `--inventory`
 // carries its subject as the flag's own value and has no positional.
 const positional=args[0]!==undefined&&!args[0].startsWith('--')?args[0]:null;
