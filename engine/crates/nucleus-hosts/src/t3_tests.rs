@@ -328,7 +328,7 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
     let run = task.run().expect("run");
     let pass = client.pass(checkout.path());
     assert_eq!(
-        pass.observe_run(run, 2).await.expect("busy checkout"),
+        pass.observe_run(run, 2).await.expect("busy checkout").host,
         Host::Current {
             instance: instance.clone(),
             state: RunState::Running
@@ -336,7 +336,7 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
     );
     process.kill().await.expect("stop fixture child");
     assert_eq!(
-        pass.observe_run(run, 3).await.expect("same inventory"),
+        pass.observe_run(run, 3).await.expect("same inventory").host,
         Host::Current {
             instance: instance.clone(),
             state: RunState::Running
@@ -346,7 +346,8 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
         quiet_pass(&client)
             .observe_run(run, 3)
             .await
-            .expect("quiet checkout"),
+            .expect("quiet checkout")
+            .host,
         Host::Current {
             instance,
             state: RunState::Ended
@@ -402,7 +403,8 @@ async fn settlement_needs_every_provider_and_background_turn_item() {
         assert_eq!(
             pass.observe_run(run, 2)
                 .await
-                .expect("active background work"),
+                .expect("active background work")
+                .host,
             Host::Current {
                 instance: instance.clone(),
                 state: RunState::Running
@@ -410,11 +412,81 @@ async fn settlement_needs_every_provider_and_background_turn_item() {
         );
     }
     assert_eq!(
-        pass.observe_run(run, 3).await.expect("covered and quiet"),
+        pass.observe_run(run, 3)
+            .await
+            .expect("covered and quiet")
+            .host,
         Host::Current {
             instance,
             state: RunState::Ended
         }
+    );
+    server.await.expect("scripted host");
+}
+
+#[tokio::test]
+async fn activity_comes_only_from_the_launchs_own_native_run() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (task, _, instance) = reserve(binding.clone());
+    let mut command = snapshot(&binding, &instance, "running", false);
+    command["projection"]["turnItems"] = json!([
+        {"type":"command_execution","status":"running","runId":"older-turn",
+         "input":"git status","startedAt":"2026-11-23T16:01:00Z"},
+        {"type":"file_change","status":"completed","runId":NATIVE_RUN,
+         "fileName":"finished.rs","startedAt":"2026-11-23T16:01:00Z"},
+        {"type":"command_execution","status":"running","runId":NATIVE_RUN,
+         "input":"cargo test --token fixture-private-value","startedAt":"2026-11-23T16:00:00Z"}
+    ]);
+    let mut file = command.clone();
+    file["projection"]["turnItems"][2] = json!({
+        "type":"file_change","status":"running","runId":NATIVE_RUN,
+        "fileName": format!("{}/src/lib.rs", binding.worktree_path)
+    });
+    let mut steer = command.clone();
+    steer["projection"]["runs"][0]["userMessageId"] = json!("original-message");
+    steer["projection"]["messages"] =
+        json!([{"id":format!("{instance}-message"),"runId":NATIVE_RUN}]);
+    let (client, server) = server(
+        [command, file, steer]
+            .into_iter()
+            .map(|reply| ("orchestration.subscribeThread", Response::Snapshot(reply)))
+            .collect(),
+    )
+    .await;
+    let pass = quiet_pass(&client);
+    let run = task.run().expect("run");
+    let seen = pass.observe_run(run, 2).await.expect("exact activity");
+    assert_eq!(
+        seen.host,
+        Host::Current {
+            instance,
+            state: RunState::Running
+        }
+    );
+    assert_eq!(
+        seen.activity,
+        Some(crate::RunActivity {
+            label: "Running Rust tests".into(),
+            started_at: Some(1_795_449_600_000),
+        })
+    );
+    assert_eq!(
+        pass.observe_run(run, 3)
+            .await
+            .expect("file activity")
+            .activity,
+        Some(crate::RunActivity {
+            label: "Editing src/lib.rs".into(),
+            started_at: None
+        })
+    );
+    assert!(
+        pass.observe_run(run, 4)
+            .await
+            .expect("steered message")
+            .activity
+            .is_none()
     );
     server.await.expect("scripted host");
 }

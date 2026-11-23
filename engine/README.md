@@ -327,6 +327,8 @@ its completion delivery with `delegated_task.completion-delivery.dispose`.
 The service continues to see its role thread and exact run. Verify reattach
 after closeout and checkout removal in the parenting fixtures. ACP and T3
 parenting follow the milestone 1 proof and precede the first real project.
+Check that every child is idle with a fresh, complete read before archiving
+the parent. Completed children follow T3 retention.
 
 ## Board
 
@@ -342,6 +344,15 @@ and optional pool controls follow their migration milestones.
 interval invalidates the list and visible task views. Task commands use the configured control
 credential. Each run has its own callback credential, including its task and
 role checks. The API exposes the run's progress without its ticket or wire.
+Task detail includes a run's current activity label and optional start time
+in Unix milliseconds. T3 derives it from running items belonging to the
+launch's exact native run. Command labels omit arguments and shell input.
+Activity is in memory, scoped to the row revision and run instance. A change
+can invalidate a task at the same version, so clients refetch on each notice.
+History pages include display records for run starts and ends, PR links,
+verdicts, questions, confirmed merges and finish. Replays of the same launch
+reuse its instance. The audit sequence and record order are enough to rebuild
+the feed on attach. Decisions never read these display records.
 
 The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
 --enable` with an existing profile on the pinned volume. Start `serve` with

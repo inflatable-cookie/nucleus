@@ -1,6 +1,7 @@
 //! Service entry points for the isolated Rust task engine.
 
 mod pass;
+mod presentation;
 mod project;
 mod question;
 mod schedule;
@@ -27,7 +28,7 @@ use nucleus_core::{
     Report, Task, WaitReason,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
-use nucleus_hosts::{HostError, T3};
+use nucleus_hosts::{HostError, RunActivity, T3};
 use nucleus_store::{
     EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError, TaskRow,
 };
@@ -94,6 +95,7 @@ struct State {
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, WaitReason>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
+    activity: BTreeMap<String, presentation::ActivityAt>,
     thread_tasks: BTreeMap<String, Vec<String>>,
 }
 
@@ -166,6 +168,7 @@ impl Service {
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 observed_forge: BTreeMap::new(),
+                activity: BTreeMap::new(),
                 thread_tasks: BTreeMap::new(),
             }),
             changes,
@@ -413,7 +416,16 @@ impl Service {
         match preflight(&mut task, authority, &observation, command)? {
             Preflight::Ready => {
                 let version = if explicit_move || prior.task != task {
-                    self.commit(&mut state, &prior, &task, &event("command"))?
+                    let mut audit = event("command");
+                    if prior.task.phase() != task.phase()
+                        && matches!(
+                            task.phase(),
+                            nucleus_core::Phase::Closing | nucleus_core::Phase::Done
+                        )
+                    {
+                        presentation::note_merge(&mut audit, &observation.forge);
+                    }
+                    self.commit(&mut state, &prior, &task, &audit)?
                 } else {
                     prior.version
                 };
@@ -536,10 +548,12 @@ impl Service {
         audit: &EventDraft,
     ) -> Result<i64, ServiceError> {
         let id = &task.identity().id;
-        let version = state.store.save_row(prior, task, audit)?;
+        let audit = presentation::decorate(&prior.task, task, audit);
+        let version = state.store.save_row(prior, task, &audit)?;
         track(state, task);
         state.waits.remove(id);
         state.observed_forge.remove(id);
+        state.activity.remove(id);
         self.wake_task(state, id, version);
         Ok(version)
     }
@@ -561,6 +575,40 @@ impl Service {
             Observed::Unknown => state.observed_forge.remove(id),
         };
         if prior.as_ref() != state.observed_forge.get(id) {
+            self.publish(id, row.version);
+        }
+        Ok(())
+    }
+
+    async fn observe_activity(
+        &self,
+        row: &TaskRow,
+        activity: Option<RunActivity>,
+    ) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let mut state = self.state.lock().await;
+        let current = self.lookup(&state, id)?;
+        let instance = |row: &TaskRow| row.task.run().map(|run| run.launch().instance.clone());
+        if current.version != row.version || instance(&current) != instance(row) {
+            return Err(StoreError::StaleTask.into());
+        }
+        let observed =
+            activity
+                .zip(instance(row))
+                .map(|(activity, instance)| presentation::ActivityAt {
+                    version: row.version,
+                    instance,
+                    activity,
+                });
+        if state.activity.get(id) != observed.as_ref() {
+            match observed {
+                Some(observed) => {
+                    state.activity.insert(id.clone(), observed);
+                }
+                None => {
+                    state.activity.remove(id);
+                }
+            }
             self.publish(id, row.version);
         }
         Ok(())

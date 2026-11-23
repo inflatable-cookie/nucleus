@@ -70,9 +70,20 @@ impl Service {
             self.project.verify()?;
             observation.workspace = seen(checkout.allocate(&pr.head));
         }
-        let host_error = match read_host(host, task, &binding).await {
-            Ok(observed) => {
-                observation.host = observed;
+        let (host_result, activity) = if let Some(run) = task.run() {
+            match host.observe_run(run, now_ms()).await {
+                Ok(seen) => (Ok(Observed::Known(seen.host)), seen.activity),
+                Err(error) => (Err(error), None),
+            }
+        } else {
+            (read_retained(host, task, &binding).await, None)
+        };
+        if task.run().is_some() {
+            self.observe_activity(row, activity).await?;
+        }
+        let host_error = match host_result {
+            Ok(state) => {
+                observation.host = state;
                 None
             }
             Err(error) => Some(error),
@@ -165,7 +176,11 @@ impl Service {
         };
         let mut updated = row.task.clone();
         let _ = updated.reconcile(observation);
-        self.save(row, updated, &event(kind)).await?;
+        let mut audit = event(kind);
+        if row.task.phase() != updated.phase() && updated.phase() == Phase::Closing {
+            crate::presentation::note_merge(&mut audit, &observation.forge);
+        }
+        self.save(row, updated, &audit).await?;
         Ok(action)
     }
 
@@ -548,22 +563,17 @@ impl Service {
             _ => "closed_checkout_retained",
         };
         let mut audit = event(record);
-        if let Observed::Known(Forge::Merged { commit, .. }) = &observed.forge {
-            audit.detail = serde_json::json!({ "mergeCommit": commit }).to_string();
-        }
+        crate::presentation::note_merge(&mut audit, &observed.forge);
         self.save(row, updated, &audit).await?;
         Ok(action)
     }
 }
 
-async fn read_host(
+async fn read_retained(
     host: &impl TaskHost,
     task: &Task,
     binding: &Binding,
 ) -> Result<Observed<Host>, HostError> {
-    if let Some(run) = task.run() {
-        return host.observe_run(run, now_ms()).await.map(Observed::Known);
-    }
     let role = match task.phase() {
         Phase::Working => Role::Worker,
         Phase::Reviewing => Role::Reviewer,

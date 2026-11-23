@@ -5,9 +5,9 @@ use axum::{
     http::Request,
 };
 use futures_util::StreamExt;
-use nucleus_core::{Action, Entry, Forge, Host, Observed, RunState};
+use nucleus_core::{Action, CheckState, Entry, Forge, Host, Observed, RunState};
 use nucleus_forge::GitHub;
-use nucleus_hosts::T3;
+use nucleus_hosts::{RunActivity, T3};
 use tower::ServiceExt;
 
 use super::*;
@@ -21,6 +21,138 @@ const BOARD_KEY: [u8; 32] = [2; 32];
 const PLANNER_KEY: [u8; 32] = [5; 32];
 const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
+
+#[tokio::test]
+async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
+    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (task, _, _) = reservation("worker", Entry::Brief, &service.project.start);
+    seed_task(&service, &task).await;
+    let row = service.task("worker").await.expect("row");
+    let authority = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: authority.clone(),
+        }],
+    );
+    let mut changes = service.changes();
+    let activity = RunActivity {
+        label: "Running Rust tests".into(),
+        started_at: Some(1000),
+    };
+    service
+        .observe_activity(&row, Some(activity.clone()))
+        .await
+        .expect("observe");
+    assert_eq!(changes.try_recv().expect("invalidate").version, row.version);
+    service
+        .observe_activity(&row, Some(activity.clone()))
+        .await
+        .expect("repeat");
+    assert!(matches!(
+        changes.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    let path = "/v1/tasks/worker";
+    let view = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(
+        view["run"]["activity"],
+        json!({"label":"Running Rust tests","startedAt":1000})
+    );
+
+    service
+        .observe_activity(&row, None)
+        .await
+        .expect("unavailable activity");
+    assert_eq!(changes.try_recv().expect("invalidate").version, row.version);
+    let view = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert!(view["run"]["activity"].is_null());
+
+    service
+        .command("worker", &authority, Command::Cancel)
+        .await
+        .expect("cancel");
+    assert!(matches!(
+        service.observe_activity(&row, Some(activity)).await,
+        Err(ServiceError::Store(nucleus_store::StoreError::StaleTask))
+    ));
+    let view = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(view["run"]["revoked"], true);
+    assert!(view["run"]["activity"].is_null());
+}
+
+#[tokio::test]
+async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise() {
+    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (task, key, mut observation) = reservation("worker", Entry::Brief, &service.project.start);
+    let instance = task.run().expect("run").launch().instance.clone();
+    seed_task(&service, &task).await;
+    let mut row = service.task("worker").await.expect("row");
+    for at in [1, 2] {
+        let mut updated = row.task.clone();
+        updated.record_send(&instance, at).expect("send marker");
+        row = service
+            .save(&row, updated, &event("host_send"))
+            .await
+            .expect("persist send");
+    }
+    let pr = PullRequest {
+        url: PR.into(),
+        head: service.project.start.clone(),
+    };
+    let mut updated = row.task.clone();
+    updated
+        .record_report(&instance, key.as_bytes(), Report::Work(pr.clone()))
+        .expect("stage report");
+    row = service
+        .save(&row, updated.clone(), &event("reported"))
+        .await
+        .expect("persist report");
+    observation.host = Observed::Known(Host::Current {
+        instance: instance.clone(),
+        state: RunState::Ended,
+    });
+    observation.forge = Observed::Known(Forge::Open {
+        pr,
+        checks: CheckState::Ready,
+    });
+    assert_eq!(
+        updated.reconcile(&observation),
+        Action::Advance(Phase::Reviewing)
+    );
+    service
+        .save(&row, updated, &event("phase_reconciled"))
+        .await
+        .expect("apply report");
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    let history = json_body(get_as(&api, "/v1/tasks/worker/history", &BOARD_KEY).await).await;
+    assert_eq!(
+        history[0]["presentation"],
+        json!([
+            {"kind":"run_ended","instance":instance}, {"kind":"pull_request","url":PR}
+        ])
+    );
+    assert_eq!(history[1]["presentation"], json!([]));
+    assert_eq!(history[2]["presentation"], json!([]));
+    assert_eq!(
+        history[3]["presentation"],
+        json!([
+            {"kind":"run_started","instance":instance,"role":"worker","purpose":"Synthetic change","reviewHead":null}
+        ])
+    );
+}
 
 #[tokio::test]
 async fn http_reports_bind_the_task_instance_credential_and_role() {
