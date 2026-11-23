@@ -647,12 +647,15 @@ export class Notices {
             if (n.error !== reason)
               this.store.putNotice({ ...n, error: reason });
           },
-          gone: () => this.store.putNotice({ ...n, error: "The responsible thread is no longer available" }),
+          gone: () =>
+            this.store.putNotice({
+              ...n,
+              error: "The responsible thread is no longer available",
+            }),
           confirm: () => {
             // Plan saves and lane-document edits may land while the owner is finishing
             // another run. Refresh at the delivery boundary and retain the episode ID.
-            if (n.kind !== "triage")
-              this.store.evaluateLaneDrains();
+            if (n.kind !== "triage") this.store.evaluateLaneDrains();
             const current = this.store
               .notices(n.taskId)
               .find((notice) => notice.id === n.id);
@@ -668,7 +671,11 @@ export class Notices {
             }
             return current;
           },
-          target: (current) => ({ agentId: current.agentId, id: current.id, text: current.text }),
+          target: (current) => ({
+            agentId: current.agentId,
+            id: current.id,
+            text: current.text,
+          }),
           mark: (current, status, error) =>
             this.store.putNotice({ ...current, error, status }),
         }),
@@ -684,14 +691,26 @@ export class Notices {
           .pendingNotices()
           .filter(
             (n) =>
-              !["host_outage", "lane_drain", "next_aim", "lead_recheck", "qa"].includes(n.kind),
+              ![
+                "host_outage",
+                "lane_drain",
+                "next_aim",
+                "lead_recheck",
+                "qa",
+              ].includes(n.kind),
           )
           .map((n) => this.store.task(n.taskId)),
       ];
       for (const n of this.store.pendingNotices()) {
         if (
           n.status !== "pending" ||
-          ["host_outage", "lane_drain", "next_aim", "lead_recheck", "qa"].includes(n.kind)
+          [
+            "host_outage",
+            "lane_drain",
+            "next_aim",
+            "lead_recheck",
+            "qa",
+          ].includes(n.kind)
         )
           continue;
         if (
@@ -713,7 +732,13 @@ export class Notices {
       for (const n of this.store.pendingNotices()) {
         if (
           n.status !== "pending" ||
-          ["host_outage", "lane_drain", "next_aim", "lead_recheck", "qa"].includes(n.kind)
+          [
+            "host_outage",
+            "lane_drain",
+            "next_aim",
+            "lead_recheck",
+            "qa",
+          ].includes(n.kind)
         )
           continue;
         if (
@@ -802,9 +827,10 @@ export class Notices {
       const suggested = stop?.suggestedVerbs.length
         ? `\nSuggested verbs: ${stop.suggestedVerbs.join(", ")}`
         : "";
-      const remapHint = task.reasonFact?.code === "retained_profile"
-        ? "\nOwner action: restart remaps the retained worker to an eligible profile, with an optional instruction as its continuation; route role=worker chooses the profile."
-        : "";
+      const remapHint =
+        task.reasonFact?.code === "retained_profile"
+          ? "\nOwner action: restart remaps the retained worker to an eligible profile, with an optional instruction as its continuation; route role=worker chooses the profile."
+          : "";
       const proofOwner = awaitingProof
         ? this.store.projectPlannerRecipient(
             this.store.projectFor(

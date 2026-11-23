@@ -149,7 +149,9 @@ export type ProjectSelectorRow = {
   dormant: boolean;
 };
 /** The selector's two row groups: active rows first, then Dormant (nucleus#1529; parking is retired). */
-export function projectSelectorRowGroup(row: Pick<ProjectSelectorRow, "dormant">): number {
+export function projectSelectorRowGroup(
+  row: Pick<ProjectSelectorRow, "dormant">,
+): number {
   return row.dormant ? 1 : 0;
 }
 /** Selector popover rows: every project matching the filter box, with its primary repository and counts.

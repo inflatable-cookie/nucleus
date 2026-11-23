@@ -25,7 +25,13 @@ import {
   type InboxView,
 } from "../../shared/inbox-board";
 import { useRpc } from "../shell";
-import { Disclosure, DropdownSelect, muted, row, type Colors } from "../controls";
+import {
+  Disclosure,
+  DropdownSelect,
+  muted,
+  row,
+  type Colors,
+} from "../controls";
 import { projectName } from "./text";
 import {
   BoardCard,
@@ -338,7 +344,8 @@ export function InboxList({
   const { board, listCounts: counts, triageTagOptions } = inbox;
   const sections = inboxSections(board, view);
   // Nucleus#1543: parked leads and papercuts sit under one collapsed row at the end of their list.
-  const parked = view === "leads" || view === "papercuts" ? parkedCards(board, view) : [];
+  const parked =
+    view === "leads" || view === "papercuts" ? parkedCards(board, view) : [];
   const [parkedOpen, setParkedOpen] = useState(false);
   const listMeasurements = useRef<{
     view: typeof view;

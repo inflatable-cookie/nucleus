@@ -19,22 +19,40 @@ export function defaultRecheckDate(now: Date = new Date()): string {
  * The stored recheck instant for a chosen `YYYY-MM-DD` day, or null when the text is not a real
  * day or the day is not after `now`. Rolled-over dates (2026-02-31) are refused, not moved.
  */
-export function recheckIsoFromDate(value: string, now: Date = new Date()): string | null {
+export function recheckIsoFromDate(
+  value: string,
+  now: Date = new Date(),
+): string | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) return null;
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const [year, month, day] = [
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  ];
   const at = new Date(year, month - 1, day, RECHECK_HOUR, 0, 0, 0);
-  if (at.getFullYear() !== year || at.getMonth() !== month - 1 || at.getDate() !== day) return null;
+  if (
+    at.getFullYear() !== year ||
+    at.getMonth() !== month - 1 ||
+    at.getDate() !== day
+  )
+    return null;
   if (at.getTime() <= now.getTime()) return null;
   return at.toISOString();
 }
 
 /** A stored recheck instant as the day it is checked, in words: "6 Dec 2026". */
 export function recheckDateLabel(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 /** The parked status's detail: "check again 6 Dec 2026", or a plain note when the park has no date. */
 export function parkedCheckLabel(revisitAt: string | null): string {
-  return revisitAt ? `check again ${recheckDateLabel(revisitAt)}` : "no recheck date set";
+  return revisitAt
+    ? `check again ${recheckDateLabel(revisitAt)}`
+    : "no recheck date set";
 }

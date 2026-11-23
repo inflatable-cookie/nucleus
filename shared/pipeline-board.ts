@@ -90,9 +90,17 @@ export function triageStatus(lead: BoardLead): TriageStatus {
     return { tone: "success", state: "Promoted", detail: null };
   // Nucleus#1543: a parked lead names its reason and its recheck; a due one names the reason it was parked for.
   if (lead.parked)
-    return { tone: "muted", state: lead.parked.reason, detail: parkedCheckLabel(lead.parked.revisitAt) };
+    return {
+      tone: "muted",
+      state: lead.parked.reason,
+      detail: parkedCheckLabel(lead.parked.revisitAt),
+    };
   if (lead.recheck)
-    return { tone: "accent", state: "Due for a recheck", detail: lead.recheck.reason };
+    return {
+      tone: "accent",
+      state: "Due for a recheck",
+      detail: lead.recheck.reason,
+    };
   if (triageKind(lead) === "papercut")
     return { tone: "muted", state: "Open", detail: lead.papercutArea };
   if (!lead.check)

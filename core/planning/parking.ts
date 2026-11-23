@@ -35,7 +35,9 @@ function projectOf(store: Store, lead: Lead): Project | null {
  */
 export function unparkDueLeads(store: Store, at = Date.now()): string[] {
   const unparked: string[] = [];
-  const due = (lead: Lead) => Boolean(lead.parked?.revisitAt) && Date.parse(lead.parked!.revisitAt!) <= at;
+  const due = (lead: Lead) =>
+    Boolean(lead.parked?.revisitAt) &&
+    Date.parse(lead.parked!.revisitAt!) <= at;
   for (const candidate of store.parkedLeads()) {
     if (!due(candidate)) continue;
     store.transaction(() => {
@@ -45,7 +47,12 @@ export function unparkDueLeads(store: Store, at = Date.now()): string[] {
       const stamp = new Date(at).toISOString();
       const reason = current.parked.reason;
       const revisitAt = current.parked.revisitAt!;
-      store.updateLead({ ...current, parked: null, recheck: { reason, at: stamp }, updatedAt: stamp });
+      store.updateLead({
+        ...current,
+        parked: null,
+        recheck: { reason, at: stamp },
+        updatedAt: stamp,
+      });
       const project = projectOf(store, current);
       if (project) {
         const planner = store.projectPlannerRecipient(project) ?? "";

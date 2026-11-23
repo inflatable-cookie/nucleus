@@ -32,22 +32,34 @@ export type InboxSection = { id: string; label: string; cards: PipelineCard[] };
  */
 export function leadsCards(board: PipelineBoard): PipelineCard[] {
   return board.cards.Triage.filter(
-    (card) => card.kind === "lead" && triageKind(card.value) === "lead" && !card.value.parked,
+    (card) =>
+      card.kind === "lead" &&
+      triageKind(card.value) === "lead" &&
+      !card.value.parked,
   );
 }
 
 /** Papercuts: the Triage column's papercut-tagged leads on the to-do list, their own list (Tom, 2026-11-21). */
 export function papercutCards(board: PipelineBoard): PipelineCard[] {
   return board.cards.Triage.filter(
-    (card) => card.kind === "lead" && triageKind(card.value) === "papercut" && !card.value.parked,
+    (card) =>
+      card.kind === "lead" &&
+      triageKind(card.value) === "papercut" &&
+      !card.value.parked,
   );
 }
 
 /** Nucleus#1543: the parked leads or papercuts of one list, shown under Parked at its end. */
-export function parkedCards(board: PipelineBoard, view: "leads" | "papercuts"): PipelineCard[] {
+export function parkedCards(
+  board: PipelineBoard,
+  view: "leads" | "papercuts",
+): PipelineCard[] {
   const kind = view === "leads" ? "lead" : "papercut";
   return board.cards.Triage.filter(
-    (card) => card.kind === "lead" && triageKind(card.value) === kind && Boolean(card.value.parked),
+    (card) =>
+      card.kind === "lead" &&
+      triageKind(card.value) === kind &&
+      Boolean(card.value.parked),
   );
 }
 

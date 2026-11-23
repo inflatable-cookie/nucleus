@@ -264,7 +264,10 @@ export class Store {
     advanceRevision: () => this.advanceRevision(),
     taskChanged: (taskId) => this.taskChanged(taskId),
     captureTelemetry: (taskId, at) =>
-      captureRetainedTelemetry(this.outcomesStore.telemetryFactsForTask(taskId), new Date(at)),
+      captureRetainedTelemetry(
+        this.outcomesStore.telemetryFactsForTask(taskId),
+        new Date(at),
+      ),
   });
   private readonly migrationStore = new StoreMigration(this.core, {
     retainedArchiveKeys: () => this.retentionStore.retainedArchiveKeys(),
@@ -1305,7 +1308,11 @@ export class Store {
   }
   /** Task 1496: the retained-telemetry capture faults the last passes recorded, for retention health. */
   telemetryRetentionError(): string {
-    return this.getMeta<string>("telemetryCaptureError") || this.getMeta<string>("telemetrySeedError") || "";
+    return (
+      this.getMeta<string>("telemetryCaptureError") ||
+      this.getMeta<string>("telemetrySeedError") ||
+      ""
+    );
   }
   /**
    * Audits B5: the tasks the next purge would delete, so the caller can reap their owned

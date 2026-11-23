@@ -289,7 +289,10 @@ export class StorePlanning {
   }
 
   /** `unpark` clears a park for a promotion or a close (Nucleus#1543); other papercut writes keep it. */
-  updatePapercut(record: Papercut, options: { unpark?: boolean } = {}): Papercut {
+  updatePapercut(
+    record: Papercut,
+    options: { unpark?: boolean } = {},
+  ): Papercut {
     const value = papercutSchema.parse(record);
     const current = this.lead(value.id);
     const mapped = leadFromPapercut(value);

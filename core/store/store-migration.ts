@@ -81,7 +81,11 @@ export class StoreMigration {
    * record's; an unrecognised value stays as stored and is listed.
    */
   migrateCapabilityBrackets(): void {
-    const record: CapabilityBracketMigration = { at: new Date().toISOString(), changes: [], unknown: [] };
+    const record: CapabilityBracketMigration = {
+      at: new Date().toISOString(),
+      changes: [],
+      unknown: [],
+    };
     const stored = this.core.getMeta<unknown[]>("pool");
     if (Array.isArray(stored)) {
       const { pool, changes, unknown } = migratePoolCapabilities(stored);
@@ -94,17 +98,31 @@ export class StoreMigration {
         "SELECT id, json_extract(data,'$.resolution.workerClimb.from') AS climbFrom, json_extract(data,'$.resolution.workerClimb.to') AS climbTo FROM tasks WHERE json_type(data,'$.resolution.workerClimb')='object'",
       )
       .all() as Array<{ id: string; climbFrom: unknown; climbTo: unknown }>;
-    const update = this.db.prepare("UPDATE tasks SET data=json_set(data,?,?) WHERE id=?");
+    const update = this.db.prepare(
+      "UPDATE tasks SET data=json_set(data,?,?) WHERE id=?",
+    );
     for (const row of climbs) {
-      for (const [field, value] of [["from", row.climbFrom], ["to", row.climbTo]] as const) {
+      for (const [field, value] of [
+        ["from", row.climbFrom],
+        ["to", row.climbTo],
+      ] as const) {
         const result = bracketFor(value);
         if (result === "keep") continue;
         if (result === "unknown") {
-          record.unknown.push({ id: row.id, field: `resolution.workerClimb.${field}`, value });
+          record.unknown.push({
+            id: row.id,
+            field: `resolution.workerClimb.${field}`,
+            value,
+          });
           continue;
         }
         update.run(`$.resolution.workerClimb.${field}`, result.to, row.id);
-        record.changes.push({ id: row.id, field: `resolution.workerClimb.${field}`, from: String(value), to: result.to });
+        record.changes.push({
+          id: row.id,
+          field: `resolution.workerClimb.${field}`,
+          from: String(value),
+          to: result.to,
+        });
       }
     }
     const offsets = this.core.getMeta<unknown>("demandRoleOffsets");
@@ -112,17 +130,24 @@ export class StoreMigration {
       record.droppedDemandRoleOffsets = offsets;
       this.core.deleteMeta("demandRoleOffsets");
     }
-    const previous = this.core.getMeta<CapabilityBracketMigration>(CAPABILITY_BRACKET_MIGRATION_KEY);
+    const previous = this.core.getMeta<CapabilityBracketMigration>(
+      CAPABILITY_BRACKET_MIGRATION_KEY,
+    );
     const changed = record.changes.length > 0 || offsets !== undefined;
     // A run that finds a different set of unknown values records them too, so a
     // value written after the first run is listed; the same set rewrites nothing.
-    const unknownMoved = JSON.stringify(previous?.unknown ?? []) !== JSON.stringify(record.unknown);
+    const unknownMoved =
+      JSON.stringify(previous?.unknown ?? []) !==
+      JSON.stringify(record.unknown);
     if (previous !== undefined && !changed && !unknownMoved) return;
     // A later run keeps what earlier runs noted: their conversions and the
     // dropped role offsets stay in the one record; `unknown` is the current scan.
     if (previous) {
       record.changes = [...(previous.changes ?? []), ...record.changes];
-      if (record.droppedDemandRoleOffsets === undefined && previous.droppedDemandRoleOffsets !== undefined)
+      if (
+        record.droppedDemandRoleOffsets === undefined &&
+        previous.droppedDemandRoleOffsets !== undefined
+      )
         record.droppedDemandRoleOffsets = previous.droppedDemandRoleOffsets;
     }
     this.core.setMeta(CAPABILITY_BRACKET_MIGRATION_KEY, record);
@@ -258,7 +283,12 @@ export class StoreMigration {
     if (!rows.length) return;
     const at = new Date().toISOString();
     const update = this.db.prepare("UPDATE leads SET data=? WHERE id=?");
-    const changes: Array<{ id: string; title: string; state: string; parked: boolean }> = [];
+    const changes: Array<{
+      id: string;
+      title: string;
+      state: string;
+      parked: boolean;
+    }> = [];
     for (const row of rows) {
       // The raw record is rewritten as it is stored, so a stripped body stays stripped.
       const lead = JSON.parse(String(row.data)) as {
