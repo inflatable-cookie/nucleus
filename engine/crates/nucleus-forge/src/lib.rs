@@ -193,6 +193,18 @@ impl GitHub {
         Self::with_origin(bearer, "https://api.github.com".into())
     }
 
+    /// Build a fixture client with a synthetic credential and local endpoint.
+    ///
+    /// # Errors
+    /// Returns an error unless the endpoint is loopback.
+    #[cfg(feature = "loopback-fixture")]
+    pub fn loopback_fixture(address: std::net::SocketAddr) -> Result<Self, ForgeError> {
+        if !address.ip().is_loopback() {
+            return Err(ForgeError::Identity);
+        }
+        Self::with_origin("fixture-token", format!("http://{address}"))
+    }
+
     fn with_origin(bearer: &str, origin: String) -> Result<Self, ForgeError> {
         if bearer.is_empty() {
             return Err(ForgeError::Credential);

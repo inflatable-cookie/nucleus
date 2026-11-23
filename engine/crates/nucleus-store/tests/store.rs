@@ -6,7 +6,7 @@ use nucleus_core::{
 };
 use nucleus_store::{
     EngineSettings, EngineStorage, EventDraft, PinnedVolume, SettingsFile, StorageError, Store,
-    StoreError,
+    StoreError, TaskRow,
 };
 use rusqlite::Connection;
 
@@ -35,6 +35,7 @@ fn task(id: &str, reference: &str) -> Task {
             repository: "example/fixture".into(),
             base: "main".into(),
             entry: Entry::Brief,
+            origin_thread: None,
         },
         "Add a greeting".into(),
         None,
@@ -47,6 +48,10 @@ fn event(kind: &str) -> EventDraft {
         kind: kind.into(),
         detail: kind.into(),
     }
+}
+
+fn row(store: &Store, id: &str) -> TaskRow {
+    store.row(id).expect("read row").expect("versioned row")
 }
 
 fn observation() -> Observation {
@@ -70,16 +75,17 @@ fn a_stale_writer_cannot_change_state_or_append_history() {
             .create(&task("2", "fixture#1"), &event("duplicate"))
             .is_err()
     );
+    let prior = row(&second, "1");
     let mut working = initial.clone();
     assert_eq!(
         working.reconcile(&observation()),
         Action::Advance(Phase::Working)
     );
     first
-        .save(&initial, &working, &event("working"))
+        .save_row(&prior, &working, &event("working"))
         .expect("save");
     assert!(matches!(
-        second.save(&initial, &initial, &event("stale")),
+        second.save_row(&prior, &initial, &event("stale")),
         Err(StoreError::StaleTask)
     ));
     assert_eq!(second.get("1").expect("read"), Some(working));
@@ -91,6 +97,31 @@ fn a_stale_writer_cannot_change_state_or_append_history() {
         .expect("history before cursor");
     assert_eq!(older.len(), 1);
     assert_eq!(older[0].content.kind, "accepted");
+}
+
+#[test]
+fn a_row_that_returns_to_the_same_task_still_invalidates_old_decisions() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("open store");
+    let initial = task("1", "fixture#1");
+    store.create(&initial, &event("admitted")).expect("admit");
+    let stale = store.row("1").expect("row").expect("versioned row");
+    let mut working = initial.clone();
+    let _ = working.reconcile(&observation());
+    let next = store
+        .save_row(&stale, &working, &event("working"))
+        .expect("advance");
+    let current = store.row("1").expect("row").expect("advanced row");
+    assert_eq!(current.version, next);
+    store
+        .save_row(&current, &initial, &event("moved back"))
+        .expect("move back");
+    assert!(matches!(
+        store.save_row(&stale, &working, &event("stale")),
+        Err(StoreError::StaleTask)
+    ));
+    assert_eq!(store.get("1").expect("read row"), Some(initial));
 }
 
 #[test]
@@ -110,9 +141,18 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
         &[7; 32],
     )
     .expect("reserve");
-    let before = task.clone();
     let mut store = Store::open(&storage).expect("open");
-    store.create(&before, &event("launched")).expect("admit");
+    store.create(&task, &event("launched")).expect("admit");
+    let before = row(&store, "1");
+    assert_eq!(store.occupied_slots("other").expect("unsent run"), 0);
+    let instance = task.run().expect("prepared run").launch().instance.clone();
+    task.record_send(&instance, 1).expect("record dispatch");
+    store
+        .save_row(&before, &task, &event("sent"))
+        .expect("save send marker");
+    assert_eq!(store.occupied_slots("other").expect("sent run"), 1);
+    assert_eq!(store.occupied_slots("1").expect("own slot excluded"), 0);
+    let before = row(&store, "1");
     task.command(
         Command::Cancel,
         &Authority::Operator {
@@ -122,13 +162,21 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
     )
     .expect("cancel");
     store
-        .save(&before, &task, &event("cancelled"))
+        .save_row(&before, &task, &event("cancelled"))
         .expect("save");
     drop(store);
 
     let mut store = Store::open(&storage).expect("reopen");
     assert_eq!(store.active().expect("active"), vec![task.clone()]);
-    let before = task.clone();
+    assert_eq!(store.active_ids(None, 1).expect("first page"), ["1"]);
+    assert!(
+        store
+            .active_ids(Some("1"), 1)
+            .expect("after cursor")
+            .is_empty()
+    );
+    assert_eq!(store.occupied_slots("other").expect("revoked pending"), 1);
+    let before = row(&store, "1");
     let settled = Observation {
         host: Observed::Known(Host::Current {
             instance: task.run().expect("revoked run").launch().instance.clone(),
@@ -137,9 +185,12 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
         ..observation
     };
     assert_eq!(task.reconcile(&settled), Action::Advance(Phase::Cancelled));
-    store.save(&before, &task, &event("stopped")).expect("save");
+    store
+        .save_row(&before, &task, &event("stopped"))
+        .expect("save");
     assert_eq!(store.get("1").expect("stored task"), Some(task));
     assert!(store.active().expect("active").is_empty());
+    assert_eq!(store.occupied_slots("other").expect("settled run"), 0);
 }
 
 #[test]
@@ -169,6 +220,32 @@ fn an_unrelated_database_is_never_initialized_as_engine_state() {
 }
 
 #[test]
+fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("open");
+    let task = task("1", "fixture#1");
+    store.create(&task, &event("admitted")).expect("admit");
+    drop(store);
+    let db = Connection::open(storage.database().path().join("engine.sqlite"))
+        .expect("fixture connection");
+    db.execute_batch("DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;")
+        .expect("restore version two schema");
+    let store = Store::open(&storage).expect("migrate version two");
+    assert_eq!(row(&store, "1"), TaskRow { task, version: 1 });
+    assert_eq!(store.history("1", None, 1).expect("audit").len(), 1);
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='occupied_launch_slots'",
+            [],
+            |row| row.get::<_, u32>(0)
+        )
+        .expect("slot index"),
+        1
+    );
+}
+
+#[test]
 fn an_audit_insert_failure_rolls_back_the_task_update() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());
@@ -180,7 +257,9 @@ fn an_audit_insert_failure_rolls_back_the_task_update() {
     db.execute_batch("CREATE TRIGGER fail_audit BEFORE INSERT ON events WHEN NEW.kind = 'reject' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").expect("install fixture trigger");
     let mut changed = initial.clone();
     changed.reconcile(&observation());
-    assert!(store.save(&initial, &changed, &event("reject")).is_err());
+    let before = row(&store, "1");
+    assert!(store.save_row(&before, &changed, &event("reject")).is_err());
+    assert_eq!(row(&store, "1"), before);
     assert_eq!(
         store.get("1").expect("read rolled back task"),
         Some(initial)

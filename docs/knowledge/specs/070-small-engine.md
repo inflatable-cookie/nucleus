@@ -71,7 +71,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 
 | Field | Meaning |
 |---|---|
-| `id`, `reference`, `repository`, `base`, `entry` | Identity. Entry is `brief` or `review_entry`, fixed at admission. |
+| `id`, `reference`, `repository`, `base`, `entry`, `origin_thread` | Identity fixed at admission. Entry is `brief` or `review_entry`. The submitting or promoting thread is the origin when the caller has one. |
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. |
 | `threads` | Retained worker and reviewer thread IDs and a monotonic launch sequence. Reuse each role's thread when it is idle. Replace its ID only after the host confirms the thread is gone. |
@@ -193,7 +193,7 @@ Reuse, to be confirmed by the build when it reads their contracts:
   - `longhorn-support-log` and `longhorn-redact` for logs;
   - `longhorn-update-install` for installing a verified build on roll.
   - Use the exact Longhorn worktree-identity API. Tom's interim pin (relayed
-    2026-11-23) is `rev = "0549175ae075f3d530df69f0e3571bff0fbcf671"` until
+    2026-11-23) is `rev = "049392e27f93d642839b82c28d217c1f353e569e"` until
     the `v0.6.0` tag is available.
 - **Barge:** the storage library and the worktree lease contract (lease, return, run).
 - **Toolchain:** the rs-toolchain gates (clippy, rustfmt, nextest, cargo-deny), run

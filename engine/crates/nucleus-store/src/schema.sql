@@ -12,6 +12,8 @@ CREATE TABLE tasks (
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 3),
   question TEXT CHECK (json_valid(question)),
   hold TEXT CHECK (json_valid(hold)),
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  origin_thread TEXT,
   UNIQUE (repository, reference)
 ) STRICT;
 

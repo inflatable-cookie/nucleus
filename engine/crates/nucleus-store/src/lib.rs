@@ -16,9 +16,11 @@ pub use settings::{EngineSettings, EngineStorage, SettingsFile, StorageError};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 3;
 const DATABASE_FILE: &str = "engine.sqlite";
-const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold";
+const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
+const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
+  WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -36,17 +38,23 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct EventDraft {
     pub at: i64,
     pub kind: String,
     pub detail: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Event {
     pub sequence: i64,
     pub content: EventDraft,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRow {
+    pub task: Task,
+    pub version: i64,
 }
 
 pub struct Store {
@@ -79,10 +87,19 @@ impl Store {
                 })? == 0 =>
             {
                 tx.execute_batch(include_str!("schema.sql"))?;
+                tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
+            (APPLICATION_ID, 1 | 2) => {
+                if version == 1 {
+                    tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
+                    tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
+                }
+                tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+                tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            }
             _ => {
                 return Err(StoreError::Incompatible {
                     application,
@@ -101,7 +118,52 @@ impl Store {
     /// # Errors
     /// Returns an error if the database cannot read or decode the row.
     pub fn get(&self, id: &str) -> Result<Option<Task>, StoreError> {
+        Ok(self.row(id)?.map(|row| row.task))
+    }
+
+    /// Read a task with the exact version required for compare-and-set.
+    /// # Errors
+    /// Returns an error if the row cannot be read or decoded.
+    pub fn row(&self, id: &str) -> Result<Option<TaskRow>, StoreError> {
         Ok(load(&self.connection, id)?)
+    }
+
+    /// Read one bounded page of active task IDs from the active index.
+    /// # Errors
+    /// Returns an error if the database cannot read the page.
+    pub fn active_ids(&self, after: Option<&str>, limit: u32) -> Result<Vec<String>, StoreError> {
+        let prefix =
+            "SELECT id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)";
+        let statement = if after.is_some() {
+            format!("{prefix} AND id > ?2 ORDER BY id LIMIT ?1")
+        } else {
+            format!("{prefix} ORDER BY id LIMIT ?1")
+        };
+        let mut query = self.connection.prepare_cached(&statement)?;
+        let decode = |row: &Row<'_>| row.get(0);
+        let ids = match after {
+            Some(id) => query.query_map(params![limit, id], decode)?,
+            None => query.query_map(params![limit], decode)?,
+        };
+        Ok(ids.collect::<Result<_, _>>()?)
+    }
+
+    /// Count other tasks whose possibly sent run still holds a launch slot.
+    /// # Errors
+    /// Returns an error if row custody cannot be read.
+    pub fn occupied_slots(&self, except: &str) -> Result<u32, StoreError> {
+        Ok(self.connection.query_row("SELECT count(*) FROM tasks WHERE id <> ?1 AND json_extract(run, '$.last_send_at_ms') IS NOT NULL", [except], |row| row.get(0))?)
+    }
+
+    /// Read bounded project provenance for responsible planner discovery.
+    /// # Errors
+    /// Returns an error if task identities or their retained roles cannot be read.
+    pub fn routing_tasks(&self, repository: &str, limit: u32) -> Result<Vec<Task>, StoreError> {
+        let mut query = self.connection.prepare_cached(&format!(
+            "SELECT {TASK_COLUMNS} FROM tasks WHERE repository = ?1 ORDER BY id LIMIT ?2"
+        ))?;
+        let rows = query.query_map(params![repository, limit], decode_task)?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Read tasks that can still take an engine pass, including pending stops.
@@ -109,9 +171,24 @@ impl Store {
     /// # Errors
     /// Returns an error if the database cannot read or decode the rows.
     pub fn active(&self) -> Result<Vec<Task>, StoreError> {
-        let mut query = self.connection.prepare_cached(&format!(
+        self.tasks(&format!(
             "SELECT {TASK_COLUMNS} FROM tasks WHERE phase NOT IN ('done','cancelled') OR run IS NOT NULL ORDER BY id"
+        ))
+    }
+
+    /// Read all tasks for the board, including terminal rows.
+    /// # Errors
+    /// Returns an error if the database cannot read or decode the rows.
+    pub fn list(&self) -> Result<Vec<TaskRow>, StoreError> {
+        let mut query = self.connection.prepare_cached(&format!(
+            "SELECT {TASK_COLUMNS}, version FROM tasks ORDER BY id"
         ))?;
+        let rows = query.query_map([], decode_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    fn tasks(&self, statement: &str) -> Result<Vec<Task>, StoreError> {
+        let mut query = self.connection.prepare_cached(statement)?;
         let rows = query.query_map([], decode_task)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
@@ -130,30 +207,30 @@ impl Store {
         Ok(())
     }
 
-    /// Replace a task if its observed state is still current. State and audit
-    /// event commit together. Callers perform remote I/O outside the transaction.
-    ///
+    /// Replace exactly the row version and run read by the caller. State and
+    /// audit commit together. Remote I/O belongs outside the transaction.
     /// # Errors
-    /// Returns an error if the expected state is stale or the write fails.
-    pub fn save(
+    /// Returns an error on a competing write or transaction failure.
+    pub fn save_row(
         &mut self,
-        expected: &Task,
+        expected: &TaskRow,
         task: &Task,
         event: &EventDraft,
-    ) -> Result<(), StoreError> {
-        if expected.identity() != task.identity() {
+    ) -> Result<i64, StoreError> {
+        if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
         }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if load(&tx, &task.identity().id)?.as_ref() != Some(expected) {
+        let row = load(&tx, &task.identity().id)?.ok_or(StoreError::StaleTask)?;
+        if row != *expected {
             return Err(StoreError::StaleTask);
         }
         persist(&tx, task, true)?;
         append(&tx, &task.identity().id, event)?;
         tx.commit()?;
-        Ok(())
+        Ok(row.version + 1)
     }
 
     /// Read a page of display history, newest first.
@@ -183,14 +260,21 @@ impl Store {
     }
 }
 
-fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<Task>> {
+fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> {
     connection
         .query_row(
-            &format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?1"),
+            &format!("SELECT {TASK_COLUMNS}, version FROM tasks WHERE id = ?1"),
             [id],
-            decode_task,
+            decode_row,
         )
         .optional()
+}
+
+fn decode_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
+    Ok(TaskRow {
+        task: decode_task(row)?,
+        version: row.get(15)?,
+    })
 }
 
 fn decode_task(row: &Row<'_>) -> rusqlite::Result<Task> {
@@ -201,6 +285,7 @@ fn decode_task(row: &Row<'_>) -> rusqlite::Result<Task> {
             "repository": row.get::<_, String>(2)?,
             "base": row.get::<_, String>(3)?,
             "entry": row.get::<_, String>(4)?,
+            "origin_thread": row.get::<_, Option<String>>(14)?,
         },
         "brief": json_column(row, 5)?,
         "phase": row.get::<_, String>(6)?,
@@ -230,10 +315,10 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
     let identity = task.identity();
     let snapshot = serde_json::to_value(task)?;
     let mut sql = format!(
-        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold)"
+        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread)"
     );
     if update {
-        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold");
+        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            version = tasks.version + 1");
     }
     let nullable_json = |key: &str| (!snapshot[key].is_null()).then(|| snapshot[key].to_string());
     tx.execute(
@@ -253,6 +338,7 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
             ":attempts": task.attempts(),
             ":question": nullable_json("question"),
             ":hold": nullable_json("hold"),
+            ":origin_thread": identity.origin_thread,
         },
     )?;
     Ok(())

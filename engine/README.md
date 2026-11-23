@@ -14,7 +14,10 @@ switch starts in milestone 2.
 | 2 | `nucleus-store`, `nucleus-work` | SQLite task and history transactions, settings paths, and worktree allocation and retirement. |
 | 3 | `nucleus-forge` | GitHub PR identity, exact-head checks, merge and merged-head readback. |
 | 4 | `nucleus-hosts` | A small host interface and the authenticated T3 adapter, tested against RPC fixtures. |
-| 5 | `nucleus-service`, `nucleus-cli` | Serialize decisions, callbacks and commands per task. Expose the read model and run an isolated service and CLI. |
+| 5a | Core, store and T3 interfaces | Add versioned task writes, planner notice delivery and native wake hints. |
+| 5b | `nucleus-service` | Run the task pass with due times, command preflight and authenticated reports. |
+| 5c | JSON API and `nucleus-cli` | Serve the task view, invalidations and commands. Configure and run the isolated service. |
+| 6 | `nucleus-acp`, T3 parenting | Present one task as one host-neutral ACP session. Parent T3 role threads under that session. |
 
 Keep PRs near 1,500 changed lines plus tests. Open each against `main` once its
 dependencies land. The planner arranges independent review and merges. Run
@@ -26,7 +29,7 @@ success, a stopped run, and readback after uncertain delivery before the
 planner's live check.
 
 Use `publish = false` for workspace packages. The Longhorn revision
-`0549175ae075f3d530df69f0e3571bff0fbcf671` is an interim pin until `v0.6.0` is
+`049392e27f93d642839b82c28d217c1f353e569e` is an interim pin until `v0.6.0` is
 tagged. Crates using Longhorn require Rust 1.97.1.
 `longhorn-config` owns the versioned engine and Storage settings domains, atomic
 updates and config backups. `longhorn-storage-layout` resolves their roots and
@@ -176,11 +179,9 @@ and effects the task engine needs.
   requires a fresh open PR and clean checkout at that head. When it has moved,
   reconcile the old wire once, stop any settled delivery's live turn, and
   archive the thread before clearing the run. Read back the settled state
-  before releasing the checkout. T3's existing one-row
-  UX needs an ACP parent, `delegated_task.request` with a live parent run and
-  root node, and `delegated_task.completion-delivery.dispose`. Milestone 1's
-  standalone threads are for the fixture only. One row per task is an entry
-  requirement for milestone 2.
+  before releasing the checkout. The milestone 1 fixture can use standalone
+  threads. The host adapter prepares that launch wire, so the service uses the
+  same task and run model when the adapter parents a thread under an ACP session.
 - The role runs call a local authenticated report endpoint via an owner-only
   ticket outside the checkout. The prompt names the ticket path. The service
   verifies the task, role, current run, credential and requested review head.
@@ -198,18 +199,109 @@ and effects the task engine needs.
   An externally merged head with no verdict requires recorded human acceptance.
   [GitHub's exact-head merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)
 
+## Service pass
+
+At startup, enqueue every active task, including a cancelled task with a pending
+run. Keep the earliest due time for each task in memory. Receipts and commands
+wake that task after their transaction commits. A T3 stream wakes the task when
+its known thread changes. Stream events are hints. A disconnect wakes watched
+tasks, and a periodic active scan catches any missed wake. The next due time
+drives the timer even when the scan is idle.
+The backstop pages through the active index with a fixed read budget.
+
+A pass takes tasks that are due and shares one bounded process inventory.
+For each task, read its row, then fetch the exact T3 turn, PR and checkout facts
+needed for its decision. Process coverage and the full provider projection gate
+continuation and release. A live process keeps the checkout in use regardless
+of elapsed time. The service rechecks Git cleanliness just before removal.
+Waits schedule another check. A provider retry deadline takes precedence over
+the ordinary check interval. Unknown facts leave the task waiting for a read;
+the existing decision table owns questions about the work.
+
+Read adapters outside the store lock. Every pass write compares the task row's
+version and run instance with what it read. A stale result drops out and wakes
+the current task. Effects and commands acquire a per-task fence only after
+preflight. Store state and audit together, including the send intent before a
+native write. The board reads committed rows without waiting on GitHub or T3.
+Keep due times, load observations and displayed waits in memory. An idle process
+slot and acceptable local load permit a new launch. Pressure reschedules it
+without spending an attempt. A fresh pass checks process custody after launch.
+
+`next` and commands call the same preflight. A command that needs a fresh forge
+fact fetches it at execution. An unavailable check is shown as pending. The
+board reads committed task data separately from those checks.
+
+An open question owns its message intent. Resolve the project's most active
+responsible planner at send time. Keep the thread ID only as part of the native delivery
+binding. Reconcile that binding before rebinding when the planner changes.
+Unsettle a settled thread using its ID and the high-water sequence from the
+same exact snapshot, then read it back. A settle emits a thread event, and the
+snapshot reads the largest event sequence for that thread in the projection
+transaction. A later settle advances the sequence even when it reuses a
+timestamp. Queue behind an active turn and let an idle planner start immediately.
+[T3 settle event](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L5564-L5626)
+[T3 thread snapshot](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/ProjectionStore.ts#L7075-L7093)
+
+Record the send marker after the preflight, just before dispatching the frozen
+message. The notice is delivered when it initiated a turn that started. If a
+person promotes the notice to a steer in T3, look for the completed user-message
+item with the exact message and target turn IDs. Replay uncertain delivery
+under the same ID after the host's wait window. A durable rejection or a
+terminal turn that never started permits a fresh binding. Clearing the question
+also clears its binding.
+
+## ACP task sessions
+
+`nucleus-acp` is a host-neutral, model-free ACP agent over stdio. Each task has
+one service-minted session with task-scoped credentials outside its Git checkout.
+The agent reads the same committed task view and current wait as the board.
+It follows task invalidations and sends the same typed commands as the CLI,
+including answers. A committed command wakes the task. The agent keeps its
+presentation cache in memory and has no access to the engine store.
+
+Preserve the stdio protocol from [Spec 065](../docs/knowledge/specs/065-acp-task-session.md).
+`initialize` advertises `loadSession: true`. An unbound `session/new` is inert;
+it refuses prompts locally. An unbound `session/load` refuses the attachment.
+A bound attach rebuilds the full current `plan`, `tool_call` list, status and open
+question. One plan covers Queued, Working, Review (with its round), Merge and
+Close. A persistent wait updates the current step's status. Each worker or
+reviewer run gets one tool call keyed by its launch instance. The service view
+provides its purpose from the brief's first line or the review step, with the
+current tool, command, file or test and its observed start time when available.
+These are display facts from the exact native turn. Use a redacted tool summary
+and compute elapsed time at display. The agent updates the call in place.
+Messages cover the PR link, verdict findings, merge, question and finish.
+Coalesce repeated state and keep retries and transient reads out of the thread.
+Clients without structured updates still receive the human-facing milestones.
+The opening prompt establishes the session. The adapter can supply silent hold
+and ignore patterns. ACP cancellation releases the presentation turn. Task
+cancellation goes through the same command preflight as other clients.
+
+Keep host execution and parenting separate. The engine uses its host interface
+to prepare a launch, observe a run and stop it. A host's parenting adapter
+ensures the session is open and creates or continues the role's child there.
+T3 runs `nucleus-acp` in the session thread. It holds or re-enters that thread,
+reads its live run and root node, and sends `delegated_task.request` with the
+bound launch identity. The adapter reuses each role's retained child and settles
+its completion delivery with `delegated_task.completion-delivery.dispose`.
+The service continues to see its role thread and exact run. Verify reattach
+after closeout and checkout removal in the parenting fixtures. ACP and T3
+parenting follow the milestone 1 proof and precede the first real project.
+
 ## Board
 
-Define the JSON model from the engine. A task list returns identity, phase and
+The JSON model comes from the engine. A task list returns identity, phase and
 current wait or question. Detail adds the brief, current run, PR, verdict,
 hold and paged event history. A `next` read returns the current phase, wait,
 question and available commands. A typed command endpoint handles `move`,
-`answer`, `cancel`, `amend` and `hold`/`release` using the same service as the
-CLI. Authorized settings reads and writes expose the engine selection for new
-tasks, work and scratch roots, optional Barge pools and role profiles. Keep
-session and callback credentials separate. A scoped SSE channel signals task
-and settings changes so the board can refetch current projections. Send an
-invalidation on reconnect so delivery gaps need no event or replay queue.
+`answer`, `cancel`, `amend` and `hold`/`release` for the CLI and board.
+`/v1/settings` reports the active work and scratch roots and role profiles.
+Milestone 1 configures the engine setting locally. The board's settings writes
+and optional pool controls follow their migration milestones.
+`/v1/events` emits the task ID and version on a change. A reconnect or missed
+interval invalidates the list and visible task views. Task commands use the configured control
+credential. Each run has its own callback credential, including its task and
+role checks. The API exposes the run's progress without its ticket or wire.
 
 | Keep | Reshape | Remove from Rust tasks |
 | --- | --- | --- |
@@ -218,9 +310,44 @@ invalidation on reconnect so delivery gaps need no event or replay queue.
 | Inbox layout and shared question controls | The Inbox shows the task's one question and lets the assigned planner submit `answer`. | Ladder rungs, escalations and recovery ownership. One question goes to the assigned planner. |
 | Settings shell and Storage form controls | Settings and Storage read the Rust domains. `client/web` transport and live channel adapt at the data boundary. | Legacy per-task tuning and recovery settings. Planning records and legacy features keep their current route while the old engine drains. |
 
+## Settings migration
+
+Keep the Settings tabs, shared controls and save feedback. Use one noun per
+control, put explanations in `?` popovers, autosave, prefer dropdowns and put
+Remove inside the editor. Milestone 2 gives
+each group a versioned Longhorn config domain and reads the live catalogue or
+health separately. Ordinary domains and their backups carry credential
+references. T3 and provider tokens stay in secure storage.
+
+| Current screen | Domain | Keep as is | Reshape | Drop |
+| --- | --- | --- | --- | --- |
+| Profiles, editor, subscriptions | `profiles` (user config) | Profile names, provider and model picker, supported options and subscription display | Configure worker and reviewer profiles against the live T3 catalogue. Map usage levels and project overrides to profile IDs. At Low, Normal and High, Frontier requires an explicit per-role planner request with a reason. | Recovery coordinator and ladder profile groups, whose roles have been retired. |
+| Dispatch limits | `dispatch` (user config) | Usage slider, autosave, global and project slot controls and project overrides | Carry over slots, local load, host-call concurrency, budgets and usage levels. Extend a budget once automatically, then ask the planner. Show which setting is in force and which launch it delays. | Wall-clock stall rules, escalation and outage timers. The pass reads activity and schedules checks. Keep papercut limits with the existing papercut service while it owns that work. |
+| Projects | `projects` (project-scoped config) | Project and repository list, editor and lane selection | Bind repositories and base branches. Keep the per-repository hung-tool limit in project settings. A command with no output for that interval is terminated, with 30 minutes as the default. Resolve the most active responsible planner live at send time. | Stored planner thread selection, recovery-agent registration and episode controls. The live role resolves ownership and task commands own cancellation and holds. |
+| Storage | `engine` (machine state) | Work root fields, resolved paths, reset and save feedback | Resolve the pinned work volume, engine database, work and scratch roots through Longhorn. Expose the optional Barge pool when its host hold is ready. | Paths for retired engine side stores. |
+| Hosts | `hosts` (machine state) | T3 connection status and its connection editor | Configure the T3 endpoint and credential reference. Read reachability and catalogue state live. The adapter translates the canonical profile vocabulary. | Multi-host default picker, retired adapter settings and host-specific profile mapping controls. |
+| Backups and Telemetry | Existing Longhorn config backup scopes and engine display history | Backup status, restore controls and useful usage summaries | Show verified config backups and the new engine's task activity with their own provenance. | Recovery attempts, incidents and escalation counts. |
+
+The service validates each domain and applies its versioned write through
+Longhorn. Keep task and planning records in their owning stores. Loading a
+setting or restoring a backup grants no task or merge authority.
+
+Port the worker start matrix and the reviewer bracket matrix cell for cell from
+[Spec 052](../docs/knowledge/specs/052-usage-level.md). Preserve the critical
+cases, smoothed Maximum and its one Frontier climb for high-complexity tasks,
+and the step-up after an applied changes-required review. Derive that trigger
+from the existing phase, verdict and attempt facts. Read the retained worker's
+actual profile for the reviewer bracket. Use the existing five-stop demand
+weight slider and [Spec 053](../docs/knowledge/specs/053-demand-based-selection.md)
+to pick within a bracket. Keep the selectors pure and reproduce every worker
+and reviewer case from `test/demand.test.ts` as a table-driven Rust test. The
+retired coordinator has no row.
+
 ## Milestone 1 proof
 
 Create the authorized private synthetic repository and its own T3 project when
-the engine is ready to run. Keep the service disabled for everything else. Use
+the engine is ready to run. The service checks the fixture repository's fetch
+and push remotes and the native project's registered checkout before dispatch.
+One process holds the engine profile's write lock. Use
 a real guarded merge and verify task state, exact heads, T3 turn settlement,
 merge commit and worktree disposition by hand with the planner.

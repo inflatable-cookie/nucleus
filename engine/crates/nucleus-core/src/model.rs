@@ -60,6 +60,8 @@ pub struct Identity {
     pub repository: String,
     pub base: String,
     pub entry: Entry,
+    #[serde(default)]
+    pub origin_thread: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +226,26 @@ pub enum Question {
 pub(crate) struct OpenQuestion {
     pub(crate) head: Option<Head>,
     pub(crate) question: Question,
+    #[serde(default)]
+    pub(crate) delivery: Option<QuestionDelivery>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionDelivery {
+    pub thread: String,
+    pub command: String,
+    pub payload: String,
+    pub last_send_at_ms: Option<u64>,
+}
+
+impl fmt::Debug for QuestionDelivery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("QuestionDelivery")
+            .field("thread", &self.thread)
+            .field("command", &self.command)
+            .finish_non_exhaustive()
+    }
 }
 
 impl OpenQuestion {
@@ -518,6 +540,23 @@ impl Task {
     #[must_use]
     pub fn question(&self) -> Option<&Question> {
         self.question.as_ref().map(|open| &open.question)
+    }
+
+    #[must_use]
+    pub fn question_delivery(&self) -> Option<&QuestionDelivery> {
+        self.question
+            .as_ref()
+            .and_then(|open| open.delivery.as_ref())
+    }
+
+    /// Bind the open question to one exact host request.
+    /// Returns false when there is no open question to bind.
+    pub fn bind_question_delivery(&mut self, delivery: QuestionDelivery) -> bool {
+        let Some(question) = &mut self.question else {
+            return false;
+        };
+        question.delivery = Some(delivery);
+        true
     }
 
     #[must_use]

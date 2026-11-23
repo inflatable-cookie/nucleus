@@ -3,6 +3,7 @@
 mod launch;
 mod process;
 mod projection;
+mod questions;
 mod rpc;
 #[cfg(test)]
 mod t3_tests;
@@ -16,14 +17,25 @@ use std::{
 
 pub use launch::{Binding, Dispatch, RoleProfile, RunRequest};
 use launch::{Method, Wire, message_id};
-use nucleus_core::{Host, RetainedThread, Run, RunState};
+use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
 use process::{Activity, Inventory};
 use projection::Projection;
+pub use questions::{NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, PlannerThread};
 use rpc::{Read, Reply, Rpc};
 use serde_json::{Value, json};
 use tokio::sync::OnceCell;
 
 const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
+
+pub struct LaunchRequest<'a> {
+    pub binding: Binding,
+    pub via: &'a Launch,
+    pub profile: &'a RoleProfile,
+    pub title: String,
+    pub instance: &'a str,
+    pub started_at: u64,
+    pub text: String,
+}
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 pub enum HostError {
@@ -88,6 +100,11 @@ impl ReplayAuthorization {
 /// The service serializes commands and effects for each task and persists
 /// the authorized send marker immediately before using it on the wire.
 pub trait TaskHost: Send + Sync {
+    /// Prepare the host's immutable launch inputs and native identity.
+    /// # Errors
+    /// Returns an error when the launch is unsupported or cannot be encoded.
+    fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError>;
+
     fn observe_retained(
         &self,
         binding: &Binding,
@@ -152,6 +169,16 @@ impl T3 {
         }
     }
 
+    /// Stream thread change hints over a socket independent of exact reads.
+    /// # Errors
+    /// Returns an error on disconnect or if the listener missed a hint.
+    pub async fn watch_threads(
+        &self,
+        hints: &tokio::sync::mpsc::Sender<String>,
+    ) -> Result<(), HostError> {
+        self.rpc.watch_threads(hints).await
+    }
+
     /// Check the host protocol and the configured role profiles before admission.
     ///
     /// # Errors
@@ -178,6 +205,33 @@ impl T3 {
                 .any(|provider| available(provider, profile))
         }) {
             return Err(HostError::Configuration);
+        }
+        Ok(())
+    }
+
+    /// Verify that the selected project is active at the expected local root.
+    /// This configuration read is independent of cycle observations.
+    ///
+    /// # Errors
+    /// Returns an error when the project or snapshot cannot be verified.
+    pub async fn check_project(&self, id: &str, root: &str) -> Result<(), HostError> {
+        let Reply::Value(snapshot) = self.rpc.call(
+            "orchestration.subscribeShell",
+            json!({"requestCompletionMarker": true, "omitIdleSubagents": true, "omitOlderSettled": true}),
+            Read::Snapshot,
+        ).await? else { return Err(HostError::Protocol) };
+        let projects = snapshot
+            .pointer("/snapshot/projects")
+            .and_then(Value::as_array)
+            .ok_or(HostError::Protocol)?;
+        let mut matched = projects.iter().filter(|project| project["id"] == id);
+        let project = matched.next().ok_or(HostError::Binding)?;
+        if matched.next().is_some()
+            || project["workspaceRoot"] != root
+            || !project["archivedAt"].is_null()
+            || !project["deletedAt"].is_null()
+        {
+            return Err(HostError::Binding);
         }
         Ok(())
     }
@@ -255,6 +309,25 @@ impl T3Pass<'_> {
 }
 
 impl TaskHost for T3Pass<'_> {
+    fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError> {
+        let (dispatch, thread) = match request.via {
+            Launch::Create => (
+                Dispatch::Create {
+                    title: request.title,
+                    profile: request.profile.clone(),
+                },
+                format!("thread:{}", request.instance),
+            ),
+            Launch::Continue { thread } => (Dispatch::Continue, thread.clone()),
+            Launch::SendPrepared => return Err(HostError::Binding),
+        };
+        RunRequest {
+            binding: request.binding,
+            dispatch,
+            text: request.text,
+        }
+        .inputs(request.instance, thread, request.started_at)
+    }
     async fn observe_retained(&self, binding: &Binding, thread: &str) -> Result<Host, HostError> {
         let projection = self.host.thread(binding, thread).await?;
         let state = if self.quiet(binding, projection.as_ref()).await? {
@@ -434,44 +507,47 @@ fn available(provider: &Value, profile: &RoleProfile) -> bool {
 }
 
 fn rejected(cause: &Value, wire: &Wire, instance: &str) -> bool {
-    let Some([reason]) = cause.as_array().map(Vec::as_slice) else {
+    if wire.method == Method::Continue {
+        return dispatch_rejected(cause, instance);
+    }
+    let Some(error) = command_failure(cause, instance) else {
         return false;
     };
-    if reason["_tag"] != "Fail" {
-        return false;
-    }
-    let error = &reason["error"];
-    if error["commandId"] != instance {
-        return false;
-    }
     let defect = &error["cause"];
-    match wire.method {
-        Method::Continue => {
-            error["_tag"] == "OrchestrationV2DispatchCommandError"
-                && error["commandType"] == "message.dispatch"
-                && rejected_command(defect, instance, "message.dispatch")
-        }
-        Method::Create => {
-            error["_tag"] == "OrchestrationV2ThreadLaunchError"
-                && error["projectId"] == wire.binding.project_id
-                && defect_named(defect, "ThreadLaunchError")
-                && [
-                    ("create-thread", instance.to_owned(), "thread.create"),
-                    (
-                        "dispatch-message",
-                        format!("{instance}:initial-message"),
-                        "message.dispatch",
-                    ),
-                ]
-                .iter()
-                .any(|(operation, command_id, command)| {
-                    (defect["operation"] == *operation
-                        || defect["message"]
-                            == format!("Thread launch {instance} failed during {operation}."))
-                        && rejected_command(&defect["cause"], command_id, command)
-                })
-        }
-    }
+    error["_tag"] == "OrchestrationV2ThreadLaunchError"
+        && error["projectId"] == wire.binding.project_id
+        && defect_named(defect, "ThreadLaunchError")
+        && [
+            ("create-thread", instance.to_owned(), "thread.create"),
+            (
+                "dispatch-message",
+                format!("{instance}:initial-message"),
+                "message.dispatch",
+            ),
+        ]
+        .iter()
+        .any(|(operation, command_id, command)| {
+            (defect["operation"] == *operation
+                || defect["message"]
+                    == format!("Thread launch {instance} failed during {operation}."))
+                && rejected_command(&defect["cause"], command_id, command)
+        })
+}
+
+fn dispatch_rejected(cause: &Value, id: &str) -> bool {
+    command_failure(cause, id).is_some_and(|error| {
+        error["_tag"] == "OrchestrationV2DispatchCommandError"
+            && error["commandType"] == "message.dispatch"
+            && rejected_command(&error["cause"], id, "message.dispatch")
+    })
+}
+
+fn command_failure<'a>(cause: &'a Value, id: &str) -> Option<&'a Value> {
+    let [reason] = cause.as_array()?.as_slice() else {
+        return None;
+    };
+    let error = &reason["error"];
+    (reason["_tag"] == "Fail" && error["commandId"] == id).then_some(error)
 }
 
 fn defect_named(value: &Value, name: &str) -> bool {

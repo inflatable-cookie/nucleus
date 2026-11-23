@@ -36,6 +36,7 @@ fn task_with_approval() -> Task {
             repository: "example/fixture".into(),
             base: "main".into(),
             entry: Entry::ReviewEntry,
+            origin_thread: None,
         },
         "Review the greeting".into(),
         Some(pr.clone()),
