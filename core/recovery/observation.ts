@@ -236,7 +236,27 @@ export class Observation {
           // Spec 068 §3: an uncertain creation settles by lookup — one match
           // binds, a complete absent read after the grace releases it for one
           // relaunch, anything partial keeps waiting with its reason named.
-          await settleRunCreation(this.resolution, this.store.task(task.id), run);
+          if (
+            (await settleRunCreation(
+              this.resolution,
+              this.store.task(task.id),
+              run,
+            )) !== "skipped"
+          )
+            continue;
+          // A proof executor keeps its owner-activated path: no automatic
+          // relaunch exists for it, so it names its explicit exits.
+          const current = this.store.task(task.id);
+          if (!current.resolution.stop) {
+            const roleLabel =
+              run.role === "recovery" ? "coordinator" : run.role;
+            this.resolution.waiting(
+              current,
+              `Uncertain ${run.role} creation ${run.id}; use run.start ${roleLabel} fresh replacing=${run.id} or run.release run=${run.id}`,
+              "lifecycle",
+              { fact: { code: "creation_lookup", subject: run.id } },
+            );
+          }
           continue;
         }
         // A superseded or replaced run whose thread its host reports archived or

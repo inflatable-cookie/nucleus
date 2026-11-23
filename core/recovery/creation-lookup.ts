@@ -181,9 +181,9 @@ const uncertainRun = (run: Run | null | undefined): run is Run =>
   );
 
 /**
- * Settle one run whose creation is uncertain (reviewer, revision, closeout or
- * executor). The coordinator's recovery runs keep the coordinator episode's own
- * lookup.
+ * Settle one run whose creation is uncertain (reviewer, revision or closeout).
+ * The coordinator's recovery runs keep the coordinator episode's own lookup, and
+ * a proof executor keeps its owner-activated path.
  */
 export async function settleRunCreation(
   ctx: CreationLookupContext,
@@ -191,7 +191,13 @@ export async function settleRunCreation(
   run: Run,
 ): Promise<CreationSettlement> {
   const store = ctx.store;
-  if (!uncertainRun(run) || run.role === "recovery") return "skipped";
+  // Roles with an ordinary admission that relaunches them; a proof executor and
+  // the coordinator keep their own owners.
+  if (
+    !uncertainRun(run) ||
+    !["reviewer", "revision", "closeout"].includes(run.role)
+  )
+    return "skipped";
   if (dispatchBlocked(task) || !run.workspaceId) return "skipped";
   if (!ctx.hostAvailable(task, run)) return "skipped";
   // Captured before the read: only an attempt that had already ended counts.
