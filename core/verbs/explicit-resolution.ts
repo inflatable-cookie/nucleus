@@ -48,6 +48,10 @@ import { blockingRecoveryEffects } from "../recovery/recovery-effects";
 import { plannerIdMatches } from "../recovery/task-reasons";
 import { reviewPublicationKey } from "../review/review-publication";
 import { digest, now, type Store } from "../store/store";
+import {
+  creationProducerId,
+  readCreationAttempt,
+} from "../store/store-task-funnel";
 import { threadServesAnotherTask } from "../workspaces/thread-ownership";
 import { collectOwnerVerbFacts, ownerPendingEffects } from "./owner-verbs";
 import { splitOwnerEffectKey } from "./owner-effects";
@@ -386,10 +390,6 @@ export async function resolveExplicitly(
     if (task.removedAt) throw Error("Task was removed from the queue");
     const releasing =
       input.action === "run.release" ? store.run(input.run) : null;
-    if (input.action === "run.release") {
-      const refusal = releaseRefusal(store, task, input.run, input.archive);
-      if (refusal) throw Error(refusal);
-    }
     if (
       source === "coordinator" &&
       input.accept.some((id) => PLANNER_ONLY_WARNINGS.has(id))
@@ -405,7 +405,7 @@ export async function resolveExplicitly(
 
     const plan = engine.onTaskHost(task, () =>
       input.action === "run.release"
-        ? releasePlan(engine, task, input, { exactTurn: true })
+        ? releasePlan(engine, task, input)
         : input.action === "record.clear"
           ? clearPlan(engine, task, input)
           : input.action === "run.start"
@@ -758,7 +758,7 @@ function recoveryRecordPlan(
   }
 }
 
-/** The explicit command and every `next` offer admit the same release target. */
+/** Every release plan and its `next` offers admit the same release target. */
 export function releaseRefusal(
   store: Store,
   task: Task,
@@ -769,17 +769,30 @@ export function releaseRefusal(
   if (run ? run.taskId !== task.id : task.runId !== runId)
     return `No current run ${runId} belongs to this task`;
   if (
-    task.resolution.stop?.fact?.code === "creation_in_flight" &&
-    task.resolution.stop.fact.subject === runId
-  )
-    return `Creation for run ${runId} may still be answered by the host. Wait for its outcome before releasing this run.`;
-  if (
     run?.role === "recovery" &&
     run.released &&
     !archive &&
     task.resolution.recovery?.runId !== runId
   )
     return `No current coordinator binding for run ${runId} belongs to this task`;
+  const attempt = readCreationAttempt(
+    store,
+    run ?? {
+      id: runId,
+      taskId: task.id,
+      hostId: task.hostId,
+      workspaceId: task.workspaceId,
+      role: "worker",
+    },
+  );
+  // The journal covers the live call before a stop is written. The host can
+  // still owe a reply after the call ends with unknown delivery.
+  if (
+    (attempt?.producerId === creationProducerId && !attempt.settlement) ||
+    (task.resolution.stop?.fact?.code === "creation_in_flight" &&
+      task.resolution.stop.fact.subject === runId)
+  )
+    return `Creation for run ${runId} may still be answered by the host. Wait for its outcome before releasing this run.`;
   return null;
 }
 
@@ -890,13 +903,12 @@ export function releasePlan(
   engine: ReleasePlanContext,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.release" }>,
-  options: { exactTurn?: boolean } = {},
 ): Plan {
   const store = engine.store;
+  const refusal = releaseRefusal(store, task, input.run, input.archive);
+  if (refusal) throw Error(refusal);
   const run = store.run(input.run);
-  const initial = !run && task.runId === input.run;
-  if ((!run || run.taskId !== task.id) && !initial)
-    return missing("run", input.run);
+  const initial = !run;
   const agentId = run ? run.agentId : task.agentId;
   const hostId = run?.hostId ?? task.hostId;
   const completion = run ? run.completion : task.completion;
@@ -1029,14 +1041,13 @@ export function releasePlan(
         const onHost = async () => {
           if (live) {
             const stopped = await attempt("Turn cancellation", () => {
-              if (!options.exactTurn) return engine.host.stopAgentTurn(agentId);
               if (!recordedTurn)
                 throw Error("The released run has no recorded turn ID");
               return engine.host.stopAgentTurn(agentId, recordedTurn, {
                 exact: true,
               });
             });
-            if (!stopped && options.exactTurn) return;
+            if (!stopped) return;
           }
           if (!input.archive) return;
           const latest = store.task(task.id);

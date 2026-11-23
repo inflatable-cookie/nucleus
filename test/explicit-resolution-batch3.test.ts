@@ -12,6 +12,10 @@ import {
   type Task,
 } from "../shared/contracts";
 import type { Adapter } from "../core/host";
+import {
+  readCreationAttempt,
+  settleCreationAttempt,
+} from "../core/store/store-task-funnel";
 import { requiredCheckPollMetaKey } from "../core/forge/index";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
@@ -149,14 +153,15 @@ async function fixture(
     });
   };
 
-  const attachCoordinator = (taskId: string, agentId = "coord-1") => {
+  const attachCoordinator = (taskId: string, agentId: string | null = "coord-1") => {
     const at = new Date().toISOString();
+    const runId = `coord-run-${taskId}`;
     const run = runSchema.parse({
-      id: `coord-run-${taskId}`,
+      id: runId,
       taskId,
       role: "recovery",
-      status: "running",
-      active: true,
+      status: agentId ? "running" : "intent",
+      active: agentId ? true : null,
       released: false,
       agentId,
       hostId: HOST,
@@ -169,6 +174,17 @@ async function fixture(
       lastObservedAt: at,
       idleSince: at,
       completion: null,
+      participantActivity: agentId
+        ? {
+            runId,
+            agentId,
+            turnId: `turn-${agentId}`,
+            turnStartedAt: at,
+            permission: null,
+            process: null,
+            tool: null,
+          }
+        : null,
     });
     store.putRun(run);
     store.update(taskId, {
@@ -181,14 +197,14 @@ async function fixture(
           generation: run.generation,
           runId: run.id,
           agentId,
-          status: "running",
+          status: agentId ? "running" : "pending",
           summary: "",
           idleSince: null,
           incidentId: null,
         },
       },
     });
-    return formatAgentId(HOST, agentId);
+    return agentId ? formatAgentId(HOST, agentId) : undefined;
   };
 
   const attachReadyReview = (taskId: string, head = HEAD) => {
@@ -723,6 +739,7 @@ test("merge.now and closeout.now read forge ports on the task's host, not the un
 
 test("closeout.now closes merged-but-parked task, enforces hard gate, and gates unverified_merge to operator board", async (t) => {
   let syncCalls = 0;
+  const stoppedTurns: Array<{ agentId: string; turnId: string }> = [];
   let mergedResult:
     | { merged: boolean; commit: string | null; head: string; base: string }
     | Error = new Error("GitHub offline");
@@ -742,6 +759,9 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
     syncMain: async () => {
       syncCalls += 1;
       return MERGED_COMMIT;
+    },
+    stopExactAgentTurn: async (agentId: string, turnId: string) => {
+      stoppedTurns.push({ agentId, turnId });
     },
   });
 
@@ -763,7 +783,27 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
       },
     },
   });
+  attachCoordinator(parked.id, null);
+  const hasCloseoutOffer = () =>
+    runtime.taskNext({ taskId: parked.id }).explicitCommands?.some(
+      (item) => item.action === "closeout.now",
+    ) ?? false;
+  assert.equal(hasCloseoutOffer(), false);
+  await assert.rejects(
+    callExplicit(
+      parked.id,
+      { action: "closeout.now", accept: ["live_runs"] },
+      OPERATOR_BOARD_CALLER,
+    ),
+    /may still be answered by the host/,
+  );
+  const pendingRun = store.run(`coord-run-${parked.id}`);
+  assert.ok(pendingRun && !pendingRun.released);
+  const attempt = readCreationAttempt(store, pendingRun);
+  assert.ok(attempt && !attempt.settlement);
+  settleCreationAttempt(store, attempt, "returned");
   const coordinator = attachCoordinator(parked.id);
+  assert.equal(hasCloseoutOffer(), true);
   const warnedClose = await callExplicit(
     parked.id,
     { action: "closeout.now" },
@@ -786,6 +826,7 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
   assert.equal(closed.resolution.recoveryActive, false);
   assert.equal(closed.resolution.recovery?.status, "resolved");
   assert.ok(closed.resolution.integrationTurn);
+  assert.deepEqual(stoppedTurns, [{ agentId: "coord-1", turnId: "turn-coord-1" }]);
   assert.equal(
     store.runs(parked.id).some((r) => !r.released),
     false,
@@ -1373,6 +1414,9 @@ test("planner rulings round 4: auto-retry stops when superseded by merge.now; cl
     stopAgentTurn: async (id: string) => {
       stoppedAgents.push(id);
     },
+    stopExactAgentTurn: async (id: string, turnId: string) => {
+      stoppedAgents.push(`${id} ${turnId}`);
+    },
   });
 
   // Ruling 1: auto-retry observing an earlier uncertain request must stop without sending when merge.now supersedes it.
@@ -1467,7 +1511,7 @@ test("planner rulings round 4: auto-retry stops when superseded by merge.now; cl
   );
   assert.equal(accepted.explicitResolution?.status, "applied");
   assert.equal(store.run(`coord-run-${liveCoordTask.id}`)?.released, true);
-  assert.deepEqual(stoppedAgents, ["coord-live"]);
+  assert.deepEqual(stoppedAgents, ["coord-live turn-coord-live"]);
 });
 
 test("review round 5: forced move and stale merge lookup preserve newer explicit accepted outcome; retained check poll does not block sent merge", async (t) => {
@@ -1557,6 +1601,9 @@ test("review round 5: forced move and stale merge lookup preserve newer explicit
     },
     stopAgentTurn: async (id: string) => {
       stoppedAgents.push(id);
+    },
+    stopExactAgentTurn: async (id: string, turnId: string) => {
+      stoppedAgents.push(`${id} ${turnId}`);
     },
   });
 
@@ -1691,7 +1738,7 @@ test("review round 5: forced move and stale merge lookup preserve newer explicit
   );
   assert.equal(selfAccepted.explicitResolution?.status, "applied");
   assert.equal(store.run(`coord-run-${selfCoordTask.id}`)?.released, true);
-  assert.deepEqual(stoppedAgents, ["coord-self"]);
+  assert.deepEqual(stoppedAgents, ["coord-self turn-coord-self"]);
   store.update(selfCoordTask.id, {
     phase: "done",
     resolution: {

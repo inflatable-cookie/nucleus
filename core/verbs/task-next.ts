@@ -5,6 +5,7 @@ import {
   releaseRefusal,
   releaseWarnings,
 } from "./explicit-resolution";
+import { closeoutRecoveryRun } from "./explicit-integration";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
 import { taskDetailView } from "../../shared/task-view";
@@ -627,9 +628,17 @@ function explicitCommandsFor(
   const base = { taskId: task.id, version: task.version };
   const commands: TaskNextExplicitCommand[] = [...settlements];
   const push = (command: TaskNextExplicitCommand) => {
+    const releaseTarget =
+      command.action === "run.release"
+        ? command.args.run
+        : command.action === "run.start"
+          ? command.args.replacing
+          : command.action === "closeout.now"
+            ? closeoutRecoveryRun(facts.store, task)?.id
+            : undefined;
     if (
-      command.action === "run.release" &&
-      releaseRefusal(facts.store, task, String(command.args.run))
+      typeof releaseTarget === "string" &&
+      releaseRefusal(facts.store, task, releaseTarget)
     )
       return;
     const sig = `${command.action}:${JSON.stringify(command.args)}`;
@@ -662,17 +671,11 @@ function explicitCommandsFor(
           ? "coordinator"
           : null;
 
-  // Spec 068 §3: a create the host may still answer offers no replacement and no
-  // release: either would let a second thread stand beside the late one.
-  const inFlight =
-    task.resolution.stop?.fact?.code === "creation_in_flight"
-      ? task.resolution.stop.fact.subject
-      : undefined;
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
     const role = startRoleFor(run.role);
-    if (role && run.id !== inFlight) {
+    if (role) {
       push({
         action: "run.start",
         args: {
@@ -694,7 +697,15 @@ function explicitCommandsFor(
     });
   }
 
-  if (task.agentIntent && !task.agentId && task.runId !== inFlight) {
+  if (task.agentIntent && !task.agentId) {
+    if (task.runId) {
+      push({
+        action: "run.release",
+        args: { action: "run.release", ...base, run: task.runId },
+        fill: ["reason"],
+        note: "Release the uncertain initial worker creation.",
+      });
+    }
     push({
       action: "run.start",
       args: {

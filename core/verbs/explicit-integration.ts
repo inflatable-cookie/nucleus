@@ -12,7 +12,7 @@ import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
 import { nextMergeRequestAt, sendGuardedMerge } from "../merge/merge-phase";
-import { now } from "../store/store";
+import { now, type Store } from "../store/store";
 import {
   releasePlan,
   type ExplicitPlan,
@@ -35,6 +35,15 @@ export type ExplicitIntegrationPreflight = {
   prIdentityError?: string;
   checksWarning?: string | null;
 };
+
+/** Closeout releases only the unreleased run bound to this recovery episode. */
+export function closeoutRecoveryRun(store: Store, task: Task) {
+  const runId = task.resolution.recovery?.runId;
+  const run = runId ? store.run(runId) : null;
+  return run?.taskId === task.id && run.role === "recovery" && !run.released
+    ? run
+    : null;
+}
 
 /**
  * Spec 067 hard gate for `merge.now` and `closeout.now`: requires an applied
@@ -674,15 +683,7 @@ export function closeoutNowPlan(
   // Whenever a live coordinator/recovery run is bound (even for the calling
   // coordinator itself), return `live_runs` and route accepted release through
   // `run.release`.
-  const episodeRunId = r.recovery?.runId ?? null;
-  const episodeRun = episodeRunId ? store.run(episodeRunId) : null;
-  const liveEpisodeRun =
-    episodeRun &&
-    episodeRun.taskId === task.id &&
-    episodeRun.role === "recovery" &&
-    !episodeRun.released
-      ? episodeRun
-      : null;
+  const liveEpisodeRun = closeoutRecoveryRun(store, task);
   const boundRelease = liveEpisodeRun
     ? releasePlan(engine, task, {
         action: "run.release",
@@ -697,7 +698,7 @@ export function closeoutNowPlan(
   if (boundRelease) {
     warnings.push({
       id: "live_runs",
-      text: `Live recovery run ${liveEpisodeRun!.id} is bound to this task; accepting releases and cancels it via run.release.`,
+      text: `Live recovery run ${liveEpisodeRun!.id} is bound to this task; accepting releases it via run.release.`,
     });
   }
 

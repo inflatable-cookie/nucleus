@@ -1,1 +1,1 @@
-- Planners can settle stale recovery episodes, coordinator bindings and orphaned records with explicit commands from `next`. Run release waits for in-flight creation to settle and limits native cancellation to the recorded turn.
+- Planners can settle stale recovery episodes, coordinator bindings and orphaned records with explicit commands from `next`. Direct release, replacement and closeout wait for in-flight creation to settle and limit native cancellation to the recorded turn.

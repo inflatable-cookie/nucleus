@@ -102,7 +102,7 @@ No command changes anything it does not name.
 | `message.send role=<worker\|reviewer\|coordinator\|planner> text` | Delivers to the role's bound thread now, steering into or queued after an active turn, and reports `delivered`, `queued` or `unknown`. Changes no task state. | `queued`, `no_thread` |
 | `merge.now head=<sha>` | Moves the task to `merging` (clearing attention and stop), requests GitHub's guarded merge of exactly that head now, and takes the integration turn if free. | `turn_held`, `checks` (non-required checks failed or pending), `holds`, `hold_owner` (planner or operator only) |
 | `turn.take` / `turn.release` | Takes or releases the repository integration turn for this task and wakes the tasks waiting on it. | `turn_held` (take displaces another task), `merge_in_flight` |
-| `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases and cancels it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs` |
+| `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs` |
 
 **Recovery settlement.** `record.clear kind=recovery id=<episode>` resolves
 the named episode and refuses its pending coordinator action. It also settles
@@ -110,13 +110,14 @@ the incident and mechanical escalation identified by that episode, leaving
 independent incidents, recorded answers and reserved decisions in place.
 If an unreleased coordinator still owns the episode, use `run.release` on
 that run. Release keeps its completion and receipt and settles its matching
-episode even if the run already reported. If the host may still answer a
-creation for that run, `next` omits release and the command refuses until
-the outcome is known. For native cancellation, `run.release` passes the
-recorded turn ID to an adapter that can stop that exact turn atomically.
-Without that capability or a recorded turn ID, the local release and
-credential revocation still apply, and the result explains why native
-cancellation was skipped.
+episode even if the run already reported. Every release checks for an open
+creation reservation from the running service and for a host wait for a late
+reply. Both block release, including through replacement or closeout. `next`
+uses the same rule and offers release for an unbound initial worker once its
+creation wait has settled. Every release passes the recorded turn ID to an
+adapter that can stop that exact turn atomically. Without that capability or
+a recorded turn ID, the local release and credential revocation still apply,
+and the result explains why native cancellation was skipped.
 
 For legacy rows, `record.clear kind=recovery id=<taskId>` clears an orphaned
 recovery flag with no episode or unreleased coordinator.
