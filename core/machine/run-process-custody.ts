@@ -4,6 +4,7 @@ import type { HostProcessFact } from "../host/types";
 import type { Resolution } from "../resolution";
 import type { PassProcessRead } from "../scheduling/pass-snapshot";
 import type { Store } from "../store/store";
+import { readOpenFileFacts } from "./host-process-listing";
 import { bbThreadForAgent, RunProcessTable } from "./run-process-tree";
 import {
   participantTemporaryDirectory,
@@ -32,16 +33,27 @@ export function runWorkProcesses(input: {
   const roots = input.directories.flatMap((root) =>
     root ? [resolve(root)] : [],
   );
-  const providerPids = new Set(input.providers?.flatMap((recorded) => {
-    const provider = input.byPid.get(recorded.pid);
-    return provider && isLiveProcess(provider) &&
-      startIdentityMatches(recorded.startIdentity, provider.startIdentity)
-      ? [provider.pid] : [];
-  }));
+  const providerPids = new Set(
+    input.providers?.flatMap((recorded) => {
+      const provider = input.byPid.get(recorded.pid);
+      return provider &&
+        isLiveProcess(provider) &&
+        startIdentityMatches(recorded.startIdentity, provider.startIdentity)
+        ? [provider.pid]
+        : [];
+    }),
+  );
   if (!roots.length && !providerPids.size) return [];
-  const prefixes = roots.map((root) => root.endsWith(sep) ? root : root + sep);
-  const inRoots = (path: string) => roots.includes(path) || prefixes.some((prefix) => path.startsWith(prefix));
-  const rooted = new Set(input.live.flatMap((fact) => fact.cwd && inRoots(fact.cwd) ? [fact.pid] : []));
+  const prefixes = roots.map((root) =>
+    root.endsWith(sep) ? root : root + sep,
+  );
+  const inRoots = (path: string) =>
+    roots.includes(path) || prefixes.some((prefix) => path.startsWith(prefix));
+  const rooted = new Set(
+    input.live.flatMap((fact) =>
+      fact.cwd && inRoots(fact.cwd) ? [fact.pid] : [],
+    ),
+  );
   return input.live.filter((fact) => {
     // An open file is direct custody even when the holder is standing runtime.
     if (fact.openFiles?.paths.some(inRoots)) return true;
@@ -67,9 +79,12 @@ export function incompleteRunProcessScan(
   const uid = process.getuid?.();
   return (
     scan.cwdComplete === false ||
-    scan.processes.some((fact) => (uid === undefined || fact.uid === uid) &&
-      isLiveProcess(fact) &&
-      (fact.cwd === null || fact.openFiles?.complete === false))
+    scan.processes.some(
+      (fact) =>
+        (uid === undefined || fact.uid === uid) &&
+        isLiveProcess(fact) &&
+        (fact.cwd === null || fact.openFiles?.complete === false),
+    )
   );
 }
 
@@ -91,7 +106,10 @@ export async function readRunProcessCustody(input: {
   const hostId = run?.hostId ?? task.hostId;
   const scan = await input.readProcesses(hostId, { allowMissFetch: true });
   if (scan.state === "unknown") return scan;
-  const live = scan.processes.filter(isLiveProcess);
+  // Open files are read only for this custody decision, never on the listing.
+  const opened = await readOpenFileFacts(scan.processes.filter(isLiveProcess));
+  if (opened.state === "unknown") return opened;
+  const live = opened.processes;
   const table = new RunProcessTable(live);
   const taskRuns = store.runs(task.id);
   const thread = bbThreadForAgent(run?.agentId ?? task.agentId, hostId);
@@ -118,7 +136,8 @@ export async function readRunProcessCustody(input: {
       )?.temporaryDirectory,
     ],
     infrastructure: table.infrastructurePids(runtime),
-    providers: provider && !table.providerHostPids().has(provider.pid) ? [provider] : [],
+    providers:
+      provider && !table.providerHostPids().has(provider.pid) ? [provider] : [],
   });
   const process = work.find(
     (fact) =>
@@ -126,7 +145,10 @@ export async function readRunProcessCustody(input: {
       startIdentityProves(fact.startIdentity),
   );
   if (process) return { state: "live", process };
-  if (work.length || incompleteRunProcessScan(scan))
+  if (
+    work.length ||
+    incompleteRunProcessScan({ processes: live, cwdComplete: scan.cwdComplete })
+  )
     return {
       state: "unknown",
       reason:

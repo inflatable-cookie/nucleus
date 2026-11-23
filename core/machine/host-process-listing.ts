@@ -171,23 +171,33 @@ async function linuxCommand(pid: number): Promise<ProcCommandLine> {
   }
 }
 
-async function linuxOpenFiles(pid: number): Promise<NonNullable<HostProcessFact["openFiles"]>> {
+async function linuxOpenFiles(
+  pid: number,
+): Promise<NonNullable<HostProcessFact["openFiles"]>> {
   const root = `/proc/${pid}/fd`;
   const files = await readdir(root).catch(() => null);
   const paths: string[] = [];
   if (!files) return { paths, complete: false };
   let complete = true;
   for (let offset = 0; offset < files.length; offset += 32)
-    await Promise.all(files.slice(offset, offset + 32).map(async (file) => {
-      try {
-        const path = await readlink(join(root, file));
-        if (isAbsolute(path)) paths.push(path);
-      } catch (error) {
-        // A descriptor may close during enumeration. A refusal proves nothing.
-        if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
-          complete = false;
-      }
-    }));
+    await Promise.all(
+      files.slice(offset, offset + 32).map(async (file) => {
+        try {
+          const path = await readlink(join(root, file));
+          if (isAbsolute(path)) paths.push(path);
+        } catch (error) {
+          // A descriptor may close during enumeration. A refusal proves nothing.
+          if (
+            !(
+              error instanceof Error &&
+              "code" in error &&
+              error.code === "ENOENT"
+            )
+          )
+            complete = false;
+        }
+      }),
+    );
   return { paths, complete };
 }
 
@@ -226,7 +236,9 @@ async function linuxProcesses(
         ]);
         // Exits during the walk are absent. Other inspection failures stay unknown.
         if (inspectedProcessGone(command, cwd)) return null;
-        const openFiles = fields[0]?.startsWith("Z") ? undefined : await linuxOpenFiles(pid);
+        const openFiles = fields[0]?.startsWith("Z")
+          ? undefined
+          : await linuxOpenFiles(pid);
         return {
           pid,
           ppid: Number(fields[1]),
@@ -259,19 +271,31 @@ function decodeLsofPath(name: string): string | null {
   if (!name.includes("\\") && !name.includes("^")) return name;
   // Caret escapes and literal carets share the same spelling.
   if (/\^[?-_]/.test(name)) return null;
-  const escapes = new Map([["\\", "\\"], ["b", "\b"], ["f", "\f"], ["n", "\n"], ["r", "\r"], ["t", "\t"]]);
+  const escapes = new Map([
+    ["\\", "\\"],
+    ["b", "\b"],
+    ["f", "\f"],
+    ["n", "\n"],
+    ["r", "\r"],
+    ["t", "\t"],
+  ]);
   const decode = new TextDecoder("utf-8", { fatal: true });
   try {
-    return name.replace(/(?:\\x[0-9a-f]{2})+|\\([\s\S]|$)/gi, (match, escape: string | undefined) => {
-      if (escape === undefined) {
-        const value = decode.decode(Buffer.from(match.replace(/\\x/gi, ""), "hex"));
-        if (!value.includes("\0")) return value;
-      } else {
-        const value = escapes.get(escape);
-        if (value !== undefined) return value;
-      }
-      throw Error("Unreadable lsof path");
-    });
+    return name.replace(
+      /(?:\\x[0-9a-f]{2})+|\\([\s\S]|$)/gi,
+      (match, escape: string | undefined) => {
+        if (escape === undefined) {
+          const value = decode.decode(
+            Buffer.from(match.replace(/\\x/gi, ""), "hex"),
+          );
+          if (!value.includes("\0")) return value;
+        } else {
+          const value = escapes.get(escape);
+          if (value !== undefined) return value;
+        }
+        throw Error("Unreadable lsof path");
+      },
+    );
   } catch {
     return null;
   }
@@ -279,7 +303,10 @@ function decodeLsofPath(name: string): string | null {
 
 /** Read cwd and open paths together. Lsof escapes path bytes even in field mode. */
 function darwinOpenFiles(stdout: string) {
-  const processes = new Map<number, { cwd: string | null; paths: Set<string>; complete: boolean }>();
+  const processes = new Map<
+    number,
+    { cwd: string | null; paths: Set<string>; complete: boolean }
+  >();
   let process: ReturnType<typeof processes.get>;
   let fd = "";
   for (const raw of stdout.split("\0")) {
@@ -351,43 +378,55 @@ async function darwinProcesses(
       cwd: null,
     });
   }
-  const pids = facts.filter((fact) => !fact.state?.startsWith("Z")).map((fact) => fact.pid);
+  const pids = facts
+    .filter((fact) => !fact.state?.startsWith("Z"))
+    .map((fact) => fact.pid);
   // A host-wide read selects the same owner as ps. Selecting each PID makes
   // lsof exit nonzero if a single process (even ps itself) has already exited.
   const selection = requested ? ["-p", pids.join(",")] : ["-u", String(uid)];
-  const listingFiles = pids.length ? await processListing("lsof", [
-    "-nP", ...selection, "-F0pfn",
-  ]) : { status: 0, stdout: "", stderr: "", timedOut: false };
-  // A file scan killed at its deadline is unknown, not missing working directories.
-  if (listingFiles.timedOut)
+  // Working directories are the coverage every listing needs. This pass prints
+  // only cwd descriptors (about 40 KB on a busy workstation). The host-wide
+  // open-file read is about 18 MB, so it runs only where a custody decision
+  // asks for open files (see readOpenFileFacts), never on every listing.
+  const cwdPass = pids.length
+    ? await processListing("lsof", [
+        "-nP",
+        ...selection,
+        "-a",
+        "-d",
+        "cwd",
+        "-F0pfn",
+      ])
+    : { status: 0, stdout: "", stderr: "", timedOut: false };
+  // A pass killed at its deadline is unknown, not missing working directories.
+  if (cwdPass.timedOut)
     return {
       state: "unknown",
-      reason: `the open-file listing timed out after ${PS_TIMEOUT_MS} ms`,
+      reason: `the working-directory listing timed out after ${PS_TIMEOUT_MS} ms`,
     };
-  const paths = darwinOpenFiles(listingFiles.stdout);
-  const complete = listingFiles.status === 0 && !listingFiles.stderr.trim();
+  const cwdFiles = darwinOpenFiles(cwdPass.stdout);
+  const complete = cwdPass.status === 0 && !cwdPass.stderr.trim();
   const cwds = new Map<number, CwdState>();
   const missing = new Map<number, HostProcessFact>();
   for (const fact of facts) {
     if (fact.state?.startsWith("Z")) continue;
-    const files = paths.get(fact.pid);
-    if (files?.cwd) {
-      fact.cwd = files.cwd;
-      cwds.set(fact.pid, { state: "read", path: files.cwd });
+    const cwd = cwdFiles.get(fact.pid)?.cwd ?? null;
+    if (cwd) {
+      fact.cwd = cwd;
+      cwds.set(fact.pid, { state: "read", path: cwd });
     } else if (pidAlive(fact.pid)) {
       cwds.set(fact.pid, { state: "unreadable" });
       if (complete) missing.set(fact.pid, fact);
     } else cwds.set(fact.pid, { state: "gone" });
-    fact.openFiles = {
-      paths: files ? [...files.paths] : [],
-      complete: complete && Boolean(files?.complete && files.cwd),
-    };
   }
   // A process can exit after ps and remain as a zombie. A successful lsof
   // omits its cwd, while a PID existence check still sees it until it is reaped.
   if (missing.size) {
     const states = await processListing("ps", [
-      "-p", [...missing.keys()].join(","), "-o", "pid=,stat=",
+      "-p",
+      [...missing.keys()].join(","),
+      "-o",
+      "pid=,stat=",
     ]);
     if (states.timedOut)
       return {
@@ -414,6 +453,57 @@ async function darwinProcesses(
       (fact) => fact.cwd !== null || fact.state?.startsWith("Z"),
     ),
   };
+}
+
+export type HostOpenFileRead =
+  | { state: "listed"; processes: HostProcessFact[] }
+  | { state: "unknown"; reason: string };
+
+/**
+ * Fill open files for the facts a custody decision examines. On macOS the
+ * host-wide open-file listing is the largest read the host makes, so it runs
+ * only here, never on a plain listing, and a deadline is its own unknown reason.
+ * A fact that already carries open files (Linux /proc, or a caller's own read)
+ * keeps them. A live process the listing reports but this read cannot find
+ * stays incomplete; one that exited since the listing is dropped as gone.
+ */
+export async function readOpenFileFacts(
+  processes: readonly HostProcessFact[],
+): Promise<HostOpenFileRead> {
+  const needsFiles = (fact: HostProcessFact) =>
+    fact.openFiles === undefined && !fact.state?.startsWith("Z");
+  if (process.platform !== "darwin" || !processes.some(needsFiles))
+    return { state: "listed", processes: [...processes] };
+  const pass = await processListing("lsof", [
+    "-nP",
+    "-u",
+    String(uidOf()),
+    "-F0pfn",
+  ]);
+  if (pass.timedOut)
+    return {
+      state: "unknown",
+      reason: `the open-file listing timed out after ${PS_TIMEOUT_MS} ms`,
+    };
+  const files = darwinOpenFiles(pass.stdout);
+  const complete = pass.status === 0 && !pass.stderr.trim();
+  const read: HostProcessFact[] = [];
+  for (const fact of processes) {
+    if (!needsFiles(fact)) {
+      read.push(fact);
+      continue;
+    }
+    const entry = files.get(fact.pid);
+    if (!entry && !pidAlive(fact.pid)) continue;
+    read.push({
+      ...fact,
+      openFiles: {
+        paths: entry ? [...entry.paths] : [],
+        complete: complete && Boolean(entry?.complete && entry.cwd),
+      },
+    });
+  }
+  return { state: "listed", processes: read };
 }
 
 /**
@@ -474,18 +564,28 @@ async function readUidProcesses(
 }
 
 /** Capture the ACP and role environment once for every consumer of this listing. */
-async function readAcpInventoryIdentities(facts: HostProcessFact[]): Promise<void> {
-  const parents = facts.filter((fact) => isAcpEntryPoint(fact.command) && !fact.state?.startsWith("Z"));
+async function readAcpInventoryIdentities(
+  facts: HostProcessFact[],
+): Promise<void> {
+  const parents = facts.filter(
+    (fact) => isAcpEntryPoint(fact.command) && !fact.state?.startsWith("Z"),
+  );
   if (!parents.length) return;
   const roots = new Set(parents.map((fact) => fact.pid));
   const servers = new Set(parents.map((fact) => fact.ppid));
-  const candidates = facts.filter((fact) =>
-    !fact.state?.startsWith("Z") &&
-    (roots.has(fact.pid) || (fact.ppid != null && (roots.has(fact.ppid) || servers.has(fact.ppid)))),
+  const candidates = facts.filter(
+    (fact) =>
+      !fact.state?.startsWith("Z") &&
+      (roots.has(fact.pid) ||
+        (fact.ppid != null &&
+          (roots.has(fact.ppid) || servers.has(fact.ppid)))),
   );
   const pids = candidates.map((fact) => fact.pid);
   const environments = await runProcessEnvironments(pids);
-  const liveness = await refreshedRunProcessLiveness(pids, listedProcessLiveness(facts));
+  const liveness = await refreshedRunProcessLiveness(
+    pids,
+    listedProcessLiveness(facts),
+  );
   for (const fact of candidates)
     if (liveness(fact.pid, fact.startIdentity) === "alive")
       fact.acpIdentity = acpIdentityFromEnvironment(environments.get(fact.pid));

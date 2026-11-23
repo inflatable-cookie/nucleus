@@ -18,7 +18,10 @@ import {
   runWorkProcesses,
 } from "../machine/run-process-custody";
 import { boundedPromise } from "../machine/bounded-promise";
-import { HOST_PROCESS_LISTING_DEADLINE_MS } from "../machine/host-process-listing";
+import {
+  HOST_PROCESS_LISTING_DEADLINE_MS,
+  readOpenFileFacts,
+} from "../machine/host-process-listing";
 import { participantRuntime } from "../machine/participant-runtime";
 import { participantTemporaryDirectory } from "../machine/participant-roots";
 import { verifyReviewSourceView } from "../review/review-source";
@@ -336,8 +339,11 @@ export class OwnedWorkspaceArchive {
       if (localTeardown || !current || ownedCheckout || reviewRun) {
         for (const agentId of attachedAgentIds) {
           const state = await this.host.observe(agentId).catch(() => null);
-          if (state?.id === agentId && state.workspaceId === id &&
-            (state.active || state.activeTurnId || state.permissions))
+          if (
+            state?.id === agentId &&
+            state.workspaceId === id &&
+            (state.active || state.activeTurnId || state.permissions)
+          )
             throw Error("Waiting for workspace participants to become idle");
         }
       }
@@ -563,17 +569,26 @@ export class OwnedWorkspaceArchive {
       () => null,
     );
     if (!scan)
-      throw Error("Preserving workspace: the host process inventory is unavailable");
+      throw Error(
+        "Preserving workspace: the host process inventory is unavailable",
+      );
     const runIds = new Set(
       runs
-        .filter((run) => run.workspaceId === id || run.reviewSourceView?.workspaceId === id)
+        .filter(
+          (run) =>
+            run.workspaceId === id || run.reviewSourceView?.workspaceId === id,
+        )
         .map((run) => run.id),
     );
     if (id === task.workspaceId) {
       if (task.runId) runIds.add(task.runId);
       for (const worker of task.retiredWorkers) runIds.add(worker.runId);
     }
-    const live = scan.filter(isLiveProcess);
+    // Open files are read only for this preservation decision, never on the listing.
+    const opened = await readOpenFileFacts(scan.filter(isLiveProcess));
+    if (opened.state === "unknown")
+      throw Error(`Preserving workspace: ${opened.reason}`);
+    const live = opened.processes;
     const table = new RunProcessTable(live);
     const providerHosts = table.providerHostPids();
     const runtime = participantRuntime({
@@ -581,7 +596,10 @@ export class OwnedWorkspaceArchive {
       tasks: [task],
       runs,
       bbThreads: [...attachedAgentIds].flatMap((agentId) => {
-        const thread = bbThreadForAgent(agentId, this.host.hostId ?? task.hostId);
+        const thread = bbThreadForAgent(
+          agentId,
+          this.host.hostId ?? task.hostId,
+        );
         return thread ? [thread] : [];
       }),
     });
@@ -591,7 +609,9 @@ export class OwnedWorkspaceArchive {
       directories: [
         directory,
         id === task.workspaceId ? task.temporaryDirectory : undefined,
-        ...[...runIds].map((runId) => participantTemporaryDirectory(task, runs, runId)),
+        ...[...runIds].map((runId) =>
+          participantTemporaryDirectory(task, runs, runId),
+        ),
       ],
       infrastructure: table.infrastructurePids(runtime),
       providers: [...table.providerBindings()].flatMap(({ runId, provider }) =>
@@ -600,9 +620,18 @@ export class OwnedWorkspaceArchive {
     });
     const holder = holders[0];
     if (holder)
-      throw Error(`Preserving workspace: process ${holder.pid} still uses the workspace or run scratch`);
-    if (incompleteRunProcessScan({ processes: scan, cwdComplete: scan.cwdComplete }))
-      throw Error("Preserving workspace: working-directory or open-file coverage is incomplete");
+      throw Error(
+        `Preserving workspace: process ${holder.pid} still uses the workspace or run scratch`,
+      );
+    if (
+      incompleteRunProcessScan({
+        processes: live,
+        cwdComplete: scan.cwdComplete,
+      })
+    )
+      throw Error(
+        "Preserving workspace: working-directory or open-file coverage is incomplete",
+      );
     if (buildOutputCleanup) {
       try {
         const cleanup = buildOutputCleanup.begin();

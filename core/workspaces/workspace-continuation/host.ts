@@ -17,6 +17,7 @@ import {
   WORKSPACES_DIR,
 } from "../workspace-allocation";
 import { workspaceToolProcessIssue } from "../../recovery/stall";
+import { readOpenFileFacts } from "../../machine/host-process-listing";
 import type { ParticipantRuntime } from "../../machine/participant-runtime";
 import type {
   WorkspaceInventoryEntry,
@@ -74,11 +75,18 @@ export class WorkspaceContinuation {
     const directory = workspace.current()?.workspaceDirectory;
     if (!directory)
       return "the participant workspace directory is unreadable for process proof";
-    const processes =
+    const listed =
       prelistedProcesses !== undefined
         ? prelistedProcesses
         : await this.host.hostProcessListing();
-    if (!processes) return "the host process listing is unreadable";
+    if (!listed) return "the host process listing is unreadable";
+    // The host listing carries working directories only; this proof reads open files itself.
+    let processes = listed;
+    if (prelistedProcesses === undefined) {
+      const opened = await readOpenFileFacts(listed);
+      if (opened.state === "unknown") return opened.reason;
+      processes = opened.processes;
+    }
     return workspaceToolProcessIssue(processes, directory, runIds, runtime);
   }
   /** Check the exact retained task worktree before a deferred worker message is delivered. */
