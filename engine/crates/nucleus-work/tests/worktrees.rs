@@ -25,6 +25,10 @@ impl GitPolicy for LocalGit {
 }
 
 fn worktrees(home: &Path) -> Worktrees<'static> {
+    worktrees_with_redactor(home, Redactor::new([], RedactionRules::common()))
+}
+
+fn worktrees_with_redactor(home: &Path, redactor: Redactor) -> Worktrees<'static> {
     let settings = SettingsFile::open(home).expect("fixture settings");
     settings
         .save(&EngineSettings {
@@ -34,12 +38,7 @@ fn worktrees(home: &Path) -> Worktrees<'static> {
         })
         .expect("save fixture settings");
     let storage = settings.storage().expect("resolve storage");
-    Worktrees::new(
-        &storage,
-        &LocalGit,
-        Redactor::new([], RedactionRules::common()),
-    )
-    .expect("work root")
+    Worktrees::new(&storage, &LocalGit, redactor).expect("work root")
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -211,4 +210,42 @@ fn allocation_never_creates_a_bucket_through_a_replaced_root() {
             .count(),
         0
     );
+}
+
+#[test]
+fn repositories_with_identical_redacted_output_still_have_distinct_identity() {
+    let root = tempfile::tempdir().expect("scratch");
+    let own = root.path().join("owned-repository");
+    let other = root.path().join("foreign-repository");
+    let own_head = repository(&own);
+    let other_head = repository(&other);
+    let secrets = [&own, &other].map(|repo| repo.join(".git").to_string_lossy().into_owned());
+    let worktrees = worktrees_with_redactor(
+        root.path(),
+        Redactor::new(secrets, RedactionRules::exact_only()),
+    );
+    let checkout = worktrees
+        .checkout(&own, "example/fixture", "task-1")
+        .expect("checkout");
+    fs::create_dir(checkout.path().parent().expect("bucket")).expect("fixture bucket");
+    git(
+        &other,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            checkout.branch(),
+            checkout.path().to_str().expect("path"),
+            other_head.as_str(),
+        ],
+    );
+    assert!(matches!(
+        checkout.allocate(&own_head),
+        Err(WorkError::WrongCheckout)
+    ));
+    assert!(matches!(
+        checkout.retire(&other_head),
+        Err(WorkError::WrongCheckout)
+    ));
+    assert!(checkout.path().join("README.md").is_file());
 }

@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use longhorn_git_workspace::{Git, GitFailure, GitFailureCode, GitPolicy};
+use longhorn_git_workspace::{Git, GitFailure, GitFailureCode, GitPolicy, WorktreeIdentity};
 use longhorn_redact::Redactor;
 use nucleus_core::{Head, InvalidHead, Workspace};
 use nucleus_store::{EngineStorage, StorageDirectory, StorageError};
@@ -127,17 +127,7 @@ impl Checkout<'_> {
         if !metadata.is_dir() || self.path.canonicalize()? != self.path {
             return Err(WorkError::WrongCheckout);
         }
-        let common = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
-        let checkout_root = self.git(&self.path, &["rev-parse", "--show-toplevel"])?;
-        let checkout_common = self.git(&self.path, &common)?;
-        let repository_common = self.git(&self.repository, &common)?;
-        let branch = self.git(&self.path, &["branch", "--show-current"])?;
-        if Path::new(checkout_root.trim_end_matches('\n')) != self.path
-            || checkout_common != repository_common
-            || branch.trim_end_matches('\n') != self.branch
-        {
-            return Err(WorkError::WrongCheckout);
-        }
+        let identity = self.owned_identity()?;
         let status = self.git(
             &self.path,
             &[
@@ -152,11 +142,7 @@ impl Checkout<'_> {
         // Git uses S for skip-worktree and lowercase tags for assume-unchanged.
         let index = self.git(&self.path, &["ls-files", "-v"])?;
         if status.is_empty() && index.lines().all(|line| line.starts_with("H ")) {
-            Ok(Workspace::Clean(
-                self.git(&self.path, &["rev-parse", "HEAD"])?
-                    .trim_end_matches('\n')
-                    .parse()?,
-            ))
+            Ok(Workspace::Clean(identity.head_oid().parse()?))
         } else {
             Ok(Workspace::Dirty)
         }
@@ -204,12 +190,27 @@ impl Checkout<'_> {
         match self.observe()? {
             Workspace::Absent => Ok(Retirement::Absent),
             Workspace::Clean(head) if &head == published => {
+                if self.owned_identity()?.head_oid() != published.as_str() {
+                    return Ok(Retirement::Retained);
+                }
                 let path = self.path.to_str().ok_or(WorkError::InvalidPath)?;
                 self.git(&self.repository, &["worktree", "remove", "--", path])?;
                 Ok(Retirement::Removed)
             }
             Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
         }
+    }
+
+    fn owned_identity(&self) -> Result<WorktreeIdentity, WorkError> {
+        let checkout = self.worktrees.git.worktree_identity(&self.path)?;
+        let repository = self.worktrees.git.worktree_identity(&self.repository)?;
+        if checkout.root() != self.path
+            || !checkout.same_repository(&repository)
+            || checkout.branch() != Some(self.branch.as_str())
+        {
+            return Err(WorkError::WrongCheckout);
+        }
+        Ok(checkout)
     }
 
     fn git(&self, directory: &Path, args: &[&str]) -> Result<String, WorkError> {

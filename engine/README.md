@@ -25,12 +25,13 @@ Cargo deny and the whole workspace run at milestone QA. The fixture exercises
 success, a stopped run, and readback after uncertain delivery before the
 planner's live check.
 
-Use the `v0.5.0` Longhorn git tag with `publish = false` for workspace packages.
-Crates using Longhorn require Rust 1.95.
+Use `publish = false` for workspace packages. The Longhorn revision
+`0549175ae075f3d530df69f0e3571bff0fbcf671` is an interim pin until `v0.6.0` is
+tagged. Crates using Longhorn require Rust 1.97.1.
 `longhorn-config` owns the versioned engine and Storage settings domains, atomic
 updates and config backups. `longhorn-storage-layout` resolves their roots and
-the separate engine data root. `longhorn-git-workspace` reads identity and
-cleanliness and supplies the bounded Git executor. `nucleus-work` owns allocation
+the separate engine data root. `longhorn-git-workspace` compares exact worktree
+and repository identity and supplies the bounded Git executor. `nucleus-work` owns allocation
 and uses explicit `git worktree add/remove` without force. `longhorn-redact` and
 `longhorn-support-log` cover adapter diagnostics. `longhorn-operation` leaves
 persistence, deduplication and restart recovery to the caller, so it adds no

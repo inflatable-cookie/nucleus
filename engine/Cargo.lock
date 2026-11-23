@@ -859,7 +859,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 [[package]]
 name = "longhorn-config"
 version = "0.5.0"
-source = "git+https://github.com/inflatable-cookie/longhorn.git?tag=v0.5.0#a3e627f37b218de8d832e26f3fd84424d1f0096a"
+source = "git+https://github.com/inflatable-cookie/longhorn.git?rev=0549175ae075f3d530df69f0e3571bff0fbcf671#0549175ae075f3d530df69f0e3571bff0fbcf671"
 dependencies = [
  "cap-std",
  "fs4",
@@ -875,7 +875,7 @@ dependencies = [
 [[package]]
 name = "longhorn-core"
 version = "0.5.0"
-source = "git+https://github.com/inflatable-cookie/longhorn.git?tag=v0.5.0#a3e627f37b218de8d832e26f3fd84424d1f0096a"
+source = "git+https://github.com/inflatable-cookie/longhorn.git?rev=0549175ae075f3d530df69f0e3571bff0fbcf671#0549175ae075f3d530df69f0e3571bff0fbcf671"
 dependencies = [
  "serde",
 ]
@@ -883,7 +883,7 @@ dependencies = [
 [[package]]
 name = "longhorn-git-workspace"
 version = "0.5.0"
-source = "git+https://github.com/inflatable-cookie/longhorn.git?tag=v0.5.0#a3e627f37b218de8d832e26f3fd84424d1f0096a"
+source = "git+https://github.com/inflatable-cookie/longhorn.git?rev=0549175ae075f3d530df69f0e3571bff0fbcf671#0549175ae075f3d530df69f0e3571bff0fbcf671"
 dependencies = [
  "longhorn-core",
  "longhorn-redact",
@@ -901,12 +901,12 @@ dependencies = [
 [[package]]
 name = "longhorn-redact"
 version = "0.5.0"
-source = "git+https://github.com/inflatable-cookie/longhorn.git?tag=v0.5.0#a3e627f37b218de8d832e26f3fd84424d1f0096a"
+source = "git+https://github.com/inflatable-cookie/longhorn.git?rev=0549175ae075f3d530df69f0e3571bff0fbcf671#0549175ae075f3d530df69f0e3571bff0fbcf671"
 
 [[package]]
 name = "longhorn-storage-layout"
 version = "0.5.0"
-source = "git+https://github.com/inflatable-cookie/longhorn.git?tag=v0.5.0#a3e627f37b218de8d832e26f3fd84424d1f0096a"
+source = "git+https://github.com/inflatable-cookie/longhorn.git?rev=0549175ae075f3d530df69f0e3571bff0fbcf671#0549175ae075f3d530df69f0e3571bff0fbcf671"
 dependencies = [
  "serde",
  "serde_json",
@@ -916,7 +916,7 @@ dependencies = [
 [[package]]
 name = "longhorn-support-log"
 version = "0.5.0"
-source = "git+https://github.com/inflatable-cookie/longhorn.git?tag=v0.5.0#a3e627f37b218de8d832e26f3fd84424d1f0096a"
+source = "git+https://github.com/inflatable-cookie/longhorn.git?rev=0549175ae075f3d530df69f0e3571bff0fbcf671#0549175ae075f3d530df69f0e3571bff0fbcf671"
 dependencies = [
  "longhorn-redact",
 ]

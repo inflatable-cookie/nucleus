@@ -4,15 +4,15 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.97.1"
 publish = false
 
 [workspace.dependencies]
-longhorn-config = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.5.0" }
-longhorn-core = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.5.0" }
-longhorn-git-workspace = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.5.0" }
-longhorn-redact = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.5.0" }
-longhorn-storage-layout = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.5.0" }
+longhorn-config = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
+longhorn-core = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
+longhorn-git-workspace = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
+longhorn-redact = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
+longhorn-storage-layout = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
