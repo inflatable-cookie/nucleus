@@ -168,6 +168,61 @@ test('an initial worker result whose binding was released before it applied goes
   } finally { await f.close(); }
 });
 
+/**
+ * The same task one hour later: its lifecycle wait (the refused verdict's) had
+ * launched a recovery coordinator that stopped without a result, so the episode
+ * and its missing-callback incident escalated. Nothing an escalated episode or
+ * its owner can apply settles the initial worker's report, so it must not hold it.
+ */
+test('an escalated recovery over the refused verdict wait does not hold the released initial worker result', async () => {
+  const f = fixture(); try {
+    f.store.patchRepository({ path: '/repo', origin: null }, { reviewer: { login: 'review-bot' } });
+    f.idle('reviewer-agent');
+    f.store.update(f.taskId, {
+      phase: 'working', workspaceIntent: true, workspaceId: 'workspace', directory: null, agentIntent: false,
+      agentId: null, runId: null, agentActive: false, profile: f.profiles.worker, workerModel: f.profiles.worker.model,
+      prUrl: null, prHead: head, completion: authorCompletion(f.taskId),
+    });
+    f.store.event(f.taskId, 'completion_received', 'Ready');
+    f.store.event(f.taskId, 'owner_resolution', JSON.stringify({ command: 'run.release', arguments: { run: 'worker-run' } }));
+    reportedCommentVerdict(f, 'first-review');
+    reportedCommentVerdict(f, 'reported-review');
+    const incident = 'd'.repeat(64);
+    f.store.putRun(runSchema.parse({
+      id: 'recovery-run', taskId: f.taskId, role: 'recovery', generation: 1, head, base, agentId: 'recovery-agent',
+      workspaceId: 'workspace', hostId: HOST, profile: null, status: 'finished', createdAt: minutesAgo(25), lastObservedAt: null,
+      active: false, idleSince: null, completion: null, released: true,
+    }));
+    const stopped = 'The recovery coordinator stopped without a result. Inspect its thread; the plugin has not repeated its prompt.';
+    f.store.update(f.taskId, { resolution: { ...f.current().resolution,
+      stop: { reason: 'lifecycle', detail: 'The forge and task owner must reconcile the canonical PR and exact verdict head',
+        since: minutesAgo(45), suggestedVerbs: [], fact: null },
+      recovery: { id: randomUUID(), key: 'k'.repeat(64), generation: 1, runId: 'recovery-run', agentId: 'recovery-agent',
+        status: 'escalated', summary: stopped, idleSince: null, incidentId: incident },
+      incident: { id: incident, fingerprint: incident, role: 'worker', runId: null, turnId: null, attempt: 0,
+        cause: 'missing_callback', detail: stopped, action: '', status: 'escalated', createdAt: minutesAgo(15), updatedAt: minutesAgo(15) },
+    } } as Partial<Task>);
+    f.store.event(f.taskId, 'recovery_escalated', stopped);
+
+    f.engine.taskQuantumOwner.orphanPhases.graceMs = 0;
+    await f.settle();
+    const task = f.current();
+    assert.equal(f.store.eventsAll(f.taskId).filter(event => event.kind === 'orphan_result_rebound').length, 1,
+      JSON.stringify(f.store.eventsAll(f.taskId).slice(-10).map(event => `${event.kind}: ${event.detail.slice(0, 160)}`)));
+    assert.equal(resultApplied(f.store, f.taskId, 'worker-run'), true, `${task.phase}: ${task.reason}`);
+    assert.equal(task.prUrl, PR, 'the result recorded the PR it named, verified at the exact head');
+    assert.notEqual(task.phase, 'working');
+    // The comment-only verdict can never apply in a formal-review repository: it
+    // is superseded and a fresh formal reviewer reads the exact head.
+    await f.settle();
+    assert.ok(f.store.eventsAll(f.taskId).some(event => event.kind === 'reported_verdict_superseded'));
+    const fresh = f.createdRuns.filter(run => run.role === 'reviewer');
+    assert.equal(fresh.length, 1, `${f.current().phase}: ${f.current().reason}`);
+    assert.equal(fresh[0]!.head, head);
+    assert.equal(f.store.run(fresh[0]!.id)?.formalReview, true);
+  } finally { await f.close(); }
+});
+
 test('a recovered no-action observation that settles its incident ends the attention, and review is admitted', async () => {
   const f = fixture(); try {
     const incident = 'f'.repeat(64);

@@ -167,8 +167,9 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
   blocker ladder. So does an initial worker's report whose binding was released
   before it applied: it gets its run binding back and the worker's own result
   acceptance verifies the PR it names at the exact head. A lifecycle wait does
-  not hold that result, since nothing else owns it. A resolved recovery episode
-  is history, not an owner, and an intent flag holds the task only while its
+  not hold that result, since nothing else owns it, and neither does a recovery
+  episode that escalated over that wait; an open planner escalation still does.
+  A resolved recovery episode is history, not an owner, and an intent flag holds the task only while its
   creation has bound nothing. A refused move, a result application that changes nothing, or
   a fourth readmission in one episode with nothing started records
   `operator_needed` with fact `orphan_phase`. The readmission is the backstop: a
