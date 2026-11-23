@@ -1368,6 +1368,12 @@ palette. A fixed environment appearance takes precedence over the browser's
 preference. A theme with one usable appearance uses that palette. An unavailable
 settings read or an unknown theme ID leaves the board's own palette.
 
+In both T3 appearances, the header uses the palette's former list shade
+(Tom, 2026-11-23). The menu and list use progressively darker sRGB mixes of
+that shade and a tint from the palette foreground. The detail pane uses the
+canvas. The menu uses foreground washes for hover and selection and marks the
+selected entry with a foreground bar.
+
 The planner ruled on 2026-11-23 that the board follows the environment defaults.
 Published definitions take precedence over the built-in palettes copied from
 T3 Code and pinned to `0.1.12-nightly.20261122.5098`. An empty default theme

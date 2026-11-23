@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync, rmSync } from "node:fs";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { JSDOM } from "jsdom";
 import { z } from "zod";
 import { roles } from "../client/design";
+import { resolvePalette } from "../client/web/theme";
+import type { T3ThemeDefinition } from "../hosts/t3code/board-theme";
+import { findT3BuiltInTheme } from "../hosts/t3code/board-theme-builtins";
 import { QueueService } from "../service/transport/server";
 import { readServiceInfo } from "../service/transport/identity";
 import { uiBoardSchema } from "../shared/contracts";
@@ -244,6 +248,8 @@ test("board interaction roles accept T3 colours and keep the existing host defau
   };
   assert.equal(roles(colors).hover, "rgba(241, 243, 245, 0.06)");
   assert.equal(roles(colors).selected, "rgba(241, 243, 245, 0.1)");
+  assert.equal(roles(colors).header, colors.surface0);
+  assert.equal(roles(colors).navigation, colors.surface0);
   const themed = roles({
     ...colors,
     surfaceHover: "#4a372d",
@@ -251,4 +257,75 @@ test("board interaction roles accept T3 colours and keep the existing host defau
   });
   assert.equal(themed.hover, "#4a372d");
   assert.equal(themed.selected, "#624333");
+});
+
+test("each built-in T3 palette keeps its former list shade in the header and darkens the menu and list", (t) => {
+  const { window } = new JSDOM("<span></span>");
+  t.after(() => window.close());
+  const swatch = window.document.querySelector("span");
+  assert.ok(swatch);
+  const color = (value: string) => {
+    swatch.style.color = "";
+    swatch.style.color = `color-mix(in srgb, ${value}, ${value})`;
+    const computed = window.getComputedStyle(swatch).color;
+    const match = computed.match(/^color\(srgb ([^/]+)\)$/);
+    assert.ok(match, `${value}: ${computed}`);
+    const channels = match[1].trim().split(/\s+/).map(Number);
+    return `#${channels
+      .map((channel) => Math.round(channel * 255).toString(16).padStart(2, "0"))
+      .join("")}`;
+  };
+  const luminance = (hex: string) => {
+    const channels = [1, 3, 5].map((offset) => {
+      const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const contrast = (a: string, b: string) => {
+    const x = luminance(a);
+    const y = luminance(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  };
+
+  for (const id of ["t3-code", "t3-chat", "grove", "ocean", "ember", "iris"]) {
+    const builtIn = findT3BuiltInTheme(id);
+    assert.ok(builtIn);
+    for (const appearance of ["light", "dark"] as const) {
+      const palette: T3ThemeDefinition["colors"] =
+        builtIn.appearance === appearance
+          ? builtIn.colors
+          : builtIn.variants?.[appearance];
+      assert.ok(palette?.canvas && palette.surfaceRaised && palette.text);
+      const theme = resolvePalette(
+        appearance,
+        {
+          colors: {
+            surface0: palette.canvas,
+            surface1: palette.surfaceRaised,
+            foreground: palette.text,
+          },
+        },
+        color,
+      );
+      assert.ok(theme);
+      const {
+        surface0,
+        surfaceHeader,
+        surfaceNavigation,
+        surfaceList,
+        foreground,
+      } = theme.colors;
+      const variant = `${id} ${appearance}`;
+      assert.ok(surfaceHeader && surfaceNavigation && surfaceList, variant);
+      assert.equal(surface0, color(palette.canvas), variant);
+      assert.equal(surfaceHeader, color(palette.surfaceRaised), variant);
+      assert.ok(luminance(surfaceHeader) > luminance(surfaceNavigation), variant);
+      assert.ok(luminance(surfaceNavigation) > luminance(surfaceList), variant);
+      assert.ok(
+        contrast(foreground, surfaceNavigation) >= 3,
+        `${variant} menu selection`,
+      );
+    }
+  }
 });

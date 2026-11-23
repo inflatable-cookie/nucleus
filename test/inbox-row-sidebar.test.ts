@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { useNativeStubs, mount, type HostNode } from "./support/render";
+import type { Colors } from "../client/design";
 
 // nucleus#1528: inbox rows read like a sidebar list — no dividers, a dimmed
 // hover/focus background, the selected surface when open — and the menu hovers
@@ -253,7 +254,7 @@ const counts = {
   closing: 0,
 };
 
-function mountMenu(c: never, view: "working" | "leads" = "working") {
+function mountMenu(c: Colors, view: "working" | "leads" = "working") {
   return mount(
     h(menu.InboxMenu as never, {
       c,
@@ -333,6 +334,42 @@ test("menu entries hover and focus dimmed; the selected entry keeps its surface"
       0.55,
       "hover keeps the dimmed quiet",
     );
+  } finally {
+    ui.update(h("View", null));
+  }
+});
+
+test("the themed menu places a foreground selection bar on the selected row only", async () => {
+  await load();
+  const c = {
+    accent: "#346bf1",
+    accentForeground: "#ffffff",
+    surface0: "#000000",
+    surface1: "#111111",
+    surface2: "#111111",
+    surfaceNavigation: "#0f0f0f",
+    border: "#191919",
+    foreground: "#f5f5f5",
+    foregroundMuted: "#818181",
+    statusSuccess: "#2aa56d",
+    statusWarning: "#fe9a00",
+    statusDanger: "#fb414a",
+  };
+  const ui = mountMenu(c);
+  try {
+    const selectionMark = (label: string) =>
+      ui.get(label).children.find(
+        (child) =>
+          typeof child !== "string" &&
+          child.type === "View" &&
+          child.props.pointerEvents === "none" &&
+          child.props.style.backgroundColor === c.foreground,
+      );
+    assert.ok(selectionMark("Working, 3"));
+    const papercuts = ui.get("Papercuts, 2");
+    papercuts.props.onHoverIn();
+    assert.equal(selectionMark("Papercuts, 2"), undefined);
+    assert.ok(selectionMark("Working, 3"));
   } finally {
     ui.update(h("View", null));
   }

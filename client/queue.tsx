@@ -106,6 +106,9 @@ export function MainSurface({
   const mode = inboxLayout(panelWidth, layout.compact);
   const wide = mode === "wide",
     narrow = mode === "narrow";
+  const { canvas, section, navigation: navigationFill } = roles(c);
+  const previousListFill = narrow ? canvas : section;
+  const listFill = c.surfaceList ?? previousListFill;
   const menuWidth = inboxMenuWidth[wide ? "wide" : "medium"];
   // The detail pane's room decides whether a record lays out compactly.
   const detailWidth = panelWidth - menuWidth - inboxListWidth;
@@ -480,7 +483,7 @@ export function MainSurface({
                 style={{
                   width: menuWidth,
                   minHeight: 0,
-                  backgroundColor: roles(c).canvas,
+                  backgroundColor: navigationFill,
                 }}
               >
                 {menu}
@@ -493,7 +496,9 @@ export function MainSurface({
                 inbox={{
                   listWidth: wide ? inboxListWidth : null,
                   laneModal: !wide,
-                  listFill: narrow ? roles(c).canvas : roles(c).section,
+                  listFill,
+                  listSurface:
+                    previousListFill === section ? "section" : "canvas",
                 }}
                 leads={boardLeads}
                 onCloseLane={(lane) =>
@@ -685,16 +690,13 @@ export function MainSurface({
                       ? {
                           width: inboxListWidth,
                           minHeight: 0,
-                          backgroundColor: roles(c).section,
+                          backgroundColor: listFill,
                         }
                       : {
                           flex: 1,
                           minWidth: 0,
                           minHeight: 0,
-                          // Beside the menu the list steps up a surface; alone it is the canvas.
-                          backgroundColor: narrow
-                            ? roles(c).canvas
-                            : roles(c).section,
+                          backgroundColor: listFill,
                         }
                   }
                 >
@@ -743,7 +745,7 @@ export function MainSurface({
                 style={{
                   width: 260,
                   maxWidth: "85%",
-                  backgroundColor: roles(c).canvas,
+                  backgroundColor: navigationFill,
                   paddingTop: space.sm,
                 }}
               >
