@@ -178,7 +178,7 @@ async fn detail(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<D
     let row = api.service.lookup(&state, &id)?;
     let task = &row.task;
     let summary = Summary::read(task, row.version, &state);
-    let run = RunView::read(&row, state.activity.get(&id));
+    let run = RunView::read(&row, state.activity.get(&id), &state.store);
     Ok(Json(Detail {
         summary,
         brief: task.brief().clone(),

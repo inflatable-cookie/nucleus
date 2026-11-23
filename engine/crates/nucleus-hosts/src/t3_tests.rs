@@ -436,7 +436,7 @@ async fn activity_comes_only_from_the_launchs_own_native_run() {
         {"type":"file_change","status":"completed","runId":NATIVE_RUN,
          "fileName":"finished.rs","startedAt":"2026-11-23T16:01:00Z"},
         {"type":"command_execution","status":"running","runId":NATIVE_RUN,
-         "input":"cargo test --token fixture-private-value","startedAt":"2026-11-23T16:00:00Z"}
+         "input":"/bin/zsh -lc 'cargo test --token fixture-private-value'","startedAt":"2026-11-23T16:00:00Z"}
     ]);
     let mut file = command.clone();
     file["projection"]["turnItems"][2] = json!({

@@ -5,7 +5,10 @@ use axum::{
     http::Request,
 };
 use futures_util::StreamExt;
-use nucleus_core::{Action, CheckState, Entry, Forge, Host, Observed, RunState};
+use nucleus_core::{
+    Action, CheckState, Entry, Forge, Host, LaunchInputs, Observed, RetainedThread, Review,
+    RunState,
+};
 use nucleus_forge::GitHub;
 use nucleus_hosts::{RunActivity, T3};
 use tower::ServiceExt;
@@ -152,6 +155,104 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
             {"kind":"run_started","instance":instance,"role":"worker","purpose":"Synthetic change","reviewHead":null}
         ])
     );
+}
+
+#[tokio::test]
+async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
+    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let head = service.project.start.clone();
+    let (task, key, mut observation) = reservation("reviewer", Entry::ReviewEntry, &head);
+    let first = task.run().expect("first review").launch().clone();
+    seed_task(&service, &task).await;
+    let mut row = service.task("reviewer").await.expect("row");
+    for at in [1, 2] {
+        let mut task = row.task.clone();
+        task.record_send(&first.instance, at).expect("send marker");
+        row = service
+            .save(&row, task, &event("host_send"))
+            .await
+            .expect("persist send");
+    }
+    let mut task = row.task.clone();
+    task.record_report(
+        &first.instance,
+        key.as_bytes(),
+        Report::Review {
+            head,
+            decision: Review::Changes,
+            summary: "Add a regression".into(),
+        },
+    )
+    .expect("stage verdict");
+    row = service
+        .save(&row, task.clone(), &event("reported"))
+        .await
+        .expect("persist report");
+    observation.host = Observed::Known(Host::Current {
+        instance: first.instance,
+        state: RunState::Ended,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    row = service
+        .save(&row, task, &event("phase_reconciled"))
+        .await
+        .expect("apply verdict");
+
+    let authority = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let mut task = row.task.clone();
+    task.command(Command::Move(Phase::Reviewing), &authority, &observation)
+        .expect("reopen review");
+    row = service
+        .save(&row, task.clone(), &event("command"))
+        .await
+        .expect("persist move");
+    observation.host = Observed::Known(Host::Retained {
+        thread: first.thread.clone(),
+        state: RetainedThread::Idle,
+    });
+    task.reserve_launch(
+        &observation,
+        LaunchInputs {
+            thread: first.thread,
+            input: "fixture-only wire".into(),
+            started_at: 3,
+        },
+        &[4; 32],
+    )
+    .expect("reserve second review");
+    row = service
+        .save(&row, task.clone(), &event("run_reserved"))
+        .await
+        .expect("persist reservation");
+    let instance = task.run().expect("second review").launch().instance.clone();
+    task.record_send(&instance, 4).expect("second send");
+    service
+        .save(&row, task, &event("host_send"))
+        .await
+        .expect("persist send");
+
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority,
+        }],
+    );
+    let detail = json_body(get_as(&api, "/v1/tasks/reviewer", &BOARD_KEY).await).await;
+    assert_eq!(detail["run"]["purpose"], "Checking round 2");
+    let history = json_body(get_as(&api, "/v1/tasks/reviewer/history", &BOARD_KEY).await).await;
+    assert_eq!(history[0]["presentation"][0]["purpose"], "Checking round 2");
+    assert_eq!(
+        history[5]["presentation"],
+        json!([]),
+        "replaying adds no run"
+    );
+    assert_eq!(history[6]["presentation"][0]["purpose"], "Checking round 1");
 }
 
 #[tokio::test]

@@ -307,17 +307,69 @@ impl TurnItem {
 
 fn command_label(input: &str) -> &'static str {
     // Match known invocations without exposing raw arguments or shell input.
-    let mut words = input.split_ascii_whitespace();
-    match (words.next(), words.next(), words.next()) {
-        (Some("cargo"), Some("test" | "nextest"), _) => "Running Rust tests",
-        (Some("cargo"), Some("check"), _) => "Checking Rust code",
-        (Some("cargo"), Some("clippy"), _) => "Linting Rust code",
-        (Some("bun" | "npm" | "pnpm" | "effigy"), Some("test"), _)
-        | (Some("pytest"), _, _)
-        | (Some("python" | "python3"), Some("-m"), Some("pytest")) => "Running tests",
-        (Some("git"), Some("diff"), _) => "Inspecting changes",
-        (Some("git"), Some("status"), _) => "Checking the worktree",
+    let mut words = shlex::Shlex::new(input);
+    let Some(program) = words.next() else {
+        return "Running a command";
+    };
+    let option = words.next();
+    let program = executable(&program);
+    if matches!(program, "sh" | "bash" | "zsh")
+        && matches!(option.as_deref(), Some("-c" | "-lc" | "-cl"))
+        && let Some(script) = words.next()
+    {
+        let mut command = shlex::Shlex::new(&script);
+        let program = command.next().unwrap_or_default();
+        let option = command.next();
+        let argument = command.next();
+        return invocation_label(executable(&program), option.as_deref(), argument.as_deref());
+    }
+    invocation_label(program, option.as_deref(), words.next().as_deref())
+}
+
+fn executable(path: &str) -> &str {
+    Path::new(path)
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default()
+}
+
+fn invocation_label(program: &str, option: Option<&str>, argument: Option<&str>) -> &'static str {
+    match (program, option, argument) {
+        ("cargo", Some("test" | "nextest"), _) | ("effigy", Some("engine:nextest"), _) => {
+            "Running Rust tests"
+        }
+        ("cargo", Some("check"), _) | ("effigy", Some("engine:check"), _) => "Checking Rust code",
+        ("cargo", Some("clippy"), _) | ("effigy", Some("engine:clippy"), _) => "Linting Rust code",
+        ("bun" | "npm" | "pnpm", Some("test"), _)
+        | ("effigy", Some("test" | "test:affected" | "test:timing" | "test:baseline"), _)
+        | ("pytest", _, _)
+        | ("python" | "python3", Some("-m"), Some("pytest")) => "Running tests",
+        ("effigy", Some("qa:docs"), _) => "Checking documentation",
+        ("effigy", Some("check"), _) => "Checking the project",
+        ("git", Some("diff"), _) => "Inspecting changes",
+        ("git", Some("status"), _) => "Checking the worktree",
         _ => "Running a command",
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn wrapped_effigy_selectors_get_friendly_labels() {
+    for (command, label) in [
+        (
+            "zsh -lc 'effigy engine:nextest -- -p nucleus-hosts'",
+            "Running Rust tests",
+        ),
+        ("bash -c \"effigy check\"", "Checking the project"),
+        ("effigy test:affected --run", "Running tests"),
+        ("effigy qa:docs", "Checking documentation"),
+        (
+            "zsh -lc 'unknown --token fixture-secret'",
+            "Running a command",
+        ),
+        ("zsh -lc 'cargo test", "Running a command"),
+    ] {
+        assert_eq!(command_label(command), label);
     }
 }
 

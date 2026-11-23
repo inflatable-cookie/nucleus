@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Task, Verdict};
 use nucleus_hosts::RunActivity;
-use nucleus_store::{Event, EventDraft, TaskRow};
+use nucleus_store::{Event, EventDraft, Store, TaskRow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -32,14 +32,18 @@ pub(super) struct RunView {
 }
 
 impl RunView {
-    pub(super) fn read(row: &TaskRow, activity: Option<&ActivityAt>) -> Option<Self> {
+    pub(super) fn read(
+        row: &TaskRow,
+        activity: Option<&ActivityAt>,
+        store: &Store,
+    ) -> Option<Self> {
         let run = row.task.run()?;
         let launch = run.launch();
         Some(Self {
             role: launch.role,
             thread: launch.thread.clone(),
             instance: launch.instance.clone(),
-            purpose: purpose(&row.task, launch.role),
+            purpose: purpose(&row.task, launch.role, store),
             reserved_at: launch.started_at,
             last_send_at: run.last_send_at_ms(),
             review_head: launch.review_head.clone(),
@@ -125,7 +129,7 @@ pub(super) fn note_merge(audit: &mut EventDraft, forge: &Observed<Forge>) {
     }
 }
 
-pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft) -> EventDraft {
+pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &Store) -> EventDraft {
     let mut records = Vec::new();
     let prior_run = prior.run().filter(|run| run.last_send_at_ms().is_some());
     let run = task.run().filter(|run| run.last_send_at_ms().is_some());
@@ -140,7 +144,7 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft) -> EventDr
             records.push(Milestone::RunStarted {
                 instance: launch.instance.clone(),
                 role: launch.role,
-                purpose: purpose(task, launch.role),
+                purpose: purpose(task, launch.role, store),
                 review_head: launch.review_head.clone(),
             });
         }
@@ -199,17 +203,28 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft) -> EventDr
     audit
 }
 
-fn purpose(task: &Task, role: Role) -> String {
+fn purpose(task: &Task, role: Role, store: &Store) -> String {
     match role {
-        Role::Worker => task
-            .brief()
-            .text
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
+        Role::Worker => brief_title(&task.brief().text)
             .map_or_else(|| "Implement the brief".into(), |line| excerpt(line, 100)),
-        Role::Reviewer => "Review the exact PR head".into(),
+        Role::Reviewer => store.completed_reviews(&task.identity().id).map_or_else(
+            |_| "Review the exact PR head".into(),
+            |completed| format!("Checking round {}", completed.saturating_add(1)),
+        ),
     }
+}
+
+fn brief_title(text: &str) -> Option<&str> {
+    let mut lines = text.trim_start().lines().map(str::trim);
+    let first = lines.next()?;
+    let title = if first == "---" {
+        lines.find(|line| *line == "---")?;
+        lines.find(|line| !line.is_empty())?
+    } else {
+        first
+    };
+    let heading = title.trim_start_matches('#');
+    Some(heading.strip_prefix(' ').map_or(title, str::trim))
 }
 
 fn excerpt(value: &str, limit: usize) -> String {

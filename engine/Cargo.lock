@@ -1235,6 +1235,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "shlex",
  "tempfile",
  "thiserror",
  "time",

@@ -17,6 +17,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
+shlex = "2"
 thiserror = "2"
 time = { version = "0.3", features = ["parsing"] }
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "time"] }

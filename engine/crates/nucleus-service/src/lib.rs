@@ -548,7 +548,7 @@ impl Service {
         audit: &EventDraft,
     ) -> Result<i64, ServiceError> {
         let id = &task.identity().id;
-        let audit = presentation::decorate(&prior.task, task, audit);
+        let audit = presentation::decorate(&prior.task, task, audit, &state.store);
         let version = state.store.save_row(prior, task, &audit)?;
         track(state, task);
         state.waits.remove(id);
