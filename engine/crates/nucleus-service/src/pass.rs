@@ -521,11 +521,12 @@ mod tests {
     use crate::tests::{Due, fixture, forge_fixture, reservation};
 
     #[tokio::test]
-    async fn revoked_replay_rechecks_the_actual_forge_and_checkout() {
-        for (changed_head, dirty, allowed) in [
-            (false, true, false),
-            (false, false, true),
-            (true, true, true),
+    async fn prepared_and_revoked_reviews_recheck_the_actual_forge_and_checkout() {
+        for (revoked, changed_head, dirty, allowed) in [
+            (false, false, true, false),
+            (true, false, true, false),
+            (true, false, false, true),
+            (true, true, true, true),
         ] {
             let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
             let head = service.project.start.clone();
@@ -548,17 +549,24 @@ mod tests {
                 checkout.allocate(&head).expect("allocate"),
                 Workspace::Clean(head.clone())
             );
-            let (mut task, _, cached) = reservation("reviewer", Entry::ReviewEntry, &head);
+            let (mut task, _, mut cached) = reservation("reviewer", Entry::ReviewEntry, &head);
             let instance = task.run().expect("run").launch().instance.clone();
-            task.record_send(&instance, 1).expect("prior delivery");
-            task.command(
-                Command::Cancel,
-                &Authority::Operator {
-                    actor: "fixture".into(),
-                },
-                &cached,
-            )
-            .expect("revoke");
+            if revoked {
+                task.record_send(&instance, 1).expect("prior delivery");
+                task.command(
+                    Command::Cancel,
+                    &Authority::Operator {
+                        actor: "fixture".into(),
+                    },
+                    &cached,
+                )
+                .expect("revoke");
+            } else {
+                cached.host = Observed::Known(Host::Current {
+                    instance,
+                    state: RunState::ReadyToSend,
+                });
+            }
             if dirty {
                 std::fs::write(checkout.path().join("local-edit.txt"), "local changes")
                     .expect("edit after observation");
@@ -575,7 +583,11 @@ mod tests {
                 .task(&task.identity().id)
                 .await
                 .expect("fixture version");
-            let result = service.stop_run(&row, &checkout, cached, &host).await;
+            let result = if revoked {
+                service.stop_run(&row, &checkout, cached, &host).await
+            } else {
+                service.send_prepared(&row, &checkout, cached, &host).await
+            };
             assert_eq!(reads.load(Ordering::Relaxed), 1, "fresh forge read");
             assert_eq!(host.0.load(Ordering::Relaxed), usize::from(allowed));
             if allowed {
@@ -583,11 +595,19 @@ mod tests {
                     result,
                     Err(ServiceError::Host(nucleus_hosts::HostError::Uncertain))
                 ));
-            } else {
+            } else if revoked {
                 assert_eq!(
                     result.expect("dirty current head waits"),
                     Action::Wait(WaitReason::Stopping)
                 );
+            } else {
+                assert_eq!(
+                    result.expect("discard unsent review"),
+                    Action::Advance(Phase::Reviewing)
+                );
+                let row = service.task("reviewer").await.expect("cleared reservation");
+                assert!(row.task.run().is_none());
+                assert_eq!(row.task.attempts(), 0);
             }
             server.abort();
         }

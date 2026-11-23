@@ -348,6 +348,7 @@ mod tests {
             _ => panic!("unexpected method"),
         };
         projection["kind"] = json!("snapshot");
+        projection["snapshotSequence"] = json!(16);
         json!({
             "_tag": "Chunk", "requestId": req["id"],
             "values": [projection, {"kind":"synchronized"}],
