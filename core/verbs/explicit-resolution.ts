@@ -41,9 +41,15 @@ import {
   workspaceLookupStop,
 } from "../recovery/workspace-lookup";
 import { plannerEscalations } from "../questions/ladder/records";
-import { blockingRecoveryEffects } from "../recovery/recovery-effects";
+import {
+  blockingRecoveryEffects,
+  matchesReviewEffectWait,
+  recoverySettlementKey,
+  type RecoveryEffect,
+} from "../recovery/recovery-effects";
 import { plannerIdMatches } from "../recovery/task-reasons";
 import { reviewPublicationKey } from "../review/review-publication";
+import { matchingInactiveParticipant } from "../intake/run-settlement";
 import { now, type Store } from "../store/store";
 import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
 import { threadServesAnotherTask } from "../workspaces/thread-ownership";
@@ -300,6 +306,24 @@ function explicitAuthorityRefusal(
     : `Explicit resolution requires ${who}; ${why}`;
 }
 
+function requireWarningAuthority(
+  source: Source,
+  accept: ResolutionWarningId[],
+): void {
+  if (
+    source === "coordinator" &&
+    accept.some((id) => PLANNER_ONLY_WARNINGS.has(id))
+  )
+    throw Error(
+      `Only the live responsible planner or operator board can accept ${[...PLANNER_ONLY_WARNINGS].join(", ")}`,
+    );
+  if (
+    source !== "operator_board" &&
+    accept.some((id) => OPERATOR_ONLY_WARNINGS.has(id))
+  )
+    throw Error("Only the operator board can accept unverified_merge");
+}
+
 async function authority(
   engine: Engine,
   task: Task,
@@ -355,6 +379,34 @@ export async function resolveExplicitly(
   // context it falls back to the unbound adapter, which carries no forge ports,
   // so each phase runs on the task's own host.
   const onHost = <T>(fn: () => T): T => engine.onTaskHost(before, fn);
+  // Keep the initial writer's binding and callback credential during the host
+  // call. The version check below still owns the local release.
+  let confirmedWorkerStop: boolean | undefined;
+  if (
+    input.action === "run.release" &&
+    input.version === before.version &&
+    !before.removedAt &&
+    input.run === before.runId &&
+    before.agentId &&
+    !before.completion &&
+    !store.run(input.run)
+  ) {
+    const agentId = before.agentId;
+    requireWarningAuthority(source, input.accept);
+    if (
+      releaseWarnings(store, before, input.run).every((warning) =>
+        input.accept.includes(warning.id),
+      )
+    )
+      confirmedWorkerStop = await onHost(() =>
+        confirmInitialWorkerStopped(
+          engine,
+          before,
+          agentId,
+          input.accept.includes("live_turn"),
+        ),
+      );
+  }
   const runStartPreflight =
     input.action === "run.start" &&
     input.version === before.version &&
@@ -382,24 +434,13 @@ export async function resolveExplicitly(
     });
     if (input.version !== task.version) return reply("stale");
     if (task.removedAt) throw Error("Task was removed from the queue");
-    if (
-      source === "coordinator" &&
-      input.accept.some((id) => PLANNER_ONLY_WARNINGS.has(id))
-    )
-      throw Error(
-        `Only the live responsible planner or operator board can accept ${[...PLANNER_ONLY_WARNINGS].join(", ")}`,
-      );
-    if (
-      source !== "operator_board" &&
-      input.accept.some((id) => OPERATOR_ONLY_WARNINGS.has(id))
-    )
-      throw Error("Only the operator board can accept unverified_merge");
+    requireWarningAuthority(source, input.accept);
 
     const plan = engine.onTaskHost(task, () =>
       input.action === "run.release"
-        ? releasePlan(engine, task, input)
+        ? releasePlan(engine, task, input, confirmedWorkerStop)
         : input.action === "record.clear"
-          ? clearPlan(engine, task, input)
+          ? clearPlan(engine, task, input, source)
           : input.action === "run.start"
             ? runStartPlan(engine, task, input, runStartPreflight)
             : input.action === "phase.set"
@@ -419,6 +460,11 @@ export async function resolveExplicitly(
                           integrationPreflight,
                         ),
     );
+    if (
+      confirmedWorkerStop === false &&
+      !plan.warnings.some((warning) => warning.id === "live_turn")
+    )
+      plan.warnings.push(liveTurnWarning);
     if (plan.warnings.some((warning) => !input.accept.includes(warning.id)))
       return reply("warnings", plan.warnings);
 
@@ -494,6 +540,51 @@ export async function resolveExplicitly(
  */
 export type ReleasePlanContext = Pick<Engine, "store" | "host" | "withHost">;
 
+const liveTurnWarning: Warning = {
+  id: "live_turn",
+  text: "This run may have a live turn. Stopping a worker may lose uncommitted changes.",
+};
+
+async function confirmInitialWorkerStopped(
+  engine: Engine,
+  task: Task,
+  agentId: string,
+  acceptLiveTurn: boolean,
+): Promise<boolean> {
+  const observe = async () => {
+    const state = await engine.host.observe(agentId);
+    if (
+      !sameCallerIdentity(state.id, agentId, task.hostId, task.hostId) ||
+      state.workspaceId !== task.workspaceId
+    )
+      throw Error("The host did not observe the bound worker in its workspace");
+    return { ...state, id: agentId };
+  };
+  try {
+    if (threadServesAnotherTask(engine.store, task, agentId))
+      throw Error("Another live assignment still owns this thread");
+    const before = await observe();
+    if (matchingInactiveParticipant(task, before)) return true;
+    if (!before.active && !before.activeTurnId && !before.permissions)
+      throw Error(
+        `The worker's ${before.status} state does not confirm that its turn ended`,
+      );
+    if (!acceptLiveTurn) return false;
+    if (engine.store.task(task.id).version !== task.version)
+      throw Error("The task changed before cancellation");
+    await engine.host.stopAgentTurn(
+      agentId,
+      ...(before.activeTurnId ? [before.activeTurnId] : []),
+    );
+    if (matchingInactiveParticipant(task, await observe())) return true;
+    throw Error("The worker still has an unsettled turn");
+  } catch (error) {
+    throw Error(
+      `Worker cancellation could not be confirmed. The existing worker remains bound. ${String(error).slice(0, 500)}`,
+    );
+  }
+}
+
 function releasedRunLive(task: Task, run: ReturnType<Store["run"]>): boolean {
   return run
     ? !run.released &&
@@ -515,7 +606,7 @@ export function releaseWarnings(
   return previewRunRelease(store, task, runId)?.warnings ?? [];
 }
 
-/** Read the named run and its local release facts. Host contact belongs to finish. */
+/** Read the named run and its local release facts without contacting its host. */
 export function previewRunRelease(store: Store, task: Task, runId: string) {
   const run = store.run(runId);
   const initial = !run && task.runId === runId;
@@ -524,11 +615,7 @@ export function previewRunRelease(store: Store, task: Task, runId: string) {
   const process = store.hostRun(runId);
   const live = releasedRunLive(task, run);
   const warnings: Warning[] = [];
-  if (live || process?.state === "running")
-    warnings.push({
-      id: "live_turn",
-      text: "This run may have a live turn. Stopping a worker may lose uncommitted changes.",
-    });
+  if (live || process?.state === "running") warnings.push(liveTurnWarning);
   if (!completion && !run?.released)
     warnings.push({
       id: "unreported_result",
@@ -553,6 +640,7 @@ export function releasePlan(
   engine: ReleasePlanContext,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.release" }>,
+  confirmedWorkerStop = false,
 ): Plan {
   const store = engine.store;
   const preview = previewRunRelease(store, task, input.run);
@@ -665,7 +753,8 @@ export function releasePlan(
           );
         });
       }
-      if (agentId && (live || input.archive)) {
+      const cancelTurn = live && !confirmedWorkerStop;
+      if (agentId && (cancelTurn || input.archive)) {
         const current = store.task(task.id);
         // Stop the released turn without dropping the retained worker binding.
         const releasedRetainedTurn =
@@ -684,7 +773,7 @@ export function releasePlan(
             ],
           };
         const onHost = async () => {
-          if (live)
+          if (cancelTurn)
             await attempt("Turn cancellation", () =>
               engine.host.stopAgentTurn(agentId),
             );
@@ -716,10 +805,10 @@ type ClearInput = Extract<ExplicitResolution, { action: "record.clear" }>;
 export type RecordClearTarget = Pick<ClearInput, "kind" | "id">;
 type ClearPlan = {
   warnings: Warning[];
-  apply(reason: string): ExplicitChange;
+  apply(reason: string, source: Source): ExplicitChange;
 };
 
-function clearPlan(engine: Engine, task: Task, input: ClearInput): Plan {
+function clearPlan(engine: Engine, task: Task, input: ClearInput, source: Source): Plan {
   const preview = previewRecordClear(
     {
       store: engine.store,
@@ -732,7 +821,7 @@ function clearPlan(engine: Engine, task: Task, input: ClearInput): Plan {
     if ("refusal" in preview) throw Error(preview.refusal);
     return {
       warnings: preview.warnings,
-      apply: () => preview.apply(input.reason),
+      apply: () => preview.apply(input.reason, source),
     };
   }
   // Modern host waits are derived from health and end on reconnect.
@@ -864,7 +953,7 @@ export function previewRecordClear(
       };
     }
     case "effect":
-      return clearEffect(store, task, id);
+      return clearEffect(store, task, id, caller);
     case "workspace_intent":
       // Spec 068 batch A: release an uncertain dispatch workspace creation
       // without a proof. The task returns to queued and ordinary dispatch
@@ -919,6 +1008,7 @@ function clearEffect(
   store: Store,
   task: Task,
   id: string,
+  caller?: string,
 ): ClearPlan | null {
   const warning: Warning = {
     id: "effect_may_land",
@@ -1043,20 +1133,21 @@ function clearEffect(
   }
   if (kind === "review_publication" || kind === "publication") {
     const publication = store.getMeta(reviewPublicationKey(key));
-    if (
-      publication &&
-      blockingRecoveryEffects(store, task, {
-        kinds: ["publication"],
-        runId: key,
-      }).some((effect) => effect.identity === key)
-    )
-      return {
-        warnings: [warning],
-        apply() {
-          store.deleteMeta(reviewPublicationKey(key));
-          return { before: publication };
-        },
-      };
+    if (!publication) return null;
+    const blockers = blockingRecoveryEffects(store, task);
+    const effect = blockers.find(
+      (item) => item.kind === "publication" && item.identity === key,
+    );
+    if (!effect) return null;
+    const clearStop =
+      blockers.length === 1 && matchesReviewEffectWait(task, blockers);
+    return clearWriteWait(
+      task,
+      effect,
+      caller,
+      publication,
+      clearStop ? { stop: null } : {},
+    );
   }
   const r = task.resolution;
   if (
@@ -1076,35 +1167,77 @@ function clearEffect(
         },
       }),
     };
-  // The merge request itself stays as durable evidence for the exact-head hard gate.
-  if (
-    id === "merge-response.merge-response" &&
-    !r.mergedCommit &&
-    (r.mergeResponseOutcome === "uncertain" ||
-      r.mergeRetryOutcome === "uncertain" ||
-      (r.mergeIntent && r.mergeResponseOutcome === "pending"))
-  )
-    return {
-      warnings: [warning],
-      apply: () => ({
-        before: {
-          intent: r.mergeIntent,
-          head: r.mergeHead,
-          requestedAt: r.mergeRequestedAt,
-          response: r.mergeResponseOutcome,
-          retry: r.mergeRetryOutcome,
-        },
-        patch: {
-          resolution: {
-            ...r,
-            mergeIntent: false,
-            mergeResponseOutcome: "pending",
-            mergeRetryOutcome: null,
-            mergeRetryAt: null,
-            mergeAutoRetryExhausted: true,
-          },
-        },
-      }),
-    };
+  if (id === "merge-response.merge-response") {
+    const [effect] = blockingRecoveryEffects(store, task, {
+      kinds: ["merge-response"],
+    });
+    if (!effect) return null;
+    return clearWriteWait(
+      task,
+      effect,
+      caller,
+      {
+        intent: r.mergeIntent,
+        head: r.mergeHead,
+        requestedAt: r.mergeRequestedAt,
+        response: r.mergeResponseOutcome,
+        retry: r.mergeRetryOutcome,
+      },
+      { mergeAutoRetryExhausted: true },
+    );
+  }
   return null;
+}
+
+/** Retire the local wait while the original GitHub write still owns observation. */
+function clearWriteWait(
+  task: Task,
+  effect: RecoveryEffect,
+  caller: string | undefined,
+  before: unknown,
+  change: Partial<Task["resolution"]>,
+): ClearPlan | null {
+  const key = `${effect.kind}.${effect.identity}`;
+  const occurrence = recoverySettlementKey(task, effect);
+  const state = task.resolution;
+  if (
+    state.ownerSettlements.some(
+      (entry) => entry.effect === key && entry.occurrence === occurrence,
+    )
+  )
+    return null;
+  return {
+    warnings: [
+      {
+        id: "effect_may_land",
+        text: "The original GitHub write may still complete. Its recorded intent remains for reconciliation.",
+      },
+    ],
+    apply: (reason, source) => ({
+      before,
+      patch: {
+        resolution: {
+          ...state,
+          ...change,
+          ownerSettlements: [
+            ...state.ownerSettlements,
+            {
+              effect: key,
+              occurrence,
+              // Keep the original effect visible to the reconciliation path.
+              recoveryKeys: [],
+              summary: effect.reason,
+              caller: caller ?? OPERATOR_BOARD_CALLER,
+              source: source === "coordinator" ? "task_recovery" : source,
+              reason,
+              at: now(),
+            },
+          ],
+        },
+        ...(change.stop === null && task.reason === state.stop?.detail
+          ? { reason: TASK_PROGRESSING_REASON }
+          : {}),
+      },
+    }),
+  };
 }

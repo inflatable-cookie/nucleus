@@ -13,7 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { mergeGate } from "../core/forge/merge";
-import { publishFormalReview } from "../core/forge/reviews";
+import {
+  publishFormalReview,
+  publishReviewOnce,
+  verifyFormalReview,
+  type FormalReviewRuntime,
+} from "../core/forge/reviews";
 import { publishedReviewDecision } from "../core/intake/result-application";
 import { ordinaryReviewSource } from "../core/review/ordinary-review";
 import { git } from "../core/git/index";
@@ -24,6 +29,7 @@ import { emptyBbThreadState } from "../hosts/bb";
 import { formatAgentId } from "../shared/agent-identity";
 import {
   OPERATOR_BOARD_CALLER,
+  completionSchema,
   REVISION_BUDGET,
   runSchema,
   submissionSchema,
@@ -42,11 +48,12 @@ import { taskStopRecord } from "../shared/task-stop";
 import { prerequisiteWaitBlocksPhase } from "../core/store/store-prerequisites";
 import { reviewPublicationKey } from "../core/review/review-publication";
 import type { Adapter } from "../core/host";
+import type { ResolutionAdapter } from "../core/resolution";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
-import { operationInputHash } from "../core/store/store";
+import { digest, operationInputHash } from "../core/store/store";
 import {
   collectOwnerVerbFacts,
   ownerPendingEffects,
@@ -3387,21 +3394,33 @@ test("next previews exact planner record settlements and reports what's left", a
             .join() === "refused,uncertain",
       };
     },
-    "stored publication journal": (f) => {
+    "uncertain merge response": (f) => {
+      const request = {
+        mergeIntent: true,
+        mergeHead: head,
+        mergeRequestedAt: stamp,
+        mergeResponseOutcome: "uncertain" as const,
+        mergeRetryAt: stamp,
+        mergeRetryOutcome: "uncertain" as const,
+      };
       f.store.update(f.current().id, {
-        runId: "old-publication",
-        agentActive: false,
-      });
-      f.store.setMeta(reviewPublicationKey("old-publication"), {
-        state: "uncertain",
+        phase: "merging",
+        resolution: { ...f.current().resolution, ...request },
       });
       return {
         kind: "effect",
-        id: "publication.old-publication",
+        id: "merge-response.merge-response",
         warnings: ["effect_may_land"],
         observeOriginal: true,
-        settled: () =>
-          f.store.getMeta(reviewPublicationKey("old-publication")) == null,
+        settled: () => {
+          const state = f.current().resolution;
+          for (const [field, value] of Object.entries(request))
+            assert.equal(Reflect.get(state, field), value);
+          assert.equal(state.mergeAutoRetryExhausted, true);
+          return blockingRecoveryEffects(f.store, f.current()).some(
+            (effect) => effect.kind === "merge-response",
+          );
+        },
       };
     },
     "held project validation": (f) => {
@@ -3492,12 +3511,12 @@ test("next previews exact planner record settlements and reports what's left", a
       );
       assert.deepEqual(
         wake.mock.calls.map(({ arguments: args }) => args),
-        observeOriginal ? [] : [[id]],
+        [[id]],
       );
       if (observeOriginal)
         assert.match(
           result.explicitResolution.next,
-          /Check GitHub for the original write/,
+          /original write remains recorded/,
         );
       assert.equal(
         (await f.command({ ...offer.args, accept: warnings, caller: planner }))
@@ -3660,4 +3679,263 @@ test("next names the operator's genuine decision and the planner's dependency co
   );
   assert.ok(!next.explicitCommands?.some((item) => item.args.kind === "stop"));
   assert.equal(f.store.decision(decision.id).status, "open");
+});
+
+test("an unconfirmed initial worker cancellation keeps the real scheduler behind the old binding", async (t) => {
+  let workerActive = true;
+  let stopError = true;
+  let cancelCalls = 0;
+  let workerCreates = 0;
+  const f = await fixture(t, {
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "workspace",
+      status: workerActive && id === "initial-worker" ? "running" : "idle",
+      active: workerActive && id === "initial-worker",
+      activeTurnId:
+        workerActive && id === "initial-worker" ? "worker-turn" : null,
+      permissions: false,
+      error: "",
+    }),
+    stopAgentTurn: async (id: string, turnId?: string) => {
+      assert.equal(id, "initial-worker");
+      assert.equal(turnId, "worker-turn");
+      cancelCalls++;
+      if (stopError) throw Error("The host lost the cancellation response");
+    },
+    verifyWorkspace: async (task: Task) => task.branch,
+    createAgent: async () => {
+      workerCreates++;
+      return { id: "replacement-worker", workspaceId: "workspace" };
+    },
+  });
+  const { store, runtime, current, command, root } = f;
+  const { worktree } = await attachGitCheckout(
+    root,
+    store,
+    current().id,
+    "interrupted-dispatch",
+  );
+  const task = store.update(current().id, {
+    phase: "dispatching",
+    runId: "initial-dispatch",
+    agentId: "initial-worker",
+    agentActive: true,
+    agentIntent: false,
+    directory: worktree,
+    profile: profile("worker"),
+    prHead: null,
+    prUrl: null,
+  });
+  store.setCredential(task.runId!, "worker-ticket");
+  store.setMeta("paused", false);
+
+  const read = () => runtime.taskNext({ taskId: task.id });
+  const offer = read().explicitCommands?.find(
+    (item) => item.action === "run.release" && item.args.run === task.runId,
+  );
+  assert.ok(offer);
+  assert.deepEqual(offer.warnings, ["live_turn", "unreported_result"]);
+  const probe = await command({ ...offer.args });
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  assert.equal(cancelCalls, 0);
+
+  const release = () =>
+    command({
+      ...offer.args,
+      version: current().version,
+      accept: offer.warnings,
+    });
+  for (const diagnostic of [
+    /lost the cancellation response/,
+    /unsettled turn/,
+  ]) {
+    await assert.rejects(release(), diagnostic);
+    await runtime.engine.wakeTask(task.id);
+    await runtime.engine.quiesce();
+    assert.equal(workerCreates, 0);
+    assert.equal(current().runId, task.runId);
+    assert.equal(current().agentId, task.agentId);
+    assert.equal(current().agentActive, true);
+    assert.equal(f.audit().length, 0);
+    assert.doesNotThrow(() => store.authenticate(task.runId!, "worker-ticket"));
+    stopError = false;
+  }
+
+  workerActive = false;
+  const applied = await release();
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(applied.agentId, null);
+  assert.throws(() => store.authenticate(task.runId!, "worker-ticket"));
+  assert.equal(cancelCalls, 2);
+  await runtime.engine.quiesce();
+  assert.equal(workerCreates, 1);
+});
+
+test("clearing a publication wait preserves the receipt-backed verdict and reconciles the original GitHub review", async (t) => {
+  const reviewer = { login: "reviewer-bot" };
+  let posts = 0;
+  let observed = 0;
+  let allowObservation = () => {};
+  const observation = new Promise<void>((resolve) => {
+    allowObservation = resolve;
+  });
+  let remoteReview: {
+    id: number;
+    body: string;
+    user: typeof reviewer;
+    commit_id: string;
+    state: string;
+  } | null = null;
+  const forge: FormalReviewRuntime = {
+    readToken: async () => "fake-token",
+    verifyPr: async (task) => ({ head: task.prHead!, url: task.prUrl! }),
+    runGh: async (task, endpoint, args) => {
+      if (args.includes("POST")) {
+        posts++;
+        const body = args
+          .find((arg) => arg.startsWith("body="))
+          ?.slice("body=".length);
+        assert.ok(body);
+        assert.ok(task.prHead);
+        remoteReview = {
+          id: 505,
+          body,
+          user: reviewer,
+          commit_id: task.prHead,
+          state: "CHANGES_REQUESTED",
+        };
+        throw Error("GitHub accepted the review, but the response was lost");
+      }
+      if (args.includes("--paginate")) {
+        await observation;
+        observed++;
+        return [[remoteReview]];
+      }
+      if (endpoint.endsWith("/505")) return remoteReview;
+      throw Error("Lookup needs a published review ID");
+    },
+  };
+  const publish: NonNullable<ResolutionAdapter["publishReview"]> = (
+    store,
+    task,
+    run,
+    status,
+    text,
+    allowed,
+    setting,
+  ) =>
+    publishReviewOnce(store, task, run, status, text, allowed, setting, forge);
+  const verify: ResolutionAdapter["verifyReview"] = (task, run, result) =>
+    verifyFormalReview(task, run, result, reviewer, forge);
+  const f = await fixture(t, { publishReview: publish, verifyReview: verify });
+  const { store, root, current, runtime } = f;
+  const { repoDir, initialSha } = await attachGitCheckout(
+    root,
+    store,
+    current().id,
+    "publication-replay",
+  );
+  await git(
+    repoDir,
+    "remote",
+    "set-url",
+    "origin",
+    "git@github.com:example/repo.git",
+  );
+  store.patchRepository(
+    { path: repoDir, origin: "example/repo" },
+    { reviewer },
+  );
+  const runId = "finished-reviewer";
+  const task = store.update(current().id, {
+    phase: "reviewing",
+    repository: "example/repo",
+    resumePrNumber: 1,
+    resolution: {
+      ...current().resolution,
+      reviewerAgentId: "retained-reviewer",
+      currentRunId: null,
+    },
+  });
+  const completion = completionSchema.parse({
+    taskId: task.id,
+    runId,
+    eventId: "authenticated-review",
+    status: "changes_required",
+    head: initialSha,
+    summary: "Fix the boundary",
+    reviewText: "Keep ownership on the original operation.",
+  });
+  store.putRun({
+    ...f.run(runId, "reviewer", "retained-reviewer"),
+    head: initialSha,
+    active: false,
+    status: "finished",
+    released: true,
+    completion,
+  });
+  const run = store.run(runId);
+  assert.ok(run);
+  store.db
+    .prepare(
+      "INSERT INTO receipts(id,task,run,hash,response) VALUES(?,?,?,?,?)",
+    )
+    .run(
+      completion.eventId,
+      task.id,
+      run.id,
+      digest(JSON.stringify(completion)),
+      JSON.stringify({ accepted: true }),
+    );
+  const journal = () => store.getMeta(reviewPublicationKey(runId));
+  await assert.rejects(
+    publishFormalReview(
+      store,
+      task,
+      run,
+      completion.status,
+      completion.reviewText!,
+      reviewer,
+      () => true,
+      forge,
+    ),
+    /response was lost/,
+  );
+  assert.equal(posts, 1);
+  const original = journal();
+  assert.ok(original);
+  const offer = runtime
+    .taskNext({ taskId: task.id })
+    .explicitCommands?.find((item) => item.args.id === `publication.${runId}`);
+  assert.ok(offer);
+  assert.deepEqual(offer.warnings, ["effect_may_land"]);
+  try {
+    const cleared = await f.command({ ...offer.args, accept: offer.warnings });
+    assert.equal(cleared.explicitResolution?.status, "applied");
+    assert.deepEqual(journal(), original);
+    assert.deepEqual(store.run(run.id)?.completion, completion);
+    const next = runtime.taskNext({ taskId: task.id });
+    assert.ok(
+      !next.explicitCommands?.some((item) => item.args.id === offer.args.id),
+    );
+    assert.ok(
+      next.verbs.some(
+        (item) =>
+          item.available && item.args?.effect === `review_publication.${runId}`,
+      ),
+    );
+    store.setMeta("paused", false);
+  } finally {
+    allowObservation();
+  }
+  await runtime.engine.quiesce();
+  assert.equal(posts, 1);
+  assert.ok(observed > 0);
+  assert.equal(current().resolution.review?.reviewId, 505);
+  assert.equal(current().resolution.review?.head, initialSha);
+  assert.equal(
+    store.getMeta<{ reviewId?: number }>(reviewPublicationKey(runId))?.reviewId,
+    505,
+  );
 });

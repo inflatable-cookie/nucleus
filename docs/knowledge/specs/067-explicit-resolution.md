@@ -103,10 +103,13 @@ correct.
 
 After an applied settlement, the response lists remaining records, runs
 and the visible stop. Nucleus schedules a pass for the affected task and
-wakes repository dispatch if the task is queued. Legacy publication journal
-and merge response clears call for checking the original GitHub write
-before retrying, so those clears do not schedule a pass. The preview uses
-local facts and supplies no result for a process, host or forge operation.
+wakes repository dispatch if the task is queued. Publication and merge
+response clears preserve the original GitHub write for reconciliation.
+Clearing a merge response stops automatic reissue while the outcome is unknown.
+Before `run.release` removes an unfinished initial worker, Nucleus
+confirms that the worker's turn has ended. If the host cannot confirm it,
+the binding and callback credential remain. The preview uses local facts
+and supplies no result for a process, host or forge operation.
 
 | Command | Does exactly | Warnings (overridable) |
 | --- | --- | --- |

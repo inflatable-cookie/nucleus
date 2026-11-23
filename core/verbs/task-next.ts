@@ -777,7 +777,9 @@ function explicitCommandsFor(
     task.runId &&
     !runs.some((run) => run.id === task.runId) &&
     (task.agentIntent ||
-      (terminal && task.agentId && task.agentActive !== false))
+      ((terminal || task.phase === "dispatching") &&
+        task.agentId &&
+        task.agentActive !== false))
   )
     offerRelease(task.runId, `Release the initial worker run ${task.runId}.`);
   if (terminal) return commands;
@@ -1082,15 +1084,15 @@ function recordClearTargets(
     );
 
   for (const effect of blockingRecoveryEffects(store, task)) {
-    // The unresolved merge request still owns the observation and exact-head gates.
-    if (effect.kind !== "merge-response")
-      add(
-        "effect",
-        `${effect.kind}.${effect.identity}`,
-        effect.kind === "publication"
-          ? `Retire the stored publication journal. Inspect the PR for the original publication. ${effect.reason}.`
+    add(
+      "effect",
+      `${effect.kind}.${effect.identity}`,
+      effect.kind === "publication"
+        ? "Clear the local publication wait and retain the journal for reconciliation."
+        : effect.kind === "merge-response"
+          ? "Stop automatic merge retries and retain the original request for reconciliation."
           : `Retire this recorded effect. ${effect.reason}.`,
-      );
+    );
   }
   for (const notice of facts.notices)
     if (notice.kind === "attention" && notice.status === "pending")

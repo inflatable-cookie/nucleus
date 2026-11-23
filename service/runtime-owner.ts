@@ -2398,8 +2398,6 @@ export class QueueRuntime {
     ) {
       const settlement =
         request.action === "run.release" || request.action === "record.clear";
-      // These legacy clears remove the journal used to observe the original
-      // write. An immediate recheck could treat that write as a fresh one.
       const observeOriginal =
         request.action === "record.clear" &&
         request.kind === "effect" &&
@@ -2428,7 +2426,7 @@ export class QueueRuntime {
               ? `Remaining records and runs are ${remaining.join(", ")}.`
               : "",
             observeOriginal
-              ? "Check GitHub for the original write before retrying."
+              ? "The original write remains recorded for GitHub reconciliation."
               : next.paused
                 ? "The scheduler waits for Nucleus to resume."
                 : `The scheduler rechecks this ${task.phase} task.`,
@@ -2450,7 +2448,6 @@ export class QueueRuntime {
       });
       if (
         settlement &&
-        !observeOriginal &&
         result.explicitResolution?.status === "applied"
       ) {
         void this.engine.cleanContext(() => this.engine.wakeTask(result.id));
