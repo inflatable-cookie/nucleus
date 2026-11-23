@@ -87,9 +87,14 @@ one of the four. It is never left in place.
 ### 2. One activity reading (the ACP work)
 
 `shared/` gets one derivation, `taskActivity(facts)`, which returns
-`{state, role, since, detail, lastActivityAt, tool?, attempt?}`. The reconciler,
-`next`, the board and the ACP task thread all read it, so what is shown is what
-Nucleus acts on. Its inputs are facts, not host display:
+`{state, role, since, occurrence, detail, lastActivityAt, tool?, attempt?}`. The
+reconciler, `next`, the board and the ACP task thread all read it, so what is shown
+is what Nucleus acts on. `occurrence` names the fact that owns the current reading —
+the decision, stop, host wait, permission, deferred coordinator host read, repair
+episode or last concluded run —
+and stays the same while that fact holds, so a reader can tell one wait from the
+next without reading the task's write timestamps. Its inputs are facts, not host
+display:
 
 - **Process facts.** The participant's recorded process and start identity are
   alive or gone. A process older than the last boot is gone.
@@ -114,7 +119,9 @@ instead of a stream of text lines:
 
 T3's ACP client carries the `plan`, `tool_call` and `tool_call_update` shapes.
 The planner checks how they render after batch 2 rolls. If either renders badly,
-the fallback is one replaced status line.
+the fallback is the deduplicated append-only status line: one line per real status
+change and nothing on a tick that changed nothing (planner ruling, 2026-11-23 —
+ACP `agent_message_chunk` is append-only, so a line is never replaced).
 
 ### 3. Facts that settle things
 

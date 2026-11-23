@@ -22,6 +22,7 @@ import {
   acpLifecycleSignature,
   acpTaskName,
 } from "../core/acp/lifecycle";
+import type { AcpTurnReply } from "../shared/acp/surface";
 import {
   acpBindingPath,
   acpSessionPath,
@@ -43,6 +44,8 @@ import {
 import type { Adapter } from "../core/host";
 import { base, profile } from "./support/responsible-lifecycle-fixture";
 import { socketFixtureDirectory } from "./support/socket-fixture";
+import { CoordinatorEpisode } from "../core/recovery/coordinator-episode";
+import { REPAIR_ATTEMPT_SETTLED } from "../core/recovery/repair-attempts";
 
 /**
  * Spec 065: the service side of an ACP session — minting the binding, the held turn,
@@ -367,20 +370,38 @@ test("a bind refuses a task without a checkout, a removed task, and a process th
   }
 });
 
-test("a held turn answers with the lifecycle line once, stays quiet, then releases a finished task", async () => {
+test("a held turn answers with structured presentation, keeps messages for human events, and releases a finished task", async () => {
   const fixture = await acpFixture();
   try {
     const first = await fixture.turn();
     assert.equal(first.state, "hold");
-    assert.deepEqual(first.messages, [
-      acpLifecycleLine(fixture.store.task(fixture.taskId)),
-    ]);
-    assert.match(first.messages[0]!, /Working/);
     assert.ok("task" in first);
+    assert.ok(first.presentation, "task turns carry structured presentation");
+    assert.deepEqual(
+      first.presentation.plan.map((e) => [e.content, e.status]),
+      [
+        ["Queued", "completed"],
+        ["Working", "in_progress"],
+        ["Review round 1 of 6", "pending"],
+        ["Merge", "pending"],
+        ["Close", "pending"],
+      ],
+    );
+    assert.equal(first.presentation.toolCalls.length, 1);
+    assert.equal(
+      first.presentation.toolCalls[0]!.title,
+      "Worker: implementing the brief",
+    );
+    assert.equal(first.presentation.toolCalls[0]!.status, "in_progress");
+    assert.deepEqual(
+      first.messages,
+      [],
+      "routine working state sends no chat message",
+    );
     assert.match(
       String(first.task.reference),
       /#/,
-      "the line is named by the task's durable reference",
+      "the task carries its durable reference",
     );
     const quiet = await fixture.turn();
     assert.deepEqual(
@@ -390,116 +411,133 @@ test("a held turn answers with the lifecycle line once, stays quiet, then releas
     );
     fixture.store.update(fixture.taskId, { phase: "awaiting_review" });
     const changed = await fixture.turn();
-    assert.equal(changed.messages.length, 1);
-    assert.match(changed.messages[0]!, /Review/);
+    assert.ok("presentation" in changed && changed.presentation);
+    assert.equal(changed.presentation.plan[1]!.status, "completed");
+    assert.equal(changed.presentation.plan[2]!.status, "in_progress");
+    assert.deepEqual(
+      changed.messages,
+      [],
+      "phase changes update the plan rather than sending text lines",
+    );
     fixture.store.update(fixture.taskId, {
       phase: "done",
       finishedAt: new Date().toISOString(),
     });
     const finished = await fixture.turn();
     assert.equal(finished.state, "release");
-    assert.match(finished.messages[0]!, /finished/);
+    assert.ok("presentation" in finished && finished.presentation);
+    assert.equal(
+      finished.presentation.plan.every((e) => e.status === "completed"),
+      true,
+    );
+    assert.equal(finished.messages.length, 1);
+    assert.match(finished.messages[0]!, /is done/);
     assert.match(finished.reason, /done/);
   } finally {
     await fixture.close();
   }
 });
 
-test("an attach shows the current lifecycle line even though this service already showed it", async () => {
+test("an attach rebuilds the current presentation even though this service already showed it", async () => {
   // The T3 restart path: the agent process dies while the service keeps running, so the
   // service still holds this session's shown signature. `session/load` attaches again and
-  // must show where the task stands.
+  // rebuilds the plan, tool calls, and any current finish/question message.
   const fixture = await acpFixture();
   try {
-    assert.equal(
-      (await fixture.turn()).messages.length,
-      1,
-      "session/new attaches with the line",
-    );
+    const opening = await fixture.turn();
+    assert.ok("presentation" in opening && opening.presentation);
+    assert.equal(opening.presentation.plan[1]!.status, "in_progress");
     assert.deepEqual(
       (await fixture.turn()).messages,
       [],
       "a held poll after that adds nothing",
     );
     const reattached = await fixture.turn({ attach: true });
+    assert.ok("presentation" in reattached && reattached.presentation);
+    assert.equal(reattached.presentation.plan[1]!.status, "in_progress");
     assert.equal(
-      reattached.messages.length,
-      1,
-      "the relaunched agent's attach still gets the line",
-    );
-    assert.equal(
-      reattached.messages[0],
-      acpLifecycleLine(fixture.store.task(fixture.taskId)),
+      reattached.presentation.toolCalls[0]!.title,
+      "Worker: implementing the brief",
     );
     fixture.store.update(fixture.taskId, { phase: "awaiting_review" });
     const changed = await fixture.turn({ attach: true });
-    assert.equal(changed.messages.length, 1);
-    assert.match(changed.messages[0]!, /Review/);
+    assert.ok("presentation" in changed && changed.presentation);
+    assert.equal(changed.presentation.plan[2]!.status, "in_progress");
     fixture.store.update(fixture.taskId, {
       phase: "done",
       finishedAt: new Date().toISOString(),
     });
     const finished = await fixture.turn({ attach: true });
     assert.equal(finished.state, "release");
-    assert.match(finished.messages[0]!, /finished/);
+    assert.equal(finished.messages.length, 1);
+    assert.match(finished.messages[0]!, /is done/);
   } finally {
     await fixture.close();
   }
 });
 
-test("milestone lines: same-state writes send nothing, the PR link and the reference show once", async () => {
+test("unchanged writes stay quiet; reviewer tool calls name the PR and short head; messages stay human-only", async () => {
   const fixture = await acpFixture();
   try {
-    assert.equal(
-      (await fixture.turn()).messages.length,
-      1,
-      "the opening line names the task",
-    );
+    await fixture.turn();
     fixture.store.update(fixture.taskId, { phase: "working" });
     assert.deepEqual(
       (await fixture.turn()).messages,
       [],
-      "a same-state write sends no line",
+      "a same-state write sends no message",
     );
     fixture.store.update(fixture.taskId, {
-      phase: "awaiting_review",
+      phase: "reviewing",
       prUrl: "https://example.test/pull/276",
+      prHead: "c86dc5a999999999999999999999999999999999",
     });
-    const review = await fixture.turn();
-    assert.deepEqual(
-      review.messages,
-      ["Review · https://example.test/pull/276"],
-      "the reference is not repeated and the link appears once",
-    );
-    fixture.store.update(fixture.taskId, { phase: "reviewing" });
+    fixture.store.putRun({
+      id: "run-review-1",
+      taskId: fixture.taskId,
+      role: "reviewer",
+      generation: 1,
+      head: "c86dc5a999999999999999999999999999999999",
+      agentId: "reviewer-agent",
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: "running",
+      createdAt: new Date().toISOString(),
+      lastObservedAt: null,
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    } as unknown as Run);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        currentRunId: "run-review-1",
+      },
+    });
     const reviewing = await fixture.turn();
-    assert.deepEqual(
-      reviewing.messages,
-      ["Reviewing · PR #276"],
-      "a later milestone refers to the PR by number",
+    assert.ok("presentation" in reviewing && reviewing.presentation);
+    assert.equal(
+      reviewing.presentation.toolCalls.some(
+        (c) => c.title === "Reviewer: reviewing PR #276 at c86dc5a",
+      ),
+      true,
     );
-    fixture.store.update(fixture.taskId, { phase: "reviewing" });
-    assert.deepEqual(
-      (await fixture.turn()).messages,
-      [],
-      "a later write with the same state repeats nothing",
-    );
+    assert.deepEqual(reviewing.messages, []);
     const reattached = await fixture.turn({ attach: true });
-    assert.deepEqual(
-      reattached.messages,
-      [acpLifecycleLine(fixture.store.task(fixture.taskId))],
-      "a reattached session shows the whole line",
-    );
-    assert.match(
-      reattached.messages[0]!,
-      /https:\/\/example\.test\/pull\/276$/,
+    assert.ok("presentation" in reattached && reattached.presentation);
+    assert.equal(
+      reattached.presentation.toolCalls.some(
+        (c) => c.title === "Reviewer: reviewing PR #276 at c86dc5a",
+      ),
+      true,
+      "a reattached session rebuilds the reviewer tool call",
     );
   } finally {
     await fixture.close();
   }
 });
 
-test("a long poll holds until the task changes, then answers with the change", async () => {
+test("a long poll holds until the task changes, then answers with the updated presentation", async () => {
   const fixture = await acpFixture();
   try {
     await fixture.turn();
@@ -511,8 +549,8 @@ test("a long poll holds until the task changes, then answers with the change", a
     );
     const answer = await waiting;
     assert.equal(answer.state, "hold");
-    assert.equal(answer.messages.length, 1);
-    assert.match(answer.messages[0]!, /Review/);
+    assert.ok("presentation" in answer && answer.presentation);
+    assert.equal(answer.presentation.plan[2]!.status, "in_progress");
   } finally {
     await fixture.close();
   }
@@ -1947,6 +1985,2583 @@ test("an Inbox answer settles the decision and notifies the asker", async () => 
     assert.equal(fixture.notified[0]!.agentId, WORKER);
     assert.match(fixture.notified[0]!.text, /Approve/);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("Spec 068 batch 2: real agent over stdio emits plan, tool_call, tool_call_update, and human-only messages across the full lifecycle", async () => {
+  const fixture = await acpFixture();
+  // Start the task in queued with no live run yet so we observe the full life from queued -> done.
+  const workerRun = fixture.store.run("run-1")!;
+  fixture.store.putRun({
+    ...workerRun,
+    released: true,
+    status: "superseded",
+  } as unknown as Run);
+  fixture.store.update(fixture.taskId, {
+    phase: "queued",
+    agentId: null,
+    runId: null,
+    resolution: {
+      ...fixture.store.task(fixture.taskId).resolution,
+      currentRunId: null,
+    },
+  });
+  const agent = launchAgent(fixture);
+  const { child, lines, write } = agent;
+  const collected: Array<Record<string, unknown>> = [];
+  const nextUpdate = async (
+    predicate: (u: Record<string, unknown>) => boolean,
+    label: string,
+  ) => {
+    for (let i = 0; i < 40; i++) {
+      const msg = await lines.next();
+      collected.push(msg);
+      const update = (msg.params as Record<string, unknown> | undefined)
+        ?.update as Record<string, unknown> | undefined;
+      if (msg.method === "session/update" && update && predicate(update))
+        return update;
+    }
+    throw new Error(`Did not observe expected update: ${label}`);
+  };
+
+  try {
+    write({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: 1, clientCapabilities: {} },
+    });
+    await lines.untilId(1);
+
+    write({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/new",
+      params: { cwd: fixture.worktree, mcpServers: [] },
+    });
+    await lines.untilId(2);
+
+    // Opening prompt holds the turn for the entire task life.
+    write({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "session/prompt",
+      params: {
+        sessionId: fixture.sessionId,
+        prompt: [{ type: "text", text: "opening prompt" }],
+      },
+    });
+
+    // 1. Queued: plan has Queued in_progress, plus the current wait as its own call.
+    const queuedPlan = await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "plan" &&
+        Array.isArray(u.entries) &&
+        (u.entries[0] as Record<string, unknown>).status === "in_progress",
+      "queued plan",
+    );
+    assert.equal(
+      (queuedPlan.entries as Array<Record<string, unknown>>)[0]!.content,
+      "Queued",
+    );
+    const queuedWait = await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "tool_call" &&
+        String(u.toolCallId).startsWith("activity:"),
+      "queued between-steps wait",
+    );
+    assert.equal(queuedWait.title, "Nucleus: between steps");
+    assert.match(
+      JSON.stringify(queuedWait.content),
+      /between steps: waiting for dispatch/i,
+    );
+
+    // 2. Working with a running tool: plan moves to Working; worker tool_call shows tool + elapsed time.
+    const nowIso = new Date().toISOString();
+    const threeMinAgo = new Date(Date.now() - 3 * 60_000).toISOString();
+    fixture.store.putRun({
+      id: "run-worker-2",
+      taskId: fixture.taskId,
+      role: "revision",
+      generation: 1,
+      head: base,
+      agentId: WORKER,
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: "running",
+      createdAt: threeMinAgo,
+      lastObservedAt: nowIso,
+      lastActivityAt: nowIso,
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+      participantActivity: {
+        runId: "run-worker-2",
+        agentId: WORKER,
+        turnId: "turn-1",
+        turnStartedAt: threeMinAgo,
+        permission: null,
+        tool: {
+          callId: "call-1",
+          name: "effigy test",
+          startedAt: threeMinAgo,
+          lastOutputAt: nowIso,
+        },
+        process: null,
+      },
+    } as unknown as Run);
+    fixture.store.update(fixture.taskId, {
+      phase: "working",
+      agentId: WORKER,
+      runId: "run-worker-2",
+      lastActivityAt: nowIso,
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        currentRunId: "run-worker-2",
+      },
+    });
+
+    await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "plan" &&
+        (u.entries as Array<Record<string, unknown>>)[1]!.status ===
+          "in_progress",
+      "working plan",
+    );
+    const workerCall = await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "tool_call" && u.toolCallId === "run:run-worker-2",
+      "worker tool_call",
+    );
+    assert.equal(workerCall.title, "Worker: implementing the brief");
+    assert.equal(workerCall.status, "in_progress");
+    assert.match(
+      JSON.stringify(workerCall.content),
+      /Running `effigy test` · 3 min/,
+    );
+
+    // 3. Review: worker completes, reviewer starts on PR #430 at c86dc5a.
+    fixture.store.putRun({
+      ...fixture.store.run("run-worker-2")!,
+      status: "finished",
+      released: true,
+      active: false,
+      completion: {
+        status: "ready_for_review",
+        headline: "Implemented Spec 068 batch 2",
+        summary: "Implemented Spec 068 batch 2",
+        prNumber: 430,
+        head: "c86dc5a111111111111111111111111111111111",
+      },
+    } as unknown as Run);
+    fixture.store.putRun({
+      id: "run-reviewer-1",
+      taskId: fixture.taskId,
+      role: "reviewer",
+      generation: 1,
+      head: "c86dc5a111111111111111111111111111111111",
+      agentId: "reviewer-agent-1",
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: "running",
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      lastActivityAt: nowIso,
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    } as unknown as Run);
+    fixture.store.update(fixture.taskId, {
+      phase: "reviewing",
+      prUrl: "https://example.test/pull/430",
+      prHead: "c86dc5a111111111111111111111111111111111",
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        currentRunId: "run-reviewer-1",
+      },
+    });
+
+    await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "plan" &&
+        (u.entries as Array<Record<string, unknown>>)[2]!.status ===
+          "in_progress",
+      "review plan",
+    );
+    const reviewCall = await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "tool_call" &&
+        u.toolCallId === "run:run-reviewer-1",
+      "reviewer tool_call",
+    );
+    assert.equal(reviewCall.title, "Reviewer: reviewing PR #430 at c86dc5a");
+    assert.equal(reviewCall.status, "in_progress");
+
+    // 4. Repair (Recovering): reviewer thread vanished -> its own tool_call with cause and attempt.
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        recoveryAttempts: 1,
+        incident: {
+          id: "inc-1",
+          role: "reviewer",
+          runId: "run-reviewer-1",
+          fingerprint: "fp-1",
+          attempt: 1,
+          cause: "stalled_turn",
+          detail: "Reviewer thread vanished",
+          action: "replacement",
+          status: "reconciling",
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+        recovery: {
+          id: "rec-1",
+          key: "k-1",
+          generation: 1,
+          runId: null,
+          agentId: null,
+          status: "running",
+          summary: "Starting fresh reviewer",
+          idleSince: null,
+          incidentId: "inc-1",
+        },
+      },
+    });
+    const repairCall = await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "tool_call" && u.toolCallId === "repair:rec-1:1",
+      "repair tool_call",
+    );
+    assert.equal(
+      repairCall.title,
+      "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+    );
+    assert.equal(repairCall.status, "in_progress");
+
+    // 5. Verdict summary + Question for the operator (with raw IDs/SHA in source data that must be stripped).
+    const decisionId = "9d4c2b1a-7e6f-4a5b-8c9d-0e1f2a3b4c5d";
+    fixture.store.putRun({
+      ...fixture.store.run("run-reviewer-1")!,
+      status: "finished",
+      released: true,
+      active: false,
+      completion: {
+        status: "changes_required",
+        headline:
+          "Fix retry bound at c86dc5a111111111111111111111111111111111 for run:run-reviewer-1",
+        summary: "Fix retry bound",
+        head: "c86dc5a111111111111111111111111111111111",
+      },
+    } as unknown as Run);
+    fixture.store.addDecision(
+      decisionSchema.parse({
+        id: decisionId,
+        version: 1,
+        headline: `Should we keep the fallback? Reported from mcp:delegated-work thread:delegated-task:abc for task:${fixture.taskId}`,
+        question: "Should we keep the fallback?",
+        askedBy: { agentId: WORKER, project: null },
+        options: ["Yes", "No"],
+        links: { tasks: [fixture.taskId] },
+        status: "open",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      }),
+    );
+    fixture.store.update(fixture.taskId, {
+      phase: "blocked",
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        recovery: null,
+        incident: null,
+      },
+    });
+
+    const verdictMsg = await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "agent_message_chunk" &&
+        /Changes requested \(PR #430\)/.test(
+          String((u.content as Record<string, unknown>).text),
+        ),
+      "verdict summary message",
+    );
+    const verdictText = String(
+      (verdictMsg.content as Record<string, unknown>).text,
+    );
+    assert.match(verdictText, /Fix retry bound/);
+    assert.doesNotMatch(
+      verdictText,
+      /c86dc5a111111111111111111111111111111111/,
+    );
+    assert.doesNotMatch(verdictText, /run-reviewer-1/);
+
+    const questionMsg = await nextUpdate(
+      (u) =>
+        u.sessionUpdate === "agent_message_chunk" &&
+        /Question for you:/.test(
+          String((u.content as Record<string, unknown>).text),
+        ),
+      "operator question message",
+    );
+    const questionText = String(
+      (questionMsg.content as Record<string, unknown>).text,
+    );
+    assert.match(questionText, /Should we keep the fallback\?/);
+    assert.doesNotMatch(questionText, new RegExp(decisionId));
+    assert.doesNotMatch(questionText, new RegExp(fixture.taskId));
+    // Every host identifier form is stripped from what a person reads.
+    assert.doesNotMatch(questionText, /mcp:delegated-work/);
+    assert.doesNotMatch(questionText, /thread:delegated-task:abc/);
+    assert.doesNotMatch(questionText, /t3code:\S+/);
+    assert.doesNotMatch(questionText, /paseo:\S+/);
+
+    assert.match(questionText, /answer it in the Nucleus Inbox/);
+    assert.doesNotMatch(questionText, /nucleus:\/\//);
+    assert.equal(
+      collected.some(
+        (m) =>
+          m.method === "session/update" &&
+          (
+            (m.params as Record<string, unknown>).update as Record<
+              string,
+              unknown
+            >
+          ).content !== undefined &&
+          (
+            (m.params as Record<string, unknown>).update as Record<
+              string,
+              unknown
+            >
+          ).sessionUpdate === "agent_message_chunk" &&
+          (
+            (
+              (m.params as Record<string, unknown>).update as Record<
+                string,
+                unknown
+              >
+            ).content as Record<string, unknown>
+          ).type === "resource_link",
+      ),
+      false,
+      "no custom-scheme resource link is emitted",
+    );
+
+    // 6. Done: all 5 plan steps completed, finish message emitted, turn releases.
+    fixture.store.update(fixture.taskId, {
+      phase: "done",
+      finishedAt: new Date().toISOString(),
+    });
+    const doneResult = await lines.untilId(3);
+    assert.equal(
+      (doneResult.answer.result as Record<string, unknown>).stopReason,
+      "end_turn",
+    );
+    collected.push(...doneResult.updates);
+    const allChunks = collected
+      .filter(
+        (m) =>
+          m.method === "session/update" &&
+          (
+            (m.params as Record<string, unknown>).update as Record<
+              string,
+              unknown
+            >
+          ).sessionUpdate === "agent_message_chunk",
+      )
+      .map(
+        (m) =>
+          (
+            (m.params as Record<string, unknown>).update as Record<
+              string,
+              unknown
+            >
+          ).content as Record<string, unknown>,
+      )
+      .filter((content) => content.type === "text")
+      .map((content) => String(content.text));
+    assert.equal(
+      allChunks.some((t) => /is done · PR #430/.test(t)),
+      true,
+      "finish message is emitted",
+    );
+    for (const text of allChunks) {
+      assert.doesNotMatch(
+        text,
+        /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+        `no raw UUID in message: ${text}`,
+      );
+      assert.doesNotMatch(
+        text,
+        /\b[0-9a-f]{40}\b/i,
+        `no raw 40-char SHA in message: ${text}`,
+      );
+      assert.doesNotMatch(
+        text,
+        /\b(?:run|task|agent|decision)[_:-][A-Za-z0-9_.:-]+\b/i,
+        `no raw internal ID in message: ${text}`,
+      );
+    }
+
+    assert.equal(await agent.close(), 0);
+  } finally {
+    child.kill();
+    await fixture.close();
+  }
+});
+
+test("Spec 068 batch 2: relaunched agent rebuilds plan and tool_calls on session/load, and text fallback sends one status line", async () => {
+  const fixture = await acpFixture();
+  try {
+    // Reattach rebuild: relaunched agent loads the session and gets both plan and tool_call.
+    const reloaded = launchAgent(fixture);
+    try {
+      reloaded.write({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: 1, clientCapabilities: {} },
+      });
+      await reloaded.lines.untilId(1);
+      reloaded.write({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/load",
+        params: {
+          sessionId: fixture.sessionId,
+          cwd: fixture.worktree,
+          mcpServers: [],
+        },
+      });
+      await reloaded.lines.untilId(2);
+      const firstUpdate = (
+        (await reloaded.lines.next()).params as Record<string, unknown>
+      ).update as Record<string, unknown>;
+      const secondUpdate = (
+        (await reloaded.lines.next()).params as Record<string, unknown>
+      ).update as Record<string, unknown>;
+      assert.equal(firstUpdate.sessionUpdate, "plan");
+      assert.equal(secondUpdate.sessionUpdate, "tool_call");
+      assert.equal(secondUpdate.title, "Worker: implementing the brief");
+      assert.equal(await reloaded.close(), 0);
+    } finally {
+      reloaded.child.kill();
+    }
+
+    // Text fallback: client without structured update support gets one status line, no plan/tool_call.
+    const fallback = launchAgent(fixture);
+    try {
+      fallback.write({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: 1,
+          clientCapabilities: { structuredUpdates: false },
+        },
+      });
+      await fallback.lines.untilId(1);
+      fallback.write({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/load",
+        params: {
+          sessionId: fixture.sessionId,
+          cwd: fixture.worktree,
+          mcpServers: [],
+        },
+      });
+      await fallback.lines.untilId(2);
+      const statusUpdate = (
+        (await fallback.lines.next()).params as Record<string, unknown>
+      ).update as Record<string, unknown>;
+      assert.equal(statusUpdate.sessionUpdate, "agent_message_chunk");
+      assert.match(
+        String((statusUpdate.content as Record<string, unknown>).text),
+        /Working/,
+      );
+      assert.equal(await fallback.close(), 0);
+    } finally {
+      fallback.child.kill();
+    }
+  } finally {
+    await fixture.close();
+  }
+});
+
+/** Release the fixture's live worker and leave a non-working task of the named phase. */
+function parkWithoutLiveRun(
+  fixture: Awaited<ReturnType<typeof acpFixture>>,
+  phase: Task["phase"],
+) {
+  const worker = fixture.store.run("run-1")!;
+  fixture.store.putRun({
+    ...worker,
+    status: "superseded",
+    released: true,
+    active: false,
+  } as unknown as Run);
+  const task = fixture.store.task(fixture.taskId);
+  fixture.store.update(fixture.taskId, {
+    phase,
+    agentId: null,
+    runId: null,
+    completion: null,
+    prUrl: "https://example.test/pull/430",
+    prHead: "c86dc5a111111111111111111111111111111111",
+    resolution: {
+      ...task.resolution,
+      currentRunId: null,
+      recovery: null,
+      incident: null,
+    },
+  });
+}
+
+test("the structured view surfaces a review gap and a person-owned wait that no run owns", async () => {
+  const fixture = await acpFixture();
+  try {
+    parkWithoutLiveRun(fixture, "reviewing");
+
+    // A review gap: the plan's review step is in progress, and until now nothing else
+    // explained it. The current reading now has its own call.
+    const gap = await fixture.turn();
+    assert.equal(gap.state, "hold");
+    assert.ok("presentation" in gap && gap.presentation);
+    assert.equal(gap.presentation.plan[2]!.status, "in_progress");
+    const gapCall = gap.presentation.toolCalls.find((call) =>
+      call.toolCallId.startsWith("activity:"),
+    );
+    assert.ok(gapCall, "the review gap has a call of its own");
+    assert.equal(gapCall.status, "in_progress");
+    assert.match(String(gapCall.detail), /no live run or wait/i);
+    assert.equal(
+      gap.presentation.toolCalls.some(
+        (call) =>
+          call.status === "in_progress" &&
+          !call.toolCallId.startsWith("activity:"),
+      ),
+      false,
+      "nothing else claims to be running",
+    );
+
+    // A person-owned wait with no live run: the same call names whose move it is.
+    const decisionId = "2f1d3c4b-5a69-4e78-8b90-a1b2c3d4e5f6";
+    fixture.store.addDecision(
+      decisionSchema.parse({
+        id: decisionId,
+        version: 3,
+        headline: "Approve the scope change",
+        question: "Approve the scope change?",
+        askedBy: { agentId: WORKER, project: null },
+        options: ["Yes", "No"],
+        links: { tasks: [fixture.taskId] },
+        status: "open",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    const waiting = await fixture.turn();
+    assert.ok("presentation" in waiting && waiting.presentation);
+    const waitCall = waiting.presentation.toolCalls.find((call) =>
+      call.toolCallId.startsWith("activity:"),
+    );
+    assert.ok(waitCall, "the person-owned wait has a call of its own");
+    assert.equal(waitCall.title, "Nucleus: waiting for a person");
+    assert.match(String(waitCall.detail), /Needs operator input/);
+    assert.deepEqual(
+      waiting.messages,
+      [
+        "Question for you: Approve the scope change — answer it in the Nucleus Inbox.",
+      ],
+      "the question names its decision in plain words and points at the Inbox",
+    );
+    assert.equal(
+      JSON.stringify(waiting).includes("nucleus://"),
+      false,
+      "no custom-scheme address reaches the thread (planner ruling, 2026-11-23)",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("each repair attempt keeps one call id and its own title across reserve, bind, settle and later repairs", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const launch = (
+    runId: string,
+    episodeId: string,
+    targetRole: string,
+    cause: string,
+  ) =>
+    fixture.store.event(
+      fixture.taskId,
+      "telemetry_recovery",
+      JSON.stringify({
+        runId,
+        targetRole,
+        cause,
+        work: "w",
+        outage: false,
+        episodeId,
+        action: "replacement",
+      }),
+    );
+  const recoveryRun = (
+    id: string,
+    status: Run["status"],
+    completion: Run["completion"],
+  ) =>
+    fixture.store.putRun({
+      id,
+      taskId: fixture.taskId,
+      role: "recovery",
+      generation: 1,
+      head: base,
+      agentId: `${id}-agent`,
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status,
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      active: false,
+      idleSince: null,
+      completion,
+      released: completion !== null,
+    } as unknown as Run);
+  const repairCalls = (reply: AcpTurnReply) =>
+    ("presentation" in reply
+      ? (reply.presentation?.toolCalls ?? [])
+      : []
+    ).filter((call) => call.toolCallId.startsWith("repair:"));
+
+  try {
+    parkWithoutLiveRun(fixture, "reviewing");
+
+    // 1. Reserved: an episode with no run yet is already its own call.
+    const reserve = (
+      episodeId: string,
+      incident: { role: "reviewer" | "worker"; detail: string },
+      attempts: number,
+    ) => {
+      const task = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: {
+          ...task.resolution,
+          recoveryAttempts: attempts,
+          incident: {
+            id: `inc-${episodeId}`,
+            role: incident.role,
+            runId: null,
+            fingerprint: `fp-${episodeId}`,
+            attempt: attempts,
+            cause: "stalled_turn",
+            detail: incident.detail,
+            action: "replacement",
+            status: "reconciling",
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          },
+          recovery: {
+            id: episodeId,
+            key: `k-${episodeId}`,
+            generation: 1,
+            runId: null,
+            agentId: null,
+            status: "running",
+            summary: "",
+            idleSince: null,
+            incidentId: `inc-${episodeId}`,
+          },
+        },
+      });
+    };
+    reserve(
+      "ep-a",
+      { role: "reviewer", detail: "Reviewer thread vanished" },
+      1,
+    );
+    const reserved = await fixture.turn();
+    assert.deepEqual(
+      repairCalls(reserved).map((call) => [
+        call.toolCallId,
+        call.title,
+        call.status,
+      ]),
+      [
+        [
+          "repair:ep-a:1",
+          "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+          "in_progress",
+        ],
+      ],
+    );
+
+    // 2. Bound: the attempt's own launch facts arrive and the same call stays put.
+    recoveryRun("run-rec-a", "running", null);
+    launch("run-rec-a", "ep-a", "reviewer", "Reviewer thread vanished");
+    {
+      const task = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: {
+          ...task.resolution,
+          currentRunId: "run-rec-a",
+          recovery: {
+            ...task.resolution.recovery!,
+            runId: "run-rec-a",
+            status: "running",
+          },
+        },
+      });
+    }
+    const bound = await fixture.turn();
+    assert.deepEqual(
+      repairCalls(bound).map((call) => [
+        call.toolCallId,
+        call.title,
+        call.status,
+      ]),
+      [
+        [
+          "repair:ep-a:1",
+          "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+          "in_progress",
+        ],
+      ],
+      "binding the run updates the reserved call instead of opening a second one",
+    );
+
+    // 3. Settled: the same attempt completes, still under its own identity and title.
+    recoveryRun("run-rec-a", "finished", {
+      status: "recovered",
+      headline: "Reviewer replaced",
+      summary: "Reviewer replaced",
+    } as Run["completion"]);
+    {
+      const task = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: {
+          ...task.resolution,
+          currentRunId: null,
+          recoveryActive: false,
+          recovery: { ...task.resolution.recovery!, status: "resolved" },
+          incident: {
+            ...task.resolution.incident!,
+            status: "resolved",
+            updatedAt: nowIso,
+          },
+        },
+      });
+    }
+    const settled = await fixture.turn();
+    assert.deepEqual(
+      repairCalls(settled).map((call) => [
+        call.toolCallId,
+        call.title,
+        call.status,
+      ]),
+      [
+        [
+          "repair:ep-a:1",
+          "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+          "completed",
+        ],
+      ],
+    );
+
+    // 4. A second repair: the first attempt keeps its identity and words.
+    reserve("ep-b", { role: "worker", detail: "Worker thread vanished" }, 2);
+    const second = await fixture.turn();
+    assert.deepEqual(
+      repairCalls(second).map((call) => [
+        call.toolCallId,
+        call.title,
+        call.status,
+      ]),
+      [
+        [
+          "repair:ep-a:1",
+          "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+          "completed",
+        ],
+        [
+          "repair:ep-b:1",
+          "Worker thread vanished · starting a fresh worker (1 of 3)",
+          "in_progress",
+        ],
+      ],
+      "a later fault never rewrites the earlier repair, and the new attempt is its own call",
+    );
+
+    // 5. Reattach rebuilds the same plan and calls from the service, statelessly.
+    recoveryRun("run-rec-b", "running", null);
+    launch("run-rec-b", "ep-b", "worker", "Worker thread vanished");
+    {
+      const task = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: {
+          ...task.resolution,
+          currentRunId: "run-rec-b",
+          recovery: { ...task.resolution.recovery!, runId: "run-rec-b" },
+        },
+      });
+    }
+    const reattached = await fixture.turn({ attach: true });
+    assert.deepEqual(
+      repairCalls(reattached).map((call) => [
+        call.toolCallId,
+        call.title,
+        call.status,
+      ]),
+      [
+        [
+          "repair:ep-a:1",
+          "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+          "completed",
+        ],
+        [
+          "repair:ep-b:1",
+          "Worker thread vanished · starting a fresh worker (1 of 3)",
+          "in_progress",
+        ],
+      ],
+      "a relaunched agent rebuilds each attempt from its own facts",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a reported repair keeps one completed call until its episode settles", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  try {
+    parkWithoutLiveRun(fixture, "reviewing");
+    const reserveEpisode = (episodeId: string) => {
+      const task = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: {
+          ...task.resolution,
+          recoveryAttempts: 1,
+          incident: {
+            id: `inc-${episodeId}`,
+            role: "reviewer",
+            runId: null,
+            fingerprint: `fp-${episodeId}`,
+            attempt: 1,
+            cause: "stalled_turn",
+            detail: "Reviewer thread vanished",
+            action: "replacement",
+            status: "reconciling",
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          },
+          recovery: {
+            id: episodeId,
+            key: `k-${episodeId}`,
+            generation: 1,
+            runId: null,
+            agentId: null,
+            status: "running",
+            summary: "",
+            idleSince: null,
+            incidentId: `inc-${episodeId}`,
+          },
+        },
+      });
+    };
+    reserveEpisode("ep-r");
+    const reserved = await fixture.turn();
+    assert.ok("presentation" in reserved && reserved.presentation);
+    assert.deepEqual(
+      reserved.presentation.toolCalls
+        .filter((call) => call.toolCallId.startsWith("repair:"))
+        .map((call) => [call.toolCallId, call.status]),
+      [["repair:ep-r:1", "in_progress"]],
+    );
+
+    // The coordinator's authenticated report lands while the episode is still running
+    // and its accepted action is pending: the run has a completion and is not released.
+    fixture.store.putRun({
+      id: "run-rec-r",
+      taskId: fixture.taskId,
+      role: "recovery",
+      generation: 1,
+      head: base,
+      agentId: "run-rec-r-agent",
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: "running",
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      active: false,
+      idleSince: null,
+      completion: {
+        status: "recovered",
+        headline: "Reviewer replaced",
+        summary: "Reviewer replaced",
+      },
+      released: false,
+    } as unknown as Run);
+    fixture.store.event(
+      fixture.taskId,
+      "telemetry_recovery",
+      JSON.stringify({
+        runId: "run-rec-r",
+        targetRole: "reviewer",
+        cause: "Reviewer thread vanished",
+        outage: false,
+        episodeId: "ep-r",
+        action: "replacement",
+      }),
+    );
+    {
+      const task = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: {
+          ...task.resolution,
+          currentRunId: "run-rec-r",
+          recovery: {
+            ...task.resolution.recovery!,
+            runId: "run-rec-r",
+            status: "running",
+          },
+        },
+      });
+    }
+    const reporting = await fixture.turn();
+    assert.ok("presentation" in reporting && reporting.presentation);
+    assert.deepEqual(
+      reporting.presentation.toolCalls
+        .filter((call) => call.toolCallId.startsWith("repair:"))
+        .map((call) => [call.toolCallId, call.status, call.title]),
+      [
+        [
+          "repair:ep-r:1",
+          "completed",
+          "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+        ],
+      ],
+      "a reported repair is one completed call, not completed and in progress at once",
+    );
+
+    // Settlement keeps that one status.
+    fixture.store.putRun({
+      ...fixture.store.run("run-rec-r")!,
+      status: "finished",
+      released: true,
+    } as unknown as Run);
+    {
+      const task = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: {
+          ...task.resolution,
+          currentRunId: null,
+          recoveryActive: false,
+          recovery: { ...task.resolution.recovery!, status: "resolved" },
+          incident: {
+            ...task.resolution.incident!,
+            status: "resolved",
+            updatedAt: nowIso,
+          },
+        },
+      });
+    }
+    const settled = await fixture.turn();
+    assert.ok("presentation" in settled && settled.presentation);
+    assert.deepEqual(
+      settled.presentation.toolCalls
+        .filter((call) => call.toolCallId.startsWith("repair:"))
+        .map((call) => [call.toolCallId, call.status]),
+      [["repair:ep-r:1", "completed"]],
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a same-episode retry is its own attempt, and uncharged launches never raise the count", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const reserve = (episodeId: string) => {
+    const task = fixture.store.task(fixture.taskId);
+    const next = task.resolution.recoveryAttempts + 1;
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...task.resolution,
+        recoveryAttempts: next,
+        incident: {
+          id: `inc-${episodeId}`,
+          role: "worker",
+          runId: null,
+          fingerprint: `fp-${episodeId}`,
+          attempt: next,
+          cause: "stalled_turn",
+          detail: "Worker thread vanished",
+          action: "replacement",
+          status: "reconciling",
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+        recovery: {
+          id: episodeId,
+          key: `k-${episodeId}`,
+          generation: 1,
+          runId: null,
+          agentId: null,
+          status: "running",
+          summary: "",
+          idleSince: null,
+          incidentId: `inc-${episodeId}`,
+        },
+      },
+    });
+  };
+  const launch = (runId: string, episodeId: string, outage: boolean) =>
+    fixture.store.event(
+      fixture.taskId,
+      "telemetry_recovery",
+      JSON.stringify({
+        runId,
+        targetRole: "worker",
+        cause: "Worker thread vanished",
+        outage,
+        episodeId,
+        action: "replacement",
+      }),
+    );
+  const runs = (reply: AcpTurnReply) =>
+    ("presentation" in reply ? (reply.presentation?.toolCalls ?? []) : [])
+      .filter((call) => call.toolCallId.startsWith("repair:"))
+      .map((call) => [call.toolCallId, call.status, call.title]);
+  const recoveryRun = (id: string, released: boolean) =>
+    fixture.store.putRun({
+      id,
+      taskId: fixture.taskId,
+      role: "recovery",
+      generation: 1,
+      head: base,
+      agentId: `${id}-agent`,
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: released ? "superseded" : "running",
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released,
+    } as unknown as Run);
+  const bind = (runId: string) => {
+    const task = fixture.store.task(fixture.taskId);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...task.resolution,
+        currentRunId: runId,
+        recovery: { ...task.resolution.recovery!, runId },
+      },
+    });
+  };
+  try {
+    parkWithoutLiveRun(fixture, "working");
+
+    // The episode's first attempt is charged and released before any send, so the
+    // episode is retained with no run bound to it.
+    reserve("ep-u");
+    const reservedFirst = await fixture.turn();
+    assert.deepEqual(runs(reservedFirst), [
+      [
+        "repair:ep-u:1",
+        "in_progress",
+        "Worker thread vanished · starting a fresh worker (1 of 3)",
+      ],
+    ]);
+    recoveryRun("run-rec-u", true);
+    launch("run-rec-u", "ep-u", false);
+
+    // The retry under the same episode is a new call, and its own attempt count.
+    reserve("ep-u");
+    const retried = await fixture.turn();
+    assert.deepEqual(
+      runs(retried),
+      [
+        [
+          "repair:ep-u:1",
+          "completed",
+          "Worker thread vanished · starting a fresh worker (1 of 3)",
+        ],
+        [
+          "repair:ep-u:2",
+          "in_progress",
+          "Worker thread vanished · starting a fresh worker (2 of 3)",
+        ],
+      ],
+      "the retry is a new call under the same episode, never a reuse of the settled one",
+    );
+
+    // Binding the retry's run keeps its attempt identity and only changes its status.
+    recoveryRun("run-rec-u2", false);
+    launch("run-rec-u2", "ep-u", false);
+    bind("run-rec-u2");
+    const bound = await fixture.turn({ attach: true });
+    assert.deepEqual(
+      runs(bound),
+      [
+        [
+          "repair:ep-u:1",
+          "completed",
+          "Worker thread vanished · starting a fresh worker (1 of 3)",
+        ],
+        [
+          "repair:ep-u:2",
+          "in_progress",
+          "Worker thread vanished · starting a fresh worker (2 of 3)",
+        ],
+      ],
+      "the retry keeps its id across bind",
+    );
+
+    // A launch no provider outage charged is still an attempt, but it does not raise
+    // the count against the bound, and the limit stays three.
+    fixture.store.putRun({
+      ...fixture.store.run("run-rec-u2")!,
+      released: true,
+      status: "superseded",
+    } as unknown as Run);
+    {
+      const task = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: { ...task.resolution, currentRunId: null },
+      });
+    }
+    recoveryRun("run-rec-u3", false);
+    launch("run-rec-u3", "ep-u", true);
+    bind("run-rec-u3");
+    const uncharged = await fixture.turn();
+    assert.deepEqual(
+      runs(uncharged).at(-1),
+      [
+        "repair:ep-u:3",
+        "in_progress",
+        "Worker thread vanished · starting a fresh worker (2 of 3)",
+      ],
+      "an uncharged outage launch never raises the displayed attempt or the limit",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a refunded launch stays out of the displayed repair count", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const recoveryRun = (id: string, released: boolean) =>
+    fixture.store.putRun({
+      id,
+      taskId: fixture.taskId,
+      role: "recovery",
+      generation: 1,
+      head: base,
+      agentId: `${id}-agent`,
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: released ? "superseded" : "running",
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released,
+    } as unknown as Run);
+  const repairCalls = (reply: AcpTurnReply) =>
+    ("presentation" in reply ? (reply.presentation?.toolCalls ?? []) : [])
+      .filter((call) => call.toolCallId.startsWith("repair:"))
+      .map((call) => [call.toolCallId, call.title]);
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    const task = fixture.store.task(fixture.taskId);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...task.resolution,
+        recoveryAttempts: 1,
+        incident: {
+          id: "inc-refund",
+          role: "worker",
+          runId: null,
+          fingerprint: "fp-refund",
+          attempt: 1,
+          cause: "stalled_turn",
+          detail: "Worker thread vanished",
+          action: "replacement",
+          status: "reconciling",
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+        recovery: {
+          id: "ep-refund",
+          key: "k-refund",
+          generation: 1,
+          runId: null,
+          agentId: null,
+          status: "running",
+          summary: "",
+          idleSince: null,
+          incidentId: "inc-refund",
+        },
+      },
+    });
+    // The launch was recorded, then a proved pre-send host-read refusal released and
+    // refunded it; the episode is retained with no run bound.
+    recoveryRun("run-rec-refund", true);
+    fixture.store.event(
+      fixture.taskId,
+      "telemetry_recovery",
+      JSON.stringify({
+        runId: "run-rec-refund",
+        targetRole: "worker",
+        cause: "Worker thread vanished",
+        outage: false,
+        episodeId: "ep-refund",
+        action: "replacement",
+      }),
+    );
+    fixture.store.event(
+      fixture.taskId,
+      "recovery_transient_read_released",
+      "run-rec-refund",
+    );
+    const retried = await fixture.turn();
+    assert.deepEqual(
+      repairCalls(retried),
+      [
+        [
+          "repair:ep-refund:1",
+          "Worker thread vanished · starting a fresh worker (1 of 3)",
+        ],
+        [
+          "repair:ep-refund:2",
+          "Worker thread vanished · starting a fresh worker (1 of 3)",
+        ],
+      ],
+      "the refunded launch keeps its own call but charges nothing, so the retry is still the first attempt",
+    );
+    assert.doesNotMatch(
+      "presentation" in retried ? (retried.presentation?.statusLine ?? "") : "",
+      /2 of 3/,
+      "the fallback line agrees with the structured count",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a later wait after work started keeps its own lifetime in one held session", async () => {
+  const fixture = await acpFixture();
+  try {
+    // Dispatch wait: the fixture's worker is released and the task is queued.
+    const worker = fixture.store.run("run-1")!;
+    fixture.store.putRun({
+      ...worker,
+      released: true,
+      status: "superseded",
+      active: false,
+    } as unknown as Run);
+    fixture.store.update(fixture.taskId, {
+      phase: "queued",
+      agentId: null,
+      runId: null,
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        currentRunId: null,
+      },
+    });
+    const dispatch = await fixture.turn();
+    assert.ok("presentation" in dispatch && dispatch.presentation);
+    const dispatchWait = dispatch.presentation.toolCalls.find((call) =>
+      call.toolCallId.startsWith("activity:"),
+    );
+    assert.ok(dispatchWait, "the dispatch wait has a call");
+    assert.match(String(dispatchWait.detail), /waiting for dispatch/i);
+
+    // Work starts: the wait call is gone and the worker's own call is live.
+    const startedIso = new Date().toISOString();
+    fixture.store.putRun({
+      id: "run-worker-again",
+      taskId: fixture.taskId,
+      role: "revision",
+      generation: 1,
+      head: base,
+      agentId: WORKER,
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: "running",
+      createdAt: startedIso,
+      lastObservedAt: startedIso,
+      lastActivityAt: startedIso,
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    } as unknown as Run);
+    fixture.store.update(fixture.taskId, {
+      phase: "working",
+      agentId: WORKER,
+      runId: "run-worker-again",
+      lastActivityAt: startedIso,
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        currentRunId: "run-worker-again",
+      },
+    });
+    const working = await fixture.turn();
+    assert.ok("presentation" in working && working.presentation);
+    assert.equal(
+      working.presentation.toolCalls.some((call) =>
+        call.toolCallId.startsWith("activity:"),
+      ),
+      false,
+      "the dispatch wait ends when work starts",
+    );
+
+    // A later wait: a new occurrence, with its own call and words.
+    const waitingSince = new Date(Date.now() - 60_000).toISOString();
+    fixture.store.putRun({
+      ...fixture.store.run("run-worker-again")!,
+      status: "finished",
+      released: true,
+      active: false,
+      completion: {
+        status: "ready_for_review",
+        headline: "Implemented Spec 068 batch 2",
+        summary: "Implemented Spec 068 batch 2",
+        prNumber: 430,
+        head: "c86dc5a111111111111111111111111111111111",
+      },
+    } as unknown as Run);
+    fixture.store.update(fixture.taskId, {
+      phase: "awaiting_review",
+      prUrl: "https://example.test/pull/430",
+      prHead: "c86dc5a111111111111111111111111111111111",
+      reason: "Waiting on the host",
+      updatedAt: waitingSince,
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        currentRunId: null,
+        hostWait: { hostId: "t3code:one", since: waitingSince },
+      } as Task["resolution"],
+    });
+    const waiting = await fixture.turn();
+    assert.ok("presentation" in waiting && waiting.presentation);
+    const laterWait = waiting.presentation.toolCalls.find((call) =>
+      call.toolCallId.startsWith("activity:"),
+    );
+    assert.ok(laterWait, "the later wait is its own call");
+    assert.notEqual(
+      laterWait.toolCallId,
+      dispatchWait.toolCallId,
+      "each wait occurrence has its own lifetime",
+    );
+    assert.match(String(laterWait.detail), /host/i);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a recurring gap is a new call, and an unrelated write never splits an anchored wait", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const waitCall = (reply: AcpTurnReply) =>
+    ("presentation" in reply ? (reply.presentation?.toolCalls ?? []) : []).find(
+      (call) => call.toolCallId.startsWith("activity:"),
+    );
+  try {
+    parkWithoutLiveRun(fixture, "reviewing");
+    // Gap 1: a review with no live run reads as an unclassified stall.
+    const gapOne = waitCall(await fixture.turn());
+    assert.ok(gapOne, "the first gap is its own wait call");
+    assert.equal(gapOne.toolCallId.startsWith("activity:unclassified:"), true);
+
+    // Active review: the gap call is gone while the reviewer works.
+    fixture.store.putRun({
+      id: "run-review-gap",
+      taskId: fixture.taskId,
+      role: "reviewer",
+      generation: 1,
+      head: "c86dc5a111111111111111111111111111111111",
+      agentId: "reviewer-agent-gap",
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: "running",
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      lastActivityAt: nowIso,
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    } as unknown as Run);
+    fixture.store.update(fixture.taskId, {
+      phase: "reviewing",
+      lastActivityAt: nowIso,
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        currentRunId: "run-review-gap",
+      },
+    });
+    assert.equal(waitCall(await fixture.turn()), undefined);
+
+    // Gap 2: the same reading after that review ends is a fresh occurrence.
+    fixture.store.putRun({
+      ...fixture.store.run("run-review-gap")!,
+      status: "finished",
+      released: true,
+      active: false,
+      completion: {
+        status: "changes_required",
+        headline: "Fix the fallback bound",
+        summary: "Fix the fallback bound",
+        head: "c86dc5a111111111111111111111111111111111",
+      },
+    } as unknown as Run);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        currentRunId: null,
+      },
+    });
+    const gapTwo = waitCall(await fixture.turn());
+    assert.ok(gapTwo, "the second gap is its own wait call");
+    assert.equal(gapTwo.toolCallId.startsWith("activity:unclassified:"), true);
+    assert.notEqual(
+      gapTwo.toolCallId,
+      gapOne.toolCallId,
+      "a fresh gap never reuses the call the agent already completed",
+    );
+
+    // An anchored wait keeps its id across an unrelated write.
+    const hostSince = new Date(Date.now() - 120_000).toISOString();
+    fixture.store.update(fixture.taskId, {
+      phase: "awaiting_review",
+      reason: "Waiting on the host",
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        hostWait: { hostId: "t3code:one", since: hostSince },
+      } as Task["resolution"],
+    });
+    const anchored = waitCall(await fixture.turn());
+    assert.ok(anchored, "the host wait is its own call");
+    fixture.store.update(fixture.taskId, {
+      reason: "Waiting on the host (unrelated note)",
+    });
+    const afterWrite = waitCall(await fixture.turn());
+    assert.ok(afterWrite, "the host wait is still shown after the write");
+    assert.equal(
+      afterWrite.toolCallId,
+      anchored.toolCallId,
+      "an unrelated write never splits one wait into two calls",
+    );
+    assert.equal(
+      afterWrite.detail,
+      anchored.detail,
+      "the wait's own words are unchanged",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a new decision and a secondary stop each keep or open the wait call they belong to", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const waitCall = (reply: AcpTurnReply) =>
+    ("presentation" in reply ? (reply.presentation?.toolCalls ?? []) : []).find(
+      (call) => call.toolCallId.startsWith("activity:"),
+    );
+  const decision = (id: string, headline: string) =>
+    decisionSchema.parse({
+      id,
+      version: 1,
+      headline,
+      question: `${headline}?`,
+      askedBy: { agentId: WORKER, project: null },
+      options: ["Yes", "No"],
+      links: { tasks: [fixture.taskId] },
+      status: "open",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+  try {
+    parkWithoutLiveRun(fixture, "reviewing");
+
+    // Decision A: the person-owned wait is its own call.
+    const first = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const second = "1b2c3d4e-5f6a-4b7c-9d8e-0f1a2b3c4d5e";
+    fixture.store.addDecision(decision(first, "Approve the scope change"));
+    const waitForFirst = waitCall(await fixture.turn());
+    assert.ok(waitForFirst, "the first decision's wait has its own call");
+    assert.match(String(waitForFirst.detail), /Needs operator input/);
+
+    // Answer it and open a second decision: a new occurrence, so a new call.
+    new Decisions(fixture.store).answer({
+      id: first,
+      version: 1,
+      answer: "Yes",
+      answeredBy: "operator",
+      relayed: false,
+      note: "",
+    });
+    fixture.store.addDecision(decision(second, "Approve the follow-up"));
+    const waitForSecond = waitCall(await fixture.turn());
+    assert.ok(waitForSecond, "the second decision's wait has its own call");
+    assert.notEqual(
+      waitForSecond.toolCallId,
+      waitForFirst.toolCallId,
+      "two separate operator decisions never share one completed wait call",
+    );
+
+    // A host wait keeps its call while a secondary stop is recorded beside it.
+    new Decisions(fixture.store).answer({
+      id: second,
+      version: 1,
+      answer: "Yes",
+      answeredBy: "operator",
+      relayed: false,
+      note: "",
+    });
+    const hostSince = new Date(Date.now() - 180_000).toISOString();
+    fixture.store.update(fixture.taskId, {
+      reason: "Waiting on the host",
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        hostWait: { hostId: "t3code:one", since: hostSince },
+      } as Task["resolution"],
+    });
+    const hostWait = waitCall(await fixture.turn());
+    assert.ok(hostWait, "the host wait is its own call");
+    assert.match(String(hostWait.detail), /host/i);
+    fixture.store.update(fixture.taskId, {
+      reason: "Participant turn stalled",
+      resolution: {
+        ...fixture.store.task(fixture.taskId).resolution,
+        stop: {
+          reason: "run_stalled",
+          detail: "Participant turn stalled",
+          since: nowIso,
+          suggestedVerbs: [],
+        },
+      } as Task["resolution"],
+    });
+    const stillHostWait = waitCall(await fixture.turn());
+    assert.ok(stillHostWait, "the host wait is still shown");
+    assert.equal(
+      stillHostWait.toolCallId,
+      hostWait.toolCallId,
+      "a secondary stop recorded beside a continuing host wait never splits its call",
+    );
+    assert.equal(
+      stillHostWait.detail,
+      hostWait.detail,
+      "the wait's words are unchanged",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a reserved repair keeps one call through an operator decision, its bind and its settlement", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const agent = launchAgent(fixture);
+  const { child, lines, write } = agent;
+  const decisionId = "3b4c5d6e-7f80-4a1b-9c2d-3e4f5a6b7c8d";
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    // A repair is reserved: an episode with no run bound, plus an operator decision.
+    const task = fixture.store.task(fixture.taskId);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...task.resolution,
+        recoveryAttempts: 1,
+        incident: {
+          id: "inc-held",
+          role: "worker",
+          runId: null,
+          fingerprint: "fp-held",
+          attempt: 1,
+          cause: "stalled_turn",
+          detail: "Worker thread vanished",
+          action: "replacement",
+          status: "reconciling",
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+        recovery: {
+          id: "ep-held",
+          key: "k-held",
+          generation: 1,
+          runId: null,
+          agentId: null,
+          status: "running",
+          summary: "",
+          idleSince: null,
+          incidentId: "inc-held",
+        },
+      },
+    });
+    fixture.store.addDecision(
+      decisionSchema.parse({
+        id: decisionId,
+        version: 1,
+        headline: "Approve the scope change",
+        question: "Approve the scope change?",
+        askedBy: { agentId: WORKER, project: null },
+        options: ["Yes", "No"],
+        links: { tasks: [fixture.taskId] },
+        status: "open",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      }),
+    );
+
+    write({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: 1, clientCapabilities: {} },
+    });
+    await lines.untilId(1);
+    write({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/new",
+      params: { cwd: fixture.worktree, mcpServers: [] },
+    });
+    await lines.untilId(2);
+    write({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "session/prompt",
+      params: {
+        sessionId: fixture.sessionId,
+        prompt: [{ type: "text", text: "opening prompt" }],
+      },
+    });
+
+    const collected: Array<Record<string, unknown>> = [];
+    const nextUpdate = async (
+      predicate: (update: Record<string, unknown>) => boolean,
+      label: string,
+    ) => {
+      for (let i = 0; i < 60; i++) {
+        const message = await lines.next();
+        collected.push(message);
+        const update = (message.params as Record<string, unknown> | undefined)
+          ?.update as Record<string, unknown> | undefined;
+        if (message.method === "session/update" && update && predicate(update))
+          return update;
+      }
+      throw new Error(`Did not observe expected update: ${label}`);
+    };
+    const repairUpdates = () =>
+      collected
+        .map(
+          (message) =>
+            ((message.params as Record<string, unknown> | undefined)?.update ??
+              {}) as Record<string, unknown>,
+        )
+        .filter((update) =>
+          String(update.toolCallId ?? "").startsWith("repair:"),
+        );
+
+    // A decision is open and the repair is still reserved: both show, and the reserved
+    // repair is its own call.
+    await nextUpdate(
+      (update) =>
+        update.sessionUpdate === "tool_call" &&
+        update.toolCallId === "repair:ep-held:1" &&
+        update.status === "in_progress",
+      "reserved repair call",
+    );
+    await nextUpdate(
+      (update) =>
+        update.sessionUpdate === "tool_call" &&
+        String(update.toolCallId).startsWith("activity:needs_person:"),
+      "operator decision wait",
+    );
+
+    // Answer the decision: the wait ends, the reserved repair must not be completed.
+    new Decisions(fixture.store).answer({
+      id: decisionId,
+      version: 1,
+      answer: "Yes",
+      answeredBy: "operator",
+      relayed: false,
+      note: "",
+    });
+    await nextUpdate(
+      (update) =>
+        update.sessionUpdate === "tool_call_update" &&
+        String(update.toolCallId).startsWith("activity:") &&
+        update.status === "completed",
+      "decision wait completed",
+    );
+
+    // Bind the coordinator: the same repair call continues, with its own attempt's facts.
+    fixture.store.putRun({
+      id: "run-coord-held",
+      taskId: fixture.taskId,
+      role: "recovery",
+      generation: 1,
+      head: base,
+      agentId: "run-coord-held-agent",
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: "running",
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: false,
+    } as unknown as Run);
+    fixture.store.event(
+      fixture.taskId,
+      "telemetry_recovery",
+      JSON.stringify({
+        runId: "run-coord-held",
+        targetRole: "worker",
+        cause: "Worker thread vanished",
+        outage: false,
+        episodeId: "ep-held",
+        action: "replacement",
+      }),
+    );
+    {
+      const bound = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        resolution: {
+          ...bound.resolution,
+          currentRunId: "run-coord-held",
+          recovery: { ...bound.resolution.recovery!, runId: "run-coord-held" },
+        },
+      });
+    }
+    await nextUpdate(
+      (update) =>
+        update.sessionUpdate === "tool_call_update" &&
+        update.toolCallId === "repair:ep-held:1",
+      "bound repair update",
+    );
+
+    // The attempt's own report settles it, once, under the same call.
+    fixture.store.putRun({
+      ...fixture.store.run("run-coord-held")!,
+      status: "finished",
+      released: true,
+      active: false,
+      completion: {
+        status: "recovered",
+        headline: "Worker replaced",
+        summary: "Worker replaced",
+      },
+    } as unknown as Run);
+    await nextUpdate(
+      (update) =>
+        update.sessionUpdate === "tool_call_update" &&
+        update.toolCallId === "repair:ep-held:1" &&
+        update.status === "completed",
+      "settled repair call",
+    );
+
+    const ids = new Set(
+      repairUpdates().map((update) => String(update.toolCallId)),
+    );
+    assert.deepEqual(
+      [...ids],
+      ["repair:ep-held:1"],
+      "one attempt is one call from reservation through bind to settlement",
+    );
+    // The only completion is the settlement at the end of the sequence.
+    const firstCompletion = repairUpdates().findIndex(
+      (update) =>
+        update.sessionUpdate === "tool_call_update" &&
+        update.status === "completed",
+    );
+    assert.equal(
+      firstCompletion,
+      repairUpdates().length - 1,
+      "nothing completes the reserved attempt before its own settlement",
+    );
+    assert.equal(
+      repairUpdates().some(
+        (update) =>
+          update.sessionUpdate === "tool_call" && update.status === "completed",
+      ),
+      false,
+      "the attempt is never re-created as a settled call",
+    );
+  } finally {
+    child.kill();
+    await fixture.close();
+  }
+});
+
+test("an unbound reservation that escalates ends its one call as terminal, never in progress", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const agent = launchAgent(fixture);
+  const { child, lines, write } = agent;
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    // A repair is reserved: an episode with no coordinator run row at all.
+    const task = fixture.store.task(fixture.taskId);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...task.resolution,
+        recoveryAttempts: 1,
+        incident: {
+          id: "inc-escalated",
+          role: "worker",
+          runId: null,
+          fingerprint: "fp-escalated",
+          attempt: 1,
+          cause: "stalled_turn",
+          detail: "Worker thread vanished",
+          action: "replacement",
+          status: "reconciling",
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+        recovery: {
+          id: "ep-escalated",
+          key: "k-escalated",
+          generation: 1,
+          runId: null,
+          agentId: null,
+          status: "running",
+          summary: "",
+          idleSince: null,
+          incidentId: "inc-escalated",
+        },
+      },
+    });
+
+    write({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: 1, clientCapabilities: {} },
+    });
+    await lines.untilId(1);
+    write({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/new",
+      params: { cwd: fixture.worktree, mcpServers: [] },
+    });
+    await lines.untilId(2);
+    write({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "session/prompt",
+      params: {
+        sessionId: fixture.sessionId,
+        prompt: [{ type: "text", text: "opening prompt" }],
+      },
+    });
+
+    const collected: Array<Record<string, unknown>> = [];
+    const nextUpdate = async (
+      predicate: (update: Record<string, unknown>) => boolean,
+      label: string,
+    ) => {
+      for (let i = 0; i < 60; i++) {
+        const message = await lines.next();
+        collected.push(message);
+        const update = (message.params as Record<string, unknown> | undefined)
+          ?.update as Record<string, unknown> | undefined;
+        if (message.method === "session/update" && update && predicate(update))
+          return update;
+      }
+      throw new Error(`Did not observe expected update: ${label}`);
+    };
+    const repairUpdates = () =>
+      collected
+        .map(
+          (message) =>
+            ((message.params as Record<string, unknown> | undefined)?.update ??
+              {}) as Record<string, unknown>,
+        )
+        .filter((update) =>
+          String(update.toolCallId ?? "").startsWith("repair:"),
+        );
+
+    await nextUpdate(
+      (update) =>
+        update.sessionUpdate === "tool_call" &&
+        update.toolCallId === "repair:ep-escalated:1" &&
+        update.status === "in_progress",
+      "reserved repair call",
+    );
+
+    // The episode escalates before any coordinator run is recorded: the explicit
+    // escalation is the attempt's own settlement fact.
+    {
+      const current = fixture.store.task(fixture.taskId);
+      fixture.store.update(fixture.taskId, {
+        phase: "needs_attention",
+        reason: "Waiting for a planner decision",
+        resolution: {
+          ...current.resolution,
+          recoveryActive: false,
+          recovery: {
+            ...current.resolution.recovery!,
+            status: "escalated",
+            summary:
+              "The coordinator stopped after a reporting reminder, but this issue still needs attention",
+          },
+          incident: {
+            ...current.resolution.incident!,
+            status: "escalated",
+            detail:
+              "The coordinator stopped after a reporting reminder, but this issue still needs attention",
+            updatedAt: nowIso,
+          },
+        },
+      });
+    }
+
+    const terminal = await nextUpdate(
+      (update) =>
+        update.sessionUpdate === "tool_call_update" &&
+        update.toolCallId === "repair:ep-escalated:1" &&
+        update.status === "failed",
+      "escalated repair call",
+    );
+    assert.equal(terminal.toolCallId, "repair:ep-escalated:1");
+    await nextUpdate(
+      (update) =>
+        update.sessionUpdate === "tool_call" &&
+        String(update.toolCallId).startsWith("activity:needs_person:"),
+      "operator wait beside the escalation",
+    );
+
+    // One call, and it ends terminal: nothing is left in progress and no second id.
+    assert.deepEqual(
+      [...new Set(repairUpdates().map((update) => String(update.toolCallId)))],
+      ["repair:ep-escalated:1"],
+    );
+    assert.deepEqual(
+      repairUpdates().map((update) => String(update.status)),
+      ["in_progress", "failed"],
+      "the attempt ends terminal once, never left in progress",
+    );
+  } finally {
+    child.kill();
+    await fixture.close();
+  }
+});
+
+/**
+ * A real agent on stdio holding the opening prompt of one task session, collecting every
+ * `session/update` frame it sends.
+ */
+async function heldSession(fixture: Awaited<ReturnType<typeof acpFixture>>) {
+  const agent = launchAgent(fixture);
+  const { lines, write } = agent;
+  write({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: 1, clientCapabilities: {} },
+  });
+  await lines.untilId(1);
+  write({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "session/new",
+    params: { cwd: fixture.worktree, mcpServers: [] },
+  });
+  await lines.untilId(2);
+  write({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "session/prompt",
+    params: {
+      sessionId: fixture.sessionId,
+      prompt: [{ type: "text", text: "opening prompt" }],
+    },
+  });
+  const updates: Array<Record<string, unknown>> = [];
+  return {
+    child: agent.child,
+    updates,
+    async next(
+      predicate: (update: Record<string, unknown>) => boolean,
+      label: string,
+    ) {
+      for (let i = 0; i < 80; i++) {
+        const message = await lines.next();
+        const update = (message.params as Record<string, unknown> | undefined)
+          ?.update as Record<string, unknown> | undefined;
+        if (message.method !== "session/update" || !update) continue;
+        updates.push(update);
+        if (predicate(update)) return update;
+      }
+      throw new Error(`Did not observe expected update: ${label}`);
+    },
+    /** Every status one call id was sent with, in order. */
+    statuses(toolCallId: string) {
+      return updates
+        .filter((update) => update.toolCallId === toolCallId)
+        .map((update) => String(update.status));
+    },
+  };
+}
+
+const isCall =
+  (toolCallId: string, status: string) => (update: Record<string, unknown>) =>
+    (update.sessionUpdate === "tool_call" ||
+      update.sessionUpdate === "tool_call_update") &&
+    update.toolCallId === toolCallId &&
+    update.status === status;
+
+/** A reserved repair: a live episode with no run bound, under an open incident. */
+function reserveRepair(
+  fixture: Awaited<ReturnType<typeof acpFixture>>,
+  episodeId: string,
+  status: "pending" | "running" = "running",
+) {
+  const nowIso = new Date().toISOString();
+  const task = fixture.store.task(fixture.taskId);
+  return fixture.store.update(fixture.taskId, {
+    resolution: {
+      ...task.resolution,
+      recoveryActive: true,
+      incident: {
+        id: `inc-${episodeId}`,
+        role: "worker",
+        runId: null,
+        fingerprint: `fp-${episodeId}`,
+        attempt: 1,
+        cause: "stalled_turn",
+        detail: "Worker thread vanished",
+        action: "replacement",
+        status: "reconciling",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+      recovery: {
+        id: episodeId,
+        key: `k-${episodeId}`,
+        generation: 1,
+        runId: null,
+        agentId: null,
+        status,
+        summary: "",
+        idleSince: null,
+        incidentId: `inc-${episodeId}`,
+      },
+    },
+  });
+}
+
+/** Bind a coordinator run that never crossed the send boundary, with its own launch line. */
+function bindRepairRun(
+  fixture: Awaited<ReturnType<typeof acpFixture>>,
+  runId: string,
+  episodeId: string,
+  attempt: number,
+) {
+  const nowIso = new Date().toISOString();
+  const run = {
+    id: runId,
+    taskId: fixture.taskId,
+    role: "recovery",
+    generation: 1,
+    head: base,
+    agentId: null,
+    workspaceId: "ws",
+    profile: fixture.engine.profiles[0]!,
+    status: "intent",
+    createdAt: nowIso,
+    lastObservedAt: null,
+    active: null,
+    idleSince: null,
+    completion: null,
+    released: false,
+  } as unknown as Run;
+  fixture.store.transaction(() => {
+    fixture.store.putRun(run);
+    fixture.store.event(
+      fixture.taskId,
+      "telemetry_recovery",
+      JSON.stringify({
+        runId,
+        targetRole: "worker",
+        cause: "Worker thread vanished",
+        outage: false,
+        episodeId,
+        attempt,
+        action: "replacement",
+      }),
+    );
+    const task = fixture.store.task(fixture.taskId);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...task.resolution,
+        recovery: {
+          ...task.resolution.recovery!,
+          runId,
+          status: "running",
+        },
+      },
+    });
+  });
+  return run;
+}
+
+const settlementFacts = (fixture: Awaited<ReturnType<typeof acpFixture>>) =>
+  fixture.store
+    .eventsAll(fixture.taskId)
+    .filter((event) => event.kind === REPAIR_ATTEMPT_SETTLED)
+    .map((event) => {
+      const value = JSON.parse(event.detail) as Record<string, unknown>;
+      return [value.episodeId, value.attempt, value.outcome];
+    });
+
+test("a retry under the same episode that escalates before binding ends its own call, and the earlier attempt stays completed", async () => {
+  const fixture = await acpFixture();
+  const episode = new CoordinatorEpisode(fixture.engine.resolution);
+  let session: Awaited<ReturnType<typeof heldSession>> | null = null;
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    reserveRepair(fixture, "ep-retry");
+    session = await heldSession(fixture);
+    await session.next(isCall("repair:ep-retry:1", "in_progress"), "attempt 1");
+
+    // Attempt 1 binds its run, then a proved pre-send host-read refusal releases that
+    // run and keeps the episode pending with no run bound: attempt 2 is reserved.
+    const run = bindRepairRun(fixture, "run-retry-1", "ep-retry", 1);
+    episode.releaseTransientReadCreation(
+      fixture.store.task(fixture.taskId),
+      run,
+    );
+    assert.equal(
+      fixture.store.task(fixture.taskId).resolution.recovery?.runId,
+      null,
+    );
+    await session.next(
+      isCall("repair:ep-retry:1", "completed"),
+      "attempt 1 settles",
+    );
+    await session.next(isCall("repair:ep-retry:2", "in_progress"), "attempt 2");
+
+    // The retry escalates before any run is bound to it.
+    episode.escalate(
+      fixture.store.task(fixture.taskId),
+      "Coordinator admission kept failing",
+    );
+    await session.next(
+      isCall("repair:ep-retry:2", "failed"),
+      "attempt 2 escalates",
+    );
+
+    assert.deepEqual(session.statuses("repair:ep-retry:1"), [
+      "in_progress",
+      "completed",
+    ]);
+    assert.deepEqual(session.statuses("repair:ep-retry:2"), [
+      "in_progress",
+      "failed",
+    ]);
+    assert.deepEqual(settlementFacts(fixture), [["ep-retry", 2, "escalated"]]);
+
+    // A relaunched agent rebuilds the same two settled attempts.
+    const rebuilt = await fixture.turn({ attach: true });
+    assert.deepEqual(
+      ("presentation" in rebuilt ? (rebuilt.presentation?.toolCalls ?? []) : [])
+        .filter((call) => call.toolCallId.startsWith("repair:"))
+        .map((call) => [call.toolCallId, call.status, call.title]),
+      [
+        [
+          "repair:ep-retry:1",
+          "completed",
+          "Worker thread vanished · starting a fresh worker (1 of 3)",
+        ],
+        [
+          "repair:ep-retry:2",
+          "failed",
+          // The refunded pre-send launch charged nothing, so the retry is still the
+          // first charged attempt.
+          "Worker thread vanished · starting a fresh worker (1 of 3)",
+        ],
+      ],
+    );
+  } finally {
+    session?.child.kill();
+    await fixture.close();
+  }
+});
+
+test("a reservation cleared for a capacity wait ends its call beside the wait", async () => {
+  const fixture = await acpFixture();
+  const episode = new CoordinatorEpisode(fixture.engine.resolution);
+  let session: Awaited<ReturnType<typeof heldSession>> | null = null;
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    reserveRepair(fixture, "ep-capacity", "pending");
+    session = await heldSession(fixture);
+    await session.next(
+      isCall("repair:ep-capacity:1", "in_progress"),
+      "reserved",
+    );
+
+    episode.wait(
+      fixture.store.task(fixture.taskId),
+      "Waiting for a coordinator slot",
+      "capacity",
+    );
+    assert.equal(fixture.store.task(fixture.taskId).resolution.recovery, null);
+    await session.next(
+      isCall("repair:ep-capacity:1", "completed"),
+      "the deferred reservation ends",
+    );
+    assert.deepEqual(session.statuses("repair:ep-capacity:1"), [
+      "in_progress",
+      "completed",
+    ]);
+    assert.deepEqual(settlementFacts(fixture), [["ep-capacity", 1, "waiting"]]);
+    const rebuilt = await fixture.turn({ attach: true });
+    const calls =
+      "presentation" in rebuilt ? (rebuilt.presentation?.toolCalls ?? []) : [];
+    assert.deepEqual(
+      calls
+        .filter((call) => call.toolCallId.startsWith("repair:"))
+        .map((call) => [call.toolCallId, call.status]),
+      [["repair:ep-capacity:1", "completed"]],
+    );
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.toolCallId.startsWith("activity:") &&
+          call.status === "in_progress",
+      ),
+      "the capacity wait is its own call",
+    );
+  } finally {
+    session?.child.kill();
+    await fixture.close();
+  }
+});
+
+test("every path that ends a repair attempt ends its call exactly once", async () => {
+  const fixture = await acpFixture();
+  const episode = new CoordinatorEpisode(fixture.engine.resolution);
+  const resolution = fixture.engine.resolution;
+  const task = () => fixture.store.task(fixture.taskId);
+  let session: Awaited<ReturnType<typeof heldSession>> | null = null;
+  const expected: Array<[string, string]> = [];
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    reserveRepair(fixture, "ep-escalate");
+    session = await heldSession(fixture);
+    const reserved = async (episodeId: string, status?: "pending") => {
+      reserveRepair(fixture, episodeId, status);
+      await session!.next(
+        isCall(`repair:${episodeId}:1`, "in_progress"),
+        `${episodeId} reserved`,
+      );
+    };
+    const ends = async (toolCallId: string, status: "completed" | "failed") => {
+      expected.push([toolCallId, status]);
+      await session!.next(
+        isCall(toolCallId, status),
+        `${toolCallId} ${status}`,
+      );
+    };
+
+    // Escalated before a run was bound.
+    await session.next(
+      isCall("repair:ep-escalate:1", "in_progress"),
+      "reserved",
+    );
+    episode.escalate(task(), "The coordinator could not be admitted");
+    await ends("repair:ep-escalate:1", "failed");
+
+    // Cleared for an admission or capacity wait.
+    await reserved("ep-wait", "pending");
+    episode.wait(task(), "Waiting for a coordinator slot", "capacity");
+    await ends("repair:ep-wait:1", "completed");
+
+    // Resolved before a run was bound.
+    await reserved("ep-resolve");
+    resolution.update(
+      task(),
+      episode.settledEpisodeChanges(task(), "Settled before launch", true)!,
+    );
+    await ends("repair:ep-resolve:1", "completed");
+
+    // Superseded by a newer episode.
+    await reserved("ep-old");
+    reserveRepair(fixture, "ep-new");
+    await ends("repair:ep-old:1", "completed");
+    await session.next(
+      isCall("repair:ep-new:1", "in_progress"),
+      "ep-new reserved",
+    );
+
+    // Bound, then released before send: the run row settles attempt 1, and the episode
+    // pending again with no run reserves attempt 2.
+    const released = bindRepairRun(fixture, "run-new-1", "ep-new", 1);
+    episode.releaseTransientReadCreation(task(), released);
+    await ends("repair:ep-new:1", "completed");
+    await session.next(
+      isCall("repair:ep-new:2", "in_progress"),
+      "ep-new retry",
+    );
+
+    // Cleared by an owner restart.
+    resolution.operatorReturn(
+      task(),
+      { recoveryActive: false, recovery: null, recoveryAttempts: 0 },
+      {},
+      "coordinator_rearmed",
+      "Owner restarted coordinator recovery",
+    );
+    await ends("repair:ep-new:2", "completed");
+
+    // Bound, then settled by its own authenticated report.
+    await reserved("ep-bound");
+    const bound = bindRepairRun(fixture, "run-bound-1", "ep-bound", 1);
+    fixture.store.putRun({
+      ...bound,
+      agentId: "coordinator-agent",
+      status: "finished",
+      released: true,
+      completion: {
+        status: "recovered",
+        headline: "Worker replaced",
+        summary: "Worker replaced",
+      },
+    } as unknown as Run);
+    await ends("repair:ep-bound:1", "completed");
+
+    // Bound, then released with its episode resolved: one settlement, from the run.
+    await reserved("ep-resolved-release");
+    const resolvedRun = bindRepairRun(
+      fixture,
+      "run-resolved-1",
+      "ep-resolved-release",
+      1,
+    );
+    episode.releaseTransientReadCreation(task(), resolvedRun, true);
+    await ends("repair:ep-resolved-release:1", "completed");
+
+    for (const [toolCallId, status] of expected) {
+      const statuses = session.statuses(toolCallId);
+      assert.deepEqual(
+        statuses.filter((value) => value === "completed" || value === "failed"),
+        [status],
+        `${toolCallId} ends exactly once`,
+      );
+      assert.equal(statuses.at(-1), status, `${toolCallId} stays ended`);
+    }
+    // Reserved attempts carry their own settlement fact; bound attempts settle with
+    // their own run rows, so they add none.
+    assert.deepEqual(settlementFacts(fixture), [
+      ["ep-escalate", 1, "escalated"],
+      ["ep-wait", 1, "waiting"],
+      ["ep-resolve", 1, "resolved"],
+      ["ep-old", 1, "superseded"],
+      ["ep-new", 2, "cleared"],
+    ]);
+  } finally {
+    session?.child.kill();
+    await fixture.close();
+  }
+});
+
+test("launches recorded before they named an episode keep their own words and charge rule", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const recoveryRun = (id: string, released: boolean) =>
+    fixture.store.putRun({
+      id,
+      taskId: fixture.taskId,
+      role: "recovery",
+      generation: 1,
+      head: base,
+      agentId: `${id}-agent`,
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: released ? "finished" : "running",
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released,
+    } as unknown as Run);
+  // Today's main shape of a launch line: no episode id, no attempt index, no action.
+  const legacyLaunch = (runId: string, cause: string, outage: boolean) =>
+    fixture.store.event(
+      fixture.taskId,
+      "telemetry_recovery",
+      JSON.stringify({
+        runId,
+        targetRole: "worker",
+        cause,
+        work: "w",
+        outage,
+      }),
+    );
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    // A retained launch during a provider outage, then a charged one.
+    recoveryRun("run-legacy-outage", true);
+    legacyLaunch("run-legacy-outage", "Worker provider was unavailable", true);
+    recoveryRun("run-legacy-charged", false);
+    legacyLaunch("run-legacy-charged", "Worker thread vanished", false);
+    const task = fixture.store.task(fixture.taskId);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...task.resolution,
+        recoveryActive: true,
+        recovery: {
+          id: "ep-legacy",
+          key: "k-legacy",
+          generation: 1,
+          runId: "run-legacy-charged",
+          agentId: "run-legacy-charged-agent",
+          status: "running",
+          summary: "",
+          idleSince: null,
+          incidentId: null,
+        },
+      },
+    });
+    const reply = await fixture.turn({ attach: true });
+    assert.deepEqual(
+      ("presentation" in reply ? (reply.presentation?.toolCalls ?? []) : [])
+        .filter((call) => call.toolCallId.startsWith("repair:"))
+        .map((call) => [call.toolCallId, call.status, call.title]),
+      [
+        [
+          "repair:run-legacy-outage",
+          "completed",
+          "Worker provider was unavailable (1 of 3)",
+        ],
+        [
+          "repair:run-legacy-charged",
+          "in_progress",
+          "Worker thread vanished (1 of 3)",
+        ],
+      ],
+      "each launch keeps its cause, and the outage launch charges nothing",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a deferred coordinator observation is its own wait call, opened and closed per occurrence", async () => {
+  const fixture = await acpFixture();
+  const firstObserved = new Date(Date.now() - 60_000).toISOString();
+  let session: Awaited<ReturnType<typeof heldSession>> | null = null;
+  const defer = (since: string) =>
+    fixture.store.event(
+      fixture.taskId,
+      "coordinator_observation_deferred",
+      JSON.stringify({
+        runId: "run-coord-deferred",
+        since,
+        until: new Date(Date.parse(since) + 600_000).toISOString(),
+        cause: "host read timed out",
+      }),
+    );
+  const waitCalls = () => [
+    ...new Set(
+      session!.updates
+        .filter(
+          (update) =>
+            update.sessionUpdate === "tool_call" &&
+            String(update.toolCallId).startsWith("activity:nucleus:"),
+        )
+        .map((update) => String(update.toolCallId)),
+    ),
+  ];
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    reserveRepair(fixture, "ep-deferred");
+    const run = bindRepairRun(fixture, "run-coord-deferred", "ep-deferred", 1);
+    fixture.store.putRun({
+      ...run,
+      agentId: "coordinator-agent",
+      status: "running",
+      lastObservedAt: firstObserved,
+    } as unknown as Run);
+    session = await heldSession(fixture);
+    await session.next(
+      isCall("repair:ep-deferred:1", "in_progress"),
+      "the coordinator's repair call",
+    );
+
+    // The coordinator's host does not answer: Nucleus waits for it, as its own call.
+    defer(firstObserved);
+    const opened = await session.next(
+      (update) =>
+        update.sessionUpdate === "tool_call" &&
+        String(update.toolCallId).startsWith("activity:nucleus:") &&
+        update.status === "in_progress",
+      "deferral wait",
+    );
+    assert.match(
+      JSON.stringify(opened.content),
+      /waiting for the coordinator's host to answer/i,
+    );
+    const first = String(opened.toolCallId);
+
+    // A good observation ends that wait; the repair call carries on.
+    const secondObserved = new Date().toISOString();
+    fixture.store.putRun({
+      ...fixture.store.run("run-coord-deferred")!,
+      lastObservedAt: secondObserved,
+    } as unknown as Run);
+    await session.next(isCall(first, "completed"), "deferral wait ends");
+
+    // A later deferral is a new occurrence and a new call, never the settled one revived.
+    defer(secondObserved);
+    const reopened = await session.next(
+      (update) =>
+        update.sessionUpdate === "tool_call" &&
+        String(update.toolCallId).startsWith("activity:nucleus:") &&
+        update.status === "in_progress",
+      "second deferral wait",
+    );
+    assert.notEqual(reopened.toolCallId, first);
+    // The service names each deferral by its own occurrence, so a relaunched agent
+    // rebuilds the second wait under its own id too.
+    const rebuilt = await fixture.turn({ attach: true });
+    const rebuiltWait = (
+      "presentation" in rebuilt ? (rebuilt.presentation?.toolCalls ?? []) : []
+    ).find((call) => call.toolCallId.startsWith("activity:nucleus:"));
+    assert.ok(rebuiltWait);
+    assert.notEqual(rebuiltWait.toolCallId, first);
+    assert.deepEqual(session.statuses(first), ["in_progress", "completed"]);
+    assert.equal(waitCalls().length, 2);
+    assert.deepEqual(
+      session
+        .statuses("repair:ep-deferred:1")
+        .filter((status) => status !== "in_progress"),
+      [],
+      "the waits never settle the repair attempt",
+    );
+  } finally {
+    session?.child.kill();
     await fixture.close();
   }
 });
