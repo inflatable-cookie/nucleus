@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { JSDOM } from "jsdom";
 import { z } from "zod";
-import { roles } from "../client/design";
+import { navigationTextOpacity, roles, wash } from "../client/design";
 import { resolvePalette } from "../client/web/theme";
 import type { T3ThemeDefinition } from "../hosts/t3code/board-theme";
 import { findT3BuiltInTheme } from "../hosts/t3code/board-theme-builtins";
@@ -114,8 +114,10 @@ test("T3 board opens re-read environment themes through the connected host, inde
   assert.equal(stock?.themeId, null);
   assert.equal(stock?.appearance, "dark");
   assert.equal(stock?.light?.colors.surface0, "#fcfcfc");
+  assert.equal(stock?.light?.colors.surfaceNavigation, "#fafafa");
   assert.equal(stock?.light?.colors.accent, "#1b4ed8");
   assert.equal(stock?.dark?.colors.surface0, "#000000");
+  assert.equal(stock?.dark?.colors.surfaceNavigation, "#000000");
   assert.equal(stock?.dark?.colors.accent, "#346bf1");
   const stockBoard = await boardSnapshot(t3);
 
@@ -169,6 +171,7 @@ test("T3 board opens re-read environment themes through the connected host, inde
     statusDanger: "#fa9487",
     statusWarning: "#f9c66d",
     statusSuccess: "#a9ca8c",
+    surfaceNavigation: "#2b211d",
     surfaceHover: "#4a372d",
     surfaceSelected: "#624333",
   });
@@ -250,6 +253,7 @@ test("board interaction roles accept T3 colours and keep the existing host defau
   assert.equal(roles(colors).selected, "rgba(241, 243, 245, 0.1)");
   assert.equal(roles(colors).header, colors.surface0);
   assert.equal(roles(colors).navigation, colors.surface0);
+  assert.equal(roles(colors).list, colors.surface1);
   const themed = roles({
     ...colors,
     surfaceHover: "#4a372d",
@@ -259,7 +263,7 @@ test("board interaction roles accept T3 colours and keep the existing host defau
   assert.equal(themed.selected, "#624333");
 });
 
-test("each built-in T3 palette keeps its former list shade in the header and darkens the menu and list", (t) => {
+test("each built-in T3 palette uses its sidebar for board navigation and shares the canvas between list and detail", (t) => {
   const { window } = new JSDOM("<span></span>");
   t.after(() => window.close());
   const swatch = window.document.querySelector("span");
@@ -287,6 +291,8 @@ test("each built-in T3 palette keeps its former list shade in the header and dar
     const y = luminance(b);
     return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
   };
+  const tint = (base: string, foreground: string, opacity: number) =>
+    color(`color-mix(in srgb, ${base}, ${foreground} ${opacity * 100}%)`);
 
   for (const id of ["t3-code", "t3-chat", "grove", "ocean", "ember", "iris"]) {
     const builtIn = findT3BuiltInTheme(id);
@@ -296,36 +302,55 @@ test("each built-in T3 palette keeps its former list shade in the header and dar
         builtIn.appearance === appearance
           ? builtIn.colors
           : builtIn.variants?.[appearance];
-      assert.ok(palette?.canvas && palette.surfaceRaised && palette.text);
+      assert.ok(palette?.canvas && palette.sidebar && palette.text);
       const theme = resolvePalette(
         appearance,
         {
           colors: {
             surface0: palette.canvas,
             surface1: palette.surfaceRaised,
+            surfaceNavigation: palette.sidebar,
             foreground: palette.text,
           },
         },
         color,
       );
       assert.ok(theme);
-      const {
-        surface0,
-        surfaceHeader,
-        surfaceNavigation,
-        surfaceList,
-        foreground,
-      } = theme.colors;
+      const { canvas, header, navigation, list, foreground } = roles(theme.colors);
       const variant = `${id} ${appearance}`;
-      assert.ok(surfaceHeader && surfaceNavigation && surfaceList, variant);
-      assert.equal(surface0, color(palette.canvas), variant);
-      assert.equal(surfaceHeader, color(palette.surfaceRaised), variant);
-      assert.ok(luminance(surfaceHeader) > luminance(surfaceNavigation), variant);
-      assert.ok(luminance(surfaceNavigation) > luminance(surfaceList), variant);
+      assert.equal(canvas, color(palette.canvas), variant);
+      assert.equal(list, canvas, variant);
+      assert.equal(header, color(palette.sidebar), variant);
+      assert.equal(navigation, header, variant);
       assert.ok(
-        contrast(foreground, surfaceNavigation) >= 3,
-        `${variant} menu selection`,
+        contrast(foreground, navigation) >= 3,
+        `${variant} selection marker against menu`,
+      );
+      const hover = tint(navigation, foreground, wash.hover);
+      const selected = tint(navigation, foreground, wash.selected);
+      assert.ok(
+        contrast(foreground, selected) >= 4.5,
+        `${variant} selected menu text`,
+      );
+      assert.ok(
+        contrast(tint(hover, foreground, navigationTextOpacity.dimmed), hover) >=
+          4.5,
+        `${variant} dimmed menu text on hover`,
       );
     }
   }
+});
+
+test("a published palette without a sidebar shade uses its canvas for all board panes", () => {
+  const canvas = "#162720";
+  const theme = resolvePalette(
+    "dark",
+    { colors: { surface0: canvas } },
+    (color) => color,
+  );
+  assert.ok(theme);
+  const fills = roles(theme.colors);
+  assert.equal(fills.header, canvas);
+  assert.equal(fills.navigation, canvas);
+  assert.equal(fills.list, canvas);
 });

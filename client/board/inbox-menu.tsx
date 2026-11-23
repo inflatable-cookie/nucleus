@@ -6,6 +6,7 @@ import { useFocusVisible } from "../focus-modality";
 import type { Colors } from "../controls";
 import {
   hoverSurface,
+  navigationTextOpacity,
   radius,
   selectedSurface,
   space,
@@ -56,7 +57,12 @@ function MenuEntry({
   // Keep zero-count labels quieter without fading the entire interaction fill.
   const labelColor = on
     ? c.foreground
-    : navigationTint(c.foregroundMuted, options.dimmed ? 0.72 : 0.85);
+    : navigationTint(
+        c.foregroundMuted,
+        options.dimmed
+          ? navigationTextOpacity.dimmed
+          : navigationTextOpacity.normal,
+      );
   return (
     <Pressable
       accessibilityRole="tab"

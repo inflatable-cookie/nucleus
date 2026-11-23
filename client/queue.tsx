@@ -106,9 +106,8 @@ export function MainSurface({
   const mode = inboxLayout(panelWidth, layout.compact);
   const wide = mode === "wide",
     narrow = mode === "narrow";
-  const { canvas, section, navigation: navigationFill } = roles(c);
-  const previousListFill = narrow ? canvas : section;
-  const listFill = c.surfaceList ?? previousListFill;
+  const { canvas, section, navigation: navigationFill, list } = roles(c);
+  const listFill = narrow ? canvas : list;
   const menuWidth = inboxMenuWidth[wide ? "wide" : "medium"];
   // The detail pane's room decides whether a record lays out compactly.
   const detailWidth = panelWidth - menuWidth - inboxListWidth;
@@ -497,8 +496,7 @@ export function MainSurface({
                   listWidth: wide ? inboxListWidth : null,
                   laneModal: !wide,
                   listFill,
-                  listSurface:
-                    previousListFill === section ? "section" : "canvas",
+                  listSurface: narrow && canvas !== section ? "canvas" : "section",
                 }}
                 leads={boardLeads}
                 onCloseLane={(lane) =>

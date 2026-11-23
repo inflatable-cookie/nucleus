@@ -124,17 +124,10 @@ export function resolvePalette(
     });
   }
   const resolved = { ...colors, ...overrides };
-  const { surface1: header, foreground } = resolved;
-  // Use a shadow of the light foreground to darken the dark palette.
-  const shade =
-    appearance === "dark" ? surface("black", foreground, 0.02) : foreground;
-  const step = appearance === "dark" ? 0.2 : 0.045;
   return {
     colors: {
       ...resolved,
-      surfaceHeader: header,
-      surfaceNavigation: surface(header, shade, step),
-      surfaceList: surface(header, shade, step * 2),
+      surfaceNavigation: overrides.surfaceNavigation ?? resolved.surface0,
     },
   };
 }

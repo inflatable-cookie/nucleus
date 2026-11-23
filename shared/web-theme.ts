@@ -13,6 +13,7 @@ const boardPaletteSchema = z.object({
     surface0: themeColorSchema.optional(),
     surface1: themeColorSchema.optional(),
     surface2: themeColorSchema.optional(),
+    surfaceNavigation: themeColorSchema.optional(),
     surfaceHover: themeColorSchema.optional(),
     surfaceSelected: themeColorSchema.optional(),
     foreground: themeColorSchema.optional(),
