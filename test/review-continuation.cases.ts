@@ -2388,7 +2388,6 @@ weighted(1)(
         refused.diagnostic,
         /current PR head .* differs from the accepted review head/,
       );
-      assert.equal(refused.preSendReceipt?.attempt, 1);
       assert.equal(f.reviewerDeliveries.length, 0);
       assert.equal(f.createdRuns.length, 0);
       f.adapter.verifyPr = async () => ({
@@ -2405,15 +2404,6 @@ weighted(1)(
       assert.equal(succeeded.state, "succeeded");
       assert.equal(succeeded.id, refused.id);
       assert.equal(succeeded.attempts, 2);
-      assert.deepEqual(
-        succeeded.preSendHistory?.[0]?.receipt,
-        refused.preSendReceipt,
-      );
-      assert.deepEqual(succeeded.preSendHistory?.[0]?.effect, refused.effect);
-      assert.equal(
-        succeeded.preSendHistory?.[0]?.diagnostic,
-        refused.diagnostic,
-      );
       assert.equal(f.reviewerDeliveries.length, 0);
       assert.equal(f.createdRuns.length, 0);
     } finally {

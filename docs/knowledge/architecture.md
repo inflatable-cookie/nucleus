@@ -509,7 +509,7 @@ owner to the rules it enforces.
 - `core/planning/operations.ts` accepts, schedules, runs and settles durable
   operations and holds the source-promotion, lead-check and re-key handlers.
   `core/planning/operation-failure.ts` classifies a failed run from its re-read
-  facts, including committed results, deferred validation, pre-send receipts and
+  facts, including committed results, deferred validation, refusal type and
   effect status. `core/planning/source-promotion-reconcile.ts` reconciles source
   promotion after interruption. `core/planning/submission.ts` owns submission
   intake; `core/planning/planning-repairs.ts` owns dispatch-base re-record and

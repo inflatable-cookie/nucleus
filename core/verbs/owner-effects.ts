@@ -673,14 +673,8 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
     if (!key || effects.some((item) => item.effect === key)) continue;
     const operation =
       blocking.kind === "operation" ? store.operation(blocking.identity) : null;
-    // nucleus#1428: the same no-write proof retry_effect reads, so next offers
-    // exactly the reconciliation retry_effect will perform.
-    const noWriteProof = operation
-      ? store.unwrittenMergeMoveProof(operation.id)
-      : null;
     const refusal =
       operation &&
-      !noWriteProof &&
       !(
         operation.result &&
         operation.effect?.status === "reconciled" &&
@@ -695,7 +689,7 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
     effects.push({
       effect: key,
       kind: "recovery_effect",
-      summary: `${blocking.kind} ${blocking.identity} is ${blocking.state}: ${blocking.reason}${noWriteProof ? `; ${noWriteProof}` : ""}`,
+      summary: `${blocking.kind} ${blocking.identity} is ${blocking.state}: ${blocking.reason}`,
       ...(refusal ? { refusal } : {}),
     });
   }

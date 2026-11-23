@@ -343,7 +343,6 @@ export function fixture(
       ),
   } as unknown as Adapter & ResolutionAdapter;
   const engine = new Engine(store, adapter, 3_600_000);
-  engine.currentServiceBuildId = () => "review-continuation-fixture-build";
   engine.profiles = [worker, reviewer];
   const current = () => store.task(submitted.id);
   const run = () => store.run(runId)!;

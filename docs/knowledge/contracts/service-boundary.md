@@ -97,7 +97,7 @@ callbacks for project and lane access and lane-activity invalidation.
 retention, pruning, content fingerprints and bounded page reclamation. Store
 callbacks preserve transaction cleanup and projection cache ownership.
 `store-operations.ts` owns the durable operation journal: acceptance, bounded reads
-and admission limits. `store-pre-send.ts` settles task-control pre-send receipts.
+and admission limits.
 `store-notices.ts`, `store-messages.ts` and `store-hook-events.ts` each own one
 table, and `store-pending-submissions.ts` owns the board's submitting cards.
 Each takes a narrow task-access interface for reads, numbering and change notifications.
@@ -956,10 +956,9 @@ resolve no recipients. Dry-run awaits validation and stores nothing. Read the
 operation status for the task ID before using it as a prerequisite.
 Backpressure means no operation was accepted.
 
-`queue.operation-status` is observation unless the caller supplies
-`reconcilePreSendInputHash`, which may settle a matching attention-held
-task-control receipt without executing it; missing or conflicting execution
-evidence refuses ([Spec 012](../specs/012-durable-asynchronous-operations.md)).
+`queue.operation-status` returns the recorded task-control outcome. See
+[Spec 012](../specs/012-durable-asynchronous-operations.md) for how callers
+settle uncertain delivery.
 
 `queue.review-entry-preview` and the durable `review_entry` operation accept an
 existing isolated workspace ([Spec 017](../specs/017-external-pr-review-entry.md)).

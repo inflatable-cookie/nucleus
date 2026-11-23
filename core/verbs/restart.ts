@@ -29,7 +29,7 @@ import {
 import { escalatedWorkerRestart } from "./owner-restart";
 import { hostFailureRefusalDetail } from "../host/errors";
 import { DurableFenceRefusal } from "../intake/run-settlement";
-import { digest, now } from "../store/store";
+import { now } from "../store/store";
 import type { Engine } from "../engine";
 import { resendExecutorReport } from "./executor-report";
 import {
@@ -40,18 +40,6 @@ import {
 } from "./reviewer-report";
 import { verifyEnclosingOperation } from "../planning/enclosing-operation";
 import type { RestartRequest } from "./owner-shared";
-
-/** Raised after read-only verification or the parked transaction has refused. */
-class ParkedRestartPreSendRefusal extends Error {
-  constructor(
-    message: string,
-    readonly taskEvidenceHash: string,
-    readonly runEvidenceHash: string,
-  ) {
-    super(message);
-  }
-}
-export { ParkedRestartPreSendRefusal };
 
 /**
  * The owner's `restart` verb. This module owns the verb's admission: the
@@ -190,10 +178,8 @@ export class RestartControls {
     } catch (error) {
       // Verification is read-only and all local writes are rolled back; neither
       // route can authorize or send a continuation before it returns.
-      throw new ParkedRestartPreSendRefusal(
+      throw new RestartRefusal(
         error instanceof Error ? error.message : String(error),
-        digest(JSON.stringify(this.store.task(task.id))),
-        digest(JSON.stringify(this.store.runs(task.id))),
       );
     }
   }

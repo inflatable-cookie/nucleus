@@ -25,7 +25,6 @@ import {
   PROFILE_CATALOG_PENDING_REASON,
   PROFILE_CATALOG_LOADING_REFUSAL,
 } from "../core/engine";
-import { QueueRuntime } from "../service/runtime-owner";
 import { taskControlOperation } from "../core/verbs/task-control-key";
 import { type ResolutionAdapter } from "../core/resolution";
 import {
@@ -262,7 +261,6 @@ function fixture(hostId = "host") {
     },
   } as unknown as Adapter & ResolutionAdapter);
   const engine = new Engine(store, adapter, 0);
-  engine.currentServiceBuildId = () => "restart-fixture-build";
   engine.profiles = all;
   const current = () => store.task(submitted.id);
   const control = (args: Record<string, unknown> = {}) =>
@@ -310,298 +308,6 @@ function fixture(hostId = "host") {
 const ownerControlCount = (f: ReturnType<typeof fixture>) =>
   f.events("owner_control").length;
 
-async function parkedRestartEvidence(f: ReturnType<typeof fixture>) {
-  f.store.setMeta("paused", true);
-  const at = new Date().toISOString();
-  f.store.putRun(
-    runSchema.parse({
-      id: "proof-recovery",
-      taskId: f.taskId,
-      role: "recovery",
-      generation: 1,
-      head,
-      base,
-      agentId: "coord-agent",
-      workspaceId: "workspace",
-      profile: f.profiles.coord,
-      status: "running",
-      createdAt: at,
-      lastObservedAt: null,
-      active: true,
-      idleSince: null,
-      completion: null,
-      released: false,
-    }),
-  );
-  f.store.update(f.taskId, {
-    phase: "needs_attention",
-    agentId: "worker-agent",
-    runId: "worker-run",
-    workspaceId: "workspace",
-    directory: "/worktree",
-    profile: f.profiles.worker,
-    agentIntent: true,
-    resolution: {
-      ...f.current().resolution,
-      attention: true,
-      currentRunId: null,
-    },
-  });
-  const before = f.current(),
-    runs = f.store.runs(f.taskId);
-  const control = taskControlInputSchema.parse({
-    taskId: f.taskId,
-    version: before.version,
-    action: "restart",
-    role: "reviewer",
-    reason: "Resume review",
-    caller: CALLER,
-  });
-  const { key, payload } = taskControlOperation(control);
-  const accepted = await f.engine.startOperation({
-    key,
-    kind: "task_control",
-    payload,
-  });
-  assert.ok("accepted" in accepted);
-  const failed = await f.engine.awaitOperation(accepted.operation.id);
-  // Parent falsification: old prose classification made this needs_attention.
-  assert.equal(failed.state, "failed");
-  assert.match(failed.diagnostic, /retained thread or uncertain delivery/);
-  assert.ok(failed.preSendReceipt?.buildId);
-  assert.deepEqual(f.current(), before);
-  assert.deepEqual(f.store.runs(f.taskId), runs);
-  assert.equal(f.createdRuns.length, 0);
-  return { before, runs, control, key, payload, failed, at };
-}
-
-test("a parked restart refusal keeps its execution proof and reconciles only that unchanged occurrence", async () => {
-  const f = fixture();
-  try {
-    const { before, runs, control, key, payload, failed, at } =
-      await parkedRestartEvidence(f);
-    const input = operationStatus.input.parse({
-      operationId: failed.id,
-      reconcilePreSendInputHash: failed.inputHash,
-    });
-    const publicStatus = (args: typeof input) =>
-      QueueRuntime.prototype.operationStatus.call(
-        { store: f.store, engine: f.engine } as QueueRuntime,
-        args,
-      );
-    assert.deepEqual(
-      publicStatus(input),
-      failed,
-      "an already definite refusal is not reported as uncertain",
-    );
-    f.store.putOperation(failed, {
-      ...payload,
-      control: { ...control, reason: "Mismatched stored request" },
-    });
-    await assert.rejects(
-      f.engine.startOperation({ key, kind: "task_control", payload }),
-      /receipt or delivery evidence conflicts/,
-    );
-    f.store.putOperation(failed, payload);
-
-    // Simulate interruption after the durable receipt, before settlement; a
-    // restarted scheduler must fence it instead of executing the control again.
-    const receipt = failed.preSendReceipt!;
-    const conflictingEffect = {
-      ...receipt.effect,
-      status: "reconciled" as const,
-      result: "Observed external effect",
-      resultAt: at,
-    };
-    f.store.putOperation({
-      ...failed,
-      state: "running",
-      settledAt: null,
-      effect: conflictingEffect,
-    });
-    f.engine.resumeOperations();
-    const conflicting = await f.engine.awaitOperation(failed.id);
-    assert.equal(conflicting.state, "needs_attention");
-    assert.deepEqual(
-      conflicting.effect,
-      conflictingEffect,
-      "restart preserves conflicting effect evidence",
-    );
-    f.store.putOperation({
-      ...failed,
-      state: "running",
-      settledAt: null,
-      diagnostic: "",
-      effect: receipt.effect,
-    });
-    f.engine.resumeOperations();
-    const held = await f.engine.awaitOperation(failed.id);
-    assert.equal(held.state, "needs_attention");
-    assert.equal(held.attempts, 1);
-    assert.throws(
-      () =>
-        publicStatus({ ...input, reconcilePreSendInputHash: "f".repeat(64) }),
-      /conflicts/,
-    );
-    f.store.putOperation({ ...held, preSendReceipt: null });
-    // The journal alone cannot stand in for the receipt when the boundary had
-    // already armed: the legacy reconcile refuses it too.
-    assert.throws(() => publicStatus(input), /evidence conflicts/);
-    f.store.putOperation({
-      ...held,
-      state: "running",
-      diagnostic: "",
-      preSendReceipt: null,
-      effect: receipt.effect,
-    });
-    f.engine.resumeOperations();
-    const unknown = await f.engine.awaitOperation(held.id);
-    assert.equal(unknown.state, "needs_attention");
-    assert.match(unknown.diagnostic, /without a pre-send receipt/);
-    assert.equal(unknown.attempts, 1);
-    assert.equal(f.createdRuns.length, 0);
-    f.store.putOperation(held);
-    f.store.putRun({ ...runs[0]!, active: false });
-    assert.throws(() => publicStatus(input), /evidence changed/);
-    f.store.putRun(runs[0]!);
-    f.store.putOperation({ ...held, attempts: 2 });
-    assert.throws(() => publicStatus(input), /conflicts/);
-    f.store.putOperation(held);
-    for (const status of ["delivered", "uncertain", "reserved"] as const) {
-      f.store.putRun({
-        ...runs[0]!,
-        reviewDeliveries: [
-          {
-            authorizationId: "auth",
-            operationId: held.id,
-            deliveryId: `ns-review-${"a".repeat(64)}`,
-            taskId: f.taskId,
-            runId: runs[0]!.id,
-            head,
-            checkpointOrdinal: 1,
-            taskVersion: before.version,
-            briefVersion: null,
-            briefDigest: null,
-            reason: "Review",
-            instruction: "Continue",
-            createdAt: at,
-            status,
-            evidence: "",
-            observedAt: null,
-          },
-        ],
-      });
-      assert.throws(() => publicStatus(input), /reviewer delivery/);
-      f.store.putRun(runs[0]!);
-    }
-    const settled = publicStatus(input);
-    assert.equal(settled.state, "failed");
-    assert.equal(settled.id, held.id);
-    assert.equal(settled.inputHash, held.inputHash);
-    assert.equal(settled.attempts, held.attempts);
-    assert.deepEqual(settled.effect, held.effect);
-    assert.equal(settled.diagnostic, held.diagnostic);
-    assert.deepEqual(publicStatus(input), settled);
-    assert.deepEqual(f.current(), before);
-    assert.deepEqual(f.store.runs(f.taskId), runs);
-    assert.equal(f.createdRuns.length, 0);
-    f.store.putRun({
-      ...runs[0]!,
-      released: true,
-      status: "finished",
-      active: false,
-    });
-    const repeated = await f.engine.startOperation({
-      key,
-      kind: "task_control",
-      payload,
-    });
-    assert.ok("accepted" in repeated);
-    const retried = await f.engine.awaitOperation(failed.id);
-    assert.equal(retried.id, failed.id);
-    assert.equal(retried.attempts, 2);
-    assert.equal(retried.state, "succeeded");
-    assert.deepEqual(retried.preSendHistory?.[0]?.receipt, receipt);
-    assert.deepEqual(retried.preSendHistory?.[0]?.effect, held.effect);
-    assert.equal(retried.preSendHistory?.[0]?.diagnostic, held.diagnostic);
-  } finally {
-    await f.close();
-  }
-});
-
-for (const variant of [
-  "unchanged",
-  "changed run",
-  "changed caller",
-  "changed head",
-  "missing receipt",
-] as const) {
-  test(`sweep settles a parked restart receipt only with its exact evidence (${variant})`, async () => {
-    const f = fixture();
-    try {
-      const { runs, control, key, payload, failed } =
-        await parkedRestartEvidence(f);
-      const proof = failed.preSendReceipt!;
-      f.store.putOperation({
-        ...failed,
-        state: "running",
-        settledAt: null,
-        diagnostic: "",
-        effect: proof.effect,
-        ...(variant === "missing receipt" ? { preSendReceipt: null } : {}),
-      });
-      f.engine.resumeOperations();
-      const held = await f.engine.awaitOperation(failed.id);
-      assert.equal(held.state, "needs_attention");
-      if (variant === "changed caller")
-        f.store.putOperation(held, {
-          ...payload,
-          control: { ...control, caller: "another-thread" },
-        });
-      if (variant === "changed run")
-        f.store.putRun({ ...runs[0]!, active: false });
-      if (variant === "changed head")
-        f.store.update(f.taskId, { prHead: "d".repeat(40) });
-
-      f.engine.hostAvailable = () => false;
-      assert.equal((await f.engine.auditPass(true)).fault, null);
-      const swept = f.store.operation(held.id)!;
-      assert.equal(
-        swept.state,
-        variant === "unchanged" ? "failed" : "needs_attention",
-      );
-      assert.deepEqual(swept.effect, held.effect);
-      assert.equal(swept.result, null);
-      assert.equal(
-        f.next().verbs.some((verb) => verb.refusal?.includes(held.id)),
-        variant !== "unchanged",
-      );
-      assert.equal(
-        f.events("operation_pre_send_refused").length,
-        variant === "unchanged" ? 1 : 0,
-      );
-      if (variant === "unchanged") {
-        const replay = await f.engine.startOperation({
-          key,
-          kind: "task_control",
-          payload,
-        });
-        assert.ok("accepted" in replay);
-        assert.deepEqual(replay.operation, swept);
-      }
-      assert.equal((await f.engine.auditPass(true)).fault, null);
-      assert.deepEqual(f.store.operation(held.id), swept);
-      assert.equal(f.createdRuns.length, 0);
-      assert.equal(
-        f.events("operation_pre_send_refused").length,
-        variant === "unchanged" ? 1 : 0,
-      );
-    } finally {
-      await f.close();
-    }
-  });
-}
-
 test("a durable parked restart records wrong-role instructions as a definite refusal", async () => {
   const f = fixture();
   try {
@@ -644,7 +350,6 @@ test("a durable parked restart records wrong-role instructions as a definite ref
       /instruction on a parked restart applies only/,
     );
     assert.equal(failed.effect?.status, "reconciled");
-    assert.ok(failed.preSendReceipt);
     assert.deepEqual(f.current(), before);
     assert.equal(f.createdRuns.length, 0);
     const repeated = await f.engine.startOperation({
@@ -656,18 +361,12 @@ test("a durable parked restart records wrong-role instructions as a definite ref
     const failedAgain = await f.engine.awaitOperation(accepted.operation.id);
     assert.equal(failedAgain.state, "failed");
     assert.equal(failedAgain.attempts, 2);
-    assert.equal(failedAgain.preSendReceipt?.attempt, 2);
-    assert.equal(
-      failedAgain.preSendHistory?.[0]?.diagnostic,
-      failed.diagnostic,
-    );
-    assert.deepEqual(failedAgain.preSendHistory?.[0]?.effect, failed.effect);
   } finally {
     await f.close();
   }
 });
 
-test("a control refused by Queue's own fence settles as not sent, with a receipt, and blocks nothing", async () => {
+test("a control refused by Queue's own fence settles as not sent, and leaves no unresolved operation", async () => {
   const f = fixture();
   try {
     const { reviewer } = coordinatorWithReviewerFence(f);
@@ -727,8 +426,6 @@ test("a control refused by Queue's own fence settles as not sent, with a receipt
       ),
     );
     assert.equal(failed.effect?.status, "reconciled");
-    assert.equal(failed.preSendReceipt?.boundary, "pre-send-refusal-v1");
-    assert.equal(failed.preSendReceipt?.attempt, 1);
     assert.deepEqual(f.current(), before, "the refusal changed nothing");
     assert.deepEqual(
       f.store.runs(f.taskId),
@@ -747,8 +444,7 @@ test("a control refused by Queue's own fence settles as not sent, with a receipt
       ),
       false,
     );
-    // The ordinary retry reopens the refused operation; both attempts keep
-    // their own receipts, and the plan-time fence refuses the retry the same way.
+    // An explicit repeat can reopen a definite refusal.
     const retried = await f.engine.startOperation({
       key,
       kind: "task_control",
@@ -764,162 +460,6 @@ test("a control refused by Queue's own fence settles as not sent, with a receipt
       ),
     );
     assert.equal(again.attempts, 2);
-    assert.equal(again.preSendReceipt?.attempt, 2);
-    assert.deepEqual(again.preSendHistory?.[0]?.receipt, failed.preSendReceipt);
-    assert.deepEqual(again.preSendHistory?.[0]?.effect, failed.effect);
-    assert.equal(again.preSendHistory?.[0]?.diagnostic, failed.diagnostic);
-  } finally {
-    await f.close();
-  }
-});
-
-test("a legacy refused-but-uncertain control reconciles through its own pre-send refusal evidence", async () => {
-  const f = fixture();
-  try {
-    // The effigy#528 shape: a checkpointed reviewer whose delivery is unknown
-    // fenced `restart role=reviewer`; the old settlement recorded Queue's own
-    // refusal as an uncertain effect with no receipt.
-    reviewingTask(f, "reader-run", "ckpt-1");
-    f.store.putRun({ ...f.store.run("reader-run")!, status: "uncertain" });
-    const control = taskControlInputSchema.parse({
-      taskId: f.taskId,
-      version: f.current().version,
-      action: "restart",
-      role: "reviewer",
-      reason: "Resume review",
-      caller: CALLER,
-    });
-    const { key, payload } = taskControlOperation(control);
-    const id = operationIdForKey(key),
-      inputHash = operationInputHash(payload);
-    const at = new Date().toISOString();
-    const diagnostic = runFenceRefusal(
-      f.store.run("reader-run")!,
-      "its delivery is unknown",
-    );
-    const operation = queueOperationSchema.parse({
-      id,
-      key,
-      kind: "task_control",
-      inputHash,
-      state: "needs_attention",
-      taskId: f.taskId,
-      expectedVersion: control.version,
-      createdAt: at,
-      startedAt: at,
-      settledAt: at,
-      attempts: 1,
-      diagnostic,
-      effect: {
-        kind: "task_control",
-        target: "restart",
-        intentAt: at,
-        status: "uncertain",
-        result: diagnostic.slice(0, 2000),
-        resultAt: at,
-      },
-    });
-    f.store.putOperation(operation, payload);
-    const taskBefore = f.current(),
-      runsBefore = f.store.runs(f.taskId);
-    const input = operationStatus.input.parse({
-      operationId: id,
-      reconcilePreSendInputHash: inputHash,
-    });
-    const publicStatus = (args: typeof input) =>
-      QueueRuntime.prototype.operationStatus.call(
-        { store: f.store, engine: f.engine } as QueueRuntime,
-        args,
-      );
-    // The journal must prove the refusal: a different input, a retry, an armed
-    // boundary, a bound delivery or any other diagnostic stays uncertain.
-    assert.throws(
-      () =>
-        publicStatus({ ...input, reconcilePreSendInputHash: "f".repeat(64) }),
-      /conflicts/,
-    );
-    f.store.putOperation({ ...operation, attempts: 2 });
-    assert.throws(() => publicStatus(input), /conflicts/);
-    f.store.putOperation({ ...operation, preSendBoundaryStartedAt: at });
-    assert.throws(() => publicStatus(input), /conflicts/);
-    f.store.putOperation(operation);
-    f.store.putRun({
-      ...f.store.run("reader-run")!,
-      reviewDeliveries: [
-        {
-          authorizationId: "auth",
-          operationId: id,
-          deliveryId: `ns-review-${"a".repeat(64)}`,
-          taskId: f.taskId,
-          runId: "reader-run",
-          head,
-          checkpointOrdinal: 1,
-          taskVersion: control.version,
-          briefVersion: null,
-          briefDigest: null,
-          reason: "Review",
-          instruction: "Continue",
-          createdAt: at,
-          status: "reserved",
-          evidence: "",
-          observedAt: null,
-        },
-      ],
-    });
-    assert.throws(() => publicStatus(input), /conflicts/);
-    const reader = f.store.run("reader-run")!;
-    const { reviewDeliveries: withoutDelivery, ...readerWithoutDelivery } =
-      reader;
-    f.store.putRun(readerWithoutDelivery);
-    const foreign = "connection lost while continuing the reviewer";
-    f.store.putOperation({
-      ...operation,
-      diagnostic: foreign,
-      effect: { ...operation.effect!, result: foreign },
-    });
-    assert.throws(
-      () => publicStatus(input),
-      /not one of Queue's own pre-send refusal messages/,
-    );
-    const ghost = runFenceRefusal(
-      { ...f.store.run("reader-run")!, id: "ghost-run" },
-      "its delivery is unknown",
-    );
-    f.store.putOperation({
-      ...operation,
-      diagnostic: ghost,
-      effect: { ...operation.effect!, result: ghost.slice(0, 2000) },
-    });
-    assert.throws(
-      () => publicStatus(input),
-      /not one of Queue's own pre-send refusal messages/,
-    );
-    f.store.putOperation(operation);
-    // Exactly the refused population relabels: nothing re-runs, nothing retries.
-    const reconciled = publicStatus(input);
-    assert.equal(reconciled.state, "failed");
-    assert.equal(reconciled.diagnostic, diagnostic);
-    assert.ok(reconciled.preSendReconciledAt);
-    assert.equal(
-      reconciled.preSendReceipt,
-      undefined,
-      "no receipt is invented; the recorded refusal stays history",
-    );
-    assert.deepEqual(
-      publicStatus(input),
-      reconciled,
-      "the reconcile is idempotent",
-    );
-    assert.deepEqual(f.current(), taskBefore);
-    assert.deepEqual(f.store.runs(f.taskId), runsBefore);
-    assert.equal(f.createdRuns.length, 0);
-    // The reconciled control no longer blocks ordinary review.
-    assert.equal(
-      recoveryEffects(f.store, f.current()).some(
-        (effect) => effect.kind === "operation",
-      ),
-      false,
-    );
   } finally {
     await f.close();
   }
@@ -2104,7 +1644,6 @@ test("a restart refused by the host's connection precondition settles failed and
     assert.equal(failed.effect?.kind, "task_control");
     assert.equal(failed.effect?.target, "restart");
     assert.equal(failed.effect?.status, "reconciled");
-    assert.equal(failed.preSendReceipt?.boundary, "pre-send-refusal-v1");
     assert.deepEqual(restartState(f), before, "the refusal changed nothing");
     assert.equal(
       recoveryEffects(f.store, f.current()).some(
@@ -2463,7 +2002,6 @@ test("the sweep settles a real lost restart after its old worker is isolated and
     assert.equal(operation.attempts, 1);
     assert.match(operation.diagnostic, /Transport/);
     assert.equal(operation.result, null);
-    assert.equal(operation.preSendReceipt ?? null, null);
     assert.equal(f.events("owner_control").length, 0);
     const sweep = async () => {
       const pass = await f.engine.auditPass(true);

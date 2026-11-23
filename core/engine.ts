@@ -928,9 +928,6 @@ export class Engine {
   readonly resolution: Resolution;
   readonly hooks: RepositoryHooks;
   readonly retirement: RuntimeRetirementService;
-  currentServiceBuildId: () => string = () => {
-    throw new Error("Service build identity is not configured");
-  };
   private readonly operations: Operations;
   readonly lifecycle: Lifecycle;
   private readonly agentControls: AgentControls;

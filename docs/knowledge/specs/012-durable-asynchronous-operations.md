@@ -35,27 +35,12 @@ Acceptance is one short SQLite transaction. Repeating the same caller key and
 input reopens a definitely `failed` operation as `pending` under its existing ID,
 keeping its attempt count, so it re-checks current state. A typed refusal raised
 before any binding settles `failed` whatever its explanation says; its wording
-never makes an operation `needs_attention`. A `succeeded` or
-`needs_attention` operation replays its stored outcome without another effect.
-A parked restart refused during read-only verification or its rolled-back local
-transaction carries a receipt written by the executing service, and so does any
-task control refused by another typed pre-send refusal — Nucleus's own
-durable-effect fence included. The receipt binds the operation,
-input, attempt, service build, intent and unchanged task and run evidence.
-An interruption after the receipt leaves the operation in attention without
-executing it again. An interruption after the parked boundary starts but before
-the receipt also remains in attention, with its original effect evidence intact.
-`queue.operation-status` with `reconcilePreSendInputHash`
-explicitly settles that occurrence only after the stored identity, effect and
-evidence still match and no reviewer delivery is bound to it; a legacy row from
-before the receipts existed relabels the same way when its diagnostic is one of
-Nucleus's own fence-refusal messages and its journal shows no boundary, retry or
-bound delivery. Its original
-diagnostic and effect remain history. A definite failure can be retried under
-the same key; its receipt and effect are retained before the next attempt.
-A missing receipt, a changed task or run, a conflicting effect or an unproved
-prior attempt keeps the fence. A present source tree, error wording and missing timeline entries do
-not establish what a historical execution did.
+never makes an operation `needs_attention`. A succeeded, uncertain or explicitly
+superseded operation returns its stored outcome when the caller repeats the key.
+An interrupted control with a durable effect intent stays uncertain unless its
+committed result or resumable step is recorded. Read its outcome with
+`queue.operation-status` and settle it through the
+[explicit resolution commands](067-explicit-resolution.md#the-explicit-commands).
 A terminal
 `retry_effect workspace_archive.<id>` that restart resumes settles from its own
 landed archive (2026-10-23). The persisted operation is the identity: a running

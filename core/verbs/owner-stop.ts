@@ -1103,8 +1103,7 @@ export class OwnerStop {
       const op = this.store.operation(operationId);
       if (
         op?.result?.taskId &&
-        op.effect?.status === "reconciled" &&
-        !op.preSendReceipt
+        op.effect?.status === "reconciled"
       ) {
         return task;
       }

@@ -603,11 +603,8 @@ function releasedAfterArchivedCompletion(
 
 /**
  * An uncertain historical restart send whose only remaining step is
- * observation. The sweep's observer owns it, and no owner retry or pre-send
- * reconciliation applies before later evidence answers it. Operations that are
- * not uncertain, already carry a result, carry an execution-authored pre-send
- * receipt, or do not match a settled historical restart send stay outside this
- * classification so executable reconciliation remains accurately represented.
+ * observation. The sweep's observer owns it while the operation is uncertain
+ * and has no recorded result.
  */
 export function observationOnlyRestartOperation(
   store: Store,
@@ -622,7 +619,6 @@ export function observationOnlyRestartOperation(
     !operation.expectedVersion ||
     operation.attempts <= 0 ||
     operation.result !== null ||
-    operation.preSendReceipt != null ||
     operation.effect?.kind !== "task_control" ||
     operation.effect.target !== "restart" ||
     operation.effect.status !== "uncertain"

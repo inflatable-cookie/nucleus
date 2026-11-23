@@ -30,7 +30,6 @@ export async function applyControlWithVersionHint(engine: Engine, input: TaskCon
     if (
       committed?.result &&
       committed.effect?.status === "reconciled" &&
-      !committed.preSendReceipt &&
       (!committed.preSendBoundaryStartedAt ||
         (committed.kind === "task_control" &&
           committed.effect.kind === "task_control" &&

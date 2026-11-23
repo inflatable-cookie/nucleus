@@ -713,7 +713,7 @@ test("preserves independent dispatch and merge holds and settles pre-boundary st
   }
 });
 
-test("genuine pre-send refusal writes no hold or intent and records preSendReceipt; replay after reopen never applies", async () => {
+test("genuine pre-send refusal writes no hold or intent and leaves no unresolved operation after reopening", async () => {
   const h = await makeHarness();
   try {
     const task = h.insertTask({ agentId: null, runId: null });

@@ -89,7 +89,6 @@ type Loose = any;
 function fixture(t: TestContext, adapter: Loose = {}) {
   const store = new Store(":memory:");
   const engine = new Engine(store, adapter as Adapter, 60_000);
-  engine.currentServiceBuildId = () => "injected-build";
   store.setMeta("paused", false);
   store.setMeta("globalLimit", 0);
   t.after(async () => {
@@ -216,17 +215,14 @@ const TYPED: [string, () => Error][] = [
 ];
 
 for (const [name, make] of TYPED) {
-  test(`operation state: ${name} settles failed with a receipt, whatever its prose says`, async (t) => {
+  test(`operation state: ${name} settles failed regardless of its diagnostic`, async (t) => {
     const operation = await settle(t, make());
     assert.equal(operation.state, "failed");
     assert.equal(operation.effect?.status, "reconciled");
-    assert.equal(operation.preSendReceipt?.boundary, "pre-send-refusal-v1");
-    assert.equal(operation.preSendReceipt?.buildId, "injected-build");
   });
-  test(`operation state: ${name} stays failed past an armed pre-send boundary, with no new receipt`, async (t) => {
+  test(`operation state: ${name} stays failed past an armed send boundary`, async (t) => {
     const operation = await settle(t, make(), undefined, armBoundary);
     assert.equal(operation.state, "failed");
-    assert.equal(operation.preSendReceipt, undefined);
   });
   test(`operation state: rewrapping ${name} into a plain Error makes it uncertain`, async (t) => {
     const operation = await settle(t, new Error(make().message));
@@ -234,30 +230,6 @@ for (const [name, make] of TYPED) {
     assert.equal(operation.effect?.status, "uncertain");
   });
 }
-
-test("operation state: the typed set is exactly these nine classes", () => {
-  // ParkedRestartPreSendRefusal is private to its file, so the set is read from
-  // source rather than thrown. test/restart.cases.ts drives that class.
-  const body =
-    /const typedPreSendRefusal = \(error: unknown\): boolean =>([\s\S]*?);\n/.exec(
-      source(),
-    )?.[1];
-  assert.ok(body, "typedPreSendRefusal is gone or reshaped");
-  assert.deepEqual(
-    [...body.matchAll(/instanceof (\w+)/g)].map((match) => match[1]).sort(),
-    [
-      "DurableFenceRefusal",
-      "ExternalMergeRefusal",
-      "ParkedRestartPreSendRefusal",
-      "PreWriteMergeObservationRefusal",
-      "ProvenPreSendRefusalError",
-      "RepositoryRekeyRefused",
-      "RestartRefusal",
-      "RetainedRunRefusal",
-      "ReviewEntryRefusal",
-    ],
-  );
-});
 
 test("operation state: a typed error outside the set takes the prose classifier", async (t) => {
   const refusal = new ProofExecutionRefusal("live_run", FRIGHTENING);
@@ -297,7 +269,6 @@ test("operation state: any other untyped failure settles failed, and an armed bo
   const plain = await settle(t, new Error("A plain refusal"));
   assert.equal(plain.state, "failed");
   assert.equal(plain.effect?.status, "reconciled");
-  assert.equal(plain.preSendReceipt, undefined);
   assert.equal(
     (await settle(t, new Error("A plain refusal"), undefined, armBoundary))
       .state,
@@ -680,90 +651,6 @@ test("proof race: each real single-flight refusal stands down quietly; other pro
     "A proof execution is already running",
     "only the typed single-flight refusal stands down; other prose still surfaces",
   );
-});
-
-test("store fence: exactly the real fence messages relabel a legacy refusal", async (t) => {
-  const f = fixture(t);
-  const task = f.add();
-  const run = putRun(f.store, task.id);
-  const control = taskControlInputSchema.parse({
-    taskId: task.id,
-    version: task.version,
-    action: "restart",
-    role: "reviewer",
-    reason: "Pin",
-  });
-  const { key, payload } = taskControlOperation(control);
-  const id = operationIdForKey(key),
-    inputHash = operationInputHash(payload);
-  const put = (diagnostic: string) =>
-    f.store.putOperation(
-      queueOperationSchema.parse({
-        id,
-        key,
-        kind: "task_control",
-        inputHash,
-        state: "needs_attention",
-        taskId: task.id,
-        expectedVersion: control.version,
-        createdAt: at,
-        startedAt: at,
-        settledAt: at,
-        attempts: 1,
-        diagnostic,
-        effect: {
-          kind: "task_control",
-          target: "restart",
-          intentAt: at,
-          status: "uncertain",
-          result: diagnostic.slice(0, 2000),
-          resultAt: at,
-        },
-      }),
-      payload,
-    );
-
-  const delivery = runFenceRefusal(run, "its delivery is unknown");
-  const effect = runFenceRefusal(run, "a publication is pending");
-  const verb = f.internals.verbRunFenceRefusal({
-    run,
-    why: "its turn is live",
-  });
-  assert.equal(
-    delivery,
-    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (its delivery is unknown); restart re-creates it under the same run, or wait for reconciliation to settle it`,
-  );
-  assert.equal(
-    runFenceRefusal(run, "run-delivery x"),
-    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (run-delivery x); restart re-creates it under the same run, or wait for reconciliation to settle it`,
-  );
-  assert.equal(
-    effect,
-    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (a publication is pending); wait for that delivery or effect to settle, or retry_effect it`,
-  );
-  assert.equal(
-    verb,
-    `A reviewer run (${run.id}) still owns this task: its turn is live`,
-  );
-  for (const diagnostic of [delivery, effect, verb]) {
-    put(diagnostic);
-    const settled = f.store.reconcileTaskControlPreSend(id, inputHash);
-    assert.equal(settled.state, "failed", diagnostic);
-    assert.ok(settled.preSendReconciledAt, diagnostic);
-  }
-  for (const diagnostic of [
-    verb.replace("still owns this task", "owns this task"),
-    delivery.replace("will not act over blindly", "will not act blindly"),
-    effect.replace(", or retry_effect it", ""),
-    runFenceRefusal({ ...run, id: "ghost" }, "its delivery is unknown"),
-  ]) {
-    put(diagnostic);
-    assert.throws(
-      () => f.store.reconcileTaskControlPreSend(id, inputHash),
-      /^Error: The diagnostic is not one of Queue's own pre-send refusal messages; delivery remains uncertain$/,
-      diagnostic,
-    );
-  }
 });
 
 for (const [name, refusal, repair] of [
@@ -1212,11 +1099,6 @@ const PARSED: ParsedText[] = [
   {
     site: "missing callback",
     reads: ["t.reasonFact?.subject === completed.role"],
-  },
-  {
-    site: "store fence",
-    re: /^A ([a-z]+) run \(([^)]+)\) (?:holds a durable side effect Queue will not act over blindly \(.+\); (?:restart re-creates it under the same run, or wait for reconciliation to settle it|wait for that delivery or effect to settle, or retry_effect it)|still owns this task: .+)$/,
-    sample: "A worker run (run-1) still owns this task: live",
   },
   {
     site: "proof hold",

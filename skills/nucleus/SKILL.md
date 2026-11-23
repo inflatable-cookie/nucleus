@@ -247,19 +247,9 @@ Wait for `succeeded` and `result.taskId` before submitting dependants; quote the
 (`304: Task title`). A failed operation needs its reported condition repaired;
 inspect an uncertain response before retrying.
 
-For an attention-held task control, inspect its operation first. Only when it
-has an execution-authored `preSendReceipt` may the owner explicitly ask Nucleus to
-reconcile the same occurrence, passing the operation's recorded input hash:
-
-```sh
-nucleus operation-status - <<'JSON'
-{"operationId":"returned-operation-id","reconcilePreSendInputHash":"recorded-input-hash"}
-JSON
-```
-
-Nucleus rechecks the receipt and current evidence and refuses when proof is
-missing or conflicts. This call never resends the control or releases a hold;
-an old diagnostic or an empty timeline is not a receipt.
+Inspect an attention-held control with `operation-status`. To retire its
+uncertain effect, use `record.clear kind=effect id=operation.<id>` with a reason
+and accept `effect_may_land`. Repeating the old key returns its settled record.
 
 `queue:` routing: `dependsOn` (task UUIDs or references such as `owner/repo#072`;
 all must reach `done` first), `lane` (one key) or

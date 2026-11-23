@@ -458,6 +458,81 @@ test("record.clear supersedes a notice and keeps late delivery evidence from res
   );
 });
 
+test("an interrupted move is surfaced and can be cleared without inferring delivery from the journal", async (t) => {
+  const { runtime, store, current, command, audit, calls } = await fixture(t);
+  const task = current();
+  const control = {
+    action: "move" as const,
+    to: "merge" as const,
+    taskId: task.id,
+    version: task.version,
+    reason: "Move the reviewed head to merge",
+    caller: OPERATOR_BOARD_CALLER,
+  };
+  const { payload, key } = taskControlOperation(control);
+  const input = {
+    key,
+    kind: "task_control" as const,
+    taskId: task.id,
+    expectedVersion: task.version,
+    inputHash: operationInputHash(payload),
+    payload,
+  };
+  const accepted = store.acceptOperation(input);
+  assert.ok("operation" in accepted);
+  const at = new Date().toISOString();
+  const operation = store.putOperation({
+    ...accepted.operation,
+    state: "running",
+    attempts: 1,
+    startedAt: at,
+    effect: {
+      kind: "task_control",
+      target: "move",
+      status: "intent",
+      intentAt: at,
+      result: null,
+      resultAt: null,
+    },
+  });
+
+  await runtime.engine.runOperation(operation.id);
+  const interrupted = store.operation(operation.id);
+  assert.equal(interrupted?.state, "needs_attention");
+  assert.equal(interrupted?.effect?.status, "uncertain");
+  const repeated = store.acceptOperation(input);
+  assert.ok("operation" in repeated);
+  assert.deepEqual(repeated.operation, interrupted);
+
+  const clear = {
+    action: "record.clear",
+    kind: "effect",
+    id: `operation.${operation.id}`,
+  };
+  const warned = await command(clear);
+  assert.equal(warned.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    warned.explicitResolution?.warnings.map((warning) => warning.id),
+    ["effect_may_land"],
+  );
+  assert.equal(warned.version, task.version);
+  assert.equal(audit().length, 0);
+  assert.deepEqual(store.operation(operation.id), interrupted);
+
+  const applied = await command({ ...clear, accept: ["effect_may_land"] });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.ok(applied.explicitResolution?.next);
+  assert.equal(applied.phase, task.phase);
+  assert.equal(audit().length, 1);
+  const settled = store.operation(operation.id);
+  assert.equal(settled?.state, "failed");
+  assert.equal(settled?.settlement?.kind, "superseded");
+  const replay = store.acceptOperation(input);
+  assert.ok("operation" in replay);
+  assert.deepEqual(replay.operation, settled);
+  assert.deepEqual(calls, []);
+});
+
 test("run.release cancels a current revision on the retained worker thread", async (t) => {
   const { store, current, run, command, calls } = await fixture(t);
   const revision = run("revision-run", "revision", "worker");

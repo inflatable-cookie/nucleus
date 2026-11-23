@@ -232,7 +232,7 @@ replacement.
 | 3 (delivered in nucleus#1521) | `turn.take`/`turn.release`, `merge.now`, `closeout.now`. Prerequisite wait releases the turn. | `merge-occurrence`, restart-to-closeout path, turn-lever refusals (nucleus#1513 retired in favour of this batch) |
 | 4 (core delivered in nucleus#1522; command-option answers and cause-based auto-close split to follow-up leads) | Plain escalation answers apply at the current task version without binding-hash or offer-availability refusals; terminal tasks close open escalations and linked decisions in one transaction (`record.clear kind=escalation` stays the manual close). | escalation binding-hash and offer-availability refusals in `escalation-settlement`; restart-as-escalation-answer path in `owner-restart`/`restart` |
 | 5 (absorbed by [Spec 069](069-scheduler.md) batch 2) | Host availability from health readings, not one call. | host-wide timeout stamping |
-| 6 | Proof owners out of the gate path. | pre-send receipts, owned-tool proof, archive proof, per-effect settlement modules, `restart-episode`, `retry_effect` replay variants; shrink `verb-fences`, `recovery-effects`, `fence-settlement`, coordinator episode modules |
+| 6 (pre-send receipt removal in nucleus#1524) | Proof owners out of the gate path. | pre-send receipts, owned-tool proof, archive proof, per-effect settlement modules, `restart-episode`, `retry_effect` replay variants; shrink `verb-fences`, `recovery-effects`, `fence-settlement`, coordinator episode modules |
 
 Acceptance for every batch: today's cases resolve in one explicit step each —
 praxis#369 and underlay#046 (`run.start reviewer fresh replacing=…`), oxide
