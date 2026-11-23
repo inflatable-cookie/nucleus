@@ -61,6 +61,7 @@ import {
 } from "./coordinator-episode";
 import {
   coordinatorReportMatches,
+  recoveryContinuationMatches,
   taskProgressDigest,
 } from "./coordinator-report";
 import { reopenLiveNoopAfterStall } from "./live-noop";
@@ -226,8 +227,11 @@ export class CoordinatorRoute {
     // Spec 058 slice 2: an opted-in responsible task settles its mechanical faults
     // by code before any coordinator episode opens. Only a fault code cannot settle
     // reaches the coordinator below.
-    if (this.responsibleFaultHandler && (await this.responsibleFaultHandler(t)))
-      return null;
+    if (this.responsibleFaultHandler) {
+      if (await this.responsibleFaultHandler(t)) return null;
+      if (!recoveryContinuationMatches({ task: [t, this.store.task(t.id)] }))
+        return null;
+    }
     // Queue continues an awaiting reviewer checkpoint itself (Tom, 2026-10-31);
     // every review fence keeps coordinators out.
     // A reviewer past its checkpoint budget has stopped; a coordinator cannot continue it. The same
@@ -373,7 +377,11 @@ export class CoordinatorRoute {
         }
         // Origin activity, PR-head lag and the rest of the ordinary lifecycle waits
         // are rechecked by the task quantum before recovery routing reaches here.
-        if (waiting) return null;
+        if (
+          waiting ||
+          !recoveryContinuationMatches({ task: [t, this.store.task(t.id)] })
+        )
+          return null;
         t = this.resolution.update(
           t,
           { stop: null },
@@ -585,7 +593,11 @@ export class CoordinatorRoute {
         const idle = await this.resolution
           .idle(incident.agentId!)
           .catch(() => false);
-        if (this.resolution.startsNoRuns()) return null;
+        if (
+          this.resolution.startsNoRuns() ||
+          !recoveryContinuationMatches({ task: [t, this.store.task(t.id)] })
+        )
+          return null;
         if (!idle) {
           this.episode.save(t, { idleSince: null });
           return null;
@@ -668,6 +680,15 @@ export class CoordinatorRoute {
     // The run this attempt records, so a proven pre-send refusal can settle the
     // occurrence it created (the catch never guesses an identity).
     let attempted: Run | null = null;
+    const currentContinuation = (snapshot = attempted) => {
+      const current = this.store.task(t.id);
+      return recoveryContinuationMatches({
+        task: [t, current],
+        ...(snapshot ? { run: [snapshot, this.store.run(snapshot.id)] } : {}),
+      })
+        ? current
+        : null;
+    };
     try {
       // Existing closeout without a callback: preserve its run and MCP binding.
       const owed = this.store
@@ -681,7 +702,8 @@ export class CoordinatorRoute {
       if (owed && t.originError) return null;
       if (owed) {
         if (!(await this.resolution.idle(t.coordinatorAgentId))) return null;
-        if (this.resolution.startsNoRuns()) return null;
+        if (this.resolution.startsNoRuns() || !currentContinuation(owed))
+          return null;
         this.episode.save(t, {
           status: "uncertain",
           agentId: t.coordinatorAgentId,
@@ -689,12 +711,15 @@ export class CoordinatorRoute {
         this.resolution.update(t, {
           recoveryAttempts: t.resolution.recoveryAttempts + 1,
         });
+        t = this.store.task(t.id);
         await this.resolution.adapter.notify!(
           t.coordinatorAgentId,
           `ns-recovery-${incident.id}`,
           `Nucleus reporting recovery for ${t.title} (${t.id}). The plugin is waiting on your existing ${owed.role} run ${owed.id}: ${t.reason}. Inspect your last result and complete its existing authenticated callback, using its original exact-head and generation requirements. If the MCP tool is absent, use the run-specific authenticated fallback from your instructions. Do not bypass a rejected callback, change task scope, repeat gated actions, or message the originating planning thread. If evidence or operator input is missing, report blocked with the concrete need through that same callback. This is one bounded reporting reminder. ${this.resolution.adapter.reportingFallback?.(owed) ?? ""}`,
         );
-        this.episode.save(t, { status: "nudged", idleSince: null });
+        const current = currentContinuation(owed);
+        if (current)
+          this.episode.save(current, { status: "nudged", idleSince: null });
         return null;
       }
       if (dispatchBlocked(t) || reviewFenceHoldsCoordinators(t, this.store)) {
@@ -710,7 +735,8 @@ export class CoordinatorRoute {
         (!mechanicalStallDue &&
           !stalledTurnDue &&
           !(await this.resolution.lease(t))) ||
-        this.resolution.startsNoRuns()
+        this.resolution.startsNoRuns() ||
+        !currentContinuation()
       )
         return null;
       let agentId = t.coordinatorAgentId || null,
@@ -755,6 +781,7 @@ export class CoordinatorRoute {
             this.resolution.host.observe(agentId!),
           );
         } catch (error) {
+          if (!currentContinuation()) return null;
           // A deleted T3 thread has no projection. Only authoritative absence or a
           // tombstone allows replacement; an unreadable inventory remains unknown.
           if (!removable || !this.resolution.adapter.originAgent) throw error;
@@ -763,6 +790,7 @@ export class CoordinatorRoute {
           );
           if (origin && !origin.deleted && !origin.archived) throw error;
         }
+        if (!currentContinuation()) return null;
         if (state && (state.active || state.permissions)) {
           this.episode.wait(
             t,
@@ -881,7 +909,6 @@ export class CoordinatorRoute {
         released: false,
         ...(temporaryDirectory ? { temporaryDirectory } : {}),
       };
-      attempted = run;
       let superseded = false,
         waitingForCapacity = "",
         heldForDispatch = false,
@@ -889,9 +916,10 @@ export class CoordinatorRoute {
       this.store.transaction(() => {
         // The awaits above leave room for an operator control (resume, revise, resolve) to clear or
         // replace this recovery. It then owns the lane: launch nothing and escalate nothing.
-        const current = this.store.task(t.id);
-        const pending = current.resolution.recovery;
+        const current = currentContinuation();
+        const pending = current?.resolution.recovery;
         if (
+          !current ||
           pending?.id !== incident!.id ||
           pending.status !== "pending" ||
           pending.runId ||
@@ -1014,34 +1042,90 @@ export class CoordinatorRoute {
       }
       if (heldForDispatch) return null;
       if (waitingForCapacity) return null;
-      if (agentId) {
-        await this.resolution.adapter.sendRun!(t, run, token, context);
-        recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
-      } else {
-        const created = await this.resolution.adapter.createRun!(
-          t,
+      const reserved = this.store.run(run.id);
+      if (!reserved) return null;
+      const dispatchTask = t;
+      attempted = reserved;
+      t = this.store.task(t.id);
+      let launched: { id: string; workspaceId: string | null } | null = null;
+      if (agentId)
+        await this.resolution.adapter.sendRun!(
+          dispatchTask,
           run,
           token,
           context,
         );
-        agentId = created.id;
-        recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
-        this.store.putRun({ ...run, agentId });
-        if (created.workspaceId !== workspaceId)
-          throw Error("Recovery agent created in wrong workspace");
-        if (this.store.task(t.id).coordinatorGeneration === run.generation)
+      else
+        launched = await this.resolution.adapter.createRun!(
+          dispatchTask,
+          run,
+          token,
+          context,
+        );
+      recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
+      const wrongWorkspace = this.store.transaction(() => {
+        const current = currentContinuation();
+        const latest = this.store.run(run.id);
+        if (!current || !latest) {
+          if (launched) {
+            // A report may beat a fresh create acknowledgement. Register only
+            // the agent on its unreleased run, keeping the authenticated result.
+            if (
+              latest?.completion &&
+              launched.workspaceId === latest.workspaceId &&
+              recoveryContinuationMatches({
+                run: [
+                  {
+                    ...reserved,
+                    completion: latest.completion,
+                    completionReceivedAt: latest.completionReceivedAt,
+                  },
+                  latest,
+                ],
+              })
+            )
+              this.store.putRun({ ...latest, agentId: launched.id });
+            this.store.event(
+              t.id,
+              "recovery_creation_acknowledged",
+              JSON.stringify({
+                runId: run.id,
+                agentId: launched.id,
+                workspaceId: launched.workspaceId,
+              }),
+            );
+          }
+          return false;
+        }
+        const boundAgent = launched?.id ?? agentId;
+        if (launched && launched.workspaceId !== workspaceId) {
+          this.store.putRun({ ...latest, agentId: boundAgent });
+          return true;
+        }
+        this.store.putRun({
+          ...latest,
+          agentId: boundAgent,
+          status: "running",
+        });
+        if (launched)
           this.store.update(
             t.id,
-            { coordinatorAgentId: agentId },
+            { coordinatorAgentId: launched.id },
             "coordinator_assigned",
-            agentId,
+            launched.id,
           );
+        this.episode.save(current, { agentId: boundAgent });
+        this.resolution.clearHostReadTransient?.(t.id, "task");
+        return false;
+      });
+      if (wrongWorkspace) {
+        attempted = this.store.run(run.id);
+        throw Error("Recovery agent created in wrong workspace");
       }
-      this.store.putRun({ ...run, agentId, status: "running" });
-      this.episode.save(t, { agentId });
-      this.resolution.clearHostReadTransient?.(t.id, "task");
       return null;
     } catch (error) {
+      const current = currentContinuation();
+      if (!current) return null;
       // A host that has not settled its model options has not refused this
       // creation: nothing crossed the send boundary, so the pending run is
       // released and the task waits for the next pass's settled snapshot

@@ -5,6 +5,7 @@ import {
   explicitResolutionSchema,
   runSchema,
   taskControlInputSchema,
+  type Run,
   type Task,
 } from "../shared/contracts";
 import { taskStopRecord } from "../shared/task-stop";
@@ -53,7 +54,11 @@ function episodeFor(
 ): RecoveryEpisode {
   return {
     id: "recovery-occurrence",
-    key: "recovery-key",
+    key: task.resolution.stop
+      ? digest(
+          `stop:${task.resolution.stop.reason}:${task.resolution.stop.since}`,
+        )
+      : "recovery-key",
     generation: task.coordinatorGeneration,
     runId: null,
     agentId: null,
@@ -653,6 +658,176 @@ test("clearing a pending episode while admission waits prevents its coordinator 
   assert.equal(f.current().resolution.recovery?.status, "resolved");
   assert.deepEqual(f.coordinatorRuns(), []);
   assert.equal(f.events("telemetry_recovery").length, 0);
+});
+
+function recoveryRouteFixture(t: TestContext, retained: boolean) {
+  const f = fixture({ responsible: false });
+  t.after(() => f.close());
+  const caller = registerPlanner(f);
+  if (retained) {
+    const { run } = coordinatorFor(f);
+    f.store.putRun({ ...run, released: true });
+    f.idle("retained-coordinator");
+  }
+  f.store.update(f.current().id, {
+    phase: "error",
+    reason: "Resolve a coordinator fault",
+    coordinatorAgentId: retained ? "retained-coordinator" : "",
+  });
+  f.engine.resolution.lease = async () => true;
+  return { ...f, caller };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test("an admission observation rejection cannot escalate a cleared recovery", async (t) => {
+  const f = recoveryRouteFixture(t, true);
+  const entered = deferred<void>();
+  const observed = deferred<never>();
+  const observe = f.adapter.observe.bind(f.adapter);
+  f.adapter.observe = async (id) => {
+    if (id !== "retained-coordinator") return observe(id);
+    entered.resolve();
+    return observed.promise;
+  };
+  const routing = f.engine.resolution.recovery.route(f.current());
+  await Promise.race([
+    entered.promise,
+    routing.then(() => {
+      throw Error("Coordinator route never observed the host");
+    }),
+  ]);
+  let cleared: Task["resolution"]["recovery"];
+  try {
+    const episode = f.current().resolution.recovery;
+    assert.equal(episode?.status, "pending");
+    const result = await recoveryCommand(f, f.caller, {
+      action: "record.clear",
+      kind: "recovery",
+      id: episode.id,
+    });
+    assert.equal(result.explicitResolution?.status, "applied");
+    cleared = f.current().resolution.recovery;
+  } finally {
+    observed.reject(new Error("The coordinator host read failed"));
+    await routing;
+  }
+  assert.deepEqual(f.current().resolution.recovery, cleared);
+  assert.equal(f.events("recovery_escalated").length, 0);
+});
+
+for (const mode of ["retained send", "fresh create"] as const) {
+  test(`a late coordinator ${mode} cannot revive its released run or credential`, async (t) => {
+    const f = recoveryRouteFixture(t, mode === "retained send");
+    const entered = deferred<{ run: Run; token: string }>();
+    const ack = deferred<void>();
+    if (mode === "retained send")
+      Object.assign(f.adapter, {
+        async sendRun(_task: Task, run: Run, token: string) {
+          entered.resolve({ run, token });
+          await ack.promise;
+        },
+      });
+    else
+      f.adapter.createRun = async (_task, run, token) => {
+        entered.resolve({ run, token });
+        await ack.promise;
+        return { id: "late-fresh-coordinator", workspaceId: run.workspaceId };
+      };
+    const routing = f.engine.resolution.recovery.route(f.current());
+    const { run, token } = await Promise.race([
+      entered.promise,
+      routing.then(() => {
+        throw Error("Coordinator route never delivered the run");
+      }),
+    ]);
+    let released: Run | null = null;
+    let episode: Task["resolution"]["recovery"];
+    try {
+      const offer = settlementOffers(f).find(
+        (item) => item.args.run === run.id,
+      );
+      assert.ok(offer);
+      const result = await recoveryCommand(f, f.caller, {
+        ...offer.args,
+        accept: offer.warnings,
+      });
+      assert.equal(result.explicitResolution?.status, "applied");
+      assert.throws(
+        () => f.store.authenticate(run.id, token),
+        /unauthorized callback/i,
+      );
+      released = f.store.run(run.id);
+      episode = f.current().resolution.recovery;
+    } finally {
+      ack.resolve();
+      await routing;
+    }
+    assert.equal(released?.released, true);
+    assert.deepEqual(f.store.run(run.id), released);
+    assert.deepEqual(f.current().resolution.recovery, episode);
+    assert.throws(
+      () => f.store.authenticate(run.id, token),
+      /unauthorized callback/i,
+    );
+  });
+}
+
+test("a recovered coordinator outcome records its report and preserves the planner's newer stop", async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const caller = registerPlanner(f);
+  const task = f.current();
+  const original = taskStopRecord("operator_needed", "The original fault");
+  f.store.update(task.id, {
+    resolution: { ...task.resolution, stop: original },
+  });
+  const { run, completion } = reportCoordinatorBeforeHeadChange(f);
+  const before = f.current();
+  const plannerStop = taskStopRecord(
+    "escalated",
+    "Waiting for the planner's decision",
+    null,
+    future,
+    [],
+    caller,
+  );
+  f.store.update(task.id, {
+    reason: plannerStop.detail,
+    resolution: { ...before.resolution, stop: plannerStop },
+  });
+  f.store.event(
+    task.id,
+    "run_result_applying",
+    JSON.stringify([task.id, run.id, completion.eventId]),
+  );
+  f.store.recordVerbOutcome(
+    task.id,
+    "retry_effect",
+    "applied",
+    "coordinator",
+    { coordinatorRun: run.id },
+    `coordinator:${completion.eventId}`,
+  );
+  f.idle(run.agentId!);
+  await f.engine.resolution.recovery.pass(task.id);
+  const settled = f.current();
+  assert.equal(f.store.run(run.id)?.released, true);
+  assert.equal(settled.resolution.recovery?.action?.status, "applied");
+  assert.equal(
+    f.events("coordinator_action_applied")[0]?.detail,
+    completion.eventId,
+  );
+  assert.deepEqual(settled.resolution.stop, plannerStop);
+  assert.equal(settled.reason, plannerStop.detail);
 });
 
 test("a late coordinator observation cannot reopen a released recovery", async (t) => {

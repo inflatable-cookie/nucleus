@@ -600,6 +600,7 @@ const recoveryTask = (
 ): Task =>
   ({
     id: "task",
+    version: 1,
     reason,
     resolution: { recovery: null, incident: null, stop: null, ...resolution },
   }) as unknown as Task;
@@ -651,11 +652,11 @@ test("recoverySettlementPatch: an accepted report resolves its episode, and a re
   const since = "2026-11-07T10:00:00.000Z";
   const openEpisode = episode({
     key: digest(`stop:reviewer_stopped:${since}`),
-    action: { eventId: "event-1" },
+    action: binding(),
   });
   const rows: Array<{
     name: string;
-    facts: Parameters<typeof recoverySettlementPatch>[0];
+    facts: Omit<Parameters<typeof recoverySettlementPatch>[0], "admitted">;
     expect: RecoverySettlementPatch;
   }> = [
     {
@@ -848,7 +849,11 @@ test("recoverySettlementPatch: an accepted report resolves its episode, and a re
     },
   ];
   for (const row of rows)
-    assert.deepEqual(recoverySettlementPatch(row.facts), row.expect, row.name);
+    assert.deepEqual(
+      recoverySettlementPatch({ ...row.facts, admitted: row.facts.task }),
+      row.expect,
+      row.name,
+    );
 });
 
 // ---------------------------------------------------------------------------
