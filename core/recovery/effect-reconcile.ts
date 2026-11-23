@@ -268,8 +268,9 @@ export class EffectReconcile {
         : Boolean(
             terminal &&
               terminal.workspaceId === run.workspaceId &&
-              closedUpdatedAt &&
-              terminal.closedUpdatedAt === closedUpdatedAt,
+              (closedUpdatedAt
+                ? terminal.closedUpdatedAt === closedUpdatedAt
+                : terminal.closedUpdatedAt === null),
           );
       if (!matchesTerminal)
         throw new Error(
@@ -411,8 +412,9 @@ export class EffectReconcile {
         : Boolean(
             terminal &&
               terminal.workspaceId === run.workspaceId &&
-              closedUpdatedAt &&
-              terminal.closedUpdatedAt === closedUpdatedAt,
+              (closedUpdatedAt
+                ? terminal.closedUpdatedAt === closedUpdatedAt
+                : terminal.closedUpdatedAt === null),
           );
       if (!matchesTerminal)
         throw new Error(

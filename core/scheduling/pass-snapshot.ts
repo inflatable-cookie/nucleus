@@ -390,28 +390,33 @@ export class PassSnapshot {
     const hostKey = hostKeyOf(hostId);
     const agentKey = `${hostKey}\0${agentId}`;
     const entries = this.timelinePageReads.get(agentKey) ?? [];
-    const match = entries.find((entry) => {
+    const compatible = (entry: CachedTimelinePageEntry): boolean => {
       if (options.provenTerminal && !entry.settled?.provenTerminal)
         return false;
       if (options.coveredObservation && !entry.settled?.coveredObservation)
         return false;
-      if (entry.limit === limit) return true;
-      if (
-        limit !== undefined &&
-        entry.limit !== undefined &&
-        entry.limit >= limit
-      )
-        return true;
-      const page =
-        entry.settled?.state === "ok" ? entry.settled.value : undefined;
-      return Boolean(
-        page &&
-          page.hasOlder === false &&
-          !page.gap &&
-          !page.staleCursor &&
-          !page.reset,
-      );
-    });
+      return true;
+    };
+    const match =
+      entries.find((entry) => compatible(entry) && entry.limit === limit) ??
+      entries.find((entry) => {
+        if (!compatible(entry)) return false;
+        if (
+          limit !== undefined &&
+          entry.limit !== undefined &&
+          entry.limit >= limit
+        )
+          return true;
+        const page =
+          entry.settled?.state === "ok" ? entry.settled.value : undefined;
+        return Boolean(
+          page &&
+            page.hasOlder === false &&
+            !page.gap &&
+            !page.staleCursor &&
+            !page.reset,
+        );
+      });
     if (match) return match.promise;
     const exhausted = this.timelineBudgetExhausted.get(hostKey);
     if (exhausted)

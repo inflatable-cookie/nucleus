@@ -921,7 +921,6 @@ export class HostPass {
       budgetRemaining() > 0;
 
     if (
-      this.adapter.originAgent &&
       this.adapter.agentTimelinePage &&
       this.context.resolution.primePassTimelinePage &&
       canWarmMore()
@@ -960,24 +959,27 @@ export class HostPass {
           for (const candidate of orderedDelivery) {
             await yieldToLoop();
             if (!canWarmMore()) return;
-            const originCap = perCandidateCap(orderedDelivery.length);
-            if (originCap <= 0) return;
-            const originRead = await boundedRead(
-              "origin agent observation",
-              () => this.context.host.originAgent(candidate.agentId),
-              originCap,
-            ).catch(() => ({
-              state: "unknown" as const,
-              reason: "origin read failed",
-            }));
-            if (originRead.state === "unknown") {
-              if (budgetRemaining() <= 0) return;
-              continue;
+            let archived = false;
+            if (this.adapter.originAgent) {
+              const originCap = perCandidateCap(orderedDelivery.length);
+              if (originCap <= 0) return;
+              const originRead = await boundedRead(
+                "origin agent observation",
+                () => this.context.host.originAgent(candidate.agentId),
+                originCap,
+              ).catch(() => ({
+                state: "unknown" as const,
+                reason: "origin read failed",
+              }));
+              if (originRead.state === "unknown") {
+                if (budgetRemaining() <= 0) return;
+                continue;
+              }
+              const origin = originRead.value;
+              if (!origin || origin.workspaceId !== candidate.workspaceId)
+                continue;
+              archived = origin.archived === true;
             }
-            const origin = originRead.value;
-            if (!origin || origin.workspaceId !== candidate.workspaceId)
-              continue;
-            const archived = origin.archived === true;
             let closedUpdatedAt: string | null | undefined;
             if (!archived) {
               const obsCap = perCandidateCap(orderedDelivery.length);
@@ -998,13 +1000,16 @@ export class HostPass {
               if (
                 state.id !== candidate.agentId ||
                 state.workspaceId !== candidate.workspaceId ||
-                state.status !== "closed" ||
+                (state.status !== "closed" && state.archived !== true) ||
                 state.active ||
                 state.activeTurnId ||
                 state.permissions
               )
                 continue;
-              closedUpdatedAt = state.updatedAt ?? null;
+              archived = state.archived === true;
+              closedUpdatedAt = archived
+                ? undefined
+                : (state.updatedAt ?? null);
             }
             const pageCap = perCandidateCap(orderedDelivery.length);
             if (pageCap <= 0) return;

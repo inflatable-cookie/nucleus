@@ -393,13 +393,11 @@ export class OwnedTools {
         const turnUnchanged =
           freshUpdatedAt !== null
             ? coveredUpdatedAt !== null && freshUpdatedAt === coveredUpdatedAt
-            : Boolean(
-                covered &&
-                  (["idle", "error", "closed", "gone"].includes(
-                    covered.status ?? "",
-                  ) ||
-                    covered.archived === true),
-              );
+            : !covered ||
+              ["idle", "error", "closed", "gone"].includes(
+                covered.status ?? "",
+              ) ||
+              covered.archived === true;
         if (!freshInactive || !turnUnchanged) {
           return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass";
         }
