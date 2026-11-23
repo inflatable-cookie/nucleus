@@ -13,6 +13,7 @@ import { ForeignPrIdentity } from "../forge/pr-identity";
 import { ProvenPreSendRefusalError } from "../host/errors";
 import { RetainedRunRefusal } from "./task-reasons/refusals";
 import { blockingRecoveryEffectsRefusal } from "./recovery-effects";
+import { plannerEscalations } from "../questions/ladder/records";
 import { operatorReplacementPending, PR_HEAD_CHANGED_REASON } from "./task-reasons";
 import { taskWaitStateContext, taskWithCurrentWait } from "./wait-context";
 import type { Engine } from "../engine";
@@ -143,10 +144,14 @@ export function orphanPhase(store: Engine["store"], task: Task, paused: boolean)
   const route = orphanPhases[task.phase];
   if (!route || paused || task.removedAt || task.interactive) return null;
   const { resolution } = task;
-  // A resolved recovery episode is history; only a live one owns the task.
-  const liveRecovery = resolution.recovery && resolution.recovery.status !== "resolved";
-  if (resolution.ownerStop || resolution.attention || resolution.recoveryActive ||
-      liveRecovery || resolution.hostWait || (resolution.stalledTurnStop && resolution.stalledTurnStop.status !== "completed"))
+  // A recovery episode holds the task while its coordinator works or its delivery
+  // is unknown. A resolved episode is history. An escalated one has released its
+  // run and handed the fault on: it still holds a readmission, but not an
+  // ownerless initial worker result (below).
+  const episode = resolution.recovery?.status;
+  const recoveryHolds = resolution.recoveryActive || (episode !== undefined && episode !== "resolved" && episode !== "escalated");
+  if (resolution.ownerStop || resolution.attention || recoveryHolds ||
+      resolution.hostWait || (resolution.stalledTurnStop && resolution.stalledTurnStop.status !== "completed"))
     return null;
   if (isDispositionActive(task) || blockingHold(task) || holdsOf(task).dispatch || holdsOf(task).merge || task.held) return null;
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) return null;
@@ -163,16 +168,20 @@ export function orphanPhase(store: Engine["store"], task: Task, paused: boolean)
   const key = [task.phase, task.agentId, task.runId, resolution.currentRunId, runs.length].join("|");
   // A worker result that reported and was released, with nothing applying it:
   // ordinary result application owns its next step, ladder included.
-  const revision = !resolution.stop && task.phase === "changes_requested" ? unappliedWorkerResult(store, task, runs, events) : null;
+  const revision = !resolution.stop && episode !== "escalated" && task.phase === "changes_requested" ? unappliedWorkerResult(store, task, runs, events) : null;
   if (revision) return { phase: task.phase, role: "worker", move: "result", key, result: { kind: "revision", run: revision } };
   // The initial worker's result has no owner at all once its binding is gone:
   // no worker is bound to observe, and no run record carries it. A lifecycle
   // wait does not own it either; there it is the lifecycle saying it can't go
-  // on without the result (a verdict on a PR the result never recorded).
-  const initial = !resolution.stop || resolution.stop.reason === "lifecycle"
+  // on without the result (a verdict on a PR the result never recorded). Nor
+  // does a recovery episode that escalated over that same wait: no verb it or
+  // its owner has applies the result. An open planner escalation, answered or
+  // not yet known, still owns the task.
+  const ladderOpen = plannerEscalations(events).some((escalation) => !escalation.answered);
+  const initial = (!resolution.stop || resolution.stop.reason === "lifecycle") && !ladderOpen
     ? unappliedInitialWorkerResult(store, task, runs, events) : null;
   if (initial) return { phase: task.phase, role: "worker", move: "result", key, result: { kind: "initial", completion: initial } };
-  if (resolution.stop) return null;
+  if (resolution.stop || episode === "escalated") return null;
   // A bound worker is the reconciler's, live or dead (Spec 068 batch 3b).
   if (task.phase === "working" && (task.agentId || task.completion)) return null;
   const activity = shownActivity(store, task, runs, events);
