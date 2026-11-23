@@ -368,11 +368,9 @@ import { resolutionAdapter } from "./resolution-adapter";
 /** Planner authority falls back to a finished shortlist read at most this old. */
 export const PLANNER_AUTHORITY_MAX_AGE_MS = 10 * 60_000;
 
-/** One finished observation of a project's shortlist. */
-export interface ConfirmedResponsibleRead {
+/** One host's part of a finished shortlist observation: its candidates, possibly none. */
+export interface ConfirmedHostRead {
   candidates: ResponsibleCandidate[];
-  incomplete: boolean;
-  unreadHosts: string[];
   /** When the shortlist's inventory was taken. */
   inventoriedAt: number;
   /** When its observations finished. */
@@ -431,21 +429,37 @@ export class Resolution {
   /** The read budget per shortlisted thread; a read over it is unverified, never gone (tests shorten it). */
   responsibleObservationMs = RESPONSIBLE_OBSERVATION_MS;
   /**
-   * The last observation of each project's shortlist that finished, kept even
-   * when an invalidation (a candidate's own call, a notice to it) discarded it
-   * before routing could use it. Routing never reads it; planner authority may.
+   * The last finished observation of each project's shortlist, per host whose
+   * inventory answered, kept even when an invalidation (a candidate's own call,
+   * a notice to it) discarded it before routing could use it. A later read that
+   * could not reach a host (offline, unread) leaves that host's entry alone.
+   * Routing never reads it; planner authority may.
    */
-  private readonly lastConfirmed = new Map<string, ConfirmedResponsibleRead>();
+  private readonly lastConfirmed = new Map<
+    string,
+    Map<string, ConfirmedHostRead>
+  >();
 
   /** How old a finished read planner authority may fall back to (tests shorten it). */
   plannerAuthorityMaxAgeMs = PLANNER_AUTHORITY_MAX_AGE_MS;
 
-  /** The last confirmed read of a project's shortlist, while it is within the authority bound. */
-  lastConfirmedResponsible(projectKey: string): ConfirmedResponsibleRead | null {
-    const read = this.lastConfirmed.get(projectKey);
+  /** One host's last finished read for a project, while it is within the authority bound. */
+  lastConfirmedResponsible(
+    projectKey: string,
+    hostId: string,
+  ): ConfirmedHostRead | null {
+    const read = this.lastConfirmed.get(projectKey)?.get(hostId);
     return read && Date.now() - read.finishedAt <= this.plannerAuthorityMaxAgeMs
       ? read
       : null;
+  }
+
+  /** Whether this host is registered, and whether it has a live connection now. */
+  responsibleHostState(hostId: string): "online" | "offline" | "unregistered" {
+    const ambient = (this.adapter as { hostId?: string }).hostId;
+    const known = [...(this.hostPorts.ids?.() ?? []), ...(ambient ? [ambient] : [])];
+    if (!known.includes(hostId)) return "unregistered";
+    return this.hostPorts.online(hostId) ? "online" : "offline";
   }
 
   private static threadOf(candidate: ResponsibleCandidate): ResponsibleThread {
@@ -473,9 +487,16 @@ export class Resolution {
     excludedHosts?: ReadonlySet<string>,
     taskIndex?: ReturnType<ResponsibleThreadResolver["taskIndex"]>,
   ) {
+    // A pass that cannot use one of the online hosts (the sweep, after that
+    // host's own pass failed) neither queries it nor reads without it: a read
+    // that knows less would replace the shared shortlist, and its different
+    // host set would invalidate every other caller's read in flight.
+    const skipsOnlineHost = [...(excludedHosts ?? [])].some((id) =>
+      this.hostPorts.online(id),
+    );
     // An invalidation can land during inventory or observation. Retry with
     // current registry facts once, then return no verified recipient for this call.
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 2 && !skipsOnlineHost; attempt++) {
       const shortlist = await this.responsibleThreads.resolve(
         project,
         excludedHosts,
@@ -511,6 +532,7 @@ export class Resolution {
         confirmed: true,
         incomplete: Boolean(confirmed.shortlist.incomplete),
         unreadHosts: confirmed.shortlist.unreadHosts ?? [],
+        readHosts: confirmed.shortlist.readHosts ?? [],
         shortlist: confirmed.candidates,
       };
     }
@@ -523,6 +545,7 @@ export class Resolution {
       confirmed: false,
       incomplete: true,
       unreadHosts: cached?.unreadHosts ?? [],
+      readHosts: [] as string[],
       shortlist: (cached?.threads ?? []).map((thread) => ({
         ...thread,
         observation: null,
@@ -681,15 +704,20 @@ export class Resolution {
         );
         // Recorded before the currency check: an invalidation that lands while
         // the reads run makes routing discard them, but they still finished.
-        const previous = this.lastConfirmed.get(projectKey);
-        if (!previous || previous.inventoriedAt <= shortlist.observedAt)
-          this.lastConfirmed.set(projectKey, {
-            candidates,
-            incomplete: Boolean(shortlist.incomplete),
-            unreadHosts: shortlist.unreadHosts ?? [],
+        let hosts = this.lastConfirmed.get(projectKey);
+        if (!hosts) this.lastConfirmed.set(projectKey, (hosts = new Map()));
+        for (const hostId of shortlist.readHosts ?? []) {
+          const previous = hosts.get(hostId);
+          if (previous && previous.inventoriedAt > shortlist.observedAt)
+            continue;
+          hosts.set(hostId, {
+            candidates: candidates.filter(
+              (candidate) => candidate.hostId === hostId,
+            ),
             inventoriedAt: shortlist.observedAt,
             finishedAt: Date.now(),
           });
+        }
         if (cache.peek(projectKey) !== shortlist) return null;
         const closed = new Set(
           reads
