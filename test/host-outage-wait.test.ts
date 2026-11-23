@@ -9,9 +9,22 @@ import { T3CodeHost } from '../hosts/t3code/adapter';
 import { t3Fake, threadProjection } from './support/t3code-fake';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { submissionSchema, summarizeTask, type Profile, type Run } from '../shared/contracts';
+import { submissionSchema, summarizeTask, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter } from '../core/host/adapter';
 import { formatAgentId, parseAgentId } from '../shared/agent-identity';
+import { taskBudget } from '../shared/task-budget';
+import { hostOutageIntervals } from '../core/scheduling/host-outage';
+import { taskWaitStateContext, taskWithCurrentWait } from '../core/recovery/wait-context';
+
+/** The task as the board, `next` and task detail read it (Spec 069 §3). */
+const readView = (store: Store, engine: Engine, task: Task) =>
+  taskWithCurrentWait(store, task, taskWaitStateContext(store, task, null), candidate => engine.currentExternalWait(candidate));
+
+/** Move a host's open outage start back, as a long outage would be. */
+const ageHostOutage = (store: Store, hostId: string, minutes: number) => {
+  const outages = store.getMeta<Record<string, { since: string; notifiedProjects: Record<string, string> }>>('hostOutages')!;
+  store.setMeta('hostOutages', { ...outages, [hostId]: { ...outages[hostId]!, since: new Date(Date.now() - minutes * 60_000).toISOString() } });
+};
 
 /**
  * Tom, 2026-11-14 (T3 lane document v18, "Rulings (Tom, 2026-11-14)", host
@@ -111,15 +124,25 @@ test('a working task on a disconnected Nightly transport waits on its host, then
   calls.length = 0;
   await engine.wake();
 
-  const waiting = store.task(inserted.id);
+  // Spec 069 §3: the outage writes nothing on the task; every read works the wait
+  // out from the host's own outage record.
+  const stored = store.task(inserted.id);
+  assert.equal(stored.resolution.stop, null, 'no stop is stored for the outage');
+  assert.equal(stored.resolution.hostWait, null, 'no host wait is stored for the outage');
+  assert.ok(!stored.resolution.budgetClock?.since, 'no per-task clock is opened for the outage');
+  const waiting = readView(store, engine, stored);
   assert.equal(waiting.resolution.stop?.reason, 'host_unavailable', waiting.reason);
   assert.match(waiting.resolution.stop?.detail ?? '', /^Waiting on T3Code host synthetic-environment since \d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(waiting.resolution.hostWait && { hostId: waiting.resolution.hostWait.hostId }, { hostId: host.hostId },
-    'the task records its own host wait');
+    'every read shows the task\'s own host wait');
   assert.equal(waiting.phase, 'working', 'the outage does not move the phase');
   assert.equal(waiting.agentId, 'synthetic-worker', 'the task keeps its retained thread');
   assert.equal(waiting.workspaceId, workspace.id, 'the task keeps its workspace');
-  assert.ok(waiting.resolution.budgetClock?.since, 'the wall-time budget pauses for the outage');
+  // A long outage: its time stays off the task's wall-time budget.
+  ageHostOutage(store, host.hostId, 30);
+  const pausedMs = () => taskBudget(store.task(inserted.id), store.runs(inserted.id), Date.now(), store.eventsAll(inserted.id), null,
+    hostOutageIntervals(store, host.hostId)).wallMs.pausedMs;
+  assert.ok(pausedMs() >= 29 * 60_000, `the wall-time budget pauses for the outage: ${pausedMs()}`);
   assert.equal(calls.length, 0, 'nothing is sent to or read from the disconnected host');
   const offlineRuns = store.runs(inserted.id);
   assert.equal(offlineRuns.length, 1, 'the stored run row is kept and no recovery run was added');
@@ -129,7 +152,7 @@ test('a working task on a disconnected Nightly transport waits on its host, then
     assert.equal(kinds.includes(never), false, `${never} is not raised by the outage: ${kinds.join(', ')}`);
   assert.equal(store.notices(inserted.id).length, 0, 'the wait raises no escalation notice');
   // The board card reads the same wait, independently of the stop record.
-  const card = summarizeTask(waiting, false, true, {}, offlineRuns, undefined, host.hostId, store.eventsAll(inserted.id));
+  const card = summarizeTask(readView(store, engine, store.task(inserted.id)), false, true, {}, offlineRuns, undefined, host.hostId, store.eventsAll(inserted.id));
   assert.equal(card.stop, 'wait');
   assert.deepEqual(card.hostWait && { hostId: card.hostWait.hostId }, { hostId: host.hostId });
 
@@ -140,10 +163,13 @@ test('a working task on a disconnected Nightly transport waits on its host, then
   calls.length = 0;
   await engine.wake();
 
-  const resumed = store.task(inserted.id);
+  const resumed = readView(store, engine, store.task(inserted.id));
   assert.notEqual(resumed.resolution.stop?.reason, 'host_unavailable', 'the wait clears when the host is back');
   assert.equal(resumed.resolution.hostWait, null, 'the independent host wait is cleared');
-  assert.equal(resumed.resolution.budgetClock?.since, null, 'the wall clock runs again');
+  assert.ok(!resumed.resolution.budgetClock?.since, 'the wall clock runs again');
+  assert.deepEqual(hostOutageIntervals(store, host.hostId).map(outage => Boolean(outage.until)), [true],
+    'the closed outage is kept once, on the host');
+  assert.ok(pausedMs() >= 29 * 60_000, 'the closed outage stays off the budget');
   assert.equal(resumed.agentId, 'synthetic-worker', 'the task resumed on the same host and thread');
   const observedAt = calls.indexOf('observe:synthetic-worker');
   const continuationAt = calls.findIndex(call => call.startsWith('notify:ns-push-continuation'));
@@ -221,8 +247,9 @@ test('an outage past the bound tells each affected project planner once and a sh
     // A shorter outage: every task waits visibly, and no planner hears anything.
     await f.engine.wake();
     for (const task of [a1, a2, b1]) {
-      assert.equal(f.store.task(task.id).resolution.stop?.reason, 'host_unavailable');
-      assert.ok(f.store.task(task.id).resolution.hostWait, 'the task records its own host wait');
+      const read = readView(f.store, f.engine, f.store.task(task.id));
+      assert.equal(read.resolution.stop?.reason, 'host_unavailable');
+      assert.ok(read.resolution.hostWait, 'every read shows the task\'s own host wait');
     }
     assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage').length, 0, 'a shorter outage sends no planner notice');
     assert.equal(f.sends.length, 0);
@@ -297,11 +324,15 @@ test('an owner-facing stop keeps its question while the host wait still pauses t
     f.engine.resolution.waiting(f.store.task(task.id), "Interactive session: waiting for the operator in the worker's thread", 'interactive');
     await f.engine.wake();
 
-    const waiting = f.store.task(task.id);
+    const waiting = readView(f.store, f.engine, f.store.task(task.id));
+    assert.equal(f.store.task(task.id).resolution.stop?.reason, 'interactive', 'the question stays the stored stop');
     assert.equal(waiting.resolution.stop?.reason, 'interactive', 'the question stays the current stop');
     assert.deepEqual(waiting.resolution.hostWait && { hostId: waiting.resolution.hostWait.hostId }, { hostId: f.host },
-      'the host wait is recorded independently of the stop');
-    assert.ok(waiting.resolution.budgetClock?.since, 'the outage still pauses the wall clock');
+      'the host wait shows independently of the stop');
+    f.ageOutage(30);
+    const budget = taskBudget(f.store.task(task.id), [], Date.now(), [{ at: new Date(Date.now() - 3_600_000).toISOString(), kind: 'agent_created', detail: '' }],
+      null, hostOutageIntervals(f.store, f.host));
+    assert.ok(budget.wallMs.pausedMs >= 29 * 60_000, 'the outage still pauses the wall clock');
     const card = summarizeTask(waiting, false, false, {}, [], undefined, f.plannerHost, f.store.eventsAll(task.id));
     assert.equal(card.stopRecord?.reason, 'interactive', 'the card keeps the owner question');
     assert.deepEqual(card.hostWait && { hostId: card.hostWait.hostId }, { hostId: f.host }, 'and shows the host wait');

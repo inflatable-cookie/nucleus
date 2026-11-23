@@ -42,6 +42,7 @@ const CAPACITY: CapacityAuthorityValues = {
   hostOutageNoticeMinutes: 120,
   operatorDefaultHostKind: "paseo",
   threadRetentionDays: 3,
+  threadRetentionIntervalHours: 12,
 };
 /** A recorded change that moved the named limits, each as [before, after]. */
 const change = (

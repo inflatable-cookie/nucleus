@@ -62,6 +62,9 @@ convention.
   what is true.
 - One brief per independently reviewable PR, in one repository. Cross-repository
   work is several linked tasks (`queue.dependsOn`).
+- Submit approved briefs straight away, however full the board is. Slots limit
+  running, not queueing, and `queue.dependsOn` sets the order (see "Queue every
+  approved brief" in [SKILL.md](../SKILL.md)).
 - Queue numbers each task per repository (`repo#N`). Quote it to the operator,
   and start the PR title with the bare number (`304: Title`). On GitHub, `#304`
   would link an unrelated PR.

@@ -8,6 +8,7 @@ import type { Adapter } from "../core/host";
 import { randomUUID } from "node:crypto";
 import { submissionSchema } from "../shared/contracts";
 import { wireLabels } from "../shared/wire-labels";
+import { CapacityChangeJournal } from "../core/dispatch/capacity-changes";
 
 /**
  * nucleus#1257: the sweep's periodic chores are their own owner. Each pass is
@@ -210,4 +211,83 @@ test("a 12k-thread retention backlog with a removal that never returns does not 
     "one pass at a time: the next hour starts no second walk",
   );
   assert.equal(store.getMeta("threadRetentionError"), undefined);
+});
+
+// Spec 069 batch 5 (Tom, 2026-11-22: "Pruning can read archived threads - it needs to
+// know what's there, but that shouldn't be running regularly? Once or twice a day?"):
+// the archived walk runs on its own Settings interval, 12 hours by default.
+test("the archived-thread walk runs once per retention interval, 12 hours by default", async (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  let walks = 0;
+  const adapter = {
+    archivedThreads: async () => {
+      walks++;
+      return [];
+    },
+    threadArchiveState: async () => null,
+    deleteAgent: async () => {},
+  } as unknown as Adapter;
+  const maintenance = new SweepMaintenance({
+    adapter,
+    hostAvailable: () => true,
+    hostIds: () => ["paseo:fixture"],
+    migrateProjectOwnersToPlanners: async () => {},
+    removeSiblings: async () => {},
+    stopped: false,
+    store,
+    withHost: (_hostId: string, work: () => unknown) => work(),
+  } as unknown as ConstructorParameters<typeof SweepMaintenance>[0]);
+  const NOON = Date.parse("2026-11-22T12:00:00.000Z");
+  const tick = async (hours: number) => {
+    await maintenance.run(NOON + hours * HOUR);
+    await maintenance.threadRetentionRun;
+  };
+  for (let hour = 0; hour < 12; hour++) await tick(hour);
+  assert.equal(walks, 1, "one walk in the first 12 hours of hourly ticks");
+  await tick(12);
+  assert.equal(walks, 2, "the next walk is due 12 hours after the last");
+  new CapacityChangeJournal(store).apply({ threadRetentionIntervalHours: 1 });
+  await tick(13);
+  assert.equal(walks, 3, "a shorter Settings interval brings the next walk forward");
+});
+
+test("a failed archived walk is retried after an hour, not after the whole interval", async (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  let walks = 0;
+  const adapter = {
+    archivedThreads: async () => {
+      walks++;
+      if (walks === 1) throw new Error("T3Code timeout: getArchivedShellSnapshot");
+      return [];
+    },
+    threadArchiveState: async () => null,
+    deleteAgent: async () => {},
+  } as unknown as Adapter;
+  const maintenance = new SweepMaintenance({
+    adapter,
+    hostAvailable: () => true,
+    hostIds: () => ["paseo:fixture"],
+    migrateProjectOwnersToPlanners: async () => {},
+    removeSiblings: async () => {},
+    stopped: false,
+    store,
+    withHost: (_hostId: string, work: () => unknown) => work(),
+  } as unknown as ConstructorParameters<typeof SweepMaintenance>[0]);
+  const NOON = Date.parse("2026-11-22T12:00:00.000Z");
+  const tick = async (minutes: number) => {
+    await maintenance.run(NOON + minutes * 60_000);
+    await maintenance.threadRetentionRun;
+  };
+  await tick(0);
+  assert.equal(walks, 1, "the first walk fails");
+  await tick(30);
+  assert.equal(walks, 1, "not retried at once");
+  await tick(60);
+  assert.equal(walks, 2, "retried an hour later");
+  await tick(120);
+  assert.equal(walks, 2, "a good walk waits the full interval again");
 });

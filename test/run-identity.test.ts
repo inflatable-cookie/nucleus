@@ -180,7 +180,7 @@ test('createAgent binds the durable run identity into the live reporting ticket'
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a release revokes the credential, a live re-bind restores it, and replaced is not released', async () => {
+test('release revokes general authority and retains only an outstanding reviewer verdict ticket', async () => {
   const f = fixture(); try {
     const task = f.add(), run = f.putRun(task, 'reviewer'), token = 'rebind-token';
     const tickets = join(f.dir, 'tickets'); mkdirSync(tickets, { recursive: true });
@@ -207,7 +207,7 @@ test('a release revokes the credential, a live re-bind restores it, and replaced
     assert.equal(f.store.credentialRunForToken(token), run.id);
     // Replaced is not released (planner ruling, 2026-11-09): a replaced reviewer
     // holds its claim — its credential stays live while the claim holds.
-    const replaced = { ...run, id: randomUUID(), role: 'reviewer' as const, status: 'superseded' as const, released: false };
+    const replaced = { ...run, id: randomUUID(), role: 'reviewer' as const, agentId: 'reviewer', status: 'superseded' as const, released: false };
     f.store.putRun(replaced);
     const replacedTickets = [`${replaced.id}.json`, `mcp-${replaced.id}.json`];
     for (const name of replacedTickets)
@@ -215,15 +215,21 @@ test('a release revokes the credential, a live re-bind restores it, and replaced
     f.store.setCredential(replaced.id, token);
     assert.doesNotThrow(() => f.store.authenticate(replaced.id, token));
     assert.equal(existsSync(join(tickets, `mcp-${replaced.id}.json`)), true);
-    // The claim ends when the review settles: the replaced run is released, and
-    // the release revokes unconditionally.
+    // Release narrows a reportless reviewer's credential to its own verdict.
     f.store.putRun({ ...replaced, released: true, active: false });
     assert.throws(() => f.store.authenticate(replaced.id, token), /Unauthorized callback/);
-    assert.equal(existsSync(join(tickets, `mcp-${replaced.id}.json`)), false);
+    assert.equal(f.store.authenticateCompletion(replaced.id, token, {
+      taskId: task.id, runId: replaced.id, head: replaced.head, status: 'ready_to_merge',
+    }), 'verdict_only');
+    assert.equal(existsSync(join(tickets, `mcp-${replaced.id}.json`)), true);
     // An explicit revocation point — cancellation, removal, absent-run replacement —
     // deletes the row, and nothing authenticates or maps it afterwards.
-    f.store.db.prepare('DELETE FROM credentials WHERE run=?').run(replaced.id);
+    f.store.transaction(() => {
+      f.store.putRun({ ...replaced, released: true, active: false });
+      f.store.deleteCredential(replaced.id);
+    });
     assert.throws(() => f.store.authenticate(replaced.id, token), /Unauthorized callback/);
+    assert.equal(existsSync(join(tickets, `mcp-${replaced.id}.json`)), false);
   } finally { await f.close(); }
 });
 

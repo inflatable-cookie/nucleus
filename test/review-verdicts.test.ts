@@ -10,7 +10,7 @@ import { Engine } from '../core/engine';
 import { Reports, reportSchema } from '../core/intake/report';
 import { startCallbacks } from '../service/callbacks/callback';
 import {
-  MAX_REVIEW_VERDICT_BYTES, REVISION_BUDGET, completionSchema, reviewRecordSchema, reviewVerdictListSchema, runSchema, submissionSchema,
+  MAX_REVIEW_VERDICT_BYTES, OPERATOR_BOARD_CALLER, REVISION_BUDGET, completionSchema, reviewRecordSchema, reviewVerdictListSchema, runSchema, submissionSchema,
   type Completion, type ReviewVerdict, type Run, type Task,
 } from '../shared/contracts';
 import { assertReviewResponsibility, latestReviewVerdicts, reviewRecordFor } from '../core/review/review-verdicts';
@@ -23,6 +23,8 @@ import { type ResolutionAdapter } from '../core/resolution';
 import { isAcceptedReview } from '../core/recovery/task-reasons';
 import { requiredMergeReview } from '../core/forge/index';
 import { observedParticipantTimeline } from './support/tool-timeline';
+import { T3UnobservedThreadError } from '../hosts/t3code/reads';
+import { resolveExplicitly } from '../core/verbs/explicit-resolution';
 
 const base = 'b'.repeat(40), head = 'a'.repeat(40);
 
@@ -308,7 +310,7 @@ test('the formal review body carries the stored verdicts to GitHub', async () =>
 // Engine flow: storage, revision prompt, re-review prompt
 // ---------------------------------------------------------------------------
 
-function engineFixture() {
+function engineFixture(graceMs = 0) {
   const dir = mkdtempSync(join(tmpdir(), 'ns-review-verdicts-engine-'));
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('paused', false);
@@ -349,7 +351,7 @@ function engineFixture() {
     mergeGate: async () => ({ head: currentHead, base: 'main', wait: '' }), merge: async () => {},
     merged: async () => ({ merged: false, commit: null, head: currentHead, base: 'main' }), syncMain: async () => base, verifyCloseout: async () => {}, notify: async () => {},
   });
-  const engine = new Engine(store, adapter as unknown as Adapter & ResolutionAdapter, 0);
+  const engine = new Engine(store, adapter as unknown as Adapter & ResolutionAdapter, graceMs);
   engine.profiles = [worker, reviewer, coordinator];
   const current = () => store.task(task.id);
   const run = () => store.run(current().resolution.currentRunId!)!;
@@ -365,6 +367,162 @@ function engineFixture() {
   const advance = () => engine.resolution.advance(current());
   return { store, engine, task, current, run, complete, advance, prompts, published, idle, tokens, close: async () => { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
+
+async function releaseFixture(graceMs = 60_000) {
+  const f = engineFixture(graceMs);
+  // Drive observation and result application explicitly after the real callback.
+  f.engine.wakeTask = async () => {};
+  await f.advance();
+  const run = f.run();
+  const token = f.tokens.get(run.id)!;
+  const reports = new Reports(f.engine);
+  const input = (status: "changes_required" | "ready_to_merge" = "changes_required") =>
+    reportSchema.parse({
+      eventId: randomUUID(), taskId: f.task.id, runId: run.id, status, head,
+      summary: "Reviewed the exact head",
+      reviewText: "Stored review findings",
+      ...(status === "changes_required" ? { reviewResponsibility: "author" } : {}),
+    });
+  const release = () => resolveExplicitly(f.engine, {
+    action: "run.release", taskId: f.task.id, version: f.current().version,
+    caller: OPERATOR_BOARD_CALLER, reason: "Release the reviewer",
+    run: run.id, accept: ["live_turn", "unreported_result"],
+  }, () => "");
+  const observe = () => f.engine.resolution.observe(undefined, f.task.id);
+  const hostObserve = f.engine.adapter.observe;
+  const unobserve = () => {
+    f.engine.adapter.observe = (id) => {
+      if (id === run.agentId) throw new T3UnobservedThreadError(id);
+      return hostObserve(id);
+    };
+  };
+  return { ...f, reviewer: run, token, reports, input, release, observe, unobserve, hostObserve };
+}
+
+for (const [status, phase] of [
+  ["changes_required", "changes_requested"],
+  ["ready_to_merge", "verifying"],
+] as const) {
+  test(`an unobserved reviewer releases and applies its ${status} verdict`, async () => {
+    const f = await releaseFixture();
+    try {
+      const input = f.input(status);
+      assert.equal((await f.reports.report(input, f.token)).accepted, true);
+      f.unobserve();
+      await f.observe();
+      assert.equal(f.store.run(f.reviewer.id)?.released, true);
+      await f.advance();
+      assert.equal(f.current().phase, phase);
+      assert.equal(f.current().resolution.review?.reviewText, input.reviewText);
+      assert.equal(f.published.length, 1);
+    } finally { await f.close(); }
+  });
+}
+
+test("run.release preserves the pending result of a reported reviewer", async () => {
+  const f = await releaseFixture();
+  try {
+    const input = f.input();
+    await f.reports.report(input, f.token);
+    assert.equal((await f.release()).explicitResolution?.status, "applied");
+    assert.equal(f.current().resolution.currentRunId, f.reviewer.id);
+    assert.equal(f.store.run(f.reviewer.id)?.released, true);
+    f.unobserve();
+    await f.advance();
+    assert.equal(f.current().phase, "changes_requested");
+    assert.equal(f.current().resolution.review?.eventId, input.eventId);
+    assert.equal(f.current().resolution.review?.reviewText, input.reviewText);
+  } finally { await f.close(); }
+});
+
+test("a released reviewer's ticket can deliver only its own first exact-head verdict", async () => {
+  const f = await releaseFixture();
+  try {
+    const input = f.input();
+    assert.equal((await f.release()).explicitResolution?.status, "applied");
+    const replacement = { ...f.reviewer, id: randomUUID() };
+    f.store.putRun(replacement);
+    f.store.setCredential(replacement.id, "replacement");
+    f.store.update(f.task.id, {
+      resolution: { ...f.current().resolution, currentRunId: replacement.id },
+    });
+    assert.throws(() => f.store.authenticate(f.reviewer.id, f.token), /Unauthorized callback/);
+    await assert.rejects(f.reports.report({
+      ...input, status: "blocked", reviewResponsibility: "environment",
+    }, f.token), /Unauthorized callback/);
+    await assert.rejects(f.reports.report({ ...input, runId: replacement.id }, f.token), /Unauthorized callback/);
+    await assert.rejects(f.reports.report({ ...input, head: base }, f.token), /original head/);
+    f.store.update(f.task.id, { prHead: base });
+    await assert.rejects(f.reports.report(input, f.token), /no longer applies at the current head/);
+    assert.equal(f.store.run(f.reviewer.id)?.completion, null);
+    assert.equal(f.store.run(replacement.id)?.released, false);
+    f.store.update(f.task.id, { prHead: head });
+    const accepted = await f.reports.report(input, f.token);
+    assert.equal(accepted.accepted, true);
+    assert.deepEqual(await f.reports.report(input, f.token), accepted);
+    assert.equal(f.current().resolution.currentRunId, f.reviewer.id);
+    assert.equal(f.store.run(f.reviewer.id)?.released, true);
+    assert.equal(f.store.run(replacement.id)?.released, true);
+    assert.equal(f.store.run(replacement.id)?.completion, null);
+    await f.advance();
+    assert.equal(f.current().phase, "changes_requested");
+    assert.equal(f.current().resolution.review?.runId, f.reviewer.id);
+    assert.equal(f.published.length, 1);
+  } finally { await f.close(); }
+});
+
+test("completion waits out its live turn and never releases a newer live turn", async () => {
+  const f = await releaseFixture();
+  try {
+    const run = f.reviewer;
+    const older = new Date(Date.now() - 120_000).toISOString();
+    let turnStartedAt = older;
+    let activeTurnId = "reporting-turn";
+    f.engine.adapter.observe = (id) => id === run.agentId
+      ? Promise.resolve({
+          id, workspaceId: run.workspaceId, status: "running", active: true,
+          permissions: false, error: "", activeTurnId, turnStartedAt,
+        })
+      : f.hostObserve(id);
+    await f.reports.report(f.input(), f.token);
+    const reported = f.store.run(run.id)!;
+    await f.observe();
+    assert.equal(f.store.run(run.id)?.released, false);
+    f.store.putRun({ ...f.store.run(run.id)!, completionReceivedAt: older });
+    activeTurnId = "newer-turn";
+    turnStartedAt = reported.completionReceivedAt!;
+    await f.observe();
+    assert.equal(f.store.run(run.id)?.released, false);
+    f.engine.adapter.observe = f.hostObserve;
+    f.idle(run.agentId!, run.workspaceId);
+    await f.observe();
+    assert.equal(f.store.run(run.id)?.released, true);
+  } finally { await f.close(); }
+});
+
+test("a completed run releases after the bound with the same turn still visible or a read failure", async () => {
+  for (const observable of [true, false]) {
+    const f = await releaseFixture();
+    try {
+      const run = f.reviewer;
+      const older = new Date(Date.now() - 120_000).toISOString();
+      f.engine.adapter.observe = async (id) => {
+        if (id !== run.agentId) return f.hostObserve(id);
+        if (!observable) throw new Error("Temporary read failure");
+        return {
+          id, workspaceId: run.workspaceId, status: "running", active: true,
+          permissions: false, error: "", activeTurnId: "same-turn", turnStartedAt: older,
+        };
+      };
+      await f.reports.report(f.input(), f.token);
+      await f.observe();
+      assert.equal(f.store.run(run.id)?.released, false);
+      f.store.putRun({ ...f.store.run(run.id)!, completionReceivedAt: older });
+      await f.observe();
+      assert.equal(f.store.run(run.id)?.released, true);
+    } finally { await f.close(); }
+  }
+});
 
 test('blocked and errored reviewer assessments survive release and reload without approval, publication or an author round', async () => {
   for (const status of ['blocked', 'error'] as const) {

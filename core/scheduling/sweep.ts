@@ -15,11 +15,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
 import { HostPass } from "./host-pass";
 import { SweepMaintenance } from "./sweep-maintenance";
-import {
-  HostTransportFault,
-  hostFaultHost,
-  recordHostFailure,
-} from "../host/adapter-routing";
+import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
@@ -52,12 +48,12 @@ export type SweepContext = Pick<
   | "flushPrerequisiteReleases"
   | "host"
   | "hostAvailable"
+  | "hostHealth"
   | "hostIds"
   | "hostOutages"
   | "hostWait"
   | "inventoryHostMatches"
   | "lifecycle"
-  | "markAuditHostUnavailable"
   | "maxSweepWindows"
   | "migrateProjectOwnersToPlanners"
   | "noteStepFailure"
@@ -67,7 +63,6 @@ export type SweepContext = Pick<
   | "recoverExhaustedWorkers"
   | "removeSiblings"
   | "replaceExhaustedReviewers"
-  | "resetAuditHostAvailability"
   | "resumePausedStops"
   | "retiredObservationKey"
   | "retiredObservationPlan"
@@ -247,7 +242,7 @@ export class Sweep {
     lastPassAt: null as string | null,
   };
   constructor(readonly engine: SweepContext) {}
-  /** A failed host step is an outage for that host, never an engine fault. */
+  /** A failed host step fails only itself: a HostHealth sample, never an engine fault. */
   private async fleetStep(
     name: string,
     work: () => Promise<unknown>,
@@ -272,7 +267,7 @@ export class Sweep {
         error instanceof HostTransportFault
           ? error
           : new HostTransportFault(hostId, error);
-      recordHostFailure(this.engine.adapter, hostId, fault);
+      this.engine.hostHealth.callFailed(hostId, fault);
       this.engine.store.setMeta(
         "hostPassError",
         `${hostId}/${name}: ${fault.message}`.slice(0, 2000),
@@ -426,8 +421,9 @@ export class Sweep {
     );
     for (const task of this.engine.store.dueHoldTasks())
       byId.set(task.id, task);
-    for (const task of this.engine.store.tasks())
-      if (task.resolution.ownerStop && !task.removedAt) byId.set(task.id, task);
+    // Spec 069 §4: the owner-stop set is indexed on write, never a scan of history.
+    for (const task of this.engine.store.ownerStopTasks())
+      byId.set(task.id, task);
     const order = [...byId.values()].reverse();
     this.engine.sweepStats.tasks = order.length;
     return order;
@@ -439,7 +435,6 @@ export class Sweep {
   ): Promise<{ fault: Error | null; covered: boolean; visited: Set<string> }> {
     const passSnapshot = this.engine.resolution.beginPassSnapshot?.();
     try {
-      this.engine.resetAuditHostAvailability();
       this.engine.store.setMeta("engineError", "");
       // One diagnostic slot per pass for the per-host steps a fleet sweep must
       // not stall on: `HostPass` records a step that throws there.
@@ -475,27 +470,30 @@ export class Sweep {
       let inventory: ReadonlyMap<string, AgentObservation> | null = null;
       const finishedCatchUp = new Map<string, Task>();
       const unavailableHosts = new Set<string>();
+      // Hosts whose health says they are away (down, or not yet read since the
+      // service started): nothing in this pass walks their tasks again.
+      const awayHosts = new Set<string>();
       const openDecisionsBefore = new Set(
         this.engine.store
           .listDecisions({ status: "open" })
           .map((row) => `${row.id}:${row.version}`),
       );
-      const allTasks = this.engine.store.tasks();
+      // Spec 069 §4: the hosts any retained task names come from the host index,
+      // so the pass never copies every retained row to find them.
       const hosts = new Set([
         ...this.engine.hostIds(),
-        ...allTasks.flatMap((task) => (task.hostId ? [task.hostId] : [])),
+        ...this.engine.store.taskHostIds(),
       ]);
       for (const host of hosts) {
         let passed: Awaited<ReturnType<HostPass["run"]>> | null;
         try {
           passed = await this.engine.withHost(host, async () => {
-            // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
-            // record of when this host went away, kept whether or not it has tasks.
-            this.engine.hostOutages.observe(
-              host,
-              this.engine.hostAvailable(host),
-            );
-            if (!this.engine.hostAvailable(host)) return null;
+            // Spec 069 §2: the host's health is its connection's. Reading it opens or
+            // closes the durable outage record on a `down` transition only; a host
+            // that is down or not yet read since the service started is not read.
+            const health = this.engine.hostHealth.read(host);
+            if (health.state === "down" || health.state === "unknown")
+              return null;
             return this.hostPass.run(host);
           });
         } catch (error) {
@@ -507,43 +505,33 @@ export class Sweep {
             continue;
           }
           if (!hostFaultHost(error)) throw error;
-          // A connected registry claim can still fail at the transport boundary.
-          // Keep this host's tasks on the existing outage wait for this pass, and
-          // continue the fleet sweep without turning the host loss into engineError.
-          recordHostFailure(this.engine.adapter, host, error);
-          unavailableHosts.add(host);
-          continue;
-        }
-        // Nothing is read from a host that is away: the wait itself is the stop.
-        if (!passed) {
-          recordHostFailure(this.engine.adapter, host, undefined);
-          unavailableHosts.add(host);
-          continue;
-        }
-        // Spec 066 R1/R6 (C2): the pass's reading of one host, shared with that
-        // host's task visits. A step that failed at the transport boundary means the
-        // host did not answer, even though the registry still claims the connection:
-        // the reading is the failure, not the claim. So this host's tasks keep their
-        // host-scoped wait for the pass, and no other host's visit sees it.
-        if (!passed.transportAnswered) {
-          unavailableHosts.add(host);
-          recordHostFailure(
-            this.engine.adapter,
-            host,
-            new Error(`Host ${host} did not answer its pass`),
+          // A failed host read fails only this host's pass (Spec 069 §2): it counts
+          // as one failed pass and the fleet sweep continues without an engineError.
+          this.engine.hostHealth.passFailed(host, error);
+          this.engine.store.setMeta(
+            "hostPassError",
+            `${host}/hostPass: ${error instanceof Error ? error.message : String(error)}`.slice(
+              0,
+              2000,
+            ),
           );
+          unavailableHosts.add(host);
+          continue;
+        }
+        // Nothing is read from a host that is away: its health is the whole wait.
+        if (!passed) {
+          unavailableHosts.add(host);
+          awayHosts.add(host);
+          continue;
+        }
+        // A pass whose own step hung or failed at the transport counts towards
+        // `degraded` (three in a row); a clean pass resets it. Neither marks the
+        // host down. This is the only feed of HostHealth's state from host calls.
+        if (passed.callFault) {
+          unavailableHosts.add(host);
+          this.engine.hostHealth.passFailed(host, passed.callFault);
         } else {
-          // Never-started queue heads are absent from the lifecycle window, but
-          // their host wait must settle before they can reserve a slot again.
-          for (const task of allTasks) {
-            if (
-              task.hostId === host &&
-              task.phase === "queued" &&
-              (task.resolution.hostWait ||
-                task.resolution.stop?.reason === "host_unavailable")
-            )
-              this.engine.hostWait(this.engine.store.task(task.id));
-          }
+          this.engine.hostHealth.answered(host);
         }
         if (passed.inventory) inventory = passed.inventory;
         for (const [id, task] of passed.finishedCatchUp)
@@ -589,12 +577,14 @@ export class Sweep {
             .activeCapacityTasks()
             .flatMap((task) => (task.hostId ? [task.hostId] : [])),
         );
+        // A host this pass already found away is not walked again (Spec 069 §4).
         for (const host of archiveHosts)
-          await this.fleetStep("archiveRetiredErroredAgents", () =>
-            this.engine.withHost(host, () =>
-              archiveRetiredErroredAgents(this.engine, host),
-            ),
-          );
+          if (!awayHosts.has(host))
+            await this.fleetStep("archiveRetiredErroredAgents", () =>
+              this.engine.withHost(host, () =>
+                archiveRetiredErroredAgents(this.engine, host),
+              ),
+            );
       }
       // Round 4: owner verbs recorded while paused or held apply once that clears.
       await this.fleetStep("applyDeferredOwnerVerbs", () =>
@@ -686,14 +676,48 @@ export class Sweep {
       // racing it, while unrelated keys keep awaiting remote effects
       // concurrently. The audit yields to the event loop between bounded
       // chunks so acceptance and reads stay responsive.
+      // Spec 069 §4: finished history is caught up from this pass's slow-cursor
+      // page (and its fresh finishes), in its own step. The host pass's cursor
+      // bounds and rotates it, so it never rides the live window: a page that
+      // changes every pass would otherwise reset the window's cursor and starve
+      // either side. One window's worth of quanta runs at a time.
+      const catchUp = [...finishedCatchUp.values()];
+      for (let at = 0; at < catchUp.length; at += SWEEP_WINDOW) {
+        const pending: Promise<void>[] = [];
+        for (const task of catchUp.slice(at, at + SWEEP_WINDOW)) {
+          await yieldToLoop();
+          if (this.engine.stopped)
+            return { fault: null, covered: false, visited };
+          pending.push(
+            this.boundTaskQuantum(
+              this.engine.scheduleLane(
+                `task:${task.id}`,
+                LANE_PRIORITY_TASK,
+                async () => {
+                  const current = this.engine.store.task(task.id);
+                  if (
+                    !["done", "cancelled"].includes(current.phase) ||
+                    !current.hostId ||
+                    !this.engine.taskHostAvailable(current)
+                  )
+                    return;
+                  await this.engine.withHost(current.hostId, () =>
+                    catchUpFinishedTaskThreads(
+                      this.engine.store,
+                      this.engine.adapter,
+                      current.id,
+                    ),
+                  );
+                },
+              ),
+              task.id,
+            ),
+          );
+        }
+        await Promise.all(pending);
+      }
       const reconciled = new Set<string>();
-      const order = [
-        ...new Map(
-          [...this.engine.sweepOrder(), ...finishedCatchUp.values()].map(
-            (task) => [task.id, task],
-          ),
-        ).values(),
-      ];
+      const order = this.engine.sweepOrder();
       this.engine.sweepStats.tasks = order.length;
       const cursorAt = this.engine.sweepCursor
         ? order.findIndex((task) => task.id === this.engine.sweepCursor)
@@ -722,57 +746,27 @@ export class Sweep {
             return { fault: null, covered: false, visited };
           visited.add(candidate.id);
           const task = this.engine.store.task(candidate.id);
-          if (["done", "cancelled"].includes(task.phase)) {
-            if (finishedCatchUp.has(task.id)) {
-              pending.push(
-                this.boundTaskQuantum(
-                  this.engine.scheduleLane(
-                    `task:${task.id}`,
-                    LANE_PRIORITY_TASK,
-                    async () => {
-                      const current = this.engine.store.task(task.id);
-                      if (
-                        !current.hostId ||
-                        !this.engine.taskHostAvailable(current)
-                      )
-                        return;
-                      await this.engine.withHost(current.hostId, () =>
-                        catchUpFinishedTaskThreads(
-                          this.engine.store,
-                          this.engine.adapter,
-                          current.id,
-                        ),
-                      );
-                    },
-                  ),
-                  task.id,
-                ),
-              );
-            }
-            continue;
-          }
+          // A task that finished since the order was read is the catch-up's.
+          if (["done", "cancelled"].includes(task.phase)) continue;
           // Spec 058 budgets (nucleus#1153): the wall clock pauses while the host, a
           // workspace or a dispatch hold keeps the task from progress — including a
-          // task whose quantum this sweep cannot start at all. The host wait is
-          // recorded first, so the pause is dated from the outage's own start.
+          // task whose quantum this sweep cannot start at all. A host outage is not
+          // one of them: the budget read discounts the host's own outage record.
           //
-          // The visit settles the task's host-scoped wait from this host's own
-          // reading (Spec 066 R1/R3/R6, C2): the one settlement (`clearHostWait`)
-          // clears an outage wait and a transport deferral together, and only when
-          // the host answered. A host that did not answer, or another host's
-          // failure, leaves this wait exactly as it is.
+          // The visit reads the task's host health (Spec 069 §2, §3). A host that
+          // is down or not yet read writes nothing for the task; once the host is
+          // connected the one settlement (`clearHostWait`) clears a transport
+          // deferral or a wait an older version stored.
           let hostWait: string | null;
           try {
             hostWait = this.engine.hostWait(task);
           } catch (error) {
-            // The host stopped answering between its pass and this visit. That is
-            // this task's own host going away, not the fleet's: hold this task and
-            // keep visiting the rest of the order (Spec 066 R6).
-            if (!hostFaultHost(error)) throw error;
-            if (task.hostId) {
-              this.engine.markAuditHostUnavailable(task.hostId);
-              this.engine.hostOutages.observe(task.hostId, false);
-            }
+            // A host read failed during this visit. It fails only this task's visit
+            // (Spec 069 §2): the host's health takes the sample and the rest of the
+            // order is still visited.
+            const failed = hostFaultHost(error);
+            if (!failed) throw error;
+            this.engine.hostHealth.callFailed(failed, error);
             reconciled.add(task.id);
             continue;
           }
@@ -854,14 +848,13 @@ export class Sweep {
           .listDecisions({ status: "open" })
           .some((row) => !openDecisionsBefore.has(`${row.id}:${row.version}`));
         if (!opened) return;
-        const freshTasks = this.engine.store.tasks();
         for (const host of hosts) {
           if (unavailableHosts.has(host)) continue;
           try {
             await this.engine.withHost(host, async () => {
               if (!this.engine.hostAvailable(host)) return;
               if (!this.engine.adapter.reconcileThreadTitles) return;
-              await this.hostPass.reconcileInboxTitles(host, freshTasks);
+              await this.hostPass.reconcileInboxTitles(host);
             });
           } catch {
             /* a host fault during follow-up title refresh retries on the next pass */
@@ -874,6 +867,9 @@ export class Sweep {
         for (const id of reconciled) this.engine.enqueueTitle(id);
         return { fault: null, covered, visited };
       }
+      // Spec 069 §1: the admitter's once-per-pass safety net, which also admits
+      // heads whose host came back this pass. Heads that cannot start cost an
+      // in-memory check; visits stay within the free slots plus a margin.
       await this.fleetStep("dispatchQueued", () =>
         this.engine.dispatchQueued(),
       );

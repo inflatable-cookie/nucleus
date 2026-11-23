@@ -1,3 +1,4 @@
+import { activityReadContext } from "./task-activity-observation";
 import type {
   Task,
   TaskSummary,
@@ -140,6 +141,7 @@ export function createUiSnapshotFactsCache(
   let liveSignature: string | null = null;
   let lastStoreRevision = store.boardRevision();
   let projectionRevision = lastStoreRevision;
+  let refreshActivityAt = Infinity;
   const read = (): UiSnapshotFacts => {
     const storeRevision = store.boardRevision();
     const currentLive = liveHostRuns();
@@ -162,6 +164,7 @@ export function createUiSnapshotFactsCache(
       boardHostId,
     ]);
     if (
+      nowMs >= refreshActivityAt ||
       storeRevision !== lastStoreRevision ||
       (liveSignature !== null && liveSignature !== signature)
     )
@@ -205,6 +208,13 @@ export function createUiSnapshotFactsCache(
       ),
     );
     const heavyByTask = taskHeavyRuns(tasks, activeHeavyRuns(currentLive, nowMs));
+    // Observation stamps can move without a board write and quiet turns age
+    // across the activity boundary. Reuse the projection between reads.
+    refreshActivityAt = tasks.some(task => task.runId && task.agentId &&
+      (task.participantActivity || (task.agentActive && task.lastActivityAt)))
+      || runs.some(run => !run.released && run.agentId &&
+        (run.participantActivity || (run.active && run.lastActivityAt)))
+      ? nowMs + 30_000 : Infinity;
     cached = {
       revision,
       tasks,
@@ -225,6 +235,8 @@ export function createUiSnapshotFactsCache(
             store.canonicalRepository(task.repoPath, task.repository),
           ]),
         ),
+        activityReadContext(store),
+        nowMs,
       ).map((summary) => {
         const heavyRun = heavyByTask.get(summary.id);
         return heavyRun ? { ...summary, heavyRun } : summary;

@@ -1,3 +1,6 @@
+import { endsStopOnReason, stopClearedPatch } from "../../shared/task-stop";
+import { observeRunningTool, recordActivityTool } from "../telemetry/task-activity-observation";
+import type { ParticipantActivity } from "../../shared/schema/task-activity";
 import type {
   TimelineEntry,
   TimelineCursor,
@@ -219,7 +222,7 @@ export class Stalls {
   /** Per-agent coalescing for timeline peeks; the cached verdict holds for the window so repeated observations agree. */
   private shellPeeks = new Map<
     string,
-    { at: number; notice: string | null; live: boolean }
+    { at: number; notice: string | null; live: boolean; turnId: string | null; tool?: ParticipantActivity["tool"] }
   >();
   /** How long one peek's verdict is reused; tests shorten it to drive successive peeks. */
   peekTtlMs = 60_000;
@@ -260,6 +263,8 @@ export class Stalls {
     const runId = run?.id ?? current.runId;
     if (!runId) return null;
     const peek = await this.shellNotice(current, role, state);
+    if (peek.tool !== undefined && peek.turnId === (state.activeTurnId ?? null))
+      recordActivityTool(this.store, t.id, runId, state.id, peek.turnId, peek.tool);
     const shellNotice = peek.notice;
     // No activity timestamp is no evidence of staleness; never judge without it.
     if (!state.updatedAt || !Number.isFinite(Date.parse(state.updatedAt)))
@@ -478,7 +483,8 @@ export class Stalls {
     t: Task,
     role: string,
     state: AgentObservation,
-  ): Promise<{ notice: string | null; live: boolean }> {
+  ): Promise<{ notice: string | null; live: boolean; turnId: string | null; tool?: ParticipantActivity["tool"] }> {
+    const turnId = state.activeTurnId ?? null;
     const turnStartedAt = state.turnStartedAt
       ? Date.parse(state.turnStartedAt)
       : NaN;
@@ -492,12 +498,13 @@ export class Stalls {
         Date.now() - turnStartedAt < SHELL_NOTICE_MS) &&
       !stale
     )
-      return { notice: null, live: false };
+      return { notice: null, live: false, turnId };
     const agentId = state.id;
     const lastPeek = this.shellPeeks.get(agentId);
     if (lastPeek && Date.now() - lastPeek.at < this.peekTtlMs) return lastPeek;
     let notice: string | null = null;
     let live = false;
+    let tool: ParticipantActivity["tool"] | undefined;
     try {
       let timeline: TimelineEntry[] | null | undefined;
       if (this.resolution.adapter.agentTimeline) {
@@ -507,13 +514,14 @@ export class Stalls {
         timeline = read.state === "ok" ? read.value : null;
       }
       const shell = runningShellCommand(timeline ?? null);
+      if (timeline) tool = observeRunningTool(timeline, turnId);
       notice = this.shellNoticeText(role, shell);
       live = Boolean(shell || (timeline && runningOwnedTool(timeline)));
     } catch {
       notice = null;
     }
     if (this.shellPeeks.size > 512) this.shellPeeks.clear();
-    const result = { at: Date.now(), notice, live };
+    const result = { at: Date.now(), notice, live, turnId, tool };
     this.shellPeeks.set(agentId, result);
     return result;
   }
@@ -578,7 +586,10 @@ export class Stalls {
         if (current.reason !== decision.reason)
           this.store.update(
             current.id,
-            { reason: decision.reason },
+            {
+              reason: decision.reason,
+              ...stopClearedPatch(this.store.task(current.id), decision.reason),
+            },
             "stalled_turn_stop_waiting",
             decision.reason,
           );
@@ -617,6 +628,10 @@ export class Stalls {
           {
             resolution: {
               ...latest.resolution,
+              ...endsStopOnReason(
+                latest,
+                "Authenticated completion retained after the stopped turn became inactive",
+              ),
               stalledTurnStop: {
                 ...latestStop,
                 status: "completed",

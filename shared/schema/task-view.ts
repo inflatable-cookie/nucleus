@@ -1,3 +1,4 @@
+import { taskActivitySchema } from "./task-activity";
 import { z } from "zod";
 import {
   taskPhaseSchema,
@@ -43,6 +44,7 @@ export const taskSummarySchema = z
     questionAgentIds: z.array(z.string()).optional(),
     interactive: z.literal(true).optional(),
     phase: taskPhaseSchema,
+    activity: taskActivitySchema.optional(),
     reason: z.string(),
     held: z.boolean(),
     holdKind: holdKindSchema.optional(),

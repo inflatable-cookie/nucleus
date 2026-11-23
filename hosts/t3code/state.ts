@@ -254,6 +254,13 @@ const schema = z.object({
         workspaceId: z.string(),
         labels: z.record(z.string(), z.string()),
         parentThreadId: z.string(),
+        /**
+         * When T3's live shell first listed this follow-up child. A follow-up is
+         * recorded when its message is sent, before T3 creates (or declines to
+         * create) the child, so an unseen record is a candidate, never a thread
+         * to read (Spec 069 batch 5).
+         */
+        seenAt: z.string().optional(),
       }),
     )
     .optional(),

@@ -40,8 +40,8 @@ import {
   gitDeliveryUnknown,
   ReviewPublicationTransientError,
 } from "../forge/forge-health";
-import { git, WorkerSourceRefusal } from "../git/index";
-import { readGitCheckout } from "../git/git-identity";
+import { WorkerSourceRefusal } from "../git/index";
+import { reattachStoredTaskCheckout } from "../git/checkout-reattach";
 import { hookHoldReason } from "../hooks/hooks";
 import {
   consecutiveNonDeliveries,
@@ -96,6 +96,7 @@ import { settlementHeld } from "../closeout/queue-drain";
 import { reviewInProgress } from "../review/review-continuation";
 import { settleProofExecution, type ProofOutcome } from "./proof-settlement";
 import { settleReportReady } from "./report-ready";
+import { openHostOutage } from "../scheduling/host-outage";
 
 /** Publication may add an ID after the authenticated callback was received. */
 function authenticatedReviewResult(
@@ -286,7 +287,13 @@ export function publishedReviewDecision(
   });
   const later = runs
     .slice(runs.indexOf(run) + 1)
-    .find((item) => item.role === "reviewer" || item.role === "revision");
+    .find((item) =>
+      item.role === "revision" ||
+      (item.role === "reviewer" &&
+        // Re-adoption binds the result as current and settles the reportless
+        // replacement. Its history cannot block publication reconciliation.
+        !(currentRunId === run.id && item.released && !item.completion && item.status === "superseded")),
+    );
   if (later)
     return blocked(
       `The ${later.role} run ${later.id} is newer than this verdict. The retained participants own the current source`,
@@ -402,10 +409,13 @@ export function publishedReviewDecision(
     );
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
     return blocked("The prerequisite wait owner must release the task");
-  if (task.resolution.hostWait)
-    return blocked(
-      `The host observer must settle the wait for ${task.resolution.hostWait.hostId}`,
-    );
+  // Spec 069 §3: the host wait is read from the host's open outage record; a
+  // wait an older service stored on the row still holds until it is settled.
+  const waitingHost =
+    task.resolution.hostWait?.hostId ??
+    (task.hostId && openHostOutage(store, task.hostId) ? task.hostId : null);
+  if (waitingHost)
+    return blocked(`The host observer must settle the wait for ${waitingHost}`);
   const ladder = reviewLadderWait(store, task);
   if (ladder.refusal) return blocked(ladder.refusal);
 
@@ -612,8 +622,9 @@ export class ResultApplication {
         "The forge observed a different publication ID. The review publication owner must reconcile it",
       );
 
-    // Retained ordinary rounds can leave the worktree detached. The prior
-    // receipt and the existing source and owned-tool proofs still govern restoration.
+    // Retained ordinary rounds read their exact head in the task checkout, which
+    // the round itself never detaches (Spec 068 §4). The prior receipt and the
+    // existing source and owned-tool proofs still govern custody.
     if (run.ordinaryDetached) {
       const prior = runs.find((item) => item.id === run.priorRunId);
       if (
@@ -673,12 +684,15 @@ export class ResultApplication {
         );
     }
     if (run.ordinaryDetached) {
-      const branch = readGitCheckout(t.directory!).branch;
-      await ordinaryReviewSource(t, run.head, branch === "");
+      // One reattach step returns a checkout an earlier round left detached to
+      // its task branch before this pass proves the source and commits the
+      // verdict: it moves no commit either way, and the proofs below require the
+      // attached branch.
+      await reattachStoredTaskCheckout(this.store, t.id, run.id);
+      await ordinaryReviewSource(t, run.head);
       const custody = recheck();
       if ("refusal" in custody) return blocked(custody.refusal);
-      if (!branch) await git(t.directory!, "checkout", "--quiet", t.branch);
-      assertOrdinaryReviewIdentity(t, run.head, false);
+      assertOrdinaryReviewIdentity(this.store.task(t.id), run.head);
     }
     return this.commitReviewerVerdict(t, run, completion, true, () => {
       const boundary = recheck();
@@ -897,10 +911,12 @@ export class ResultApplication {
     let c = run.completion;
     if (run.ordinaryDetached) {
       await this.resolution.ordinaryRoundCustody(t, run, true);
-      const branch = readGitCheckout(t.directory!).branch;
-      await ordinaryReviewSource(t, run.head, branch === "");
-      if (!branch) await git(t.directory!, "checkout", "--quiet", t.branch);
-      await ordinaryReviewSource(t, run.head, false);
+      // The reattach step returns a checkout an earlier round left detached to
+      // its task branch before this pass proves the source it advances: it moves
+      // no commit, and the ordinary source proof requires the attached branch.
+      await reattachStoredTaskCheckout(this.store, t.id, run.id);
+      await ordinaryReviewSource(t, run.head);
+      assertOrdinaryReviewIdentity(this.store.task(t.id), run.head);
     }
     // A pass that read this reviewer as current before another pass settled it
     // has nothing left to do, and must not clear whichever run is current now.
@@ -1193,7 +1209,7 @@ export class ResultApplication {
       return;
     }
     if (
-      !(await this.resolution.lease(t)) ||
+      !(await this.resolution.lease(t, undefined, run.id)) ||
       settlementHeld(this.store, this.resolution.stopped())
     )
       return;
@@ -1571,6 +1587,12 @@ export class ResultApplication {
       this.store.transaction(() => this.closeProofOnlyQualification(t, run, c));
       return this.verdictApplied(t.id, run.id);
     }
+    // The verdict applies on the task branch at the head the round read. The one
+    // reattach step returns a checkout an earlier round left detached before this
+    // body publishes, verifies or commits it — for this run's own round, and
+    // moving no commit — so a restored or replayed verdict never leaves the
+    // checkout detached (Spec 068 §4).
+    await reattachStoredTaskCheckout(this.store, t.id, run.id);
     const reviewer = this.resolution.reviewerSetting(t);
     // Spec 033: a formal review id is its own evidence, never a comment id.
     const publicationId = (completion: Completion) =>
@@ -1673,10 +1695,8 @@ export class ResultApplication {
       if (this.verdictApplied(t.id, run.id)) return changed;
       const published = admitPublished?.();
       if (published?.kind === "blocked") return published;
-      // Replaced is not released (planner ruling, 2026-11-09): this verdict
-      // settles the review, so replaced runs that never delivered are released
-      // and their credentials revoked unconditionally — after release nothing
-      // authenticates.
+      // This verdict settles the review. Displaced runs can release, and their
+      // verdict-only credentials can no longer win at this head.
       for (const replaced of this.store.runs(t.id)) {
         if (
           replaced.id !== run.id &&

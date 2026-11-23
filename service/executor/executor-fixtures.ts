@@ -139,8 +139,8 @@ export async function handleDebug(runtime: QueueRuntime, op: unknown, state: Fix
     if (request.action === "set-host-offline") { state.hostOffline = Boolean(request.value); return { ok: true }; }
     if (request.action === "set-slow-db") { state.slowDbMs = Number(request.value) || 0; return { ok: true }; }
     if (request.action === "ordinary-review-source") {
-      const value = request.value as { task: Task; head: string; detached?: boolean };
-      await ordinaryReviewSource(value.task, value.head, Boolean(value.detached));
+      const value = request.value as { task: Task; head: string };
+      await ordinaryReviewSource(value.task, value.head);
       return { ok: true };
     }
     // "clone" makes every publication fail at postMessage (a non-cloneable member), not before it.

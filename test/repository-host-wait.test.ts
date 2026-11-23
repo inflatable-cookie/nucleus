@@ -4,10 +4,27 @@ import { Engine } from "../core/engine";
 import { Store } from "../core/store/store";
 import { poolSchema } from "../shared/contracts";
 import { fakeAdapter, profile, submission } from "./support/fakes";
+import {
+  taskWaitStateContext,
+  taskWithCurrentWait,
+} from "../core/recovery/wait-context";
 
 // nucleus#1416: an explicit repository hostKind is a requirement for first worker
 // dispatch. Stored tasks, stored repository settings and the real catalog shape
 // (one host per kind, each with its own read catalog) run through dispatchQueued.
+// Spec 069 §1: the wait is never stored on the queued row; the board and `next`
+// read it, so these assertions read it the way they do.
+
+/** The queued wait as the board reads it: the current admission and host facts. */
+function readReason(store: Store, engine: Engine, id: string): string {
+  const task = store.task(id);
+  const context = taskWaitStateContext(store, task, null, (candidate) =>
+    engine.resolution.slotAdmissionReason(candidate),
+  );
+  return taskWithCurrentWait(store, task, context, (candidate) =>
+    engine.queuedExternalWait(candidate),
+  ).reason;
+}
 
 const PASEO = "paseo-primary";
 const T3 = "t3code:env";
@@ -114,7 +131,7 @@ test("an offline repository host kind keeps an unbound task queued with a named 
     await engine.dispatchQueued();
     const held = store.task(waiting.id);
     assert.equal(held.phase, "queued");
-    assert.equal(held.reason, "Waiting for repository host T3Code");
+    assert.equal(readReason(store, engine, held.id), "Waiting for repository host T3Code");
     assert.equal(held.workspaceId, null);
     assert.equal(held.profile, null);
     assert.equal(held.workspaceIntent, false);
@@ -160,7 +177,7 @@ test("the same task dispatches on its repository host through ordinary schedulin
     const task = insertTask(store, engine, REPO_T3.path);
     await engine.dispatchQueued();
     assert.equal(
-      store.task(task.id).reason,
+      readReason(store, engine, task.id),
       "Waiting for repository host T3Code",
     );
     online.add(T3);
@@ -199,7 +216,7 @@ test("an unread catalog on the repository host waits, even when another host has
     await engine.dispatchQueued();
     const waiting = store.task(task.id);
     assert.equal(waiting.phase, "queued");
-    assert.equal(waiting.reason, "Waiting for repository host T3Code");
+    assert.equal(readReason(store, engine, waiting.id), "Waiting for repository host T3Code");
     assert.equal(created.length, 0, "no fallback host creates a workspace");
   } finally {
     await engine.stop();
@@ -266,7 +283,7 @@ test("a repository host dropping between selection and commit holds the dispatch
     await engine.dispatchQueued();
     const held = store.task(task.id);
     assert.equal(held.phase, "queued");
-    assert.equal(held.reason, "Waiting for repository host T3Code");
+    assert.equal(readReason(store, engine, held.id), "Waiting for repository host T3Code");
     assert.equal(held.profile, null);
     assert.equal(held.workspaceId, null);
     assert.equal(
@@ -300,7 +317,7 @@ test("changing the repository setting while queued releases the wait on the next
     const task = insertTask(store, engine, REPO_T3.path);
     await engine.dispatchQueued();
     assert.equal(
-      store.task(task.id).reason,
+      readReason(store, engine, task.id),
       "Waiting for repository host T3Code",
     );
     store.patchRepository(REPO_T3, { hostKind: null });
@@ -334,7 +351,7 @@ test("a repository host kind with no registered host is a visible configuration 
     const waiting = store.task(task.id);
     assert.equal(waiting.phase, "queued");
     assert.equal(
-      waiting.reason,
+      readReason(store, engine, waiting.id),
       "Repository host BB is not registered; waiting for its configuration",
     );
     assert.equal(created.length, 0);
@@ -382,7 +399,7 @@ test("an offline operator default host kind holds an unbound task, while a repos
     await engine.dispatchQueued();
     const held = store.task(waiting.id);
     assert.equal(held.phase, "queued");
-    assert.equal(held.reason, "Waiting for operator default host T3Code");
+    assert.equal(readReason(store, engine, held.id), "Waiting for operator default host T3Code");
     assert.equal(held.workspaceId, null);
     assert.equal(held.profile, null);
     assert.equal(held.workspaceIntent, false);
@@ -412,7 +429,7 @@ test("an operator default host kind with no registered host is a visible configu
     const waiting = store.task(task.id);
     assert.equal(waiting.phase, "queued");
     assert.equal(
-      waiting.reason,
+      readReason(store, engine, waiting.id),
       "Operator default host T3Code is not registered; waiting for its configuration",
     );
     assert.equal(created.length, 0);
@@ -432,7 +449,7 @@ test("the same task dispatches on its operator default host through ordinary sch
     online.delete(T3);
     const task = insertTask(store, engine, REPO_PLAIN.path);
     await engine.dispatchQueued();
-    assert.equal(store.task(task.id).reason, "Waiting for operator default host T3Code");
+    assert.equal(readReason(store, engine, task.id), "Waiting for operator default host T3Code");
     online.add(T3);
     await engine.dispatchQueued();
     const dispatched = store.task(task.id);
@@ -462,7 +479,7 @@ test("a default that changes to an unready host during admission holds the commi
     await engine.dispatchQueued();
     const held = store.task(task.id);
     assert.equal(held.phase, "queued");
-    assert.equal(held.reason, "Waiting for operator default host T3Code");
+    assert.equal(readReason(store, engine, held.id), "Waiting for operator default host T3Code");
     assert.equal(held.workspaceId, null);
     assert.equal(
       store.events(task.id).filter((event) => event.kind === "dispatch_intent").length,
@@ -502,7 +519,7 @@ test("an explicit repository T3Code kind waits even when the operator default na
     online.delete(T3);
     const task = insertTask(store, engine, REPO_T3.path);
     await engine.dispatchQueued();
-    assert.equal(store.task(task.id).reason, "Waiting for repository host T3Code");
+    assert.equal(readReason(store, engine, task.id), "Waiting for repository host T3Code");
     assert.equal(created.length, 0);
   } finally {
     await engine.stop();

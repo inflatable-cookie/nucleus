@@ -124,6 +124,32 @@ export async function queueUntrackedFiles(directory: string, ...args: string[]):
     && !(path === "node_modules" && isQueueRetainedNodeModulesLink(directory))).join("\n");
 }
 /**
+ * Return a detached checkout to one branch it is already at, and prove the
+ * result. The commit never moves: this checks the branch out and reads the
+ * checkout back, and the caller decides the conditions under which that is
+ * safe (`currentWorkerBranch` below, and
+ * `core/git/checkout-reattach.ts` for the task-checkout step).
+ */
+export async function returnCheckoutToBranch(
+  directory: string,
+  branch: string,
+  head: string,
+): Promise<{ branch: string; head: string }> {
+  await git(directory, "switch", "--quiet", branch);
+  const current = await git(directory, "branch", "--show-current");
+  const now = await git(directory, "rev-parse", "HEAD");
+  if (current !== branch || now !== head)
+    throw new Error(
+      `Checkout did not return to ${branch} at ${head}: observed ${now} on ${current || "(detached)"}`,
+    );
+  if (await queueCheckoutStatus(directory, "status", "--porcelain"))
+    throw new Error(
+      "Detached checkout changed while reattaching its queue-owned branch",
+    );
+  return { branch: current, head: now };
+}
+
+/**
  * The worker checkout's current branch, reattaching it first when ordinary review
  * left it detached at the reviewed head. Reattach only when that clean head is
  * still exactly the locally recorded and remotely published queue branch tip;
@@ -138,11 +164,7 @@ export async function currentWorkerBranch(task: Pick<Task, "branch" | "baseBranc
     const remote = await git(directory, "ls-remote", "origin", `refs/heads/${task.branch}`).catch(() => "");
     const published = remote.split(/\s+/)[0] ?? "";
     if (head === local && head === published) {
-      await git(directory, "switch", "--quiet", task.branch);
-      branch = await git(directory, "branch", "--show-current");
-      if (branch !== task.branch || await git(directory, "rev-parse", "HEAD") !== head
-        || await queueCheckoutStatus(directory, "status", "--porcelain"))
-        throw new Error("Detached worker checkout changed while reattaching its queue-owned branch");
+      branch = (await returnCheckoutToBranch(directory, task.branch, head)).branch;
     }
   }
   return branch;

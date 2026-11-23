@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import { isDeepStrictEqual } from "node:util";
 import type { ReviewDeliveryAuthorization, Run } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
@@ -129,7 +130,7 @@ export class EffectReconcile {
       )
         this.store.update(
           current.id,
-          { reason },
+          { reason, ...stopClearedPatch(this.store.task(current.id), reason) },
           `review_delivery_${status}`,
           `${deliveryId}: ${evidence.slice(0, 1200)}`,
         );

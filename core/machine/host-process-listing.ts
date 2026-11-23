@@ -1,3 +1,4 @@
+import { rememberParticipantProcessTable } from "./participant-process-observation";
 import type { HostProcessFact } from "../host/types";
 export type { HostProcessFact } from "../host/types";
 /**
@@ -39,7 +40,7 @@ const execFileAsync = promisify(execFile);
 
 /** What a host process-table read proved: the table, or why there is none. */
 export type HostProcessListRead =
-  | { state: "listed"; processes: HostProcessFact[] }
+  | { state: "listed"; processes: HostProcessFact[]; enumeratedPids?: ReadonlySet<number> }
   | { state: "unknown"; reason: string };
 
 /**
@@ -195,7 +196,7 @@ async function linuxProcesses(
     );
     for (const fact of facts) if (fact) listed.push(fact);
   }
-  return { state: "listed", processes: listed };
+  return { state: "listed", processes: listed, enumeratedPids: new Set(entries.filter(entry => /^\d+$/.test(entry)).map(Number)) };
 }
 
 async function darwinProcesses(
@@ -270,6 +271,19 @@ async function darwinProcesses(
  * running, so no caller may read it that way.
  */
 export async function readHostUidProcesses(
+  options: { deadlineMs?: number } = {},
+): Promise<HostProcessListRead> {
+  const at = Date.now();
+  const read = await readUidProcesses(options);
+  rememberParticipantProcessTable(
+    read.state === "listed" ? read.processes : null,
+    at,
+    read.state === "listed" ? read.enumeratedPids : undefined,
+  );
+  return read;
+}
+
+async function readUidProcesses(
   options: { deadlineMs?: number } = {},
 ): Promise<HostProcessListRead> {
   const uid = uidOf();

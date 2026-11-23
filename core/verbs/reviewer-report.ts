@@ -20,8 +20,13 @@ import {
 import { runsUnchangedSince } from "../recovery/observation-advance";
 import { taskPrNumber } from "../forge";
 import { ordinaryReviewSource } from "../review/ordinary-review";
+import { reattachStoredTaskCheckout } from "../git/checkout-reattach";
 
-/** Observe the canonical PR without reattaching an ordinary detached review checkout. */
+/**
+ * Observe the canonical PR on the attached task branch at the run's exact head.
+ * A checkout an earlier round left detached is returned by the one reattach step
+ * first, for this run's own round.
+ */
 export async function verifyReviewerPr(
   engine: Engine,
   task: Task,
@@ -32,9 +37,12 @@ export async function verifyReviewerPr(
   if (!run.ordinaryDetached) return engine.adapter.verifyPr(task, number);
   if (!engine.adapter.verifyPrIdentity)
     throw Error("Ordinary review canonical PR observation unavailable");
-  await ordinaryReviewSource(task, run.head, true);
+  // This run settles the checkout it reads: a checkout an earlier round already
+  // left detached returns to its task branch first, moving no commit (Spec 068 §4).
+  await reattachStoredTaskCheckout(engine.store, run.taskId, run.id);
+  await ordinaryReviewSource(task, run.head);
   const pr = await engine.adapter.verifyPrIdentity(task, number);
-  await ordinaryReviewSource(task, run.head, true);
+  await ordinaryReviewSource(task, run.head);
   if (pr.url !== task.prUrl || (requireRunHead && pr.head !== run.head))
     throw Error("Open PR, task and reviewer heads do not match");
   return pr;

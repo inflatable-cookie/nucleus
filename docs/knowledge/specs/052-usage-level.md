@@ -216,7 +216,11 @@ takes effect on that role's next run, and routing details show the reason.
   reviewer runs one bracket below the worker's actual profile (its start
   bracket before a worker ran): Heavyweight → Worker, Worker → Mechanical,
   Frontier → Heavyweight, and a Mechanical worker gets a Mechanical reviewer.
-  At High, Extra high and Maximum it runs on the worker's bracket. No reviewer
+  At High, Extra high and Maximum it runs on the worker's bracket. Tom,
+  2026-11-22: High moves to the one-bracket-below rule ("I want to use high to
+  make use of Sol as worker, but still have lower bracket profiles do the
+  review"), so the reviewer is on the worker's bracket only at Extra high and
+  Maximum. Until nucleus#1559 lands, the code still uses the earlier rule. No reviewer
   floor parks review: when no independent profile carries the reviewer's
   bracket, the nearest permitted bracket above serves, and otherwise the most
   capable permitted profile. A critical task prefers a reviewer at least as

@@ -1,6 +1,6 @@
 import { Decisions } from "../planning/decisions";
 import type { AssignmentRole } from "../../shared/schema/state";
-import { StoreAuth } from "./store-auth";
+import { StoreAuth, VERDICT_ONLY_CREDENTIAL, type CompletionIdentity } from "./store-auth";
 import { StoreConfig } from "./store-config";
 import { digest, now, StoreCore } from "./store-core";
 import { StoreHostRuns } from "./store-host-runs";
@@ -766,8 +766,15 @@ export class Store {
     limit: number,
     repoPath?: string,
     startedOnly = false,
+    admissible?: (task: Task) => boolean,
   ): Task[] {
-    return this.tasksStore.queue.readyQueueHeads(limit, repoPath, startedOnly);
+    return this.tasksStore.queue.readyQueueHeads(
+      limit,
+      repoPath,
+      startedOnly,
+      false,
+      admissible,
+    );
   }
   boardQueueCounts(): Array<{ repoPath: string; count: number }> {
     return this.tasksStore.board.boardQueueCounts();
@@ -960,7 +967,11 @@ export class Store {
         this.tasksStore.projectionUndo = null;
         for (const [runId, taskId] of this.pendingRunReportingCleanup) {
           try {
-            purgeReleasedRunTicket(dirname(this.path), taskId, runId);
+            const credential = this.db
+              .prepare("SELECT revoked FROM credentials WHERE run=?")
+              .get(runId);
+            if (credential?.revoked !== VERDICT_ONLY_CREDENTIAL)
+              purgeReleasedRunTicket(dirname(this.path), taskId, runId);
             this.pendingRunReportingCleanup.delete(runId);
           } catch {
             /* The credential row is already revoked; a later transaction retries file cleanup. */
@@ -1158,6 +1169,33 @@ export class Store {
   }
   liveTasks(): Task[] {
     return this.tasksStore.liveTasks();
+  }
+  /**
+   * Spec 069 §4: the pass-facing sets, maintained on write. A sweep or host pass
+   * reads these instead of `tasks()`, so its cost follows live work, not history.
+   */
+  taskHostIds(): string[] {
+    return this.tasksStore.hosts.hostIds();
+  }
+  /** One host's live (nonterminal, retained) tasks, newest first. */
+  liveHostTasks(hostId: string): Task[] {
+    return this.tasksStore.hosts.liveTasks(hostId);
+  }
+  /** Retained tasks carrying an owner stop, newest first. */
+  ownerStopTasks(): Task[] {
+    return this.tasksStore.hosts.ownerStopTasks();
+  }
+  /** One page of a host's finished tasks in identity order, for the slow catch-up cursor. */
+  finishedHostTaskPage(
+    hostId: string,
+    after: string | null,
+    limit: number,
+  ): { tasks: Task[]; next: string | null } {
+    return this.tasksStore.hosts.finishedPage(hostId, after, limit);
+  }
+  /** Take up to `limit` of a host's tasks that finished since the last take. */
+  takeRecentlyFinishedHostTasks(hostId: string, limit: number): Task[] {
+    return this.tasksStore.hosts.takeRecentlyFinished(hostId, limit);
   }
   laneTaskPage(
     lane: string,
@@ -1505,6 +1543,9 @@ export class Store {
   }
   authenticate(run: string, token: string) {
     return this.authStore.authenticate(run, token);
+  }
+  authenticateCompletion(run: string, token: string, input: CompletionIdentity) {
+    return this.authStore.authenticateCompletion(run, token, input);
   }
   credentialRunForToken(token: string): string | null {
     return this.authStore.credentialRunForToken(token);
@@ -2810,7 +2851,15 @@ export class Store {
     return this.threadEffects.retireScratch(taskId, agentId);
   }
   /** Finished tasks on this host whose threads still owe an archive or removal; `store-thread-effects.ts` owns the keys. */
-  finishedTasksOwingThreadCleanup(hostId: string, removal: boolean): Task[] {
-    return this.threadEffects.finishedTasksOwingCleanup(hostId, removal);
+  finishedTasksOwingThreadCleanup(
+    hostId: string,
+    removal: boolean,
+    taskIds?: readonly string[],
+  ): Task[] {
+    return this.threadEffects.finishedTasksOwingCleanup(
+      hostId,
+      removal,
+      taskIds,
+    );
   }
 }

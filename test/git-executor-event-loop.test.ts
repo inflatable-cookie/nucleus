@@ -66,7 +66,7 @@ exec "${realGit}" "$@"
     baseBranch: 'main',
     repoPath: repo,
   };
-  const slow = service.debug({ target: 'fixture', action: 'ordinary-review-source', value: { task, head, detached: false } });
+  const slow = service.debug({ target: 'fixture', action: 'ordinary-review-source', value: { task, head } });
   const started = Date.now();
   const read = await service.debug({ target: 'store', method: 'task', args: [inserted.id] }) as { id: string };
   const readMs = Date.now() - started;

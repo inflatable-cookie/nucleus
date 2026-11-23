@@ -546,7 +546,7 @@ test("nothing waiting says so once, with no empty tabs", async () => {
   assert.equal(ui.query(/^Show (leads|papercuts) for /), undefined, "no tabs");
 });
 
-test("the header names the horizon, open state and other plans; Close lane and Edit lane keep their actions", async () => {
+test("the header names the horizon, open state and other plans; Mark done asks first, Reopen returns it, and Edit lane keeps its action", async () => {
   const projects = [
     {
       key: "alpha",
@@ -623,10 +623,35 @@ test("the header names the horizon, open state and other plans; Close lane and E
   assert.ok(ui.get("Alpha project: Now"));
   ui.press("Show the Beta project plan, Later");
   assert.doesNotMatch(ui.text(), /step \d+ of|Shared by/);
-  ui.press("Close lane Alpha lane");
+  ui.press("Mark done Alpha lane");
+  assert.ok(
+    ui.get("Mark Alpha lane done"),
+    "marking done asks first",
+  );
+  assert.match(
+    ui.text(),
+    /It moves to Finished lanes on every plan that lists it\. You can reopen it\./,
+  );
+  assert.match(ui.text(), /Alpha project \(Now\).*Beta project \(Later\)/);
+  assert.match(ui.text(), /1 live task/);
+  assert.deepEqual(
+    status,
+    ["show:beta"],
+    "the confirmation writes nothing until it is confirmed",
+  );
+  ui.press("Cancel marking Alpha lane done");
+  assert.equal(
+    ui.query("Mark Alpha lane done"),
+    undefined,
+    "cancel closes the confirmation",
+  );
+  assert.deepEqual(status, ["show:beta"], "cancel writes nothing");
+  ui.press("Mark done Alpha lane");
+  ui.press("Mark Alpha lane done");
   assert.deepEqual(status, ["show:beta", "done"]);
   ui.press("Edit the Alpha lane document");
   assert.equal(status.at(-1), "draft", "Edit lane starts a document draft");
+  const closedStatus: string[] = [];
   const closed = mount(
     h(LaneScreen, {
       lane: { ...lane, status: "done" } as LaneView,
@@ -645,16 +670,25 @@ test("the header names the horizon, open state and other plans; Close lane and E
       leads: { items: [] },
       onOpenTask: () => {},
       onOpenLead: () => {},
-      onSetStatus: () => {},
+      onSetStatus: (next: string) => closedStatus.push(next),
       c,
     }),
   );
   assert.ok(closed.get("Lane closed"));
   assert.equal(
-    closed.query("Close lane Alpha lane"),
+    closed.query("Mark done Alpha lane"),
     undefined,
-    "a closed lane has nothing to close",
+    "a closed lane has nothing to mark done",
   );
+  assert.doesNotMatch(closed.text(), /Close lane/, "no Close lane control remains");
+  closed.press("Reopen lane Alpha lane help");
+  assert.match(
+    closed.text(),
+    /Returns the lane to its saved plan position/,
+    "the Reopen explanation lives in a help popover, not inline text",
+  );
+  closed.press("Reopen lane Alpha lane");
+  assert.deepEqual(closedStatus, ["active"], "reopen needs no confirmation");
   assert.match(textOf(closed.get("Finish line")), /Not set/);
 });
 

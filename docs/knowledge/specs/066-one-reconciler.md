@@ -19,7 +19,12 @@ the current code. Tom approved the design on 2026-11-18; implementation follows 
 1. **R1 · Collect facts.** Use the existing audit cursor and exclusive task lane.
    For each visited task, read its current phase, substantive version, bindings,
    holds, accepted results, pending effects and applicable policy. Share bounded
-   host, forge, process and capacity observations across the pass. Mark an
+   host, forge, process and capacity observations across the pass (host
+   availability itself is the host's health, read from its connection; see
+   [Spec 069](069-scheduler.md) §2). A pass reads its tasks from indexed sets —
+   live tasks per host, the active set and owner stops — never by copying every
+   retained row, and finished history is caught up a page at a time on its own
+   durable cursor (Spec 069 §4). Mark an
    observation as unknown when it is unavailable, ambiguous, incomplete or
    belongs to a different identity. Recheck every applicable wait on each visit.
    A retry deadline can govern an expensive probe, while the pass still checks
@@ -46,6 +51,13 @@ the current code. Tom approved the design on 2026-11-18; implementation follows 
    participant and any unresolved effect that could still conflict with the
    step. Keep a durable wake obligation until ordinary lifecycle admission
    sees it, so clearing the last blocker survives a crash or a lost wake.
+   Since [Spec 069](069-scheduler.md) §1 admission stores no wait on a
+   never-started queued task: its queued wait is derived when read, and a host
+   wait an older service left on it is settled at admission. Since Spec 069 §2 no
+   host-failure path writes one, and since Spec 069 §3 no outage writes a wait on
+   a started task either: its host wait and budget pause are read from the host's
+   own outage record, and a stop is settled only by its own writer (the task
+   funnel no longer clears a stop when a write changes only `reason`).
 4. **R4 · Decide actions once.** Sweep, `next` and owner verb execution use the
    same decision for the same facts and caller. Offer a verb only when it has
    an admissible step after the listed owner inputs. Put a refusal, missing
@@ -61,16 +73,22 @@ the current code. Tom approved the design on 2026-11-18; implementation follows 
    Continue a retained, already authorized step once. If an owner must
    authorize another revision, show `move to=work` with its inputs. Release
    alone creates no revision, policy waiver, approval, budget or route.
+   For queued work that admission is the Spec 069 §1 event-driven admitter:
+   each release signals it, and it takes the startable heads in fair order.
 6. **R6 · Read host capabilities as facts.** Distinguish a reachable host,
    an unavailable host, a definite pre-send refusal and an unsupported
-   capability. A healthy host can still lack the required observation or
+   capability. Whether a host is reachable is no longer read from how a pass
+   went: [Spec 069](069-scheduler.md) §2 supersedes "the reading is the failure,
+   not the claim". A failed or hung call fails only its own step; a connected
+   host becomes `degraded` only after three host passes in a row fail, and only
+   the connection makes it `down`. A healthy host can still lack the required observation or
    admission capability. Use the equivalent supported path if it establishes
    the same fact. Otherwise surface the missing capability and which owner can
    address it. Keep role, task, workspace and callback binding intact across
    rolls. Host-local failures cannot stop another host's pass.
 
-For transport failures, a successful host read supersedes a transport wait
-for that host. It answers an individual operation only if it observes the
+For transport failures, a connected host (Spec 069 §2) supersedes a transport
+wait for that host. It answers an individual operation only if it observes the
 operation's target or proves its dependence on an obsolete binding. A late
 restart might have armed a new turn on a still-current reviewer. Keep that
 conflict blocking while the target could still receive it. A verified terminal
@@ -272,7 +290,7 @@ their known refusals. Generic stop suggestions can differ from those offers.
 | ID · Holding record | Current writer and clear condition | Current `next` and refusal | Basis and Spec 066 rule |
 | --- | --- | --- | --- |
 | **I09 · Typed stop and older wait text.** `resolution.stop` reason, holder, detail, `since`, suggested verbs; stored `Task.reason` and `gitTransient:<id>` deadline. | `TaskStops.recordStop/waiting/transportDeferred/environmentDeferred`, `TaskWakes.deferGitTransient` and `EngineStop.note` write it. The producing lifecycle path rewrites it on progress. A transport deferral writes the host-scoped wait (`host_unavailable`, settled by the pass that observes the host answer) beside its own `transport_deferred` cause; no text prefix decides it. `taskStopClassification/recordedStopIsWait` in [shared/task-stop.ts](../../../shared/task-stop.ts) infer some old waits from text, including read-only forge failures. A Git backoff ends on a due observation or reaches bounded attention. Settled-wait prose (`TASK_PROGRESSING_REASON`) is never a stop: the quantum fallback writes no occurrence from it, `waiting(…, "classify")` keeps the current stop, and `TaskStops.settleSettledWaitStop` settles a stored `operator_needed` occurrence with that prose only when nothing owns it (no unreleased run, unresolved incident or recovery, hold, prerequisite or merge intent, or open planner escalation); the prose and the phase are never the evidence (nucleus#1437). | Waits normally have no suggested verb. `next` can add available verbs on an aged queue wait, even when the owning lifecycle path is still held. `operator_needed` suggests restart/route/move and `run_stalled` suggests restart. Underlying gates can refuse. | Fact for transient waits, control for genuine decisions. Spec 050, #1148, #1257, #1320/#1321. R1/R3/R4. |
-| **I10 · Host outage/scope and host-read recovery.** `resolution.hostWait`, outage meta, audit-host unavailable flag, host session/identity, runtime bootstrap readiness and `hostReadTransient:<scope>:<id>`. | `Sweep.auditPass/recordQuantumOutage` and [host-outage.ts](../../../core/scheduling/host-outage.ts) `HostOutages.observe` scope loss. `TaskStops.clearHostWait` and `clearTransportWait` are one settlement, made from the pass's own host reading, so an outage wait and a transport wait clear on the same pass that observes the host answer. Incomplete target observations on a reachable host (`HostReadRefusalError`) stay with [host-read-transient.ts](../../../core/recovery/host-read-transient.ts) and [task-wakes.ts](../../../core/scheduling/task-wakes.ts), bound to occurrence/host/target, re-arming across restarts, resuming ordinary admission when fresh evidence answers, and coalescing one sustained owner notice (`host_read_transient_exhausted`) without entering coordinator routing, excluding profiles, or re-wrapping rendered reasons (`cause()`). `RuntimeLifecycle.ensureBootstrap/refresh` and `HostConnections` gate on the owning host/session and identity; a mismatched runtime/session needs repair. A long-outage notice is once per project/outage. | No launch action can repair transport or incomplete host observation. Exhausted host reads name host-read recovery, the missing observation and clearing controls (`restart`/`move` or fresh observation); coordinator routing does not run. Existing restart/route can refuse offline or unsupported hosts. Rehosting stays an explicit authorized operation where supported. | Both. #1198, #1267, #1320/#1321, #1461. R1/R4/R6. |
+| **I10 · Host outage/scope and host-read recovery.** `resolution.hostWait` (only from older services: since Spec 069 §3 a host wait is read from the outage record, never stored on a task), outage meta and its closed history (`hostOutageHistory`), HostHealth state (Spec 069 §2), host session/identity, runtime bootstrap readiness and `hostReadTransient:<scope>:<id>`. | [host-health.ts](../../../core/scheduling/host-health.ts) `HostHealth` reads each host's connection and writes [host-outage.ts](../../../core/scheduling/host-outage.ts) `HostOutages` only on transitions into and out of `down`. `TaskStops.clearHostWait` and `clearTransportWait` are one settlement, made from that health, so an outage wait and a transport wait clear on the same pass that reads the host connected. Incomplete target observations on a reachable host (`HostReadRefusalError`) stay with [host-read-transient.ts](../../../core/recovery/host-read-transient.ts) and [task-wakes.ts](../../../core/scheduling/task-wakes.ts), bound to occurrence/host/target, re-arming across restarts, resuming ordinary admission when fresh evidence answers, and coalescing one sustained owner notice (`host_read_transient_exhausted`) without entering coordinator routing, excluding profiles, or re-wrapping rendered reasons (`cause()`). `RuntimeLifecycle.ensureBootstrap/refresh` and `HostConnections` gate on the owning host/session and identity; a mismatched runtime/session needs repair. A long-outage notice is once per project/outage. | No launch action can repair transport or incomplete host observation. Exhausted host reads name host-read recovery, the missing observation and clearing controls (`restart`/`move` or fresh observation); coordinator routing does not run. Existing restart/route can refuse offline or unsupported hosts. Rehosting stays an explicit authorized operation where supported. | Both. #1198, #1267, #1320/#1321, #1461. R1/R4/R6. |
 | **I11 · Capacity and reservation.** Project/global/papercut slot limits, in-flight workspace limits, active run/task membership, fair ordering and `restartSlotHold`. | `capacity.ts` `occupiesSlot/decideSlotAdmission/projectInFlightWaitReason`, `StoreQueueIndex.index` and `SlotAdmission.withDispatchPass` derive membership from rows. The restart writer transfers an occupied slot to the durable reservation. The next intent consumes it, or a fence releases it. `TaskWakes.wakeCapacityWaiter` wakes a successor. `wait-context.ts` derives queued and parked wait detail from the current slot decision. | Wait, with no capacity verb. `restart` or `move` can be blocked on admission. Board policy can change limits. | Fact for membership, control for limits. #1258/#1278, papercut `fedca2e8`. R1/R3/R5. |
 | **I12 · Dependencies and retained prerequisite wait.** `dependsOn`, `prerequisiteWait` with `releasedAt`, terminal `goalUnmet` and release notice. | `StorePrerequisites.updateDependencies/setPrerequisiteWait/reconcilePrerequisiteWait` own the rows. `Store.dependencyWait` reads completion/outcomes; missing, removed, cancelled and goal-unmet prerequisites need correction. `PrerequisiteReleases.flushPrerequisiteReleases` wakes queued dependants. The dispatched task uses the release rule in [Wait states and prerequisites](../contracts/orchestration.md#wait-states-and-prerequisites). | `set_dependencies` before first dispatch, or explicit `set_prerequisite_wait` correction. Open wait refuses work move and worker restart. Released wait can need `move to=work` or a retained restart. | Both. #232, #257, Spec 050 and the #1317 incident. R3/R5. |
 | **I13 · Holds and board pause.** `holds.dispatch/merge`, legacy `held/hold*`, `resolution.ownerStop`, hold generation, blocking notification and timed/prerequisite `until`; meta `paused/dispatchHeld`. | `Holds.reconcileHoldUntil` in [merge-hold.ts](../../../core/merge/merge-hold.ts) records owner/generation and reevaluates self-lifting holds, keeping any active `ownerStop` dispatch hold fenced until settled. `OwnerStop.stopTask/observeOwnerStop/resumeOwnerStop` in [owner-stop.ts](../../../core/verbs/owner-stop.ts) persist `ownerStop` before crossing `stopAgentTurn` and settle confirmed idle or newer-turn participants during sweep/resume. `DispatchAdmission.queuedExternalWait`, `dispatchGate` and `startsNoRuns` enforce board policy. User resume or holder release clears unconditional holds once no pending `ownerStop` blocks release. | `release/keep_hold` for the recorded hold, with ownership and version checks; `release` (dispatch), `restart`, `move`, `complete`, and duplicate `stop` refuse while `resolution.ownerStop` awaits confirmation. Keep refuses after merge intent. Dispatch hold or pause can defer an applicable delivery; active merge hold blocks only merge. Global changes are board controls. | Both. Specs 040/046/050, #650, #1491. R1/R4/R5. |

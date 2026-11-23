@@ -1,3 +1,4 @@
+import { activityReadContext } from "./task-activity-observation";
 import { missingResult } from "../recovery/missing-result";
 import { taskNeverDispatched } from "../task-decision-rules";
 import type { Store } from "../store/store";
@@ -167,6 +168,8 @@ export function createTaskDetailCache(
         entry.evidence.runs,
         entry.evidence.events,
         store.canonicalRepository(task.repoPath, task.repository),
+        now(),
+        activityReadContext(store),
       );
       const dependencyIds = [
         ...new Set([

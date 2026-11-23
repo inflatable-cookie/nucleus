@@ -556,6 +556,25 @@ task. The request applies directly and `task.next` shows its reason. A worker
 or reviewer cannot request a profile for their own task. The Low submission
 gate still requires operator approval for high and very-high complexity work.
 
+### Queue every approved brief; Nucleus paces the runs
+
+Slots (per project and global) and in-flight capacity (twice a project's slots)
+limit how many tasks *run* at once. They never limit how many tasks you
+*queue*. A task submitted beyond them waits in `queued` and starts on its own,
+in order, as capacity frees. So:
+
+- **Submit every approved brief now.** Don't hold work back because the board
+  looks full, and don't feed it in one task at a time waiting for slots.
+- **Control order with `dependsOn`.** A task with prerequisites waits until all
+  of them reach `done`. Use it for real order: work that builds on another
+  task's merged code, or tasks that would edit the same files and conflict. Use
+  `set_dependencies` to change the order before dispatch. Leave independent
+  work without dependencies so it runs as soon as there's room.
+- **The only reasons to hold a brief** are that the operator asked you to wait,
+  or that the brief depends on a ruling or design not settled yet. A
+  prerequisite that hasn't been briefed is not a reason: brief it too, and link
+  them with `dependsOn`.
+
 ### Dispatch limits are the operator's, in Settings
 
 Nucleus's host-wide dispatch limits (global and per-project task slots, the
@@ -566,8 +585,9 @@ screen, on the plugin or on the local board with a link from `nucleus ui`.
 changes Nucleus's dispatch limits, in Settings. Nothing changed; do not retry." The
 CLI refuses `capacity` too, and a repeated call changes nothing. Never look for
 another way in, including invoking the plugin bridge yourself: that is the
-Settings surface, not an agent route, and an agent must not use it. If a limit
-blocks approved work, say which limit and why, and pick up other ready work.
+Settings surface, not an agent route, and an agent must not use it. A limit never
+blocks submitting: queued work waits for capacity and starts on its own. If a
+limit is holding up urgent work, tell the operator which one; only they change it.
 The same Settings control sets the preferred host kind for new tasks: `paseo`, `t3code`, `bb`, or planner host. Repository host preferences come first, then the operator default and planner host. At first dispatch the worker profile is selected across online hosts; a profile that only one host can launch takes the task there. The chosen host is recorded with its reason and remains fixed for every later role and run. Repository `hostKind` may be unset to inherit the default preference.
 `queue.capacity-state` reads the values in force and the record of applied
 changes — each with its time, surface and full before and after values. This is
@@ -1260,6 +1280,15 @@ messages use the most active live responsible thread, or tell the sender to
 handle the matter when none exists. A task's own dispatching planner remains
 first for its questions. `project.agents` lists named non-task threads;
 `agent.register` and `agent.unregister` maintain explicit addresses (Spec 060).
+
+## Planner handover
+
+Treat "planner handover", "handoff" or "hand this to a new thread" as a request
+to run the whole [handover](references/handover.md) without stopping. Use the
+model the operator names, or ask with a question card and a recommendation.
+Write a thorough handoff. Start the successor thread, then move the planner role
+and every open task this thread owns to it, check that everything moved, and
+stop acting for the project.
 
 ## Review entry for external PRs
 

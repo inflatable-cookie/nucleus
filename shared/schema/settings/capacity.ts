@@ -68,6 +68,13 @@ export const DEFAULT_THREAD_RETENTION_DAYS = 3;
 
 export const MAX_THREAD_RETENTION_DAYS = 90;
 
+// How often the archived-thread retention pass runs (Tom, 2026-11-22: "Pruning can
+// read archived threads - it needs to know what's there, but that shouldn't be
+// running regularly? Once or twice a day?"). Spec 069 batch 5.
+export const DEFAULT_THREAD_RETENTION_INTERVAL_HOURS = 12;
+
+export const MAX_THREAD_RETENTION_INTERVAL_HOURS = 168;
+
 /** One bounded settings-only limit: its bounds and the default an absent field keeps. */
 interface CapacityBound {
   min: number;
@@ -122,6 +129,11 @@ export const capacityBounds = {
     max: MAX_THREAD_RETENTION_DAYS,
     fallback: DEFAULT_THREAD_RETENTION_DAYS,
   },
+  threadRetentionIntervalHours: {
+    min: 1,
+    max: MAX_THREAD_RETENTION_INTERVAL_HOURS,
+    fallback: DEFAULT_THREAD_RETENTION_INTERVAL_HOURS,
+  },
 } as const satisfies Record<string, CapacityBound>;
 
 export type CapacityBoundField = keyof typeof capacityBounds;
@@ -156,6 +168,9 @@ export const capacitySchema = z
       "hostOutageNoticeMinutes",
     ).optional(),
     threadRetentionDays: capacityValue("threadRetentionDays").optional(),
+    threadRetentionIntervalHours: capacityValue(
+      "threadRetentionIntervalHours",
+    ).optional(),
     operatorDefaultHostKind: hostKindSchema.nullable().optional(),
   })
   .strict();
@@ -179,6 +194,7 @@ export const capacityAuthorityValuesSchema = capacitySchema
     laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes"),
     hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes"),
     threadRetentionDays: capacityValue("threadRetentionDays"),
+    threadRetentionIntervalHours: capacityValue("threadRetentionIntervalHours"),
     operatorDefaultHostKind: hostKindSchema.nullable(),
   });
 
@@ -219,6 +235,9 @@ export const capacityStateFields = {
   threadRetentionDays: capacityValue("threadRetentionDays").default(
     capacityBounds.threadRetentionDays.fallback,
   ),
+  threadRetentionIntervalHours: capacityValue(
+    "threadRetentionIntervalHours",
+  ).default(capacityBounds.threadRetentionIntervalHours.fallback),
   operatorDefaultHostKind: hostKindSchema.nullable().default(DEFAULT_HOST_KIND),
 };
 

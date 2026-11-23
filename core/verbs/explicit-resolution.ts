@@ -18,6 +18,10 @@ import {
 } from "../../shared/task-stop";
 import type { Engine } from "../engine";
 import { signalProcessGroupByLeader } from "../machine/process-group";
+import {
+  reattachRefusal,
+  reattachStoredTaskCheckout,
+} from "../git/checkout-reattach";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
@@ -358,7 +362,10 @@ export function releasePlan(
   if (!completion && !run?.released)
     warnings.push({
       id: "unreported_result",
-      text: "Any later report from this run will be refused.",
+      text:
+        run?.role === "reviewer" && run.agentId && !run.exhaustionReason
+          ? "Only this reviewer's first verdict at the current exact head can still be accepted."
+          : "Any later report from this run will be refused.",
     });
 
   return {
@@ -393,15 +400,14 @@ export function releasePlan(
           reviewContinuation: null,
         });
       }
-      store.deleteCredential(input.run);
+      if (!run) store.deleteCredential(input.run);
       if (task.runId === input.run)
         Object.assign(patch, {
-          runId: null,
-          agentId: null,
+          ...(!completion ? { runId: null, agentId: null } : {}),
           agentIntent: false,
           agentActive: false,
         });
-      if (resolution.currentRunId === input.run) {
+      if (resolution.currentRunId === input.run && !completion) {
         resolution.currentRunId = null;
         if (run?.role === "reviewer") {
           resolution.reviewerAgentId = null;
@@ -411,7 +417,7 @@ export function releasePlan(
       if (resolution.restartSlotHold?.fromRunId === input.run)
         resolution.restartSlotHold = null;
       const recovery = resolution.recovery;
-      if (recovery?.runId === input.run) {
+      if (recovery?.runId === input.run && !completion) {
         resolution.recoveryActive = false;
         resolution.recovery = {
           ...recovery,
@@ -441,6 +447,16 @@ export function releasePlan(
           );
         }
       };
+      // Spec 068 §4: a release settles its run's custody of the checkout, so the
+      // same reattach step runs here and reports why a detached checkout stayed
+      // detached. The commit never moves.
+      const reattach = await reattachStoredTaskCheckout(
+        store,
+        task.id,
+        run?.id ?? input.run,
+      );
+      const reattachRefused = reattachRefusal(reattach);
+      if (reattachRefused) issues.push(`Checkout reattach: ${reattachRefused}.`);
       if (process?.pid && process.processGroupId && process.startIdentity) {
         await attempt("Process-group stop", () => {
           signalProcessGroupByLeader(
@@ -453,14 +469,12 @@ export function releasePlan(
       }
       if (agentId && (live || input.archive)) {
         const current = store.task(task.id);
-        // A current revision can run on the retained worker's existing thread.
-        // Its turn can be stopped independently of that retained binding.
-        const releasedRetainedRevision =
-          run?.role === "revision" &&
-          task.resolution.currentRunId === run.id &&
-          current.runId === task.runId;
+        // Stop the released turn without dropping the retained worker binding.
+        const releasedRetainedTurn =
+          current.runId === task.runId &&
+          (initial || (run?.role === "revision" && task.resolution.currentRunId === run.id));
         if (
-          (current.agentId === agentId && !releasedRetainedRevision) ||
+          (current.agentId === agentId && !releasedRetainedTurn) ||
           threadServesAnotherTask(store, current, agentId)
         )
           return {
@@ -555,6 +569,12 @@ function clearPlan(
             ? { reason: TASK_PROGRESSING_REASON }
             : {}),
         });
+      // Spec 069 §3: a host wait is worked out from the host's health when read;
+      // no record is stored to clear, and it ends when the host reconnects.
+      if (id === task.hostId && engine.inFlightHostWait(task))
+        throw Error(
+          `The host wait on ${id} is read from the host's health, not stored on the task; it clears when the host reconnects, and there is no record to clear`,
+        );
       break;
     case "owner_stop":
       if (

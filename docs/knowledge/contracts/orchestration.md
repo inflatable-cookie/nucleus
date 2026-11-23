@@ -57,6 +57,25 @@ and labelled.
   write rolls back. A committed change whose board projection fails reports an
   uncertain outcome; the caller reads current state and Nucleus never replays it
   ([Spec 013](../specs/013-standalone-queue-service.md)).
+- One owner per field (Spec 069 §3). A task's stop belongs to its writer, which
+  records and clears it explicitly. `Resolution.update` is the stop owner's own
+  write: it clears the stop when its write changes the reason or phase without
+  naming one, and that is its rule, not the funnel's. The store funnel ends a
+  stop only on a lifecycle write, one that names `phase` and moves the phase or
+  the reason (an owner move to the phase the task is already in included),
+  unless the write names a new stop. A write that changes only `reason` keeps it,
+  so a progress note can never erase another writer's stop and set the two
+  writing in turn. A reason-only writer whose new reason ends the stop it
+  supersedes (workspace and worker creation progress, a checkpoint, a settled
+  check, review delivery, a dependency change, a stalled-turn stop step) says so
+  with `stopClearedPatch` or `endsStopOnReason`, which clear only when the reason
+  really changes, so re-asserting the same text never alternates with the
+  stop's owner. Annotation writers do not clear: a dispatch-held launch attempt
+  (the hold owns the `held` stop) and a queued task's usage-gate and target-host
+  notes (their dispatch waits are worked out on read).
+- Writes happen only on change (Spec 069 §3). A meta write of the value already
+  stored writes nothing (`Store.setMeta` compares first), so a pass that resets
+  `engineError` or `hostPassError` writes only when they change.
 - Owner verbs apply while Nucleus is paused (Tom, 2026-10-19). Task state changes
   at once; only dispatch of new agents waits for unpause. A continuation on an
   already-bound run is in-flight settlement and proceeds during pause.
@@ -90,7 +109,10 @@ Do not unify the two adapters.
 Event kinds, reason text, refusal text and typed refusal classes are control
 flow. They stay byte-identical. `test/control-strings.test.ts` pins the census.
 Do not normalise `store.update` against `Resolution.update` (the latter nulls
-`stop`), or `store.events` (newest 100) against `eventsAll` (all, oldest first).
+`stop` on a reason or phase change; the store funnel nulls it only on a write
+that names `phase` and moves the phase or the reason, never on a write that
+changes only `reason`, Spec 069 §3), or
+`store.events` (newest 100) against `eventsAll` (all, oldest first).
 Do not rewrap the typed refusal classes that settle an operation.
 
 ### Host-run scheduling
@@ -214,16 +236,63 @@ periodic chores and one host's steps belong to their own owners: **SweepMaintena
 the owner/lane passes on their own cadence, and **HostPass**
 (`core/scheduling/host-pass.ts`) runs one host's settlement, row-surfacing,
 inventory, retired-worker, title and finished-thread steps, recording a step that
-throws as `hostPassError` instead of dropping it. A host transport failure while
-entering a host pass opens that host's ordinary `host_unavailable` wait for its
-tasks and the fleet pass continues; it never becomes `engineError`. A step that
-fails at the transport boundary answers for that host alone: the pass reads the
-failure rather than the registry's connected claim, so only that host's tasks keep
-their host-scoped wait, and the same bounded reading covers a host read made during
-a task visit and the failover pass. The optional observation inventory is one of
-those steps: an inventory that cannot be read is only unavailable, so every
-identity takes the narrow read, while an inventory that loses the transport is
-that host not answering and keeps its tasks' host-scoped wait.
+throws as `hostPassError` instead of dropping it. A pass's cost follows active work,
+not history (Spec 069 §4): it reads the store's indexed sets (`StoreHostIndex`:
+live tasks per host, finished tasks per host in identity order, fresh finishes and
+owner stops, maintained on every task write and rebuilt when the projection is),
+never `store.tasks()`. Observation reads the host's live set; rows, titles and
+hidden-row reads cover the host's active tasks (the ones that have a thread).
+The finished-parent archive is selected from the host's own open parent
+bindings, each resolved through the store's single-task read, so it never depends
+on which finished tasks a pass lists and survives a service roll. Other finished
+history goes to a slow cursor: each pass takes up to one page
+(`FINISHED_CATCH_UP_PAGE`) of fresh finishes, then one page from the cursor
+persisted in `finishedCatchUpCursor:<host>`, and only those reach finished rows,
+hidden-row clearing, title catch-up and the finished-thread cleanup selection. A
+finish seen since the last pass goes first; the start-up backlog (one read of
+every task still owing thread cleanup, most recent finish first) and retries queue
+behind it. Each keeps its place until its cleanup is no longer owed or it has had
+`FRESH_FINISH_ATTEMPTS` passes. The cursor advances, and hints are spent, only when
+the pass reaches its end, except that a page which aborted `PAGE_ABORT_LIMIT` passes
+in a row is skipped, so one hanging finished task cannot pin the cursor. After that, a failed thread
+cleanup on an older finished task is retried only when the cursor comes round again,
+about (finished tasks on the host ÷ page) passes later: roughly 40 passes, or 13
+minutes at the 20-second tick, for 1,000 finished tasks. The task's own closeout
+quantum remains the main cleanup path. The sweep runs that page's thread-cleanup catch-up in its
+own bounded step on each task's lane, outside the live window, so a page that
+changes every pass never resets the window's cursor. A host that is down or not
+yet read is not walked again in the same pass. A host step that hangs or fails
+at the transport fails only itself (Spec 069 §2): a hung call stops that host's
+remaining steps for the pass, the pass reports itself to **HostHealth** as a failed
+pass, and the fleet pass continues; it never becomes `engineError`, never marks the
+host down and writes nothing for its tasks. The optional observation inventory is
+one of those steps: an inventory that cannot be read is only unavailable, so every
+identity takes the narrow read, while one that loses the transport fails the pass.
+
+**HostHealth** (`core/scheduling/host-health.ts`). The one owner of each host's
+health, read from the connection alone: the registry claim, which the runtime
+retires when the socket closes (T3 closes it after two missed heartbeats, BB and
+Paseo through their own connection objects). States: `up`; `degraded`, connected
+but its last three host passes in a row each hung or failed at the transport (the
+first clean pass makes it `up`); `down`, the connection is lost; `unknown`, not yet
+seen connected since the service started (the runtime's startup grace is five
+minutes, then a host that never connected reads `down`). The runtime tick reads
+every registered host's health even while no host is connected, so `unknown`
+becomes `down` and a long-outage notice is raised on time; nothing is sent. A
+single call that fails (dispatch, observation, a fleet step, a task visit) never
+changes state: it is kept only as the reading's diagnostic `detail`. Errors that
+measure Nucleus's own queue (`HostCallAbandonedError`, `HostExecutorUnavailableError`)
+are not host faults. The durable outage record is written only on transitions into
+and out of `down`. One rule decides launches, read after the task's own gates: an
+`up` host admits every first dispatch, a `degraded` host one at a time (one launch
+in flight), and a `down` or `unknown` host none. Degraded touches nothing else:
+running and observed work, routing catalogs and owner controls treat it as
+connected. A first dispatch whose own host call fails skips that host for the rest
+of its dispatch pass, with no state change: the pass registers its skipped hosts
+with slot admission for its own duration, so neither that host's queued tasks nor
+reviews from it as origin hold a slot-order place until the pass ends. No call
+outcome, pass outcome or task record marks a host down. A host pass that failed on
+Nucleus's own queue errors is neutral: it neither advances nor resets the count.
 
 **ControlContext** (`core/verbs/control-context.ts`). Holds the hidden parameters of
 every verb (`selfForceRunId`, `coordinatorActionRunId`, `replayingDeferredVerb`)
@@ -241,8 +310,9 @@ cleanup lane's `stop()`. Delegates remain on Engine.
 
 ### Worker-path owners
 
-**Dispatch** (`core/dispatch/dispatch.ts`). Visits queued tasks, admits workspace
-creation and review entry, and owns the workspace-pressure wake. Enforces
+**Dispatch** (`core/dispatch/dispatch.ts`). The queued admitter: visits the
+startable queue heads, admits workspace creation and review entry, signals
+admission for a submission into free capacity, and owns the workspace-pressure wake. Enforces
 [Admission, limits and priority](#admission-limits-and-priority) and
 [Review entry](#review-entry). Pures: `dispatchGate`,
 `decideWorkspacePressureWait`. Engine.stop clears its timer. Delegates remain
@@ -846,7 +916,8 @@ re-record and validation retry. Delegates remain on Engine.
 ### Run-launch owners
 
 **RunLaunchSource** (`core/dispatch/run-launch/source.ts`). The source a launch
-dispatches from: detached ordinary-review custody and worktree, the first
+dispatches from: the one reattach step for a task checkout an earlier round left
+detached, detached ordinary-review custody, the first
 revision worker's independent profile, the retained worker route, and the PR
 head the run is launched at. Enforces [Profile selection](#profile-selection)
 and [PR identity from reports](#pr-identity-from-reports). Pure:
@@ -1021,15 +1092,15 @@ deduplicates native agent IDs. A thread created before Nucleus is still read
 through its recorded `northstar.*` labels wherever an archived or terminal
 record is inspected, and a split identity is refused rather than guessed.
 Callback environments carry only `NUCLEUS_*`; a ticket authenticates its run, and a helper refuses a report whose explicit task or run identity differs from that ticket. Worker readiness verifies the PR identity before recording a completion and refuses a foreign queue branch named in the report. A move to work clears an unbound result only when the forge positively identifies a different branch; unknown or unavailable evidence remains held, and the cleared event remains history.
-Agents report only through their own run's binding; they never read or use another ticket under the data home. A refused report is reported as blocked through the same binding, not bypassed through another ticket or route; if that also refuses, the agent states the refusal. Retained threads keep their original MCP binding path. Before a new run's continuation is sent, Nucleus atomically rebinds that path to the new run; releasing an earlier run deletes the path only while its contents still name that released run. A confirmed dispatched run whose stopped thread has a missing known local MCP binding records a named report failure after the reporting grace and follows the existing recovery path, without reading another ticket. Uncertain dispatches keep their existing hold. Historical events,
+Agents report only through their own run's binding; they never read or use another ticket under the data home. A refused report is reported as blocked through the same binding, not bypassed through another ticket or route; if that also refuses, the agent states the refusal. Retained threads keep their original MCP binding path. Before a new run's continuation is sent, Nucleus atomically rebinds that path to the new run. Release removes a path only while it still names the released run and the credential has no verdict-only use. A confirmed dispatched run whose stopped thread has a missing known local MCP binding records a named report failure after the reporting grace and follows the existing recovery path, without reading another ticket. Uncertain dispatches keep their existing hold. Historical events,
 request identities and stored committed-handoff rows are not rewritten.
 
 - Completion authentication binds task and run. One worker creation mints
   exactly one run identity, shared by the task, the callback credential and the
   reporting binding; a path that could mint a second fails closed.
-- A run whose live turn a verb cancelled is stopped, not replaced: its
-  credential is revoked and a late callback is stale. Released or superseded
-  runs stay immutable; late callbacks stay evidence without authority.
+- A run whose live turn a verb cancelled is stopped, with its credential
+  revoked. When a dispatched reviewer releases before reporting, its
+  credential can authenticate only a verdict for its original run and head.
 - Attention on a task with no live run owner lands in `needs_attention`, so a
   recovery control always applies.
 - The queue-owned worker branch is fixed before launch. A `ready_for_review`
@@ -1174,21 +1245,56 @@ request identities and stored committed-handoff rows are not rewritten.
 - A queued task waiting on a prerequisite does not block a runnable task behind
   it in the same project. When the prerequisite settles, its dependent resumes
   its existing place in dispatch order; queue indexing must preserve that order.
+- The queue is inert (Spec 069 §1). A submission writes its row into the ordered
+  ready index and nothing else: no dispatch pass, task quantum, host read or wait.
+  It signals admission only when the task itself could start (its host, review
+  origin or target host kind is ready, and no Low-usage approval is pending) and
+  its own pools have a free slot. The one exception is a question the operator
+  must answer before any run (the Low usage level's approval, a required profile),
+  which opens through its own step on the task's lane.
+- Admission is event-driven: a freed slot or in-flight place, a prerequisite
+  reaching `done`, a released hold or pause, a submission into free capacity, and
+  the sweep's once-per-pass safety net, which also admits heads whose host came
+  back. It takes heads from the ordered index in fair order and admits as many as
+  the free slots allow. A head that cannot start now (its host is away, a review
+  entry's origin host is away or unproven, or an unbound first worker's target
+  host kind is not ready) is skipped in the index walk and holds no place in slot
+  order, so it takes no visit and hides no head behind it. The walk reads each
+  host and repository target once per round and each head from its own fields, so
+  a skipped head costs an in-memory check, never a store or host read. A visit
+  that starts nothing hands its place on, but one pass makes at most the free
+  slots plus two visits.
 - Dispatch reads indexed ready heads, not every queued row. Prerequisite settlement
   wakes its dependants after commit and refreshes their checkout siblings when the
   final prerequisite settles, even if dispatch is held. Refresh work grows with the
   affected dependants; their dispatch wake is coalesced per repository. A missed
   refresh is also checked before dispatch. Route-unavailable requests are reconsidered
-  when the effective routing inputs change. Queued prerequisite, hold and capacity
-  text is derived on read; waiting alone does not write a task or event.
+  when the effective routing inputs change. Queued prerequisite, hold, capacity and
+  host text is derived on read; waiting alone does not write a task or event.
+  Admission stores no stop or wait on a never-started task: its card and `next`
+  name a slot wait, prerequisites, its host (`host_unavailable` with the host's
+  own outage start) or its review origin from one admission read. A host wait on
+  a queued row (left by an older service) is ignored by the read and settled when
+  the task is admitted. No host-failure path writes one any more (Spec 069 §2): a
+  queued task's host wait, a degraded host's one-launch wait and an unread host's
+  start-up wait are all read from HostHealth.
 - The board carries up to five queued heads per repository and the total queued
   count. `queue.queued-page` reads the rest on demand. A completed mutation that
   advances the board revision publishes before its reply. The one-second tick
   owns refreshes for read-only and unchanged replies and observes the publication budget.
+  The web board's live channel publishes at most one board per 500 ms window
+  (Spec 069 §3): the first publication after a quiet window goes out at once and
+  the rest of a burst is coalesced into one trailing push of the latest board, so
+  a burst of task writes never sends every stream one full board per revision.
+  Each push is still the whole board; per-stream deltas are not built yet. Board,
+  `next` and admission reads only `peek` host health, so a read never moves a
+  host's state or writes its outage record; the runtime tick and the sweep do.
 - The 20-second safety sweep handles active work and queued lifecycle obligations;
-  it does not visit ordinary queued tasks. Its maintenance preflight still checks
-  retained terminal and exceptional queued records, so its cost grows with those
-  records; it is not a queue-position refresh. Origin routing observes each queued
+  it does not visit ordinary queued tasks, and its host steps read finished history
+  only through the slow catch-up cursor (Spec 069 §4). Its maintenance preflight and
+  the lifecycle selection still filter retained terminal and exceptional queued
+  records in memory (no copies, reads or host calls), so that part of its cost still
+  grows with those records; it is not a queue-position refresh. Origin routing observes each queued
   owner once and visits its tasks when the recorded workspace or origin changes.
 - `promote` gives a queued or parked unmerged task priority above every live
   task until completion or cancellation, and skips the workspace-creation load
@@ -1352,25 +1458,47 @@ request identities and stored committed-handoff rows are not rewritten.
 ### Host outage
 
 - A task's host is part of its identity (Tom, 2026-11-14; T3 lane document v18,
-  host dropout option 1: wait). While its host is unavailable — the service
-  health `state` is not `online`, so the transport is not connected — the task
-  records its own durable wait (`resolution.hostWait`: the host and the time the
-  outage was first observed). The outage record is durable (`hostOutages` meta),
-  so a service restart during the outage keeps the same start.
+  host dropout option 1: wait). While its host is `down` in HostHealth (Spec 069
+  §2: the connection is lost) the task waits on it. The wait is worked out when
+  read (Spec 069 §3), never stored per task: the board card, `next`, task detail
+  and the budget read it from the host's own outage record, dated from the time
+  HostHealth opened the outage (`Engine.inFlightHostWait` for a started task, the
+  admission read for a queued one). So a host going down or coming back writes
+  one record, not one per task. The outage record is durable (`hostOutages`
+  meta), so a service restart during the outage keeps the same start, and
+  HostHealth closes it on the host's first connected reading, appending it to the
+  host's closed history (`hostOutageHistory`, newest 50). A `resolution.hostWait`
+  or outage-text `host_unavailable` stop an older service stored is ignored by
+  the read while the host is not down and settled by the next connected visit.
+  `record.clear host_wait` clears only such a stored wait; for a read wait it
+  refuses, naming that the wait ends when the host reconnects. A published review
+  verdict is not applied while the task's host has an open outage record.
+- A service start never parks tasks. Until HostHealth has seen a host connected
+  it is `unknown`: its tasks keep their state, nothing is written for them and
+  nothing is sent to the host. A queued task's card reads `Waiting for <host> to
+  connect after the service start`.
+- A connected host whose host passes keep hanging or failing at the transport is
+  `degraded`. Its running tasks keep going and their own owners retry their failed
+  steps; it takes one first dispatch at a time, and a never-started task waiting
+  behind that launch shows `Waiting for <host>: its calls are not answering, so it
+  takes one launch at a time` (never the call's error, which stays in the health
+  reading) and reserves no slot. Like every never-started wait it is read, never
+  stored, and only after the task's own gates.
 - A transport deferral of a task's own host is the same wait (Spec 066 batch 2,
   nucleus#1332). `transportDeferred` records the cause durably (one
   `transport_deferred` event per reading) and the host-scoped wait: a
-  `host_unavailable` stop carrying its diagnostic, beside the independent
-  `resolution.hostWait` when an outage recorded one. The pass that observes the
-  host answer settles both through one settlement (`clearHostWait`), recording one
+  `host_unavailable` stop carrying its diagnostic (a call that failed for this
+  task is the task's own record; an outage is not). The pass that observes the
+  host answer settles it, and any wait an older service stored, through one
+  settlement (`clearHostWait`), recording one
   `host_wait_cleared` event, and the ready task is visited in that same pass.
-  Nothing is settled from the stop's text or a reason prefix (the #1321 rule is
-  retired), a host that did not answer settles nothing, a repeated pass adds no
+  The settlement reads HostHealth: a connected (`up` or `degraded`) host settles
+  the wait. Nothing is settled from the stop's text or a reason prefix (the #1321
+  rule is retired), a host that is down settles nothing, a repeated pass adds no
   event, send or notice, and an owner stop beside the wait keeps its question.
 - A thrown adapter fault carries its host identity into sweep steps, observation
-  and dispatch. It holds that host's tasks while the sweep continues to later
-  steps and healthy tasks. The diagnostic is a separate idempotent event, so repeated
-  refusals leave the outage wait unchanged. A review waiting on a different origin
+  and dispatch. It fails only the step that made the call: HostHealth takes it as
+  a sample and no other task on the host is written. A review waiting on a different origin
   host names that host and does not mark its execution host offline or reserve a
   slot. Queue scans continue past those waits; a recovered origin is proved before
   the review rejoins fair slot ordering. A fault outside a host still records `engineError`.
@@ -1412,15 +1540,17 @@ request identities and stored committed-handoff rows are not rewritten.
 - A queued task waiting for an unavailable fixed host does not reserve an available
   slot ahead of another host; its reservation returns when its host wait clears.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
-  more specific already stops the task the stop reads `host_unavailable`, naming
-  the host and the outage start. A stop that belongs to an owner answer (budget,
+  more specific already stops the task every read shows the stop as
+  `host_unavailable`, naming the host and the outage start; nothing is written. A stop that belongs to an owner answer (budget,
   ladder escalation, responsible question, hold, proof wait, interactive turn,
   paused stop, operator attention) keeps its own record and question: the host
   wait still pauses the wall clock, shows on the card beside the stop, and joins
   the project's outage notice.
 - Nothing is sent to that host: no quantum, launch, continuation, notification,
   recovery or coordinator, and no stall, incident or escalation is raised from
-  the outage. The wall-time budget pauses for the wait (Spec 058 budgets). New
+  the outage. The wall-time budget pauses for the wait (Spec 058 budgets): every
+  budget read discounts the task host's open and closed outages
+  (`hostOutageIntervals`), so no clock opens or closes on any task. New
   dispatch that already owns a host waits the same way. A first worker instead
   considers the other online hosts.
 - When the host returns, the wait clears and observation re-proves each retained
@@ -1552,8 +1682,8 @@ request identities and stored committed-handoff rows are not rewritten.
   `syncIntegrationCheckout` (`core/forge/merge.ts`). `WorkerLauncher` checks
   after `verifyWorkspace`, which can fast-forward the task worktree. The shared
   `RunLaunchSource` and `RunLaunchDeliver` paths check again after the exact
-  source is established and before a task-worktree agent is delivered, including
-  after an ordinary review switches to its detached head. They detect whether
+  source is established and before a task-worktree agent is delivered; the
+  reattach step leaves the checkout on its branch throughout. They detect whether
   the task worktree inherits the shared root link or has a checkout-local link
   to the registered install, and run `npm ci` in that worktree when its
   per-worktree install state does not match its own `package.json` and npm
@@ -1900,7 +2030,13 @@ review or merge credit; live participants and unsettled effects remain fences.
   callback. The task shows the wait, no incident or reminder is recorded, the
   reminder grace is extended, and no recovery run starts over it. Unreadable
   or inconclusive tool evidence is not liveness (papercut 6895edaa).
-- Observation releases a superseded or replaced run whose thread its host
+- A run with an authenticated completion releases when the host reports its
+  thread idle, closed, archived, gone or no longer observed. The reporting
+  grace also lets it release when the read is unavailable or the same turn is
+  still visible, provided there is no evidence of a newer turn. The completion
+  keeps its run binding through automatic and explicit `run.release`. Result
+  application checks the exact head and its own evidence and effect gates.
+- Observation releases a reportless superseded or replaced run whose thread its host
   reports archived or gone, using the same per-agent proof the archive path
   accepts. An unreadable read, a host without that answer or an inventory that
   does not mention the identity is unknown, never absence. The release records
@@ -2336,7 +2472,7 @@ reports, grants or spends that history.
   records a ready archive so observation can finish the replacement. An uncertain archive
   retains ownership until observation confirms the agent is archived or absent; it
   is never blindly resent. On T3 the fence is a stopped turn observed idle,
-  with the displaced run released and its late callbacks refused; the thread
+  with the displaced run released and eligible only for an exact-head verdict. The thread
   stays settled until closeout (T3 adapter spec, [thread
   lifecycle](../specs/t3code-host-adapter.md#thread-lifecycle)).
 - Other replacement paths allow a working reviewer to finish (Tom, 2026-10-19; planner ruling
@@ -2344,14 +2480,12 @@ reports, grants or spends that history.
   replaced (`replacedAt`) without releasing it or revoking its credential; its
   checkpoint still applies as saved progress, and its verdict is accepted if it
   is at the current head and no verdict for that head exists yet — the first
-  verdict at the head wins; a later reviewer's verdict ends the claim. The run
-  is released, and its credential and tickets revoked unconditionally, only
-  when the review settles: the replacement's verdict applies, a readopted
-  verdict applies, or the replaced run ends without a verdict; after release
-  nothing authenticates. A run already proven ended settles at replacement
-  instead. A host's own answer that the thread is archived or gone is that same
-  proven end, so observation releases the run and no relaunch names it again.
-  Provider-refusal and quota replacements are not marked.
+  verdict at the head wins and settles a replacement that has yet to report.
+  Release frees the run and leaves its verdict-only ticket when a dispatched
+  reviewer has yet to report. A late verdict uses that same re-adoption rule
+  and retains the original run's released state. The ticket can replay its
+  accepted receipt. Provider-refusal and quota replacements lose callback
+  authority.
 - A current reviewer whose own provider refused its dispatch turn (the canonical
   Cursor plan refusal or an attributed quota error in its own `ns-run-<runId>`
   turn) is replaced only after one read-only selection proves an eligible
@@ -2399,9 +2533,21 @@ reports, grants or spends that history.
 ### Retained change review
 
 Ordinary tasks retain the qualified reviewer across revision heads, with a new
-run, credential and full exact-head verdict. The shared checkout is detached only
-after custody and source checks, then restored to the recorded author branch after
-release ([Spec 057](../specs/057-retained-change-review.md)).
+run, credential and full exact-head verdict. No round detaches the shared task
+checkout: a follow-up round reads its exact head there, on its own branch, after
+the same custody and source checks as the first round, and the launch detaches
+nothing ([Spec 068](../specs/068-self-healing.md) §4, after
+[Spec 057](../specs/057-retained-change-review.md)).
+
+One reattach step (`core/git/checkout-reattach.ts`) returns a checkout an earlier
+round already left detached to its task branch. It runs before any launch into
+the task checkout, in `run.start` and in `run.release`; it checks the branch out
+only when no unreleased round owns the checkout, the tree is clean and HEAD
+already equals the branch tip, so the commit never moves. Otherwise it records
+`task_checkout_reattach_refused` naming the cause, the command that ran it
+reports that reason, and the checkout is left exactly as it is. A run's own
+release settles its ownership, so `run.release` then `run.start` is the exit
+from every refused reattach.
 
 The prompt supplies earlier findings, exact SHAs and the git commands that
 read the delta in the reviewer's checkout; diff and range-diff text is never
@@ -2462,8 +2608,8 @@ movement invalidates source approval and preserves the normal readiness gates.
   active participant. An accepted verdict at an earlier head never qualifies a
   changed source, and an exhausted author allowance is the owner's disposition,
   never a reason for another review.
-- Reviewer threads are released after their verdict is verified and applied, and
-  the worker stays through revisions until closeout. A released support thread
+- A released reviewer's verdict is verified and applied through the ordinary
+  result path, and the worker stays through revisions until closeout. A released support thread
   (reviewer, recovery coordinator, executor) is archived at once on a host that
   cannot remove a thread; a host that can (T3Code) keeps it settled and bound so
   the next round or episode continues the same thread, and removes it at closeout
@@ -2914,6 +3060,11 @@ movement invalidates source approval and preserves the normal readiness gates.
   reported as `wallMs.pausedMs` on the detail and named on the budget's time bar, and
   subtracted from the wall figure, so a defect never spends a task's budget. A budget
   pause, a merge hold, capacity queueing and the task's own validation keep charging.
+  A host outage opens no clock (Spec 069 §3): every budget reader passes the task
+  host's outages from the host's own record (`hostOutageIntervals`) to
+  `taskBudget`, which discounts them like a hold, so an outage writes nothing per task.
+  The read uses the task's current host, so a task moved to another host keeps no
+  discount for its old host's outages.
 - Any thread registers itself with `task.register` (Spec 058 slice 4): the worker
   is the calling thread, bound to its own live worktree, always responsible, with
   no planner, owner or coordinator. Identity comes from the authenticated thread,
@@ -3960,8 +4111,13 @@ can go stale, exactly like that. It needs to be managed by Nucleus scheduling").
   operator unarchived.
 - Implementation: nucleus#1367.
 
-The pass is `core/workspaces/thread-retention.ts`. `SweepMaintenance` starts it
-hourly, only while Nucleus is unpaused, and removes at most
+The pass is `core/workspaces/thread-retention.ts`. It is the only reader of a
+host's archived threads, and it runs on its own interval (Tom, 2026-11-22:
+"Pruning can read archived threads - it needs to know what's there, but that
+shouldn't be running regularly? Once or twice a day?"): `SweepMaintenance` starts
+it every `threadRetentionIntervalHours` (Settings → Dispatch limits → Advanced,
+bounded 1–168, default 12; the `lastThreadRetentionAt` meta records the last
+start), only while Nucleus is unpaused, and removes at most
 `THREAD_RETENTION_BATCH` (200) threads per host per pass, oldest archive stamp
 first, so the existing backlog drains over sweeps instead of in one burst. The
 pass runs detached: `SweepMaintenance` starts it and does not await it, and at
@@ -3978,7 +4134,13 @@ A host prunes only when its adapter supplies the two optional reads beside
 `deleteAgent`: `archivedThreads` (one walk of every archived thread Nucleus
 created, under the current `nucleus.*` and the pre-Nucleus `northstar.*` labels,
 which answers `null` rather than a partial list) and `threadArchiveState` (one
-thread's fresh stamp, immediately before removal). A host that has the walk but
+thread's fresh stamp, immediately before removal). On T3 that stamp comes from
+the live shell and the pass's own walk; after a removal, T3's settled
+`thread.delete` receipt is the confirmation (it drops the thread from the walk),
+not a fresh read, and no per-thread inventory is read (Spec 069 batch 5). A walk
+that fails or is cut short is retried after an hour rather than a full
+interval. T3 has no paged archived read, so its walk is one
+`getArchivedShellSnapshot` per interval. A host that has the walk but
 no removal call (BB) is still read: its pass records `at`, `scanned` and
 `eligible`, leaves `supported` false, and names in `error` that nothing was
 removed. A host with neither is reported as unable to list, with its reason,

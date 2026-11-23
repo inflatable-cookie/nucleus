@@ -273,15 +273,17 @@ test("an unchanged thread is not snapshotted, and a changed live thread is snaps
   );
   await host.endHostPass();
 
-  // A second pass with nothing changed serves nothing: the thread's own row in
-  // T3's list is the change marker, and this one is identical.
+  // A second pass with nothing changed reads only what the row cannot carry: the
+  // thread's own row in T3's list is the change marker for its state, but a running
+  // thread's window (tool output a stall check reads) can move under an unchanged
+  // row, so its window is refreshed once per pass and shared (Spec 069 batch 5).
   before = served();
   await host.beginHostPass(tasks);
   await consume(host, live.id);
   assert.equal(
-    served(),
-    before,
-    "an unchanged live thread is not snapshotted again",
+    snapshotsFor(live.id, before),
+    1,
+    "an unchanged running thread's window is refreshed once in the pass",
   );
   await host.endHostPass();
 

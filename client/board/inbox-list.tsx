@@ -7,6 +7,7 @@ import {
   type BoardLead,
   type BoardLeadLink,
   type LaneView,
+  type ProjectPlan,
   type TaskSummary,
   type UiQueueState,
 } from "../../shared/contracts";
@@ -275,6 +276,8 @@ export type InboxListProps = {
   onSelectPapercut: (id: string) => void;
   /** Opens a lane in the plan view, the drained-lane card's press (nucleus#1511). */
   onOpenLane: (key: string) => void;
+  /** Every project plan, so the drained lane's mark-done confirmation names each plan that lists it. */
+  plans?: ProjectPlan[];
   busy: boolean;
   act: BoardAct;
   /** The list's view state the shell keeps across views (`usePipelineState`). */
@@ -317,6 +320,7 @@ export function InboxList({
   busy,
   act,
   pipeline,
+  plans = [],
 }: InboxListProps) {
   const setTask = useRpc(api.taskControl);
   const changeLaneStatus = useRpc(api.laneStatus);
@@ -518,6 +522,8 @@ export function InboxList({
             }
             onClose={() => closeDrainedLane(card.value)}
             onKeep={(reason) => keepDrainedLane(card.value, reason)}
+            projects={state?.projects ?? []}
+            plans={plans}
           />
         );
       case "task":
