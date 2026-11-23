@@ -184,6 +184,8 @@ fn config_and_brief_use_the_existing_canonical_vocabulary() {
         "---\nqueue:\n  complexity: medium\n  complexity: high\n---\nbody",
         "---\nqueue:\n  profileRequests:\n    worker: {profileId: frontier, reason: '  '}\n---\nbody",
         "---\nqueue:\n  profileRequests:\n    worker: {profileId: frontier}\n---\nbody",
+        "---\nqueue:\n  profileRequests:\n    worker: {profileId: frontier, reason: true}\n---\nbody",
+        "---\nqueue:\n  profileRequests:\n    worker: {profileId: 123, reason: analysis}\n---\nbody",
         "---\nqueue:\n  complexity: low",
     ] {
         assert!(BriefPolicy::parse(invalid).is_err(), "{invalid}");
@@ -298,6 +300,22 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
     let automatic = working("---\nqueue: {complexity: very_high}\n---\nBody");
     let pool = [candidate(&frontier), candidate(&peer)];
     for usage in [UsageLevel::Low, Normal, UsageLevel::High] {
+        assert!(matches!(
+            decide_profile_launch(
+                &automatic,
+                &unbound(),
+                &LaunchPolicy {
+                    usage,
+                    candidates: &[candidate(&frontier)],
+                    planner_brief: true,
+                    author_models: &[],
+                }
+            ),
+            Err(ProfileLaunchError::NoEligibleProfile {
+                role: Role::Worker,
+                ..
+            })
+        ));
         let chosen = pick(&worker, &unbound(), usage, &pool);
         assert_eq!(chosen.profile().id, frontier.id);
         assert_eq!(chosen.profile().effort, Some(Effort::XHigh));
@@ -347,6 +365,10 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
     assert_eq!(
         pick(&automatic, &unbound(), Maximum, &pool).profile().id,
         frontier.id
+    );
+    assert_eq!(
+        pick(&automatic, &unbound(), ExtraHigh, &[candidate(&frontier)]).profile(),
+        &frontier
     );
     let reviewer_only = working(
         "---\nqueue: {complexity: very_high, profileRequests: {reviewer: {profileId: frontier, reason: review}}}\n---\nBody",
@@ -604,6 +626,39 @@ fn critical_review_prefers_the_actual_workers_bracket_and_falls_back() {
             &light
         );
     }
+}
+
+#[test]
+fn a_critical_fallback_reviewer_continues_until_the_ordinary_bracket_changes() {
+    let mut task =
+        working("---\nqueue: {complexity: very_high, critical: true}\n---\nInvestigate.");
+    let worker = profile("author", Heavyweight);
+    let fallback = profile("fallback", Worker);
+    let peer = profile("peer", Heavyweight);
+    finish_worker(&mut task, &worker);
+    review_changes(&mut task, &open('a'), &fallback);
+
+    let obs = role_thread(open('a'), "reviewer-1", RetainedThread::Idle);
+    let planner = Authority::Planner {
+        actor: "fixture-planner".into(),
+    };
+    task.command(Command::Move(Phase::Reviewing), &planner, &obs)
+        .unwrap();
+
+    let pool = [candidate(&fallback), candidate(&peer)];
+    let same = pick(&task, &obs, UsageLevel::High, &pool);
+    assert_eq!(same.profile(), &fallback);
+    assert_eq!(
+        same.via(),
+        &Launch::Continue {
+            thread: "reviewer-1".into()
+        }
+    );
+
+    let raised = pick(&task, &obs, ExtraHigh, &pool);
+    assert_eq!(raised.profile(), &peer);
+    assert_eq!(raised.via(), &Launch::Create);
+    assert_eq!(raised.replaced_thread(), Some("reviewer-1"));
 }
 
 #[test]

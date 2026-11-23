@@ -1,6 +1,6 @@
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 
 use super::{Complexity, Effort};
 use crate::Role;
@@ -23,11 +23,22 @@ struct Requests {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileRequest {
+    #[serde(deserialize_with = "text_scalar")]
     pub profile_id: String,
+    #[serde(deserialize_with = "text_scalar")]
     pub reason: String,
     #[serde(default)]
     pub required: bool,
     pub thinking_option_id: Option<Effort>,
+}
+
+// YAML's direct string reader also accepts booleans and numbers. A routing
+// request must supply text for both its profile ID and its justification.
+fn text_scalar<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    match yaml_serde::Value::deserialize(deserializer)? {
+        yaml_serde::Value::String(text) => Ok(text),
+        _ => Err(de::Error::custom("expected a text scalar")),
+    }
 }
 
 #[derive(Debug)]

@@ -183,7 +183,7 @@ pub fn decide_profile_launch(
                     demand.climb.or(demand.earned),
                 )
         });
-        let best = retain_or_rotate(automatic, role, &previous, retained, &demand).ok_or(
+        let best = retain_or_rotate(automatic, &previous, retained, &demand).ok_or(
             ProfileLaunchError::NoEligibleProfile {
                 role,
                 demand: demand.target,
@@ -232,6 +232,7 @@ pub fn decide_profile_launch(
 
 struct Demand {
     target: Capability,
+    retained_floor: Capability,
     ceiling: Capability,
     climb: Option<Capability>,
     earned: Option<Capability>,
@@ -253,6 +254,9 @@ fn demand(
     match role {
         Role::Reviewer => Demand {
             target: reviewer_bracket(usage, actual, brief.critical),
+            // Criticality prefers a peer for fresh review. An independent
+            // retained fallback can continue if it meets the ordinary bracket.
+            retained_floor: reviewer_bracket(usage, actual, false),
             ceiling: actual,
             climb: None,
             earned,
@@ -278,6 +282,7 @@ fn demand(
             };
             Demand {
                 target: climb.unwrap_or(target),
+                retained_floor: climb.unwrap_or(Capability::Mechanical),
                 ceiling: climb.unwrap_or(if same_review {
                     ceiling.min(actual)
                 } else {
@@ -307,7 +312,6 @@ pub(crate) fn applied_changes<'a>(task: &'a Task, observation: &Observation) -> 
 
 fn retain_or_rotate<'a>(
     candidates: impl Iterator<Item = Candidate<'a>> + Clone,
-    role: Role,
     launch: &Launch,
     retained: Option<&Profile>,
     demand: &Demand,
@@ -325,7 +329,7 @@ fn retain_or_rotate<'a>(
         .find(|candidate| retained.is_some_and(|profile| profile.same_binding(candidate.profile)));
     retained_candidate
         .filter(|candidate| {
-            (role == Role::Worker && demand.climb.is_none())
+            candidate.profile.capability >= demand.retained_floor
                 || tier_order(candidate.profile.capability, demand.target)
                     <= tier_order(best.profile.capability, demand.target)
         })
