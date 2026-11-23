@@ -28,16 +28,23 @@ import {
 import { decisionAge } from "../shared/pipeline-board";
 import { formatLocalDateTime } from "../shared/date-time";
 import type { ProjectBadge } from "../shared/t3/project-badge";
-import { ActionButton, Button, row, type Colors } from "./controls";
+import {
+  ActionButton,
+  Button,
+  SurfacePress,
+  row,
+  useCardFill,
+  type Colors,
+} from "./controls";
 import { ReopenHelp } from "./lane-mark-done";
 import {
   cardRow,
-  hoverSurface,
   planningRead,
   radius,
   roles,
   space,
   toneSurface,
+  toneWash,
   type,
 } from "./design";
 import { ProjectBadgeMark } from "./board/cards";
@@ -229,45 +236,6 @@ export function LaneProgress({
   );
 }
 
-/** A pressable surface with the inbox's dimmed hover. */
-function HoverPress({
-  label,
-  onPress,
-  selected = false,
-  style,
-  c,
-  children,
-}: {
-  label: string;
-  onPress: () => void;
-  selected?: boolean;
-  style: object;
-  c: Colors;
-  children: ReactNode;
-}) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ selected }}
-      onPress={onPress}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      style={{
-        ...style,
-        backgroundColor: selected
-          ? c.surface2
-          : hovered
-            ? hoverSurface(c)
-            : (style as { backgroundColor?: string }).backgroundColor,
-      }}
-    >
-      {children}
-    </Pressable>
-  );
-}
-
 /** One lane on the roadmap: its title and attention, its aim, its live work and its finish line. */
 export function LaneCard({
   step,
@@ -281,19 +249,18 @@ export function LaneCard({
   c: Colors;
 }) {
   const r = roles(c);
+  const fill = useCardFill(c);
   const attention = lane ? laneAttention(lane) : 0;
   return (
-    <HoverPress
+    <SurfacePress
       label={`Open lane ${step.title}`}
       onPress={onOpen}
       c={c}
+      corner={radius.panel}
       style={{
         gap: space.xs,
         padding: space.sm,
-        borderRadius: radius.panel,
-        borderWidth: 1,
-        borderColor: r.border,
-        backgroundColor: r.section,
+        backgroundColor: fill,
       }}
     >
       <View
@@ -344,11 +311,7 @@ export function LaneCard({
       {lane && <LaneProgress lane={lane} c={c} />}
       {(step.doneWhen || step.doneWhenMissing) && (
         <View
-          style={{
-            borderTopWidth: 1,
-            borderTopColor: r.border,
-            paddingTop: space.xs,
-          }}
+          style={{ paddingTop: space.xxs }}
         >
           {step.doneWhen ? (
             <Text style={{ ...meta(c), lineHeight: type.body.lineHeight }}>
@@ -367,7 +330,7 @@ export function LaneCard({
           )}
         </View>
       )}
-    </HoverPress>
+    </SurfacePress>
   );
 }
 
@@ -449,16 +412,16 @@ export function ProjectRow({
         opacity: dim && !selected ? planningRead.dormantOpacity : 1,
       }}
     >
-      <HoverPress
+      <SurfacePress
         label={`Project row ${project.name}`}
         selected={selected}
         onPress={onPress}
         c={c}
+        corner={radius.control}
         style={{
           gap: space.xxs,
           paddingHorizontal: space.sm,
           paddingVertical: space.sm,
-          borderRadius: radius.control,
           backgroundColor: "transparent",
         }}
       >
@@ -501,7 +464,7 @@ export function ProjectRow({
               : `Couldn’t load ${state.subject}: ${state.error}`}
           </Text>
         )}
-      </HoverPress>
+      </SurfacePress>
       {state.kind === "error" && onRetry && (
         <View style={{ paddingHorizontal: space.sm, paddingBottom: space.xs }}>
           <Button
@@ -580,12 +543,6 @@ function Banner({
         gap: space.xxs,
         padding: space.md,
         borderRadius: radius.panel,
-        borderWidth: 1,
-        borderColor: toneSurface(
-          r.warning,
-          r.border,
-          planningRead.bannerBorderAlpha,
-        ),
         backgroundColor: toneSurface(
           r.warning,
           r.section,
@@ -930,9 +887,7 @@ export function ProjectRoadmapView({
             style={{
               padding: space.md,
               borderRadius: radius.panel,
-              borderWidth: 1,
-              borderStyle: "dashed",
-              borderColor: r.border,
+              backgroundColor: roles(c).hover,
               alignItems: "center",
             }}
           >
@@ -1009,9 +964,7 @@ export function ProjectRoadmapView({
               gap: space.xs,
               padding: space.sm,
               borderRadius: radius.control,
-              borderWidth: 1,
-              borderColor: r.danger,
-              backgroundColor: r.section,
+              backgroundColor: toneWash(r.danger, r.section),
             }}
           >
             <Text style={body(c)}>Couldn’t load this plan: {error}</Text>
@@ -1038,9 +991,7 @@ export function ProjectRoadmapView({
             gap: space.xs,
             padding: space.sm,
             borderRadius: radius.control,
-            borderWidth: 1,
-            borderColor: r.warning,
-            backgroundColor: r.section,
+            backgroundColor: toneWash(r.warning, r.section),
           }}
         >
           <Text style={{ ...meta(c), color: r.warning }}>
@@ -1104,8 +1055,6 @@ export function ProjectRoadmapView({
           accessibilityLabel="Finished lanes"
           style={{
             gap: space.xs,
-            borderTopWidth: 1,
-            borderTopColor: r.border,
             paddingTop: space.sm,
           }}
         >

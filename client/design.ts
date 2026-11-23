@@ -74,14 +74,36 @@ export function touchSlop(visible: number) {
 }
 
 /**
- * The colour roles components paint with, read from the host theme. Dark is the
- * first mapping; a light mapping is defined when light is actually implemented.
+ * The alphas the interaction and hairline roles derive from the theme foreground
+ * (nucleus#1540). A foreground wash reads on any surface step in either theme, so
+ * hover and selection work on the canvas, a section card or a raised control alike.
+ */
+export const wash = {
+  hover: 0.06,
+  selected: 0.1,
+  hairline: 0.08,
+  /** A status tint (warning, danger, accent) that replaces a toned card border. */
+  tone: 0.1,
+} as const;
+
+/**
+ * The colour roles components paint with, read from the host theme. Surfaces tell
+ * regions apart (nucleus#1540, T3-style): `canvas` for the header, menu and detail
+ * pane, `section` for the list pane and section cards on the canvas, `raised` for
+ * controls and cards on a section. Hover and selection are foreground washes, and
+ * `hairline` is the barely visible edge for a floating surface or an otherwise
+ * ambiguous boundary. `border` stays for editable fields only. Dark is the first
+ * mapping; light derives from the same theme colours.
  */
 export function roles(c: Colors) {
   return {
     canvas: c.surface0,
     section: c.surface1,
     raised: c.surface2,
+    hover: toneSurface(c.foreground, c.surface2, wash.hover),
+    selected: toneSurface(c.foreground, c.surface2, wash.selected),
+    hairline: toneSurface(c.foreground, c.border, wash.hairline),
+    /** Editable field edges (inputs, selects, checkboxes); never cards or panes. */
     border: c.border,
     foreground: c.foreground,
     muted: c.foregroundMuted,
@@ -132,7 +154,6 @@ export const planningRead = {
   dormantOpacity: 0.6,
   reviewAlpha: 0.55,
   bannerAlpha: 0.08,
-  bannerBorderAlpha: 0.2,
 } as const;
 
 /**
@@ -148,26 +169,36 @@ export const taskDetail = {
   stepBarHeight: 4,
   stepBarRadius: 2,
   budgetBarHeight: 5,
-  tabIndicator: 2,
   severityWidth: 34,
   severityHeight: 18,
   eyebrowTracking: 0.6,
   attnAlpha: 0.08,
-  attnBorderAlpha: 0.25,
   severityAlpha: 0.14,
   kvLabelWidth: 160,
 } as const;
 
-/** Overlay colours that are structure, not theme roles: the modal scrim and popover shadow. */
 /**
- * Sidebar-style hover for inbox rows and menu entries (nucleus#1528): the selected
- * surface at low alpha, so hover reads dimmer than the solid selected surface.
- * Selected stays the `surface2` token itself; hover over a selected row keeps it.
+ * Sidebar-style hover for rows, cards and menu entries (nucleus#1528, #1540): the
+ * hover role, dimmer than the selected role. Hover over a selected row keeps it.
  */
 export function hoverSurface(c: Colors): string {
-  return toneSurface(c.surface2, c.surface1);
+  return roles(c).hover;
 }
 
+/** The selected or active row, card and menu entry surface (nucleus#1540). */
+export function selectedSurface(c: Colors): string {
+  return roles(c).selected;
+}
+
+/**
+ * A status card's fill (nucleus#1540): the tone at the `wash.tone` alpha instead of
+ * a toned border, so a warning, danger or draft card reads by surface alone.
+ */
+export function toneWash(color: string | undefined, fallback: string): string {
+  return toneSurface(color, fallback, wash.tone);
+}
+
+/** Overlay colours that are structure, not theme roles: the modal scrim and popover shadow. */
 export const overlay = { scrim: "rgba(0,0,0,0.68)", shadow: "#000" } as const;
 
 /**

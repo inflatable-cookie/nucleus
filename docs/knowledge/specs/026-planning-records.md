@@ -528,11 +528,11 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   as the list nears its end; nucleus#1532),
   **Working** (working tasks), **In review** (tasks awaiting or under review) and
   **Closing** (verifying, merging and closing tasks). The menu reads Needs you, a
-  divider, Planning, Leads, Papercuts, Queue, a divider, Working, In review and
-  Closing; both dividers read at half the border's contrast against the menu
-  background. Each entry shows its real total — Planning shows the number of
-  open (active) lanes the selected projects list, counting a lane two selected
-  projects list once; only Needs you is highlighted.
+  gap, Planning, Leads, Papercuts, Queue, a gap, Working, In review and
+  Closing; the gaps are spacing, never a drawn line (nucleus#1540). Each entry
+  shows its real total — Planning shows the number of open (active) lanes the
+  selected projects list, counting a lane two selected projects list once; only
+  Needs you is highlighted.
   An entry whose count is 0 renders dimmed but stays selectable; the selected
   entry keeps its selected styling.
   Opening a view clears the open record and resets Leads and Papercuts to their
@@ -551,7 +551,9 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   something is abnormal (paused or draining, dispatch held, stopped threads, queued
   operations, connecting), the project selector, then Settings, Refresh and the Pause
   split button. There is no status line, and a resumed-thread count never earns a pill:
-  it outlives the restart it describes (nucleus#1511). Below 720 points of panel width
+  it outlives the restart it describes (nucleus#1511). A service state (not running,
+  a roll retrying, deferred or failed, or a UI older than the service) is a pill too,
+  with its full detail in the pill's popover on hover, focus or press (nucleus#1540). Below 720 points of panel width
   the selector collapses to its folder icon button, keeping its accessible label
   ("Projects, <selection>") and the same picker, so the title and the menu button share
   the row with the controls. The queue menu behind the split button holds Pause or
@@ -595,7 +597,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     phase label, and worker blocks without a holder keep `Blocked`. Separate dispatch and merge hold badges retain their
     existing tones.
   - Everything else (areas, lanes, repository, queued) stays neutral.
-  - The tone colours text and outline over the usual badge surface.
+  - The tone colours the text and tints the badge's fill; no badge has an outline.
 - **Cards and long lists** (Tom, 2026-09-27): every card uses the standard card
   component, drawn as a flat row in the inbox list. The list fills its pane and
   scrolls on its own, so the page never grows into one long scroll (Tom,
@@ -654,6 +656,28 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     record's row keeps the selected surface, stronger than hover; hovering it
     keeps it. The menu's entries hover the same way, while the selected entry
     keeps its surface.
+- **Surfaces, not lines** (Tom, 2026-11-22, nucleus#1540: "light or no divider
+  lines, sections distinguished by subtle colour differences, minimal or no card
+  borders with selection and hover states"). The whole board follows the sidebar
+  rule above:
+  - The header, menu and detail pane paint the canvas (`surface0`); the list pane
+    beside the menu, and the Planning list pane, paint the section step
+    (`surface1`). No pane divider and no header rule. Alone on a narrow board the
+    list is the canvas.
+  - A card takes the next step up from its pane, with no border: the section step
+    on the canvas, raised (`surface2`) on a section pane or in a dialog. Lists
+    inside a pane part with spacing. Settings sections part with a wider gap.
+  - Hover is a low-alpha foreground wash and selection a stronger one, laid over
+    the resting fill, so they read on any surface; secondary buttons, cards, rows,
+    tabs, menu items and chips all use them. A status card (warning, danger, a
+    draft) is a tinted fill instead of a toned border.
+  - Only editable fields (inputs, selects, checkboxes) keep a border. A floating
+    surface (popover, menu, dialog) keeps a hairline edge, since it otherwise
+    blends into what it covers; so do the rows of a dense settings table. Keyboard
+    focus keeps its ring.
+  - Components paint with the roles in `client/design.ts` (`canvas`, `section`,
+    `raised`, `hover`, `selected`, `hairline`, `border` for fields), derived from
+    the theme colours, never a literal, so a host theme supplies the palette.
   - **Detail only:** routing sentences, host identity and kind, profile names, host
     waits beyond "on the host", attempt counts, report headlines beyond the status
     line, prerequisite counts and promotion, a decision's choices, a lane's aim, and the

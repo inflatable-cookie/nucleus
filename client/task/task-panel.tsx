@@ -31,11 +31,11 @@ export function TaskDetailPanel({ theme, layout, navigation, taskId }: BoardSurf
   const drafts = useTaskDraftStore(`${shownId}|panel`);
   const task = detailQuery.data?.task;
   const project = task ? state?.projects.find(candidate => projectHasRepository(candidate, task.repoPath, task.repository)) : undefined;
-  if (!task) return <View accessibilityLabel="Task detail" style={{ flex: 1, padding: space.md, backgroundColor: c.surface0 }}>
+  if (!task) return <View accessibilityLabel="Task detail" style={{ flex: 1, padding: space.md, backgroundColor: roles(c).canvas }}>
     <Text style={muted(c)}>{detailQuery.error ? readErrorText("Task detail", detailQuery.error) : "Loading task…"}</Text>
   </View>;
   return <PopoverHost>
-    <View style={{ flex: 1, minHeight: 0, backgroundColor: c.surface0 }}>
+    <View style={{ flex: 1, minHeight: 0, backgroundColor: roles(c).canvas }}>
       {shownId !== taskId && <View style={{ padding: space.xs }}>
         <Button small c={c} text="Back" label="Back to this thread's task" onPress={() => setShownId(taskId)} />
       </View>}

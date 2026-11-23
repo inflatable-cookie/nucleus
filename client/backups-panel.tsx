@@ -320,7 +320,7 @@ function SnapshotLine({
   );
   const border = {
     borderTopWidth: first ? 0 : 1,
-    borderTopColor: r.border,
+    borderTopColor: r.hairline,
     paddingHorizontal: space.sm,
   };
   // At the settings width a snapshot is one line; a phone-width panel puts the labels under the date.
@@ -405,8 +405,7 @@ function Chip({
         paddingHorizontal: space.xs,
         paddingVertical: space.xxs / 2,
         borderRadius: radius.control,
-        borderWidth: 1,
-        borderColor: strong ? r.muted : r.border,
+        backgroundColor: strong ? r.selected : r.hover,
       }}
     >
       <Text

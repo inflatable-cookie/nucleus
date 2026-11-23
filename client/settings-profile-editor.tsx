@@ -855,8 +855,6 @@ export function ProfileEditor({
         gap: space.sm,
         padding: space.sm,
         borderRadius: radius.card,
-        borderWidth: 1,
-        borderColor: c.border,
         backgroundColor: c.surface1,
       }}
     >
@@ -1082,8 +1080,6 @@ export function ProfileEditor({
             ...row,
             gap: space.sm,
             paddingTop: space.xs,
-            borderTopWidth: 1,
-            borderTopColor: c.border,
           }}
         >
           <Text

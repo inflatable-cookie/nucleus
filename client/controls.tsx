@@ -53,17 +53,20 @@ export function HoverRow({
       onPointerLeave={() => setHovered(false)}
       style={{
         borderRadius: radius.control,
-        backgroundColor: hovered ? c.surface2 : "transparent",
+        backgroundColor: hovered ? roles(c).hover : "transparent",
       }}
     >
       {children}
     </View>
   );
 }
-/** Popover and help-panel chrome: a raised bordered surface with a soft shadow. */
+/**
+ * Popover and help-panel chrome: a raised surface with a soft shadow and a hairline
+ * edge, since a floating surface over the same step is otherwise ambiguous.
+ */
 export const popover = (c: Colors) => ({
   borderWidth: 1,
-  borderColor: roles(c).border,
+  borderColor: roles(c).hairline,
   backgroundColor: roles(c).raised,
   shadowColor: overlay.shadow,
   shadowOffset: { width: 0, height: 3 },
@@ -105,6 +108,112 @@ export function FocusRing({
         borderColor: roles(c).focus,
       }}
     />
+  );
+}
+/**
+ * The state wash (nucleus#1540): an inset overlay in the hover or selected role over
+ * a control's own fill, so a filled button or card still lightens on hover and reads
+ * selected whatever its resting surface. Selected wins over hover.
+ */
+export function StateWash({
+  c,
+  hovered,
+  selected = false,
+  corners,
+}: {
+  c: Colors;
+  hovered: boolean;
+  selected?: boolean;
+  corners?: ViewStyle;
+}) {
+  if (!hovered && !selected) return null;
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        borderRadius: radius.control,
+        ...corners,
+        backgroundColor: selected ? roles(c).selected : roles(c).hover,
+      }}
+    />
+  );
+}
+
+/**
+ * The surface a pane paints (nucleus#1540): the canvas (header, menu, detail pane)
+ * or the section step (the list pane beside the menu). A card takes the next step
+ * up from its pane, so it reads by surface alone with no border.
+ */
+export type PaneSurface = "canvas" | "section";
+export const PaneSurfaceContext = React.createContext<PaneSurface>("canvas");
+
+/** The resting fill for a card on the current pane: `section` on the canvas, `raised` on a section. */
+export function useCardFill(c: Colors): string {
+  const pane = React.useContext(PaneSurfaceContext);
+  const r = roles(c);
+  return pane === "section" ? r.raised : r.section;
+}
+
+/**
+ * A pressable card or row (nucleus#1540): no border at rest, its resting fill from
+ * `style`, the hover wash under the pointer or keyboard focus, the selected wash
+ * when open, and the focus ring for keyboard focus.
+ */
+export function SurfacePress({
+  label,
+  onPress,
+  selected = false,
+  disabled,
+  role = "button",
+  hitSlop,
+  style,
+  c,
+  corner = radius.card,
+  children,
+}: {
+  label: string;
+  onPress: () => void;
+  selected?: boolean;
+  disabled?: boolean;
+  role?: "button" | "menuitem" | "tab";
+  hitSlop?: ReturnType<typeof touchSlop>;
+  style?: ViewStyle;
+  c: Colors;
+  corner?: number;
+  children: React.ReactNode;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const focus = useFocusVisible();
+  return (
+    <Pressable
+      accessibilityRole={role}
+      accessibilityLabel={label}
+      accessibilityState={
+        disabled === undefined ? { selected } : { selected, disabled }
+      }
+      disabled={disabled}
+      hitSlop={hitSlop}
+      onPress={onPress}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      onFocus={focus.onFocus}
+      onBlur={focus.onBlur}
+      style={{ borderRadius: corner, ...style, ...noOutline() }}
+    >
+      <StateWash
+        c={c}
+        hovered={!disabled && (hovered || focus.visible)}
+        selected={selected}
+        corners={{ borderRadius: corner }}
+      />
+      {children}
+      <FocusRing c={c} visible={focus.visible} corner={corner} />
+    </Pressable>
   );
 }
 /**
@@ -262,6 +371,7 @@ export function Button({
         ...(wrap ? { maxWidth: "100%", flexShrink: 1 } : {}),
       }}
     >
+      <StateWash c={c} hovered={hovered && !disabled && !on && !danger} corners={corners} />
       <FocusRing c={c} visible={focus.visible} corners={corners} />
       <View
         style={{
@@ -1381,7 +1491,7 @@ export function DropdownSelect({
             style={{
               maxHeight: 260,
               borderWidth: control.border,
-              borderColor: r.border,
+              borderColor: r.hairline,
               borderRadius: control.radius,
               backgroundColor: r.section,
               shadowColor: overlay.shadow,
@@ -1804,9 +1914,9 @@ export function SaveStatus({
  * reason moves to the next line instead of squeezing the title (review #599).
  */
 /**
- * A settings section, ruled off from the next one. `endsInRow` says the content
- * already ends in a row divider: the boundary is then a wider gap instead of a
- * second line a few points under it (Tom, 2026-11-09).
+ * A settings section, set off from the next one by a wider gap, never a drawn line
+ * (nucleus#1540). `endsInRow` is kept for callers whose content ends in a list row;
+ * the boundary is the same gap either way.
  */
 export function Section({
   c,
@@ -1817,7 +1927,6 @@ export function Section({
   status,
   description,
   last = false,
-  endsInRow = false,
   children,
 }: {
   c: Colors;
@@ -1834,16 +1943,14 @@ export function Section({
   const [helpOpen, setHelpOpen] = useState(false);
   const header = useRef<View | null>(null);
   const r = roles(c);
-  const ruled = !last && !endsInRow;
   return (
     <View
       accessibilityLabel={label}
       style={{
         gap: space.sm,
         paddingTop: space.md,
-        paddingBottom: !last && endsInRow ? space.lg : space.md,
-        borderBottomWidth: ruled ? 1 : 0,
-        borderBottomColor: r.border,
+        // Sections part with a wider gap, never a drawn line (nucleus#1540).
+        paddingBottom: last ? space.md : space.lg,
       }}
     >
       <View
@@ -1917,7 +2024,7 @@ export function Section({
     </View>
   );
 }
-/** A bordered panel with an optional header. Used for detail groups and for the cards that sit inside a section. */
+/** A section-surface panel with an optional header and no border (nucleus#1540). Used for detail groups and for the cards that sit inside a section. */
 export function DetailSection({
   title,
   children,
@@ -1927,15 +2034,14 @@ export function DetailSection({
   children: React.ReactNode;
   c: Colors;
 }) {
+  const fill = useCardFill(c);
   return (
     <View
       style={{
         gap: space.sm,
         padding: space.sm,
         borderRadius: radius.panel,
-        borderWidth: 1,
-        borderColor: roles(c).border,
-        backgroundColor: roles(c).section,
+        backgroundColor: fill,
       }}
     >
       {title && (
@@ -1951,7 +2057,10 @@ export function DetailSection({
           {title}
         </Text>
       )}
-      {children}
+      {/* Cards inside the panel step up from it. */}
+      <PaneSurfaceContext.Provider value="section">
+        {children}
+      </PaneSurfaceContext.Provider>
     </View>
   );
 }
@@ -2018,7 +2127,7 @@ export function Dialog({
               padding: space.md,
               borderRadius: radius.panel,
               borderWidth: 1,
-              borderColor: r.border,
+              borderColor: r.hairline,
               backgroundColor: r.section,
             }}
           >
@@ -2058,6 +2167,10 @@ export function Dialog({
           </View>
   );
   if (inline) return frame;
+  // A modal frame paints the section step, so its cards step up to `raised`.
+  const modalFrame = (
+    <PaneSurfaceContext.Provider value="section">{frame}</PaneSurfaceContext.Provider>
+  );
   return (
     <Modal
       visible
@@ -2090,7 +2203,7 @@ export function Dialog({
               }}
             />
           )}
-          {frame}
+          {modalFrame}
         </View>
       </PopoverHost>
     </Modal>
@@ -2135,7 +2248,7 @@ export function ConfirmReplaceAnswer({
             padding: space.md,
             borderRadius: radius.panel,
             borderWidth: 1,
-            borderColor: r.border,
+            borderColor: r.hairline,
             backgroundColor: r.section,
           }}
         >

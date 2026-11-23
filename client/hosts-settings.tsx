@@ -607,10 +607,7 @@ export function HostsPanel({
                 <View
                   key="hosts-divider"
                   accessibilityLabel="Offline hosts"
-                  style={{
-                    borderTopWidth: 1,
-                    borderTopColor: roles(c).border,
-                  }}
+                  style={{ height: space.sm }}
                 />,
               );
             rows.push(

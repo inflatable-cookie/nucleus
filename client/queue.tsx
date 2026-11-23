@@ -54,7 +54,7 @@ import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
 import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
-import { overlay, space, type as typeScale } from "./design";
+import { overlay, roles, space, type as typeScale } from "./design";
 export { TaskCard, DecisionCard } from "./board/cards";
 export { TriageLeadCard } from "./board/triage-lead-card";
 export {
@@ -398,7 +398,7 @@ export function MainSurface({
   const detailPane = (
     <View
       accessibilityLabel="Detail"
-      style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+      style={{ flex: 1, minWidth: 0, minHeight: 0, backgroundColor: roles(c).canvas }}
     >
       {detail ?? (
         <View
@@ -454,7 +454,7 @@ export function MainSurface({
     <PopoverHost>
       <View
         onLayout={(event) => setPanelWidth(event.nativeEvent.layout.width)}
-        style={{ flex: 1, minHeight: 0, backgroundColor: c.surface0 }}
+        style={{ flex: 1, minHeight: 0, backgroundColor: roles(c).canvas }}
       >
         <BoardHeader
           c={c}
@@ -480,8 +480,7 @@ export function MainSurface({
                 style={{
                   width: menuWidth,
                   minHeight: 0,
-                  borderRightWidth: 1,
-                  borderRightColor: c.border,
+                  backgroundColor: roles(c).canvas,
                 }}
               >
                 {menu}
@@ -494,6 +493,7 @@ export function MainSurface({
                 inbox={{
                   listWidth: wide ? inboxListWidth : null,
                   laneModal: !wide,
+                  listFill: narrow ? roles(c).canvas : roles(c).section,
                 }}
                 leads={boardLeads}
                 onCloseLane={(lane) =>
@@ -685,10 +685,17 @@ export function MainSurface({
                       ? {
                           width: inboxListWidth,
                           minHeight: 0,
-                          borderRightWidth: 1,
-                          borderRightColor: c.border,
+                          backgroundColor: roles(c).section,
                         }
-                      : { flex: 1, minWidth: 0, minHeight: 0 }
+                      : {
+                          flex: 1,
+                          minWidth: 0,
+                          minHeight: 0,
+                          // Beside the menu the list steps up a surface; alone it is the canvas.
+                          backgroundColor: narrow
+                            ? roles(c).canvas
+                            : roles(c).section,
+                        }
                   }
                 >
                   <InboxList
@@ -736,9 +743,7 @@ export function MainSurface({
                 style={{
                   width: 260,
                   maxWidth: "85%",
-                  backgroundColor: c.surface0,
-                  borderRightWidth: 1,
-                  borderRightColor: c.border,
+                  backgroundColor: roles(c).canvas,
                   paddingTop: space.sm,
                 }}
               >
@@ -817,7 +822,7 @@ export function QueueBoardPanel(props: BoardWorkspacePanelProps) {
     };
   }, [root, fetchProject]);
   return (
-    <View style={{ flex: 1, minHeight: 0, backgroundColor: c.surface0 }}>
+    <View style={{ flex: 1, minHeight: 0, backgroundColor: roles(c).canvas }}>
       {!workspace && (
         <BoardNotice
           text="Nucleus cannot see this workspace, so it cannot tell which project it belongs to."

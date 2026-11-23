@@ -27,7 +27,11 @@ export const serviceRollSchema = z.object({
 }).strict();
 export type ServiceRoll = z.infer<typeof serviceRollSchema>;
 
-export interface ServiceNotice { tone: "warning" | "quiet"; text: string }
+/**
+ * A service state the header shows as a state pill (nucleus#1540): the pill's short
+ * `label`, and the full `text` in the pill's popover. The header shows no status line.
+ */
+export interface ServiceNotice { tone: "warning" | "quiet"; label: string; text: string }
 
 /**
  * Header notices from the bridge's service state. The UI bundle and the bridge
@@ -38,12 +42,12 @@ export function serviceNotices(state: {
   state: string; detail: string; buildId: string | null; pluginBuildId?: string | null; roll?: ServiceRoll | null;
 }): ServiceNotice[] {
   const notices: ServiceNotice[] = [];
-  if (state.state !== "running") notices.push({ tone: "warning", text: `Nucleus service ${state.state}${state.detail ? ` · ${state.detail}` : ""}` });
-  if (state.roll?.status === "retrying") notices.push({ tone: "warning", text: `Nucleus is replacing its service onto the new build: ${state.roll.detail}` });
-  if (state.roll?.status === "deferred") notices.push({ tone: "quiet", text: `Nucleus is deferring a service roll: ${state.roll.detail}` });
-  if (state.roll?.status === "failed") notices.push({ tone: "warning", text: `Nucleus kept its running service because ${state.roll.detail}` });
+  if (state.state !== "running") notices.push({ tone: "warning", label: `Service ${state.state}`, text: `Nucleus service ${state.state}${state.detail ? ` · ${state.detail}` : ""}` });
+  if (state.roll?.status === "retrying") notices.push({ tone: "warning", label: "Roll retrying", text: `Nucleus is replacing its service onto the new build: ${state.roll.detail}` });
+  if (state.roll?.status === "deferred") notices.push({ tone: "quiet", label: "Roll deferred", text: `Nucleus is deferring a service roll: ${state.roll.detail}` });
+  if (state.roll?.status === "failed") notices.push({ tone: "warning", label: "Roll failed", text: `Nucleus kept its running service because ${state.roll.detail}` });
   if (state.state === "running" && state.buildId && state.pluginBuildId && state.buildId !== state.pluginBuildId) {
-    notices.push({ tone: "quiet", text: "Nucleus updated; reload the plugin to refresh the UI" });
+    notices.push({ tone: "quiet", label: "Reload to update", text: "Nucleus updated; reload the plugin to refresh the UI" });
   }
   return notices;
 }

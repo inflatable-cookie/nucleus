@@ -10,7 +10,15 @@ import {
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Icon } from "../shell";
-import { Button, Field, muted, row, type Colors } from "../controls";
+import {
+  Button,
+  Field,
+  StateWash,
+  muted,
+  row,
+  useCardFill,
+  type Colors,
+} from "../controls";
 import {
   HOST_KIND_LABELS,
   hostKindOf,
@@ -68,6 +76,7 @@ import {
   cardRow,
   hoverSurface,
   roles,
+  selectedSurface,
   space,
   radius,
   toneSurface,
@@ -409,6 +418,7 @@ export const BoardCard = React.memo(function BoardCard({
   const [hovered, setHovered] = useState(false);
   const focus = useFocusVisible();
   const highlighted = hovered || focus.visible;
+  const cardFill = useCardFill(c);
   // Flags and buttons line up under the content, past the tile.
   const actionInset = kind ? cardRow.tile + space.sm : 0;
   // The flags sit outside the row's press target, like its buttons, so the PR link is
@@ -435,7 +445,7 @@ export const BoardCard = React.memo(function BoardCard({
           marginHorizontal: space.xs,
           borderRadius: radius.control,
           backgroundColor: selected
-            ? c.surface2
+            ? selectedSurface(c)
             : highlighted
               ? hoverSurface(c)
               : "transparent",
@@ -473,21 +483,32 @@ export const BoardCard = React.memo(function BoardCard({
         )}
       </View>
     );
+  // A card rests on the next surface step with no border; hover and selection are
+  // washes over that fill (nucleus#1540).
   return (
     <View
       style={{
         gap: space.xs,
         padding: board ? space.sm : space.md,
         borderRadius: radius.card,
-        borderWidth: 1,
-        borderColor: selected ? c.accent : c.border,
-        backgroundColor: c.surface1,
+        backgroundColor: cardFill,
       }}
     >
+      <StateWash
+        c={c}
+        hovered={highlighted}
+        selected={Boolean(selected)}
+        corners={{ borderRadius: radius.card }}
+      />
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
+        accessibilityState={{ selected }}
         onPress={onPress}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
+        onFocus={focus.onFocus}
+        onBlur={focus.onBlur}
       >
         {body}
       </Pressable>

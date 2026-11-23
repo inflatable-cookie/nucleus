@@ -9,8 +9,15 @@ import {
 } from "../shared/lead-status";
 export { leadApprovalView, leadCheckView } from "../shared/lead-status";
 import { formatLocalDateTime } from "../shared/date-time";
-import { Button, Disclosure, Field, row, type Colors } from "./controls";
-import { radius, roles, space, type } from "./design";
+import {
+  Button,
+  Disclosure,
+  Field,
+  row,
+  useCardFill,
+  type Colors,
+} from "./controls";
+import { radius, roles, space, toneWash, type } from "./design";
 import { Readable } from "./readable-text";
 import { ParkFields, ParkedNote } from "./park-controls";
 import { defaultRecheckDate, recheckIsoFromDate } from "../shared/parking";
@@ -167,6 +174,7 @@ export function LeadScreen({
   onRetry: () => void;
 }) {
   const r = roles(c);
+  const fill = useCardFill(c);
   const [notices, setNotices] = useState<Record<string, Notice>>({});
   const [running, setRunning] = useState<string | null>(null);
   const [more, setMore] = useState(false);
@@ -215,9 +223,7 @@ export function LeadScreen({
     gap: space.xs,
     padding: space.sm,
     borderRadius: radius.control,
-    borderWidth: 1,
-    borderColor: r.border,
-    backgroundColor: r.section,
+    backgroundColor: fill,
   } as const;
   // The two columns share a wide row from a zero basis, so a long brief never pushes the check
   // and approval below it; narrow layouts stack each at full width.
@@ -271,7 +277,7 @@ export function LeadScreen({
         {read.error ? (
           <View
             accessibilityRole="alert"
-            style={{ ...panel, borderColor: r.danger }}
+            style={{ ...panel, backgroundColor: toneWash(r.danger, fill) }}
           >
             <Text style={text}>Couldn’t load this lead: {read.error}</Text>
             <Text style={meta}>
@@ -565,7 +571,7 @@ export function LeadScreen({
       {read.error && (
         <View
           accessibilityRole="alert"
-          style={{ ...panel, borderColor: r.warning }}
+          style={{ ...panel, backgroundColor: toneWash(r.warning, fill) }}
         >
           <Text style={{ ...text, color: r.warning }}>
             Showing the last read of this lead. It may be out of date:{" "}
