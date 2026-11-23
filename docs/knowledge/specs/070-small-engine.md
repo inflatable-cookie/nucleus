@@ -51,9 +51,9 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    adapt it to the new model though, not adapt the model to the ui!!"). The model
    and API come from this spec alone. The board keeps its layout, theming and
    primitives, and its components are reshaped to the new model. Components that
-   exist only for the old machinery are deleted. Host plugins that must be JavaScript (Paseo, BB) become thin
-   shims. T3 is called directly over its RPC.
-5. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
+   exist only for the old machinery are deleted. T3 is called directly over its RPC.
+5. **T3 is the only host.** BB and Paseo are dropped, not ported (Tom, 2026-11-23: "Regarding BB and Paseo - I wouldn't be upset if we drop them. I like T3, the workflow can work well.. I'd be tempted to not bother with those two. If I was going to support more ADEs, I would look at something like Zeron, which would get a similar integration to T3."). The host trait stays, so a future ADE gets an adapter shaped like T3's.
+6. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
    useful"). Barge provides worktrees when its pool setting is on.
 
@@ -160,7 +160,7 @@ A Cargo workspace inside this repository, at `engine/`:
 |---|---|
 | `nucleus-core` | Types, the decision table and the state transitions. No I/O. |
 | `nucleus-store` | SQLite for tasks and the event log, through a small schema of its own. |
-| `nucleus-hosts` | The host trait and the T3 adapter first. BB and Paseo follow as shims. |
+| `nucleus-hosts` | The host trait and the T3 adapter. No BB or Paseo adapters (ruling 5). |
 | `nucleus-forge` | GitHub: the PR, checks, merge at the exact head, and reviews. |
 | `nucleus-work` | Worktrees under `workRoot`, or from a Barge pool when the setting is on. |
 | `nucleus-service` | The pass loop, the JSON API for the board, and callbacks. |
