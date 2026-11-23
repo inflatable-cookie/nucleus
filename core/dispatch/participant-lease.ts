@@ -2,10 +2,6 @@ import {
   assignedThreadWaitReason,
   coordinative,
 } from "../recovery/task-reasons";
-import {
-  blockingRecoveryEffects,
-  recoveryEffectsRefusal,
-} from "../recovery/recovery-effects";
 import { executionParticipants } from "../machine/execution-participants";
 import {
   runBindsCurrentWork,
@@ -16,7 +12,6 @@ import { isStaleIntegrationBaseRefusal } from "../hooks/hooks";
 import { agentSettled } from "../machine/agent-settled";
 import { isAgentGoneRefusal } from "../host/errors";
 import type { Adapter } from "../host/adapter";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import type { Resolution } from "../resolution";
 import {
   QUANTUM_READ_DEADLINE_MS,
@@ -231,41 +226,9 @@ export class ParticipantLease {
   /** Merge and closeout observe execution bindings, including retained runs. */
   async executionLease(
     t: Task,
-    enclosing?: VerifiedEnclosingOperation,
     syncing = false,
     probe = false,
   ): Promise<boolean> {
-    const refreshing = this.resolution.refreshingCloseoutHook(t, syncing);
-    const blocking = blockingRecoveryEffects(this.store, t, {
-      enclosing,
-      kinds: [
-        "operation",
-        "hook",
-        "run-delivery",
-        "review-delivery",
-        "publication",
-        "attention-notice",
-      ],
-    }).filter(
-      (item) =>
-        !(
-          refreshing &&
-          item.kind === "hook" &&
-          item.identity === refreshing.id
-        ),
-    );
-    if (blocking.length) {
-      // A speculative probe (an external-merge read on a task that is nowhere near
-      // a merge) records no wait: its fence is a silent no, and the owning phase
-      // keeps its own reason. Real merge gates name what they wait for.
-      if (!probe)
-        this.resolution.waiting(
-          t,
-          `Merge waits for ${recoveryEffectsRefusal(blocking)}; settle each with retry_effect or an owner control that supersedes it`,
-          "lifecycle",
-        );
-      return false;
-    }
     const runs = this.store.runs(t.id);
     for (const [id, workspace] of executionParticipants(t, runs)) {
       // The owner explicitly superseded these exact identities to close an already merged PR.

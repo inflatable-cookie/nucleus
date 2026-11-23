@@ -143,8 +143,7 @@ export class RunReservationAdmission {
           if (
             latest.version !== t.version ||
             !retainedPrerequisiteRevision(latest) ||
-            slotRequestFenced(latest) ||
-            blockingRecoveryEffectsRefusal(this.store, latest)
+            slotRequestFenced(latest)
           )
             return false;
         }

@@ -432,8 +432,10 @@ path in favour of explicit commands and `record.clear`), and the stalled-run han
 shape is served by its own owner: `restart-worker.ts` continues or replaces a
 worker run (owner-stopped, pre-dispatch, absent creation, blocked/retained and
 stopped revision) and owns the worker restart arm; `restart-review.ts` continues a
-reviewer checkpoint or relaunches a stopped reader; `restart-episode.ts` owns the
-absent resolution creation and the coordinator episode; `executor-report.ts` makes
+reviewer checkpoint or relaunches a stopped reader. `RestartControls` re-arms
+an exhausted coordinator episode on owner request. An uncertain resolution
+creation points to `run.release` or `run.start ... replacing=<run>`.
+`executor-report.ts` makes
 the proof executor's one bounded re-report request; `stalled-turn-stop.ts` owns the
 durable targeted stop. Enforces
 [Retained worker recovery](#retained-worker-recovery) and the restart arms in
@@ -577,10 +579,10 @@ that keeps the turn while a task's awaited work runs. Enforces
 `turnReleased` stays a late-bound field on Resolution; Closeout calls it when a
 closeout write frees the turn.
 
-**ParticipantLease** (`core/dispatch/participant-lease.ts`). Proves a task's
-participants are settled: the lease over identities that still own work, and
-the execution lease merge and closeout read, including retained runs and
-blocking recovery effects. It reads `agentSettled` from
+**ParticipantLease** (`core/dispatch/participant-lease.ts`). Checks the task's
+execution participants, including retained runs. The merge and closeout lease
+uses participant activity. The read-only effect list keeps old operations,
+hooks and notices available for `record.clear`. It reads `agentSettled` from
 `core/machine/agent-settled.ts`, the one settled-thread predicate, and host
 failures by their typed readers (`isAgentGoneRefusal`, `isStaleIntegrationBaseRefusal`)
 rather than their text. The withdrawn-native-question settlement dispatch runs
@@ -2802,8 +2804,8 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 - Publication intent at a previous PR head remains history and cannot block or
   offer settlement at the current head. Review credit still binds to its exact head.
-- A reviewer waits while recovery effects block dispatch; it does not repeatedly
-  create runs until those effects change.
+- An earlier unresolved operation, hook or notice remains visible to the owner.
+  It does not hold a new review, an already-published verdict or a merge lease.
 - An uncertain restart stays a conflict until positive evidence makes its
   occurrence obsolete. A later workspace binding alone does not identify its
   target. An exact owner settlement, a verified merge of the task's exact head,

@@ -1150,58 +1150,6 @@ test("an enforced update-branch rule uses the revision path instead of merging a
   }
 });
 
-test("a publication-blocked holder yields without renumbering or spinning, then rejoins in order", async () => {
-  const f = fixture();
-  try {
-    const first = f.add(),
-      second = f.add();
-    await f.engine.wake();
-    const key = `reviewPublication:${first.runId}`;
-    f.store.setMeta(key, { status: "uncertain" });
-    await f.report(first.id, "ready_to_merge");
-    const sequence = f.current(first.id).resolution.integrationTurn!.sequence;
-    assert.equal(
-      f.engine.resolution.integrationActive(f.current(first.id)),
-      false,
-    );
-    await f.report(second.id, "ready_to_merge");
-    await f.engine.wake();
-    assert.equal(
-      f.counts().merges,
-      1,
-      "the able successor merges while publication is unresolved",
-    );
-    const before = f.store.eventsAll(first.id).length;
-    for (let i = 0; i < 3; i++) await f.engine.wakeTask(first.id);
-    assert.equal(
-      f.store.eventsAll(first.id).length,
-      before,
-      "repeated yields do not schedule a polling loop or rewrite waits",
-    );
-    assert.equal(
-      f.current(first.id).resolution.integrationTurn!.sequence,
-      sequence,
-    );
-    f.bases.set(first.id, "d".repeat(40));
-    f.store.deleteMeta(key);
-    assert.equal(
-      f.engine.resolution.holdsIntegrationTurn(f.current(first.id)),
-      true,
-      "the original sequence rejoins ahead of later idle work",
-    );
-    await f.engine.wakeTask(first.id);
-    await f.engine.quiesce();
-    assert.equal(f.counts().merges, 2);
-    assert.equal(
-      f.current(first.id).resolution.mechanicalVerification?.base,
-      "d".repeat(40),
-      "the returning task verifies the advanced base",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
 test("an uncertain merge holds the turn through attention, escalation, holds and pause", async () => {
   const f = fixture();
   try {
@@ -1324,7 +1272,7 @@ test("a recovered earlier task cannot race a successor whose merge request is aw
   }
 });
 
-test("a landed holder with an unresolved operation yields until the operation settles", async () => {
+test("a historical unresolved operation leaves its landed holder in the integration turn", async () => {
   const f = fixture();
   try {
     const first = f.add(),
@@ -1361,12 +1309,13 @@ test("a landed holder with an unresolved operation yields until the operation se
     f.store.putOperation(operation);
     assert.equal(
       f.engine.resolution.holdsIntegrationTurn(f.current(first.id)),
-      false,
+      true,
     );
     assert.equal(
       f.engine.resolution.holdsIntegrationTurn(f.current(second.id)),
-      true,
+      false,
     );
+    assert.equal(f.store.operation(operation.id)?.state, "needs_attention");
     f.store.putOperation({
       ...operation,
       state: "failed",

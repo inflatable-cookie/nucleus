@@ -10,9 +10,7 @@ import type { Engine } from "../../engine";
 import { assertCanonicalPrSource, taskPrNumber } from "../../forge/index";
 import { publishedReviewDecision } from "../../intake/result-application";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
-import { verifyEnclosingOperationMatching } from "../../planning/enclosing-operation";
 import { runsUnchangedSince } from "../../recovery/observation-advance";
-import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { operatorReplacementPending } from "../../recovery/task-reasons";
 import { reviewerIdentityAtHead } from "../../review/review-continuation";
 import { proofOnlyReceiptAwaitingReview } from "../../qa/proof-records";
@@ -69,24 +67,8 @@ export async function moveToReview(
   );
   const stateRefusal = moveStateRefusal(task, "review");
   if (stateRefusal) throw Error(stateRefusal);
-  const enclosing = () =>
-    verifyEnclosingOperationMatching(
-      store,
-      task.id,
-      operationId,
-      input.version,
-      (control) =>
-        control.action === "move" &&
-        control.to === "review" &&
-        !control.force &&
-        control.reason === input.reason &&
-        control.caller === input.caller &&
-        control.prNumber === input.prNumber &&
-        control.fresh === input.fresh &&
-        isDeepStrictEqual(control.reviewer, input.reviewer),
-    );
   if (!input.fresh) {
-    const published = publishedReviewDecision(store, task, enclosing());
+    const published = publishedReviewDecision(store, task);
     if (published.kind === "blocked")
       throw new DurableFenceRefusal(published.refusal);
     if (published.kind === "ready") {
@@ -98,7 +80,6 @@ export async function moveToReview(
         await engine.resolution.resultApplication.applyPublishedReview(
           task,
           published,
-          enclosing,
         );
       if (applied.kind === "blocked")
         throw new DurableFenceRefusal(applied.refusal);
@@ -166,7 +147,7 @@ export async function moveToReview(
   // head supersedes it, and an explicit fresh review owns this transition.
   if (input.fresh !== true && pr.head === task.prHead) {
     if (
-      publishedReviewDecision(store, store.task(task.id), enclosing()).kind !==
+      publishedReviewDecision(store, store.task(task.id)).kind !==
       "none"
     )
       throw new DurableFenceRefusal(
@@ -294,19 +275,6 @@ export async function moveToReview(
         );
     }
   };
-  const checkRetainedEffects = () => {
-    if (!retained) return;
-    const refusal = blockingRecoveryEffectsRefusal(store, store.task(task.id), {
-      kinds: [
-        "run-delivery",
-        "publication",
-        "review-delivery",
-        "merge-response",
-      ],
-    });
-    if (refusal) throw Error(refusal);
-  };
-  checkRetainedEffects();
   await observeRetainedWorkers();
   // Spec 050 (#3569): finished runs settle by observation before the run
   // fence — including a completed reviewer run, whose verdict the move
@@ -436,7 +404,6 @@ export async function moveToReview(
             throw Error(
               "The ready result changed during the move; refresh before retrying",
             );
-          checkRetainedEffects();
           // Finished runs of other roles release first: a recovery episode's
           // accepted action is recorded as not applied on the resolved episode, and
           // the re-read in the commit carries that record through the move's update.

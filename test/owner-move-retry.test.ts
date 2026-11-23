@@ -4759,7 +4759,7 @@ test("publication retry excludes its reporting run but fences other retained run
 
 
 
-test("a merge lease records a wait naming the blocking retry operation and diagnostic", async () => {
+test("a merge lease preserves an old unresolved operation without waiting for it", async () => {
   const f = fixture();
   try {
     f.store.update(f.taskId, { phase: "merging", reason: "Waiting to merge" });
@@ -4805,9 +4805,9 @@ test("a merge lease records a wait naming the blocking retry operation and diagn
     const execution = f.engine.resolution as unknown as {
       executionLease(task: Task): Promise<boolean>;
     };
-    assert.equal(await execution.executionLease(f.task()), false);
-    assert.match(f.task().reason, new RegExp(id));
-    assert.match(f.task().reason, /Workspace creation remains uncertain/);
+    assert.equal(await execution.executionLease(f.task()), true);
+    assert.equal(f.store.operation(id)?.diagnostic, "Workspace creation remains uncertain");
+    assert.equal(f.task().reason, "Waiting to merge");
   } finally {
     await f.close();
   }

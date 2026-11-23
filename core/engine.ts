@@ -45,7 +45,6 @@ import {
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
 
-import { type VerifiedEnclosingOperation } from "./planning/enclosing-operation";
 
 import { z } from "zod";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
@@ -132,7 +131,6 @@ import { ExternalMergeRefusal, MoveControls } from "./verbs/moves";
 import { RestartControls } from "./verbs/restart";
 import { WorkerRestarts } from "./verbs/restart-worker";
 import { ReviewRestarts } from "./verbs/restart-review";
-import { EpisodeRestarts } from "./verbs/restart-episode";
 import { StalledTurnStops } from "./verbs/stalled-turn-stop";
 import { RetryEffectControls } from "./verbs/retry-effect";
 import { ArchiveEffectRetries } from "./verbs/retry-effect-archive";
@@ -952,7 +950,6 @@ export class Engine {
   readonly restartControls: RestartControls;
   readonly workerRestarts: WorkerRestarts;
   private readonly reviewRestarts: ReviewRestarts;
-  private readonly episodeRestarts: EpisodeRestarts;
   private readonly stalledTurnStops: StalledTurnStops;
   private readonly retryEffectControls: RetryEffectControls;
   private readonly archiveEffectRetries: ArchiveEffectRetries;
@@ -1181,7 +1178,6 @@ export class Engine {
     this.restartControls = new RestartControls(this);
     this.workerRestarts = new WorkerRestarts(this);
     this.reviewRestarts = new ReviewRestarts(this);
-    this.episodeRestarts = new EpisodeRestarts(this);
     this.stalledTurnStops = new StalledTurnStops(this);
     this.retryEffectControls = new RetryEffectControls(this);
     this.archiveEffectRetries = new ArchiveEffectRetries(this);
@@ -2056,12 +2052,6 @@ export class Engine {
       operated,
     );
   }
-  moveEnclosingInvocation(
-    input: TaskControlInput,
-    operationId?: string,
-  ): () => VerifiedEnclosingOperation | undefined {
-    return this.moveControls.moveEnclosingInvocation(input, operationId);
-  }
   applyTaskControlMove(
     input: TaskControlInput,
     operated: <T>(result: T) => T,
@@ -2488,7 +2478,7 @@ export class Engine {
     head?: string;
     relayed?: boolean;
     relayNote?: string;
-    enclosing?: () => VerifiedEnclosingOperation | undefined;
+    operationId?: string;
   }): Promise<Task> {
     return this.moveControls.moveToCloseout(input);
   }
@@ -2500,7 +2490,7 @@ export class Engine {
     head?: string;
     relayed?: boolean;
     relayNote?: string;
-    enclosing: () => VerifiedEnclosingOperation | undefined;
+    operationId?: string;
   }): Promise<Task> {
     return this.moveControls.reconcileRetainedExternalMerge(input);
   }
@@ -2512,7 +2502,7 @@ export class Engine {
     head?: string;
     relayed?: boolean;
     relayNote?: string;
-    enclosing: () => VerifiedEnclosingOperation | undefined;
+    operationId?: string;
   }): Promise<Task> {
     return this.moveControls.reconcileReviewEntryExternalMerge(input);
   }
@@ -2707,18 +2697,21 @@ export class Engine {
       commit,
     );
   }
-  executeEpisodeRestart(
+  async executeEpisodeRestart(
     taskId: string,
     displacement: { runIds: string[]; cancel: () => Promise<void> },
     admit: () => Promise<Task | (() => Task | Promise<Task>)>,
-    runIds?: string[],
   ): Promise<Task> {
-    return this.episodeRestarts.executeEpisodeRestart(
-      taskId,
-      displacement,
-      admit,
-      runIds,
+    const { version } = this.store.task(taskId);
+    const apply = await admit();
+    if (typeof apply !== "function") return apply;
+    const current = () => this.requireOwnerControlCurrent(
+      this.store.task(taskId), version, "Task changed during restart",
     );
+    current();
+    await displacement.cancel();
+    current();
+    return apply();
   }
   workerRestartArm(
     task: Task,
@@ -2747,10 +2740,6 @@ export class Engine {
   restartReviewer(request: RestartRequest): Promise<Task> {
     return this.reviewRestarts.restartReviewer(request);
   }
-  restartEpisode(request: RestartRequest): Promise<Task> {
-    return this.episodeRestarts.restartEpisode(request);
-  }
-
   continueRetainedReviewer(
     task: Task,
     options: {
@@ -2827,20 +2816,6 @@ export class Engine {
     runId: string;
   }): Promise<Task> {
     return this.stalledTurnStops.stopStalledTurn(input);
-  }
-  prepareAbsentResolution(
-    input: {
-      taskId: string;
-      version: number;
-      settleFences?: {
-        detail: string;
-        runIds: string[];
-        displacedRunIds?: string[];
-      };
-    },
-    restart?: { input: TaskControlInput; instruction: string },
-  ): Promise<Task | (() => Task | Promise<Task>)> {
-    return this.episodeRestarts.prepareAbsentResolution(input, restart);
   }
   async stop() {
     this.stopped = true;

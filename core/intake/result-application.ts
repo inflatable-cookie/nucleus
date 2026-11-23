@@ -74,10 +74,6 @@ import {
   proofExecutor,
 } from "../recovery/task-reasons";
 import {
-  blockingRecoveryEffects,
-  recoveryEffectsRefusal,
-} from "../recovery/recovery-effects";
-import {
   observationAdvanceSince,
   runsUnchangedSince,
 } from "../recovery/observation-advance";
@@ -85,7 +81,6 @@ import {
   isOwnerRoutedReviewer,
   reviewerIndependence,
 } from "../dispatch/routing";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import {
   escalationWaitState,
   type EscalationWait,
@@ -167,7 +162,6 @@ type PublishedReviewDecision =
 type PublishedReviewApplication =
   | { kind: "applied" }
   | { kind: "blocked"; refusal: string };
-type ReviewInvocation = () => VerifiedEnclosingOperation | undefined;
 
 function hasPublicationEvidence(store: Store, run: Run): boolean {
   return (
@@ -252,7 +246,6 @@ function reviewLadderWait(
 export function publishedReviewDecision(
   store: Store,
   task: Task,
-  enclosing?: VerifiedEnclosingOperation,
 ): PublishedReviewDecision {
   // Receipt-only qualification and review of a recorded external merge keep their own lifecycle.
   if (
@@ -495,28 +488,6 @@ export function publishedReviewDecision(
     return blocked(
       `The ${stop.holderAgentId ?? "stop owner"} must settle the ${stop.reason} stop: ${stop.detail}`,
     );
-  // A publication can conflict with application when it belongs to another
-  // reviewer at this head. Unbound and earlier-head effects still belong to
-  // recovery and the existing merge-custody gate.
-  const effects = blockingRecoveryEffects(store, task, {
-    enclosing,
-    noticeKinds: "all",
-  }).filter(
-    (effect) =>
-      effect.kind !== "publication" ||
-      runs.some(
-        (other) =>
-          other.id === effect.runId &&
-          other.role === "reviewer" &&
-          other.id !== run.id &&
-          other.head === run.head,
-      ),
-  );
-  const refusal = recoveryEffectsRefusal(effects);
-  if (refusal)
-    return blocked(
-      `${refusal}. The effect owner must settle it before applying the verdict`,
-    );
   return {
     kind: "ready",
     run,
@@ -643,7 +614,6 @@ export class ResultApplication {
   async applyPublishedReview(
     t: Task,
     decision: PublishedReview,
-    enclosing?: ReviewInvocation,
   ): Promise<PublishedReviewApplication> {
     const { run, completion, reviewer, prNumber, publicationId } = decision;
     const runs = this.store.runs(t.id);
@@ -655,7 +625,7 @@ export class ResultApplication {
       const task = this.store.task(t.id);
       if (this.resolution.stopped())
         return { refusal: "The scheduler is stopped" };
-      const current = publishedReviewDecision(this.store, task, enclosing?.());
+      const current = publishedReviewDecision(this.store, task);
       if (current.kind === "blocked") return { refusal: current.refusal };
       if (
         current.kind !== "ready" ||

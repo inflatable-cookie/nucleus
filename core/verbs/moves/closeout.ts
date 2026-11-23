@@ -1,15 +1,12 @@
 import type { Task } from "../../../shared/contracts";
 import type { Engine } from "../../engine";
-import type { VerifiedEnclosingOperation } from "../../planning/enclosing-operation";
 import {
-  closeoutEffectRefusal,
   closeoutMoveStateRefusal,
   moveStateRefusal,
   recordedCloseoutRefusal,
   REMOVED_TASK_REFUSAL,
 } from "../control-refusals";
 import { prIdentity } from "../owner-facts";
-import { DurableFenceRefusal } from "../../intake/run-settlement";
 
 /** The owner `move to=closeout` request, after the verb has parsed it. */
 export type CloseoutMoveInput = {
@@ -21,7 +18,7 @@ export type CloseoutMoveInput = {
   head?: string;
   relayed?: boolean;
   relayNote?: string;
-  enclosing?: () => VerifiedEnclosingOperation | undefined;
+  operationId?: string;
 };
 
 /**
@@ -50,17 +47,9 @@ export async function moveToCloseout(
   if (["done", "cancelled"].includes(task.phase)) return task;
   const stateRefusal = moveStateRefusal(task, "closeout");
   if (stateRefusal) throw Error(stateRefusal);
-  // Task 408: the never-dispatched review-entry boundary. It is read fresh from
-  // the same store fact the dependency correction uses, and only through the
-  // authenticated durable invocation executing this move: a direct engine call
-  // carries no verified invocation identity and keeps the parent refusal without
-  // allowing a forged exemption (task 404).
-  const enclosing = input.enclosing?.();
-  const boundary = enclosing
-    ? store.reviewEntryUnrunBeforeFirstRun(task, enclosing)
-    : false;
-  // An unverified caller gets the existing review-entry refusal at its
-  // authorization boundary. The preview cannot grant that exemption.
+  const boundary = Boolean(
+    input.operationId && store.reviewEntryUnrunBeforeFirstRun(task, input.operationId),
+  );
   const reviewEntry = boundary || store.reviewEntryUnrunBeforeFirstRun(task);
   const closeoutRefusal = closeoutMoveStateRefusal(
     task,
@@ -78,7 +67,7 @@ export async function moveToCloseout(
     head: input.head,
     relayed: input.relayed,
     relayNote: input.relayNote,
-    enclosing: input.enclosing ?? (() => undefined),
+    operationId: input.operationId,
   };
   if (boundary) return engine.reconcileReviewEntryExternalMerge(merge);
   if (input.qualification)
@@ -90,8 +79,6 @@ export async function moveToCloseout(
     throw Error(
       "A head is only named by a move to merge with an owner acceptance; closeout proves the PR merged at the forge",
     );
-  const effects = closeoutEffectRefusal(store, task, enclosing);
-  if (effects) throw new DurableFenceRefusal(effects);
   // Round 4: a move applies while paused; only dispatch waits for unpause.
   // Spec 050 atomic verbs: nothing settles before the merge is proven —
   // acceptExternalMerge refuses an unmerged PR or an active thread before it
@@ -102,9 +89,6 @@ export async function moveToCloseout(
     input.reason,
     `move closeout: ${input.reason}`,
     engine.coordinatorActionRunId.getStore(),
-    undefined,
-    undefined,
-    input.enclosing,
   );
   return store.task(task.id);
 }
@@ -137,12 +121,11 @@ async function resumeRecordedMerge(
     throw Error(engine.displaceRefusal(finished.fenced[0]!));
   if (finished.live.length)
     throw Error("A participant still has a live turn; stop it before closeout");
-  const enclosing = input.enclosing?.();
   const quiet = () =>
-    engine.resolution.executionLease(task, enclosing, false, true);
+    engine.resolution.executionLease(task, false, true);
   if (!(await quiet()))
     throw Error(
-      "Task participants or effects are not settled; no closeout was started",
+      "Task participants are not settled; no closeout was started",
     );
   const observed =
     await engine.resolution.externalMerge.observeRecordedMerge(task);
@@ -156,7 +139,7 @@ async function resumeRecordedMerge(
     throw Error("The forge merge does not match the recorded head and commit");
   if (!(await quiet()))
     throw Error(
-      "Task participants or effects changed while observing the merge",
+      "Task participants changed while observing the merge",
     );
   return store.transaction(() => {
     const current = store.task(task.id);

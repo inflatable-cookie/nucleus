@@ -5,7 +5,6 @@ import {
   type QueueOperation,
 } from "../../shared/operations";
 import type { Task, Run } from "../../shared/contracts";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 
 /**
  * The stored facts the review-entry eligibility reads: runs of any role, the task's
@@ -31,17 +30,13 @@ export interface ReviewEntryFacts {
  * delivery-shaped recorded. Intake's settled operation and bound workspace
  * are provenance, never dispatch. Every other shape of ambiguity refuses.
  *
- * `enclosing` (task 404) is the one internally authenticated durable
- * invocation executing `move to=closeout`, proved by
- * `verifyEnclosingOperation`: Queue persists that operation before the engine
- * performs it, so it is the admitted control itself, not a competing writer.
- * Nothing else is exempt — a stale, foreign, settled or changed invocation
- * excludes nothing, and the 401 dependency boundary never passes one.
+ * The operation executor passes the ID of the closeout control it is applying.
+ * Dependency correction checks every unfinished operation.
  */
 export function reviewEntryUnrun(
   facts: ReviewEntryFacts,
   task: Task,
-  enclosing?: VerifiedEnclosingOperation,
+  operationId?: string,
 ): boolean {
   const entry = task.reviewEntry;
   if (
@@ -75,7 +70,7 @@ export function reviewEntryUnrun(
       })
       .some(
         (operation) =>
-          operation.id !== enclosing?.operationId &&
+          operation.id !== operationId &&
           !operationOccurrenceSettlement(operation),
       )
   )
@@ -179,6 +174,5 @@ export function reviewEntryBeforeFirstRun(
  * is the one shape whose own PR may have merged outside Queue before any
  * reviewer existed. The dependency correction and external-merge
  * reconciliation both read `reviewEntryUnrun`, so no second
- * boundary can drift from them. `enclosing` is the authenticated
- * durable invocation executing this control (task 404).
+ * boundary can drift from them.
  */

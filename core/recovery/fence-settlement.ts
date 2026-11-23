@@ -12,7 +12,6 @@ import type { Engine } from "../engine";
 import type { Adapter } from "../host/adapter";
 import { recordProofExecution } from "../qa/proof-records";
 import { timelineSelectorEvidence } from "../qa/proof-selector-evidence";
-import { blockingRecoveryEffectsRefusal } from "./recovery-effects";
 import {
   reviewContinuationWait,
   reviewInProgress,
@@ -1080,10 +1079,7 @@ export class RunRelease {
    * Why one binding-superseded run must stay held, or null when it is
    * observably idle with its safeguards passing. Observation is fresh, never
    * from stored flags: the same agent in the run's workspace, idle with no
-   * active turn and no pending permission, no live owned tool by the existing
-   * timeline proof unless native closure already ended the managed session,
-   * and no ambiguous or uncertain effect on the run. A hold
-   * writes nothing.
+   * active turn and no pending permission. A hold writes nothing.
    */
   async supersededIdleFence(
     run: Run,
@@ -1122,14 +1118,6 @@ export class RunRelease {
       if (!["idle", "error", "closed"].includes(state.status))
         return `its agent is ${state.status}`;
     }
-    // The archive proves the thread cannot take a turn; it never settles the
-    // run's durable effects, which keep their own fence.
-    const refusal = blockingRecoveryEffectsRefusal(
-      this.store,
-      this.store.task(run.taskId),
-      { runId: run.id },
-    );
-    if (refusal) return refusal;
     return null;
   }
 

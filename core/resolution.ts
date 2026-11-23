@@ -189,7 +189,6 @@ import {
 } from "./questions/agent-messages";
 
 import { type WorktreeValidationScan } from "./workspaces/worktree-validation";
-import type { VerifiedEnclosingOperation } from "./planning/enclosing-operation";
 import type { RecoveryDispatchSnapshot } from "./recovery/recovery-context";
 import type { OwnerReviewContext } from "./review/owner-review-context";
 import {
@@ -271,8 +270,8 @@ export interface ProofActivation {
  * existing external-merge route.
  */
 export interface ReviewEntryExternalMerge {
-  /** The authenticated durable invocation executing this move (task 404). */
-  enclosing: () => VerifiedEnclosingOperation | undefined;
+  /** The operation applying this move, when invoked through the operation lane. */
+  operationId?: string;
   /**
    * The operator source acceptance for the head observed at the forge. It is
    * derived per observed head from the shared acceptance rule: a caller-supplied
@@ -1377,7 +1376,6 @@ export class Resolution {
       "holdsIntegrationTurn",
       "integrationActive",
       "paused",
-      "refreshingCloseoutHook",
       "requiredCheckPollState",
       "slotAdmissionReason",
       "store",
@@ -2371,11 +2369,10 @@ export class Resolution {
   }
   executionLease(
     t: Task,
-    enclosing?: VerifiedEnclosingOperation,
     syncing?: boolean,
     probe?: boolean,
   ): Promise<boolean> {
-    return this.participantLease.executionLease(t, enclosing, syncing, probe);
+    return this.participantLease.executionLease(t, syncing, probe);
   }
   retry(
     t: Task,
@@ -3785,7 +3782,6 @@ export class Resolution {
     appliedCoordinatorRunId?: string,
     reviewEntry?: ReviewEntryExternalMerge,
     retained?: RetainedSourceExternalMerge,
-    enclosingOperation?: () => VerifiedEnclosingOperation | undefined,
   ) {
     return this.externalMerge.acceptExternalMerge(
       t,
@@ -3794,7 +3790,6 @@ export class Resolution {
       appliedCoordinatorRunId,
       reviewEntry,
       retained,
-      enclosingOperation,
     );
   }
   recoverExternalMerge(t: Task) {

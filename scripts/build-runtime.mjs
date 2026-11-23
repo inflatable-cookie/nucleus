@@ -179,7 +179,6 @@ export async function buildRuntime(destination) {
   "core/workspaces/thread-ownership.ts": "server/thread-ownership.ts",
   "core/scheduling/cohort.ts": "server/cohort.ts",
   "core/scheduling/repository-contention.ts": "server/repository-contention.ts",
-  "core/planning/enclosing-operation.ts": "server/enclosing-operation.ts",
   "core/recovery/fence-settlement.ts": "server/fence-settlement.ts",
   "core/recovery/wait-context.ts": "server/wait-context.ts",
   "core/stages.ts": "server/stages.ts",

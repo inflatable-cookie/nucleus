@@ -190,7 +190,6 @@ import {
   type RepositoryRekeyReceiptQuery,
   type RepositoryRekeyResult,
 } from "../../shared/repository-rekey";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 
 import {
   HOST_RUN_OUTPUT_FAILURE_DUE_PAGE,
@@ -2685,9 +2684,9 @@ export class Store {
    */
   reviewEntryUnrunBeforeFirstRun(
     task: Task,
-    enclosing?: VerifiedEnclosingOperation,
+    operationId?: string,
   ): boolean {
-    return reviewEntryUnrun(this.reviewEntryFacts, task, enclosing);
+    return reviewEntryUnrun(this.reviewEntryFacts, task, operationId);
   }
   /** The dependency boundary; `store-prerequisites.ts` owns its admission rules. */
   updateDependencies(

@@ -150,7 +150,6 @@ export class ReviewerControls {
             await this.resolution.admitReviewContinuation(admitted, operation);
             return () => this.resolution.continueReview(admitted, operation);
           },
-          runIds,
         ),
       `task:${task.id}`,
     );
@@ -255,7 +254,6 @@ export class ReviewerControls {
                 );
               });
           },
-          finished.settleable.map((run) => run.id),
         ),
       `task:${task.id}`,
     );
@@ -587,7 +585,6 @@ export class ReviewerControls {
               return this.store.task(settled.id);
             };
           },
-          finished.settleable.map((run) => run.id),
         ),
       `task:${taskId}`,
     );

@@ -677,7 +677,6 @@ export class ReviewContinuations {
     const local = reviewContinuationLocalRefusal(this.store, task, run, input, {
       settling,
       paused: this.resolution.paused(),
-      operationId,
       ownerStopYields:
         (input as { ownerStopYields?: boolean }).ownerStopYields === true,
       provenance: (current, record) =>

@@ -1,6 +1,5 @@
 import type { Run, Task } from "../../shared/contracts";
 import { operationOccurrenceSettlement, type QueueOperation } from "../../shared/operations";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import {
   classifyReviewPublication,
   reviewPublicationKey,
@@ -42,12 +41,6 @@ export type RecoveryEffect = {
 };
 
 type RecoveryEffectsOptions = {
-  /**
-   * The one internally authenticated enclosing operation to exclude
-   * (Spec 012/317). Only `verifyEnclosingOperation`/`verifyEnclosingOperationMatching`
-   * can produce this value, so a raw id can never suppress an effect.
-   */
-  enclosing?: VerifiedEnclosingOperation;
   /** Restrict per-run effects (publication, delivery, continuation) to one run. */
   runId?: string | null;
   /** Restrict the projection to these kinds. */
@@ -82,12 +75,9 @@ export function recoveryEffects(
   };
 
   // Durable operations. A deterministic completed result is history; only a
-  // pending, running or needs_attention row still owes work. The single
-  // authenticated enclosing operation (Spec 012/317) is not a competing effect.
+  // pending, running or needs_attention row still owes work.
   if (include("operation")) {
     for (const operation of store.unfinishedTaskOperations(task.id)) {
-      if (options.enclosing && operation.id === options.enclosing.operationId)
-        continue;
       const settled =
         operationOccurrenceSettlement(operation) ||
         (!operation.preSendBoundaryStartedAt &&
