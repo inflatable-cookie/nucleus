@@ -84,7 +84,8 @@ export class SweepMaintenance {
           health.hosts.some(
             (fact) =>
               fact.checkedAt === new Date(at).toISOString() &&
-              (fact.truncated || fact.error.startsWith("The archived thread walk")),
+              (fact.truncated ||
+                fact.error.startsWith("The archived thread walk")),
           )
         )
           retrySoon();

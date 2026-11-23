@@ -30,7 +30,9 @@ export const ROUTING_APPROVAL_MIGRATION_KEY = "routingApprovalMigration";
 export interface MigrationHooks {
   retainedArchiveKeys: () => Set<string>;
   pruneThreadArchiveKeys: () => void;
-  withdrawDecision: (input: Parameters<Decisions["withdrawInTransaction"]>[0]) => void;
+  withdrawDecision: (
+    input: Parameters<Decisions["withdrawInTransaction"]>[0],
+  ) => void;
 }
 
 /**
@@ -164,7 +166,10 @@ export class StoreMigration {
   retireRoutingApprovals(): void {
     const grants = this.core.getMeta<unknown>("routingGrants");
     const droppedGrants = Array.isArray(grants) ? grants.length : 0;
-    const decisions = [...this.db.prepare(`
+    const decisions = [
+      ...this.db
+        .prepare(
+          `
       SELECT id, json_extract(data, '$.version') AS version
       FROM decisions
       WHERE status = 'open' AND id IN (
@@ -178,7 +183,10 @@ export class StoreMigration {
         FROM tasks, json_each(tasks.data, '$.profileRequests') AS request
         WHERE request.type = 'object'
       )
-    `).iterate(JSON.stringify(Array.isArray(grants) ? grants : []))];
+    `,
+        )
+        .iterate(JSON.stringify(Array.isArray(grants) ? grants : [])),
+    ];
     // The old approval flow could turn a legacy preference into a request
     // itself. Keep the preference, but give direct routing only to requests
     // somebody actually made.
@@ -188,26 +196,41 @@ export class StoreMigration {
         AND json_type(data,'$.profileRequests.worker.requestedBy') IS NULL
         AND EXISTS (SELECT 1 FROM events WHERE taskId=tasks.id AND kind='routing_preference_requested')
     `);
-    for (const [table, prefix] of [["tasks", "$.profileRequests"], ["outcomes", "$.routing.profileRequests"]]) {
-      const fields = ["worker", "reviewer", "coordinator"].map((role) => `${prefix}.${role}.signoff`);
-      this.db.prepare(
-        `UPDATE ${table} SET data=json_remove(data, ?, ?, ?)
+    for (const [table, prefix] of [
+      ["tasks", "$.profileRequests"],
+      ["outcomes", "$.routing.profileRequests"],
+    ]) {
+      const fields = ["worker", "reviewer", "coordinator"].map(
+        (role) => `${prefix}.${role}.signoff`,
+      );
+      this.db
+        .prepare(
+          `UPDATE ${table} SET data=json_remove(data, ?, ?, ?)
         WHERE json_type(data, ?) IS NOT NULL OR json_type(data, ?) IS NOT NULL OR json_type(data, ?) IS NOT NULL`,
-      ).run(...fields, ...fields);
+        )
+        .run(...fields, ...fields);
     }
     const withdrawn: string[] = [];
     for (const { id, version } of decisions) {
       if (typeof id !== "string" || typeof version !== "number")
-        throw Error("A retired routing decision is missing its stored identity");
+        throw Error(
+          "A retired routing decision is missing its stored identity",
+        );
       this.hooks.withdrawDecision({
-        id, version, withdrawnBy: "queue",
-        reason: "Overtaken by the 2026-11-22 ruling that explicit profile requests apply directly.",
+        id,
+        version,
+        withdrawnBy: "queue",
+        reason:
+          "Overtaken by the 2026-11-22 ruling that explicit profile requests apply directly.",
       });
       withdrawn.push(id);
     }
 
     if (grants !== undefined) this.core.deleteMeta("routingGrants");
-    const previous = this.core.getMeta<{ droppedGrants: number; withdrawn: string[] }>(ROUTING_APPROVAL_MIGRATION_KEY);
+    const previous = this.core.getMeta<{
+      droppedGrants: number;
+      withdrawn: string[];
+    }>(ROUTING_APPROVAL_MIGRATION_KEY);
     if (previous && grants === undefined && !withdrawn.length) return;
     this.core.setMeta(ROUTING_APPROVAL_MIGRATION_KEY, {
       at: new Date().toISOString(),

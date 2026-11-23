@@ -1,6 +1,10 @@
 import { Decisions } from "../planning/decisions";
 import type { AssignmentRole } from "../../shared/schema/state";
-import { StoreAuth, VERDICT_ONLY_CREDENTIAL, type CompletionIdentity } from "./store-auth";
+import {
+  StoreAuth,
+  VERDICT_ONLY_CREDENTIAL,
+  type CompletionIdentity,
+} from "./store-auth";
 import { StoreConfig } from "./store-config";
 import { digest, now, StoreCore } from "./store-core";
 import { StoreHostRuns } from "./store-host-runs";
@@ -272,7 +276,8 @@ export class Store {
   private readonly migrationStore = new StoreMigration(this.core, {
     retainedArchiveKeys: () => this.retentionStore.retainedArchiveKeys(),
     pruneThreadArchiveKeys: () => this.retentionStore.pruneThreadArchiveKeys(),
-    withdrawDecision: (input) => new Decisions(this).withdrawInTransaction(input),
+    withdrawDecision: (input) =>
+      new Decisions(this).withdrawInTransaction(input),
   });
   private readonly admissionStore = new StoreAdmission(this.core, {
     storedSchema: (path, integrity) => Store.storedSchema(path, integrity),
@@ -1551,7 +1556,11 @@ export class Store {
   authenticate(run: string, token: string) {
     return this.authStore.authenticate(run, token);
   }
-  authenticateCompletion(run: string, token: string, input: CompletionIdentity) {
+  authenticateCompletion(
+    run: string,
+    token: string,
+    input: CompletionIdentity,
+  ) {
     return this.authStore.authenticateCompletion(run, token, input);
   }
   credentialRunForToken(token: string): string | null {
