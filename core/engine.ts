@@ -1182,6 +1182,7 @@ export class Engine {
           "heavyRunAlive",
           "identifyOriginHost",
           "plannerRungsFor",
+          "quantumReadTimeoutMs",
           "responsibleThreads",
           "withHost",
           "reconcileStalledTurnStop",
@@ -3137,8 +3138,8 @@ export class Engine {
     );
     if (reason) this.note(taskId, reason, "classify");
   }
-  supersededIdleFence(run: Run): Promise<string | null> {
-    return this.runRelease.supersededIdleFence(run);
+  supersededIdleFence(run: Run, deadlineAt?: number): Promise<string | null> {
+    return this.runRelease.supersededIdleFence(run, deadlineAt);
   }
   ownedToolHold(
     agentId: string,

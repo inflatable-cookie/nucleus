@@ -1470,3 +1470,450 @@ test("timing: sweep merge quantum with a 60 s process double records unknown hol
     "task quantum must not hit the 120 s observation_outage bound",
   );
 });
+
+test("an unbound launch reservation without an agentId does not abort the host pass or fleet sweep", async (t) => {
+  const warmedAgents: string[] = [];
+  const updatedAt = new Date(Date.now() - 60_000).toISOString();
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: `ws-${id.replace(/^agent-/, "")}`,
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt,
+          },
+        ]),
+      ),
+    originAgent: async (id: string) => ({
+      id,
+      workspaceId: `ws-${id.replace(/^agent-/, "")}`,
+      archived: false,
+      deleted: false,
+    }),
+    agentTimelinePage: async (id: string) => {
+      warmedAgents.push(id);
+      return toolTimelinePage([]);
+    },
+    hostProcessListing: async () => [],
+  });
+
+  // Task 1 has an unbound reviewer launch reservation (agentId: null, released: false).
+  const unbound = seedFinishedWorkerTask(f.store, "unbound-intent");
+  f.store.update(unbound.task.id, { phase: "reviewing" });
+  f.store.putRun(
+    runSchema.parse({
+      id: "run-unbound-reviewer",
+      taskId: unbound.task.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId: null,
+      workspaceId: "ws-unbound-intent",
+      hostId: HOST,
+      profile: null,
+      status: "intent",
+      createdAt: updatedAt,
+      lastObservedAt: null,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: false,
+    }),
+  );
+
+  // Task 2 is a normal task on the same host that should still be warmed.
+  const healthy = seedFinishedWorkerTask(f.store, "healthy-sibling");
+
+  const pass = await f.engine.auditPass(true);
+  assert.equal(
+    pass.fault,
+    null,
+    "unbound reservation must not fault the sweep",
+  );
+  assert.equal(pass.covered, true, "sweep still covers all tasks");
+  assert.equal(f.store.getMeta("hostPassError"), "");
+  assert.ok(
+    warmedAgents.includes(healthy.agentId),
+    "healthy sibling task is still warmed in the same host pass",
+  );
+});
+
+test("bounded tool projection holds when a newer turn advances updatedAt after the host pass snapshot", async (t) => {
+  const t1 = new Date(Date.now() - 60_000).toISOString();
+  let currentUpdatedAt = t1;
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-bounded-fresh",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt: t1,
+          },
+        ]),
+      ),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-bounded-fresh",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: currentUpdatedAt,
+    }),
+    agentTimelinePage: async () => ({
+      entries: [],
+      hasOlder: true,
+      gap: false,
+      staleCursor: false,
+      reset: false,
+      hasNewer: false,
+      epoch: "agent-bounded-fresh",
+      startCursor: null,
+      endCursor: null,
+      projection: "bounded" as const,
+      pendingBackgroundTasks: [],
+    }),
+    hostProcessListing: async () => [],
+    noLiveWorkspaceProcesses: async () => null,
+  });
+
+  const seeded = seedFinishedWorkerTask(f.store, "bounded-fresh");
+  f.store.update(seeded.task.id, {
+    directory: "/tmp/synthetic-bounded-fresh",
+    scratchRoot: "/tmp/synthetic-bounded-fresh-scratch",
+  });
+  const seededRun = f.store.run(seeded.runId)!;
+  f.store.putRun({
+    ...seededRun,
+    temporaryDirectory: "/tmp/synthetic-bounded-fresh-scratch",
+  });
+
+  const snapshot = f.engine.resolution.beginPassSnapshot();
+  try {
+    await f.engine.sweep.hostPass.run(HOST);
+    // Simulate a new turn completing after the host pass captured the bounded
+    // window and process table.
+    currentUpdatedAt = new Date(Date.now() + 5_000).toISOString();
+    const hold = await f.engine.resolution.ownedToolHold(seeded.agentId, {
+      requireCompleteEvidence: true,
+      runId: seeded.runId,
+      runIds: [seeded.runId],
+      taskId: seeded.task.id,
+      workspaceId: "ws-bounded-fresh",
+    });
+    assert.ok(
+      hold,
+      "bounded tool proof must hold when fresh observation has a newer updatedAt than the pass snapshot",
+    );
+    assert.match(hold, /predates|active after the pass process snapshot/i);
+  } finally {
+    snapshot.expire();
+  }
+});
+
+test("two missing closure stamps never authorize durable run_delivery_not_delivered from a pass snapshot", async (t) => {
+  const f = engineFixture(t, {
+    originAgent: async (id: string) => ({
+      id,
+      workspaceId: "ws-unstamped-close",
+      archived: false,
+      deleted: false,
+    }),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-unstamped-close",
+      status: "closed",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      // Intentionally omit updatedAt (missing closure stamp).
+    }),
+    agentTimelinePage: async () => toolTimelinePage([]),
+  });
+
+  const seeded = seedFinishedWorkerTask(f.store, "unstamped-close");
+  f.store.putRun(
+    runSchema.parse({
+      id: "run-unstamped-close",
+      taskId: seeded.task.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId: "agent-unstamped-close",
+      workspaceId: "ws-unstamped-close",
+      hostId: HOST,
+      profile: null,
+      status: "uncertain",
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      lastObservedAt: null,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: true,
+    }),
+  );
+
+  const snapshot = f.engine.resolution.beginPassSnapshot();
+  try {
+    await f.engine.resolution.primePassTimelinePage(
+      "agent-unstamped-close",
+      100,
+      HOST,
+      {
+        provenTerminal: {
+          archived: false,
+          workspaceId: "ws-unstamped-close",
+          closedUpdatedAt: null,
+        },
+      },
+    );
+    await assert.rejects(
+      () =>
+        f.engine.resolution.reconcileUncertainRunDelivery(
+          seeded.task.id,
+          "run-unstamped-close",
+        ),
+      /predates agent closure/i,
+      "missing closure stamps must not compare equal to authorize durable negative delivery",
+    );
+    assert.equal(
+      f.store
+        .events(seeded.task.id)
+        .filter((e) => e.kind === "run_delivery_not_delivered").length,
+      0,
+    );
+  } finally {
+    snapshot.expire();
+  }
+});
+
+test("worker reconcileObservation bounds hung observe and settleSupersededIdleRuns shares one quantum budget across runs", async (t) => {
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  let observeCalls = 0;
+  const f = engineFixture(t, {
+    observe: () => {
+      observeCalls++;
+      return new Promise<AgentObservation>((resolve) => {
+        const timer = setTimeout(
+          () =>
+            resolve({
+              id: "late",
+              workspaceId: "ws-late",
+              status: "idle",
+              active: false,
+              activeTurnId: null,
+              permissions: false,
+              error: "",
+            }),
+          60_000,
+        );
+        timer.unref?.();
+        timers.push(timer);
+      });
+    },
+    originAgent: () =>
+      new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), 60_000);
+        timer.unref?.();
+        timers.push(timer);
+      }),
+  });
+  f.engine.resolution.quantumReadTimeoutMs = 100;
+
+  // 1. Working task with hung host.observe returns inside quantum deadline.
+  const working = f.store.insert(
+    submission({
+      submissionId: "sub-hung-worker",
+      title: "Hung worker observe",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  f.store.update(working.id, {
+    phase: "working",
+    workspaceId: "ws-hung-worker",
+    directory: "/tmp/synthetic-hung-worker",
+    agentId: "agent-hung-worker",
+    runId: "run-hung-worker",
+  });
+
+  const workerStart = performance.now();
+  await f.engine.reconcile(f.store.task(working.id));
+  const workerElapsed = performance.now() - workerStart;
+  assert.ok(
+    workerElapsed < 2_000,
+    `reconcileObservation with hung observe should return inside bound, took ${workerElapsed.toFixed(1)} ms`,
+  );
+
+  // 2. Seven eligible superseded runs share ONE quantum budget instead of 7 * 2 * budget.
+  const multi = seedFinishedWorkerTask(f.store, "multi-superseded");
+  for (let i = 0; i < 7; i++) {
+    f.store.putRun(
+      runSchema.parse({
+        id: `run-sup-${i}`,
+        taskId: multi.task.id,
+        role: "reviewer",
+        generation: i + 1,
+        head: HEAD,
+        base: HEAD,
+        agentId: `agent-sup-${i}`,
+        workspaceId: "ws-multi-superseded",
+        hostId: HOST,
+        profile: null,
+        status: "running",
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
+        lastObservedAt: null,
+        active: false,
+        idleSince: null,
+        completion: null,
+        released: false,
+      }),
+    );
+  }
+  const callsBefore = observeCalls;
+  const supStart = performance.now();
+  const settled = await f.engine.settleSupersededIdleRuns(
+    multi.task.id,
+    "shared budget test",
+  );
+  const supElapsed = performance.now() - supStart;
+  assert.equal(settled, 0);
+  assert.ok(
+    supElapsed < 2_000,
+    `7 slow superseded runs must share one quantum budget, took ${supElapsed.toFixed(1)} ms`,
+  );
+  assert.ok(
+    observeCalls - callsBefore < 7,
+    `budget expiry should stop before observing all 7 runs, observed ${observeCalls - callsBefore}`,
+  );
+});
+
+test("stable idle tool backlog does not starve shell peeks, and unknown shell peek defers stalled_turn attention", async (t) => {
+  const staleAt = new Date(Date.now() - 45 * 60_000).toISOString();
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  const shellWarmed: string[] = [];
+
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          id === "agent-running-shell"
+            ? {
+                id,
+                workspaceId: "ws-running-shell",
+                status: "running",
+                active: true,
+                activeTurnId: "turn-shell-1",
+                permissions: false,
+                error: "",
+                turnStartedAt: staleAt,
+                updatedAt: staleAt,
+              }
+            : {
+                id,
+                workspaceId: `ws-${id.replace(/^agent-/, "")}`,
+                status: "idle",
+                active: false,
+                activeTurnId: null,
+                permissions: false,
+                error: "",
+                updatedAt: idleAt,
+              },
+        ]),
+      ),
+    agentTimelinePage: async () => toolTimelinePage([]),
+    agentTimeline: async (id: string) => {
+      shellWarmed.push(id);
+      return [runningShellEntry("call-long-shell", staleAt)];
+    },
+    hostProcessListing: async () => [],
+  });
+
+  // Seed 10 idle tool candidates (more than HOST_PASS_WARM_CANDIDATE_CAP = 8).
+  for (let i = 0; i < 10; i++) {
+    seedFinishedWorkerTask(f.store, `idle-backlog-${i}`);
+  }
+  // Seed 1 running task whose shell peek is needed to prevent false stall attention.
+  const runningTask = f.store.insert(
+    submission({
+      submissionId: "sub-running-shell",
+      title: "Running shell task",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  f.store.update(runningTask.id, {
+    phase: "working",
+    workspaceId: "ws-running-shell",
+    directory: "/tmp/synthetic-running-shell",
+    agentId: "agent-running-shell",
+    runId: "run-running-shell",
+  });
+
+  // 1. Round-robin warming must include the shell candidate despite 10 idle tool candidates.
+  const snap1 = f.engine.resolution.beginPassSnapshot();
+  try {
+    await f.engine.sweep.hostPass.run(HOST);
+    assert.ok(
+      shellWarmed.includes("agent-running-shell"),
+      "interleaved warming must warm the shell peek despite 10 idle tool candidates",
+    );
+  } finally {
+    snap1.expire();
+  }
+
+  // 2. When a sealed pass snapshot returns unknown for a shell peek, Stalls.check
+  // must NOT raise stalled_turn attention.
+  const snap2 = f.engine.resolution.beginPassSnapshot();
+  try {
+    f.engine.resolution.sealPassHost(HOST);
+    const notice = await f.engine.resolution.stalls.check(
+      f.store.task(runningTask.id),
+      null,
+      {
+        id: "agent-running-shell",
+        workspaceId: "ws-running-shell",
+        status: "running",
+        active: true,
+        activeTurnId: "turn-shell-1",
+        permissions: false,
+        error: "",
+        turnStartedAt: staleAt,
+        updatedAt: staleAt,
+      },
+    );
+    assert.equal(notice, null);
+    assert.equal(
+      f.store.task(runningTask.id).resolution.incident,
+      null,
+      "unknown shell peek must defer stalled_turn attention instead of treating unknown as no live tool",
+    );
+  } finally {
+    snap2.expire();
+  }
+});

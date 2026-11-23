@@ -295,6 +295,10 @@ export class Stalls {
       (peek.live ? `${role} is waiting on a running tool` : null) ??
       (await this.ownedProcessNotice(current, run, role, runId, state.id));
     if (toolNotice) return toolNotice;
+    // Spec 068 §6: an unknown timeline read (e.g. sealed pass-snapshot miss or
+    // deadline expiry) is not proof that no tool is live; defer stall attention
+    // until a later pass reads the timeline cleanly.
+    if (peek.unknown) return null;
     const turn = state.activeTurnId
       ? `, active turn ${state.activeTurnId}`
       : "";
@@ -502,6 +506,7 @@ export class Stalls {
   ): Promise<{
     notice: string | null;
     live: boolean;
+    unknown?: boolean;
     turnId: string | null;
     tool?: ParticipantActivity["tool"];
   }> {
@@ -525,6 +530,7 @@ export class Stalls {
     if (lastPeek && Date.now() - lastPeek.at < this.peekTtlMs) return lastPeek;
     let notice: string | null = null;
     let live = false;
+    let unknown = false;
     let tool: ParticipantActivity["tool"] | undefined;
     try {
       let timeline: TimelineEntry[] | null | undefined;
@@ -532,7 +538,12 @@ export class Stalls {
         const read = await this.resolution.onTaskHost(t, () =>
           this.resolution.readPassTimeline(agentId, t.hostId),
         );
-        timeline = read.state === "ok" ? read.value : null;
+        if (read.state === "unknown") {
+          unknown = true;
+          timeline = null;
+        } else {
+          timeline = read.value;
+        }
       }
       const shell = runningShellCommand(timeline ?? null);
       if (timeline) tool = observeRunningTool(timeline, turnId);
@@ -541,6 +552,7 @@ export class Stalls {
     } catch {
       notice = null;
     }
+    if (unknown) return { notice: null, live: false, unknown: true, turnId };
     if (this.shellPeeks.size > 512) this.shellPeeks.clear();
     const result = { at: Date.now(), notice, live, turnId, tool };
     this.shellPeeks.set(agentId, result);

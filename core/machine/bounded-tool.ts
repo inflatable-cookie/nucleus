@@ -19,7 +19,7 @@ export async function boundedToolHold(
   host: { observe(id: string): Promise<AgentObservation | null> },
   agentId: string,
   workspaceId: string | undefined,
-  processProof: () => Promise<string | null>,
+  processProof: (observed: AgentObservation) => Promise<string | null>,
   deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
 ): Promise<string | null> {
   // Positive live evidence always holds, even when another signal is unknown.
@@ -62,7 +62,7 @@ export async function boundedToolHold(
   if (!noTurnLive(state))
     return "owned tool evidence is inconclusive: participant inactivity is unproven";
   try {
-    const issue = await processProof();
+    const issue = await processProof(state);
     if (issue === null) return null;
     return typeof issue === "string" && issue
       ? `owned tool process proof did not clear: ${issue}`

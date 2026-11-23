@@ -23,7 +23,7 @@ import {
   TOOL_TIMELINE_READ_BUDGET,
   noTurnLive,
 } from "../recovery/stall";
-import { executionParticipants } from "../machine/execution-participants";
+import { knownExecutionParticipantIds } from "../machine/execution-participants";
 import {
   HOST_PASS_WARM_BUDGET_MS,
   HOST_PASS_WARM_CANDIDATE_CAP,
@@ -790,11 +790,16 @@ export class HostPass {
         [];
       const seenRetained = new Set<string>();
       for (const task of activeTasks) {
-        for (const [agentId, workspaceId] of executionParticipants(
+        for (const { agentId, workspaceId } of knownExecutionParticipantIds(
           task,
           this.store.runs(task.id),
         )) {
-          if (observedMap?.has(agentId) || seenRetained.has(agentId)) continue;
+          if (
+            !workspaceId ||
+            observedMap?.has(agentId) ||
+            seenRetained.has(agentId)
+          )
+            continue;
           seenRetained.add(agentId);
           missingRetained.push({ agentId, workspaceId });
         }
@@ -911,28 +916,34 @@ export class HostPass {
         });
     }
     // Spec 068 §6: pre-read timelines needed by this host's tasks into the
-    // pass's shared snapshot under a single bounded per-host budget, rotating
-    // candidate order across passes so a persistently slow candidate cannot
-    // starve healthy candidates on the same host.
+    // pass's shared snapshot under a single bounded per-host budget. Interleave
+    // delivery, tool, and shell groups round-robin (rotating both group start
+    // and within-group candidate order across passes) so a stable backlog in
+    // one group or a persistently slow candidate cannot starve other groups.
     let warmed = 0;
     const canWarmMore = (): boolean =>
       !this.context.stopped &&
       warmed < HOST_PASS_WARM_CANDIDATE_CAP &&
       budgetRemaining() > 0;
 
+    type WarmItem =
+      | { kind: "delivery"; agentId: string; workspaceId: string }
+      | {
+          kind: "tool";
+          agentId: string;
+          coveredObservation?: {
+            updatedAt?: string | null;
+            status?: string;
+            archived?: boolean;
+          };
+        }
+      | { kind: "shell"; agentId: string };
+
+    const deliveryItems: WarmItem[] = [];
     if (
       this.adapter.agentTimelinePage &&
-      this.context.resolution.primePassTimelinePage &&
-      canWarmMore()
+      this.context.resolution.primePassTimelinePage
     ) {
-      // Delivery timelines are primed ONLY after proving the agent is already
-      // terminal (archived or closed) in its recorded workspace, carrying
-      // `closedUpdatedAt` for resumable closed threads so an earlier closure
-      // can never settle a later resumed turn's delivery as absent.
-      const deliveryCandidates: Array<{
-        agentId: string;
-        workspaceId: string;
-      }> = [];
       const seenDelivery = new Set<string>();
       for (const task of hostTasks) {
         if (task.removedAt) continue;
@@ -946,105 +957,21 @@ export class HostPass {
             !releasedRunDeliveryEvidence(this.store, run)
           ) {
             seenDelivery.add(run.agentId);
-            deliveryCandidates.push({
+            deliveryItems.push({
+              kind: "delivery",
               agentId: run.agentId,
               workspaceId: run.workspaceId,
             });
           }
         }
       }
-      if (deliveryCandidates.length) {
-        const orderedDelivery = rotate(deliveryCandidates, passOffset);
-        await this.step(host, "timelineDeliverySnapshot", async () => {
-          for (const candidate of orderedDelivery) {
-            await yieldToLoop();
-            if (!canWarmMore()) return;
-            let archived = false;
-            if (this.adapter.originAgent) {
-              const originCap = perCandidateCap(orderedDelivery.length);
-              if (originCap <= 0) return;
-              const originRead = await boundedRead(
-                "origin agent observation",
-                () => this.context.host.originAgent(candidate.agentId),
-                originCap,
-              ).catch(() => ({
-                state: "unknown" as const,
-                reason: "origin read failed",
-              }));
-              if (originRead.state === "unknown") {
-                if (budgetRemaining() <= 0) return;
-                continue;
-              }
-              const origin = originRead.value;
-              if (!origin || origin.workspaceId !== candidate.workspaceId)
-                continue;
-              archived = origin.archived === true;
-            }
-            let closedUpdatedAt: string | null | undefined;
-            if (!archived) {
-              const obsCap = perCandidateCap(orderedDelivery.length);
-              if (obsCap <= 0) return;
-              const obsRead = await boundedRead(
-                "participant observation",
-                () => this.context.host.observe(candidate.agentId),
-                obsCap,
-              ).catch(() => ({
-                state: "unknown" as const,
-                reason: "observe failed",
-              }));
-              if (obsRead.state === "unknown") {
-                if (budgetRemaining() <= 0) return;
-                continue;
-              }
-              const state = obsRead.value;
-              if (
-                state.id !== candidate.agentId ||
-                state.workspaceId !== candidate.workspaceId ||
-                (state.status !== "closed" && state.archived !== true) ||
-                state.active ||
-                state.activeTurnId ||
-                state.permissions
-              )
-                continue;
-              archived = state.archived === true;
-              closedUpdatedAt = archived
-                ? undefined
-                : (state.updatedAt ?? null);
-            }
-            const pageCap = perCandidateCap(orderedDelivery.length);
-            if (pageCap <= 0) return;
-            warmed++;
-            const pageRead = await this.context.resolution
-              .primePassTimelinePage!(candidate.agentId, 100, host, {
-              provenTerminal: {
-                archived,
-                workspaceId: candidate.workspaceId,
-                ...(archived ? {} : { closedUpdatedAt }),
-              },
-              deadlineMs: pageCap,
-            }).catch(() => null);
-            if (pageRead?.state === "unknown" && budgetRemaining() <= 0) return;
-          }
-        });
-      }
     }
+
+    const toolItems: WarmItem[] = [];
     if (
       this.adapter.agentTimelinePage &&
-      this.context.resolution.primePassTimelinePage &&
-      canWarmMore()
+      this.context.resolution.primePassTimelinePage
     ) {
-      // Pre-warm tool timeline pages at TOOL_TIMELINE_LIMIT (200) for
-      // historical proof executor runs and non-terminal participants,
-      // expanding partial pages inside HostPass so task quanta never start
-      // timeline RPCs on their exclusive lanes.
-      const toolCandidates: Array<{
-        agentId: string;
-        coveredObservation?: {
-          updatedAt?: string | null;
-          status?: string;
-          archived?: boolean;
-        };
-      }> = [];
       const seenTool = new Set<string>();
       const addTool = (
         agentId: string,
@@ -1052,7 +979,8 @@ export class HostPass {
       ): void => {
         if (seenTool.has(agentId)) return;
         seenTool.add(agentId);
-        toolCandidates.push({
+        toolItems.push({
+          kind: "tool",
           agentId,
           ...(state
             ? {
@@ -1082,7 +1010,7 @@ export class HostPass {
           )
             addTool(run.agentId, observedMap?.get(run.agentId));
         }
-        for (const [agentId] of executionParticipants(task, runs)) {
+        for (const { agentId } of knownExecutionParticipantIds(task, runs)) {
           const state = observedMap?.get(agentId) ?? null;
           if (state) {
             if (
@@ -1110,14 +1038,156 @@ export class HostPass {
           }
         }
       }
-      if (toolCandidates.length) {
-        const orderedTools = rotate(toolCandidates, passOffset);
-        await this.step(host, "timelineToolSnapshot", async () => {
-          for (const candidate of orderedTools) {
-            await yieldToLoop();
-            if (!canWarmMore()) return;
-            const cap = perCandidateCap(orderedTools.length);
-            if (cap <= 0) return;
+    }
+
+    const shellItems: WarmItem[] = [];
+    if (
+      this.adapter.agentTimeline &&
+      this.context.resolution.primePassTimeline
+    ) {
+      const seenShell = new Set<string>();
+      const addShell = (agentId: string): void => {
+        if (seenShell.has(agentId)) return;
+        seenShell.add(agentId);
+        shellItems.push({ kind: "shell", agentId });
+      };
+      const nowMs = Date.now();
+      const stallMinutes = this.store.getMeta<number>("stallThresholdMinutes");
+      const stallThresholdMs =
+        typeof stallMinutes === "number" &&
+        Number.isFinite(stallMinutes) &&
+        stallMinutes > 0
+          ? stallMinutes * 60_000
+          : 30 * 60_000;
+      if (observed) {
+        const observedMap = observed as ReadonlyMap<string, AgentObservation>;
+        for (const [agentId, state] of observedMap) {
+          if (!state.active && !state.permissions) continue;
+          const turnStartedAt = state.turnStartedAt
+            ? Date.parse(state.turnStartedAt)
+            : NaN;
+          const updatedAt = state.updatedAt ? Date.parse(state.updatedAt) : NaN;
+          const longTurn =
+            Number.isFinite(turnStartedAt) &&
+            nowMs - turnStartedAt >= SHELL_NOTICE_MS;
+          const staleTurn =
+            Number.isFinite(updatedAt) &&
+            nowMs - updatedAt >= Math.min(SHELL_NOTICE_MS, stallThresholdMs);
+          if (longTurn || staleTurn) addShell(agentId);
+        }
+        // Initial task-row workers may not have a Run row in observationInventory.
+        for (const task of activeTasks) {
+          if (
+            task.agentId &&
+            task.phase === "working" &&
+            !observedMap.has(task.agentId)
+          )
+            addShell(task.agentId);
+        }
+      } else {
+        for (const task of activeTasks) {
+          if (
+            task.agentId &&
+            ["working", "reviewing", "needs_attention"].includes(task.phase)
+          )
+            addShell(task.agentId);
+          for (const run of this.store.runs(task.id))
+            if (!run.released && run.agentId) addShell(run.agentId);
+        }
+      }
+    }
+
+    const rotatedGroups = rotate(
+      [
+        rotate(deliveryItems, passOffset),
+        rotate(toolItems, passOffset),
+        rotate(shellItems, passOffset),
+      ].filter((group) => group.length > 0),
+      passOffset,
+    );
+    const interleaved: WarmItem[] = [];
+    const maxLen = rotatedGroups.reduce(
+      (max, group) => Math.max(max, group.length),
+      0,
+    );
+    for (let i = 0; i < maxLen; i++) {
+      for (const group of rotatedGroups) {
+        if (i < group.length) interleaved.push(group[i]!);
+      }
+    }
+
+    if (interleaved.length && canWarmMore()) {
+      await this.step(host, "timelineWarmSnapshot", async () => {
+        for (const candidate of interleaved) {
+          await yieldToLoop();
+          if (!canWarmMore()) return;
+          const cap = perCandidateCap(interleaved.length);
+          if (cap <= 0) return;
+          if (candidate.kind === "delivery") {
+            let archived = false;
+            if (this.adapter.originAgent) {
+              const originRead = await boundedRead(
+                "origin agent observation",
+                () => this.context.host.originAgent(candidate.agentId),
+                cap,
+              ).catch(() => ({
+                state: "unknown" as const,
+                reason: "origin read failed",
+              }));
+              if (originRead.state === "unknown") {
+                if (budgetRemaining() <= 0) return;
+                continue;
+              }
+              const origin = originRead.value;
+              if (!origin || origin.workspaceId !== candidate.workspaceId)
+                continue;
+              archived = origin.archived === true;
+            }
+            let closedUpdatedAt: string | null | undefined;
+            if (!archived) {
+              const obsCap = perCandidateCap(interleaved.length);
+              if (obsCap <= 0) return;
+              const obsRead = await boundedRead(
+                "participant observation",
+                () => this.context.host.observe(candidate.agentId),
+                obsCap,
+              ).catch(() => ({
+                state: "unknown" as const,
+                reason: "observe failed",
+              }));
+              if (obsRead.state === "unknown") {
+                if (budgetRemaining() <= 0) return;
+                continue;
+              }
+              const state = obsRead.value;
+              if (
+                state.id !== candidate.agentId ||
+                state.workspaceId !== candidate.workspaceId ||
+                (state.status !== "closed" && state.archived !== true) ||
+                state.active ||
+                state.activeTurnId ||
+                state.permissions
+              )
+                continue;
+              archived = state.archived === true;
+              closedUpdatedAt = archived
+                ? undefined
+                : (state.updatedAt ?? null);
+            }
+            const pageCap = perCandidateCap(interleaved.length);
+            if (pageCap <= 0) return;
+            warmed++;
+            const pageRead = await this.context.resolution
+              .primePassTimelinePage!(candidate.agentId, 100, host, {
+              provenTerminal: {
+                archived,
+                workspaceId: candidate.workspaceId,
+                ...(archived ? {} : { closedUpdatedAt }),
+              },
+              deadlineMs: pageCap,
+            }).catch(() => null);
+            if (pageRead?.state === "unknown" && budgetRemaining() <= 0) return;
+          } else if (candidate.kind === "tool") {
             let coveredObservation = candidate.coveredObservation;
             if (!coveredObservation) {
               const obsRead = await boundedRead(
@@ -1140,7 +1210,7 @@ export class HostPass {
                 archived: s.archived,
               };
             }
-            const pageCap = perCandidateCap(orderedTools.length);
+            const pageCap = perCandidateCap(interleaved.length);
             if (pageCap <= 0) return;
             warmed++;
             const firstRead = await this.context.resolution
@@ -1157,9 +1227,6 @@ export class HostPass {
               if (budgetRemaining() <= 0) return;
               continue;
             }
-            // If the 200-entry page is partial (`hasOlder === true` and not
-            // bounded), expand it here in HostPass within the remaining budget
-            // so the task lane does not issue widening RPCs.
             let page = firstRead?.state === "ok" ? firstRead.value : null;
             let limit = TOOL_TIMELINE_LIMIT;
             for (
@@ -1176,7 +1243,7 @@ export class HostPass {
               step++
             ) {
               limit = Math.max(limit, page.entries.length) * 2;
-              const expandCap = perCandidateCap(orderedTools.length);
+              const expandCap = perCandidateCap(interleaved.length);
               if (expandCap <= 0) break;
               const expanded = await boundedRead(
                 "agent timeline page",
@@ -1201,78 +1268,18 @@ export class HostPass {
               );
               page = expanded.value;
             }
-          }
-        });
-      }
-    }
-    if (
-      this.adapter.agentTimeline &&
-      this.context.resolution.primePassTimeline &&
-      canWarmMore()
-    ) {
-      const shellAgents: string[] = [];
-      const seenShell = new Set<string>();
-      const addShell = (agentId: string): void => {
-        if (seenShell.has(agentId)) return;
-        seenShell.add(agentId);
-        shellAgents.push(agentId);
-      };
-      const nowMs = Date.now();
-      const stallMinutes = this.store.getMeta<number>("stallThresholdMinutes");
-      const stallThresholdMs =
-        typeof stallMinutes === "number" &&
-        Number.isFinite(stallMinutes) &&
-        stallMinutes > 0
-          ? stallMinutes * 60_000
-          : 30 * 60_000;
-      if (observed) {
-        for (const [agentId, state] of observed as ReadonlyMap<
-          string,
-          AgentObservation
-        >) {
-          if (!state.active && !state.permissions) continue;
-          const turnStartedAt = state.turnStartedAt
-            ? Date.parse(state.turnStartedAt)
-            : NaN;
-          const updatedAt = state.updatedAt ? Date.parse(state.updatedAt) : NaN;
-          const longTurn =
-            Number.isFinite(turnStartedAt) &&
-            nowMs - turnStartedAt >= SHELL_NOTICE_MS;
-          const staleTurn =
-            Number.isFinite(updatedAt) &&
-            nowMs - updatedAt >= Math.min(SHELL_NOTICE_MS, stallThresholdMs);
-          if (longTurn || staleTurn) addShell(agentId);
-        }
-      } else {
-        for (const task of activeTasks) {
-          if (
-            task.agentId &&
-            ["working", "reviewing", "needs_attention"].includes(task.phase)
-          )
-            addShell(task.agentId);
-          for (const run of this.store.runs(task.id))
-            if (!run.released && run.agentId) addShell(run.agentId);
-        }
-      }
-      if (shellAgents.length) {
-        const orderedShells = rotate(shellAgents, passOffset);
-        await this.step(host, "timelineShellSnapshot", async () => {
-          for (const agentId of orderedShells) {
-            await yieldToLoop();
-            if (!canWarmMore()) return;
-            const cap = perCandidateCap(orderedShells.length);
-            if (cap <= 0) return;
+          } else {
             warmed++;
             const read = await this.context.resolution.primePassTimeline!(
-              agentId,
+              candidate.agentId,
               host,
               undefined,
               cap,
             ).catch(() => null);
             if (read?.state === "unknown" && budgetRemaining() <= 0) return;
           }
-        });
-      }
+        }
+      });
     }
     // Seal this host's timeline snapshot now that HostPass finished warming so
     // task-lane cache misses return explicit unknown instead of starting new

@@ -174,12 +174,13 @@ export class OwnedTools {
     if (!priorInactive) {
       return "the pass process snapshot was captured before the participant was proven inactive; waiting for the next host pass";
     }
-    if (
-      prior?.updatedAt &&
-      turn?.updatedAt &&
-      prior.updatedAt !== turn.updatedAt
-    ) {
-      return "the participant was active after the pass process snapshot; waiting for the next host pass";
+    const priorTerminal = Boolean(
+      prior && (prior.status === "gone" || prior.archived === true),
+    );
+    if (turn?.updatedAt) {
+      if (!priorTerminal && prior?.updatedAt !== turn.updatedAt) {
+        return "the participant was active after the pass process snapshot; waiting for the next host pass";
+      }
     }
     return null;
   }
@@ -285,6 +286,7 @@ export class OwnedTools {
               runIds,
               workspaceId,
               options.runId,
+              custody.observation,
             );
           if (
             processIssue &&
@@ -340,7 +342,7 @@ export class OwnedTools {
         this.resolution.host,
         agentId,
         workspaceId,
-        () =>
+        (observed) =>
           this.verifyOwnedWorkspaceAndScratchProcesses(
             agentId,
             task,
@@ -348,6 +350,8 @@ export class OwnedTools {
             runIds,
             workspaceId,
             options.runId,
+            observed,
+            read.entries,
           ),
         this.readDeadlineMs,
       );
@@ -370,7 +374,8 @@ export class OwnedTools {
     if (!liveToolIssueFact(read.entries)) {
       // Spec 068 §6: a warmed tool page with no live call may only clear a
       // hold when a fresh observation proves no newer turn occurred since the
-      // page was captured (matching `coveredObservation.updatedAt`).
+      // page was captured (positive matching `coveredObservation.updatedAt`).
+      // A missing activity stamp never proves the turn did not change.
       const pageMeta = lastPageRead as PassTimelinePageRead | null;
       if (pageMeta?.fromPassSnapshot) {
         const freshTurn = await observedTurnState(
@@ -387,19 +392,51 @@ export class OwnedTools {
               freshTurn.status ?? "",
             ),
         );
+        if (!freshInactive) {
+          return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass";
+        }
         const covered = pageMeta.coveredObservation;
         const coveredUpdatedAt = covered?.updatedAt ?? null;
         const freshUpdatedAt = freshTurn?.updatedAt ?? null;
-        const turnUnchanged =
-          freshUpdatedAt !== null
-            ? coveredUpdatedAt !== null && freshUpdatedAt === coveredUpdatedAt
-            : !covered ||
-              ["idle", "error", "closed", "gone"].includes(
-                covered.status ?? "",
-              ) ||
-              covered.archived === true;
-        if (!freshInactive || !turnUnchanged) {
-          return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass";
+        const positiveMatch = Boolean(
+          coveredUpdatedAt &&
+            freshUpdatedAt &&
+            freshUpdatedAt === coveredUpdatedAt,
+        );
+        if (!positiveMatch) {
+          // If neither side carries an activity stamp (e.g. a host adapter that
+          // omits `updatedAt`), never settle on the cached pass page: re-read
+          // boundedly directly so a newer tool call is observed and a hung read
+          // returns unknown inside the quantum deadline.
+          if (coveredUpdatedAt === null && freshUpdatedAt === null) {
+            const directHost = {
+              agentTimelinePage: async (id: string, limit?: number) => {
+                const direct = await boundedRead(
+                  "agent timeline page",
+                  () => this.resolution.host.agentTimelinePage(id, limit),
+                  this.readDeadlineMs,
+                );
+                if (direct.state === "unknown") throw new Error(direct.reason);
+                return direct.value;
+              },
+            };
+            let freshRead: Awaited<ReturnType<typeof readToolTimeline>>;
+            try {
+              freshRead = await readToolTimeline(
+                directHost,
+                agentId,
+                this.readDeadlineMs,
+              );
+            } catch {
+              return "owned tool evidence is inconclusive: cached tool timeline has no activity stamp and fresh timeline read failed";
+            }
+            if ("issue" in freshRead)
+              return `owned tool evidence is inconclusive: ${freshRead.issue}`;
+            const freshIssue = liveToolIssueFact(freshRead.entries);
+            if (freshIssue) return formatLiveToolIssue(freshIssue);
+          } else {
+            return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass";
+          }
         }
       }
       if (options.taskId)
@@ -538,7 +575,9 @@ export class OwnedTools {
     agentId: string,
     workspaceId: string | undefined,
   ): Promise<
-    { kind: "live" | "retired" | "gone" } | { kind: "refuse"; reason: string }
+    | { kind: "live" }
+    | { kind: "retired" | "gone"; observation?: ObservedTurnState | null }
+    | { kind: "refuse"; reason: string }
   > {
     let observeError: unknown;
     try {
@@ -567,9 +606,9 @@ export class OwnedTools {
           reason:
             "participant is not idle and permission-free in the recorded workspace",
         };
-      if (state.status === "gone") return { kind: "gone" };
+      if (state.status === "gone") return { kind: "gone", observation: state };
       if (state.status === "closed" || state.archived === true)
-        return { kind: "retired" };
+        return { kind: "retired", observation: state };
       if (agentSettled(state, ["idle", "closed"])) return { kind: "live" };
       return {
         kind: "refuse",
@@ -648,6 +687,8 @@ export class OwnedTools {
     runIds: string[],
     workspaceId: string | undefined,
     boundRunId: string | undefined,
+    turn?: ObservedTurnState | null,
+    entries?: TimelineEntry[],
   ): Promise<string | null> {
     if (
       !task ||
@@ -681,6 +722,8 @@ export class OwnedTools {
       processRead,
       processHostId,
       agentId,
+      turn,
+      entries,
     );
     if (predates) return predates;
     const workspaceRead = await boundedRead(

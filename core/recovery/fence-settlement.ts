@@ -969,12 +969,17 @@ export class RunRelease {
   ): Promise<number> {
     let settled = 0;
     if (this.store.task(taskId).removedAt) return settled;
+    const budgetMs =
+      this.engine.resolution?.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const deadlineAt = Date.now() + budgetMs;
     for (const run of this.store
       .runs(taskId)
       .filter((candidate) => !candidate.released)) {
       if (settlementHeld(this.store, this.stopped)) return settled;
+      if (Date.now() >= deadlineAt) return settled;
       if (!supersededIdleBinding(this.store, taskId, run).superseded) continue;
-      if ((await this.engine.supersededIdleFence(run)) !== null) continue;
+      if ((await this.engine.supersededIdleFence(run, deadlineAt)) !== null)
+        continue;
       if (settlementHeld(this.store, this.stopped)) return settled;
       let done = false;
       this.store.transaction(() => {
@@ -1006,8 +1011,12 @@ export class RunRelease {
   ): Promise<number> {
     let settled = 0;
     if (this.store.task(taskId).removedAt) return settled;
+    const budgetMs =
+      this.engine.resolution?.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const deadlineAt = Date.now() + budgetMs;
     for (const run of this.store.runs(taskId)) {
       if (settlementHeld(this.store, this.stopped)) return settled;
+      if (Date.now() >= deadlineAt) return settled;
       if (run.role !== "executor" || !run.proofExecution) continue;
       const record = (this.store.task(taskId).proofExecutions ?? []).find(
         (item) => item.runId === run.id,
@@ -1021,9 +1030,8 @@ export class RunRelease {
       if (!run.agentId || !this.adapter.agentTimelinePage) continue;
       let read: Awaited<ReturnType<typeof readToolTimeline>>;
       try {
-        const deadlineMs =
-          this.engine.resolution?.quantumReadTimeoutMs ??
-          QUANTUM_READ_DEADLINE_MS;
+        const remainingMs = Math.max(0, deadlineAt - Date.now());
+        if (remainingMs <= 0) return settled;
         const timelineHost = this.engine.resolution?.readPassTimelinePage
           ? {
               agentTimelinePage: async (id: string, limit?: number) => {
@@ -1032,7 +1040,7 @@ export class RunRelease {
                     id,
                     limit,
                     run.hostId ?? this.store.task(taskId).hostId,
-                    deadlineMs,
+                    Math.max(0, deadlineAt - Date.now()),
                   );
                 if (pageRead.state === "unknown")
                   throw new Error(pageRead.reason);
@@ -1040,7 +1048,7 @@ export class RunRelease {
               },
             }
           : this.engine.host;
-        read = await readToolTimeline(timelineHost, run.agentId, deadlineMs);
+        read = await readToolTimeline(timelineHost, run.agentId, remainingMs);
       } catch {
         continue;
       }
@@ -1097,15 +1105,21 @@ export class RunRelease {
    * and no ambiguous or uncertain effect on the run. A hold
    * writes nothing.
    */
-  async supersededIdleFence(run: Run): Promise<string | null> {
-    const deadlineMs =
+  async supersededIdleFence(
+    run: Run,
+    deadlineAt?: number,
+  ): Promise<string | null> {
+    const budgetMs =
       this.engine.resolution?.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const effectiveDeadlineAt = deadlineAt ?? Date.now() + budgetMs;
+    const observeRemaining = Math.max(0, effectiveDeadlineAt - Date.now());
+    if (observeRemaining <= 0) return "its agent observation budget expired";
     let state: Awaited<ReturnType<Adapter["observe"]>> | null = null;
     try {
       const read = await boundedRead(
         "superseded run observation",
         () => this.engine.host.observe(run.agentId!),
-        deadlineMs,
+        observeRemaining,
       );
       state = read.state === "ok" ? read.value : null;
     } catch {
@@ -1115,7 +1129,7 @@ export class RunRelease {
       // A missing, timed-out, or throwing live observation is unobservable. A
       // thread its host reports archived or gone is the stopped proof the
       // ordinary archive path accepts, so that one case no longer holds it.
-      if (!(await this.threadArchivedOrGone(run.agentId!)))
+      if (!(await this.threadArchivedOrGone(run.agentId!, effectiveDeadlineAt)))
         return "its agent is unobservable";
     } else {
       if (!state.id || state.id !== run.agentId)
@@ -1128,6 +1142,8 @@ export class RunRelease {
       if (!["idle", "error", "closed"].includes(state.status))
         return `its agent is ${state.status}`;
       if (state.status !== "closed") {
+        if (Date.now() >= effectiveDeadlineAt)
+          return "its owned-tool observation budget expired";
         const tools = await this.engine.ownedToolHold(
           run.agentId!,
           run.id,
@@ -1148,15 +1164,23 @@ export class RunRelease {
   }
 
   /** The host's own answer that this thread is archived or gone; an unreadable or timed-out one proves nothing. */
-  async threadArchivedOrGone(agentId: string): Promise<boolean> {
+  async threadArchivedOrGone(
+    agentId: string,
+    deadlineAt?: number,
+  ): Promise<boolean> {
     try {
-      const deadlineMs =
+      const budgetMs =
         this.engine.resolution?.quantumReadTimeoutMs ??
         QUANTUM_READ_DEADLINE_MS;
+      const remainingMs =
+        deadlineAt !== undefined
+          ? Math.max(0, deadlineAt - Date.now())
+          : budgetMs;
+      if (remainingMs <= 0) return false;
       const read = await boundedRead(
         "origin agent observation",
         () => this.engine.host.originAgent(agentId),
-        deadlineMs,
+        remainingMs,
       );
       if (read.state === "unknown") return false;
       const origin = read.value;
