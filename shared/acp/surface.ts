@@ -71,12 +71,60 @@ export interface AcpPendingCard {
   version: number;
 }
 
+export type AcpPlanStatus = "pending" | "in_progress" | "completed";
+export type AcpPlanPriority = "high" | "medium" | "low";
+
+export interface AcpPlanEntry {
+  content: string;
+  priority: AcpPlanPriority;
+  status: AcpPlanStatus;
+}
+
+export type AcpToolCallStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed";
+export type AcpToolCallKind =
+  | "read"
+  | "edit"
+  | "delete"
+  | "move"
+  | "search"
+  | "execute"
+  | "think"
+  | "fetch"
+  | "switch_mode"
+  | "other";
+
+export interface AcpToolCall {
+  /** Stable identifier for this run or repair within the task, so updates match in place. */
+  toolCallId: string;
+  /** Plain human-readable title, e.g. "Worker: implementing the brief". */
+  title: string;
+  kind: AcpToolCallKind;
+  status: AcpToolCallStatus;
+  /** Short detail line from `activity.detail` (running tool + elapsed, permission, wait, etc.). */
+  detail?: string;
+}
+
+/**
+ * Spec 068 §2: structured ACP presentation for a task thread (`plan` + `tool_call` /
+ * `tool_call_update`), plus a single-line status fallback for clients or attaches that
+ * do not support structured updates.
+ */
+export interface AcpTaskPresentation {
+  plan: AcpPlanEntry[];
+  toolCalls: AcpToolCall[];
+  statusLine: string;
+}
+
 export type AcpTurnReply = {
   /** `hold` keeps the agent's turn open; `release` ends it, and the client settles the thread. */
   state: "hold" | "release";
   /** Why, in one line: the task's state, or the release directive the service recorded. */
   reason: string;
-  /** Lifecycle lines the client shows as agent messages; empty when nothing changed. */
+  /** Human-facing messages the client shows as agent messages; empty when nothing changed. */
   messages: string[];
   elicitations?: AcpElicitation[];
 } & (
@@ -88,6 +136,7 @@ export type AcpTurnReply = {
         phase: string;
         name: string;
       };
+      presentation?: AcpTaskPresentation;
     }
   | { kind: "inbox"; hostId: string }
 );

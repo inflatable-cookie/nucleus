@@ -50,6 +50,7 @@ import {
   readHostReadTransientEpisode,
 } from "./host-read-transient";
 import { refusedLaunchProfiles } from "./refused-launch";
+import { readRepairJournal } from "./repair-attempts";
 import { unreleasedExecutorRun } from "../qa/proof-admission";
 import {
   CoordinatorEpisode,
@@ -965,6 +966,18 @@ export class CoordinatorRoute {
             cause: cause(t, this.store.runs(t.id)),
             work: taskWorkIdentity(current, this.store),
             outage,
+            // The attempt's own identity (its episode and index under it) and the
+            // action it takes, so an ACP thread keeps each repair's title and call id
+            // after a later repair replaces the task's current episode (Spec 068 §2).
+            episodeId: incident!.id,
+            attempt:
+              readRepairJournal(this.store.eventsAll(t.id)).attempts(
+                incident!.id,
+              ) + 1,
+            action:
+              current.resolution.incident?.status === "resolved"
+                ? ""
+                : (current.resolution.incident?.action ?? ""),
           }),
         );
         this.episode.save(t, {

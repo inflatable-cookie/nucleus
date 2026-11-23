@@ -37,12 +37,19 @@ nothing else:
   bound session and attach to the service. If no binding exists, `session/new`
   instead opens an inert session advertising the same models; its prompts refuse
   with guidance and never reach the service. `session/load` still refuses. The attach always answers with the
-  task's current lifecycle line, even when this service already showed that line
-  to an earlier agent process for the same session: a relaunched agent has
-  nothing else to display. `session/load` replays nothing because Nucleus holds
-  the task's history;
-- `session/prompt` holds the turn while the service says to, shows the
-  lifecycle lines the service sends as `session/update` agent messages, and
+  task's current presentation (`plan`, `tool_call` list, and status-line fallback)
+  plus any pending human messages, even when this service already showed that state
+  to an earlier agent process for the same session: a relaunched agent rebuilds the
+  plan and tool calls from the service without keeping durable state. `session/load`
+  replays no message history because Nucleus holds the task's history;
+- `session/prompt` holds the turn while the service says to, renders the task's
+  activity as native ACP `session/update` `plan`, `tool_call`, and `tool_call_update`
+  frames (or, when the client or attach disables structured updates, appends one
+  deduplicated status line per real change — `agent_message_chunk` is append-only, so
+  a line is never replaced and an unchanged status is never repeated), emits
+  human-facing messages (verdict summaries, operator questions named in plain words
+  with directions to answer in the Nucleus Inbox, and the finish) as
+  `agent_message_chunk`, and
   forwards a person's text from a task session. The inbox never forwards prompt text.
   A client may wrap the person's message in its own instructions, so the
   operator's text is the last `<user_request>` block when the prompt carries one
@@ -110,21 +117,27 @@ task; a host adapter calls `bind` in-process with its own `ignorePattern` and
 `holdPattern`, which is how the T3 adapter's parent thread is armed before it is
 launched.
 
-### 3. The service API: hold, release, lifecycle text
+### 3. The service API: hold, release, structured activity presentation
 
 `core/acp/sessions.ts` serves three callback routes on the existing callback
 socket, authenticated by the minted token:
 
 - `POST /acp-turn` `{taskId, sessionId, waitMs, attach?}` answers
-  `{state: "hold" | "release", reason, messages, task}`. `waitMs` is 0 for an
+  `{state: "hold" | "release", reason, messages, task, presentation}`. `waitMs` is 0 for an
   attach and up to 25 s for a held turn. The answer is derived from the task
-  row, never cached as a decision:
-  - `hold` while the task is unfinished; `messages` carries a lifecycle line the
-    first time and whenever the label the operator reads or the PR link changes,
-    and nothing when neither has changed (a version bump, a poll, a re-entry);
-  - an attach (`attach: true`) always carries the current lifecycle line,
-    whatever this service already showed for that session. The stored signature
-    suppresses only the repetitions a held turn would otherwise make;
+  row, its runs, events, open decisions, and `taskActivity` (Spec 068 §2), never
+  cached as a decision:
+  - `hold` while the task is unfinished; `presentation` carries the current
+    `plan` (`Queued`, `Working`, `Review round N of M`, `Merge`, `Close`), the
+    participant, repair and current-wait `toolCalls`, and the fallback
+    `statusLine`. `messages` carries only human-facing entries (verdict
+    summaries, open operator questions named in plain words, and the finish) when
+    they newly appear, and nothing when unchanged (a version bump, a poll, a
+    re-entry);
+  - an attach (`attach: true`) always carries the full current `presentation`
+    and any current open question or finish message, whatever this service already
+    showed for that session, so a relaunched agent rebuilds the plan and tool
+    calls from scratch;
   - `release` when the task is terminal, or when a host adapter called
     `release(sessionId, reason)`. A release directive is consumed by the turn
     that acts on it and the next turn holds again, which is what "release the
@@ -143,15 +156,84 @@ socket, authenticated by the minted token:
 - `POST /acp-message` `{taskId, sessionId, eventId, text}` records the
   operator's text through the existing message route and answers its receipt.
 
-`core/acp/lifecycle.ts` owns the text. A line is a milestone: the state label
-`shared/task-state` already owns, plus the PR. The session's first line names the
-task's reference, and the PR link appears once (`PR #N` after that). The
-signature is the label and the PR link, so a version bump, a poll or a re-entry
-that changes neither sends nothing. A reattached session gets the whole line
-again, because its thread shows nothing from before. The agent never composes
-task text of its own.
+`core/acp/lifecycle.ts` owns the presentation derived from `taskActivity`:
+- **Plan**: five entries (`Queued`, `Working`, `Review round N of M`, `Merge`,
+  `Close`), each `pending`, `in_progress`, or `completed`, updated in place as
+  the task moves.
+- **Tool calls**: one `tool_call` per participant run with a plain title (such
+  as `"Worker: implementing the brief"` or `"Reviewer: reviewing PR #430 at c86dc5a"`)
+  and one per automatic repair titled with its cause and attempt (such as
+  `"Reviewer thread vanished · starting a fresh reviewer (1 of 3)"`).
+  `tool_call_update` keeps status (`in_progress` / `completed` / `failed`) and a
+  short detail line current from `activity.detail` (running tool and elapsed
+  time, permission prompt, or between-steps wait).
+  A repair attempt keeps one call id from the moment its episode is reserved,
+  through its run's launch and its settlement, and takes its title from the
+  launch the attempt itself recorded (`telemetry_recovery`'s episode id, target
+  role, cause and action) — so a later repair never relabels an earlier one.
+  The identity is attempt-scoped (`repair:<episode>:<n>`). Attempts are numbered in
+  journal order under their episode: each coordinator launch (`telemetry_recovery`)
+  and each reservation that ended before a run was bound (`recovery_attempt_settled`)
+  is the next attempt, and both events name the episode and the index. A retry under
+  the same episode is therefore a new call and never reuses a settled attempt's id.
+  Settlement is one fact per attempt, and a call's terminal status comes only from
+  the fact for that exact attempt. A bound attempt settles with its own run row: its
+  authenticated report, release or supersession. A reserved attempt (a live episode
+  with no run bound) settles with exactly one `recovery_attempt_settled` event naming
+  its episode, index and outcome: escalated, resolved, cleared for an admission or
+  capacity wait, cleared by another write (an owner restart, say), or superseded by a
+  newer episode. The task store writes it in the same transaction as whichever task
+  write ends the reservation, so no path can end one without it. An escalation fails
+  the call and every other outcome completes it. A fact about an earlier attempt
+  under the same episode never settles or hides a later one. A run's authenticated
+  report completes its attempt while the episode is still settling, and that one
+  call keeps its single status throughout report and settlement; the agent also
+  never moves a settled attempt back to in progress. The displayed attempt is derived from the settled
+  charge facts: a launch no provider outage charged, and a launch a proved pre-send
+  host-read refusal released and refunded (`recovery_transient_read_released`), stay
+  outside the count, so the ordinal and the fixed per-cause limit never grow on their
+  account.
+  Whenever no run or repair is in progress, the current reading is its own
+  `activity` call, so a review gap or a person-owned wait with no live run still
+  shows in the structured view instead of leaving only a plan step in progress.
+  Each wait occurrence has its own call lifetime, keyed by the fact the activity
+  derivation selected for the reading (`activity.occurrence`: the open decision, the
+  recorded stop, the host wait, the permission, a launch in flight, the repair episode,
+  or the last concluded run and phase when no single fact owns it). A wait keeps one id
+  for its whole duration, so a secondary stop recorded beside a continuing host wait
+  never splits it, and a fresh occurrence — a second decision, a new stop, another
+  concluded run — is a new call. The reading's own `since` is never the key: several
+  readings default it to the task's last write, which is not an occurrence.
+  The agent also gives every observed lifetime its own wire id: a waiting occurrence
+  whose call ended and whose reading then returned (a board dispatch hold released and
+  set again, which updates no task fact) opens a new call instead of setting the
+  settled one back to in progress. A repair attempt is different: its call is keyed by
+  the attempt and lives from its reservation through its bind to its own settlement. It
+  is never completed because one presentation happened to leave it out (an operator
+  decision in front of the reading, say), and it never reopens under a new id — a stale
+  live snapshot of an already-settled attempt is dropped. A recovering reading with no
+  attempt in progress (an uncertain launch being checked) is shown as a wait call, never
+  as an invented attempt. Settled history stays quiet: a
+  finished participant run or a settled repair attempt is in every later presentation
+  and keeps its one call, so an unchanged poll never adds a copy. That bookkeeping is
+  in-memory per process, so a relaunched agent still rebuilds the whole current view
+  from the service.
+- **Messages**: kept strictly for what a person reads — a verdict's summary, an
+  operator question, and the finish — with no raw IDs, SHAs, host identifiers
+  (`mcp:…`, `thread:…`, `t3code:…`) or stop codes. A question names its decision in
+  plain words (its headline) and tells the operator to answer it in the Nucleus Inbox,
+  where the decision's card is offered and answered. It carries no custom-scheme link
+  and no address of its own: no ACP client resolves a custom scheme (planner ruling,
+  2026-11-23, round 3).
+- **Fallback**: `presentation.statusLine` supplies one concise status line when
+  a client or attach opts out of structured updates (`clientCapabilities` or
+  attach params disabling `structuredUpdates`/`plan`/`toolCalls`, or
+  `NUCLEUS_ACP_TEXT_FALLBACK=1`). `agent_message_chunk` is append-only, so the
+  fallback appends exactly one line per real status change and never a line on a
+  tick that changed nothing (an unchanged reading is compared against the last
+  line shown). The agent never composes task text of its own.
 
-The agent writes each line as its own paragraph (`text` plus a blank line),
+The agent writes each message line as its own paragraph (`text` plus a blank line),
 because clients join message chunks without a separator. It also skips a line
 identical to the one a session showed last, so a repeated attach cannot repeat it.
 The hold rule for a host's re-entry is an exact match. On the installed nightly

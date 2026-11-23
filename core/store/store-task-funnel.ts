@@ -48,6 +48,11 @@ import { runBuildOutputIntent } from "../hooks/build-output-records";
 import { initialBriefVersion } from "../planning/brief";
 import { laneSnapshot } from "../planning/lanes";
 import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
+import {
+  REPAIR_ATTEMPT_SETTLED,
+  REPAIR_LAUNCHED,
+  repairAttemptSettlement,
+} from "../recovery/repair-attempts";
 import { runtimeRetirementFailure } from "../../shared/contracts";
 import { stageDeclarationFromBrief } from "../stages";
 import { digest, now } from "./store-core";
@@ -951,6 +956,23 @@ export class StoreTaskFunnel {
         workspaceId: next.workspaceId,
         role: "worker",
       });
+    // Spec 068 §2: the write that ends a reserved repair attempt records that attempt's
+    // one settlement fact, whichever path made the write.
+    const settlement = repairAttemptSettlement(
+      task.resolution,
+      next.resolution,
+      kind,
+      () =>
+        this.services.db
+          .prepare(
+            "SELECT kind, detail FROM events WHERE taskId=? AND kind IN (?, ?) ORDER BY id",
+          )
+          .all(id, REPAIR_LAUNCHED, REPAIR_ATTEMPT_SETTLED) as Array<{
+          kind: string;
+          detail: string;
+        }>,
+    );
+    if (settlement) this.services.event(id, REPAIR_ATTEMPT_SETTLED, settlement);
     if (kind) this.services.event(id, kind, detail);
     const becameTerminal = Boolean(terminal && task.phase !== next.phase);
     const becameRemovedFinished =
