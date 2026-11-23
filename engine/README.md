@@ -306,7 +306,7 @@ A bound attach rebuilds the full current `plan`, `tool_call` list, status and op
 question. One plan covers Queued, Working, Review (with its round), Merge and
 Close. A persistent wait updates the current step's status. Each worker or
 reviewer run gets one tool call keyed by its launch instance. The service view
-provides its purpose from the brief's first line or the review step, with the
+provides its purpose from the brief's title or the review round, with the
 current tool, command, file or test and its observed start time when available.
 These are display facts from the exact native turn. Use a redacted tool summary
 and compute elapsed time at display. The agent updates the call in place.
@@ -327,6 +327,13 @@ its completion delivery with `delegated_task.completion-delivery.dispose`.
 The service continues to see its role thread and exact run. Verify reattach
 after closeout and checkout removal in the parenting fixtures. ACP and T3
 parenting follow the milestone 1 proof and precede the first real project.
+In the parenting slice, reaching Done schedules archival through the same
+native write gate. Confirm the children are archived or gone, then take a
+fresh, complete parent read that proves its turn and background work have ended.
+Busy or unknown reads schedule a recheck. Confirm that the parent is archived
+or gone and append an audit receipt for that Done revision. Restart recovery
+can skip rows with matching receipts without contacting T3. The engine never
+settles a task thread.
 
 ## Board
 
@@ -342,6 +349,17 @@ and optional pool controls follow their migration milestones.
 interval invalidates the list and visible task views. Task commands use the configured control
 credential. Each run has its own callback credential, including its task and
 role checks. The API exposes the run's progress without its ticket or wire.
+Task detail includes a run's current activity label and optional start time
+in Unix milliseconds. T3 derives it from running items belonging to the
+launch's exact native run. Command labels omit arguments and shell input.
+Activity is in memory, scoped to the row revision and run instance. A change
+can invalidate a task at the same version, so clients refetch on each notice.
+History pages include display records for run starts and ends, PR links,
+verdicts, questions, confirmed merges and finish. Replays of the same launch
+reuse its instance. The audit sequence and record order are enough to rebuild
+the feed on attach. Decisions never read these display records.
+Review rounds count applied reviewer verdicts in history. Replays and
+unsuccessful launches stay in the same round.
 
 The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
 --enable` with an existing profile on the pinned volume. Start `serve` with

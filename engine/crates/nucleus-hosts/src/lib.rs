@@ -21,6 +21,7 @@ use launch::{Method, Wire, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
 use process::{Activity, Inventory};
 use projection::Projection;
+pub use projection::RunActivity;
 pub use questions::{
     NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, NoticeTarget, PlannerThread,
 };
@@ -147,6 +148,13 @@ impl ReplayAuthorization {
     }
 }
 
+/// Decision evidence and optional presentation from the same exact native read.
+#[derive(Debug)]
+pub struct RunObservation {
+    pub host: Host,
+    pub activity: Option<RunActivity>,
+}
+
 /// The service serializes commands and effects for each task and persists
 /// the authorized send marker immediately before using it on the wire.
 pub trait TaskHost: Send + Sync {
@@ -165,7 +173,7 @@ pub trait TaskHost: Send + Sync {
         &self,
         run: &Run,
         now_ms: u64,
-    ) -> impl Future<Output = Result<Host, HostError>> + Send;
+    ) -> impl Future<Output = Result<RunObservation, HostError>> + Send;
 
     fn authorize_send(
         &self,
@@ -438,7 +446,7 @@ impl TaskHost for T3Pass<'_> {
         })
     }
 
-    async fn observe_run(&self, run: &Run, now_ms: u64) -> Result<Host, HostError> {
+    async fn observe_run(&self, run: &Run, now_ms: u64) -> Result<RunObservation, HostError> {
         if run.revoked() {
             return Err(HostError::Binding);
         }
@@ -456,7 +464,12 @@ impl TaskHost for T3Pass<'_> {
         } else {
             state
         };
-        Ok(current(run, state))
+        let activity =
+            thread.and_then(|thread| thread.activity(&message_id(&run.launch().instance)));
+        Ok(RunObservation {
+            host: current(run, state),
+            activity,
+        })
     }
 
     async fn authorize_send(&self, run: &Run) -> Result<ReplayAuthorization, HostError> {

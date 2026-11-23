@@ -1,6 +1,13 @@
+use std::{
+    path::{Component, Path},
+    sync::LazyLock,
+};
+
+use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{RetainedThread, RunState};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{Binding, HostError};
 
@@ -82,6 +89,16 @@ struct TurnItem {
     status: String,
     run_id: Option<String>,
     input: Option<Value>,
+    file_name: Option<Value>,
+    started_at: Option<Value>,
+}
+
+/// A display-only summary of a running item on the launch's exact native run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunActivity {
+    pub label: String,
+    pub started_at: Option<u64>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -224,6 +241,24 @@ impl Projection {
         self.thread.archived_at.is_some()
     }
 
+    pub(crate) fn activity(&self, message_id: &str) -> Option<RunActivity> {
+        if self.windowed || self.thread.deleted_at.is_some() {
+            return None;
+        }
+        // A message attached as a steer does not own the target run.
+        let run = self.runs.iter().find(|run| {
+            run.user_message_id.as_deref() == Some(message_id)
+                && !matches!(run.status, Status::RolledBack)
+        })?;
+        let checkout = Path::new(self.thread.worktree_path.as_deref()?);
+        self.turn_items
+            .as_ref()?
+            .iter()
+            .filter(|item| item.run_id.as_ref() == Some(&run.id) && item.status == "running")
+            .filter_map(|item| item.activity(checkout))
+            .max_by_key(|activity| activity.started_at)
+    }
+
     pub(crate) fn stop_command(&self, message_id: &str) -> Option<(&'static str, &str)> {
         let run = self.delivery(message_id).1?;
         match run.status {
@@ -248,6 +283,115 @@ impl Projection {
             .any(|request| request.status == "pending")
             || self.runs.iter().any(|run| run.status.in_flight())
     }
+}
+
+impl TurnItem {
+    fn activity(&self, checkout: &Path) -> Option<RunActivity> {
+        let label = match self.kind.as_str() {
+            "command_execution" => command_label(self.input.as_ref()?.as_str()?).into(),
+            "file_change" => {
+                let relative = file_label(checkout, self.file_name.as_ref()?.as_str()?);
+                relative.map_or_else(|| "Editing a file".into(), |file| format!("Editing {file}"))
+            }
+            _ => return None,
+        };
+        let started_at = self
+            .started_at
+            .as_ref()
+            .and_then(Value::as_str)
+            .and_then(|value| OffsetDateTime::parse(value, &Rfc3339).ok())
+            .and_then(|value| u64::try_from(value.unix_timestamp_nanos() / 1_000_000).ok());
+        Some(RunActivity { label, started_at })
+    }
+}
+
+fn command_label(input: &str) -> &'static str {
+    // Match known invocations without exposing raw arguments or shell input.
+    let mut words = shlex::Shlex::new(input);
+    let Some(program) = words.next() else {
+        return "Running a command";
+    };
+    let option = words.next();
+    let program = executable(&program);
+    if matches!(program, "sh" | "bash" | "zsh")
+        && matches!(option.as_deref(), Some("-c" | "-lc" | "-cl"))
+        && let Some(script) = words.next()
+    {
+        let mut command = shlex::Shlex::new(&script);
+        let program = command.next().unwrap_or_default();
+        let option = command.next();
+        let argument = command.next();
+        return invocation_label(executable(&program), option.as_deref(), argument.as_deref());
+    }
+    invocation_label(program, option.as_deref(), words.next().as_deref())
+}
+
+fn executable(path: &str) -> &str {
+    Path::new(path)
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default()
+}
+
+fn invocation_label(program: &str, option: Option<&str>, argument: Option<&str>) -> &'static str {
+    match (program, option, argument) {
+        ("cargo", Some("test" | "nextest"), _) | ("effigy", Some("engine:nextest"), _) => {
+            "Running Rust tests"
+        }
+        ("cargo", Some("check"), _) | ("effigy", Some("engine:check"), _) => "Checking Rust code",
+        ("cargo", Some("clippy"), _) | ("effigy", Some("engine:clippy"), _) => "Linting Rust code",
+        ("bun" | "npm" | "pnpm", Some("test"), _)
+        | ("effigy", Some("test" | "test:affected" | "test:timing" | "test:baseline"), _)
+        | ("pytest", _, _)
+        | ("python" | "python3", Some("-m"), Some("pytest")) => "Running tests",
+        ("effigy", Some("qa:docs"), _) => "Checking documentation",
+        ("effigy", Some("check"), _) => "Checking the project",
+        ("git", Some("diff"), _) => "Inspecting changes",
+        ("git", Some("status"), _) => "Checking the worktree",
+        _ => "Running a command",
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn wrapped_effigy_selectors_get_friendly_labels() {
+    for (command, label) in [
+        (
+            "zsh -lc 'effigy engine:nextest -- -p nucleus-hosts'",
+            "Running Rust tests",
+        ),
+        ("bash -c \"effigy check\"", "Checking the project"),
+        ("effigy test:affected --run", "Running tests"),
+        ("effigy qa:docs", "Checking documentation"),
+        (
+            "zsh -lc 'unknown --token fixture-secret'",
+            "Running a command",
+        ),
+        ("zsh -lc 'cargo test", "Running a command"),
+    ] {
+        assert_eq!(command_label(command), label);
+    }
+}
+
+fn file_label(checkout: &Path, file: &str) -> Option<String> {
+    static REDACTOR: LazyLock<Redactor> =
+        LazyLock::new(|| Redactor::new([], RedactionRules::common()));
+    let path = Path::new(file);
+    let relative = if path.is_absolute() {
+        path.strip_prefix(checkout).ok()?
+    } else {
+        path
+    };
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || file.chars().any(char::is_control)
+    {
+        return None;
+    }
+    let redacted = REDACTOR.redact(relative.to_str()?);
+    Some(redacted.text.chars().take(120).collect())
 }
 
 pub(crate) fn missing_thread(cause: &Value, id: &str) -> bool {

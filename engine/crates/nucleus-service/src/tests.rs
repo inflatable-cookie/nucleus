@@ -17,8 +17,8 @@ use nucleus_core::{
     PullRequest, Run, Workspace,
 };
 use nucleus_hosts::{
-    Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, SendOutcome,
-    StopProgress, TaskHost,
+    Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
+    SendOutcome, StopProgress, TaskHost,
 };
 use nucleus_store::{EngineSettings, PinnedVolume};
 use serde_json::{Value, json};
@@ -136,7 +136,7 @@ pub(super) fn reservation(
             entry,
             origin_thread: None,
         },
-        "Synthetic change".into(),
+        "---\ncomplexity: normal\n---\n\n# Synthetic change\n\nFixture details.".into(),
         (entry == Entry::ReviewEntry).then(|| pr.clone()),
     );
     let observation = Observation {
@@ -229,7 +229,7 @@ impl TaskHost for Due {
     async fn observe_retained(&self, _: &Binding, _: &str) -> Result<Host, HostError> {
         unreachable!("only replay gate is exercised")
     }
-    async fn observe_run(&self, _: &Run, _: u64) -> Result<Host, HostError> {
+    async fn observe_run(&self, _: &Run, _: u64) -> Result<RunObservation, HostError> {
         unreachable!("only revoked runs are exercised")
     }
 
