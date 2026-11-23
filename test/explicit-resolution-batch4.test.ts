@@ -754,7 +754,7 @@ test("round 10: fresh escalations offer plain choices only (no route, restart, m
 test("round 11: a merge reserved during a live planner question timeout leaves the escalation open", async () => {
   const fx = makeFixture();
   try {
-    fx.engine.resolution.delegatedAnswerWaitMs = 20;
+    fx.engine.resolution.delegatedAnswerWaitMs = 150;
     const escId = "esc-merge-timeout";
     fx.store.event(
       fx.taskId,
@@ -791,7 +791,36 @@ test("round 11: a merge reserved during a live planner question timeout leaves t
       `${escId}: decision ${linked.id}`,
     );
 
-    // Reserve a pending merge while the planner question is live and times out with no reply.
+    // Start routing first, wait for the planner question's durable delivery, then
+    // reserve the merge while that delegated answer window is live.
+    const routing = fx.engine.resolution.ladder.routePlannerEscalation(
+      fx.task(),
+      escId,
+      "Worker stopped; choose how it proceeds.",
+    );
+    let askedRow: { taskId: string; detail: string } | undefined;
+    for (let i = 0; i < 60 && !askedRow; i++) {
+      askedRow = fx.store.db
+        .prepare(
+          "SELECT taskId, detail FROM events WHERE kind='delegated_delivery' AND taskId LIKE ? ORDER BY id DESC LIMIT 1",
+        )
+        .get(`delegation:%${escId}%`) as
+        | { taskId: string; detail: string }
+        | undefined;
+      if (!askedRow) await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(
+      askedRow,
+      "delegated planner question must be delivered before reserving the merge",
+    );
+    assert.equal(
+      fx.store
+        .eventsAll(askedRow.taskId)
+        .some((e) => e.kind === "delegated_closed"),
+      false,
+      "delegated planner question window must still be live when the merge is reserved",
+    );
+
     fx.store.update(
       fx.taskId,
       {
@@ -801,12 +830,10 @@ test("round 11: a merge reserved during a live planner question timeout leaves t
       "merge_intent",
       "merge reserved during live planner question",
     );
-    await fx.engine.resolution.ladder.routePlannerEscalation(
-      fx.task(),
-      escId,
-      "Worker stopped; choose how it proceeds.",
-    );
+    await routing;
 
+    assert.equal(fx.task().phase, "merging");
+    assert.equal(fx.task().resolution.mergeIntent, true);
     const events = fx.store.eventsAll(fx.taskId);
     assert.equal(
       plannerEscalations(events).find((e) => e.id === escId)?.answered,
@@ -825,7 +852,18 @@ test("round 11: a merge reserved during a live planner question timeout leaves t
       events.some(
         (e) =>
           e.kind === "planner_escalation_missed" &&
-          e.detail.startsWith(`${escId}:`),
+          e.detail.startsWith(`${escId}:`) &&
+          e.detail.includes("no answer in time"),
+      ),
+      true,
+      "live planner window must expire with a timeout miss",
+    );
+    assert.equal(
+      events.some(
+        (e) =>
+          e.kind === "planner_escalation_missed" &&
+          e.detail ===
+            `${escId}: no delegated answer was produced; the escalation stays open for the planner`,
       ),
       true,
     );
@@ -838,21 +876,57 @@ test("round 11: a merge reserved during a live planner question timeout leaves t
 test("round 11: interrupted planner-receipt recovery during a pending merge leaves the escalation open", async () => {
   const fx = makeFixture();
   try {
+    const reviewerRunId = "run-rev-receipt-merge";
+    fx.store.putRun(
+      makeRun(fx.taskId, {
+        id: reviewerRunId,
+        role: "reviewer",
+        agentId: "agent-rev-receipt-merge",
+        workspaceId: "ws-rev-receipt-merge",
+        status: "running",
+        active: true,
+      }),
+    );
+    fx.store.update(
+      fx.taskId,
+      {
+        phase: "reviewing",
+        prHead: HEAD_A,
+        resolution: { ...fx.task().resolution, currentRunId: reviewerRunId },
+      },
+      "review_started",
+      "active retained reviewer",
+    );
     const escId = "esc-receipt-merge";
     const { questionId } = recordOpenEscalation(
       fx.store,
       fx.engine,
       fx.taskId,
       escId,
+      { runId: reviewerRunId },
     );
-    const receiptEventId = fx.store.eventsAll(fx.taskId).at(-1)?.id ?? 0;
+    const answerText = "Keep reviewing head A and report findings";
+    const reasonText =
+      "Active retained reviewer should continue with this direction";
+    const delegationKey = `delegation:${questionId}`;
+    fx.store.event(
+      delegationKey,
+      "delegated_answer",
+      JSON.stringify({
+        questionId,
+        caller: PLANNER,
+        answer: answerText,
+        reason: reasonText,
+      }),
+    );
+    // Direction to an active retained reviewer journals control: null before delivery.
     fx.store.event(
       fx.taskId,
       "planner_escalation_answer_pending",
       `${escId}: ${JSON.stringify({
         questionId,
-        who: PLANNER,
-        answer: "Stop and keep the work",
+        who: `planner ${PLANNER}`,
+        answer: `${answerText} — ${reasonText}`,
         control: null,
       })}`,
     );
@@ -866,14 +940,21 @@ test("round 11: interrupted planner-receipt recovery during a pending merge leav
       "pending merge during interrupted receipt recovery",
     );
 
-    const outcome =
-      fx.engine.resolution.escalationSettlement.reconcileDelegatedEscalationAnswer(
-        fx.taskId,
-        escId,
-        questionId,
-        receiptEventId,
-      );
-    assert.notEqual(outcome, "applied");
+    await assert.rejects(
+      async () =>
+        await fx.engine.resolution.answerDelegatedQuestion(
+          {
+            questionId,
+            answer: answerText,
+            reason: reasonText,
+          },
+          PLANNER,
+        ),
+      /outcome is unknown|did not replay/i,
+    );
+
+    assert.equal(fx.task().phase, "merging");
+    assert.equal(fx.task().resolution.mergeIntent, true);
     const events = fx.store.eventsAll(fx.taskId);
     assert.equal(
       plannerEscalations(events).find((e) => e.id === escId)?.answered,
@@ -886,6 +967,23 @@ test("round 11: interrupted planner-receipt recovery during a pending merge leav
           e.detail.startsWith(`${escId}:`),
       ),
       false,
+    );
+    assert.equal(
+      events.some(
+        (e) =>
+          e.kind === "planner_escalation_applied" &&
+          e.detail.startsWith(`${escId}:`),
+      ),
+      false,
+    );
+    const delegationEvents = fx.store.eventsAll(delegationKey);
+    assert.equal(
+      delegationEvents.some((e) => e.kind === "delegated_command_applied"),
+      false,
+    );
+    assert.equal(
+      delegationEvents.some((e) => e.kind === "delegated_command_refused"),
+      true,
     );
   } finally {
     await fx.close();
