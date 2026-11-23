@@ -2,20 +2,17 @@ use std::{
     fs::{File, symlink_metadata},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    time::Duration,
 };
 
+use crate::{Service, ServiceError, State};
 use nucleus_core::{
-    Authority, Command, Phase,
+    Phase,
     acp::{Binding, session_id},
 };
-use nucleus_store::{AcpSession, StoreError, TaskRow};
+use nucleus_store::AcpSession;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use tokio::{sync::oneshot, time::Instant};
-
-use crate::{CommandOutcome, Service, ServiceError, State, schedule::Priority};
 
 const BINDINGS: &str = "acp-bindings";
 const GROUP_OR_OTHER_PERMISSIONS: u32 = 0o077;
@@ -31,25 +28,6 @@ pub(super) struct MintedSession {
 pub(super) struct WriteAccess {
     pub credential: [u8; 32],
     pub controller: [u8; 32],
-}
-
-pub(super) struct WriteCheck<'a> {
-    pub access: &'a WriteAccess,
-    pub planner: Option<&'a PendingCommand>,
-}
-
-pub(super) struct PendingCommand {
-    version: i64,
-    authority: Authority,
-    command: Command,
-    access: WriteAccess,
-    reply: oneshot::Sender<Result<CommandOutcome, ServiceError>>,
-}
-
-impl PendingCommand {
-    pub(super) fn current(&self, row: &TaskRow) -> bool {
-        self.version == row.version && !self.reply.is_closed()
-    }
 }
 
 impl Service {
@@ -129,91 +107,6 @@ impl Service {
         self.storage.database().verify().ok()?;
         let state = self.state.lock().await;
         writer_controller(&state, task, key)
-    }
-
-    pub(super) async fn planner_acp_command(
-        &self,
-        id: &str,
-        authority: Authority,
-        access: WriteAccess,
-        command: Command,
-    ) -> Result<CommandOutcome, ServiceError> {
-        let (reply, receive) = oneshot::channel();
-        let version = {
-            let mut state = self.state.lock().await;
-            let row = self.lookup(&state, id)?;
-            if state
-                .acp_commands
-                .get(id)
-                .is_some_and(|pending| !pending.reply.is_closed())
-            {
-                return Ok(CommandOutcome::Pending {
-                    version: row.version,
-                });
-            }
-            state.acp_commands.insert(
-                id.into(),
-                PendingCommand {
-                    version: row.version,
-                    authority,
-                    command,
-                    access,
-                    reply,
-                },
-            );
-            state.schedule.wake(id, Instant::now(), Priority::Wake);
-            row.version
-        };
-        self.wake.notify_one();
-        match tokio::time::timeout(Duration::from_secs(10), receive).await {
-            Ok(Ok(result)) => result,
-            _ => Ok(CommandOutcome::Pending { version }),
-        }
-    }
-
-    pub(super) async fn apply_acp_command(&self, row: &TaskRow) -> bool {
-        let id = &row.task.identity().id;
-        let Some(pending) = self.state.lock().await.acp_commands.remove(id) else {
-            return false;
-        };
-        if pending.reply.is_closed() {
-            return false;
-        }
-        let result = self.check_planner_command(row, &pending).await;
-        let _ = pending.reply.send(result);
-        true
-    }
-
-    async fn check_planner_command(
-        &self,
-        row: &TaskRow,
-        pending: &PendingCommand,
-    ) -> Result<CommandOutcome, ServiceError> {
-        let id = &row.task.identity().id;
-        if !pending.current(row) {
-            return Err(StoreError::StaleTask.into());
-        }
-        if self.acp_controller(id, &pending.access.credential).await
-            != Some(pending.access.controller)
-        {
-            return Err(ServiceError::AcpUnauthorized);
-        }
-        let Authority::Planner { actor } = &pending.authority else {
-            return Err(ServiceError::AcpUnauthorized);
-        };
-        if self.responsible_planner(&row.task).await?.as_ref() != Some(actor) {
-            return Err(ServiceError::QuestionPlanner);
-        }
-        self.command_with_session(
-            id,
-            &pending.authority,
-            pending.command.clone(),
-            Some(WriteCheck {
-                access: &pending.access,
-                planner: Some(pending),
-            }),
-        )
-        .await
     }
 }
 

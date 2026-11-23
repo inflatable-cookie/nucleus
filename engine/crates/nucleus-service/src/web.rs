@@ -26,7 +26,7 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     CommandOutcome, Preflight, Service, ServiceError, State as EngineState,
-    acp::{MintedSession, WriteAccess, WriteCheck},
+    acp::{MintedSession, WriteAccess},
     now_ms, preflight,
     presentation::{HistoryEvent, RunView},
 };
@@ -358,27 +358,10 @@ async fn command(
     input: Result<Json<Command>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let command = body(input)?;
-    let outcome = match session {
-        Some(Extension(access)) if matches!(authority, Authority::Planner { .. }) => {
-            api.service
-                .planner_acp_command(&id, authority, access, command)
-                .await?
-        }
-        Some(Extension(access)) => {
-            api.service
-                .command_with_session(
-                    &id,
-                    &authority,
-                    command,
-                    Some(WriteCheck {
-                        access: &access,
-                        planner: None,
-                    }),
-                )
-                .await?
-        }
-        None => api.service.command(&id, &authority, command).await?,
-    };
+    let outcome = api
+        .service
+        .command_with_session(&id, &authority, command, session.as_deref())
+        .await?;
     match outcome {
         CommandOutcome::Applied(row) => {
             Ok(Json(Summary::new(&row.task, row.version, None)).into_response())
@@ -592,9 +575,12 @@ impl IntoResponse for ApiError {
                 let status = match error {
                     ServiceError::Missing => StatusCode::NOT_FOUND,
                     ServiceError::Input | ServiceError::Project => StatusCode::BAD_REQUEST,
-                    ServiceError::QuestionPlanner => StatusCode::FORBIDDEN,
+                    ServiceError::QuestionPlanner | ServiceError::PlannerAuthorityRefused => {
+                        StatusCode::FORBIDDEN
+                    }
                     ServiceError::AcpUnauthorized => StatusCode::UNAUTHORIZED,
                     ServiceError::Core(_)
+                    | ServiceError::EffectInProgress
                     | ServiceError::Store(nucleus_store::StoreError::StaleTask) => {
                         StatusCode::CONFLICT
                     }

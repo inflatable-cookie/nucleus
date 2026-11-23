@@ -331,12 +331,15 @@ reviewer processes receive their own report credentials.
 
 Use `bind-acp --read-only <task>` for a session that can only read the task,
 its history and its event stream. A writable binding has a separate command
-credential. The service checks that its controller still has access and the
-scheduler resolves the current responsible planner before applying a planner
-command. Rebinding keeps the session ID and rotates the credentials. Reaching
-Done revokes command access and keeps the final view readable. The live turn follows the
-task's invalidations, including changes within a row version. Attach and load
-read the committed view and history locally. A stream interruption reconnects
+credential. The service checks the current controller and planner authority
+in the same local transaction as a command. The scheduler refreshes the
+project's authority from the shared host roster and routing provenance. A
+closure invalidates affected authority. If the authority is unknown, the
+service asks the caller to retry. Rebinding keeps the session ID and rotates
+the credentials. Reaching Done revokes command access and keeps the final view
+readable. The live turn follows task invalidations, including changes within a
+row version. Attach and load read the committed view and history locally.
+A stream interruption reconnects
 with backoff. After the opening prompt, enter commands such as
 `hold <reason>`, `move reviewing`, `answer work <guidance>` or `release`.
 `NUCLEUS_ACP_HOLD_PATTERN` and `NUCLEUS_ACP_IGNORE_PATTERN` configure silent

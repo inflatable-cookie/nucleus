@@ -55,6 +55,12 @@ pub enum ServiceError {
     Input,
     #[error("the question is assigned to a different planner")]
     QuestionPlanner,
+    #[error("planner authority is not yet known. Retry shortly.")]
+    PlannerAuthorityUnknown,
+    #[error("the caller is no longer the responsible planner for this task")]
+    PlannerAuthorityRefused,
+    #[error("a task effect is still in progress. Retry shortly.")]
+    EffectInProgress,
     #[error("an isolated engine is already serving this profile or its lock is unreadable")]
     ProfileLock,
     #[error("the callback configuration or ticket is invalid")]
@@ -106,7 +112,8 @@ struct State {
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
     activity: BTreeMap<String, presentation::ActivityAt>,
-    acp_commands: BTreeMap<String, acp::PendingCommand>,
+    planner_authority: Option<question::PlannerAuthority>,
+    planner_authority_epoch: u64,
     thread_tasks: BTreeMap<String, BTreeMap<String, Option<ThreadHint>>>,
 }
 
@@ -182,7 +189,8 @@ impl Service {
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
                 activity: BTreeMap::new(),
-                acp_commands: BTreeMap::new(),
+                planner_authority: None,
+                planner_authority_epoch: 0,
                 thread_tasks: BTreeMap::new(),
             }),
             pass_lock: Mutex::new(()),
@@ -264,12 +272,7 @@ impl Service {
                 let mut state = self.state.lock().await;
                 track(&mut state, &row.task);
             }
-            let result = if self.apply_acp_command(&row).await {
-                let wait = self.state.lock().await.waits.get(&id).copied();
-                Ok(wait.map_or(Action::Nothing, Action::Wait))
-            } else {
-                Box::pin(self.advance_due_task(&row, &host, &profiles)).await
-            };
+            let result = Box::pin(self.advance_due_task(&row, &host, &profiles)).await;
             self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });
         }
@@ -302,6 +305,13 @@ impl Service {
     /// every decision, and the due queue stays live across stream failures.
     pub async fn watch_host(&self) {
         let _subscription = self.watch_lock.lock().await;
+        tokio::join!(
+            self.watch_thread_hints(),
+            Box::pin(self.watch_planner_authority())
+        );
+    }
+
+    async fn watch_thread_hints(&self) {
         loop {
             let (sender, mut hints) = mpsc::channel(128);
             let watch = self.host.watch_threads(&sender);
@@ -312,12 +322,16 @@ impl Service {
                     Some(hint) = hints.recv() => self.wake_from_host(hint).await,
                 }
             }
+            self.state.lock().await.invalidate_planner_authority();
             tokio::time::sleep(T3_RETRY_DELAY).await;
         }
     }
 
     async fn wake_from_host(&self, hint: ThreadHint) {
         let mut state = self.state.lock().await;
+        if hint.closed() {
+            state.planner_thread_closed(&hint.thread);
+        }
         let State {
             thread_tasks,
             schedule,
@@ -487,23 +501,25 @@ impl Service {
         id: &str,
         authority: &Authority,
         command: Command,
-        session: Option<acp::WriteCheck<'_>>,
+        session: Option<&acp::WriteAccess>,
     ) -> Result<CommandOutcome, ServiceError> {
-        let _fence = self.fence(id).await;
+        let fence = self.task_fence(id).await;
+        let _fence = if session.is_some() {
+            fence
+                .try_lock_owned()
+                .map_err(|_| ServiceError::EffectInProgress)?
+        } else {
+            fence.lock_owned().await
+        };
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let prior = self.lookup(&state, id)?;
         if let Some(session) = session {
-            if acp::writer_controller(&state, id, &session.access.credential)
-                != Some(session.access.controller)
-            {
+            if acp::writer_controller(&state, id, &session.credential) != Some(session.controller) {
                 return Err(ServiceError::AcpUnauthorized);
             }
-            if session
-                .planner
-                .is_some_and(|pending| !pending.current(&prior))
-            {
-                return Err(StoreError::StaleTask.into());
+            if let Authority::Planner { actor } = authority {
+                state.check_planner_authority(&prior.task, actor)?;
             }
         }
         let observation = state.command_observation(&prior);
@@ -575,11 +591,12 @@ impl Service {
     }
 
     async fn fence(&self, id: &str) -> OwnedMutexGuard<()> {
-        let fence = {
-            let mut state = self.state.lock().await;
-            Arc::clone(state.fences.entry(id.into()).or_default())
-        };
-        fence.lock_owned().await
+        self.task_fence(id).await.lock_owned().await
+    }
+
+    async fn task_fence(&self, id: &str) -> Arc<Mutex<()>> {
+        let mut state = self.state.lock().await;
+        Arc::clone(state.fences.entry(id.into()).or_default())
     }
 
     async fn effect(&self, expected: &TaskRow) -> Result<OwnedMutexGuard<()>, ServiceError> {

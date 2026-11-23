@@ -232,14 +232,17 @@ impl ServiceClient {
             .command_auth
             .as_ref()
             .ok_or_else(|| Failure::Refused("This binding is read-only.".into()))?;
-        let response = accepted(
-            self.request(Method::POST, "/commands", key)
-                .timeout(Duration::from_secs(15))
-                .json(command)
-                .send()
-                .await,
-        )
-        .await?;
+        let response = self
+            .request(Method::POST, "/commands", key)
+            .timeout(DEADLINE)
+            .json(command)
+            .send()
+            .await
+            .map_err(|_| Failure::Unavailable)?;
+        if response.status() == StatusCode::SERVICE_UNAVAILABLE {
+            return Err(rejection(response).await);
+        }
+        let response = accepted(Ok(response)).await?;
         Ok(response.status() != StatusCode::ACCEPTED)
     }
 
@@ -270,22 +273,24 @@ async fn accepted(result: Result<Response, reqwest::Error>) -> Result<Response, 
         StatusCode::UNAUTHORIZED => Err(Failure::Unauthorized),
         status if status.is_success() => Ok(response),
         status if status.is_server_error() => Err(Failure::Unavailable),
-        _ => {
-            #[derive(Deserialize)]
-            struct Rejection {
-                error: String,
-            }
-            let message = body(response)
-                .await
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Rejection>(&bytes).ok())
-                .map_or_else(
-                    || "Nucleus refused the request.".into(),
-                    |reply| reply.error,
-                );
-            Err(Failure::Refused(message))
-        }
+        _ => Err(rejection(response).await),
     }
+}
+
+async fn rejection(response: Response) -> Failure {
+    #[derive(Deserialize)]
+    struct Rejection {
+        error: String,
+    }
+    let message = body(response)
+        .await
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Rejection>(&bytes).ok())
+        .map_or_else(
+            || "Nucleus refused the request.".into(),
+            |reply| reply.error,
+        );
+    Failure::Refused(message)
 }
 
 async fn body(mut response: Response) -> Result<Vec<u8>, Failure> {

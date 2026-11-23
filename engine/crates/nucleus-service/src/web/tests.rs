@@ -1030,39 +1030,24 @@ async fn post_as(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> Re
 #[tokio::test]
 async fn an_acp_planner_command_is_refused_after_handover() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    let replaced = Arc::new(AtomicBool::new(false));
-    let changed = Arc::clone(&replaced);
-    let (host, native) = crate::tests::native_fixture(move |request| {
-        let snapshot = match request["tag"].as_str() {
-            Some("orchestration.subscribeThread") => {
-                let thread = request["payload"]["threadId"].as_str().expect("thread");
-                json!({"kind":"snapshot","snapshotSequence":1,"projection":{"thread":{
-                    "id":thread,"projectId":"local-fixture",
-                    "archivedAt":(thread == "old-planner" && changed.load(Ordering::Relaxed))
-                        .then_some("2026-11-23T18:00:00Z")
-                }}})
-            }
-            Some("orchestration.subscribeShell") => json!({"kind":"snapshot","snapshot":{
-                "threads":[{"id":"new-planner","projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z"}]
-            }}),
-            _ => panic!("the check only needs planner reads"),
-        };
-        json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
-    }).await;
+    let (host, replaced, reads, native) = planner_roster_fixture().await;
     service.host = host;
-    let task = Task::new(
-        Identity {
-            id: "handover".into(),
-            reference: "handover".into(),
-            repository: REPOSITORY.into(),
-            base: "main".into(),
-            entry: Entry::Brief,
-            origin_thread: Some("old-planner".into()),
-        },
-        "Synthetic brief".into(),
-        None,
-    );
-    seed_task(&service, &task).await;
+    seed_task(
+        &service,
+        &Task::new(
+            Identity {
+                id: "handover".into(),
+                reference: "handover".into(),
+                repository: REPOSITORY.into(),
+                base: "main".into(),
+                entry: Entry::Brief,
+                origin_thread: Some("old-planner".into()),
+            },
+            "Synthetic brief".into(),
+            None,
+        ),
+    )
+    .await;
     let service = Arc::new(service);
     let api = router(
         Arc::clone(&service),
@@ -1074,25 +1059,55 @@ async fn an_acp_planner_command_is_refused_after_handover() {
     let binding = mint_binding(&api, "handover", &PLANNER_KEY).await;
     let writer = binding.command_credential.expect("scope writer");
     let path = "/v1/tasks/handover/commands";
+    let hold = json!({"hold":"Keep the first plan"});
+    let cold = post_as(&api, path, &writer, &hold).await;
+    assert_eq!(cold.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(
-        scoped_planner_command(
-            &service,
-            &api,
-            path,
-            &writer,
-            &json!({"hold":"Keep the first plan"})
-        )
-        .await,
-        StatusCode::OK,
+        json_body(cold).await["error"],
+        "planner authority is not yet known. Retry shortly."
     );
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("first roster");
+
+    let fence = service.fence("handover").await;
+    let busy = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        post_json(&api, path, &writer, &hold),
+    )
+    .await
+    .expect("an effect cannot block the command");
+    assert_eq!(busy, StatusCode::CONFLICT);
+    drop(fence);
+    assert_eq!(post_json(&api, path, &writer, &hold).await, StatusCode::OK);
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+
     replaced.store(true, Ordering::Relaxed);
+    service
+        .state
+        .lock()
+        .await
+        .planner_thread_closed("old-planner");
+    let release = json!("release");
     assert_eq!(
-        scoped_planner_command(&service, &api, path, &writer, &json!("release")).await,
-        StatusCode::FORBIDDEN,
+        post_json(&api, path, &writer, &release).await,
+        StatusCode::SERVICE_UNAVAILABLE
     );
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("handover roster");
+    assert_eq!(
+        post_json(&api, path, &writer, &release).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
     let row = service.task("handover").await.expect("task");
     assert_eq!(row.version, 2);
     assert!(row.task.hold().is_some());
+
     let new_api = router(service, [planner_controller(BOUND_KEY, "new-planner")]);
     assert_eq!(
         get_as(&new_api, "/v1/tasks/handover", &binding.credential)
@@ -1101,31 +1116,43 @@ async fn an_acp_planner_command_is_refused_after_handover() {
         StatusCode::OK
     );
     assert_eq!(
-        post_json(&new_api, path, &writer, &json!("release")).await,
+        post_json(&new_api, path, &writer, &release).await,
         StatusCode::UNAUTHORIZED
     );
+    let new_binding = mint_binding(&new_api, "handover", &BOUND_KEY).await;
+    let new_writer = new_binding.command_credential.expect("new scope writer");
+    assert_eq!(
+        post_json(&new_api, path, &new_writer, &release).await,
+        StatusCode::OK
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
     native.abort();
 }
 
-async fn scoped_planner_command(
-    service: &Service,
-    api: &Router,
-    path: &str,
-    key: &[u8; 32],
-    input: &Value,
-) -> StatusCode {
-    let (status, pass) = tokio::join!(post_json(api, path, key, input), async {
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            while service.state.lock().await.acp_commands.is_empty() {
-                service.wake.notified().await;
-            }
-        })
-        .await
-        .expect("command wakes scheduler");
-        service.pass().await
-    });
-    pass.expect("planner check pass");
-    status
+async fn planner_roster_fixture() -> (
+    nucleus_hosts::T3,
+    Arc<AtomicBool>,
+    Arc<AtomicUsize>,
+    tokio::task::JoinHandle<()>,
+) {
+    let replaced = Arc::new(AtomicBool::new(false));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let changed = Arc::clone(&replaced);
+    let calls = Arc::clone(&reads);
+    let (host, native) = crate::tests::native_fixture(move |request| {
+        assert_eq!(request["tag"], "orchestration.subscribeShell");
+        calls.fetch_add(1, Ordering::Relaxed);
+        json!({"_tag":"Chunk","requestId":request["id"],"values":[
+            {"kind":"snapshot","snapshot":{"threads":[
+                {"id":"old-planner","projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z",
+                    "archivedAt":changed.load(Ordering::Relaxed).then_some("2026-11-23T18:10:00Z")},
+                {"id":"new-planner","projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z"}
+            ]}},
+            {"kind":"synchronized"}
+        ]})
+    })
+    .await;
+    (host, replaced, reads, native)
 }
 
 async fn mint_binding(api: &Router, task: &str, key: &[u8; 32]) -> nucleus_core::acp::Binding {
