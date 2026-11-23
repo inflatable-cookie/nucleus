@@ -126,7 +126,9 @@ impl Wire {
                     && payload["initialMessage"]["messageId"] == message
             }
             Method::Continue => {
-                payload["type"] == "message.dispatch" && payload["messageId"] == message
+                payload["type"] == "message.dispatch"
+                    && payload["messageId"] == message
+                    && payload["dispatchMode"]["type"] == "queue_after_active"
             }
         };
         if matches

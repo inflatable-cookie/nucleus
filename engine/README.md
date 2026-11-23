@@ -6,8 +6,12 @@ by default, uses its own settings and database, and admits only the explicitly
 configured fixture repository. The planner checks the run by hand. The board
 switch starts in milestone 2.
 
-Dispatch verifies the fixture's Git origin and the current T3 project root
-before sending a standalone worker or reviewer.
+Dispatch checks the frozen destination against the fixture's Git origin and
+the current T3 project root. A worker or reviewer needs its owned checkout.
+A planner notice needs an exact thread in the fixture project. Review sends
+check the open PR and clean checkout after native authorization.
+A missing review checkout is recovered at the verified PR head before
+reserving a run. If recovery fails, the task waits for another check.
 
 ## Crates and review slices
 
@@ -230,6 +234,10 @@ native write. The board reads committed rows without waiting on GitHub or T3.
 Keep due times, load observations and displayed waits in memory. An idle process
 slot and acceptable local load permit a new launch. Pressure reschedules it
 without spending an attempt. A fresh pass checks process custody after launch.
+
+A definite GitHub head mismatch retires approval and keeps the bound PR in
+Merging until a read shows a new head. A refusal followed by incomplete
+readback waits for fresh evidence and honours any forge retry deadline.
 
 `next` and commands call the same preflight. A command that needs a fresh forge
 fact fetches it at execution. An unavailable check is shown as pending. The

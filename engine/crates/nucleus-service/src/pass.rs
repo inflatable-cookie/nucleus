@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::atomic::Ordering,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -8,11 +9,21 @@ use nucleus_core::{
     Phase, Report, RetainedThread, Role, RunState, Task, WaitReason, Workspace, decide,
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
-use nucleus_hosts::{Binding, LaunchRequest, SendOutcome, StopProgress, TaskHost};
+use nucleus_hosts::{
+    Binding, HostError, LaunchRequest, NoticeTarget, SendOutcome, StopProgress, TaskHost,
+};
 use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
 
-use crate::{Service, ServiceError, event, now_ms, ticket};
+use crate::{Service, ServiceError, event, now_ms, project::linked_checkout, ticket};
+
+pub(super) enum DispatchTarget<'a> {
+    Run {
+        frozen: &'a Binding,
+        checkout: &'a Checkout<'a>,
+    },
+    Planner(&'a NoticeTarget),
+}
 
 impl Service {
     pub(super) async fn advance(
@@ -37,6 +48,18 @@ impl Service {
         };
         if task.run().is_some_and(nucleus_core::Run::revoked) {
             return self.stop_run(row, &checkout, observation, host).await;
+        }
+        if task.phase() == Phase::Reviewing
+            && task.run().is_none()
+            && task.question().is_none()
+            && task.hold().is_none()
+            && observation.workspace == Observed::Known(Workspace::Absent)
+            && let Observed::Known(Forge::Open { pr, .. }) = &observation.forge
+            && task.pull_request() == Some(pr)
+        {
+            let _fence = self.effect(row).await?;
+            self.project.verify()?;
+            observation.workspace = seen(checkout.allocate(&pr.head));
         }
         observation.host = read_host(host, task, &binding).await;
 
@@ -239,7 +262,9 @@ impl Service {
         if !self.launch_capacity(&task.identity().id).await? {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
-        let (sent, result) = self.send(row, host).await?;
+        let Some((sent, result, _)) = self.send(row, checkout, host).await? else {
+            return Ok(Action::Wait(WaitReason::HostUnknown));
+        };
         if result == SendOutcome::Rejected {
             observation.host = Observed::Known(current(&sent.task, RunState::Rejected)?);
             let next = decide(&sent.task, &observation);
@@ -251,21 +276,77 @@ impl Service {
     async fn send(
         &self,
         row: &TaskRow,
+        checkout: &Checkout<'_>,
         host: &impl TaskHost,
-    ) -> Result<(TaskRow, SendOutcome), ServiceError> {
+    ) -> Result<Option<(TaskRow, SendOutcome, bool)>, ServiceError> {
         let task = &row.task;
         let authorization = host
             .authorize_send(task.run().ok_or(ServiceError::Input)?)
             .await?;
         let _fence = self.effect(row).await?;
-        self.check_project().await?;
+        let target = DispatchTarget::Run {
+            frozen: authorization.binding(),
+            checkout,
+        };
+        let Some(archive) = self.dispatch_gate(task, target).await? else {
+            return Ok(None);
+        };
+        if authorization.needs_unarchive() {
+            host.unarchive(&authorization).await?;
+            return Ok(None);
+        }
         let mut sent = task.clone();
-        authorization.record(&mut sent)?;
+        let dispatch = authorization.record(&mut sent)?;
         let sent = self.save(row, sent, &event("host_send")).await?;
-        let result = host
-            .send(sent.task.run().ok_or(ServiceError::Input)?, authorization)
-            .await?;
-        Ok((sent, result))
+        let result = host.send(dispatch).await?;
+        Ok(Some((sent, result, archive)))
+    }
+
+    pub(super) async fn dispatch_gate(
+        &self,
+        task: &Task,
+        target: DispatchTarget<'_>,
+    ) -> Result<Option<bool>, ServiceError> {
+        self.project.scope(task.identity())?;
+        match &target {
+            DispatchTarget::Run { frozen, checkout } if **frozen != self.binding(checkout)? => {
+                return Err(HostError::Binding.into());
+            }
+            DispatchTarget::Planner(target) if target.project_id != self.project.host_project => {
+                return Err(HostError::Binding.into());
+            }
+            _ => {}
+        }
+        self.check_project().await?;
+        match target {
+            DispatchTarget::Run { checkout, .. } => {
+                let run = task.run().ok_or(ServiceError::Input)?;
+                let Some(head) = run.launch().review_head.as_ref() else {
+                    return Ok((checkout.observe()? != Workspace::Absent).then_some(false));
+                };
+                let forge = self.read_forge(task, checkout).await.0;
+                let workspace = checkout.observe()?;
+                if workspace == Workspace::Absent {
+                    return Ok(None);
+                }
+                let fresh = Observation {
+                    forge,
+                    workspace: Observed::Known(workspace),
+                    host: Observed::Unknown,
+                };
+                Ok(replay_policy(Some(head), &fresh)
+                    .filter(|&superseded| !superseded || run.revoked()))
+            }
+            DispatchTarget::Planner(target) => {
+                self.host.check_notice_target(target).await?;
+                if let Some(path) = &target.worktree_path
+                    && !linked_checkout(&self.project.checkout, Path::new(path))?
+                {
+                    return Err(HostError::Binding.into());
+                }
+                Ok(Some(false))
+            }
+        }
     }
 
     async fn stop_run(
@@ -280,9 +361,10 @@ impl Service {
         let head = run.launch().review_head.as_ref();
         let archive = superseded(head, &observation.forge);
         let stopping = Action::Wait(WaitReason::Stopping);
+        let binding = self.binding(checkout)?;
         let progress = {
             let _fence = self.effect(row).await?;
-            host.stop(run, now_ms(), archive).await?
+            host.stop(run, &binding, now_ms(), archive).await?
         };
         match progress {
             StopProgress::Waiting => Ok(stopping),
@@ -302,23 +384,21 @@ impl Service {
                     observation.forge = self.read_forge(task, checkout).await.0;
                     observation.workspace = seen(checkout.observe());
                 }
-                let Some(archive) = replay_policy(head, &observation) else {
+                if replay_policy(head, &observation).is_none() {
                     return Ok(stopping);
-                };
+                }
                 if !self.launch_capacity(&task.identity().id).await? {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
-                let (sent, outcome) = self.send(row, host).await?;
+                let Some((sent, outcome, archive)) = self.send(row, checkout, host).await? else {
+                    return Ok(stopping);
+                };
+                let _fence = self.effect(&sent).await?;
+                let run = sent.task.run().ok_or(ServiceError::Input)?;
                 let observed = if outcome == SendOutcome::Rejected {
-                    StopProgress::Settled(current(&sent.task, RunState::Rejected)?)
+                    host.stop_rejected(run, archive).await?
                 } else {
-                    let _fence = self.effect(&sent).await?;
-                    host.stop(
-                        sent.task.run().ok_or(ServiceError::Input)?,
-                        now_ms(),
-                        archive,
-                    )
-                    .await?
+                    host.stop(run, &binding, now_ms(), archive).await?
                 };
                 if let StopProgress::Settled(host) = observed {
                     observation.host = Observed::Known(host);
@@ -348,24 +428,27 @@ impl Service {
             return Ok(Action::Wait(WaitReason::ForgeUnknown));
         }
         let observed = seen_from(capture_forge(self, attempt.observed));
-        if attempt.write == MergeWrite::HeadMismatch && observed == Observed::Unknown {
+        if attempt.write == MergeWrite::HeadMismatch {
             let mut updated = task.clone();
             if updated.merge_head_mismatched(head) {
-                self.save(row, updated, &event("merge_head_changed"))
-                    .await?;
-                return Ok(Action::Advance(Phase::Reviewing));
+                observation.forge = observed;
+                let next = updated.reconcile(&observation);
+                let mut history = event("merge_head_changed");
+                history.detail = serde_json::json!({
+                    "refusedHead": head, "priorVerdict": task.verdict()
+                })
+                .to_string();
+                self.save(row, updated, &history).await?;
+                return Ok(next);
             }
+            return Ok(Action::Wait(WaitReason::ForgeUnknown));
         }
         if attempt.write == MergeWrite::Unknown
             && !matches!(observed, Observed::Known(Forge::Merged { .. }))
         {
             return Ok(Action::Wait(WaitReason::ForgeUnknown));
         }
-        // A definite refusal remains actionable even when the readback failed.
-        // The old head scopes the question and grants no merge authority.
-        if observed != Observed::Unknown || !matches!(attempt.write, MergeWrite::Refused { .. }) {
-            observation.forge = observed;
-        }
+        observation.forge = observed;
         if let MergeWrite::Refused { .. } = attempt.write
             && let Observed::Known(Forge::Open { checks, .. }) = &mut observation.forge
         {
@@ -514,13 +597,286 @@ fn replay_policy(head: Option<&Head>, observation: &Observation) -> Option<bool>
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
 
-    use nucleus_core::{Authority, Entry, PullRequest};
+    use axum::{
+        Json, Router,
+        http::{StatusCode, header::RETRY_AFTER},
+        response::IntoResponse,
+        routing::{get, post, put},
+    };
+    use nucleus_core::{Authority, Entry, PullRequest, Review};
     use nucleus_forge::GitHub;
+    use nucleus_hosts::{Dispatch, RunRequest};
+    use serde_json::json;
 
     use super::*;
-    use crate::tests::{Due, fixture, forge_fixture, reservation};
+    use crate::tests::{
+        Due, fixture, forge_checks, forge_fixture, forge_pull, native_fixture, reservation,
+        serve_forge,
+    };
+
+    #[tokio::test]
+    async fn review_recovers_its_checkout_before_creating_a_reservation() {
+        for available in [true, false] {
+            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let head = if available {
+                service.project.start.clone()
+            } else {
+                "b".repeat(40).parse().expect("missing local object")
+            };
+            let (forge, _, server) = forge_fixture(&head).await;
+            service.forge = forge;
+            let (reserved, _, observation) = reservation("reviewer", Entry::ReviewEntry, &head);
+            let mut task = Task::new(
+                reserved.identity().clone(),
+                reserved.brief().text.clone(),
+                reserved.pull_request().cloned(),
+            );
+            let _ = task.reconcile(&observation);
+            service
+                .state
+                .lock()
+                .await
+                .store
+                .create(&task, &event("fixture"))
+                .expect("seed");
+            let row = service.task("reviewer").await.expect("reviewing row");
+            assert_eq!(row.task.phase(), Phase::Reviewing);
+            let step = Box::pin(service.advance(&row, &service.host.pass()))
+                .await
+                .expect("pass");
+            let next = service.task("reviewer").await.expect("result row");
+            if available {
+                assert_eq!(
+                    step,
+                    Action::Launch {
+                        role: Role::Reviewer,
+                        via: Launch::Create
+                    }
+                );
+                assert!(next.task.run().is_some());
+            } else {
+                assert_eq!(step, Action::Wait(WaitReason::WorkspaceUnknown));
+                assert_eq!(row, next);
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn an_edit_during_native_authorization_cannot_send_the_review() {
+        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+        let head = service.project.start.clone();
+        let (forge, reads, forge_server) = forge_fixture(&head).await;
+        service.forge = forge;
+        let worktrees = service.worktrees().expect("worktrees");
+        let checkout = worktrees
+            .checkout(
+                &service.project.checkout,
+                &service.project.repository,
+                "reviewer",
+            )
+            .expect("checkout");
+        assert_eq!(
+            checkout.allocate(&head).expect("allocate"),
+            Workspace::Clean(head.clone())
+        );
+        let (task, _, mut observation) = reservation("reviewer", Entry::ReviewEntry, &head);
+        let launch = task.run().expect("run").launch();
+        let inputs = RunRequest {
+            binding: service.binding(&checkout).expect("binding"),
+            dispatch: Dispatch::Create {
+                title: "Review fixture".into(),
+                profile: service.project.reviewer.clone(),
+            },
+            text: "Review the fixture".into(),
+        }
+        .inputs(&launch.instance, launch.thread.clone(), 1)
+        .expect("wire");
+        let mut restored = serde_json::to_value(&task).expect("stored reservation");
+        restored["run"]["launch"]["input"] = json!(inputs.input);
+        let task: Task = serde_json::from_value(restored).expect("typed reservation");
+        let id = task.run().expect("run").launch().instance.clone();
+        observation.host = Observed::Known(Host::Current {
+            instance: id,
+            state: RunState::ReadyToSend,
+        });
+        let edit = checkout.path().join("edit-during-authorization.txt");
+        let root = service.project.checkout.clone();
+        let (host, native_server) = native_fixture(move |req| {
+            match req["tag"].as_str() {
+                Some("orchestration.subscribeThread") => {
+                    std::fs::write(&edit, "local work").expect("edit while T3 is answering");
+                    let thread = &req["payload"]["threadId"];
+                    json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Failure","cause":[
+                        {"_tag":"Fail","error":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":thread,
+                            "cause":{"name":"ProjectionStoreThreadNotFoundError","message":format!("No orchestration projection exists for thread {}.", thread.as_str().expect("thread"))}
+                        }}
+                    ]}})
+                }
+                Some("orchestration.subscribeShell") => json!({"_tag":"Chunk","requestId":req["id"],"values":[
+                    {"kind":"snapshot","snapshot":{"projects":[{"id":"local-fixture","workspaceRoot":root}]}},
+                    {"kind":"synchronized"}
+                ]}),
+                _ => panic!("must not send a dirty review"),
+            }
+        }).await;
+        service.host = host;
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .expect("seed");
+        let row = service.task("reviewer").await.expect("original row");
+        let result = service
+            .send_prepared(&row, &checkout, observation, &service.host.fixture_pass())
+            .await;
+        assert_eq!(
+            result.expect("dirty gate waits"),
+            Action::Wait(WaitReason::HostUnknown)
+        );
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            2,
+            "forge reread after T3 authorization"
+        );
+        assert_eq!(service.task("reviewer").await.expect("no send marker"), row);
+        native_server.abort();
+        forge_server.abort();
+    }
+
+    #[tokio::test]
+    async fn merge_writes_wait_until_the_forge_confirms_the_next_fact() {
+        for status in [StatusCode::CONFLICT, StatusCode::METHOD_NOT_ALLOWED] {
+            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let head = service.project.start.clone();
+            let new_head: Head = "b".repeat(40).parse().expect("changed head");
+            let next = Arc::new(AtomicBool::new(false));
+            let puts = Arc::new(AtomicUsize::new(0));
+            let app = merge_fixture(&head, &new_head, status, &next, &puts);
+            let (forge, server) = serve_forge(app).await;
+            service.forge = forge;
+            let (mut task, credential, mut observation) =
+                reservation("reviewer", Entry::ReviewEntry, &head);
+            let instance = task.run().expect("run").launch().instance.clone();
+            task.record_report(
+                &instance,
+                credential.as_bytes(),
+                Report::Review {
+                    head: head.clone(),
+                    decision: Review::Approve,
+                    summary: "Approved exact head".into(),
+                },
+            )
+            .expect("report");
+            observation.host = Observed::Known(Host::Current {
+                instance,
+                state: RunState::Ended,
+            });
+            assert_eq!(
+                task.reconcile(&observation),
+                Action::Advance(Phase::Merging)
+            );
+            service
+                .state
+                .lock()
+                .await
+                .store
+                .create(&task, &event("fixture"))
+                .expect("seed merge");
+            let host = service.host.pass();
+            let row = service.task("reviewer").await.expect("old approval");
+            assert_eq!(
+                Box::pin(service.advance(&row, &host))
+                    .await
+                    .expect("first pass"),
+                Action::Wait(WaitReason::ForgeUnknown)
+            );
+            let row = service.task("reviewer").await.expect("waiting task");
+            assert_eq!(row.task.phase(), Phase::Merging);
+            assert!(row.task.question().is_none());
+            assert_eq!(
+                Box::pin(service.advance(&row, &host))
+                    .await
+                    .expect("one more stale pass"),
+                Action::Wait(WaitReason::ForgeUnknown)
+            );
+            assert_eq!(puts.load(Ordering::Relaxed), 1);
+            if status == StatusCode::CONFLICT {
+                assert!(row.task.verdict().is_none());
+                assert_eq!(
+                    row.task.pull_request().expect("keep the bound PR").head,
+                    head
+                );
+                next.store(true, Ordering::Relaxed);
+                assert_eq!(
+                    Box::pin(service.advance(&row, &host))
+                        .await
+                        .expect("fresh head"),
+                    Action::Advance(Phase::Reviewing)
+                );
+                let updated = service.task("reviewer").await.expect("new head bound");
+                assert_eq!(updated.task.pull_request().expect("PR").head, new_head);
+            } else {
+                assert!(service.forge_until.load(Ordering::Relaxed) > now_ms());
+            }
+            server.abort();
+        }
+    }
+
+    fn merge_fixture(
+        head: &Head,
+        new_head: &Head,
+        status: StatusCode,
+        new: &Arc<AtomicBool>,
+        puts: &Arc<AtomicUsize>,
+    ) -> Router {
+        let (before, after) = (forge_pull(head), forge_pull(new_head));
+        let (old_checks, new_checks) = (forge_checks(head), forge_checks(new_head));
+        let (change, changed) = (Arc::clone(new), Arc::clone(new));
+        let (count, sent) = (Arc::clone(puts), Arc::clone(puts));
+        let pull = format!("/repos/{}/pulls/1", crate::tests::REPOSITORY);
+        Router::new()
+            .route(
+                &pull,
+                get(move || async move {
+                    if status == StatusCode::METHOD_NOT_ALLOWED && sent.load(Ordering::Relaxed) > 0
+                    {
+                        return (StatusCode::TOO_MANY_REQUESTS, [(RETRY_AFTER, "60")])
+                            .into_response();
+                    }
+                    Json(if change.load(Ordering::Relaxed) {
+                        after
+                    } else {
+                        before
+                    })
+                    .into_response()
+                }),
+            )
+            .route(
+                "/graphql",
+                post(move || async move {
+                    Json(if changed.load(Ordering::Relaxed) {
+                        new_checks
+                    } else {
+                        old_checks
+                    })
+                }),
+            )
+            .route(
+                &format!("{pull}/merge"),
+                put(move || async move {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    status
+                }),
+            )
+    }
 
     #[tokio::test]
     async fn prepared_and_revoked_reviews_recheck_the_actual_forge_and_checkout() {

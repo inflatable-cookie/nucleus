@@ -154,7 +154,7 @@ impl Task {
     }
 
     /// Retire the authority for the exact head GitHub refused as mismatched.
-    /// The next review still needs a fresh open PR and clean checkout.
+    /// Keep the binding in Merging while the forge still shows the old head.
     #[must_use]
     pub fn merge_head_mismatched(&mut self, attempted: &Head) -> bool {
         if self.phase != Phase::Merging
@@ -165,7 +165,6 @@ impl Task {
             return false;
         }
         self.verdict = None;
-        self.phase = Phase::Reviewing;
         self.attempts = 0;
         true
     }

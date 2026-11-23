@@ -142,6 +142,9 @@ pub(super) fn linked_checkout(project: &Path, path: &Path) -> Result<bool, HostE
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(_) => return Err(HostError::Uncertain),
     };
+    if root != path {
+        return Ok(false);
+    }
     let git = Git::new(&GIT_POLICY, Redactor::new([], RedactionRules::common()));
     let checkout = git
         .worktree_identity(&root)

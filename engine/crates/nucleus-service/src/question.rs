@@ -4,6 +4,7 @@ use nucleus_core::{Action, Question, Task, WaitReason};
 use nucleus_hosts::{HostError, NoticeSend, NoticeState, T3};
 use nucleus_store::{TaskRow, ThreadProvenance};
 
+use crate::pass::DispatchTarget;
 use crate::{RegisteredRole, Service, ServiceError, event, project::linked_checkout};
 
 impl Service {
@@ -32,6 +33,14 @@ impl Service {
         let Some(authorization) = self.host.authorize_notice(&attempt).await? else {
             return Ok(wait);
         };
+        let target = DispatchTarget::Planner(authorization.target());
+        if self.dispatch_gate(&row.task, target).await?.is_none() {
+            return Ok(wait);
+        }
+        if authorization.needs_unsettle() {
+            self.host.unsettle_notice(&authorization).await?;
+            return Ok(wait);
+        }
         let dispatch = authorization.record(&mut attempt)?;
         let command = attempt.command.clone();
         let mut updated = row.task.clone();
@@ -52,7 +61,7 @@ impl Service {
 
     async fn responsible_planner(&self, task: &Task) -> Result<Option<String>, ServiceError> {
         if let Some(origin) = &task.identity().origin_thread
-            && self.routable(origin).await?
+            && self.host.planner_routable(origin).await?
         {
             return Ok(Some(origin.clone()));
         }
@@ -113,19 +122,11 @@ impl Service {
                     continue;
                 }
             }
-            if self.routable(&id).await? {
+            if self.host.planner_routable(&id).await? {
                 return Ok(Some(id));
             }
         }
         Ok(None)
-    }
-
-    async fn routable(&self, id: &str) -> Result<bool, ServiceError> {
-        match self.host.planner_routable(id).await {
-            Ok(available) => Ok(available),
-            Err(HostError::Binding) => Ok(false),
-            Err(error) => Err(error.into()),
-        }
     }
 }
 
@@ -158,15 +159,10 @@ mod tests {
         atomic::{AtomicBool, Ordering},
     };
 
-    use axum::{
-        Json, Router,
-        extract::ws::{Message, WebSocketUpgrade},
-        routing::{get, post},
-    };
+    use crate::tests::native_fixture;
     use nucleus_core::{Entry, Host, Identity, Observed, Report, RunState};
     use nucleus_forge::GitHub;
     use serde_json::{Value, json};
-    use tokio::net::TcpListener;
 
     use super::*;
 
@@ -210,12 +206,13 @@ mod tests {
             ("origin", "planner-old", Some("origin")),
             ("gone", "planner-old", Some("planner-old")),
             ("gone", "unverified", None),
-            ("gone", "mismatch", Some("planner-other")),
+            ("gone", "mismatch", None),
         ] {
             let (_home, mut service) =
                 crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
+            let checkout = service.project.checkout.clone();
             let (host, server) =
-                native_fixture(move |request| snapshot_reply(request, strongest)).await;
+                native_fixture(move |request| snapshot_reply(request, strongest, &checkout)).await;
             service.host = host;
             service.project.agents = [
                 (strongest, RegisteredRole::Planner),
@@ -246,7 +243,9 @@ mod tests {
             } else {
                 assert!(matches!(
                     result,
-                    Err(ServiceError::Host(HostError::Uncertain))
+                    Err(ServiceError::Host(
+                        HostError::Uncertain | HostError::Binding
+                    ))
                 ));
             }
             server.abort();
@@ -259,9 +258,10 @@ mod tests {
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
         let received = Arc::new(Mutex::new(Vec::new()));
         let native = Arc::clone(&received);
+        let checkout = service.project.checkout.clone();
         let (host, server) = native_fixture(move |request| {
             if request["tag"] != "orchestration.dispatchCommand" {
-                return snapshot_reply(request, "planner");
+                return snapshot_reply(request, "planner", &checkout);
             }
             let command = request["payload"]["commandId"].as_str().expect("command ID");
             let mut sent = native.lock().expect("notice trace");
@@ -277,31 +277,7 @@ mod tests {
             ]}})
         }).await;
         service.host = host;
-        let (mut task, credential, mut observation) =
-            crate::tests::reservation("notice", Entry::Brief, &service.project.start);
-        let instance = task.run().expect("worker").launch().instance.clone();
-        task.record_report(
-            &instance,
-            credential.as_bytes(),
-            Report::Question {
-                prompt: "Choose the greeting".into(),
-                options: Vec::new(),
-            },
-        )
-        .expect("authenticated question");
-        observation.host = Observed::Known(Host::Current {
-            instance,
-            state: RunState::Ended,
-        });
-        assert!(matches!(task.reconcile(&observation), Action::Ask(_)));
-        service
-            .state
-            .lock()
-            .await
-            .store
-            .create(&task, &event("fixture"))
-            .expect("seed question");
-        let first = service.task("notice").await.expect("first row");
+        let first = seed_question(&service).await;
         service
             .notify_question(&first)
             .await
@@ -330,55 +306,68 @@ mod tests {
         server.abort();
     }
 
-    async fn native_fixture(
-        response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
-    ) -> (T3, tokio::task::JoinHandle<()>) {
-        let app = Router::new()
-            .route(
-                "/api/auth/websocket-ticket/rpc",
-                post(|| async { Json(json!({"ticket":"fixture"})) }),
-            )
-            .route(
-                "/ws",
-                get(move |upgrade: WebSocketUpgrade| async move {
-                    upgrade.on_upgrade(move |mut ws| async move {
-                        while let Some(Ok(Message::Text(frame))) = ws.recv().await {
-                            let req: Value = serde_json::from_str(&frame).expect("Effect request");
-                            if req["_tag"] == "Request" {
-                                let reply = response(&req);
-                                ws.send(Message::Text(reply.to_string().into()))
-                                    .await
-                                    .expect("reply");
-                            }
-                        }
-                    })
-                }),
-            );
-        let tcp = TcpListener::bind("127.0.0.1:0").await.expect("listen");
-        let host = T3::new(
-            &format!("http://{}", tcp.local_addr().expect("address")),
-            "fixture",
-        )
-        .expect("native client");
-        (
-            host,
-            tokio::spawn(async {
-                axum::serve(tcp, app).await.expect("native server");
-            }),
-        )
+    #[tokio::test]
+    async fn a_notice_cannot_send_or_unsettle_outside_the_fixture_project() {
+        let (_home, mut service) =
+            crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
+        let checkout = service.project.checkout.clone();
+        let (host, server) =
+            native_fixture(move |request| snapshot_reply(request, "outside", &checkout)).await;
+        service.host = host;
+        let row = seed_question(&service).await;
+        assert!(matches!(
+            service.notify_question(&row).await,
+            Err(ServiceError::Host(HostError::Binding))
+        ));
+        assert_eq!(
+            service.task("notice").await.expect("no dispatch recorded"),
+            row
+        );
+        server.abort();
     }
 
-    fn snapshot_reply(req: &Value, strongest: &str) -> Value {
+    async fn seed_question(service: &Service) -> TaskRow {
+        let (mut task, credential, mut observation) =
+            crate::tests::reservation("notice", Entry::Brief, &service.project.start);
+        let instance = task.run().expect("worker").launch().instance.clone();
+        task.record_report(
+            &instance,
+            credential.as_bytes(),
+            Report::Question {
+                prompt: "Choose the greeting".into(),
+                options: Vec::new(),
+            },
+        )
+        .expect("authenticated question");
+        observation.host = Observed::Known(Host::Current {
+            instance,
+            state: RunState::Ended,
+        });
+        assert!(matches!(task.reconcile(&observation), Action::Ask(_)));
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .expect("seed question");
+        service.task("notice").await.expect("first row")
+    }
+
+    fn snapshot_reply(req: &Value, strongest: &str, checkout: &Path) -> Value {
         let mut projection = match req["tag"].as_str() {
-            Some("orchestration.subscribeShell") => json!({"snapshot": {"threads": [
+            Some("orchestration.subscribeShell") => json!({"snapshot": {
+                "projects": [{"id":"local-fixture", "workspaceRoot": checkout}],
+                "threads": [
                 shell(strongest, "2026-11-02T00:00:00.000Z"),
-                shell("planner-other", "2026-11-01T00:00:00.000Z"),
-                shell("registered-agent", "2026-11-03T00:00:00.000Z")
+                shell("planner-other", "2026-11-01T00:00:00.000Z")
             ]}}),
             Some("orchestration.subscribeThread") => {
                 let id = req["payload"]["threadId"].as_str().expect("exact thread");
                 json!({"hasMoreHistory": id == "unverified", "projection": {"thread": {
                                     "id": if id == "mismatch" { "another-thread" } else { id },
+                                    "projectId": if id == "outside" { "other-project" } else { "local-fixture" },
+                                    "settledAt": (id == "outside").then_some("2026-11-01T00:00:00.000Z"),
                                     "archivedAt": (id == "gone").then_some("2026-11-01T00:00:00.000Z")
                                 }, "messages":[], "runs":[]}})
             }

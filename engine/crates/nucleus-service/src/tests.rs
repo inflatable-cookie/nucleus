@@ -9,6 +9,7 @@ use std::{
 
 use axum::{
     Json, Router,
+    extract::ws::{Message, WebSocketUpgrade},
     routing::{get, post},
 };
 use nucleus_core::{
@@ -16,7 +17,7 @@ use nucleus_core::{
     PullRequest, Run, Workspace,
 };
 use nucleus_hosts::{
-    Binding, ReplayAuthorization, RoleProfile, SendOutcome, StopProgress, TaskHost,
+    Binding, ReplayAuthorization, RoleProfile, RunDispatch, SendOutcome, StopProgress, TaskHost,
 };
 use nucleus_store::{EngineSettings, PinnedVolume};
 use serde_json::{Value, json};
@@ -24,7 +25,7 @@ use tokio::net::TcpListener;
 
 use super::*;
 
-const REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
+pub(super) const REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
 
 pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
@@ -169,16 +170,8 @@ pub(super) async fn forge_fixture(
 ) -> (GitHub, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let reads = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&reads);
-    let pull = json!({
-        "number":1, "html_url":PR, "merged":false, "state":"open", "merge_commit_sha":null,
-        "head":{"ref":"ns-reviewer", "sha":head, "repo":{"full_name":REPOSITORY}},
-        "base":{"ref":"main", "sha":head, "repo":{"full_name":REPOSITORY}},
-    });
-    let checks = json!({"data":{"repository":{"pullRequest":{
-        "headRefOid":head, "baseRefName":"main", "isDraft":false, "state":"OPEN",
-        "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN", "reviewDecision":null,
-        "statusCheckRollup":{"state":"SUCCESS"},
-    }}}});
+    let pull = forge_pull(head);
+    let checks = forge_checks(head);
     let server = Router::new()
         .route(
             &format!("/repos/{REPOSITORY}/pulls/1"),
@@ -188,17 +181,38 @@ pub(super) async fn forge_fixture(
             }),
         )
         .route("/graphql", post(move || async move { Json(checks) }));
+    let (client, server) = serve_forge(server).await;
+    (client, reads, server)
+}
+
+pub(super) fn forge_pull(head: &Head) -> Value {
+    json!({
+        "number":1, "html_url":PR, "merged":false, "state":"open", "merge_commit_sha":null,
+        "head":{"ref":"ns-reviewer", "sha":head, "repo":{"full_name":REPOSITORY}},
+        "base":{"ref":"main", "sha":head, "repo":{"full_name":REPOSITORY}},
+    })
+}
+
+pub(super) fn forge_checks(head: &Head) -> Value {
+    json!({"data":{"repository":{"pullRequest":{
+        "headRefOid":head, "baseRefName":"main", "isDraft":false, "state":"OPEN",
+        "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN", "reviewDecision":null,
+        "statusCheckRollup":{"state":"SUCCESS"},
+    }}}})
+}
+
+pub(super) async fn serve_forge(app: Router) -> (GitHub, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("fixture endpoint");
     let client = GitHub::loopback_fixture(listener.local_addr().expect("local address"))
         .expect("fixture forge");
     let server = tokio::spawn(async {
-        axum::serve(listener, server)
+        axum::serve(listener, app)
             .await
             .expect("fixture forge server");
     });
-    (client, reads, server)
+    (client, server)
 }
 
 pub(super) struct Due(pub(super) AtomicUsize);
@@ -223,12 +237,20 @@ impl TaskHost for Due {
         Err(HostError::Uncertain)
     }
 
-    async fn send(&self, _: &Run, _: ReplayAuthorization) -> Result<SendOutcome, HostError> {
+    async fn send(&self, _: RunDispatch) -> Result<SendOutcome, HostError> {
         unreachable!("fixture probes the decision before the send marker")
     }
 
-    async fn stop(&self, _: &Run, _: u64, _: bool) -> Result<StopProgress, HostError> {
+    async fn unarchive(&self, _: &ReplayAuthorization) -> Result<(), HostError> {
+        unreachable!("fixture probes the decision before any native write")
+    }
+
+    async fn stop(&self, _: &Run, _: &Binding, _: u64, _: bool) -> Result<StopProgress, HostError> {
         Ok(StopProgress::ReplayDue)
+    }
+
+    async fn stop_rejected(&self, _: &Run, _: bool) -> Result<StopProgress, HostError> {
+        unreachable!("fixture probes the decision before the send marker")
     }
 }
 
@@ -321,4 +343,42 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         Workspace::Absent
     );
     server.abort();
+}
+
+pub(super) async fn native_fixture(
+    response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
+) -> (T3, tokio::task::JoinHandle<()>) {
+    let app = Router::new()
+        .route(
+            "/api/auth/websocket-ticket/rpc",
+            post(|| async { Json(json!({"ticket":"fixture"})) }),
+        )
+        .route(
+            "/ws",
+            get(move |upgrade: WebSocketUpgrade| async move {
+                upgrade.on_upgrade(move |mut ws| async move {
+                    while let Some(Ok(Message::Text(frame))) = ws.recv().await {
+                        let req: Value = serde_json::from_str(&frame).expect("Effect request");
+                        if req["_tag"] == "Request" {
+                            let reply = response(&req);
+                            ws.send(Message::Text(reply.to_string().into()))
+                                .await
+                                .expect("reply");
+                        }
+                    }
+                })
+            }),
+        );
+    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("listen");
+    let host = T3::new(
+        &format!("http://{}", tcp.local_addr().expect("address")),
+        "fixture",
+    )
+    .expect("native client");
+    (
+        host,
+        tokio::spawn(async {
+            axum::serve(tcp, app).await.expect("native server");
+        }),
+    )
 }

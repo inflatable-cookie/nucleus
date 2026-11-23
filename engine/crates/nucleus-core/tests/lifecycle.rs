@@ -632,10 +632,7 @@ fn review_handoff_checks_workspace_and_credential_binding() {
         ),
         (
             Observed::Known(Workspace::Absent),
-            Action::Launch {
-                role: Role::Reviewer,
-                via: Launch::Create,
-            },
+            Action::Wait(WaitReason::WorkspaceUnknown),
         ),
     ] {
         assert_eq!(

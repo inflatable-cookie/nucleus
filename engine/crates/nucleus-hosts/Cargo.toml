@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version = "1.95"
 publish.workspace = true
 
+[features]
+loopback-fixture = []
+
 [dependencies]
 futures-util = { version = "0.3", features = ["sink"] }
 log = { version = "0.4", features = ["max_level_debug"] }

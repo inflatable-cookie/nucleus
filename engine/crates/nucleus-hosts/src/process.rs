@@ -46,7 +46,7 @@ struct ProcessPaths {
 }
 
 impl Inventory {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "loopback-fixture"))]
     pub(crate) fn quiet_fixture() -> Self {
         Self {
             processes: HashMap::from([(
