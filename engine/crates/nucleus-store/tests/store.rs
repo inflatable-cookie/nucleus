@@ -1,6 +1,6 @@
 use nucleus_core::{
-    Action, Authority, Command, CredentialDigest, Entry, Host, Identity, Observation, Observed,
-    Phase, PreparedLaunch, Role, RunState, Task, Workspace,
+    Action, Authority, Command, Entry, Host, Identity, LaunchInputs, Observation, Observed, Phase,
+    RunState, Task, Workspace,
 };
 use nucleus_store::{EventDraft, Store, StoreError};
 use rusqlite::Connection;
@@ -78,16 +78,12 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
     task.reconcile(&observation);
     task.reserve_launch(
         &observation,
-        PreparedLaunch {
-            instance: "work-1".into(),
+        LaunchInputs {
             thread: "worker".into(),
-            role: Role::Worker,
-            label: "task-1-working-none-0".into(),
             started_at: 1,
-            credential: CredentialDigest([7; 32]),
             input: "first launch".into(),
-            review_head: None,
         },
+        &[7; 32],
     )
     .expect("reserve");
     let before = task.clone();
@@ -111,7 +107,7 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
     let before = task.clone();
     let settled = Observation {
         host: Observed::Known(Host::Current {
-            instance: "work-1".into(),
+            instance: task.run().expect("revoked run").launch().instance.clone(),
             state: RunState::Ended,
         }),
         ..observation
