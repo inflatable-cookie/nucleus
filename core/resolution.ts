@@ -492,7 +492,7 @@ export class Resolution {
   /** The currently active pass snapshot (sweep pass or wake-scoped), or null outside a pass. */
   currentPassSnapshot(): PassSnapshot | null {
     const scoped = currentTaskQuantumScope()?.snapshot;
-    if (scoped?.active) return scoped;
+    if (scoped) return scoped.active ? scoped : null;
     return this.passSnapshot?.active ? this.passSnapshot : null;
   }
 
@@ -1678,6 +1678,7 @@ export class Resolution {
       "claimIntegrationTurn",
       "continuedPrBinding",
       "continuedProgressWait",
+      "currentPassSnapshot",
       "deliverLaunchRun",
       "ensureIncident",
       "holdForSpentBudget",

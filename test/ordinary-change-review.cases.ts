@@ -3271,42 +3271,73 @@ test("a reviewer that reported while its turn still runs is stopped once and its
   }
 });
 
-test("an ordinary reviewer whose participant page the wake did not capture waits for the next pass instead of stopping, then sends", async () => {
+async function waitForOrdinaryPassProof(f: ReturnType<typeof fixture>) {
+  await f.engine.wake();
+  const earlierReview = f.current();
+  await f.report(earlierReview, "changes_required");
+  await f.engine.wake();
+  const revision = f.current();
+  assert.equal(revision.role, "revision");
+  const head = f.pushRevision("revision 1");
+  f.idle(revision);
+  assert.ok(revision.profile);
+  const retired = { ...revision, id: "retired-revision", agentId: "retired-worker" };
+  const releasedAt = new Date().toISOString();
+  f.store.putRun({
+    ...retired,
+    active: false,
+    released: true,
+    explicitlyReleasedAt: releasedAt,
+    status: "superseded",
+  });
+  f.idle(retired);
+  const task = f.store.task(f.task.id);
+  const namedCheck = "effigy test unit -- test/named-environment-check.test.ts";
+  f.store.update(task.id, {
+    retiredWorkers: [...task.retiredWorkers, {
+      runId: retired.id,
+      agentId: retired.agentId,
+      profile: revision.profile,
+      reason: "Retired and explicitly released",
+    }],
+    resolution: {
+      ...task.resolution,
+      proofRetry: { runId: earlierReview.id, head, proofs: [namedCheck], at: releasedAt },
+    },
+  });
+  // T3 stamps every observation; the freshness rule needs it.
+  const stamp = new Date(Date.now() - 60_000).toISOString();
+  for (const [id, state] of f.states)
+    f.states.set(id, { ...state, activeTurnId: null, updatedAt: stamp });
+  // The callback's own wake admits the reviewer outside any sweep pass. Its
+  // host-side prefetch runs out of budget before it reaches the retained
+  // participants (a slow host), so the custody proof inside the quantum reads
+  // a page that was never captured: unknown, never a refusal.
+  const resolution = f.engine.resolution as { hostPassWarmBudgetMs: number };
+  const warmBudget = resolution.hostPassWarmBudgetMs;
+  resolution.hostPassWarmBudgetMs = 0;
+  const result = await new Reports(f.engine).report(
+    {
+      taskId: f.task.id,
+      runId: revision.id,
+      eventId: randomUUID(),
+      status: "ready_for_review",
+      summary: "Fixed revision 1",
+      prNumber: 41,
+      head,
+    },
+    f.tokens.get(revision.id)!,
+  );
+  assert.equal((result as { accepted: boolean }).accepted, true);
+  await f.engine.quiesce();
+  resolution.hostPassWarmBudgetMs = warmBudget;
+  return { head, namedCheck, retiredAgentId: retired.agentId };
+}
+
+test("ordinary review waits for a pass proof and sends the full review with its named check", async () => {
   const f = fixture();
   try {
-    await f.engine.wake();
-    await f.report(f.current(), "changes_required");
-    await f.engine.wake();
-    const revision = f.current();
-    assert.equal(revision.role, "revision");
-    const head = f.pushRevision("revision 1");
-    f.idle(revision);
-    // T3 stamps every observation; the freshness rule needs it.
-    const stamp = new Date(Date.now() - 60_000).toISOString();
-    for (const [id, state] of f.states)
-      f.states.set(id, { ...state, updatedAt: stamp });
-    // The callback's own wake admits the reviewer outside any sweep pass. Its
-    // host-side prefetch runs out of budget before it reaches the retained
-    // participants (a slow host), so the custody proof inside the quantum reads
-    // a page that was never captured: unknown, never a refusal.
-    const resolution = f.engine.resolution as { hostPassWarmBudgetMs: number };
-    const warmBudget = resolution.hostPassWarmBudgetMs;
-    resolution.hostPassWarmBudgetMs = 0;
-    const result = await new Reports(f.engine).report(
-      {
-        taskId: f.task.id,
-        runId: revision.id,
-        eventId: randomUUID(),
-        status: "ready_for_review",
-        summary: "Fixed revision 1",
-        prNumber: 41,
-        head,
-      },
-      f.tokens.get(revision.id)!,
-    );
-    assert.equal((result as { accepted: boolean }).accepted, true);
-    await f.engine.quiesce();
-    resolution.hostPassWarmBudgetMs = warmBudget;
+    const { head, namedCheck, retiredAgentId } = await waitForOrdinaryPassProof(f);
     const waiting = f.store.task(f.task.id);
     assert.equal(f.sends.length, 0, "nothing is sent on an unread proof");
     assert.notEqual(
@@ -3331,14 +3362,58 @@ test("an ordinary reviewer whose participant page the wake did not capture waits
       "no pre-send refusal is recorded",
     );
     assert.equal(waiting.resolution.recovery ?? null, null, "no coordinator is summoned");
+    const beforeSend = f.store.runs(f.task.id).at(-1)!;
+    assert.equal(beforeSend.releasedBeforeSend, true);
 
-    // The next host pass serves the demanded participants and the reviewer is sent.
-    await f.engine.wake();
-    await f.engine.wake();
+    const pages: string[] = [];
+    const readPage = f.adapter.agentTimelinePage!;
+    f.adapter.agentTimelinePage = async (id, request) => {
+      pages.push(id);
+      return readPage(id, request);
+    };
+    // The next host pass serves even the explicitly released retired worker.
+    await f.engine.auditPass(true);
+    if (!f.sends.length) await f.engine.auditPass(true);
     const sent = f.store.task(f.task.id);
-    assert.equal(f.sends.length, 1, `the reviewer is sent (reason: ${sent.reason})`);
-    assert.equal(f.sends[0]!.ordinaryDetached, true);
-    assert.equal(f.sends[0]!.head, head);
+    assert.equal(f.sends.length, 1, `the reviewer is sent (reason: ${sent.reason}, pages: ${pages.join(", ")})`);
+    assert.ok(pages.includes(retiredAgentId));
+    const run = f.sends[0]!;
+    assert.equal(run.ordinaryDetached, true);
+    assert.equal(run.head, head);
+    const prompt = runPrompt(sent, run, "/helper", "ticket", false);
+    assert.match(prompt, /You are the independent reviewer/);
+    assert.ok(prompt.includes(namedCheck), "the sent review keeps the named check");
+    assert.doesNotMatch(prompt, /Recover your own finished findings/);
+  } finally {
+    await f.close();
+  }
+});
+
+test("an ordinary pass proof that stays unreadable on a healthy host becomes a typed stop", async () => {
+  const f = fixture();
+  try {
+    await waitForOrdinaryPassProof(f);
+    const waiting = f.store.task(f.task.id);
+    const stop = waiting.resolution.stop;
+    assert.equal(stop?.fact?.code, "pass_proof");
+    assert.ok(stop);
+    (f.engine.resolution as { hostPassWarmBudgetMs: number }).hostPassWarmBudgetMs = 0;
+    await f.engine.auditPass(true);
+    const missed = f.store.task(f.task.id);
+    assert.equal(missed.resolution.stop?.since, stop.since, "a missed pass preserves the wait's start");
+    f.store.update(f.task.id, {
+      resolution: {
+        ...missed.resolution,
+        stop: { ...stop, since: new Date(Date.now() - 6 * 60_000).toISOString() },
+      },
+    });
+    await f.engine.auditPass(true);
+    const exhausted = f.store.task(f.task.id);
+    assert.equal(f.sends.length, 0);
+    assert.equal(exhausted.phase, "needs_attention");
+    assert.equal(exhausted.resolution.stop?.reason, "operator_needed");
+    assert.equal(exhausted.resolution.stop?.fact?.code, "pass_proof_exhausted");
+    assert.match(exhausted.reason, /Ordinary review participant .*host pass timeline warming budget .* exhausted/);
   } finally {
     await f.close();
   }

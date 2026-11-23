@@ -36,7 +36,8 @@ export class HostReadRefusalError extends Error {
  * Spec 068 §6: an owned-tool proof that read a participant's page or process
  * snapshot the current pass has not captured. The read already asked the next
  * host pass to serve that participant first, so the caller waits and retries
- * through the bounded host-read wait; unknown is never a refusal or a stop.
+ * on a completed host pass. An unread proof can exhaust its wait, but it
+ * cannot prove a refusal.
  */
 export class PassProofPendingError extends HostReadRefusalError {
   constructor(readonly subject: string, readonly reason: string) {

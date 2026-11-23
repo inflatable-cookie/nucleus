@@ -11,6 +11,9 @@ import type {
 import { HOST_PASS_WARM_CANDIDATE_CAP, runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { fakeAdapter, submission } from "./support/fakes";
 import { runSchema, type Task } from "../shared/contracts";
+import { taskControlOperation } from "../core/verbs/task-control-key";
+import { readHostReadTransientEpisode } from "../core/recovery/host-read-transient";
+import { taskProgressDigest } from "../core/recovery/coordinator-report";
 
 const HOST = "host-1";
 const HEAD = "a".repeat(40);
@@ -128,6 +131,7 @@ function fixture(
   options: {
     processes?: () => HostProcessFact[];
     workspaces: Map<string, string>;
+    recovery?: boolean;
   },
 ) {
   const store = new Store(":memory:");
@@ -136,6 +140,7 @@ function fixture(
   const merged: string[] = [];
   const adapter = fakeAdapter({
     hostId: HOST,
+    supportsCoordinatorRecovery: options.recovery ?? false,
     observationInventory: async (ids: readonly string[]) => {
       inventoryIds.push(...ids);
       return new Map(
@@ -283,4 +288,117 @@ test("any quantum read of a pass timeline page registers demand, not only the ow
     resolution.readPassTimelinePage("agent-continuation", 20, HOST));
   assert.equal(read.state, "unknown", "outside a pass the quantum gets no live read");
   assert.deepEqual(resolution.takePassProofs(HOST, new Set(["agent-continuation"])), ["agent-continuation"]);
+});
+
+function seedOwnedToolHold(store: Store, workspaces: Map<string, string>) {
+  const seeded = seedMergingTask(store, "owned-tool-retry");
+  for (const [id, ws] of participantWorkspaces(seeded)) workspaces.set(id, ws);
+  const task = store.update(seeded.task.id, {
+    phase: "needs_attention",
+    reason: "Owned-tool evidence was incomplete",
+  });
+  store.event(task.id, "owned_tool_hold", JSON.stringify({
+    runId: task.runId,
+    reason: task.reason,
+  }));
+  return { task, effect: `owned_tool.${task.runId}` };
+}
+
+test("a deferred durable owned-tool retry waits for the host pass and is audited as applied", async (t) => {
+  const workspaces = new Map<string, string>();
+  const { store, engine, pageReads } = fixture(t, { workspaces });
+  const { task, effect } = seedOwnedToolHold(store, workspaces);
+  store.setMeta("hostReadTransientMaxAttempts", 1);
+  const control = taskControlOperation({
+    taskId: task.id,
+    version: task.version,
+    action: "retry_effect",
+    effect,
+    reason: "Recheck the owned tool",
+  });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const accepted = await engine.startOperation({ ...control, kind: "task_control" });
+  assert.ok("accepted" in accepted);
+  const id = accepted.operation.id;
+  await engine.quiesce();
+  assert.equal(store.operation(id)?.state, "pending");
+  assert.equal(readHostReadTransientEpisode(store, id, "op")?.retryOnPass, true);
+  assert.deepEqual(store.verbOutcomes(""), []);
+  assert.deepEqual(pageReads, [], "the task lane does not read a timeline");
+
+  t.mock.timers.tick(10_000);
+  await engine.scheduleOperation(id);
+  await engine.quiesce();
+  assert.equal(store.operation(id)?.state, "pending");
+  assert.equal(readHostReadTransientEpisode(store, id, "op")?.attempts, 1);
+  t.mock.timers.reset();
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.operation(id)?.state, "succeeded", store.operation(id)?.diagnostic);
+  assert.deepEqual(store.verbOutcomes("").map(({ action, outcome, source }) => ({ action, outcome, source })), [
+    { action: "retry_effect", outcome: "applied", source: "owner" },
+  ]);
+});
+
+test("a coordinator's accepted owned-tool retry stays pending until its proof is served", async (t) => {
+  const workspaces = new Map<string, string>();
+  const { store, engine } = fixture(t, { workspaces, recovery: true });
+  const { task, effect } = seedOwnedToolHold(store, workspaces);
+  const runId = "coordinator-run";
+  const agentId = "coordinator-agent";
+  const binding = {
+    eventId: "coordinator-report",
+    runId,
+    reportStatus: "recovered",
+    coordinatorAction: { verb: "retry_effect", effect, reason: "Check the tool again" },
+    summary: "Check the tool again",
+    status: "pending",
+  } as const;
+  assert.ok(task.workspaceId);
+  workspaces.set(agentId, task.workspaceId);
+  const current = store.update(task.id, {
+    coordinatorAgentId: agentId,
+    coordinatorGeneration: 1,
+    resolution: {
+      ...task.resolution,
+      recoveryActive: true,
+      coordinatorWorkspaceId: task.workspaceId,
+      recovery: {
+        id: "episode",
+        key: "owned-tool-hold",
+        generation: 1,
+        runId,
+        agentId,
+        status: "running",
+        summary: "",
+        idleSince: null,
+        incidentId: null,
+        progress: taskProgressDigest(task),
+        action: binding,
+      },
+    },
+  });
+  const run = runSchema.parse({
+    id: runId, taskId: task.id, role: "recovery", generation: 1,
+    head: HEAD, base: HEAD, agentId, workspaceId: task.workspaceId,
+    hostId: HOST, profile: null, status: "running", createdAt: IDLE_AT,
+    lastObservedAt: IDLE_AT, idleSince: IDLE_AT, active: false, released: false,
+    completion: {
+      eventId: binding.eventId, taskId: task.id, runId, status: "recovered",
+      summary: binding.summary, coordinatorAction: binding.coordinatorAction,
+      coordinatorGeneration: 1,
+    },
+  });
+  store.putRun(run);
+  await runInTaskQuantumScope(30_000, () => engine.applyCoordinatorAction(current, run, binding));
+  assert.equal(store.task(task.id).resolution.recovery?.action?.status, "pending");
+  assert.equal(store.run(runId)?.released, false);
+  assert.deepEqual(store.verbOutcomes(""), []);
+  assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "run_result_deferred").length, 1);
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.task(task.id).resolution.recovery?.action?.status, "applied", store.task(task.id).reason);
+  assert.deepEqual(store.verbOutcomes("").map(({ outcome, source }) => ({ outcome, source })), [
+    { outcome: "applied", source: "coordinator" },
+  ]);
 });

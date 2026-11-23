@@ -1060,7 +1060,10 @@ test("a refused owned-tool retry settles its operation without creating an uncer
       },
     });
     f.run({ id: "refused-unknown-run", agentId: "coord-refused" });
-    f.observe("coord-refused", { activeTurnId: null });
+    f.observe("coord-refused", {
+      activeTurnId: null,
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
     f.timelineEntries.push({
       timestamp: new Date().toISOString(),
       turnId: "turn-1",
@@ -1125,8 +1128,11 @@ test("a refused owned-tool retry settles its operation without creating an uncer
       expectedVersion: task.version,
     });
     assert.ok("accepted" in accepted);
-    const operation = await f.engine.awaitOperation(accepted.operation.id);
-    assert.equal(operation.state, "failed", "the read-only refusal is settled");
+    await f.engine.quiesce();
+    assert.equal(f.engine.operationStatus(accepted.operation.id).state, "pending");
+    await f.engine.auditPass(true);
+    const operation = f.engine.operationStatus(accepted.operation.id);
+    assert.equal(operation.state, "failed", "the fresh proof refuses the live hold");
     assert.match(
       operation.diagnostic,
       /Owned-tool hold refused-unknown-run remains/,

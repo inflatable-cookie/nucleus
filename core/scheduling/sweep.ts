@@ -20,6 +20,7 @@ import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
+import { readHostReadTransientEpisode } from "../recovery/host-read-transient";
 
 /**
  * Tasks reconciled per bounded safety-sweep window (Spec 013). The minute sweep
@@ -69,6 +70,7 @@ export type SweepContext = Pick<
   | "retiredObservationPlan"
   | "scheduleLane"
   | "scheduleLifecycleFollowUp"
+  | "scheduleOperation"
   | "scheduleTaskQuantum"
   | "settleQuiesce"
   | "startSweepChain"
@@ -482,6 +484,12 @@ export class Sweep {
       // Hosts whose health says they are away (down, or not yet read since the
       // service started): nothing in this pass walks their tasks again.
       const awayHosts = new Set<string>();
+      // Take the waiting set before warming starts. An operation that first
+      // misses during this pass has asked the following pass for its proof.
+      const proofRetries = this.engine.store.operations({ states: ["pending", "running"] })
+        .filter((operation) =>
+          readHostReadTransientEpisode(this.engine.store, operation.id, "op")?.retryOnPass,
+        );
       const openDecisionsBefore = new Set(
         this.engine.store
           .listDecisions({ status: "open" })
@@ -541,10 +549,23 @@ export class Sweep {
           this.engine.hostHealth.passFailed(host, passed.callFault);
         } else {
           this.engine.hostHealth.answered(host);
+          if (this.engine.hostHealth.peek(host).state === "up")
+            passSnapshot?.completeHostPass(host);
         }
         if (passed.inventory) inventory = passed.inventory;
         for (const [id, task] of passed.finishedCatchUp)
           finishedCatchUp.set(id, task);
+      }
+      if (proofRetries.length && passSnapshot && !startsNoRuns(this.engine.store, this.engine.stopped)) {
+        const retries = proofRetries.flatMap((operation) =>
+          operation.taskId && passSnapshot.hostPassCompleted(operation.hostId)
+            ? [this.boundTaskQuantum(
+                this.engine.scheduleOperation(operation.id, passSnapshot),
+                operation.taskId,
+              )]
+            : [],
+        );
+        if (retries.length) await Promise.all(retries);
       }
       // A failed host already spent its per-pass observation budget; do not
       // query it again while refreshing project notice recipients.

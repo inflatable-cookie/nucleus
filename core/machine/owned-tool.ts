@@ -329,8 +329,10 @@ export class OwnedTools {
         workspaceId,
         remainingMs(),
       );
-      if (custody.kind === "deferred")
+      if (custody.kind === "deferred") {
+        this.resolution.requestPassProof?.(boundRun?.hostId ?? task?.hostId, agentId);
         return { kind: "deferred", reason: custody.reason };
+      }
       if (custody.kind === "refuse")
         return { kind: "hold", reason: custody.reason };
       if (custody.kind === "retired" || custody.kind === "gone") {

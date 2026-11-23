@@ -62,8 +62,31 @@ import { declaredLaneDocumentKeys } from "../../planning/brief-lane-documents";
 import { dirname } from "node:path";
 import { ensureTaskNodeModules } from "../../workspaces/task-node-modules";
 import { verifyBargeLeaseAndCustody } from "../../workspaces/barge-allocator";
+import { waitAgeMs } from "../../scheduling/host-outage";
+import { taskStopRecord, type TaskDecisionFact } from "../../../shared/task-stop";
 
-// Proof executors keep their own refusal path; every other creation waits for its lookup.
+const REVIEW_PASS_PROOF_LIMIT_MINUTES = 5;
+
+/** Put unconsumed owner direction and named checks back on the task. */
+function unsentReviewIntent(task: Task, run: Run) {
+  if (run.role !== "reviewer" || task.prHead !== run.head) return {};
+  return {
+    ...(run.reviewReason && !task.resolution.pendingReviewReason
+      ? { pendingReviewReason: run.reviewReason }
+      : {}),
+    ...(run.proofRetry && !task.resolution.proofRetry
+      ? {
+          proofRetry: {
+            runId: run.proofRetry.forRunId,
+            head: run.proofRetry.head,
+            proofs: run.proofRetry.proofs,
+            at: run.createdAt,
+          },
+        }
+      : {}),
+  };
+}
+
 /**
  * The detached reviewer round's PR identity (nucleus#1425). A recorded unreviewed external
  * merge of the task's PR binds its exact merged source; any other task keeps the strict
@@ -585,12 +608,16 @@ export class RunLaunchDeliver {
                 ...latestRun,
                 status: "superseded",
                 released: true,
+                releasedBeforeSend: true,
                 active: false,
               });
             if (!agentId) this.store.deleteCredential(run.id);
             const latest = this.store.task(t.id);
             if (latest.resolution.currentRunId === run.id)
-              this.resolution.update(latest, { currentRunId: null });
+              this.resolution.update(latest, {
+                currentRunId: null,
+                ...unsentReviewIntent(latest, run),
+              });
           });
           return;
         }
@@ -608,13 +635,18 @@ export class RunLaunchDeliver {
               ...latestRun,
               status: "superseded",
               released: true,
+              releasedBeforeSend: true,
               active: false,
             });
           const latest = this.store.task(t.id);
           if (latest.resolution.currentRunId === run.id)
             this.resolution.update(
               latest,
-              { currentRunId: null, attention: false },
+              {
+                currentRunId: null,
+                attention: false,
+                ...unsentReviewIntent(latest, run),
+              },
               { phase: role === "reviewer" ? "reviewing" : latest.phase },
               "review_waiting_on_effects",
               recoveryEffectsRefusal(error.effects) ?? "",
@@ -651,29 +683,65 @@ export class RunLaunchDeliver {
               ...latestRun,
               status: "superseded",
               released: true,
+              releasedBeforeSend: true,
               active: false,
             });
           if (!agentId) this.store.deleteCredential(run.id);
           const latest = this.store.task(t.id);
-          if (latest.resolution.currentRunId === run.id)
+          if (latest.resolution.currentRunId !== run.id) return;
+          const release = {
+            currentRunId: null,
+            ...unsentReviewIntent(latest, run),
+          };
+          const prior = latest.resolution.stop;
+          if (
+            pendingProof &&
+            prior?.fact?.code === "pass_proof" &&
+            this.resolution.currentPassSnapshot()?.hostPassCompleted(latest.hostId) &&
+            waitAgeMs(this.store, latest.hostId, prior.since) >=
+              REVIEW_PASS_PROOF_LIMIT_MINUTES * 60_000
+          ) {
+            const reason = `${error.subject} could not be proved after ${REVIEW_PASS_PROOF_LIMIT_MINUTES} minutes while the host was up. ${error.reason}`;
+            const fact: TaskDecisionFact = {
+              code: "pass_proof_exhausted",
+              subject: error.subject.slice(0, 240),
+            };
+            const stop = taskStopRecord(
+              "operator_needed",
+              reason,
+              null,
+              undefined,
+              undefined,
+              undefined,
+              fact,
+            );
             this.resolution.update(
               latest,
-              { currentRunId: null, attention: false },
-              { phase: role === "reviewer" ? "reviewing" : latest.phase },
-              pendingProof
-                ? "review_waiting_on_pass_proof"
-                : "review_waiting_on_host_snapshot",
-              pendingProof ? error.message : error.detail,
+              { ...release, attention: true, stop },
+              { phase: "needs_attention", reason, reasonFact: fact },
+              "review_pass_proof_exhausted",
+              reason,
             );
+            return;
+          }
+          const waiting = this.resolution.update(
+            latest,
+            { ...release, attention: false },
+            { phase: role === "reviewer" ? "reviewing" : latest.phase },
+            pendingProof
+              ? "review_waiting_on_pass_proof"
+              : "review_waiting_on_host_snapshot",
+            pendingProof ? error.message : error.detail,
+          );
+          this.resolution.waiting(
+            waiting,
+            pendingProof
+              ? error.message
+              : `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
+            "lifecycle",
+            pendingProof ? { fact: { code: "pass_proof" } } : undefined,
+          );
         });
-        this.resolution.waiting(
-          this.store.task(t.id),
-          pendingProof
-            ? error.message
-            : `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
-          "lifecycle",
-          pendingProof ? { fact: { code: "pass_proof" } } : undefined,
-        );
         return;
       }
       // A proved pre-send transient read failure (e.g. T3 inventory churn on
@@ -691,6 +759,7 @@ export class RunLaunchDeliver {
               ...latestRun,
               status: "superseded",
               released: true,
+              releasedBeforeSend: true,
               active: false,
             });
           if (!agentId) this.store.deleteCredential(run.id);
@@ -698,7 +767,7 @@ export class RunLaunchDeliver {
           if (latest.resolution.currentRunId === run.id)
             this.resolution.update(
               latest,
-              { currentRunId: null },
+              { currentRunId: null, ...unsentReviewIntent(latest, run) },
               { phase: role === "reviewer" ? "reviewing" : latest.phase },
               "launch_transient_read_wait",
               error.message,
@@ -735,11 +804,15 @@ export class RunLaunchDeliver {
             ...this.store.run(run.id)!,
             status: "superseded",
             released: true,
+            releasedBeforeSend: true,
           });
           this.store.deleteCredential(run.id);
           const current = this.store.task(t.id);
           if (current.resolution.currentRunId === run.id)
-            this.resolution.update(current, { currentRunId: null });
+            this.resolution.update(current, {
+              currentRunId: null,
+              ...unsentReviewIntent(current, run),
+            });
         });
         throw error;
       }
@@ -767,13 +840,18 @@ export class RunLaunchDeliver {
             ...this.store.run(run.id)!,
             status: "superseded",
             released: true,
+            releasedBeforeSend: true,
           });
           this.store.deleteCredential(run.id);
           const current = this.store.task(t.id);
           if (current.resolution.currentRunId === run.id)
             this.resolution.update(
               current,
-              { currentRunId: null, attention: true },
+              {
+                currentRunId: null,
+                attention: true,
+                ...unsentReviewIntent(current, run),
+              },
               { phase: "needs_attention", reason },
               tooLarge
                 ? "review_prompt_refused_before_send"

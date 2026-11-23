@@ -223,6 +223,9 @@ export class RunReservationAdmission {
           JSON.stringify({ waitId: latest.prerequisiteWait.id, runId: run.id }),
         );
       }
+      const retryingPassProof =
+        role === "reviewer" && latest.phase === "reviewing" &&
+        latest.resolution.stop?.fact?.code === "pass_proof";
       this.resolution.update(
         t,
         {
@@ -268,15 +271,20 @@ export class RunReservationAdmission {
             : {}),
         },
         {
-          phase:
-            role === "reviewer"
-              ? "reviewing"
-              : role === "revision"
-                ? "changes_requested"
-                : proofExecutor(role)
-                  ? t.phase
-                  : "closing",
-          reason: dispatchReason,
+          // Keep the stop's clock while a new reservation re-proves custody.
+          ...(retryingPassProof
+            ? {}
+            : {
+                phase:
+                  role === "reviewer"
+                    ? "reviewing"
+                    : role === "revision"
+                      ? "changes_requested"
+                      : proofExecutor(role)
+                        ? t.phase
+                        : "closing",
+                reason: dispatchReason,
+              }),
           ...(role === "revision"
             ? {
                 stashBaseline: s.stash
@@ -289,6 +297,7 @@ export class RunReservationAdmission {
             : {}),
         },
         "run_intent",
+        dispatchReason,
       );
       admitPhaseFacts(this.store, t.id);
       if (replacingReviewer)
