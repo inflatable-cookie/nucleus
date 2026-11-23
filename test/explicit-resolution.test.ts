@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   chmodSync,
+  closeSync,
+  openSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -556,16 +558,23 @@ test("a coordinator must accept live_turn before releasing an inactive worker wi
       },
     },
   });
+  const file = join(scratch, "held output");
+  const fd = openSync(file, "w");
   const child = spawn(process.execPath, ["-e", "console.log('ready'); setInterval(() => {}, 1000)"], {
-    cwd: directory,
-    stdio: ["ignore", "pipe", "inherit"],
+    cwd: f.root,
+    stdio: ["ignore", "pipe", "inherit", fd],
   });
+  closeSync(fd);
   const exited = once(child, "exit");
   try {
+    assert.ok(child.stdout);
     await once(child.stdout, "data");
     pid = child.pid;
     assert.ok(pid);
-    assert.equal((await scan())?.find((fact) => fact.pid === pid)?.cwd, directory);
+    const fact = (await scan())?.find((process) => process.pid === pid);
+    assert.ok(fact);
+    assert.equal(fact.cwd, f.root);
+    assert.ok(fact.openFiles?.paths.includes(file));
     const offer = (await f.runtime.taskNext({ taskId: task.id })).explicitCommands?.find(
       (item) => item.action === "run.release" && item.args.run === runId,
     );

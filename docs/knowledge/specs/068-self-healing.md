@@ -289,8 +289,8 @@ passes, and that snapshot predates the participant's observation too.
 ### 7. Attention reaches the planner quickly
 
 An opaque tool can stall only when the process inventory proves there is no live
-run process. A process in the recorded workspace or scratch, or a descendant of
-the run's identified provider, counts as activity. An incomplete inventory
+run process. A process whose cwd or open file lies in the recorded workspace or
+scratch, or a descendant of the run's identified provider, counts as activity. An incomplete inventory
 defers the verdict. A task uses the host pass's shared scan and can start a
 bounded, shared scan when the pass missed it. The hung-tool limit still governs
 termination when tool silence is observable.

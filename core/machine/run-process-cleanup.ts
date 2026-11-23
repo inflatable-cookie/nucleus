@@ -824,7 +824,7 @@ async function sweep(
         byPid: table.byPid,
         directories: [run.directory, run.temporaryDirectory],
         infrastructure,
-        provider: provider && !providerHosts.has(provider.pid) ? provider : null,
+        providers: provider && !providerHosts.has(provider.pid) ? [provider] : [],
       });
       if (holders.length) {
         deferReason(
@@ -835,7 +835,7 @@ async function sweep(
         continue;
       }
       if (incomplete) {
-        deferReason(store, run, "process working-directory coverage is incomplete");
+        deferReason(store, run, "process working-directory or open-file coverage is incomplete");
         continue;
       }
       if (!store.removeRunScratchAfterProcesses(run.temporaryDirectory)) {

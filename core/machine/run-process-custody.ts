@@ -18,7 +18,7 @@ export function isLiveProcess(fact: HostProcessFact): boolean {
 }
 
 /**
- * A cwd in either recorded root holds custody even without a report helper.
+ * A cwd or open file under either recorded root holds custody without a report helper.
  * Follow ancestry as well, so changing cwd cannot hide a live child.
  * Standing runtime is excluded as a holder, but its children are examined.
  */
@@ -27,41 +27,30 @@ export function runWorkProcesses(input: {
   byPid: ReadonlyMap<number, HostProcessFact>;
   directories: readonly (string | null | undefined)[];
   infrastructure: ReadonlySet<number>;
-  provider?: Pick<HostProcessFact, "pid" | "startIdentity"> | null;
+  providers?: readonly Pick<HostProcessFact, "pid" | "startIdentity">[];
 }): HostProcessFact[] {
   const roots = input.directories.flatMap((root) =>
     root ? [resolve(root)] : [],
   );
-  const recordedProvider = input.provider;
-  const provider = recordedProvider && input.byPid.get(recordedProvider.pid);
-  const providerPid =
-    recordedProvider &&
-    provider &&
-    isLiveProcess(provider) &&
-    startIdentityMatches(recordedProvider.startIdentity, provider.startIdentity)
-      ? provider.pid
-      : null;
-  if (!roots.length && providerPid === null) return [];
-  const rooted = new Set(
-    input.live.flatMap((fact) => {
-      if (!fact.cwd) return [];
-      const cwd = resolve(fact.cwd);
-      return roots.some(
-        (root) =>
-          cwd === root ||
-          cwd.startsWith(root.endsWith(sep) ? root : root + sep),
-      )
-        ? [fact.pid]
-        : [];
-    }),
-  );
+  const providerPids = new Set(input.providers?.flatMap((recorded) => {
+    const provider = input.byPid.get(recorded.pid);
+    return provider && isLiveProcess(provider) &&
+      startIdentityMatches(recorded.startIdentity, provider.startIdentity)
+      ? [provider.pid] : [];
+  }));
+  if (!roots.length && !providerPids.size) return [];
+  const prefixes = roots.map((root) => root.endsWith(sep) ? root : root + sep);
+  const inRoots = (path: string) => roots.includes(path) || prefixes.some((prefix) => path.startsWith(prefix));
+  const rooted = new Set(input.live.flatMap((fact) => fact.cwd && inRoots(fact.cwd) ? [fact.pid] : []));
   return input.live.filter((fact) => {
-    if (fact.pid === providerPid || input.infrastructure.has(fact.pid))
+    // An open file is direct custody even when the holder is standing runtime.
+    if (fact.openFiles?.paths.some(inRoots)) return true;
+    if (providerPids.has(fact.pid) || input.infrastructure.has(fact.pid))
       return false;
     let current: HostProcessFact | undefined = fact;
     const visited = new Set<number>();
     while (current && !visited.has(current.pid)) {
-      if (current.pid === providerPid || rooted.has(current.pid)) return true;
+      if (providerPids.has(current.pid) || rooted.has(current.pid)) return true;
       visited.add(current.pid);
       current = input.byPid.get(current.ppid ?? 0);
     }
@@ -77,7 +66,8 @@ export function incompleteRunProcessScan(
 ): boolean {
   return (
     scan.cwdComplete === false ||
-    scan.processes.some((fact) => isLiveProcess(fact) && fact.cwd === null)
+    scan.processes.some((fact) => isLiveProcess(fact) &&
+      (fact.cwd === null || fact.openFiles?.complete === false))
   );
 }
 
@@ -126,8 +116,7 @@ export async function readRunProcessCustody(input: {
       )?.temporaryDirectory,
     ],
     infrastructure: table.infrastructurePids(runtime),
-    provider:
-      provider && !table.providerHostPids().has(provider.pid) ? provider : null,
+    providers: provider && !table.providerHostPids().has(provider.pid) ? [provider] : [],
   });
   const process = work.find(
     (fact) =>
@@ -139,7 +128,7 @@ export async function readRunProcessCustody(input: {
     return {
       state: "unknown",
       reason:
-        "run process identity or working-directory coverage is incomplete",
+        "run process identity, working-directory or open-file coverage is incomplete",
     };
   if (input.activityAt && Date.parse(input.activityAt) > scan.capturedAt)
     return {

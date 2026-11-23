@@ -1799,8 +1799,9 @@ request identities and stored committed-handoff rows are not rewritten.
   scratch and appear on the task timeline with PID and start identity.
   Scratch removal follows the stop attempt and the existing volume proof. Every
   release, including `run.release`, leaves scratch cleanup pending while a run
-  process still uses the workspace or scratch, or remains in the run's process
-  tree. Incomplete working-directory coverage also leaves the intent pending. The
+  process still has its cwd or an open file in the workspace or scratch, or
+  remains in the run's process tree. Incomplete cwd or open-file coverage
+  also leaves the intent pending. The
   hourly host sweep applies the same ownership proof to settled historical runs,
   including runs settled before this rule, and retries missed cleanup.
   A live non-init ancestor is an absolute protection: nothing below a live
@@ -3892,7 +3893,8 @@ after the task finishes.
   is unreleased, no host run holds the checkout
   ([Spec 035](../specs/035-host-run-scheduler.md) "Workspace custody") and the
   checkout shares the repository's common directory. Terminal archive waits on
-  the same host-run hold.
+  the same host-run hold and checks cwd and open files before removing build
+  output, even for merged tasks.
 - Installed: run-bound settlement removes only Cargo `target`; `node_modules`
   stays and is reported retained, and only terminal cleanup removes it (Tom,
   2026-10-20). Approved, not yet built: Cargo build-output deletion leaves

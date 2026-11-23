@@ -17,7 +17,11 @@ import { boundedToolHold } from "../machine/bounded-tool";
 import {
   bbThreadForAgent,
   bbWorkspaceThreads,
+  RunProcessTable,
 } from "../machine/owned-tool-process-proof";
+import { incompleteRunProcessScan, isLiveProcess, runWorkProcesses } from "../machine/run-process-custody";
+import { boundedPromise } from "../machine/bounded-promise";
+import { HOST_PROCESS_LISTING_DEADLINE_MS } from "../machine/host-process-listing";
 import { participantRuntime } from "../machine/participant-runtime";
 import { participantTemporaryDirectory } from "../machine/participant-roots";
 import {
@@ -725,6 +729,41 @@ export class OwnedWorkspaceArchive {
     const initial = await prove(false);
     if (!initial) return [];
     if (buildOutputCleanup) {
+      const scans = await boundedPromise(
+        this.host.hostProcessListing(), HOST_PROCESS_LISTING_DEADLINE_MS, () => null,
+      );
+      if (!scans)
+        throw Error("Preserving workspace: the host process inventory is unavailable");
+      const runs = participantRuns?.() ?? (reviewRun ? [reviewRun] : []);
+      const runIds = new Set(runs.filter((run) => run.workspaceId === id).map((run) => run.id));
+      if (id === task.workspaceId) {
+        if (task.runId) runIds.add(task.runId);
+        for (const worker of task.retiredWorkers) runIds.add(worker.runId);
+      }
+      const live = scans.filter(isLiveProcess);
+      const table = new RunProcessTable(live);
+      const providerHosts = table.providerHostPids();
+      const runtime = participantRuntime({
+        dataHome: this.host.dataDir(),
+        tasks: [task],
+        runs,
+        bbThreads: bbWorkspaceThreads(task, runs, id, { includeAllRuns: true }),
+      });
+      const holders = runWorkProcesses({
+        live,
+        byPid: table.byPid,
+        directories: [directory, ...[...runIds].map((runId) =>
+          participantTemporaryDirectory(task, runs, runId),
+        )],
+        infrastructure: table.infrastructurePids(runtime),
+        providers: [...table.providerBindings()].flatMap(({ runId, provider }) =>
+          runIds.has(runId) && !providerHosts.has(provider.pid) ? [provider] : [],
+        ),
+      });
+      if (holders.length)
+        throw Error(`Preserving workspace: process ${holders[0]!.pid} still uses the workspace or run scratch`);
+      if (incompleteRunProcessScan({ processes: scans, cwdComplete: scans.cwdComplete }))
+        throw Error("Preserving workspace: working-directory or open-file coverage is incomplete");
       try {
         const cleanup = buildOutputCleanup.begin();
         if (cleanup === false) return false;
