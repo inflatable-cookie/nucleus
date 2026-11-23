@@ -53,6 +53,13 @@ pub struct Checkout<'a> {
     branch: String,
 }
 
+/// Derive the path used for a task checkout without opening the filesystem.
+#[must_use]
+pub fn checkout_path(root: &Path, repository: &str, task: &str) -> PathBuf {
+    let bucket = format!("{:x}", Sha256::digest(repository.as_bytes()));
+    root.join(bucket).join(format!("ns-{task}"))
+}
+
 impl<'a> Worktrees<'a> {
     /// Bind all checkouts to the configured root and caller's Git policy.
     ///
@@ -88,12 +95,11 @@ impl<'a> Worktrees<'a> {
         {
             return Err(WorkError::InvalidTaskId);
         }
-        let bucket = format!("{:x}", Sha256::digest(repository_id.as_bytes()));
         let branch = format!("ns-{task_id}");
         Ok(Checkout {
             worktrees: self,
             repository: repository.canonicalize()?,
-            path: self.root.path().join(bucket).join(&branch),
+            path: checkout_path(self.root.path(), repository_id, task_id),
             branch,
         })
     }

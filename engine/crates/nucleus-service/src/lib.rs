@@ -33,7 +33,7 @@ use nucleus_hosts::{HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
 use nucleus_store::{
     EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError, TaskRow,
 };
-use nucleus_work::{WorkError, Worktrees};
+use nucleus_work::{WorkError, Worktrees, checkout_path};
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
@@ -270,7 +270,7 @@ impl Service {
             };
             {
                 let mut state = self.state.lock().await;
-                track(&mut state, &row.task);
+                self.track(&mut state, &row.task);
             }
             let result = Box::pin(self.advance_due_task(&row, &host, &profiles)).await;
             self.schedule_result(&row, &result, priority).await?;
@@ -285,6 +285,9 @@ impl Service {
         host: &impl nucleus_hosts::TaskHost,
         profiles: &OnceCell<Result<(), HostError>>,
     ) -> Result<Action, ServiceError> {
+        if row.task.phase() == Phase::Done && self.project.acp_provider.is_some() {
+            return self.archive_done(row).await;
+        }
         if row.task.phase() == Phase::Queued
             && row.task.run().is_none()
             && row.task.hold().is_none()
@@ -381,7 +384,7 @@ impl Service {
                 let State {
                     store, schedule, ..
                 } = &mut *state;
-                schedule.seed(store, now)?;
+                schedule.seed(store, now, self.project.acp_provider.is_some())?;
                 if let Some(ready) = schedule.take_ready(now, &BTreeSet::new()) {
                     return Ok(ready);
                 }
@@ -410,7 +413,10 @@ impl Service {
         };
         let mut state = self.state.lock().await;
         let current = self.lookup(&state, id)?;
-        if !active(&current.task) && !state.forge_requested.contains(id) {
+        let archive_due = self.project.acp_provider.is_some()
+            && current.task.phase() == Phase::Done
+            && !state.store.archive_confirmed(id)?;
+        if !archive_due && !active(&current.task) && !state.forge_requested.contains(id) {
             state.set_wait(id, None);
             return Ok(());
         }
@@ -670,7 +676,7 @@ impl Service {
         let id = &task.identity().id;
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
         let version = state.store.save_row(prior, task, &audit)?;
-        track(state, task);
+        self.track(state, task);
         state.set_wait(id, None);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
@@ -845,31 +851,37 @@ fn occupied_slot(task: &Task) -> bool {
         .is_some()
 }
 
-fn track(state: &mut State, task: &Task) {
-    let id = &task.identity().id;
-    if !active(task) {
-        state.thread_tasks.remove(id);
-        return;
-    }
-    let thread = task
-        .run()
-        .map(|run| run.launch().thread.as_str())
-        .or_else(|| {
-            let role = match task.phase() {
-                Phase::Working => nucleus_core::Role::Worker,
-                Phase::Reviewing => nucleus_core::Role::Reviewer,
-                _ => return None,
-            };
-            task.threads().get(role)
-        });
-    let mut threads: Vec<_> = thread.into_iter().map(str::to_owned).collect();
-    if let Some(binding) = task.question_delivery() {
-        threads.push(binding.thread.clone());
-    }
-    let tracked = state.thread_tasks.entry(id.clone()).or_default();
-    tracked.retain(|thread, _| threads.contains(thread));
-    for thread in threads {
-        tracked.entry(thread).or_insert(None);
+impl Service {
+    fn track(&self, state: &mut State, task: &Task) {
+        let id = &task.identity().id;
+        if !active(task) {
+            state.thread_tasks.remove(id);
+            return;
+        }
+        let thread = task
+            .run()
+            .map(|run| run.launch().thread.as_str())
+            .or_else(|| {
+                let role = match task.phase() {
+                    Phase::Working => nucleus_core::Role::Worker,
+                    Phase::Reviewing => nucleus_core::Role::Reviewer,
+                    _ => return None,
+                };
+                task.threads().get(role)
+            });
+        let mut threads: Vec<_> = thread.into_iter().map(str::to_owned).collect();
+        if self.project.acp_provider.is_some() {
+            let checkout = checkout_path(self.storage.work().path(), &self.project.repository, id);
+            threads.push(nucleus_hosts::parent_thread(&checkout));
+        }
+        if let Some(binding) = task.question_delivery() {
+            threads.push(binding.thread.clone());
+        }
+        let tracked = state.thread_tasks.entry(id.clone()).or_default();
+        tracked.retain(|thread, _| threads.contains(thread));
+        for thread in threads {
+            tracked.entry(thread).or_insert(None);
+        }
     }
 }
 

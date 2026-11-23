@@ -1,0 +1,260 @@
+use std::{collections::BTreeMap, path::Path};
+
+use nucleus_core::{RetainedThread, acp::session_id};
+use serde_json::{Value, json};
+
+use crate::{
+    Binding, HostError, T3, message_id,
+    rpc::{Read, Reply},
+};
+
+const HOLD: &str = "Nucleus keeps this task thread open for its next role.";
+
+/// Evidence for the exact active turn and root node that can parent a child.
+#[derive(Clone)]
+pub struct ParentRun {
+    pub(crate) thread: String,
+    pub(crate) run: String,
+    pub(crate) node: String,
+}
+
+pub enum ParentStep {
+    Live(ParentRun),
+    Write(ParentWrite),
+    Wait,
+}
+
+pub enum ArchiveStep {
+    Finished,
+    Write(ParentWrite),
+    Wait,
+}
+
+/// Native mutation bound to the same project and checkout as the evidence.
+pub struct ParentWrite {
+    binding: Binding,
+    rpc: &'static str,
+    payload: Value,
+    idle_at: Option<(String, u64)>,
+}
+
+impl ParentWrite {
+    #[must_use]
+    pub const fn binding(&self) -> &Binding {
+        &self.binding
+    }
+}
+
+/// The deterministic native identity of the task's one visible thread.
+#[must_use]
+pub fn parent_thread(checkout: &Path) -> String {
+    format!("thread:{}", session_id(checkout))
+}
+
+impl T3 {
+    /// Retire children before the parent, with a fresh complete read before
+    /// each proposed mutation and readback on the next scheduler pass.
+    /// # Errors
+    /// Returns an error if identity or complete custody evidence is missing.
+    pub async fn prepare_parent_archive(
+        &self,
+        binding: &Binding,
+        provider: &str,
+        retained: &[&str],
+    ) -> Result<ArchiveStep, HostError> {
+        let parent = parent_thread(Path::new(&binding.worktree_path));
+        let snapshot = self.thread(binding, &parent).await?;
+        let mut children: BTreeMap<_, _> = retained.iter().map(|thread| (*thread, None)).collect();
+        let mut sequence = None;
+        if let Some(snapshot) = &snapshot
+            && snapshot.retained()? != RetainedThread::Gone
+        {
+            snapshot.require_parent_provider(provider)?;
+            sequence = Some(snapshot.sequence());
+            for child in snapshot
+                .subagents()?
+                .iter()
+                .filter(|child| child.origin == "app_owned")
+            {
+                if let Some(thread) = child.child_thread_id.as_deref() {
+                    children.insert(thread, Some(child));
+                }
+            }
+        }
+        for (thread, child) in children {
+            let Some(observed) = self.thread(binding, thread).await? else {
+                continue;
+            };
+            if !observed.belongs_to_parent(&parent) {
+                return Err(HostError::Binding);
+            }
+            match observed.retained()? {
+                RetainedThread::Busy => return Ok(ArchiveStep::Wait),
+                RetainedThread::Gone => continue,
+                RetainedThread::Idle => {}
+            }
+            if let Some(child) = child
+                && child
+                    .completion_delivery
+                    .as_ref()
+                    .is_some_and(|state| matches!(state.state.as_str(), "pending" | "claimed"))
+            {
+                return Ok(ArchiveStep::Write(ParentWrite {
+                    binding: binding.clone(),
+                    rpc: "orchestration.dispatchCommand",
+                    idle_at: None,
+                    payload: json!({
+                        "type":"delegated_task.completion-delivery.dispose",
+                        "commandId":format!("{}-dispose", child.id),
+                        "parentThreadId":parent, "taskId":child.id,
+                    }),
+                }));
+            }
+            if !observed.archived() {
+                return Ok(ArchiveStep::Write(archive(
+                    binding,
+                    thread,
+                    observed.sequence(),
+                )));
+            }
+        }
+
+        let Some(fresh) = self.thread(binding, &parent).await? else {
+            return Ok(ArchiveStep::Finished);
+        };
+        match fresh.retained()? {
+            RetainedThread::Gone => Ok(ArchiveStep::Finished),
+            RetainedThread::Busy => Ok(ArchiveStep::Wait),
+            RetainedThread::Idle => {
+                fresh.require_parent_provider(provider)?;
+                // A change since the child checks can be a new child or wake.
+                if Some(fresh.sequence()) != sequence {
+                    return Ok(ArchiveStep::Wait);
+                }
+                if fresh.archived() {
+                    Ok(ArchiveStep::Finished)
+                } else {
+                    Ok(ArchiveStep::Write(archive(
+                        binding,
+                        &parent,
+                        fresh.sequence(),
+                    )))
+                }
+            }
+        }
+    }
+
+    /// Read the parent, or prepare one guarded write to establish its held turn.
+    /// A missing root or uncertain projection waits for another pass.
+    /// # Errors
+    /// Returns an error for a failed native read or a mismatched parent.
+    pub async fn prepare_parent(
+        &self,
+        binding: &Binding,
+        provider: &str,
+        title: &str,
+    ) -> Result<ParentStep, HostError> {
+        let thread = parent_thread(Path::new(&binding.worktree_path));
+        if let Some(projection) = self.thread(binding, &thread).await? {
+            projection.require_parent_provider(provider)?;
+            if let Some((run, node)) = projection.live_parent_run() {
+                return Ok(ParentStep::Live(ParentRun {
+                    thread,
+                    run: run.into(),
+                    node: node.into(),
+                }));
+            }
+            if projection.retained()? != RetainedThread::Idle {
+                return Ok(ParentStep::Wait);
+            }
+            let sequence = projection.sequence();
+            if projection.archived() {
+                return Ok(ParentStep::Write(ParentWrite {
+                    binding: binding.clone(),
+                    rpc: "orchestration.dispatchCommand",
+                    idle_at: Some((thread.clone(), sequence)),
+                    payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
+                }));
+            }
+            let command = format!("{thread}-hold-{sequence}");
+            return Ok(ParentStep::Write(ParentWrite {
+                binding: binding.clone(),
+                rpc: "orchestration.dispatchCommand",
+                idle_at: Some((thread.clone(), sequence)),
+                payload: json!({
+                    "type":"message.dispatch", "commandId":command, "threadId":thread,
+                    "messageId":message_id(&command), "text":HOLD, "attachments":[],
+                    "createdBy":"user", "creationSource":"server",
+                    "dispatchMode":{"type":"queue_after_active"}
+                }),
+            }));
+        }
+
+        self.check_parent_provider(provider).await?;
+        let command = format!("{thread}-launch");
+        Ok(ParentStep::Write(ParentWrite {
+            binding: binding.clone(),
+            rpc: "orchestration.launchThread",
+            idle_at: None,
+            payload: json!({
+                "commandId":command, "threadId":thread, "projectId":binding.project_id,
+                "title":title, "modelSelection":{"instanceId":provider,"model":"nucleus"},
+                "runtimeMode":"full-access", "interactionMode":"default",
+                "workspaceStrategy":{
+                    "type":"existing_worktree", "worktreePath":binding.worktree_path,"branch":binding.branch,
+                },
+                "initialMessage":{"messageId":message_id(&command),"text":HOLD,"attachments":[]}
+            }),
+        }))
+    }
+
+    /// Execute the prepared parent write after the service's destination gate.
+    /// # Errors
+    /// Returns an error if the native receipt cannot be confirmed.
+    pub async fn write_parent(&self, write: ParentWrite) -> Result<(), HostError> {
+        if let Some((thread, sequence)) = &write.idle_at {
+            let Some(fresh) = self.thread(&write.binding, thread).await? else {
+                return Err(HostError::Uncertain);
+            };
+            if fresh.sequence() != *sequence || fresh.retained()? != RetainedThread::Idle {
+                return Err(HostError::Uncertain);
+            }
+        }
+        match self.rpc.call(write.rpc, write.payload, Read::One).await? {
+            Reply::Value(_) => Ok(()),
+            Reply::Failure(_) => Err(HostError::Uncertain),
+        }
+    }
+
+    async fn check_parent_provider(&self, instance: &str) -> Result<(), HostError> {
+        let Reply::Value(config) = self
+            .rpc
+            .call("server.getConfig", json!({}), Read::One)
+            .await?
+        else {
+            return Err(HostError::Uncertain);
+        };
+        let profile = crate::RoleProfile {
+            instance_id: instance.into(),
+            model: "nucleus".into(),
+            runtime_mode: "full-access".into(),
+        };
+        if !config["providers"].as_array().is_some_and(|providers| {
+            providers.iter().any(|provider| {
+                provider["driver"] == "acpRegistry" && crate::available(provider, &profile)
+            })
+        }) {
+            return Err(HostError::Configuration);
+        }
+        Ok(())
+    }
+}
+
+fn archive(binding: &Binding, thread: &str, sequence: u64) -> ParentWrite {
+    ParentWrite {
+        binding: binding.clone(),
+        rpc: "orchestration.dispatchCommand",
+        idle_at: Some((thread.into(), sequence)),
+        payload: json!({"type":"thread.archive", "threadId":thread, "commandId":format!("{thread}-archive-{sequence}")}),
+    }
+}

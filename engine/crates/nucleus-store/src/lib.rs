@@ -178,6 +178,33 @@ impl Store {
         Ok(self.connection.query_row("SELECT count(*) FROM tasks WHERE id <> ?1 AND json_extract(run, '$.last_send_at_ms') IS NOT NULL", [except], |row| row.get(0))?)
     }
 
+    /// Read completed tasks whose native archive receipt is still absent.
+    /// # Errors
+    /// Returns an error if the pending archive page cannot be read.
+    pub fn archive_due_ids(
+        &self,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<String>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT tasks.id FROM tasks WHERE tasks.id > ?1 AND phase = 'done'
+             AND NOT EXISTS (SELECT 1 FROM events WHERE task_id = tasks.id AND kind = 'role_threads_archived')
+             ORDER BY tasks.id LIMIT ?2",
+        )?;
+        let rows = query.query_map(params![after.unwrap_or_default(), limit], |row| row.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Check the receipt from successful native archive readback.
+    /// # Errors
+    /// Returns an error if audit history cannot be read.
+    pub fn archive_confirmed(&self, id: &str) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM events WHERE task_id = ?1 AND kind = 'role_threads_archived')",
+            [id], |row| row.get(0),
+        )?)
+    }
+
     /// Read provenance only for threads in the current native inventory.
     /// # Errors
     /// Returns an error if task identities or their retained roles cannot be read.

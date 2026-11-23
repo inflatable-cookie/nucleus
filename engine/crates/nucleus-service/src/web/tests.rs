@@ -1256,3 +1256,80 @@ async fn done_permanently_revokes_the_writer_and_keeps_read_access() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn later_history_never_reopens_a_confirmed_native_archive() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    let (host, native) = crate::tests::native_fixture(|_| {
+        panic!("an archived task must not read T3 again");
+    })
+    .await;
+    service.host = host;
+    service.project.acp_provider = Some("fixture-acp".into());
+    let head = service.project.start.clone();
+    seed_held_acceptance(&service, &head).await;
+    let actor = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let first = service.task("reviewer").await.expect("seeded task");
+    let forge = Observed::Known(Forge::Merged {
+        pr: first.task.pull_request().expect("bound PR").clone(),
+        commit: head.clone(),
+    });
+    for command in [
+        Command::Answer(Answer::Accept {
+            head,
+            reason: "Fixture acceptance".into(),
+        }),
+        Command::Move(Phase::Done),
+    ] {
+        let row = service.task("reviewer").await.expect("current row");
+        service
+            .observe_commands(&row, &forge)
+            .await
+            .expect("merge observation");
+        assert!(matches!(
+            service
+                .command("reviewer", &actor, command)
+                .await
+                .expect("applied command"),
+            CommandOutcome::Applied(_)
+        ));
+    }
+    let mut row = service.task("reviewer").await.expect("done task");
+    assert_eq!(row.task.phase(), Phase::Done);
+    {
+        let mut state = service.state.lock().await;
+        assert_eq!(
+            state
+                .store
+                .archive_due_ids(None, 8)
+                .expect("pending archive"),
+            ["reviewer"]
+        );
+        for kind in ["role_threads_archived", "display_note"] {
+            row.version = state
+                .store
+                .save_row(&row, &row.task, &event(kind))
+                .expect("append history");
+        }
+        assert!(
+            state
+                .store
+                .archive_due_ids(None, 8)
+                .expect("restart scan")
+                .is_empty()
+        );
+        assert!(
+            state
+                .store
+                .archive_confirmed("reviewer")
+                .expect("existing receipt")
+        );
+    }
+    // Consume the already queued Done wake as well as excluding it on restart.
+    let outcomes = service.pass().await.expect("queued pass");
+    assert_eq!(outcomes.len(), 1);
+    assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
+    native.abort();
+}

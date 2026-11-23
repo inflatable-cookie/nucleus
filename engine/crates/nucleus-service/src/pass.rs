@@ -10,8 +10,8 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, SendOutcome, StopProgress,
-    TaskHost,
+    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentStep,
+    SendOutcome, StopProgress, TaskHost,
 };
 use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
@@ -26,10 +26,62 @@ pub(super) enum DispatchTarget<'a> {
         checkout: &'a Checkout<'a>,
         launch: bool,
     },
+    Archive {
+        frozen: &'a Binding,
+        checkout: &'a Checkout<'a>,
+    },
     Planner(&'a NoticeTarget),
 }
 
 impl Service {
+    pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
+        let Some(provider) = &self.project.acp_provider else {
+            return Ok(Action::Nothing);
+        };
+        let id = &row.task.identity().id;
+        if self.state.lock().await.store.archive_confirmed(id)? {
+            return Ok(Action::Nothing);
+        }
+        let worktrees = self.worktrees()?;
+        let checkout = worktrees.checkout(&self.project.checkout, &self.project.repository, id)?;
+        let scope = self.binding(&checkout)?;
+        let retained: Vec<_> = [Role::Worker, Role::Reviewer]
+            .into_iter()
+            .filter_map(|role| row.task.threads().get(role))
+            .collect();
+        let archive = self
+            .host
+            .prepare_parent_archive(&scope, provider, &retained)
+            .await?;
+        let _fence = self.effect(row).await?;
+        match archive {
+            ArchiveStep::Finished => {
+                let mut state = self.state.lock().await;
+                self.commit(&mut state, row, &row.task, &event("role_threads_archived"))?;
+                Ok(Action::Nothing)
+            }
+            ArchiveStep::Wait => Ok(Action::Wait(WaitReason::Stopping)),
+            ArchiveStep::Write(write) => {
+                if self
+                    .dispatch_gate(
+                        &row.task,
+                        DispatchTarget::Archive {
+                            frozen: write.binding(),
+                            checkout: &checkout,
+                        },
+                    )
+                    .await?
+                    .is_none()
+                {
+                    return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
+                }
+                self.host.write_parent(write).await?;
+                self.recheck_effect(row, WaitReason::Stopping).await;
+                Ok(Action::Wait(WaitReason::Stopping))
+            }
+        }
+    }
+
     pub(super) async fn advance(
         &self,
         row: &TaskRow,
@@ -252,8 +304,46 @@ impl Service {
             &self.report_command,
             &ticket_path,
         );
+        let binding = self.binding(checkout)?;
+        let parent = if let Some(provider) = &self.project.acp_provider {
+            if !self.launch_capacity(&task.identity().id).await? {
+                return Ok(Action::Wait(WaitReason::Capacity));
+            }
+            match self
+                .host
+                .prepare_parent(&binding, provider, &task.identity().reference)
+                .await?
+            {
+                ParentStep::Live(parent) => Some(parent),
+                ParentStep::Wait => return Ok(Action::Wait(WaitReason::Starting)),
+                ParentStep::Write(write) => {
+                    self.ensure_parent_reader(&task.identity().id, checkout.path())
+                        .await?;
+                    if self
+                        .dispatch_gate(
+                            task,
+                            DispatchTarget::Run {
+                                frozen: write.binding(),
+                                checkout,
+                                launch: false,
+                            },
+                        )
+                        .await?
+                        .is_none()
+                    {
+                        return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
+                    }
+                    self.host.write_parent(write).await?;
+                    self.recheck_effect(row, WaitReason::HostUnknown).await;
+                    return Ok(Action::Wait(WaitReason::Starting));
+                }
+            }
+        } else {
+            None
+        };
         let inputs = host.prepare_launch(LaunchRequest {
-            binding: self.binding(checkout)?,
+            binding,
+            parent,
             title: format!("{} • {role:?}", task.identity().reference),
             profile: self.project.profile(role),
             via: &via,
@@ -367,7 +457,10 @@ impl Service {
         match &target {
             DispatchTarget::Run {
                 frozen, checkout, ..
-            } if **frozen != self.binding(checkout)? => {
+            }
+            | DispatchTarget::Archive { frozen, checkout }
+                if **frozen != self.binding(checkout)? =>
+            {
                 return Err(HostError::Binding.into());
             }
             DispatchTarget::Planner(target) if target.project_id != self.project.host_project => {
@@ -377,6 +470,15 @@ impl Service {
         }
         self.check_project().await?;
         match target {
+            DispatchTarget::Archive { checkout, .. } => {
+                if task.phase() != Phase::Done {
+                    return Err(HostError::Binding.into());
+                }
+                // Closeout can have already retired the clean checkout. Still
+                // verify its derived destination and pinned worktree root.
+                checkout.observe()?;
+                Ok(Some(false))
+            }
             DispatchTarget::Run {
                 checkout, launch, ..
             } => {
@@ -1046,6 +1148,7 @@ mod tests {
         let (task, _, observation) = reservation("reviewer", Entry::ReviewEntry, head);
         let launch = task.run().expect("run").launch();
         let inputs = RunRequest {
+            parent: None,
             binding: service.binding(checkout).expect("binding"),
             dispatch: Dispatch::Create {
                 title: "Review fixture".into(),

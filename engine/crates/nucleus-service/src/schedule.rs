@@ -84,6 +84,7 @@ pub(crate) struct Schedule {
     tasks: BTreeMap<String, Pending>,
     scan_at: Instant,
     cursor: Option<String>,
+    archive_cursor: Option<String>,
 }
 
 impl Schedule {
@@ -92,6 +93,7 @@ impl Schedule {
             tasks: BTreeMap::new(),
             scan_at: Instant::now(),
             cursor: None,
+            archive_cursor: None,
         }
     }
 
@@ -99,15 +101,27 @@ impl Schedule {
         self.tasks.entry(id.into()).or_default().wake(due, priority);
     }
 
-    pub(crate) fn seed(&mut self, store: &Store, now: Instant) -> Result<(), ServiceError> {
+    pub(crate) fn seed(
+        &mut self,
+        store: &Store,
+        now: Instant,
+        parenting: bool,
+    ) -> Result<(), ServiceError> {
         if now < self.scan_at {
             return Ok(());
         }
         let ids = store.active_ids(self.cursor.as_deref(), SCAN_PAGE)?;
         let more = ids.len() == SCAN_PAGE as usize;
         self.cursor = ids.last().filter(|_| more).cloned();
+        let archival = if parenting {
+            store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE)?
+        } else {
+            Vec::new()
+        };
+        let more_archival = archival.len() == SCAN_PAGE as usize;
+        self.archive_cursor = archival.last().filter(|_| more_archival).cloned();
         self.scan_at = now
-            + if more {
+            + if more || more_archival {
                 Duration::from_secs(1)
             } else {
                 SCAN_INTERVAL
@@ -116,6 +130,13 @@ impl Schedule {
             self.tasks.entry(id).or_insert_with(|| {
                 let mut pending = Pending::default();
                 pending.wake(now, Priority::Decision);
+                pending
+            });
+        }
+        for id in archival {
+            self.tasks.entry(id).or_insert_with(|| {
+                let mut pending = Pending::default();
+                pending.wake(now, Priority::Effect);
                 pending
             });
         }

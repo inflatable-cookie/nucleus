@@ -1,7 +1,7 @@
 use std::{
     convert::Infallible,
-    fs::OpenOptions,
-    os::unix::fs::OpenOptionsExt,
+    fs::{DirBuilder, OpenOptions},
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::Path,
     process::Stdio,
     sync::{
@@ -37,7 +37,7 @@ struct AgentIo {
 }
 
 impl AgentIo {
-    fn spawn(path: Option<&Path>) -> Self {
+    fn spawn(path: Option<&Path>, cwd: Option<&Path>) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_nucleus-acp"));
         command
             .stdin(Stdio::piped())
@@ -47,6 +47,9 @@ impl AgentIo {
             .env_remove("NUCLEUS_ACP_BINDINGS");
         if let Some(path) = path {
             command.env("NUCLEUS_ACP_SESSION", path);
+        }
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
         }
         let mut child = command.spawn().expect("spawn ACP agent");
         let input = child.stdin.take().expect("stdin");
@@ -95,7 +98,7 @@ impl AgentIo {
 
 #[tokio::test]
 async fn unbound_new_is_inert_and_load_refuses() {
-    let mut agent = AgentIo::spawn(None);
+    let mut agent = AgentIo::spawn(None, None);
     let init = agent
         .call(1, "initialize", json!({"protocolVersion":1}))
         .await;
@@ -223,6 +226,15 @@ async fn loopback() -> (
         axum::serve(listener, api).await.expect("serve");
     });
     let home = tempfile::tempdir().expect("scratch directory");
+    let canonical = home.path().canonicalize().expect("scratch root");
+    let checkout = canonical.join("checkout");
+    let scratch = canonical.join("agent");
+    for path in [&checkout, &scratch] {
+        DirBuilder::new()
+            .mode(0o700)
+            .create(path)
+            .expect("private directory");
+    }
     let pointer = home.path().join("binding.json");
     let binding = Binding {
         session_id: SESSION.into(),
@@ -230,6 +242,7 @@ async fn loopback() -> (
         endpoint,
         credential: [5; 32],
         command_credential: Some([6; 32]),
+        scratch_dir: Some(scratch),
     };
     let file = OpenOptions::new()
         .create_new(true)
@@ -238,18 +251,19 @@ async fn loopback() -> (
         .open(&pointer)
         .expect("binding file");
     serde_json::to_writer(file, &binding).expect("write binding");
-    let agent = AgentIo::spawn(Some(&pointer));
+    let agent = AgentIo::spawn(Some(&pointer), Some(&checkout));
     (agent, fixture, home, server)
 }
 
 #[tokio::test]
 async fn stdio_rebuilds_and_updates_the_exact_run_from_invalidations() {
-    let (mut agent, fixture, _home, server) = loopback().await;
+    let (mut agent, fixture, home, server) = loopback().await;
 
     let opened = agent
         .call(1, "session/new", json!({"cwd":"/fixture"}))
         .await;
     assert_eq!(opened["result"]["sessionId"], SESSION);
+    assert_scratch_cwd(&agent, home.path()).await;
     agent.update("plan").await;
     assert_eq!(agent.update("tool_call").await["toolCallId"], INSTANCE);
     agent
@@ -318,4 +332,26 @@ async fn stdio_rebuilds_and_updates_the_exact_run_from_invalidations() {
             .success()
     );
     server.abort();
+}
+
+async fn assert_scratch_cwd(agent: &AgentIo, home: &Path) {
+    let pid = agent.child.id().expect("agent pid").to_string();
+    let listing = tokio::time::timeout(
+        Duration::from_secs(5),
+        Command::new("/usr/sbin/lsof")
+            .args(["-a", "-p", &pid, "-d", "cwd", "-Fn"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("cwd probe deadline")
+    .expect("probe cwd");
+    assert!(listing.status.success());
+    let cwd = home.canonicalize().expect("scratch root").join("agent");
+    let expected = format!("n{}", cwd.display());
+    assert!(
+        String::from_utf8_lossy(&listing.stdout)
+            .lines()
+            .any(|line| line == expected)
+    );
 }

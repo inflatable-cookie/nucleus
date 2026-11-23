@@ -328,6 +328,10 @@ the binding path and stable session ID. Start `nucleus-acp` with
 binding directory so the agent finds the task by checkout. The service writes
 the binding outside the checkout with owner-only permissions. Worker and
 reviewer processes receive their own report credentials.
+The binding also names a private scratch directory on the pinned volume,
+outside both the checkout and the run scratch scanned for custody.
+The agent moves there at startup and keeps the launch directory only to
+resolve the session. A held presentation turn never needs files in the checkout.
 
 Use `bind-acp --read-only <task>` for a session that can only read the task,
 its history and its event stream. A writable binding has a separate command
@@ -370,6 +374,8 @@ T3 runs `nucleus-acp` in the session thread. It holds or re-enters that thread,
 reads its live run and root node, and sends `delegated_task.request` with the
 bound launch identity. The adapter reuses each role's retained child and settles
 its completion delivery with `delegated_task.completion-delivery.dispose`.
+The command ID names the native child and its first message. Continue sends a
+new message to the retained child. [T3 delegated task command](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L9952-L10170)
 The service continues to see its role thread and exact run. Verify reattach
 after closeout and checkout removal in the parenting fixtures. ACP and T3
 parenting follow the milestone 1 proof and precede the first real project.
@@ -380,6 +386,19 @@ Busy or unknown reads schedule a recheck. Confirm that the parent is archived
 or gone and append an audit receipt for that Done revision. Restart recovery
 can skip rows with matching receipts without contacting T3. The engine never
 settles a task thread.
+
+Set `acpProvider` in the isolated project's configuration to the registered T3
+ACP provider for the Rust `nucleus-acp` binary. Configure the provider's
+`NUCLEUS_ACP_BINDINGS` to the service's binding directory. The scheduler supplies
+a read-only binding when no session has been minted. Keep an existing writable
+binding so the planner can use the task's commands. Standalone roles remain
+available for the milestone 1 fixture without this setting.
+
+The scheduler uses the host's `deliver_notice` operation for planner messages.
+T3 can first prepare a settled destination, then queue the frozen notice after
+a fresh read and the same write gate. An accepted queue write still needs
+readback to prove delivery. This interface also serves project messages under
+Spec 070 ruling 14 when planning moves into the engine.
 
 ## Board
 

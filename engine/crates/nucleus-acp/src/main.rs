@@ -21,6 +21,7 @@ type Output = mpsc::UnboundedSender<Value>;
 
 struct Agent {
     output: Output,
+    launch_cwd: Option<PathBuf>,
     sessions: BTreeMap<String, Session>,
     model: &'static str,
     structured: bool,
@@ -49,6 +50,13 @@ impl Drop for Turn {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> io::Result<()> {
+    let launch_cwd = env::current_dir().ok();
+    if let Some(workspace) = &launch_cwd
+        && let Ok(binding) = client::binding(workspace)
+        && let Some(scratch) = binding.scratch_dir
+    {
+        client::enter_scratch(workspace, &scratch).map_err(io::Error::other)?;
+    }
     let (output, mut frames) = mpsc::unbounded_channel();
     let writer = tokio::spawn(async move {
         let mut stdout = BufWriter::new(tokio::io::stdout());
@@ -62,6 +70,7 @@ async fn main() -> io::Result<()> {
     });
     let mut agent = Agent {
         output,
+        launch_cwd,
         sessions: BTreeMap::new(),
         model: MODELS[0],
         structured: env::var("NUCLEUS_ACP_TEXT_FALLBACK").as_deref() != Ok("1"),
@@ -153,7 +162,7 @@ impl Agent {
         let cwd = params["cwd"]
             .as_str()
             .map(PathBuf::from)
-            .or_else(|| env::current_dir().ok())
+            .or_else(|| self.launch_cwd.clone())
             .ok_or(Failure::Binding)?;
         let (session_id, client) = match client::binding(&cwd) {
             Ok(binding) => {
@@ -239,11 +248,12 @@ impl Agent {
             return;
         }
         let prompt = prompt_text(&params["prompt"]);
+        let text = operator_text(&prompt);
         let opening = !std::mem::replace(&mut session.prompted, true);
         if self
             .ignore
             .as_ref()
-            .is_some_and(|pattern| pattern.is_match(prompt.trim()))
+            .is_some_and(|pattern| pattern.is_match(text))
         {
             stop(&self.output, id, "end_turn");
             return;
@@ -252,11 +262,11 @@ impl Agent {
             || self
                 .hold
                 .as_ref()
-                .is_some_and(|pattern| pattern.is_match(prompt.trim()))
+                .is_some_and(|pattern| pattern.is_match(text))
         {
             None
         } else {
-            let Some(command) = parse_command(operator_text(&prompt)) else {
+            let Some(command) = parse_command(text) else {
                 error(
                     &self.output,
                     id,
