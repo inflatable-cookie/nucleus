@@ -37,17 +37,11 @@ import {
 } from "./worker-replacement";
 import { resolve, sep } from "node:path";
 import {
-  bbThreadForAgent,
-  ownedToolProcessTreeVerdict,
   participantRuntimePids,
   type RuntimeFact,
 } from "../machine/owned-tool-process-proof";
-import {
-  participantRuntime,
-  storeDataHome,
-  type ParticipantRuntime,
-} from "../machine/participant-runtime";
-import type { HostProcessFact } from "../host/types";
+import type { ParticipantRuntime } from "../machine/participant-runtime";
+import { readRunProcessCustody } from "../machine/run-process-custody";
 import {
   DeferredPassReadError,
   QUANTUM_READ_DEADLINE_MS,
@@ -376,8 +370,7 @@ export class Stalls {
         this.store.update(t.id, { lastActivityAt });
     }
     // Spec 068 §4: a command quiet past the repository's tool limit is stopped;
-    // the agent sees a failed tool call and its turn is judged next time. One
-    // that cannot be stopped no longer fences stall detection.
+    // the agent sees a failed tool call and its turn is judged next time.
     const hung = await this.hungTools.settle(
       current,
       run,
@@ -400,11 +393,21 @@ export class Stalls {
       : 0;
     if (hung !== "unterminated" && quietMs < this.thresholdMs())
       return peek.notice;
-    if (hung !== "unterminated" && !opaqueTool)
-      return (
-        toolNotice ??
-        (await this.ownedProcessNotice(current, run, role, runId, state.id))
-      );
+    if (hung !== "unterminated" && !opaqueTool && toolNotice)
+      return toolNotice;
+    const custody = await readRunProcessCustody({
+      store: this.store,
+      readProcesses: this.resolution.readPassProcesses,
+      task: current,
+      run,
+      runId,
+      activityAt: lastActivityAt,
+    });
+    if (custody.state === "live")
+      return peek.notice ??
+        `${role} is running a long command (process ${custody.process.pid} still belongs to the run)`;
+    if (custody.state === "unknown" || (hung !== "unterminated" && !opaqueTool))
+      return toolNotice;
     const turn = state.activeTurnId
       ? `, active turn ${state.activeTurnId}`
       : "";
@@ -467,91 +470,15 @@ export class Stalls {
     const limit = peek.tool?.lastOutputAt
       ? this.store.toolQuietLimitMsFor(t)
       : this.thresholdMs();
-    return Boolean(activityAt && Date.now() - Date.parse(activityAt) < limit);
-  }
-
-  /** A live process in this run's workspace or scratch is owned-tool activity. */
-  private async ownedProcessNotice(
-    t: Task,
-    run: Run | null,
-    role: string,
-    runId: string,
-    agentId: string,
-  ): Promise<string | null> {
-    if (!this.resolution.adapter.hostProcessListing) return null;
-    let processes: HostProcessFact[] | null = null;
-    try {
-      const read = await this.resolution.readPassProcesses(
-        run?.hostId ?? t.hostId,
-      );
-      processes = read.state === "listed" ? read.processes : null;
-    } catch {
-      return null;
-    }
-    if (!processes) return null;
-    const verdict = ownedToolProcessTreeVerdict(
+    if (activityAt && Date.now() - Date.parse(activityAt) < limit) return true;
+    return (await readRunProcessCustody({
+      store: this.store,
+      readProcesses: this.resolution.readPassProcesses,
+      task: t,
+      run,
       runId,
-      processes.filter((process) => !isZombieProcess(process)),
-    );
-    if (verdict.state !== "live") return null;
-    // Scope the run-owned tree to this task, rather than accepting a process
-    // merely because some unrelated process happens to use the workspace.
-    const tree = new Set([verdict.providerPid]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const process of processes)
-        if (
-          process.ppid != null &&
-          tree.has(process.ppid) &&
-          !tree.has(process.pid)
-        ) {
-          tree.add(process.pid);
-          changed = true;
-        }
-    }
-    const helperTree = new Set([verdict.helperPid]);
-    let more = true;
-    while (more) {
-      more = false;
-      for (const process of processes)
-        if (
-          process.ppid != null &&
-          helperTree.has(process.ppid) &&
-          !helperTree.has(process.pid)
-        ) {
-          helperTree.add(process.pid);
-          more = true;
-        }
-    }
-    const roots = [
-      t.directory,
-      run?.temporaryDirectory,
-      run ? undefined : t.temporaryDirectory,
-    ].filter((root): root is string => Boolean(root));
-    const thread = bbThreadForAgent(agentId, run?.hostId ?? t.hostId);
-    const runtime = participantRuntime({
-      dataHome: storeDataHome(this.store),
-      tasks: [t],
-      runs: this.store.runs(t.id),
-      bbThreads: thread ? [thread] : [],
-    });
-    for (const root of roots) {
-      const issue = workspaceToolProcessIssue(
-        processes.filter(
-          (process) =>
-            tree.has(process.pid) &&
-            process.pid !== verdict.providerPid &&
-            !helperTree.has(process.pid),
-        ),
-        root,
-        [runId],
-        runtime,
-      );
-      if (issue && issue.includes("remains in the task workspace process tree"))
-        return `${role} is running a long command (${issue})`;
-    }
-    return null;
+      activityAt,
+    })).state === "live";
   }
 
   /**

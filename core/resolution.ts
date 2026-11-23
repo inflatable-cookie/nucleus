@@ -43,6 +43,7 @@ import {
   boundedRead,
   currentTaskQuantumScope,
   isQuantumDeadlineExceeded,
+  runOutsideTaskQuantumScope,
   type BoundedReadResult,
   type CoveredObservationSnapshot,
   type PassProcessRead,
@@ -617,8 +618,11 @@ export class Resolution {
     const read = async (): Promise<HostProcessListRead & { deferred?: true }> => {
       if (this.adapter.hostProcessListing) {
         try {
+          const list = () => this.adapter.hostProcessListing!();
           const processes = requireCustodyEvidence(
-            await this.adapter.hostProcessListing(),
+            await (options.allowMissFetch
+              ? runOutsideTaskQuantumScope(list)
+              : list()),
             "the host process listing",
           );
           return { state: "listed", processes, cwdComplete: processes.cwdComplete };
@@ -641,7 +645,7 @@ export class Resolution {
         ...options,
         cacheOnly: inQuantum && !options.allowMissFetch,
       });
-    if (inQuantum) {
+    if (inQuantum && !options.allowMissFetch) {
       return Promise.resolve({
         state: "unknown",
         reason:

@@ -2870,6 +2870,7 @@ export class Store {
     hostId?: string;
     agentId?: string | null;
     temporaryDirectory?: string;
+    directory?: string | null;
   }): void {
     const key = `runProcessCleanup:${run.id}`;
     // A release, a replacement or an idle observation re-queues the same
@@ -2883,6 +2884,7 @@ export class Store {
       leftAlone?: unknown;
       stoppedAt?: string;
       uncertainty?: string;
+      directory?: string | null;
     }>(key);
     this.setMeta(key, {
       ...previous,
@@ -2891,6 +2893,7 @@ export class Store {
       hostId: run.hostId,
       agentId: run.agentId,
       temporaryDirectory: run.temporaryDirectory,
+      directory: run.directory ?? previous?.directory,
       pending: true,
     });
   }

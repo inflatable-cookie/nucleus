@@ -24,6 +24,8 @@ import type { ResponsibleThreadReason } from "../../shared/responsible-thread";
 import type { Engine } from "../engine";
 import { recordResultApplied, resultApplied } from "../intake/applied-result";
 import { signalProcessGroupByLeader } from "../machine/process-group";
+import { readRunProcessCustody } from "../machine/run-process-custody";
+import { runWorkspaceDirectory } from "../machine/participant-roots";
 import {
   reattachRefusal,
   reattachStoredTaskCheckout,
@@ -361,6 +363,33 @@ export async function resolveExplicitly(
   // context it falls back to the unbound adapter, which carries no forge ports,
   // so each phase runs on the task's own host.
   const onHost = <T>(fn: () => T): T => engine.onTaskHost(before, fn);
+  let liveReleaseProcess = false;
+  if (
+    input.action === "run.release" &&
+    input.version === before.version &&
+    !before.removedAt &&
+    !releaseRefusal(store, before, input.run, input.archive)
+  ) {
+    const run = store.run(input.run);
+    if (
+      !releasedRunLive(before, run) &&
+      (runWorkspaceDirectory(before, run) ||
+        run?.temporaryDirectory ||
+        (!run && before.temporaryDirectory) ||
+        (run ?? before).participantActivity?.process)
+    ) {
+      const custody = await engine.onTaskHost(run ?? before, () =>
+        readRunProcessCustody({
+          store,
+          readProcesses: engine.resolution.readPassProcesses.bind(engine.resolution),
+          task: before,
+          run,
+          runId: input.run,
+        }),
+      );
+      liveReleaseProcess = custody.state === "live";
+    }
+  }
   const runStartPreflight =
     input.action === "run.start" &&
     input.version === before.version &&
@@ -403,7 +432,7 @@ export async function resolveExplicitly(
 
     const plan = engine.onTaskHost(task, () =>
       input.action === "run.release"
-        ? releasePlan(engine, task, input)
+        ? releasePlan(engine, task, input, liveReleaseProcess)
         : input.action === "record.clear"
           ? clearPlan(engine, task, input)
           : input.action === "run.start"
@@ -862,22 +891,23 @@ function releasedRunLive(task: Task, run: ReturnType<Store["run"]>): boolean {
 
 /**
  * The warnings a `run.release` of this run names, read from the stored run, the
- * task and the run's host process alone. `next` lists them as the command's
- * expected warnings (papercut ee6e634c).
+ * task and its host run. `next` lists the recorded warnings; the command
+ * also checks for live processes when the stored turn is inactive.
  */
 export function releaseWarnings(
   store: Store,
   task: Task,
   runId: string,
+  liveProcess = false,
 ): Warning[] {
   const run = store.run(runId);
   const completion = run ? run.completion : task.completion;
   const process = store.hostRun(runId);
   const warnings: Warning[] = [];
-  if (releasedRunLive(task, run) || process?.state === "running")
+  if (liveProcess || releasedRunLive(task, run) || process?.state === "running")
     warnings.push({
       id: "live_turn",
-      text: "This run may have a live turn. Stopping a worker may lose uncommitted changes.",
+      text: "This run may have a live turn or process. Stopping a worker may lose uncommitted changes.",
     });
   if (!completion && !run?.released)
     warnings.push({
@@ -901,6 +931,7 @@ export function releasePlan(
   engine: ReleasePlanContext,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.release" }>,
+  liveProcess = false,
 ): Plan {
   const store = engine.store;
   const refusal = releaseRefusal(store, task, input.run, input.archive);
@@ -912,7 +943,7 @@ export function releasePlan(
   const completion = run ? run.completion : task.completion;
   const live = releasedRunLive(task, run);
   const process = store.hostRun(input.run);
-  const warnings = releaseWarnings(store, task, input.run);
+  const warnings = releaseWarnings(store, task, input.run, liveProcess);
   const activity = run ? run.participantActivity : task.participantActivity;
   const stall = task.resolution.stalledTurnStop;
   const turnId =

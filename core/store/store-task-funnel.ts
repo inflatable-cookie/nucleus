@@ -37,6 +37,7 @@ import {
   taskDecisionFact,
 } from "../../shared/task-stop";
 import { EMPTY_RUN_USAGE } from "../telemetry/run-usage";
+import { runWorkspaceDirectory } from "../machine/participant-roots";
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { restartSlotObsolete } from "../dispatch/capacity";
 import {
@@ -238,6 +239,7 @@ export interface TaskFunnelServices {
     hostId?: string;
     agentId?: string | null;
     temporaryDirectory?: string;
+    directory?: string | null;
   }): void;
   queueRunReportingCleanup(runId: string, taskId: string): void;
   get path(): string;
@@ -909,7 +911,7 @@ export class StoreTaskFunnel {
       (!task.removedAt && Boolean(next.removedAt))
     )
       for (const run of this.services.runs(id))
-        this.services.queueRunCleanup(run);
+        this.services.queueRunCleanup({ ...run, directory: runWorkspaceDirectory(task, run) });
     if (
       task.runId &&
       (task.runId !== next.runId ||
@@ -922,6 +924,7 @@ export class StoreTaskFunnel {
         hostId: task.hostId,
         agentId: task.agentId,
         temporaryDirectory: task.temporaryDirectory,
+        directory: task.directory,
       });
     if (this.services.tasksStore.taskProjection) {
       this.services.tasksStore.setProjectedTask(validated);
@@ -1244,7 +1247,11 @@ export class StoreTaskFunnel {
       this.services.db
         .prepare("UPDATE credentials SET revoked=0 WHERE run=? AND revoked=1")
         .run(run.id);
-    if (run.released || run.completion) this.services.queueRunCleanup(run);
+    if (run.released || run.completion)
+      this.services.queueRunCleanup({
+        ...run,
+        directory: runWorkspaceDirectory(this.services.task(run.taskId), run),
+      });
     if (this.services.tasksStore.taskProjection) {
       this.services.tasksStore.rememberProjectedRun(run.id, run.taskId);
       const states = this.services.tasksStore.runState!;

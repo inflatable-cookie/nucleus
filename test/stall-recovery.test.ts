@@ -213,6 +213,7 @@ async function fixture(
   let timelinePages: TimelineEntry[][] = [];
   const adapter: Adapter & Partial<ResolutionAdapter> = fakeAdapter({
     supportsCoordinatorRecovery: true,
+    hostProcessListing: async () => [],
     profiles: async () => [worker, coordinator, reviewer],
     validate: async (candidate: Task) => candidate.planningCommit,
     createWorkspace: async (candidate: Task) => ({
@@ -544,13 +545,20 @@ console.log(JSON.stringify([process.pid, helper.pid, child.pid])); setInterval((
   });
   const [ready] = await once(provider.stdout!, "data");
   const fixturePids = JSON.parse(String(ready)) as number[];
+  let incomplete = false;
+  let exited = false;
   f.adapter.hostProcessListing = async () => {
+    if (incomplete) return Object.assign([], { cwdComplete: false });
+    if (exited) return [];
     const listing = await readProcessSubset(fixturePids);
+    assert.equal(listing.state, "listed");
+    assert.ok(listing.processes.some((fact) => fact.pid === fixturePids[2] && fact.cwd === f.directory));
     return listing.state === "listed" ? listing.processes : null;
   };
   f.setObservation(
     running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }),
   );
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
   await f.engine.wake();
   const current = f.store.task(f.task.id);
   assert.equal(current.resolution.incident, null);
@@ -562,6 +570,18 @@ console.log(JSON.stringify([process.pid, helper.pid, child.pid])); setInterval((
       .some((event) => event.kind === "planner_escalation"),
     false,
   );
+  provider.kill();
+  await once(provider, "exit");
+  exited = true;
+  incomplete = true;
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
+  await f.engine.wake();
+  assert.equal(f.store.task(f.task.id).resolution.incident, null);
+
+  incomplete = false;
+  f.setTimelines([[opaqueTool()], [opaqueTool()]]);
+  await f.engine.wake();
+  assert.equal(f.store.task(f.task.id).resolution.stop?.reason, "run_stalled");
 });
 
 test("fresh tool output renews a long test run with a stale host turn stamp", async (t) => {

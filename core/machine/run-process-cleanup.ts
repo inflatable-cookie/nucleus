@@ -1,7 +1,7 @@
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import type { Store } from "../store/store";
-import type { HostProcessFact } from "../host/types";
+import type { HostProcessFact, HostProcessTable } from "../host/types";
 import type { Run, Task } from "../../shared/contracts";
 import { readHostUidProcesses } from "./host-process-listing";
 import { pidAlive } from "./pid";
@@ -21,6 +21,12 @@ import {
 } from "./owned-tool-process-proof";
 import { protectedHostPids } from "./host-process-select";
 import { terminateHostProcessTargets } from "./host-process-reap";
+import {
+  incompleteRunProcessScan,
+  isLiveProcess,
+  runWorkProcesses,
+} from "./run-process-custody";
+import { runWorkspaceDirectory } from "./participant-roots";
 
 interface CleanupRun {
   id: string;
@@ -28,6 +34,7 @@ interface CleanupRun {
   hostId?: string;
   agentId?: string | null;
   temporaryDirectory?: string;
+  directory?: string | null;
   pending?: boolean;
   uncertainty?: string;
   /** When this run last had a process stopped for it; a same-run respawn is left alone. */
@@ -231,6 +238,7 @@ function cleanupRuns(store: Store, hostId: string) {
       hostId,
       agentId: task.agentId,
       temporaryDirectory: task.temporaryDirectory,
+      directory: task.directory,
     };
     (settledTask(task) ? settled : live).set(run.id, run);
   }
@@ -240,7 +248,7 @@ function cleanupRuns(store: Store, hostId: string) {
     const run: Run = JSON.parse(String(row.data));
     const task = byTask.get(run.taskId) ?? store.task(run.taskId);
     if (settledRun(run, task)) {
-      settled.set(run.id, run);
+      settled.set(run.id, { ...run, directory: runWorkspaceDirectory(task, run) });
       live.delete(run.id);
     } else {
       live.set(run.id, run);
@@ -252,8 +260,14 @@ function cleanupRuns(store: Store, hostId: string) {
     .all()) {
     const run: CleanupRun = JSON.parse(String(row.value));
     intents.set(run.id, run);
-    if (run.hostId === hostId && !live.has(run.id))
-      settled.set(run.id, { ...run, ...settled.get(run.id) });
+    if (run.hostId === hostId && !live.has(run.id)) {
+      const current = settled.get(run.id);
+      settled.set(run.id, {
+        ...run,
+        ...current,
+        directory: run.directory ?? current?.directory,
+      });
+    }
   }
   for (const id of live.keys()) settled.delete(id);
   return { settled: [...settled.values()], live: [...live.values()], intents };
@@ -268,7 +282,7 @@ export function sweepSettledRunProcesses(
     taskId?: string;
     pendingOnly?: boolean;
     graceMs?: number;
-    readProcesses?: () => Promise<HostProcessFact[] | null>;
+    readProcesses?: () => Promise<HostProcessTable | null>;
     readEnvironments?: typeof runProcessEnvironments;
     terminate?: typeof terminateHostProcessTargets;
     /** Longest one process read may hold the sweep; tests shorten it. */
@@ -389,14 +403,16 @@ export function hostOwesRunProcessCleanup(
 /** One process-table snapshot per sweep, shared by every run it settles. */
 async function snapshot(
   options: Parameters<typeof sweepSettledRunProcesses>[2],
-): Promise<HostProcessFact[] | null> {
+): Promise<HostProcessTable | null> {
   const readBoundMs = options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS;
   return boundedRead(
     () =>
       options?.readProcesses
         ? options.readProcesses()
         : readHostUidProcesses().then((read) =>
-            read.state === "listed" ? read.processes : null,
+            read.state === "listed"
+              ? Object.assign(read.processes, { cwdComplete: read.cwdComplete })
+              : null,
           ),
     readBoundMs,
   );
@@ -472,7 +488,11 @@ async function sweep(
   // bounded spawned read for exactly the targets.
   const tableLiveness = listedProcessLiveness(facts);
   const dataHome = dirname(store.path);
-  const live = facts.filter((fact) => !fact.state?.startsWith("Z"));
+  const live = facts.filter(isLiveProcess);
+  const incomplete = incompleteRunProcessScan({
+    processes: facts,
+    cwdComplete: facts.cwdComplete,
+  });
   // The one ownership question this table answers: what init owns outright.
   const rooted = new Set(
     live
@@ -798,6 +818,26 @@ async function sweep(
     if (run.temporaryDirectory) {
       if (!store.getMeta<CleanupRun>(key(run.id)))
         store.queueRunProcessCleanup({ ...run, hostId });
+      const provider = records.get(run.id)?.provider;
+      const holders = runWorkProcesses({
+        live,
+        byPid: table.byPid,
+        directories: [run.directory, run.temporaryDirectory],
+        infrastructure,
+        provider: provider && !providerHosts.has(provider.pid) ? provider : null,
+      });
+      if (holders.length) {
+        deferReason(
+          store,
+          run,
+          "live processes still use the run workspace or scratch",
+        );
+        continue;
+      }
+      if (incomplete) {
+        deferReason(store, run, "process working-directory coverage is incomplete");
+        continue;
+      }
       if (!store.removeRunScratchAfterProcesses(run.temporaryDirectory)) {
         deferReason(store, run, "scratch retirement was refused");
         continue;
@@ -812,6 +852,7 @@ async function sweep(
         hostId,
         agentId: run.agentId,
         temporaryDirectory: run.temporaryDirectory,
+        directory: run.directory,
         pending: false,
       });
   }
@@ -834,6 +875,7 @@ function recordStop(
     hostId,
     agentId: run.agentId,
     temporaryDirectory: run.temporaryDirectory,
+      directory: run.directory,
     pending: true,
   };
   store.setMeta(key(run.id), {
@@ -889,6 +931,7 @@ function recordLeftAlone(
       hostId,
       agentId: run.agentId,
       temporaryDirectory: run.temporaryDirectory,
+      directory: run.directory,
     }),
     pending: intent?.pending ?? true,
     uncertainty: undefined,
@@ -963,6 +1006,7 @@ function deferCleanup(
     hostId: run.hostId,
     agentId: run.agentId,
     temporaryDirectory: run.temporaryDirectory,
+    directory: run.directory,
     ...prior,
     pending: true,
     uncertainty,
