@@ -604,6 +604,14 @@ function recoveryEpisodeSettlement(
         : episode.runId === run.id) &&
       !resultApplied(store, task.id, run.id)
     ) {
+      store.recordVerbOutcome(
+        task.id,
+        action.coordinatorAction?.verb ?? "retired_recovery_action",
+        "refused",
+        "coordinator",
+        { coordinatorRun: run.id, reason: reason.slice(0, 600) },
+        `coordinator:${action.eventId}`,
+      );
       store.event(task.id, "coordinator_action_refused", action.eventId);
       recordResultApplied(store, task.id, run.id);
     }

@@ -210,8 +210,10 @@ export class CoordinatorPass {
       for (const run of stale) {
         const reason =
           run.generation !== current.coordinatorGeneration
-            ? "Coordinator generation changed before the action could apply."
-            : "The completed coordinator run no longer owns an applicable action.";
+            ? "coordinator generation changed after the accepted report"
+            : episode?.runId === run.id && episode.action?.status === "pending"
+              ? "The task moved on since the coordinator was asked (its results, head, phase, run or routes changed)"
+              : "The completed coordinator run no longer owns an applicable action.";
         const patch = releaseCoordinatorBinding(
           this.store,
           current,
@@ -242,6 +244,7 @@ export class CoordinatorPass {
         incident = t.resolution.recovery;
       const runs = this.store.runs(t.id);
       if (
+        (t.entrypoint !== "proof" || !t.proofOnly) &&
         !this.resolution.startsNoRuns() &&
         !isDispositionActive(t) &&
         !isDispositionComplete(t) &&
