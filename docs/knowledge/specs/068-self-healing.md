@@ -249,8 +249,9 @@ including retired workers with explicitly released runs, under the same
 freshness rule. The send keeps its normal review instructions and any named
 checks. Custody checks freshness before using a cached process or tool
 observation to clear or hold custody. Evidence from before the participant's
-latest activity and transient custody read failures both leave the proof
-pending and renew the demand. If a completed host pass still cannot
+latest activity and transient custody read failures, including null timeline
+pages and process listings, leave the proof pending and renew the demand.
+If a completed host pass still cannot
 serve the proof after five minutes of host and service uptime, the task stops with
 `pass_proof_exhausted` and names the unread proof.
 The bound starts at the first proof wait for that review round and head, even
@@ -262,7 +263,9 @@ while its snapshot is active. The pass also serves recovery and closeout
 participants named by an owned-tool retry. Proof retries have their own batch
 and run while paused so an accepted read-only proof can drain. The verb
 records its outcome when it settles. A coordinator's accepted action stays
-pending on an unread proof.
+pending on an unread proof. If a completed pass still cannot serve the proof
+after five minutes of host and service uptime from the report's first deferral,
+the action records the exhausted proof and escalates to the planner ladder.
 
 Reusing a previous pass's snapshot was rejected: it would carry reads across
 passes, and that snapshot predates the participant's observation too.

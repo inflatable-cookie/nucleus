@@ -54,7 +54,7 @@ import {
   runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
 import { knownExecutionParticipantIds } from "../machine/execution-participants";
-import { custodyProofDeferral } from "../machine/custody-proof";
+import { custodyProofDeferral, requireCustodyEvidence } from "../machine/custody-proof";
 import {
   TOOL_TIMELINE_LIMIT,
   TOOL_TIMELINE_READ_BUDGET,
@@ -1011,13 +1011,11 @@ export class TaskWakes {
             hostId,
             async () => {
               try {
-                const listed = await adapter.hostProcessListing!();
-                return listed
-                  ? { state: "listed", processes: listed }
-                  : {
-                      state: "unknown",
-                      reason: "the host process listing is unreadable",
-                    };
+                const processes = requireCustodyEvidence(
+                  await adapter.hostProcessListing!(),
+                  "the host process listing",
+                );
+                return { state: "listed", processes };
               } catch (error) {
                 const deferred = custodyProofDeferral({ kind: "error", error });
                 return {

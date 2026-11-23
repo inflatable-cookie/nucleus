@@ -16,6 +16,14 @@ import {
   type PassTimelinePageRead,
 } from "../scheduling/pass-snapshot";
 
+export const PASS_PROOF_WAIT_LIMIT_MINUTES = 5;
+
+/** A host adapter's null response means the requested evidence could not be read. */
+export function requireCustodyEvidence<T>(value: T | null, label: string): T {
+  if (value === null) throw new HostReadRefusalError(`${label} is unreadable`);
+  return value;
+}
+
 export type CustodyProofRead =
   | { kind: "error"; error: unknown }
   | {

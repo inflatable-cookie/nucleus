@@ -130,7 +130,6 @@ function fixture() {
   ).createRun;
 
   const faults = {
-    unknownTools: false,
     staleCovering: false,
     mergeNeedsApproval: false,
     blockOrdinarySend: false,
@@ -172,8 +171,7 @@ function fixture() {
       base: runGit(f.repo, "rev-parse", "main"),
       wait: "",
     }),
-    agentTimelinePage: async () =>
-      faults.unknownTools ? null : toolTimelinePage([]),
+    agentTimelinePage: async () => toolTimelinePage([]),
     authorCommentEvidence: async () => {
       if (faults.admissionRace) {
         faults.admissionRace = false;
@@ -2628,26 +2626,6 @@ test("a retained new-head round checkpoints and automatically continues the same
   }
 });
 
-test("unknown tools refuse the ordinary new-head send while preserving the earlier verdict and checkout", async () => {
-  const f = fixture();
-  try {
-    await f.engine.wake();
-    const first = f.current();
-    await f.report(first, "changes_required");
-    f.faults.unknownTools = true;
-    await authorRevision(f, 1);
-    assert.equal(f.sends.length, 0);
-    assert.match(f.store.task(f.task.id).reason, /unknown tools|inconclusive/);
-    assert.equal(f.store.run(first.id)!.completion!.status, "changes_required");
-    assert.equal(
-      runGit(f.workspace, "branch", "--show-current"),
-      "feature/external",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
 test("a genuine rebase author report receives base movement and covering evidence, then a genuine verdict at the new head", async () => {
   const f = fixture();
   try {
@@ -3334,7 +3312,42 @@ async function waitForOrdinaryPassProof(f: ReturnType<typeof fixture>) {
   assert.equal((result as { accepted: boolean }).accepted, true);
   await f.engine.quiesce();
   resolution.hostPassWarmBudgetMs = warmBudget;
-  return { head, namedCheck, retiredAgentId: retired.agentId };
+  return { head, namedCheck, retiredAgentId: retired.agentId, earlierReview };
+}
+
+for (const evidence of ["timeline page", "process listing"] as const) {
+  test(`ordinary review retries a null ${evidence} without refusing the send`, async () => {
+    const f = fixture();
+    try {
+      const { retiredAgentId, earlierReview } = await waitForOrdinaryPassProof(f);
+      let unavailable = true;
+      if (evidence === "timeline page") {
+        const readPage = f.adapter.agentTimelinePage!;
+        f.adapter.agentTimelinePage = async (id, limit) =>
+          unavailable && id === retiredAgentId ? null : readPage(id, limit);
+      } else {
+        const retired = f.states.get(retiredAgentId);
+        assert.ok(retired);
+        f.states.set(retiredAgentId, { ...retired, status: "closed" });
+        f.adapter.noLiveWorkspaceProcesses = async () => null;
+        f.adapter.hostProcessListing = async () => unavailable ? null : [];
+      }
+      await f.engine.auditPass(true);
+      const waiting = f.store.task(f.task.id);
+      assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
+      assert.match(waiting.reason, new RegExp(`${evidence} is unreadable`));
+      assert.equal(f.sends.length, 0);
+      assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
+      assert.equal(f.store.run(earlierReview.id)?.completion?.status, "changes_required");
+      assert.equal(runGit(f.workspace, "branch", "--show-current"), "feature/external");
+
+      unavailable = false;
+      await f.engine.auditPass(true);
+      assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
+    } finally {
+      await f.close();
+    }
+  });
 }
 
 test("ordinary review waits for a pass proof and sends the full review with its named check", async () => {

@@ -6,7 +6,7 @@ import type { Run, Task } from "../../shared/contracts";
 import { isTransportFailure } from "../../shared/transport";
 import { agentSettled } from "./agent-settled";
 import { boundedToolHold } from "./bounded-tool";
-import { custodyProofDeferral } from "./custody-proof";
+import { custodyProofDeferral, requireCustodyEvidence } from "./custody-proof";
 import {
   bbThreadForAgent,
   bbWorkspaceThreads,
@@ -82,9 +82,13 @@ export class OwnedTools {
     onRead?: (read: PassTimelinePageRead) => void,
     deadlineMs?: number,
   ) {
-    if (!this.resolution.readPassTimelinePage) return this.resolution.host;
     return {
       agentTimelinePage: async (id: string, limit?: number) => {
+        if (!this.resolution.readPassTimelinePage)
+          return requireCustodyEvidence(
+            await this.resolution.host.agentTimelinePage(id, limit),
+            "the agent timeline page",
+          );
         const read = await this.resolution.readPassTimelinePage(
           id,
           limit,
@@ -98,7 +102,7 @@ export class OwnedTools {
         this.resolution.requestPassProof?.(hostId, id);
         if (read.state === "unknown")
           throw new DeferredPassReadError(read.reason);
-        return read.value;
+        return requireCustodyEvidence(read.value, "the agent timeline page");
       },
     };
   }
@@ -112,7 +116,10 @@ export class OwnedTools {
     if (this.adapter.hostProcessListing) {
       const read = await boundedRead(
         "host process listing",
-        () => this.adapter.hostProcessListing!(),
+        async () => requireCustodyEvidence(
+          await this.adapter.hostProcessListing!(),
+          "the host process listing",
+        ),
         this.processDeadlineMs,
       ).catch((error) => {
         const deferred = custodyProofDeferral({ kind: "error", error });
@@ -124,7 +131,7 @@ export class OwnedTools {
               deferred: false,
             };
       });
-      if (read.state === "ok" && read.value) {
+      if (read.state === "ok") {
         return {
           state: "listed",
           processes: read.value,
@@ -132,20 +139,12 @@ export class OwnedTools {
           fromPassSnapshot: false,
         };
       }
-      if (read.state === "unknown") {
-        return {
-          state: "unknown",
-          reason: read.reason,
-          capturedAt,
-          fromPassSnapshot: false,
-          deferred: "deferred" in read ? read.deferred : true,
-        };
-      }
       return {
         state: "unknown",
-        reason: "the host process listing is unreadable",
+        reason: read.reason,
         capturedAt,
         fromPassSnapshot: false,
+        deferred: "deferred" in read ? read.deferred : true,
       };
     }
     const listing = await readHostUidProcesses({

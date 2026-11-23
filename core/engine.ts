@@ -1362,7 +1362,14 @@ export class Engine {
           "performTaskControl",
           "store",
         ],
-        ["attention", "currentPassSnapshot", "openPlannerEscalation", "recovery", "update"],
+        [
+          "attention",
+          "currentPassSnapshot",
+          "escalateRefusedCoordinator",
+          "openPlannerEscalation",
+          "recovery",
+          "update",
+        ],
       ),
     );
     this.pausedStops = new PausedStops(this);

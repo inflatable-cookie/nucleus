@@ -856,7 +856,7 @@ test("conflicting running shell needs the same empty process proof", async () =>
   }
 });
 
-test("an unreadable provider process listing still holds a finished turn", async () => {
+test("an unreadable provider process listing leaves a finished turn pending", async () => {
   const f = fixture();
   try {
     f.store.update(f.taskId, {
@@ -892,10 +892,8 @@ test("an unreadable provider process listing still holds a finished turn", async
       0,
     );
     assert.equal(f.store.run("stale-unreadable-run")!.released, false);
-    assert.match(
-      f.events("owned_tool_hold")[0]!.detail,
-      /process tree is unreadable/,
-    );
+    assert.equal(f.events("owned_tool_hold").length, 0);
+    assert.equal(f.events("owned_tool_settled").length, 0);
   } finally {
     await f.close();
   }
@@ -1152,7 +1150,7 @@ test("a refused owned-tool retry settles its operation without creating an uncer
   }
 });
 
-test("a live shell descendant and an unreadable process tree keep the idle run held", async () => {
+test("a live shell descendant holds the idle run and a null listing defers settlement", async () => {
   for (const processes of [
     [
       {
@@ -1227,10 +1225,7 @@ test("a live shell descendant and an unreadable process tree keep the idle run h
           /descendant pid 102/,
         );
       else
-        assert.match(
-          f.events("owned_tool_hold")[0]!.detail,
-          /process tree is unreadable/,
-        );
+        assert.equal(f.events("owned_tool_hold").length, 0);
     } finally {
       await f.close();
     }

@@ -63,9 +63,8 @@ import { dirname } from "node:path";
 import { ensureTaskNodeModules } from "../../workspaces/task-node-modules";
 import { verifyBargeLeaseAndCustody } from "../../workspaces/barge-allocator";
 import { waitAgeMs } from "../../scheduling/host-outage";
+import { PASS_PROOF_WAIT_LIMIT_MINUTES } from "../../machine/custody-proof";
 import { taskStopRecord, type TaskDecisionFact } from "../../../shared/task-stop";
-
-const REVIEW_PASS_PROOF_LIMIT_MINUTES = 5;
 
 /** Put unconsumed owner direction and named checks back on the task. */
 function unsentReviewIntent(task: Task, run: Run) {
@@ -716,9 +715,9 @@ export class RunLaunchDeliver {
             pendingProof &&
             this.resolution.currentPassSnapshot()?.hostPassCompleted(latest.hostId) &&
             waitAgeMs(this.store, latest.hostId, since) >=
-              REVIEW_PASS_PROOF_LIMIT_MINUTES * 60_000
+              PASS_PROOF_WAIT_LIMIT_MINUTES * 60_000
           ) {
-            const reason = `${error.subject} could not be proved after ${REVIEW_PASS_PROOF_LIMIT_MINUTES} minutes while the host was up. ${error.reason}`;
+            const reason = `${error.subject} could not be proved after ${PASS_PROOF_WAIT_LIMIT_MINUTES} minutes while the host was up. ${error.reason}`;
             const fact: TaskDecisionFact = {
               code: "pass_proof_exhausted",
               subject: error.subject.slice(0, 240),

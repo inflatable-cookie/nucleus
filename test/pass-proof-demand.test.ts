@@ -437,7 +437,7 @@ test("a transient host read leaves the owner audit to the successful operation",
   assert.deepEqual(store.verbOutcomes("").map(({ outcome }) => outcome), ["applied"]);
 });
 
-test("a coordinator's accepted owned-tool retry stays pending through a second transient host read", async (t) => {
+function seedCoordinatorProofRetry(t: TestContext) {
   const workspaces = new Map<string, string>();
   const { store, engine } = fixture(t, { workspaces, recovery: true });
   const { task, effect } = seedOwnedToolHold(store, workspaces);
@@ -487,7 +487,13 @@ test("a coordinator's accepted owned-tool retry stays pending through a second t
     },
   });
   store.putRun(run);
-  await runInTaskQuantumScope(30_000, () => engine.applyCoordinatorAction(current, run, binding));
+  return { store, engine, task: current, run, binding };
+}
+
+test("a coordinator's accepted owned-tool retry stays pending through a second transient host read", async (t) => {
+  const { store, engine, task, run, binding } = seedCoordinatorProofRetry(t);
+  const runId = run.id;
+  await runInTaskQuantumScope(30_000, () => engine.applyCoordinatorAction(task, run, binding));
   assert.equal(store.task(task.id).resolution.recovery?.action?.status, "pending");
   assert.equal(store.run(runId)?.released, false);
   assert.deepEqual(store.verbOutcomes(""), []);
@@ -511,4 +517,39 @@ test("a coordinator's accepted owned-tool retry stays pending through a second t
   assert.deepEqual(store.verbOutcomes("").map(({ outcome, source }) => ({ outcome, source })), [
     { outcome: "applied", source: "coordinator" },
   ]);
+});
+
+test("a coordinator's owned-tool proof wait escalates after five minutes of uptime", async (t) => {
+  const { store, engine, task, run, binding } = seedCoordinatorProofRetry(t);
+  await runInTaskQuantumScope(30_000, () => engine.applyCoordinatorAction(task, run, binding));
+  const firstWait = store.eventsAll(task.id).find((event) => event.kind === "run_result_deferred");
+  assert.ok(firstWait);
+
+  let reads = 0;
+  engine.performTaskControl = async () => {
+    reads++;
+    throw new HostReadRefusalError("The participant inventory changed during the read");
+  };
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.task(task.id).resolution.recovery?.action?.status, "pending");
+  assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "run_result_deferred").length, 2);
+  store.db.prepare("UPDATE events SET at=? WHERE id=?").run(
+    new Date(Date.now() - 6 * 60_000).toISOString(), firstWait.id,
+  );
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  const recovery = store.task(task.id).resolution.recovery;
+  assert.equal(recovery?.status, "escalated");
+  assert.equal(recovery?.action?.status, "refused");
+  assert.match(recovery?.action?.reason ?? "", /owned_tool.*after 5 minutes.*inventory changed/);
+  assert.equal(store.run(run.id)?.released, true);
+  assert.deepEqual(store.verbOutcomes("").map(({ outcome, source }) => ({ outcome, source })), [
+    { outcome: "refused", source: "coordinator" },
+  ]);
+  assert.ok(store.eventsAll(task.id).some((event) =>
+    event.kind === "planner_escalation_question" && event.detail.includes(recovery!.action!.reason!),
+  ));
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(reads, 2, "the settled report cannot retry again");
 });

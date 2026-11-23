@@ -135,7 +135,7 @@ import {
 
 import { Stalls } from "./recovery/stall";
 import { OwnedTools } from "./machine/owned-tool";
-import { custodyProofDeferral } from "./machine/custody-proof";
+import { custodyProofDeferral, requireCustodyEvidence } from "./machine/custody-proof";
 import { PrAdoption } from "./review/pr-adoption";
 import {
   ProviderRefusals,
@@ -605,13 +605,11 @@ export class Resolution {
     const read = async (): Promise<HostProcessListRead & { deferred?: true }> => {
       if (this.adapter.hostProcessListing) {
         try {
-          const listed = await this.adapter.hostProcessListing();
-          return listed
-            ? { state: "listed", processes: listed }
-            : {
-                state: "unknown",
-                reason: "the host process listing is unreadable",
-              };
+          const processes = requireCustodyEvidence(
+            await this.adapter.hostProcessListing(),
+            "the host process listing",
+          );
+          return { state: "listed", processes };
         } catch (error) {
           if (isQuantumDeadlineExceeded(error)) throw error;
           const deferred = custodyProofDeferral({ kind: "error", error });
