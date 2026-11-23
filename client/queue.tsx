@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import {
   useRpc,
@@ -32,14 +32,14 @@ import {
   inboxLayout,
   inboxListWidth,
   inboxMenuWidth,
-  type InboxView,
 } from "../shared/inbox-board";
+import { normalizeRepositoryOrigin } from "../shared/lanes";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
 import { projectName } from "./board/text";
 import { BoardHeader } from "./board/header";
 import { InboxList, useInboxBoard, usePipelineState } from "./board/inbox-list";
-import { InboxMenu } from "./board/inbox-menu";
+import { InboxMenu, type BoardView } from "./board/inbox-menu";
 import { useBoardSelection } from "./board/use-board-selection";
 import {
   useBoardAct,
@@ -49,6 +49,8 @@ import {
   type BoardTab,
 } from "./board/use-board-data";
 import { TaskDialog } from "./task/task-dialog";
+import { RustTaskDialog } from "./task/rust-task";
+import { groupRustTasks, useRustTasks, type RustInvalidation } from "./web/rust-board";
 import { useTaskDraftStore } from "./task/drafts";
 import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
@@ -100,7 +102,8 @@ export function MainSurface({
   layout,
   navigation,
   workspaceBoard,
-}: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number }) {
+  rustBoard,
+}: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number; rustBoard?: RustInvalidation }) {
   const c = theme.colors;
   const [panelWidth, setPanelWidth] = useState(0);
   const mode = inboxLayout(panelWidth, layout.compact);
@@ -118,7 +121,7 @@ export function MainSurface({
   const readPlan = useRpc(api.planGet);
   const searchOutcomes = useRpc(api.outcomeSearch);
   const queryClient = useQueryClient();
-  const [view, setView] = useState<InboxView>("needs");
+  const [view, setView] = useState<BoardView>("needs");
   const [menuOpen, setMenuOpen] = useState(false);
   // The reads still key on the two data shapes: Planning's, and the card lists'.
   const tab: BoardTab = view === "planning" ? "planning" : "queue";
@@ -136,6 +139,8 @@ export function MainSurface({
   const {
     selected,
     setSelected,
+    rustTaskId,
+    setRustTaskId,
     selectedLeadId,
     setSelectedLeadId,
     leadLane,
@@ -145,6 +150,7 @@ export function MainSurface({
     openDecisionId,
     setOpenDecisionId,
     selectTask,
+    selectRustTask,
     selectDecision,
     selectLead,
     selectPapercut,
@@ -165,6 +171,15 @@ export function MainSurface({
   // hook, so every surface hydrates from one projection and panel mounts never
   // wait for their own poll.
   const { stateQuery, state } = useBoardState();
+  const rustTasks = useRustTasks(Boolean(rustBoard));
+  const rustColumns = useMemo(() => {
+    if (!rustTasks.data) return undefined;
+    const contains = scopeContains(state?.projects ?? [], scope.projects);
+    return groupRustTasks(rustTasks.data.filter(({ identity }) =>
+      contains(identity.repository, normalizeRepositoryOrigin(identity.repository)),
+    ));
+  }, [rustTasks.data, state?.projects, scope.projects]);
+  const rustView = Boolean(rustBoard) && view !== "planning" && view !== "leads" && view !== "papercuts" ? view : null;
   // The selector's row actions (nucleus#1430) refresh the board after each save; Remove opens the shared removal dialog below.
   const projectSelector = useProjectSelectorActions(() => stateQuery.refetch());
   const [removingProject, setRemovingProject] = useState<api.Project | null>(
@@ -280,7 +295,7 @@ export function MainSurface({
     setPlanningStep("plan");
   };
   /** A menu pick opens that view with nothing selected, so the detail pane never shows a record the list hides. */
-  const openView = (next: InboxView) => {
+  const openView = (next: BoardView) => {
     if (next !== view) clearSelection();
     setView(next);
     setMenuOpen(false);
@@ -316,9 +331,14 @@ export function MainSurface({
   // holds the lane, so a record opened from it is a modal, as on a narrower board.
   const inlineDetail = wide && view !== "planning";
   const anyRecord = Boolean(
-    selected || selectedLeadId || openPapercutId || openDecisionId,
+    selected || rustTaskId || selectedLeadId || openPapercutId || openDecisionId,
   );
-  const detail = task ? (
+  const detail = rustTaskId && rustBoard ? (
+    <RustTaskDialog key={`rust:${rustTaskId}`} id={rustTaskId}
+      summary={rustTasks.data?.find(({ identity }) => identity.id === rustTaskId)}
+      inline={inlineDetail} compact={compact} c={c}
+      onClose={() => setRustTaskId(null)} invalidate={rustBoard} />
+  ) : task ? (
     <TaskDialog
       key={`task:${task.id}`}
       task={task}
@@ -425,6 +445,9 @@ export function MainSurface({
       view={view}
       counts={inbox.counts}
       loaded={Boolean(state)}
+      rust={rustBoard ? { totals: Object.fromEntries(
+        Object.entries(rustColumns ?? {}).map(([column, tasks]) => [column, tasks.length]),
+      ) } : undefined}
       onSelect={openView}
     />
   );
@@ -704,6 +727,17 @@ export function MainSurface({
                     stateError={stateQuery.error}
                     inbox={inbox}
                     view={view}
+                    rust={rustView ? {
+                      tasks: rustColumns?.[rustView],
+                      error: rustTasks.error,
+                      retry: () => void rustTasks.refetch(),
+                      selected: rustTaskId,
+                      onSelect: selectRustTask,
+                      projectName: ({ identity }) => {
+                        const origin = normalizeRepositoryOrigin(identity.repository);
+                        return projectForRepository(identity.repository, origin)?.name ?? origin ?? identity.repository;
+                      },
+                    } : undefined}
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}
                     queuedHidden={queuedHidden}

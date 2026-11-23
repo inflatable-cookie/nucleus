@@ -15,8 +15,9 @@ import {
 } from "./live-channel";
 import { errorText } from "../error-text";
 import { useWebTheme } from "./theme";
+import { createRustInvalidator, listenForRustChanges } from "./rust-board";
 
-export function WebApp() {
+export function WebApp({ rustBoard = false }: { rustBoard?: boolean }) {
   const { appearance, theme } = useWebTheme();
   const [live, setLive] = useState(false);
   // The live channel's last failure. A stream that drops reconnects below, and
@@ -25,10 +26,17 @@ export function WebApp() {
   const [settings, setSettings] = useState(false);
   const transport = useMemo(() => createWebTransport(), []);
   const query = useMemo(() => new QueryClient(), []);
+  const invalidateRust = useMemo(() => createRustInvalidator(query), [query]);
   const context = useMemo(
     () => ({ transport, settings }),
     [transport, settings],
   );
+  useEffect(() => {
+    if (!rustBoard) return;
+    const controller = new AbortController();
+    void listenForRustChanges(invalidateRust, controller.signal);
+    return () => controller.abort();
+  }, [rustBoard, invalidateRust]);
   useEffect(() => {
     registerSettingsOpener((section) => {
       if (section) hintSettingsSection(section);
@@ -118,7 +126,7 @@ export function WebApp() {
                   onBack={() => setSettings(false)}
                 />
               ) : (
-                <MainSurface theme={theme} layout={{ compact: false }} />
+                <MainSurface theme={theme} layout={{ compact: false }} rustBoard={rustBoard ? invalidateRust : undefined} />
               )}
             </div>
           </div>

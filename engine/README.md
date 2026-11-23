@@ -426,6 +426,14 @@ the feed on attach. Decisions never read these display records.
 Review rounds count applied reviewer verdicts in history. Replays and
 unsuccessful launches stay in the same round.
 
+The existing web board enables the Rust task views when its server environment
+sets `NUCLEUS_BOARD_ENGINE_URL` to the engine's loopback HTTP origin and
+`NUCLEUS_BOARD_ENGINE_KEY` to a controller key. Use the assigned planner's
+controller for a planner board. Both preflight and writes use that same
+controller. Paired browsers receive only the capability flag and talk to
+same-origin task routes. Those routes forward the task reads, commands and
+event stream; planning and other legacy features keep their existing routes.
+
 The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
 --enable` with an existing profile on the pinned volume. Start `serve` with
 that profile, a project file for the authorized fixture, and the local T3

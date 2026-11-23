@@ -47,6 +47,7 @@ import {
 } from "../../shared/service/protocol";
 import { boardThemeSnapshotSchema } from "../../shared/web-theme";
 import { sourcePathFromModule } from "../../shared/service/build";
+import { RustBoardProxy, rustBoardRoute } from "./rust-board";
 
 const LOOPBACK = "127.0.0.1";
 /** The board bundle directory, relative to the checkout root, served when present. */
@@ -233,6 +234,7 @@ export interface WebBoardHost {
 
 export interface WebBoardOptions {
   host: WebBoardHost;
+  rustBoard?: RustBoardProxy | null;
   /** A built bundle to serve; null serves the minimal "not built yet" page. */
   bundleDir?: string | null;
   /** Fixture clock for token expiry; production reads the wall clock. */
@@ -373,6 +375,7 @@ export class WebBoard {
 
   /** Stop publishing, end live streams and release the port. */
   async close(): Promise<void> {
+    this.options.rustBoard?.closeStreams();
     this.unsubscribe?.();
     this.unsubscribe = null;
     if (this.tokenTimer) clearInterval(this.tokenTimer);
@@ -440,6 +443,43 @@ export class WebBoard {
     if (url.pathname === "/api/theme") return this.theme(request, response);
     if (url.pathname === "/api/rpc") return this.rpc(request, response);
     if (url.pathname === "/api/events") return this.events(request, response);
+    const engine = this.options.rustBoard;
+    const target = engine && rustBoardRoute(url);
+    if (target) {
+      if (request.method !== target.method) {
+        sendJson(response, 405, refusal("method", "This task route does not serve that method."));
+        return;
+      }
+      const write = target.method === "POST";
+      if (
+        request.headersDistinct.host?.length !== 1 ||
+        (request.headersDistinct.origin?.length ?? 0) > 1 ||
+        ((origin !== undefined || write) && origin !== `http://${request.headers.host}`)
+      ) {
+        sendJson(response, 403, refusal("origin", "Use this board's exact origin."));
+        return;
+      }
+      const session = await this.authorize(request, response, write);
+      if (!session) return;
+      let body: string | undefined;
+      if (write) {
+        if (request.headers["content-type"]?.split(";")[0] !== "application/json") {
+          sendJson(response, 415, refusal("invalid_input", "Task commands require JSON."));
+          return;
+        }
+        try {
+          body = await readBody(request, 64 * 1024);
+        } catch (error) {
+          if (error instanceof BodyTooLarge) {
+            sendJson(response, 413, refusal("oversize", "The task command is too large."));
+            return;
+          }
+          throw error;
+        }
+      }
+      if (response.destroyed) return;
+      return engine.forward({ target, response, session, headers: securityHeaders(), body });
+    }
     if (url.pathname.startsWith("/api/")) {
       sendJson(response, 404, refusal("not_found", "No such board route."));
       return;
@@ -546,7 +586,7 @@ export class WebBoard {
     sendJson(
       response,
       200,
-      { paired: true },
+      this.sessionView(),
       {
         "set-cookie": sessionCookie(cookie),
       },
@@ -566,7 +606,11 @@ export class WebBoard {
       return;
     }
     if (!(await this.authorize(request, response))) return;
-    sendJson(response, 200, { paired: true });
+    sendJson(response, 200, this.sessionView());
+  }
+
+  private sessionView() {
+    return this.options.rustBoard ? { paired: true, rustBoard: true } : { paired: true };
   }
 
   private async theme(
@@ -925,6 +969,7 @@ export class WebBoard {
   }
 
   private dropRevokedStreams(): void {
+    this.options.rustBoard?.closeStreams((key) => (this.sessions.get(key) ?? 0) > this.now());
     for (const stream of [...this.streams]) {
       if (
         !this.sessions.has(stream.key) ||

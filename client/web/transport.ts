@@ -6,14 +6,17 @@ import { SETTINGS_SURFACE_HEADER, SETTINGS_SURFACE_VALUE } from "../../shared/we
 const PROFILE_SAVE_TIMEOUT_MS = 10_000;
 
 /** Exchange the one-time link token for an HttpOnly same-origin session cookie. */
-export async function pairWebSession(token?: string, fetcher: typeof fetch = fetch): Promise<void> {
+export async function pairWebSession(token?: string, fetcher: typeof fetch = fetch): Promise<{ rustBoard: boolean }> {
   const response = token
     ? await fetcher("/api/pair", { method: "POST", headers: { authorization: `Bearer ${token}` } })
     : await fetcher("/api/session");
+  const body: unknown = await response.json();
   if (!response.ok) {
-    const body = await response.json() as { error?: { message?: string } };
-    throw new Error(body.error?.message ?? `Board session check failed (${response.status})`);
+    const error = body && typeof body === "object" && "error" in body ? body.error : null;
+    const message = error && typeof error === "object" && "message" in error ? error.message : null;
+    throw new Error(typeof message === "string" ? message : `Board session check failed (${response.status})`);
   }
+  return { rustBoard: Boolean(body && typeof body === "object" && "rustBoard" in body && body.rustBoard === true) };
 }
 
 function waitForService(): Promise<void> {
