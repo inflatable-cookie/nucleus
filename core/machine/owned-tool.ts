@@ -383,10 +383,9 @@ export class OwnedTools {
             !freshTurn.active &&
             !freshTurn.permissions &&
             !freshTurn.activeTurnId &&
-            (["idle", "error", "closed", "gone"].includes(
+            ["idle", "error", "closed", "gone"].includes(
               freshTurn.status ?? "",
-            ) ||
-              freshTurn.archived === true),
+            ),
         );
         const covered = pageMeta.coveredObservation;
         const coveredUpdatedAt = covered?.updatedAt ?? null;
