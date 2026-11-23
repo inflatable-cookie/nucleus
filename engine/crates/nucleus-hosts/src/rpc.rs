@@ -56,15 +56,23 @@ struct Slot {
 pub struct ThreadHint {
     pub thread: String,
     change: Option<Value>,
+    closed: bool,
 }
 
 impl ThreadHint {
+    /// A closure can revoke existing planner authority. It cannot grant it.
+    #[must_use]
+    pub const fn closed(&self) -> bool {
+        self.closed
+    }
+
     fn read(item: &Value) -> Option<Self> {
         match item["kind"].as_str()? {
             "thread.updated" => {
                 let thread = &item["thread"];
                 Some(Self {
                     thread: thread["id"].as_str()?.into(),
+                    closed: !thread["archivedAt"].is_null() || !thread["deletedAt"].is_null(),
                     change: Some(json!([
                         item["location"],
                         thread["status"],
@@ -83,6 +91,7 @@ impl ThreadHint {
             "thread.removed" => Some(Self {
                 thread: item["threadId"].as_str()?.into(),
                 change: None,
+                closed: true,
             }),
             _ => None,
         }
@@ -396,6 +405,9 @@ mod tests {
         revised["thread"]["activeRunId"] = Value::Null;
         revised["thread"]["status"] = json!("completed");
         assert_ne!(ThreadHint::read(&running), ThreadHint::read(&revised));
+        assert!(!ThreadHint::read(&revised).expect("completed hint").closed());
+        revised["thread"]["archivedAt"] = json!("2026-11-23T20:00:01Z");
+        assert!(ThreadHint::read(&revised).expect("archived hint").closed());
     }
 
     #[tokio::test]

@@ -1,8 +1,10 @@
 //! The task model and its decisions. Adapters supply observations and apply effects.
 
+pub mod acp;
 mod command;
 mod decision;
 mod model;
+pub mod profiles;
 
 pub use command::{Answer, Command, CommandError};
 pub use decision::{

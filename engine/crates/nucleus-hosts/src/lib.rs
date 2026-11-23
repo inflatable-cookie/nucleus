@@ -1,6 +1,7 @@
 //! Host observation and delivery for the isolated Rust task engine.
 
 mod launch;
+mod parenting;
 mod process;
 mod projection;
 mod questions;
@@ -17,13 +18,15 @@ use std::{
 };
 
 pub use launch::{Binding, Dispatch, RoleProfile, RunRequest};
-use launch::{Method, Wire, message_id};
+use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
+pub use parenting::{ArchiveStep, ParentRun, ParentStep, ParentWrite, parent_thread};
 use process::{Activity, Inventory};
 use projection::Projection;
 pub use projection::RunActivity;
 pub use questions::{
-    NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, NoticeTarget, PlannerThread,
+    NoticeAuthorization, NoticeDispatch, NoticeHost, NoticeSend, NoticeState, NoticeTarget,
+    NoticeWrite, PlannerThread,
 };
 pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc};
@@ -36,6 +39,7 @@ pub const T3_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1
 
 pub struct LaunchRequest<'a> {
     pub binding: Binding,
+    pub parent: Option<ParentRun>,
     pub via: &'a Launch,
     pub profile: &'a RoleProfile,
     pub title: String,
@@ -231,6 +235,11 @@ impl T3 {
         })
     }
 
+    #[must_use]
+    pub fn endpoint(&self) -> &str {
+        self.rpc.endpoint().as_str()
+    }
+
     /// Use the connected T3 server's own runtime descriptor for custody checks.
     #[must_use]
     pub fn with_runtime_descriptor(mut self, path: PathBuf) -> Self {
@@ -350,8 +359,13 @@ impl T3 {
     ) -> Result<(Option<Projection>, RunState), HostError> {
         let launch = run.launch();
         let thread = self.thread(&wire.binding, &launch.thread).await?;
+        if let (Some(thread), Some(parent)) = (&thread, &wire.parent)
+            && !thread.belongs_to_parent(parent)
+        {
+            return Err(HostError::Binding);
+        }
         let state = match &thread {
-            Some(thread) => thread.run(&message_id(&launch.instance))?,
+            Some(thread) => thread.run(&wire.message_id(&launch.instance))?,
             None if wire.method == Method::Continue => RunState::Gone,
             None => RunState::ReadyToSend,
         };
@@ -417,7 +431,16 @@ impl T3Pass<'_> {
 
 impl TaskHost for T3Pass<'_> {
     fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError> {
+        let parent = request.parent.as_ref().map(|parent| parent.thread.clone());
         let (dispatch, thread) = match request.via {
+            Launch::Create if let Some(parent) = request.parent => (
+                Dispatch::Delegate {
+                    title: request.title,
+                    profile: request.profile.clone(),
+                    parent,
+                },
+                delegated_child(request.instance),
+            ),
             Launch::Create => (
                 Dispatch::Create {
                     title: request.title,
@@ -430,6 +453,7 @@ impl TaskHost for T3Pass<'_> {
         };
         RunRequest {
             binding: request.binding,
+            parent,
             dispatch,
             text: request.text,
         }
@@ -469,7 +493,7 @@ impl TaskHost for T3Pass<'_> {
             state
         };
         let activity =
-            thread.and_then(|thread| thread.activity(&message_id(&run.launch().instance)));
+            thread.and_then(|thread| thread.activity(&wire.message_id(&run.launch().instance)));
         Ok(RunObservation {
             host: current(run, state),
             activity,
@@ -484,6 +508,11 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         let wire = Wire::read(run)?;
+        if let Some(parent) = &wire.parent
+            && self.host.thread(&wire.binding, parent).await?.is_none()
+        {
+            return Err(HostError::Uncertain);
+        }
         let (thread, state) = self.host.delivery(run, &wire).await?;
         if state != RunState::ReadyToSend
             || !self
@@ -550,7 +579,7 @@ impl TaskHost for T3Pass<'_> {
         let (thread, state) = self.host.delivery(run, &wire).await?;
         if let Some((command, target)) = thread
             .as_ref()
-            .and_then(|thread| thread.stop_command(&message_id(&launch.instance)))
+            .and_then(|thread| thread.stop_command(&wire.message_id(&launch.instance)))
         {
             return Ok(StopProgress::Write(ControlDispatch {
                 binding: wire.binding,
@@ -660,8 +689,13 @@ fn available(provider: &Value, profile: &RoleProfile) -> bool {
 }
 
 fn rejected(cause: &Value, wire: &Wire, instance: &str) -> bool {
-    if wire.method == Method::Continue {
-        return dispatch_rejected(cause, instance);
+    if wire.method == Method::Continue || wire.method == Method::Delegate {
+        let command = if wire.method == Method::Delegate {
+            "delegated_task.request"
+        } else {
+            "message.dispatch"
+        };
+        return command_rejected(cause, instance, command);
     }
     let Some(error) = command_failure(cause, instance) else {
         return false;
@@ -688,10 +722,14 @@ fn rejected(cause: &Value, wire: &Wire, instance: &str) -> bool {
 }
 
 fn dispatch_rejected(cause: &Value, id: &str) -> bool {
+    command_rejected(cause, id, "message.dispatch")
+}
+
+fn command_rejected(cause: &Value, id: &str, command: &str) -> bool {
     command_failure(cause, id).is_some_and(|error| {
         error["_tag"] == "OrchestrationV2DispatchCommandError"
-            && error["commandType"] == "message.dispatch"
-            && rejected_command(&error["cause"], id, "message.dispatch")
+            && error["commandType"] == command
+            && rejected_command(&error["cause"], id, command)
     })
 }
 
@@ -737,6 +775,7 @@ mod tests {
         };
         let wire = |method| Wire {
             binding: binding.clone(),
+            parent: None,
             method,
             payload: to_raw_value(&json!({})).expect("fixture wire"),
         };

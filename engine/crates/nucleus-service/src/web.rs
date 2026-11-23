@@ -4,7 +4,7 @@ use axum::{
     Extension, Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State, rejection::JsonRejection},
     http::{
-        HeaderMap, StatusCode,
+        HeaderMap, Method, StatusCode,
         header::{AUTHORIZATION, HOST, ORIGIN},
     },
     middleware::{self, Next},
@@ -20,13 +20,21 @@ use nucleus_core::{
     Report, Task, Verdict, WaitReason,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+#[cfg(test)]
+use serde_json::Value;
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::{
-    CommandOutcome, Preflight, Service, ServiceError, State as EngineState, now_ms, preflight,
+    CommandOutcome, Preflight, Service, ServiceError, State as EngineState,
+    acp::{MintedSession, WriteAccess},
+    now_ms,
     presentation::{HistoryEvent, RunView},
 };
+
+mod settings;
+pub(crate) use settings::{CachedHost, RuntimeSettings};
 
 #[cfg(test)]
 mod tests;
@@ -43,6 +51,24 @@ pub struct Controller {
     pub authority: Authority,
 }
 
+impl Controller {
+    fn digest(&self) -> [u8; 32] {
+        let (role, actor): (&[u8], &str) = match &self.authority {
+            Authority::Operator { actor } => (b"operator", actor),
+            Authority::Planner { actor } => (b"planner", actor),
+        };
+        Sha256::new()
+            .chain_update(self.credential)
+            .chain_update(role)
+            .chain_update(actor.as_bytes())
+            .finalize()
+            .into()
+    }
+}
+
+#[derive(Clone)]
+struct ControllerDigest([u8; 32]);
+
 /// Bind the engine's JSON API and its revision stream. Task commands and
 /// callbacks use separate credentials. Serve on the configured loopback address.
 pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Controller>) -> Router {
@@ -52,14 +78,25 @@ pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Contr
     };
     let controller = Router::new()
         .route("/v1/tasks", get(list).post(admit))
-        .route("/v1/tasks/{id}", get(detail))
+        .route("/v1/tasks/{id}/acp", post(bind_acp))
         .route("/v1/tasks/{id}/next", get(next))
-        .route("/v1/tasks/{id}/history", get(history))
-        .route("/v1/tasks/{id}/commands", post(command))
-        .route("/v1/settings", get(settings))
+        .route("/v1/health", get(settings::health))
+        .route("/v1/settings", get(settings::all))
+        .route(
+            "/v1/settings/{domain}",
+            get(settings::get).put(settings::put),
+        )
+        .route("/v1/settings/projects/reassign", post(settings::reassign))
         .route("/v1/events", get(events))
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize));
+    let tasks = Router::new()
+        .route("/v1/tasks/{id}", get(detail))
+        .route("/v1/tasks/{id}/history", get(history))
+        .route("/v1/tasks/{id}/commands", post(command))
+        .route("/v1/tasks/{id}/events", get(task_events))
+        .route_layer(middleware::from_fn_with_state(api.clone(), authorize_task));
     controller
+        .merge(tasks)
         .route("/v1/runs/{task}/{instance}/report", post(report))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn_with_state(
@@ -100,16 +137,79 @@ async fn authorize(
     next: Next,
 ) -> Result<Response, ApiError> {
     let supplied = credential(request.headers())?;
+    let caller = controller(&api, &supplied).ok_or(ApiError::Unauthorized)?;
+    request.extensions_mut().insert(caller.authority.clone());
+    request
+        .extensions_mut()
+        .insert(ControllerDigest(caller.digest()));
+    Ok(next.run(request).await)
+}
+
+fn controller<'a>(api: &'a Api, supplied: &[u8; 32]) -> Option<&'a Controller> {
     let mut matches = api
         .controllers
         .iter()
-        .filter(|caller| bool::from(caller.credential.ct_eq(&supplied)));
-    let caller = matches.next().ok_or(ApiError::Unauthorized)?;
-    if matches.next().is_some() {
-        return Err(ApiError::Unauthorized);
+        .filter(|caller| bool::from(caller.credential.ct_eq(supplied)));
+    let caller = matches.next()?;
+    matches.next().is_none().then_some(caller)
+}
+
+#[derive(Clone)]
+struct SessionCredential([u8; 32]);
+
+async fn authorize_task(
+    State(api): State<Api>,
+    Path(id): Path<String>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let supplied = credential(request.headers())?;
+    if let Some(caller) = controller(&api, &supplied) {
+        request.extensions_mut().insert(caller.authority.clone());
+    } else if request.method() == Method::POST {
+        let digest = api
+            .service
+            .acp_controller(&id, &supplied)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+        let caller = api
+            .controllers
+            .iter()
+            .find(|caller| bool::from(caller.digest().ct_eq(&digest)))
+            .and_then(|caller| controller(&api, &caller.credential))
+            .ok_or(ApiError::Unauthorized)?;
+        request.extensions_mut().insert(caller.authority.clone());
+        request.extensions_mut().insert(WriteAccess {
+            credential: supplied,
+            controller: digest,
+        });
+    } else {
+        if !api.service.acp_reader(&id, &supplied).await {
+            return Err(ApiError::Unauthorized);
+        }
+        request.extensions_mut().insert(SessionCredential(supplied));
     }
-    request.extensions_mut().insert(caller.authority.clone());
     Ok(next.run(request).await)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BindOptions {
+    #[serde(default)]
+    read_only: bool,
+}
+
+async fn bind_acp(
+    State(api): State<Api>,
+    Path(id): Path<String>,
+    Extension(ControllerDigest(controller)): Extension<ControllerDigest>,
+    Query(options): Query<BindOptions>,
+) -> Result<Json<MintedSession>, ApiError> {
+    Ok(Json(
+        api.service
+            .bind_acp(&id, controller, options.read_only)
+            .await?,
+    ))
 }
 
 async fn report(
@@ -203,7 +303,7 @@ async fn next(
         wait: summary.wait,
         next_check_at: summary.next_check_at,
         question: summary.question,
-        commands: command_options(task, &authority, &state.command_observation(&row)),
+        commands: command_options(task, &authority, &state.command_observation(&row), &state),
     }))
 }
 
@@ -211,6 +311,7 @@ fn command_options(
     task: &Task,
     authority: &Authority,
     observation: &Observation,
+    state: &EngineState,
 ) -> Vec<CommandView> {
     let mut commands = vec![
         ("cancel", Command::Cancel),
@@ -232,7 +333,8 @@ fn command_options(
         };
         commands.push(("answer", Command::Answer(answer)));
     }
-    let check = |command| match preflight(&mut task.clone(), authority, observation, command) {
+    let check = |command| match state.preflight(&mut task.clone(), authority, observation, command)
+    {
         Ok(Preflight::Ready) => CommandReadiness::Ready,
         Ok(Preflight::Pending) => CommandReadiness::Pending,
         Err(_) => CommandReadiness::Unavailable,
@@ -265,9 +367,15 @@ async fn command(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
     Path(id): Path<String>,
+    session: Option<Extension<WriteAccess>>,
     input: Result<Json<Command>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    match api.service.command(&id, &authority, body(input)?).await? {
+    let command = body(input)?;
+    let outcome = api
+        .service
+        .command_with_session(&id, &authority, command, session.as_deref())
+        .await?;
+    match outcome {
         CommandOutcome::Applied(row) => {
             Ok(Json(Summary::new(&row.task, row.version, None)).into_response())
         }
@@ -300,38 +408,58 @@ async fn history(
     ))
 }
 
-async fn settings(State(api): State<Api>) -> Json<Value> {
-    let storage = &api.service.storage;
-    let project = &api.service.project;
-    Json(json!({
-        "enabled": true,
-        "storage": {
-            "workRoot": storage.work().path(),
-            "scratchRoot": storage.scratch().path(),
-        },
-        "roles": { "worker": project.worker, "reviewer": project.reviewer },
-    }))
+async fn events(State(api): State<Api>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    invalidations(api.service, None)
 }
 
-async fn events(State(api): State<Api>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+async fn task_events(
+    State(api): State<Api>,
+    Path(id): Path<String>,
+    credential: Option<Extension<SessionCredential>>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    let _ = api.service.task(&id).await?;
+    Ok(invalidations(
+        api.service,
+        Some((id, credential.map(|Extension(key)| key))),
+    ))
+}
+
+fn invalidations(
+    service: Arc<Service>,
+    scope: Option<(String, Option<SessionCredential>)>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     Sse::new(stream::unfold(
-        (api.service.changes(), true),
-        |(mut receiver, first)| async move {
+        (service.changes(), service, scope, true),
+        |(mut receiver, service, scope, first)| async move {
             let event = if first {
                 Event::default().event("refresh").data("{}")
             } else {
-                match receiver.recv().await {
-                    Ok(change) => Event::default()
-                        .event("invalidate")
-                        .json_data(change)
-                        .ok()?,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        Event::default().event("refresh").data("{}")
+                loop {
+                    match receiver.recv().await {
+                        Ok(change)
+                            if scope
+                                .as_ref()
+                                .is_none_or(|(task, _)| *task == change.task_id) =>
+                        {
+                            break Event::default()
+                                .event("invalidate")
+                                .json_data(change)
+                                .ok()?;
+                        }
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            break Event::default().event("refresh").data("{}");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
                 }
             };
-            Some((Ok(event), (receiver, false)))
+            if let Some((id, Some(credential))) = &scope
+                && !service.acp_reader(id, &credential.0).await
+            {
+                return None;
+            }
+            Some((Ok(event), (receiver, service, scope, false)))
         },
     ))
     .keep_alive(KeepAlive::default())
@@ -352,7 +480,11 @@ struct Summary {
 impl Summary {
     fn read(task: &Task, version: i64, state: &EngineState) -> Self {
         let id = &task.identity().id;
-        let mut view = Self::new(task, version, state.waits.get(id).copied());
+        let mut view = Self::new(
+            task,
+            version,
+            state.waits.get(id).map(|(reason, _)| *reason),
+        );
         if view.wait.is_some() {
             view.next_check_at = state.schedule.due(id).map(|due| {
                 let delay = due.saturating_duration_since(tokio::time::Instant::now());
@@ -425,12 +557,19 @@ enum ApiError {
     Unauthorized,
     Address,
     Invalid,
+    SettingsOperator,
     Service(ServiceError),
 }
 
 impl From<ServiceError> for ApiError {
     fn from(error: ServiceError) -> Self {
         Self::Service(error)
+    }
+}
+
+impl From<nucleus_store::StorageError> for ApiError {
+    fn from(error: nucleus_store::StorageError) -> Self {
+        ServiceError::from(error).into()
     }
 }
 
@@ -443,12 +582,29 @@ impl IntoResponse for ApiError {
                 "request must use the engine's loopback address and origin".into(),
             ),
             Self::Invalid => (StatusCode::BAD_REQUEST, "invalid request".into()),
+            Self::SettingsOperator => (
+                StatusCode::FORBIDDEN,
+                "settings writes require an operator".into(),
+            ),
             Self::Service(error) => {
                 let status = match error {
                     ServiceError::Missing => StatusCode::NOT_FOUND,
-                    ServiceError::Input | ServiceError::Project => StatusCode::BAD_REQUEST,
-                    ServiceError::QuestionPlanner => StatusCode::FORBIDDEN,
-                    ServiceError::Core(_)
+                    ServiceError::Input
+                    | ServiceError::Project
+                    | ServiceError::Settings(
+                        nucleus_store::StorageError::InvalidSettings(_)
+                        | nucleus_store::StorageError::MissingVolume
+                        | nucleus_store::StorageError::OutsideVolume
+                        | nucleus_store::StorageError::Layout
+                        | nucleus_store::StorageError::ConfinedDirectory(_),
+                    ) => StatusCode::BAD_REQUEST,
+                    ServiceError::QuestionPlanner | ServiceError::PlannerAuthorityRefused => {
+                        StatusCode::FORBIDDEN
+                    }
+                    ServiceError::AcpUnauthorized => StatusCode::UNAUTHORIZED,
+                    ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
+                    | ServiceError::Core(_)
+                    | ServiceError::EffectInProgress
                     | ServiceError::Store(nucleus_store::StoreError::StaleTask) => {
                         StatusCode::CONFLICT
                     }

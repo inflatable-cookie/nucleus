@@ -47,7 +47,7 @@ impl PinnedVolume {
         })
     }
 
-    fn open_mount(&self) -> Result<OwnedFd, StorageError> {
+    pub(crate) fn open_mount(&self) -> Result<OwnedFd, StorageError> {
         if self.volume_id.is_empty()
             || !self.mount.is_absolute()
             || self.mount.canonicalize()? != self.mount
@@ -112,8 +112,28 @@ impl StorageDirectory {
         self.walk(&self.path.join(child), true)
     }
 
+    // Verify against the already checked mount held open by the running engine.
+    // Reopening the path detects a dismount or replacement without a process.
+    pub(crate) fn verify_from_mount(&self, mount: &OwnedFd) -> Result<(), StorageError> {
+        let current = open(&self.volume.mount, DIRECTORY, Mode::empty())?;
+        let expected = fstat(mount)?;
+        let found = fstat(&current)?;
+        if (expected.st_dev, expected.st_ino) != (found.st_dev, found.st_ino) {
+            return Err(StorageError::VolumeUnavailable);
+        }
+        self.walk_from(current, &self.path, false)
+    }
+
     fn walk(&self, path: &Path, create: bool) -> Result<(), StorageError> {
-        let mut directory = self.volume.open_mount()?;
+        self.walk_from(self.volume.open_mount()?, path, create)
+    }
+
+    fn walk_from(
+        &self,
+        mut directory: OwnedFd,
+        path: &Path,
+        create: bool,
+    ) -> Result<(), StorageError> {
         let device = fstat(&directory)?.st_dev;
         for component in relative(&self.volume.mount, path)?.components() {
             let Component::Normal(name) = component else {

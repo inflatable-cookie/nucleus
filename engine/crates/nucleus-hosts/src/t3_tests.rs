@@ -1,8 +1,8 @@
 use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
 
 use crate::{
-    Binding, Dispatch, HostError, RoleProfile, RunRequest, SendOutcome, StopProgress, T3, T3Pass,
-    TaskHost,
+    Binding, Dispatch, HostError, NoticeHost, NoticeWrite, RoleProfile, RunRequest, SendOutcome,
+    StopProgress, T3, T3Pass, TaskHost,
 };
 use futures_util::{SinkExt, StreamExt};
 use nucleus_core::{
@@ -51,6 +51,7 @@ struct Request {
 
 enum Response {
     Snapshot(Value),
+    ParentSnapshot(Value),
     Success,
     Failure(Value),
 }
@@ -116,9 +117,18 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                 .expect("request envelope");
             assert_eq!(request.tag, tag);
             let id = &request.id;
-            let chunk = matches!(response, Response::Snapshot(_));
+            let thread = match &response {
+                Response::Snapshot(_) => Some(THREAD.to_owned()),
+                Response::ParentSnapshot(value) => Some(
+                    value["projection"]["thread"]["id"]
+                        .as_str()
+                        .expect("parent ID")
+                        .to_owned(),
+                ),
+                _ => None,
+            };
             let reply = match response {
-                Response::Snapshot(value) => json!({
+                Response::Snapshot(value) | Response::ParentSnapshot(value) => json!({
                     "_tag": "Chunk", "requestId": id.parse::<u64>().expect("numeric request sequence"),
                     "values": [value, {"kind": "synchronized"}],
                 }),
@@ -133,7 +143,7 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                 .send(Message::Text(reply.to_string().into()))
                 .await
                 .expect("write reply");
-            if chunk {
+            if let Some(thread) = thread {
                 for expected in ["Ack", "Interrupt"] {
                     let frame = socket
                         .next()
@@ -148,7 +158,7 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                     serde_json::from_str(request.payload.get()).expect("subscribe body");
                 assert_eq!(
                     payload,
-                    json!({"threadId":THREAD,"requestCompletionMarker":true,"acceptBoundedSnapshot":false})
+                    json!({"threadId":thread,"requestCompletionMarker":true,"acceptBoundedSnapshot":false})
                 );
             }
             seen.push(request);
@@ -199,6 +209,7 @@ fn reserve(binding: Binding) -> (Task, Observation, String) {
     let _ = task.reconcile(&observation);
     let instance = task.next_launch_instance().expect("instance");
     let inputs = RunRequest {
+        parent: None,
         binding,
         dispatch: Dispatch::Create {
             title: "fixture".into(),
@@ -239,6 +250,131 @@ fn absent() -> Response {
         "_tag":"OrchestrationV2GetThreadProjectionError","threadId":THREAD,
         "cause":{"name":"ProjectionStoreThreadNotFoundError","message": format!("No orchestration projection exists for thread {THREAD}.")},
     }}]))
+}
+
+fn parent_snapshot(binding: &Binding, state: &str, archived: bool) -> Value {
+    let mut reply = snapshot(binding, "parent", state, archived);
+    let projection = &mut reply["projection"];
+    projection["thread"]["id"] = json!(crate::parent_thread(Path::new(&binding.worktree_path)));
+    projection["thread"]["providerInstanceId"] = json!("fixture-acp");
+    projection["thread"]["modelSelection"] = json!({"instanceId":"fixture-acp","model":"nucleus"});
+    projection["runs"][0]["rootNodeId"] = json!("parent-root");
+    projection["subagents"] =
+        json!([{"id":"child-node","childThreadId":THREAD,"origin":"app_owned"}]);
+    reply
+}
+
+#[tokio::test]
+async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (client, native) = server(vec![(
+        "orchestration.subscribeThread",
+        Response::ParentSnapshot(parent_snapshot(&binding, "running", false)),
+    )])
+    .await;
+    let crate::ParentStep::Live(parent) = client
+        .prepare_parent(&binding, "fixture-acp", "Synthetic task")
+        .await
+        .expect("parent read")
+    else {
+        panic!("live parent and its root are required");
+    };
+    let profile = RoleProfile {
+        instance_id: "fixture-worker".into(),
+        model: "fixture".into(),
+        runtime_mode: "full-access".into(),
+    };
+    let inputs = quiet_pass(&client)
+        .prepare_launch(crate::LaunchRequest {
+            binding,
+            parent: Some(parent),
+            via: &nucleus_core::Launch::Create,
+            profile: &profile,
+            instance: "task-fixture-run-1",
+            title: "Worker".into(),
+            started_at: 1,
+            text: "Synthetic brief".into(),
+        })
+        .expect("frozen role wire");
+    assert_eq!(inputs.thread, "thread:delegated-task:task-fixture-run-1");
+    let wire: Value = serde_json::from_str(&inputs.input).expect("run input");
+    assert_eq!(wire["payload"]["type"], "delegated_task.request");
+    assert_eq!(wire["payload"]["parentRunId"], NATIVE_RUN);
+    assert_eq!(wire["payload"]["parentNodeId"], "parent-root");
+    assert!(wire["payload"].get("workspaceStrategy").is_none());
+    native.await.expect("native trace");
+}
+
+#[tokio::test]
+async fn archival_waits_for_idle_children_then_reads_back_both_threads() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = parent_snapshot(&binding, "completed", false);
+    let mut archived_parent = parent_snapshot(&binding, "completed", true);
+    archived_parent["snapshotSequence"] = json!(18);
+    let child = |state, archived| {
+        let mut value = snapshot(&binding, "child", state, archived);
+        value["projection"]["thread"]["parentThreadId"] =
+            json!(crate::parent_thread(Path::new(&binding.worktree_path)));
+        value
+    };
+    let read = "orchestration.subscribeThread";
+    let write = "orchestration.dispatchCommand";
+    let (client, native) = server(vec![
+        (read, Response::ParentSnapshot(parent.clone())),
+        (read, Response::Snapshot(child("running", false))),
+        (read, Response::ParentSnapshot(parent.clone())),
+        (read, Response::Snapshot(child("completed", false))),
+        (read, Response::Snapshot(child("completed", false))),
+        (write, Response::Success),
+        (read, Response::ParentSnapshot(parent.clone())),
+        (read, Response::Snapshot(child("completed", true))),
+        (read, Response::ParentSnapshot(parent.clone())),
+        (read, Response::ParentSnapshot(parent)),
+        (write, Response::Success),
+        (read, Response::ParentSnapshot(archived_parent.clone())),
+        (read, Response::Snapshot(child("completed", true))),
+        (read, Response::ParentSnapshot(archived_parent)),
+    ])
+    .await;
+    assert!(matches!(
+        client
+            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD])
+            .await
+            .expect("busy read"),
+        crate::ArchiveStep::Wait
+    ));
+    for _ in 0..2 {
+        let crate::ArchiveStep::Write(effect) = client
+            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD])
+            .await
+            .expect("idle read")
+        else {
+            panic!("one archive effect");
+        };
+        client.write_parent(effect).await.expect("archive receipt");
+    }
+    assert!(matches!(
+        client
+            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD])
+            .await
+            .expect("readback"),
+        crate::ArchiveStep::Finished
+    ));
+    let requests = native.await.expect("native trace");
+    let archived: Vec<Value> = requests
+        .iter()
+        .filter(|request| request.tag == write)
+        .map(|request| serde_json::from_str(request.payload.get()).expect("archive wire"))
+        .collect();
+    assert_eq!(archived.len(), 2);
+    assert!(archived.iter().all(|wire| wire["type"] == "thread.archive"));
+    assert_eq!(archived[0]["threadId"], THREAD);
+    assert_eq!(
+        archived[1]["threadId"],
+        crate::parent_thread(Path::new(&binding.worktree_path))
+    );
 }
 
 fn revoke(task: &mut Task, observation: &Observation) {
@@ -291,7 +427,10 @@ async fn ready_notice(
         .expect("read planner")
         .expect("authorized");
     if permit.needs_unsettle() {
-        client.unsettle_notice(&permit).await.expect("wake planner");
+        client
+            .deliver_notice(NoticeWrite::Prepare(&permit))
+            .await
+            .expect("wake planner");
         client
             .authorize_notice(notice)
             .await
@@ -567,6 +706,7 @@ async fn next_review_resumes_the_same_thread_after_archival() {
     observation.host = Observed::Known(retained);
     let instance = task.next_launch_instance().expect("next instance");
     let inputs = RunRequest {
+        parent: None,
         binding,
         dispatch: Dispatch::Continue,
         text: "Fresh review".into(),
@@ -822,7 +962,7 @@ async fn planner_notice_unsettles_and_queue_acceptance_is_not_delivery() {
     let dispatch = permit.record(&mut notice).expect("persist native marker");
     assert_eq!(
         client
-            .send_notice(dispatch)
+            .deliver_notice(NoticeWrite::Queue(dispatch))
             .await
             .expect("queue planner notice"),
         NoticeSend::Accepted
@@ -903,7 +1043,7 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
         .expect("record the original bytes");
     assert_eq!(
         client
-            .send_notice(dispatch)
+            .deliver_notice(NoticeWrite::Queue(dispatch))
             .await
             .expect("confirmed outcome"),
         NoticeSend::Rejected

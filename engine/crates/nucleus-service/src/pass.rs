@@ -10,8 +10,8 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, SendOutcome, StopProgress,
-    TaskHost,
+    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentStep,
+    SendOutcome, StopProgress, TaskHost,
 };
 use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
@@ -26,10 +26,62 @@ pub(super) enum DispatchTarget<'a> {
         checkout: &'a Checkout<'a>,
         launch: bool,
     },
+    Archive {
+        frozen: &'a Binding,
+        checkout: &'a Checkout<'a>,
+    },
     Planner(&'a NoticeTarget),
 }
 
 impl Service {
+    pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
+        let Some(provider) = &self.project.acp_provider else {
+            return Ok(Action::Nothing);
+        };
+        let id = &row.task.identity().id;
+        if self.state.lock().await.store.archive_confirmed(id)? {
+            return Ok(Action::Nothing);
+        }
+        let worktrees = self.worktrees()?;
+        let checkout = worktrees.checkout(&self.project.checkout, &self.project.repository, id)?;
+        let scope = self.binding(&checkout)?;
+        let retained: Vec<_> = [Role::Worker, Role::Reviewer]
+            .into_iter()
+            .filter_map(|role| row.task.threads().get(role))
+            .collect();
+        let archive = self
+            .host
+            .prepare_parent_archive(&scope, provider, &retained)
+            .await?;
+        let _fence = self.effect(row).await?;
+        match archive {
+            ArchiveStep::Finished => {
+                let mut state = self.state.lock().await;
+                self.commit(&mut state, row, &row.task, &event("role_threads_archived"))?;
+                Ok(Action::Nothing)
+            }
+            ArchiveStep::Wait => Ok(Action::Wait(WaitReason::Stopping)),
+            ArchiveStep::Write(write) => {
+                if self
+                    .dispatch_gate(
+                        &row.task,
+                        DispatchTarget::Archive {
+                            frozen: write.binding(),
+                            checkout: &checkout,
+                        },
+                    )
+                    .await?
+                    .is_none()
+                {
+                    return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
+                }
+                self.host.write_parent(write).await?;
+                self.recheck_effect(row, WaitReason::Stopping).await;
+                Ok(Action::Wait(WaitReason::Stopping))
+            }
+        }
+    }
+
     pub(super) async fn advance(
         &self,
         row: &TaskRow,
@@ -158,6 +210,12 @@ impl Service {
                 until: UNIX_EPOCH + std::time::Duration::from_millis(deadline),
             });
         }
+        let required = self
+            .state
+            .lock()
+            .await
+            .settings
+            .fixture_checks(&self.project);
         let branches = Branches::new(
             &self.project.repository,
             &self.project.base,
@@ -174,6 +232,7 @@ impl Service {
         };
         match target {
             Some(target) => {
+                let target = target.with_required_checks(required);
                 let forge = capture_forge(self, self.forge.observe(&target).await)?;
                 Ok((forge, Some(target)))
             }
@@ -252,8 +311,46 @@ impl Service {
             &self.report_command,
             &ticket_path,
         );
+        let binding = self.binding(checkout)?;
+        let parent = if let Some(provider) = &self.project.acp_provider {
+            if !self.launch_capacity(&task.identity().id, false).await? {
+                return Ok(Action::Wait(WaitReason::Capacity));
+            }
+            match self
+                .host
+                .prepare_parent(&binding, provider, &task.identity().reference)
+                .await?
+            {
+                ParentStep::Live(parent) => Some(parent),
+                ParentStep::Wait => return Ok(Action::Wait(WaitReason::Starting)),
+                ParentStep::Write(write) => {
+                    self.ensure_parent_reader(&task.identity().id, checkout.path())
+                        .await?;
+                    if self
+                        .dispatch_gate(
+                            task,
+                            DispatchTarget::Run {
+                                frozen: write.binding(),
+                                checkout,
+                                launch: false,
+                            },
+                        )
+                        .await?
+                        .is_none()
+                    {
+                        return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
+                    }
+                    self.host.write_parent(write).await?;
+                    self.recheck_effect(row, WaitReason::HostUnknown).await;
+                    return Ok(Action::Wait(WaitReason::Starting));
+                }
+            }
+        } else {
+            None
+        };
         let inputs = host.prepare_launch(LaunchRequest {
-            binding: self.binding(checkout)?,
+            binding,
+            parent,
             title: format!("{} • {role:?}", task.identity().reference),
             profile: self.project.profile(role),
             via: &via,
@@ -300,7 +397,7 @@ impl Service {
         ) {
             return self.apply(row, &observation, action).await;
         }
-        if !self.launch_capacity(&task.identity().id).await? {
+        if !self.launch_capacity(&task.identity().id, false).await? {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
         let Some((sent, result, _)) = self.send(row, checkout, host).await? else {
@@ -367,7 +464,10 @@ impl Service {
         match &target {
             DispatchTarget::Run {
                 frozen, checkout, ..
-            } if **frozen != self.binding(checkout)? => {
+            }
+            | DispatchTarget::Archive { frozen, checkout }
+                if **frozen != self.binding(checkout)? =>
+            {
                 return Err(HostError::Binding.into());
             }
             DispatchTarget::Planner(target) if target.project_id != self.project.host_project => {
@@ -377,6 +477,15 @@ impl Service {
         }
         self.check_project().await?;
         match target {
+            DispatchTarget::Archive { checkout, .. } => {
+                if task.phase() != Phase::Done {
+                    return Err(HostError::Binding.into());
+                }
+                // Closeout can have already retired the clean checkout. Still
+                // verify its derived destination and pinned worktree root.
+                checkout.observe()?;
+                Ok(Some(false))
+            }
             DispatchTarget::Run {
                 checkout, launch, ..
             } => {
@@ -449,7 +558,7 @@ impl Service {
                 if replay_policy(head, &observation).is_none() {
                     return Ok(stopping);
                 }
-                if !self.launch_capacity(&task.identity().id).await? {
+                if !self.launch_capacity(&task.identity().id, true).await? {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
                 let Some((sent, outcome, archive)) = self.send(row, checkout, host).await? else {
@@ -504,9 +613,17 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
         let task = &row.task;
+        let required = {
+            let state = self.state.lock().await;
+            if state.settings.fixture_slots(&self.project).is_none() {
+                return Ok(Action::Wait(WaitReason::Capacity));
+            }
+            state.settings.fixture_checks(&self.project)
+        };
+        let target = target.clone().with_required_checks(required);
         let attempt = self
             .forge
-            .merge(task, target)
+            .merge(task, &target)
             .await
             .inspect_err(|error| record_forge_failure(self, error))?;
         if let MergeWrite::Deferred { until } = attempt.write {
@@ -1015,9 +1132,13 @@ mod tests {
                 .create(&task, &event("fixture"))
                 .expect("seed");
             let row = service.task("reviewer").await.expect("revoked row");
-            let result = service
-                .stop_run(&row, &checkout, observation, &service.host.fixture_pass())
-                .await;
+            let result = Box::pin(service.stop_run(
+                &row,
+                &checkout,
+                observation,
+                &service.host.fixture_pass(),
+            ))
+            .await;
             if retargeted {
                 assert!(matches!(
                     result,
@@ -1046,6 +1167,7 @@ mod tests {
         let (task, _, observation) = reservation("reviewer", Entry::ReviewEntry, head);
         let launch = task.run().expect("run").launch();
         let inputs = RunRequest {
+            parent: None,
             binding: service.binding(checkout).expect("binding"),
             dispatch: Dispatch::Create {
                 title: "Review fixture".into(),
@@ -1182,7 +1304,10 @@ mod tests {
         assert_eq!(service.forge_retry_secs.load(Ordering::Relaxed), 30);
         let state = service.state.lock().await;
         for id in ["first", "second"] {
-            assert_eq!(state.waits.get(id), Some(&WaitReason::ForgeUnknown));
+            assert_eq!(
+                state.waits.get(id).map(|(reason, _)| *reason),
+                Some(WaitReason::ForgeUnknown)
+            );
             assert!(
                 state
                     .schedule
@@ -1328,7 +1453,7 @@ mod tests {
                 .await
                 .expect("fixture version");
             let result = if revoked {
-                service.stop_run(&row, &checkout, cached, &host).await
+                Box::pin(service.stop_run(&row, &checkout, cached, &host)).await
             } else {
                 service.send_prepared(&row, &checkout, cached, &host).await
             };

@@ -26,6 +26,102 @@ const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
 #[tokio::test]
+async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    for id in ["task-one", "task-two"] {
+        let (task, _, _) = reservation(id, Entry::Brief, &service.project.start);
+        seed_task(&service, &task).await;
+    }
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: PLANNER_KEY,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    let path = "/v1/tasks/task-one/acp";
+    let mint = json_body(post_as(&api, path, &PLANNER_KEY, &json!({})).await).await;
+    assert!(mint["credential"].is_null());
+    let file = std::path::Path::new(mint["bindingPath"].as_str().expect("binding path"));
+    let binding: nucleus_core::acp::Binding =
+        serde_json::from_slice(&std::fs::read(file).expect("pointer")).expect("binding");
+    assert_eq!(
+        binding.session_id,
+        mint["sessionId"].as_str().expect("session ID")
+    );
+    assert_eq!(binding.task_id, "task-one");
+    let key = &binding.credential;
+    let writer = binding.command_credential.as_ref().expect("command key");
+    for path in ["/v1/tasks/task-two", "/v1/events", "/v1/settings"] {
+        assert_eq!(
+            get_as(&api, path, key).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        post_json(&api, path, key, &json!({})).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get_as(&api, "/v1/tasks/task-one", key).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_json(
+            &api,
+            "/v1/tasks/task-two/commands",
+            writer,
+            &json!("cancel")
+        )
+        .await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        post_json(&api, "/v1/tasks/task-one/commands", key, &json!("cancel")).await,
+        StatusCode::UNAUTHORIZED,
+        "a read key cannot write"
+    );
+    let response = get_as(&api, "/v1/tasks/task-one/events", key).await;
+    let mut events = response.into_body().into_data_stream();
+    assert_event(&mut events, &["event: refresh"]).await;
+    assert_eq!(
+        post_json(
+            &api,
+            "/v1/tasks/task-two/commands",
+            &PLANNER_KEY,
+            &json!("cancel")
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_json(
+            &api,
+            "/v1/tasks/task-one/commands",
+            writer,
+            &json!("cancel")
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_event(&mut events, &[r#""taskId":"task-one""#]).await;
+    let rotated = json_body(post_as(&api, path, &PLANNER_KEY, &json!({})).await).await;
+    assert_eq!(rotated["sessionId"], mint["sessionId"]);
+    assert_eq!(
+        get_as(&api, "/v1/tasks/task-one", key).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), events.next())
+            .await
+            .expect("stream closes")
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn admission_commits_when_t3_is_unreachable() {
     let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let service = Arc::new(service);
@@ -545,9 +641,15 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
         get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
     ))
     .await;
-    let (_home, service) = fixture(forge);
+    let (_home, mut service) = fixture(forge);
+    let (host, _, _, native) = planner_roster_fixture("planner", "spare-planner").await;
+    service.host = host;
     let head = service.project.start.clone();
     let exact = seed_review_work_question(&service, &head).await;
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("planner roster");
     let prior = service.task("reviewer").await.expect("seeded question");
     let service = Arc::new(service);
     let api = router(
@@ -558,20 +660,7 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     let path = "/v1/tasks/reviewer/commands";
     let answer = json!({"answer":{"work":"Use the fixture greeting"}});
     let amend = json!({"amend":"Use the fixture wording"});
-    let changed_forge = Observed::Known(Forge::Open {
-        pr: PullRequest {
-            url: PR.into(),
-            head: (if head.as_str().starts_with('a') {
-                "b"
-            } else {
-                "a"
-            })
-            .repeat(40)
-            .parse()
-            .expect("new head"),
-        },
-        checks: nucleus_core::CheckState::Ready,
-    });
+    let changed_forge = changed_open_head(&head);
     service
         .observe_commands(&prior, &changed_forge)
         .await
@@ -640,7 +729,25 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
             .ends_with("Use the fixture greeting")
     );
     assert!(answered.task.question().is_none());
+    native.abort();
     server.abort();
+}
+
+fn changed_open_head(head: &nucleus_core::Head) -> Observed<Forge> {
+    Observed::Known(Forge::Open {
+        pr: PullRequest {
+            url: PR.into(),
+            head: (if head.as_str().starts_with('a') {
+                "b"
+            } else {
+                "a"
+            })
+            .repeat(40)
+            .parse()
+            .expect("new head"),
+        },
+        checks: nucleus_core::CheckState::Ready,
+    })
 }
 
 async fn seed_review_work_question(
@@ -706,7 +813,9 @@ async fn serve_merged_forge(
 
 #[tokio::test]
 async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (host, replaced, reads, native) = planner_roster_fixture("origin", "responsible").await;
+    service.host = host;
     let (reserved, _, _) = reservation("worker", Entry::Brief, &service.project.start);
     let mut identity = reserved.identity().clone();
     identity.origin_thread = Some("origin".into());
@@ -749,8 +858,9 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
         .observe_commands(&row, &forge)
         .await
         .expect("exact merged observation");
+    let service = Arc::new(service);
     let api = router(
-        Arc::new(service),
+        Arc::clone(&service),
         [
             Controller {
                 credential: PLANNER_KEY,
@@ -769,6 +879,18 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
     let next_path = "/v1/tasks/worker/next";
     let command_path = "/v1/tasks/worker/commands";
     let answer = json!({"answer":{"accept":{"head":head, "reason":"Accepted the observed merge"}}});
+    let cold = json_body(get_as(&api, next_path, &BOUND_KEY).await).await;
+    expect_command(&cold, "answer", None, "unavailable");
+    assert_eq!(
+        post_json(&api, command_path, &BOUND_KEY, &answer).await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    replaced.store(true, Ordering::Relaxed);
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("published replacement");
     let origin = json_body(get_as(&api, next_path, &PLANNER_KEY).await).await;
     expect_command(&origin, "answer", None, "unavailable");
     assert_eq!(
@@ -781,6 +903,8 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
         post_json(&api, command_path, &BOUND_KEY, &answer).await,
         StatusCode::OK
     );
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    native.abort();
 }
 
 #[tokio::test]
@@ -929,4 +1053,717 @@ async fn post_as(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> Re
         )
         .await
         .expect("response")
+}
+
+#[tokio::test]
+async fn an_acp_planner_command_is_refused_after_handover() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    let (host, replaced, reads, native) =
+        planner_roster_fixture("old-planner", "new-planner").await;
+    service.host = host;
+    seed_task(
+        &service,
+        &Task::new(
+            Identity {
+                id: "handover".into(),
+                reference: "handover".into(),
+                repository: REPOSITORY.into(),
+                base: "main".into(),
+                entry: Entry::Brief,
+                origin_thread: Some("old-planner".into()),
+            },
+            "Synthetic brief".into(),
+            None,
+        ),
+    )
+    .await;
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [
+            planner_controller(PLANNER_KEY, "old-planner"),
+            planner_controller(BOUND_KEY, "new-planner"),
+        ],
+    );
+    let binding = mint_binding(&api, "handover", &PLANNER_KEY).await;
+    let writer = binding.command_credential.expect("scope writer");
+    let path = "/v1/tasks/handover/commands";
+    let hold = json!({"hold":"Keep the first plan"});
+    let cold = post_as(&api, path, &writer, &hold).await;
+    assert_eq!(cold.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        json_body(cold).await["error"],
+        "planner authority is not yet known. Retry shortly."
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("first roster");
+
+    let fence = service.fence("handover").await;
+    let busy = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        post_json(&api, path, &writer, &hold),
+    )
+    .await
+    .expect("an effect cannot block the command");
+    assert_eq!(busy, StatusCode::CONFLICT);
+    drop(fence);
+    assert_eq!(post_json(&api, path, &writer, &hold).await, StatusCode::OK);
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+
+    replaced.store(true, Ordering::Relaxed);
+    service
+        .state
+        .lock()
+        .await
+        .planner_thread_closed("old-planner");
+    let release = json!("release");
+    assert_eq!(
+        post_json(&api, path, &writer, &release).await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("handover roster");
+    assert_eq!(
+        post_json(&api, path, &writer, &release).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
+    let row = service.task("handover").await.expect("task");
+    assert_eq!(row.version, 2);
+    assert!(row.task.hold().is_some());
+
+    let new_api = router(service, [planner_controller(BOUND_KEY, "new-planner")]);
+    assert_eq!(
+        get_as(&new_api, "/v1/tasks/handover", &binding.credential)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_json(&new_api, path, &writer, &release).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let new_binding = mint_binding(&new_api, "handover", &BOUND_KEY).await;
+    let new_writer = new_binding.command_credential.expect("new scope writer");
+    assert_eq!(
+        post_json(&new_api, path, &new_writer, &release).await,
+        StatusCode::OK
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
+    native.abort();
+}
+
+async fn planner_roster_fixture(
+    old: &'static str,
+    new: &'static str,
+) -> (
+    nucleus_hosts::T3,
+    Arc<AtomicBool>,
+    Arc<AtomicUsize>,
+    tokio::task::JoinHandle<()>,
+) {
+    let replaced = Arc::new(AtomicBool::new(false));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let changed = Arc::clone(&replaced);
+    let calls = Arc::clone(&reads);
+    let (host, native) = crate::tests::native_fixture(move |request| {
+        assert_eq!(request["tag"], "orchestration.subscribeShell");
+        calls.fetch_add(1, Ordering::Relaxed);
+        json!({"_tag":"Chunk","requestId":request["id"],"values":[
+            {"kind":"snapshot","snapshot":{"threads":[
+                {"id":old,"projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z",
+                    "archivedAt":changed.load(Ordering::Relaxed).then_some("2026-11-23T18:10:00Z")},
+                {"id":new,"projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z"}
+            ]}},
+            {"kind":"synchronized"}
+        ]})
+    })
+    .await;
+    (host, replaced, reads, native)
+}
+
+async fn mint_binding(api: &Router, task: &str, key: &[u8; 32]) -> nucleus_core::acp::Binding {
+    let mint = post_as(api, &format!("/v1/tasks/{task}/acp"), key, &json!({})).await;
+    assert_eq!(mint.status(), StatusCode::OK);
+    let mint = json_body(mint).await;
+    let file = std::path::Path::new(mint["bindingPath"].as_str().expect("binding path"));
+    serde_json::from_slice(&std::fs::read(file).expect("binding file")).expect("binding shape")
+}
+
+#[tokio::test]
+async fn done_permanently_revokes_the_writer_and_keeps_read_access() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let head = service.project.start.clone();
+    seed_held_acceptance(&service, &head).await;
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    let binding = mint_binding(&api, "reviewer", &BOARD_KEY).await;
+    let writer = binding.command_credential.expect("writer");
+    let commands = "/v1/tasks/reviewer/commands";
+    let task = service.task("reviewer").await.expect("reviewer");
+    let forge = Observed::Known(Forge::Merged {
+        pr: task.task.pull_request().expect("PR").clone(),
+        commit: head.clone(),
+    });
+    service
+        .observe_commands(&task, &forge)
+        .await
+        .expect("merge observation");
+    assert_eq!(
+        post_json(
+            &api,
+            commands,
+            &BOARD_KEY,
+            &json!({"answer":{"accept":{"head":head,"reason":"fixture acceptance"}}})
+        )
+        .await,
+        StatusCode::OK
+    );
+    let task = service.task("reviewer").await.expect("accepted revision");
+    service
+        .observe_commands(&task, &forge)
+        .await
+        .expect("exact merge at accepted revision");
+    assert_eq!(
+        post_json(&api, commands, &BOARD_KEY, &json!({"move":"done"})).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_json(&api, commands, &writer, &json!("release")).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let detail = json_body(get_as(&api, "/v1/tasks/reviewer", &binding.credential).await).await;
+    assert_eq!(detail["phase"], "done");
+    assert_eq!(
+        post_json(&api, commands, &BOARD_KEY, &json!({"move":"queued"})).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_json(&api, commands, &writer, &json!("release")).await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn later_history_never_reopens_a_confirmed_native_archive() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    let (host, native) = crate::tests::native_fixture(|_| {
+        panic!("an archived task must not read T3 again");
+    })
+    .await;
+    service.host = host;
+    service.project.acp_provider = Some("fixture-acp".into());
+    let (mut row, _) = fixture_at_done(&service).await;
+    assert_eq!(row.task.phase(), Phase::Done);
+    {
+        let mut state = service.state.lock().await;
+        assert_eq!(
+            state
+                .store
+                .archive_due_ids(None, 8)
+                .expect("pending archive"),
+            ["reviewer"]
+        );
+        for kind in ["role_threads_archived", "display_note"] {
+            row.version = state
+                .store
+                .save_row(&row, &row.task, &event(kind))
+                .expect("append history");
+        }
+        assert!(
+            state
+                .store
+                .archive_due_ids(None, 8)
+                .expect("restart scan")
+                .is_empty()
+        );
+        assert!(
+            state
+                .store
+                .archive_confirmed("reviewer")
+                .expect("existing receipt")
+        );
+    }
+    // Consume the already queued Done wake as well as excluding it on restart.
+    let outcomes = service.pass().await.expect("queued pass");
+    assert_eq!(outcomes.len(), 1);
+    assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
+    native.abort();
+}
+
+async fn fixture_at_done(service: &Service) -> (nucleus_store::TaskRow, Observed<Forge>) {
+    let head = service.project.start.clone();
+    seed_held_acceptance(service, &head).await;
+    let actor = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let first = service.task("reviewer").await.expect("seeded task");
+    let forge = Observed::Known(Forge::Merged {
+        pr: first.task.pull_request().expect("bound PR").clone(),
+        commit: head.clone(),
+    });
+    for command in [
+        Command::Answer(Answer::Accept {
+            head,
+            reason: "Fixture acceptance".into(),
+        }),
+        Command::Move(Phase::Done),
+    ] {
+        let row = service.task("reviewer").await.expect("current row");
+        service
+            .observe_commands(&row, &forge)
+            .await
+            .expect("merge observation");
+        assert!(matches!(
+            service
+                .command("reviewer", &actor, command)
+                .await
+                .expect("applied command"),
+            CommandOutcome::Applied(_)
+        ));
+    }
+    (service.task("reviewer").await.expect("done task"), forge)
+}
+
+#[tokio::test]
+async fn settings_save_is_local_validated_and_wakes_capacity() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let now = tokio::time::Instant::now();
+    {
+        let mut state = service.state.lock().await;
+        state.set_wait("awaiting-slot", Some(nucleus_core::WaitReason::Capacity));
+        state.schedule.wake(
+            "awaiting-slot",
+            now + std::time::Duration::from_mins(1),
+            crate::schedule::Priority::Refresh,
+        );
+    }
+    let path = "/v1/settings/dispatch";
+    let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    let mut update = json!({"revision": original["revision"], "value": original["value"]});
+    update["value"]["slots"] = json!(0);
+    assert_eq!(
+        put_settings(&api, path, &BOARD_KEY, &update).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        json_body(get_as(&api, path, &BOARD_KEY).await).await,
+        original
+    );
+    update["value"]["slots"] = json!(3);
+    assert_eq!(
+        put_settings(&api, path, &PLANNER_KEY, &update)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let saved = json_body(put_settings(&api, path, &BOARD_KEY, &update).await).await;
+    assert_eq!(saved["value"]["slots"], 3);
+    assert_ne!(saved["revision"], original["revision"]);
+    assert_eq!(
+        put_settings(&api, path, &BOARD_KEY, &update).await.status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(json_body(get_as(&api, path, &BOARD_KEY).await).await, saved);
+    let state = service.state.lock().await;
+    assert_eq!(
+        state
+            .settings
+            .dispatch
+            .as_ref()
+            .expect("published dispatch")
+            .slots,
+        3
+    );
+    assert!(
+        state.schedule.due("awaiting-slot").expect("capacity wake") <= tokio::time::Instant::now()
+    );
+}
+
+#[tokio::test]
+async fn reassign_commits_once_and_invalidates_planner_at_publication() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    let (host, _, reads, native) = planner_roster_fixture("planner-one", "planner-two").await;
+    service.host = host;
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let path = "/v1/settings/projects";
+    let starting = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    let update = json!({
+        "revision": starting["settings"]["revision"],
+        "value": {"projects": {
+            "alpha": {"name": "Alpha", "slots": 4, "repositories": [{
+                "origin": REPOSITORY, "path": service.project.checkout, "base": service.project.base,
+                "requiredChecks": ["CI"]
+            }]},
+            "beta": {"name": "Beta", "slots": 2},
+        }},
+    });
+    let initial_epoch = service.state.lock().await.planner_authority_epoch;
+    let planner_wake = service.planner_wake.notified();
+    let saved = json_body(put_settings(&api, path, &BOARD_KEY, &update).await).await;
+    tokio::time::timeout(std::time::Duration::from_secs(1), planner_wake)
+        .await
+        .expect("settings requests a local scheduler refresh");
+    assert_eq!(
+        saved["resolvedPlanners"],
+        json!({"alpha": null, "beta": null})
+    );
+    assert_eq!(
+        saved["settings"]["value"]["projects"]["alpha"]["repositories"][0]["hungToolMinutes"],
+        30
+    );
+
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        0,
+        "the save made no host request"
+    );
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("scheduler publishes authority");
+    let resolved = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(resolved["resolvedPlanners"]["alpha"], "planner-one");
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        1,
+        "the read used cached authority"
+    );
+
+    let reassign = json!({
+        "revision": saved["settings"]["revision"], "origin": REPOSITORY, "toProject": "beta",
+    });
+    let moved = json_body(
+        post_as(
+            &api,
+            "/v1/settings/projects/reassign",
+            &BOARD_KEY,
+            &reassign,
+        )
+        .await,
+    )
+    .await;
+    let projects = &moved["settings"]["value"]["projects"];
+    assert_eq!(projects["alpha"]["repositories"], json!([]));
+    assert_eq!(
+        projects["beta"]["repositories"][0]["requiredChecks"],
+        json!(["CI"])
+    );
+    assert_eq!(
+        post_as(
+            &api,
+            "/v1/settings/projects/reassign",
+            &BOARD_KEY,
+            &reassign
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let state = service.state.lock().await;
+    assert_eq!(state.planner_authority_epoch, initial_epoch + 2);
+    assert!(state.planner_authority.is_none());
+    assert_eq!(state.settings.fixture_slots(&service.project), Some(2));
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        1,
+        "reassignment made no host request"
+    );
+    native.abort();
+}
+
+#[tokio::test]
+async fn host_settings_reject_embedded_credentials_and_stage_the_endpoint() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let path = "/v1/settings/hosts";
+    let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    let mut update = json!({
+        "revision": original["settings"]["revision"],
+        "value": {"t3": {"endpoint": "http://user:fixture-password@localhost:8000", "credentialRef": "T3_TEST_BEARER"}}
+    });
+    let failed = put_settings(&api, path, &BOARD_KEY, &update).await;
+    assert_eq!(failed.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        !json_body(failed)
+            .await
+            .to_string()
+            .contains("fixture-password")
+    );
+    update["value"]["t3"]["endpoint"] = json!("http://localhost:8000");
+    update["value"]["t3"]["bearer"] = json!("fixture-not-a-reference");
+    assert_eq!(
+        put_settings(&api, path, &BOARD_KEY, &update).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    update["value"]["t3"]
+        .as_object_mut()
+        .expect("T3 config")
+        .remove("bearer");
+    let after = json_body(put_settings(&api, path, &BOARD_KEY, &update).await).await;
+    assert_eq!(
+        after["settings"]["value"]["t3"]["endpoint"],
+        "http://localhost:8000/"
+    );
+    assert_eq!(after["active"], original["active"]);
+}
+
+fn settings_api(service: &Arc<Service>) -> Router {
+    router(
+        Arc::clone(service),
+        [
+            Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "fixture-operator".into(),
+                },
+            },
+            Controller {
+                credential: PLANNER_KEY,
+                authority: Authority::Planner {
+                    actor: "fixture-planner".into(),
+                },
+            },
+        ],
+    )
+}
+
+async fn put_settings(api: &Router, path: &str, key: &[u8; 32], input: &Value) -> Response {
+    api.clone()
+        .oneshot(
+            Request::put(path)
+                .header(HOST, LOCAL_HOST)
+                .header(AUTHORIZATION, format!("Bearer {}", hex::encode(key)))
+                .header("content-type", "application/json")
+                .body(Body::from(input.to_string()))
+                .expect("settings request"),
+        )
+        .await
+        .expect("settings response")
+}
+
+#[tokio::test]
+async fn a_reopened_task_archives_its_new_child_after_the_next_done() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    service.project.acp_provider = Some("fixture-acp".into());
+    let (mut first, merged) = fixture_at_done(&service).await;
+    {
+        let mut state = service.state.lock().await;
+        first.version = state
+            .store
+            .save_row(&first, &first.task, &event("role_threads_archived"))
+            .expect("first receipt");
+        assert!(
+            state
+                .store
+                .archive_confirmed("reviewer")
+                .expect("first Done is archived")
+        );
+    }
+    let second = reopen_and_finish_review(&service, &first, &merged).await;
+    {
+        let state = service.state.lock().await;
+        assert!(
+            !state
+                .store
+                .archive_confirmed("reviewer")
+                .expect("awaits new receipt")
+        );
+        assert_eq!(
+            state
+                .store
+                .archive_due_ids(None, 10)
+                .expect("restart archive scan"),
+            ["reviewer"]
+        );
+    }
+    let child = second
+        .task
+        .threads()
+        .get(nucleus_core::Role::Reviewer)
+        .expect("new child");
+    let (host, parent, archived, native) = archive_roster_fixture(&service, child).await;
+    service.host = host;
+    for _ in 0..2 {
+        assert!(matches!(
+            service.archive_done(&second).await.expect("archive effect"),
+            Action::Wait(WaitReason::Stopping)
+        ));
+    }
+    assert!(matches!(
+        service
+            .archive_done(&second)
+            .await
+            .expect("archive readback"),
+        Action::Nothing
+    ));
+    assert_eq!(
+        *archived.lock().expect("archive writes"),
+        [child, parent.as_str()]
+    );
+    let state = service.state.lock().await;
+    assert!(
+        state
+            .store
+            .archive_confirmed("reviewer")
+            .expect("new Done is archived")
+    );
+    assert!(
+        state
+            .store
+            .archive_due_ids(None, 10)
+            .expect("post-close restart")
+            .is_empty()
+    );
+    native.abort();
+}
+
+async fn reopen_and_finish_review(
+    service: &Service,
+    done: &nucleus_store::TaskRow,
+    merged: &Observed<Forge>,
+) -> nucleus_store::TaskRow {
+    let head = service.project.start.clone();
+    let role = nucleus_core::Role::Reviewer;
+    let old_thread = done.task.threads().get(role).expect("prior review");
+    let mut observation = Observation {
+        forge: Observed::Known(Forge::Open {
+            pr: done.task.pull_request().expect("PR").clone(),
+            checks: CheckState::Ready,
+        }),
+        host: Observed::Known(Host::Retained {
+            thread: old_thread.into(),
+            state: RetainedThread::Gone,
+        }),
+        workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
+    };
+    let mut task = done.task.clone();
+    let actor = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    task.command(Command::Move(Phase::Reviewing), &actor, &observation)
+        .expect("reopen");
+    task.command(Command::Release, &actor, &observation)
+        .expect("release hold");
+    let reopened = service
+        .save(done, task.clone(), &event("command"))
+        .await
+        .expect("reopened task");
+    let instance = task.next_launch_instance().expect("new launch");
+    let credential = task
+        .reserve_launch(
+            &observation,
+            LaunchInputs {
+                thread: format!("thread:delegated-task:{instance}"),
+                started_at: 2,
+                input: "fixture-only wire".into(),
+            },
+            &[4; 32],
+        )
+        .expect("reserve new child");
+    task.record_send(&instance, 3).expect("send marker");
+    task.record_report(
+        &instance,
+        credential.as_bytes(),
+        Report::Review {
+            head,
+            decision: Review::Approve,
+            summary: "Synthetic review of the reopened task".into(),
+        },
+    )
+    .expect("new review report");
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Merging)
+    );
+    observation.forge = merged.clone();
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Closing)
+    );
+    observation.workspace = Observed::Known(nucleus_core::Workspace::Absent);
+    assert!(task.finish_close(&observation));
+    service
+        .save(&reopened, task, &event("closed_checkout_absent"))
+        .await
+        .expect("second Done")
+}
+
+async fn archive_roster_fixture(
+    service: &Service,
+    new_child: &str,
+) -> (
+    T3,
+    String,
+    Arc<std::sync::Mutex<Vec<String>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let worktrees = service.worktrees().expect("worktree scope");
+    let checkout = worktrees
+        .checkout(
+            &service.project.checkout,
+            &service.project.repository,
+            "reviewer",
+        )
+        .expect("reviewer path");
+    let parent_id = nucleus_hosts::parent_thread(checkout.path());
+    let parent = parent_id.clone();
+    let path = checkout.path().to_owned();
+    let branch = checkout.branch().to_owned();
+    let project_root = service.project.checkout.clone();
+    let child = new_child.to_owned();
+    let archived = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let writes = Arc::clone(&archived);
+    let (host, native) = crate::tests::native_fixture(move |request| {
+        if request["tag"] == "orchestration.dispatchCommand" {
+            let payload = &request["payload"];
+            assert_eq!(payload["type"], "thread.archive");
+            let target = payload["threadId"].as_str().expect("archive destination");
+            writes.lock().expect("archive log").push(target.into());
+            return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{}}});
+        }
+        let mut snapshot = json!({"kind":"snapshot","snapshotSequence":16});
+        match request["tag"].as_str() {
+            Some("orchestration.subscribeShell") => snapshot["snapshot"] = json!({"projects":[{"id":"local-fixture","workspaceRoot":project_root}]}),
+            Some("orchestration.subscribeThread") => {
+                let id = request["payload"]["threadId"].as_str().expect("thread ID");
+                let is_parent = id == parent;
+                let archived = writes.lock().expect("archive log").iter().any(|value| value == id);
+                snapshot["projection"] = json!({
+                    "thread":{"id":id,"projectId":"local-fixture","worktreePath":path,"branch":branch,
+                        "parentThreadId":(!is_parent).then_some(&parent),
+                        "providerInstanceId":"fixture-acp","modelSelection":{"instanceId":"fixture-acp","model":"nucleus"},
+                        "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z"),
+                        "archivedAt":archived.then_some("2026-11-23T16:10:00Z")},
+                    "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],
+                    "subagents":[{"id":"new-child","childThreadId":child,"origin":"app_owned"}]
+                });
+            }
+            _ => panic!("unexpected archive read"),
+        }
+        json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
+    }).await;
+    (host, parent_id, archived, native)
 }

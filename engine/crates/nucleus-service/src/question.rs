@@ -1,15 +1,89 @@
-use std::{cmp::Reverse, path::Path};
+use std::{cmp::Reverse, collections::BTreeSet, path::Path, time::Duration};
 
 use nucleus_core::{Action, Question, Task, WaitReason};
-use nucleus_hosts::{HostError, NoticeSend, NoticeState, T3};
+use nucleus_hosts::{
+    HostError, NoticeHost, NoticeSend, NoticeState, NoticeWrite, PlannerThread, T3, T3_RETRY_DELAY,
+};
 use nucleus_store::{TaskRow, ThreadProvenance};
+use tokio::time::Instant;
 
 use crate::pass::DispatchTarget;
-use crate::{RegisteredRole, Service, ServiceError, event, project::linked_checkout};
+use crate::{RegisteredRole, Service, ServiceError, State, event, project::linked_checkout};
+
+const PLANNER_REFRESH: Duration = Duration::from_secs(45);
+
+pub(super) struct PlannerAuthority {
+    live: BTreeSet<String>,
+    fallback: Option<String>,
+    expires: Instant,
+}
+
+impl PlannerAuthority {
+    pub(crate) fn resolved(&self) -> Option<&str> {
+        (Instant::now() < self.expires).then_some(())?;
+        self.fallback.as_deref()
+    }
+}
+
+struct PlannerCandidates {
+    live: BTreeSet<String>,
+    ranked: Vec<(u8, Reverse<String>, PlannerThread)>,
+}
+
+impl State {
+    pub(super) fn invalidate_planner_authority(&mut self) {
+        self.planner_authority_epoch += 1;
+        self.planner_authority = None;
+    }
+
+    pub(super) fn planner_thread_closed(&mut self, thread: &str) {
+        // An inventory read that started before the closure cannot publish it.
+        self.planner_authority_epoch += 1;
+        if self
+            .planner_authority
+            .as_ref()
+            .is_some_and(|authority| authority.live.contains(thread))
+        {
+            self.planner_authority = None;
+        }
+    }
+
+    pub(super) fn check_planner_authority(
+        &self,
+        task: &Task,
+        actor: &str,
+    ) -> Result<(), ServiceError> {
+        let authority = self
+            .planner_authority
+            .as_ref()
+            .filter(|authority| Instant::now() < authority.expires)
+            .ok_or(ServiceError::PlannerAuthorityUnknown)?;
+        let planner = task
+            .identity()
+            .origin_thread
+            .as_deref()
+            .filter(|origin| authority.live.contains(*origin))
+            .or(authority.fallback.as_deref());
+        if planner != Some(actor) {
+            return Err(ServiceError::PlannerAuthorityRefused);
+        }
+        Ok(())
+    }
+}
 
 impl Service {
     pub(super) async fn notify_question(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let wait = Action::Wait(WaitReason::Question);
+        if self
+            .state
+            .lock()
+            .await
+            .settings
+            .fixture_slots(&self.project)
+            .is_none()
+        {
+            return Ok(wait);
+        }
         let bound = if let Some(delivery) = row.task.question_delivery() {
             match self.host.notice_state(delivery).await? {
                 NoticeState::Started => return Ok(wait),
@@ -38,7 +112,9 @@ impl Service {
             return Ok(wait);
         }
         if authorization.needs_unsettle() {
-            self.host.unsettle_notice(&authorization).await?;
+            self.host
+                .deliver_notice(NoticeWrite::Prepare(&authorization))
+                .await?;
             self.recheck_effect(row, WaitReason::Question).await;
             return Ok(wait);
         }
@@ -49,7 +125,12 @@ impl Service {
             return Err(ServiceError::Input);
         }
         let sent = self.save(row, updated, &event("question_delivery")).await?;
-        if self.host.send_notice(dispatch).await? == NoticeSend::Rejected {
+        if self
+            .host
+            .deliver_notice(NoticeWrite::Queue(dispatch))
+            .await?
+            == NoticeSend::Rejected
+        {
             let mut pending = sent.task.clone();
             if !pending.clear_question_delivery(&command) {
                 return Err(ServiceError::Input);
@@ -60,74 +141,155 @@ impl Service {
         Ok(wait)
     }
 
+    pub(super) async fn watch_planner_authority(&self) {
+        loop {
+            let delay = if self.refresh_planner_authority().await.is_ok() {
+                PLANNER_REFRESH
+            } else {
+                T3_RETRY_DELAY
+            };
+            tokio::select! {
+                () = tokio::time::sleep(delay) => {}
+                () = self.planner_wake.notified() => {}
+            }
+        }
+    }
+
+    pub(super) async fn refresh_planner_authority(&self) -> Result<(), ServiceError> {
+        let (epoch, enabled) = {
+            let state = self.state.lock().await;
+            (
+                state.planner_authority_epoch,
+                state.settings.fixture_slots(&self.project).is_some(),
+            )
+        };
+        if !enabled {
+            return Ok(());
+        }
+        let result = self.read_planner_authority().await;
+        let mut state = self.state.lock().await;
+        if state.planner_authority_epoch != epoch {
+            return Err(HostError::Uncertain.into());
+        }
+        state.settings.host = match &result {
+            Ok(_) => crate::web::CachedHost::Reachable,
+            Err(ServiceError::Host(
+                HostError::Deferred { .. } | HostError::Unavailable | HostError::Timeout,
+            )) => crate::web::CachedHost::Unavailable,
+            Err(_) => crate::web::CachedHost::Unknown,
+        };
+        state.planner_authority = None;
+        state.planner_authority = Some(result?);
+        Ok(())
+    }
+
+    async fn read_planner_authority(&self) -> Result<PlannerAuthority, ServiceError> {
+        let PlannerCandidates { live, ranked } = self.planner_candidates().await?;
+        let mut fallback = None;
+        for (rank, _, thread) in ranked {
+            if self.planner_workspace(rank, thread.worktree_path).await? {
+                fallback = Some(thread.id);
+                break;
+            }
+        }
+        Ok(PlannerAuthority {
+            live,
+            fallback,
+            expires: Instant::now() + PLANNER_REFRESH + T3_RETRY_DELAY,
+        })
+    }
+
     async fn responsible_planner(&self, task: &Task) -> Result<Option<String>, ServiceError> {
         if let Some(origin) = &task.identity().origin_thread
             && self.host.planner_routable(origin).await?
         {
             return Ok(Some(origin.clone()));
         }
-        // Titles carry no authority. Registered roles and task provenance set
-        // rank, with project membership as the last candidate source.
-        let threads = self.host.planner_threads().await?;
-        let ids: Vec<_> = threads.iter().map(|thread| thread.id.as_str()).collect();
-        let provenance = self
-            .state
-            .lock()
-            .await
-            .store
-            .routing_provenance(&self.project.repository, &ids)?;
-        let mut candidates: Vec<_> = threads
-            .into_iter()
-            .filter_map(|thread| {
-                if thread.archived_at.is_some()
-                    || thread.deleted_at.is_some()
-                    || provenance.get(&thread.id) == Some(&ThreadProvenance::TaskRole)
-                {
-                    return None;
-                }
-                let registered = self
-                    .project
-                    .agents
-                    .iter()
-                    .filter(|agent| agent.thread == thread.id)
-                    .map(|agent| match agent.role {
-                        RegisteredRole::Planner => 0,
-                        RegisteredRole::Agent => 1,
-                    })
-                    .min();
-                let rank = registered
-                    .or_else(|| {
-                        (provenance.get(&thread.id) == Some(&ThreadProvenance::Dispatcher))
-                            .then_some(2)
-                    })
-                    .or_else(|| (thread.project_id == self.project.host_project).then_some(3))?;
-                let interaction = match thread.latest_user_message_at {
-                    Some(last) => last.max(thread.updated_at),
-                    None => thread.updated_at,
-                };
-                Some((rank, Reverse(interaction), thread.id, thread.worktree_path))
-            })
-            .collect();
-        candidates.sort_unstable();
-        for (rank, _, id, worktree) in candidates {
-            if rank == 3
-                && let Some(worktree) = worktree
+        for (rank, _, thread) in self.planner_candidates().await?.ranked {
+            if self.planner_workspace(rank, thread.worktree_path).await?
+                && self.host.planner_routable(&thread.id).await?
             {
-                let project = self.project.checkout.clone();
-                let matching = tokio::task::spawn_blocking(move || {
-                    linked_checkout(&project, Path::new(&worktree))
-                })
-                .await
-                .map_err(|_| HostError::Uncertain)??;
-                if !matching {
-                    continue;
-                }
-            }
-            if self.host.planner_routable(&id).await? {
-                return Ok(Some(id));
+                return Ok(Some(thread.id));
             }
         }
         Ok(None)
+    }
+
+    async fn planner_candidates(&self) -> Result<PlannerCandidates, ServiceError> {
+        let threads = self.host.planner_threads().await?;
+        let ids: Vec<_> = threads.iter().map(|thread| thread.id.as_str()).collect();
+        let (provenance, use_fixture_registrations) = {
+            let state = self.state.lock().await;
+            (
+                state
+                    .store
+                    .routing_provenance(&self.project.repository, &ids)?,
+                !state.settings.uses_project_registry(),
+            )
+        };
+        let mut live = BTreeSet::new();
+        let mut ranked = Vec::new();
+        for thread in threads {
+            if thread.archived_at.is_some()
+                || thread.deleted_at.is_some()
+                || thread.parent_thread_id.is_some()
+                || self
+                    .project
+                    .acp_provider
+                    .as_ref()
+                    .is_some_and(|instance| thread.provider_instance_id.as_ref() == Some(instance))
+                || provenance.get(&thread.id) == Some(&ThreadProvenance::TaskRole)
+            {
+                continue;
+            }
+            // Titles carry no authority. Registered roles and task provenance set
+            // rank, with project membership as the last candidate source.
+            let registered = self
+                .project
+                .agents
+                .iter()
+                .filter(|agent| use_fixture_registrations && agent.thread == thread.id)
+                .map(|agent| match agent.role {
+                    RegisteredRole::Planner => 0,
+                    RegisteredRole::Agent => 1,
+                })
+                .min();
+            let rank = registered
+                .or_else(|| {
+                    (provenance.get(&thread.id) == Some(&ThreadProvenance::Dispatcher)).then_some(2)
+                })
+                .or_else(|| (thread.project_id == self.project.host_project).then_some(3));
+            if let Some(rank) = rank {
+                live.insert(thread.id.clone());
+                let interaction = thread.latest_user_message_at.clone().map_or_else(
+                    || thread.updated_at.clone(),
+                    |last| last.max(thread.updated_at.clone()),
+                );
+                ranked.push((rank, Reverse(interaction), thread));
+            }
+        }
+        ranked.sort_unstable_by(|left, right| {
+            (left.0, &left.1, &left.2.id).cmp(&(right.0, &right.1, &right.2.id))
+        });
+        Ok(PlannerCandidates { live, ranked })
+    }
+
+    async fn planner_workspace(
+        &self,
+        rank: u8,
+        worktree: Option<String>,
+    ) -> Result<bool, ServiceError> {
+        if rank == 3
+            && let Some(worktree) = worktree
+        {
+            let project = self.project.checkout.clone();
+            return Ok(tokio::task::spawn_blocking(move || {
+                linked_checkout(&project, Path::new(&worktree))
+            })
+            .await
+            .map_err(|_| HostError::Uncertain)??);
+        }
+        Ok(true)
     }
 }
 
@@ -220,10 +382,13 @@ mod tests {
             let (host, server) =
                 native_fixture(move |request| snapshot_reply(request, strongest, &checkout)).await;
             service.host = host;
+            service.project.acp_provider = Some("fixture-acp".into());
             service.project.agents = [
                 (strongest, RegisteredRole::Planner),
                 ("planner-other", RegisteredRole::Planner),
                 ("registered-agent", RegisteredRole::Agent),
+                ("task-session", RegisteredRole::Planner),
+                ("role-child", RegisteredRole::Planner),
             ]
             .into_iter()
             .map(|(thread, role)| crate::RegisteredAgent {
@@ -316,6 +481,7 @@ mod tests {
     async fn a_notice_cannot_send_or_unsettle_outside_the_fixture_project() {
         let (_home, mut service) =
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
+        service.project.acp_provider = Some("fixture-acp".into());
         let checkout = service.project.checkout.clone();
         let (host, server) =
             native_fixture(move |request| snapshot_reply(request, "outside", &checkout)).await;
@@ -366,7 +532,9 @@ mod tests {
                 "projects": [{"id":"local-fixture", "workspaceRoot": checkout}],
                 "threads": [
                 shell(strongest, "2026-11-02T00:00:00.000Z"),
-                shell("planner-other", "2026-11-01T00:00:00.000Z")
+                shell("planner-other", "2026-11-01T00:00:00.000Z"),
+                {"id":"task-session","projectId":"local-fixture","updatedAt":"2026-11-03T00:00:00.000Z","providerInstanceId":"fixture-acp"},
+                {"id":"role-child","projectId":"local-fixture","updatedAt":"2026-11-03T00:00:00.000Z","parentThreadId":"task-session"}
             ]}}),
             Some("orchestration.subscribeThread") => {
                 let id = req["payload"]["threadId"].as_str().expect("exact thread");

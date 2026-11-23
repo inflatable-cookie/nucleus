@@ -26,6 +26,9 @@ pub struct Project {
     pub host_project: String,
     pub worker: RoleProfile,
     pub reviewer: RoleProfile,
+    /// The local T3 ACP provider running the Rust session agent.
+    #[serde(default)]
+    pub acp_provider: Option<String>,
     #[serde(default)]
     pub launch_budget: LaunchBudget,
     #[serde(default)]
@@ -70,6 +73,7 @@ impl Project {
             || !self.launch_budget.max_load.is_finite()
             || self.launch_budget.max_load <= 0.0
             || self.host_project.is_empty()
+            || self.acp_provider.as_deref().is_some_and(str::is_empty)
             || !self.checkout.is_absolute()
             || self.checkout.canonicalize()? != self.checkout
             || !self.checkout.is_dir()

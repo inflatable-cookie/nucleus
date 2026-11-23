@@ -1,26 +1,48 @@
 //! The Rust engine's independent `SQLite` database.
 
 mod settings;
+mod settings_domains;
+mod usage;
 mod volume;
 
 use std::{collections::BTreeMap, time::Duration};
 
-use nucleus_core::Task;
+use nucleus_core::{Phase, Role, Task, profiles::RotationCounts};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, named_params,
     params,
 };
 use serde_json::{Value, json};
 
-pub use settings::{EngineSettings, EngineStorage, SettingsFile, StorageError};
+pub use settings::{
+    Backups, EngineSettings, EngineStorage, RetentionSettings, SettingsFile, SettingsSnapshot,
+    SettingsValue, StorageError, VerifiedBackup,
+};
+pub use settings_domains::{
+    DispatchSettings, Hosts, NamedProfile, Profiles, ProjectSettings, Projects, RepositorySettings,
+    T3Settings,
+};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 5;
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
+const CURRENT_ARCHIVE_RECEIPT: &str = "EXISTS (
+  SELECT 1 FROM events AS receipt
+  WHERE receipt.task_id = tasks.id AND receipt.kind = 'role_threads_archived'
+  AND receipt.sequence > COALESCE((
+    SELECT max(sequence) FROM events WHERE task_id = tasks.id AND kind = 'entered_done'
+  ), 0)
+)";
+const ACP_SESSIONS: &str = "CREATE TABLE acp_sessions (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+  reader BLOB NOT NULL CHECK (length(reader) = 32),
+  writer BLOB CHECK (length(writer) = 32),
+  controller BLOB NOT NULL CHECK (length(controller) = 32)
+) STRICT";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -32,6 +54,8 @@ pub enum StoreError {
     IdentityChanged,
     #[error("task changed since it was read")]
     StaleTask,
+    #[error("profile assignment requires a new frozen launch")]
+    NoProfileLaunch,
     #[error("could not encode task state")]
     Encode(#[from] serde_json::Error),
     #[error("engine database operation failed")]
@@ -55,6 +79,13 @@ pub struct Event {
 pub struct TaskRow {
     pub task: Task,
     pub version: i64,
+}
+
+/// Task-scoped credential digests. The database never holds raw ACP keys.
+pub struct AcpSession {
+    pub reader: [u8; 32],
+    pub writer: Option<[u8; 32]>,
+    pub controller: [u8; 32],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,16 +125,24 @@ impl Store {
             {
                 tx.execute_batch(include_str!("schema.sql"))?;
                 tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+                tx.execute(ACP_SESSIONS, [])?;
+                tx.execute_batch(usage::SCHEMA)?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
-            (APPLICATION_ID, 1 | 2) => {
+            (APPLICATION_ID, 1..=4) => {
                 if version == 1 {
                     tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
                     tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
                 }
-                tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+                if version < 3 {
+                    tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+                }
+                if version < 4 {
+                    tx.execute(ACP_SESSIONS, [])?;
+                }
+                tx.execute_batch(usage::SCHEMA)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -159,6 +198,32 @@ impl Store {
     /// Returns an error if row custody cannot be read.
     pub fn occupied_slots(&self, except: &str) -> Result<u32, StoreError> {
         Ok(self.connection.query_row("SELECT count(*) FROM tasks WHERE id <> ?1 AND json_extract(run, '$.last_send_at_ms') IS NOT NULL", [except], |row| row.get(0))?)
+    }
+
+    /// Read completed tasks whose native archive receipt is still absent.
+    /// # Errors
+    /// Returns an error if the pending archive page cannot be read.
+    pub fn archive_due_ids(
+        &self,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<String>, StoreError> {
+        let mut query = self.connection.prepare_cached(&format!(
+            "SELECT tasks.id FROM tasks WHERE tasks.id > ?1 AND phase = 'done' AND run IS NULL
+             AND NOT {CURRENT_ARCHIVE_RECEIPT} ORDER BY tasks.id LIMIT ?2",
+        ))?;
+        let rows = query.query_map(params![after.unwrap_or_default(), limit], |row| row.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Check the receipt from successful native archive readback.
+    /// # Errors
+    /// Returns an error if audit history cannot be read.
+    pub fn archive_confirmed(&self, id: &str) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            &format!("SELECT EXISTS (SELECT 1 FROM tasks WHERE id = ?1 AND phase = 'done' AND {CURRENT_ARCHIVE_RECEIPT})"),
+            [id], |row| row.get(0),
+        )?)
     }
 
     /// Read provenance only for threads in the current native inventory.
@@ -246,10 +311,49 @@ impl Store {
         task: &Task,
         event: &EventDraft,
     ) -> Result<i64, StoreError> {
+        self.save(expected, task, event, None)
+    }
+
+    /// Commit a newly frozen profiled launch and charge its subscription group.
+    /// The launch stays valid if the optional rotation history cannot be written.
+    ///
+    /// # Errors
+    /// Returns an error on a stale row, a task without a fresh profile reservation,
+    /// or failure to commit the task and its audit event.
+    pub fn save_profile_launch(
+        &mut self,
+        expected: &TaskRow,
+        task: &Task,
+        event: &EventDraft,
+        group: &str,
+    ) -> Result<i64, StoreError> {
+        self.save(expected, task, event, Some(group))
+    }
+
+    /// Read Spec 053 counts for one candidate from the local engine database.
+    /// `None` means the history could not be read and selection should use its
+    /// weights alone. An empty history returns zero counts.
+    #[must_use]
+    pub fn rotation_counts(
+        &self,
+        role: Role,
+        profile: &str,
+        group: &str,
+    ) -> Option<RotationCounts> {
+        usage::counts(&self.connection, role, profile, group).ok()
+    }
+
+    fn save(
+        &mut self,
+        expected: &TaskRow,
+        task: &Task,
+        event: &EventDraft,
+        group: Option<&str>,
+    ) -> Result<i64, StoreError> {
         if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
         }
-        let tx = self
+        let mut tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let row = load(&tx, &task.identity().id)?.ok_or(StoreError::StaleTask)?;
@@ -257,9 +361,75 @@ impl Store {
             return Err(StoreError::StaleTask);
         }
         persist(&tx, task, true)?;
+        if task.phase() == Phase::Done {
+            tx.execute(
+                "UPDATE acp_sessions SET writer = NULL WHERE task_id = ?1",
+                [&task.identity().id],
+            )?;
+            if row.task.phase() != Phase::Done {
+                append(
+                    &tx,
+                    &task.identity().id,
+                    &EventDraft {
+                        at: event.at,
+                        kind: "entered_done".into(),
+                        detail: String::new(),
+                    },
+                )?;
+            }
+        }
         append(&tx, &task.identity().id, event)?;
+        if let Some(group) = group {
+            let launch = task
+                .run()
+                .filter(|run| !run.revoked() && run.last_send_at_ms().is_none())
+                .filter(|_| row.task.run().is_none())
+                .map(nucleus_core::Run::launch)
+                .ok_or(StoreError::NoProfileLaunch)?;
+            let profile = launch.profile().ok_or(StoreError::NoProfileLaunch)?;
+            if let Ok(history) = tx.savepoint()
+                && usage::record(&history, launch, &profile.id, group, event.at).is_ok()
+            {
+                let _ = history.commit();
+            }
+        }
         tx.commit()?;
         Ok(row.version + 1)
+    }
+
+    /// Rotate the session credentials attached to an existing task.
+    ///
+    /// # Errors
+    /// Returns an error if the task is missing or the session cannot be saved.
+    pub fn bind_acp(&self, id: &str, session: &AcpSession) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO acp_sessions (task_id, reader, writer, controller)
+             VALUES (?1, ?2, ?3, ?4) ON CONFLICT(task_id) DO UPDATE
+               SET reader = excluded.reader, writer = excluded.writer, controller = excluded.controller",
+            params![id, session.reader, session.writer, session.controller],
+        )?;
+        Ok(())
+    }
+
+    /// Read the session's verifiers for this exact task.
+    ///
+    /// # Errors
+    /// Returns an error if the credential record is unreadable.
+    pub fn acp_session(&self, id: &str) -> Result<Option<AcpSession>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT reader, writer, controller FROM acp_sessions WHERE task_id = ?1",
+                [id],
+                |row| {
+                    Ok(AcpSession {
+                        reader: row.get(0)?,
+                        writer: row.get(1)?,
+                        controller: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
     }
 
     /// Read a page of display history, newest first.

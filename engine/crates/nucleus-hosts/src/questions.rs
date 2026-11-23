@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use nucleus_core::QuestionDelivery;
 use serde::Deserialize;
 use serde_json::{Value, json, value::RawValue};
@@ -20,6 +22,8 @@ pub struct PlannerThread {
     pub worktree_path: Option<String>,
     pub archived_at: Option<String>,
     pub deleted_at: Option<String>,
+    pub parent_thread_id: Option<String>,
+    pub provider_instance_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,8 +38,27 @@ pub enum NoticeState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeSend {
+    Prepared,
     Accepted,
     Rejected,
+}
+
+/// A planner notice advances by one authorized write. Some hosts prepare the
+/// destination first and authorize the queue write on a later scheduler pass.
+pub enum NoticeWrite<'a, Authorization, Dispatch> {
+    Prepare(&'a Authorization),
+    Queue(Dispatch),
+}
+
+/// Deliver a planner notice without steering a live turn.
+pub trait NoticeHost: Send + Sync {
+    type Authorization: Sync;
+    type Dispatch: Send;
+
+    fn deliver_notice(
+        &self,
+        write: NoticeWrite<'_, Self::Authorization, Self::Dispatch>,
+    ) -> impl Future<Output = Result<NoticeSend, HostError>> + Send;
 }
 
 #[derive(Clone)]
@@ -58,6 +81,24 @@ pub struct NoticeAuthorization {
 pub struct NoticeDispatch {
     command: String,
     payload: Box<RawValue>,
+}
+
+impl NoticeHost for T3 {
+    type Authorization = NoticeAuthorization;
+    type Dispatch = NoticeDispatch;
+
+    async fn deliver_notice(
+        &self,
+        write: NoticeWrite<'_, Self::Authorization, Self::Dispatch>,
+    ) -> Result<NoticeSend, HostError> {
+        match write {
+            NoticeWrite::Prepare(authorization) => {
+                self.unsettle_notice(authorization).await?;
+                Ok(NoticeSend::Prepared)
+            }
+            NoticeWrite::Queue(dispatch) => self.send_notice(dispatch).await,
+        }
+    }
 }
 
 impl NoticeAuthorization {
@@ -240,10 +281,7 @@ impl T3 {
     /// Unsettle an authorized planner destination. Re-read before dispatch.
     /// # Errors
     /// Returns an error when the wake is inapplicable or uncertain.
-    pub async fn unsettle_notice(
-        &self,
-        authorization: &NoticeAuthorization,
-    ) -> Result<(), HostError> {
+    async fn unsettle_notice(&self, authorization: &NoticeAuthorization) -> Result<(), HostError> {
         let sequence = authorization.wake.ok_or(HostError::Binding)?;
         let thread = &authorization.target.thread;
         self.thread_command(json!({
@@ -256,7 +294,7 @@ impl T3 {
     /// Send the recorded wire. An exact rejection permits a fresh binding.
     /// # Errors
     /// Returns an error if the outcome is uncertain.
-    pub async fn send_notice(&self, dispatch: NoticeDispatch) -> Result<NoticeSend, HostError> {
+    async fn send_notice(&self, dispatch: NoticeDispatch) -> Result<NoticeSend, HostError> {
         match self
             .rpc
             .call(

@@ -81,6 +81,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
         host_project: "local-fixture".into(),
         worker: profile.clone(),
         reviewer: profile,
+        acp_provider: None,
         launch_budget: LaunchBudget {
             slots: 1,
             max_load: f64::MAX,

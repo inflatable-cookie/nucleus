@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use nucleus_core::{LaunchInputs, Run};
 use serde::{Deserialize, Serialize};
 use serde_json::{
@@ -5,7 +7,7 @@ use serde_json::{
     value::{RawValue, to_raw_value},
 };
 
-use crate::HostError;
+use crate::{HostError, ParentRun, parent_thread};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,7 +27,15 @@ pub struct RoleProfile {
 
 #[derive(Clone)]
 pub enum Dispatch {
-    Create { title: String, profile: RoleProfile },
+    Create {
+        title: String,
+        profile: RoleProfile,
+    },
+    Delegate {
+        title: String,
+        profile: RoleProfile,
+        parent: ParentRun,
+    },
     Continue,
 }
 
@@ -33,6 +43,7 @@ pub enum Dispatch {
 pub struct RunRequest {
     pub binding: Binding,
     pub dispatch: Dispatch,
+    pub parent: Option<String>,
     pub text: String,
 }
 
@@ -62,6 +73,22 @@ impl RunRequest {
                     "initialMessage": {"messageId": message, "text": self.text, "attachments": []},
                 }),
             ),
+            Dispatch::Delegate {
+                title,
+                profile,
+                parent,
+            } => (
+                Method::Delegate,
+                json!({
+                    "type":"delegated_task.request", "commandId":instance,
+                    "createdBy":"user", "creationSource":"server",
+                    "parentThreadId":parent.thread, "parentRunId":parent.run, "parentNodeId":parent.node,
+                    "task":self.text,"title":title,
+                    "modelSelection":{"instanceId":profile.instance_id,"model":profile.model},
+                    "runtimeMode":profile.runtime_mode,"interactionMode":"default",
+                    "completionWake":"settled_only"
+                }),
+            ),
             Dispatch::Continue => (
                 Method::Continue,
                 json!({
@@ -73,6 +100,7 @@ impl RunRequest {
         };
         let wire = Wire {
             binding: self.binding.clone(),
+            parent: self.parent.clone(),
             method,
             payload: to_raw_value(&payload).map_err(|_| HostError::Configuration)?,
         };
@@ -89,6 +117,7 @@ impl RunRequest {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Method {
     Create,
+    Delegate,
     Continue,
 }
 
@@ -96,7 +125,7 @@ impl Method {
     pub(crate) const fn rpc(self) -> &'static str {
         match self {
             Self::Create => "orchestration.launchThread",
-            Self::Continue => "orchestration.dispatchCommand",
+            Self::Delegate | Self::Continue => "orchestration.dispatchCommand",
         }
     }
 }
@@ -104,42 +133,71 @@ impl Method {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Wire {
     pub(crate) binding: Binding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent: Option<String>,
     pub(crate) method: Method,
     pub(crate) payload: Box<RawValue>,
 }
 
 impl Wire {
+    pub(crate) fn message_id(&self, instance: &str) -> String {
+        if self.method == Method::Delegate {
+            format!("message:delegated-task:{instance}")
+        } else {
+            message_id(instance)
+        }
+    }
+
     pub(crate) fn read(run: &Run) -> Result<Self, HostError> {
         let launch = run.launch();
         let wire: Self =
             serde_json::from_str(&launch.input).map_err(|_| HostError::Configuration)?;
         let payload: Value =
             serde_json::from_str(wire.payload.get()).map_err(|_| HostError::Configuration)?;
-        let message = message_id(&launch.instance);
+        if wire
+            .parent
+            .as_ref()
+            .is_some_and(|parent| *parent != parent_thread(Path::new(&wire.binding.worktree_path)))
+        {
+            return Err(HostError::Binding);
+        }
+        let message = wire.message_id(&launch.instance);
         let matches = match wire.method {
             Method::Create => {
                 let workspace = &payload["workspaceStrategy"];
-                payload["projectId"] == wire.binding.project_id
+                payload["threadId"] == launch.thread
+                    && wire.parent.is_none()
+                    && payload["projectId"] == wire.binding.project_id
                     && workspace["type"] == "existing_worktree"
                     && workspace["worktreePath"] == wire.binding.worktree_path
                     && workspace["branch"] == wire.binding.branch
                     && payload["initialMessage"]["messageId"] == message
             }
+            Method::Delegate => {
+                payload["type"] == "delegated_task.request"
+                    && wire.parent.as_deref() == payload["parentThreadId"].as_str()
+                    && wire.parent.is_some()
+                    && payload.get("workspaceStrategy").is_none()
+                    && payload["completionWake"] == "settled_only"
+                    && launch.thread == delegated_child(&launch.instance)
+            }
             Method::Continue => {
                 payload["type"] == "message.dispatch"
+                    && payload["threadId"] == launch.thread
                     && payload["messageId"] == message
                     && payload["dispatchMode"]["type"] == "queue_after_active"
             }
         };
-        if matches
-            && payload["commandId"] == launch.instance
-            && payload["threadId"] == launch.thread
-        {
+        if matches && payload["commandId"] == launch.instance {
             Ok(wire)
         } else {
             Err(HostError::Binding)
         }
     }
+}
+
+pub(crate) fn delegated_child(instance: &str) -> String {
+    format!("thread:delegated-task:{instance}")
 }
 
 pub(crate) fn message_id(instance: &str) -> String {

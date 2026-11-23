@@ -84,6 +84,32 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    - Milestone QA is not ported as its own record. A QA run is an ordinary task with a report, like any other.
    - The planning system may be simplified as it moves. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly". See [Planning model](#planning-model-milestone-3).
 
+13. **No Nucleus-held merge turn.** Tom, 2026-11-23, approving the planner's surface review ("Sounds good, go for it"). The engine merges at the exact approved head and lets GitHub's mergeability and required checks decide. A conflict sends the task back to its worker. A project's pre-merge validation is a GitHub check (CI or a required status), not a Nucleus turn. There is no per-repository integration turn, prospective-merge candidate, warm checkout, `task.pre_merge` hook manifest or closeout reservation. Tonight's old-engine deadlock (concurrent merge intents each waiting for a turn none could take) is the reason.
+14. **Messages go by project, through the host adapter.** Tom: "we sometimes need to send a message from one planner to all the others".
+    - `tell` addresses a project, a list of projects or `all` planners, and never a thread, a reply handle or an ADE.
+    - Nucleus resolves each project's current planner from the in-memory authority snapshot (ruling 11). It then hands the text to that planner's host adapter, whose one delivery operation queues a notice and never steers a running turn. T3's adapter un-settles a settled thread to deliver. An adapter for another ADE implements the same operation its own way, so a broadcast can reach planners in different ADEs at once.
+    - Each message carries its sender's project, and a reply is another `tell` to that project. There are no reply handles and no expiry.
+    - Each recipient's delivery is recorded (queued or delivered) so the sender can see who it reached.
+    - The task question stays the only blocking ask: one per task, answered by its planner.
+15. **A small CLI and skill.**
+    - The CLI covers the five commands and the planning verbs, takes plain arguments, and identifies its caller by binding token, with no host identity lookup.
+    - The skill shrinks to a page or two.
+    - This sets the target for milestone 4's documentation rewrite.
+16. **Diagnostics you can read.**
+    - The audit keeps a small set of typed events (the milestones the ACP session shows, plus faults).
+    - One health endpoint reports queue depth per host lane, the oldest waits and host status, readable without opening the database.
+    - There is no catalogue of hundreds of event kinds or telemetry stages.
+17. **Settings beyond Projects shrink too.**
+    - Hosts lists T3 (and any later ADE adapter) with no Paseo or BB fields.
+    - Storage folds in backups, retention and worktree roots.
+    - Budgets become one allowance.
+    - The profile matrix is unchanged (ruling 9).
+
+18. **One pinned Nucleus Inbox.** Tom, 2026-11-23: "do we get the equivalent pinned Nucleus Inbox thread via Nucleus ACP? That is vital to my workflow".
+    - The ACP agent has an inbox session alongside task sessions, carrying over Specs 032 and 065: one pinned inbox session per host. Each operator decision appears as a native form answered in place, and the answer reaches the asker on the ordinary answer path. A task session never takes a decision; it names the decision and points to the Inbox.
+    - The operator keeps one Inbox throughout the transition (Tom chose this). Until milestone 3, the Rust engine's operator decisions are added to the existing TypeScript decision store, so they appear in the current Inbox, and their answers flow back to the Rust task. The scheduler does that hand-off, never a request path (ruling 11).
+    - At milestone 3, decisions move into the Rust service (ruling 12) and the Rust inbox session replaces the TypeScript Inbox as the one pinned thread.
+
 ## The model
 
 ### Stored state per task
@@ -93,10 +119,10 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 | `id`, `reference`, `repository`, `base`, `entry`, `origin_thread` | Identity fixed at admission. Entry is `brief` or `review_entry`. The submitting or promoting thread is the origin when the caller has one. |
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. |
-| `threads` | Retained worker and reviewer thread IDs and a monotonic launch sequence. Reuse each role's thread when it is idle. Replace its ID when the host confirms the thread is gone, or when the role's profile changes (ruling 9): a profile climb starts a new child thread, because one thread cannot change provider. |
-| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds the immutable launch request, the last possible send time and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
+| `threads` | Retained worker and reviewer thread IDs, their canonical profile bindings and a monotonic launch sequence. Reuse each role's thread when it is idle and can run the next assignment. Replace a thread only when the host confirms it is gone or the role's profile changes. A profile change starts a fresh child (ruling 9), and an unknown read never replaces a thread. The worker binding records which applied review launch authorized its most recent climb. |
+| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds the immutable launch request and selected profile, the last possible send time and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
 | `pr` | URL and head SHA. |
-| `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. |
+| `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. Step-up requires an applied changes verdict at the current head with a review launch sequence newer than the climb recorded on the worker binding. |
 | `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
 | `question` | At most one open question to the task's planner, with its options and the head it was asked at. Observing a new head clears it. |
 | `hold` | An optional operator or planner hold, with its reason. |
@@ -237,7 +263,7 @@ Cargo builds" rule for the `engine/` workspace only:
    For this proof only, the engine uses standalone top-level role threads and its default
    worktree allocator. Milestone 2 parents them under the task's ACP session (ruling 6).
 2. **Milestone 2:** the board reads the new engine's API, and its settings (profiles, limits, projects, storage) work against the new engine (ruling 8). New tasks for one project go
-   to the new engine. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
+   to the new engine. The first project is Barge (Tom, 2026-11-23), starting with one small docs or test task once the repository binding, real profile launches, the installed ACP provider and per-project routing are in place. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
 3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
    takes no new work. Planning records move into the new service (ruling 12).
 4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the

@@ -10,6 +10,7 @@ use crate::model::{
     Acceptance, Authority, Brief, CallbackCredential, CredentialDigest, Head, Hold, LaunchInputs,
     OpenQuestion, Phase, PreparedLaunch, Question, Report, Role, Run, Task, Verdict,
 };
+use crate::profiles::ProfileLaunch;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,6 +128,7 @@ impl Task {
             .and_then(|run| run.report)
         {
             if self.pr.as_ref().is_some_and(|pr| pr.head == head) {
+                self.threads.applied_review_sequence = Some(self.threads.launch_sequence);
                 self.verdict = Some(Verdict::Reviewed {
                     head,
                     decision,
@@ -143,7 +145,7 @@ impl Task {
     fn settle_run(&mut self, observation: &Observation) -> Option<Run> {
         let run = self.run.take()?;
         if observation.current(&run.launch.instance) == Some(RunState::Ended) {
-            self.threads.set(run.launch.role, run.launch.thread.clone());
+            self.threads.bind(&run.launch);
         }
         Some(run)
     }
@@ -193,8 +195,47 @@ impl Task {
         inputs: LaunchInputs,
         seed: &[u8; 32],
     ) -> Result<CallbackCredential, CommandError> {
+        self.reserve(observation, inputs, seed, None)
+    }
+
+    /// Freeze the selected profile with the adapter's prepared wire. The same
+    /// durable reservation owns both the first send and a verified replay.
+    ///
+    /// # Errors
+    /// Returns an error if the launch no longer applies or IDs are exhausted.
+    pub fn reserve_profile_launch(
+        &mut self,
+        observation: &Observation,
+        inputs: LaunchInputs,
+        seed: &[u8; 32],
+        intent: ProfileLaunch,
+    ) -> Result<CallbackCredential, CommandError> {
+        self.reserve(observation, inputs, seed, Some(intent))
+    }
+
+    fn reserve(
+        &mut self,
+        observation: &Observation,
+        inputs: LaunchInputs,
+        seed: &[u8; 32],
+        intent: Option<ProfileLaunch>,
+    ) -> Result<CallbackCredential, CommandError> {
         let Action::Launch { role, via } = decide(self, observation) else {
             return Err(CommandError::LaunchNoLongerApplies);
+        };
+        let (via, profile) = if let Some(intent) = intent {
+            if intent.role != role
+                || intent.previous != via
+                || intent.instance != self.next_launch_instance()?
+                || intent.brief != self.brief
+                || intent.pr != self.pr
+                || intent.findings.as_deref() != crate::profiles::applied_changes(self, observation)
+            {
+                return Err(CommandError::LaunchNoLongerApplies);
+            }
+            (intent.via, Some(intent.profile))
+        } else {
+            (via, None)
         };
         let valid_thread = match via {
             Launch::Create => self.threads.get(role) != Some(inputs.thread.as_str()),
@@ -231,6 +272,7 @@ impl Task {
                 credential: CredentialDigest(Sha256::digest(bearer.as_bytes()).into()),
                 input: inputs.input,
                 review_head,
+                profile,
             },
             report: None,
             revoked: false,
@@ -275,7 +317,7 @@ impl Task {
             return Err(CommandError::LaunchNoLongerApplies);
         }
         run.last_send_at_ms = Some(now_ms);
-        self.threads.set(run.launch.role, run.launch.thread.clone());
+        self.threads.bind(&run.launch);
         Ok(())
     }
 
