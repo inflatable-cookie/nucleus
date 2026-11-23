@@ -413,6 +413,19 @@ async fn a_graphql_rate_error_uses_the_reset_before_interpreting_partial_data() 
 }
 
 #[tokio::test]
+async fn a_graphql_problem_names_the_failed_read_without_copying_the_body() {
+    let target = branches().target(PR_URL).expect("target");
+    let (forge, calls) = server(vec![
+        Some(pull('a', false)),
+        Some(json!({"errors":[{"message":"synthetic-value", "type":"INVALID_QUERY"}]})),
+    ]);
+    let error = forge.observe(&target).await.expect_err("query rejected");
+    assert!(matches!(error, ForgeError::GraphQlRejected));
+    assert!(!format!("{error:?} {error}").contains("synthetic-value"));
+    assert_eq!(calls.join().expect("exact requests").len(), 2);
+}
+
+#[tokio::test]
 async fn decoder_errors_do_not_reveal_diagnostic_values() {
     const TOKEN: &str = "synthetic-token-in-response";
     let target = branches().target(PR_URL).expect("target");
