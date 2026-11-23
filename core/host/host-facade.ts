@@ -25,7 +25,7 @@ import type {
   WorkspaceId,
 } from "../../shared/host";
 import type { Adapter } from "./adapter";
-import { raceQuantumDeadline } from "../scheduling/pass-snapshot";
+import { runUnderQuantumDeadline } from "../scheduling/pass-snapshot";
 
 /**
  * What an owner contributes to cross-host identity routing. An owner that can
@@ -74,8 +74,8 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     );
   }
 
-  #bound<T>(label: string, promise: Promise<T>): Promise<T> {
-    return raceQuantumDeadline(label, promise);
+  #bound<T>(label: string, invoke: () => Promise<T>): Promise<T> {
+    return runUnderQuantumDeadline(label, invoke);
   }
 
   /**
@@ -90,16 +90,14 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     label = "host port",
   ): Promise<T> {
     const parsed = parseAgentId(id);
-    if (!parsed) return this.#bound(label, read(this.owner.adapter, id));
+    if (!parsed) return this.#bound(label, () => read(this.owner.adapter, id));
     const bound = this.#boundHost();
     if (bound && parsed.hostId === bound)
-      return this.#bound(
-        label,
+      return this.#bound(label, () =>
         read(this.owner.adapter, callerNativeId(id, bound)),
       );
     if (!bound && !this.owner.withHost)
-      return this.#bound(
-        label,
+      return this.#bound(label, () =>
         read(this.owner.adapter, callerNativeId(id, bound)),
       );
     if (
@@ -107,9 +105,8 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
       (this.owner.hostOnline && !this.owner.hostOnline(parsed.hostId))
     )
       throw new Error(foreignIdentityRefusal(parsed.hostId));
-    return this.#bound(
-      label,
-      this.owner.withHost(parsed.hostId, () =>
+    return this.#bound(label, () =>
+      this.owner.withHost!(parsed.hostId, () =>
         read(this.owner.adapter, parsed.nativeAgentId),
       ),
     );
@@ -119,14 +116,14 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     const { adapter } = this.owner;
     const read = adapter.catalog;
     if (!read) return refused("This host does not report a catalog");
-    return this.#bound("catalog", read.call(adapter, options));
+    return this.#bound("catalog", () => read.call(adapter, options));
   }
 
   profiles(): Promise<Profile[]> {
     const { adapter } = this.owner;
     const read = adapter.profiles;
     if (!read) return refused("This host cannot read profiles");
-    return this.#bound("profiles", read.call(adapter));
+    return this.#bound("profiles", () => read.call(adapter));
   }
 
   capabilities(): HostCapabilities {
@@ -139,8 +136,7 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
   }
 
   findWorkspaces(task: Task): Promise<Workspace[]> {
-    return this.#bound(
-      "findWorkspaces",
+    return this.#bound("findWorkspaces", () =>
       this.owner.adapter.findWorkspaces(task),
     );
   }
@@ -149,14 +145,14 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     const { adapter } = this.owner;
     const read = adapter.workspaceAvailable;
     if (!read) return refused("This host cannot report workspace availability");
-    return this.#bound("workspaceAvailable", read.call(adapter, id));
+    return this.#bound("workspaceAvailable", () => read.call(adapter, id));
   }
 
   workspaceCatalog(directory: string): Promise<HostWorkspaceCatalog> {
     const { adapter } = this.owner;
     const read = adapter.externalWorkspaceCatalog;
     if (!read) return refused("This host cannot read a workspace catalog");
-    return this.#bound("workspaceCatalog", read.call(adapter, directory));
+    return this.#bound("workspaceCatalog", () => read.call(adapter, directory));
   }
 
   workspaceArchived(id: WorkspaceId): Promise<boolean> {
@@ -164,7 +160,7 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     const read = adapter.taskWorkspaceArchived;
     if (!read)
       return refused("This host cannot report workspace archive state");
-    return this.#bound("workspaceArchived", read.call(adapter, id));
+    return this.#bound("workspaceArchived", () => read.call(adapter, id));
   }
 
   originAgent(id: AgentId): Promise<OriginAgent | null> {
@@ -186,7 +182,7 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     const read = adapter.observationInventory;
     if (!read) return refused("This host cannot read an observation inventory");
     if (!ids.some((id) => parseAgentId(id)))
-      return this.#bound("observationInventory", read.call(adapter, ids));
+      return this.#bound("observationInventory", () => read.call(adapter, ids));
     // One inventory across hosts: each qualified identity is read on its own
     // host, and the caller's qualified keys are rebuilt over the merged map.
     const bound = this.#boundHost();
@@ -227,50 +223,43 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
       }
       throw new Error(foreignIdentityRefusal(parsed.hostId));
     }
-    const reads = [...groups.entries()].map(([host, group]) => {
-      // The method is looked up inside each group read, never captured: on an
-      // Engine the adapter is a transport proxy bound at property-access time,
-      // so a captured reference would serve every group from the ambient
-      // transport — exactly the unwrap-against-the-wrong-host this class fix
-      // removes.
-      const call = () => {
-        const groupRead = this.owner.adapter.observationInventory;
-        if (!groupRead)
-          return refused("This host cannot read an observation inventory");
-        return groupRead
-          .call(this.owner.adapter, group.native)
-          .then((result) =>
-            result
-              ? (new Map(
-                  group.qualified.flatMap((id, i) => {
-                    const observation = result.get(group.native[i]!);
-                    return observation ? [[id, observation] as const] : [];
-                  }),
-                ) as ReadonlyMap<AgentId, HostObservation>)
-              : null,
-          );
-      };
-      return !host || host === bound
-        ? call()
-        : this.owner.withHost!(host, call);
-    });
-    if (reads.length === 1)
-      return this.#bound("observationInventory", reads[0]!);
-    return this.#bound(
-      "observationInventory",
-      Promise.all(reads).then((results) =>
+    return this.#bound("observationInventory", () => {
+      const reads = [...groups.entries()].map(([host, group]) => {
+        const call = () => {
+          const groupRead = this.owner.adapter.observationInventory;
+          if (!groupRead)
+            return refused("This host cannot read an observation inventory");
+          return groupRead
+            .call(this.owner.adapter, group.native)
+            .then((result) =>
+              result
+                ? (new Map(
+                    group.qualified.flatMap((id, i) => {
+                      const observation = result.get(group.native[i]!);
+                      return observation ? [[id, observation] as const] : [];
+                    }),
+                  ) as ReadonlyMap<AgentId, HostObservation>)
+                : null,
+            );
+        };
+        return !host || host === bound
+          ? call()
+          : this.owner.withHost!(host, call);
+      });
+      if (reads.length === 1) return reads[0]!;
+      return Promise.all(reads).then((results) =>
         results.every((result) => result !== null)
           ? new Map(results.flatMap((result) => [...result!]))
           : null,
-      ),
-    );
+      );
+    });
   }
 
   listLiveAgents(): Promise<HostLiveAgent[]> {
     const { adapter } = this.owner;
     const read = adapter.listLiveAgents;
     if (!read) return refused("This host cannot list live agents");
-    return this.#bound("listLiveAgents", read.call(adapter));
+    return this.#bound("listLiveAgents", () => read.call(adapter));
   }
 
   agentTimelinePage(

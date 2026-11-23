@@ -8,6 +8,10 @@ import { EngineStop } from "./recovery/engine-stop";
 import { ProjectLifecycle } from "./planning/project-lifecycle";
 
 import { PrerequisiteReleases } from "./scheduling/prerequisites";
+import {
+  QUANTUM_TOTAL_READ_BUDGET_MS,
+  runInTaskQuantumScope,
+} from "./scheduling/pass-snapshot";
 import { TaskQuantum } from "./scheduling/task-quantum";
 
 import { unavailableGroupNames } from "../shared/pool";
@@ -1635,10 +1639,20 @@ export class Engine {
     options: { coalesce?: string } = {},
   ): Promise<void> {
     const hostId = this.laneHost(key);
+    // Spec 068 §6: every quantum scheduled onto an exclusive `task:<id>` lane
+    // carries the task quantum deadline scope, whoever scheduled it (audit
+    // branch-PR recovery, wake follow-up, dispatch, or full taskQuantum).
+    const scoped = key.startsWith("task:")
+      ? () =>
+          runInTaskQuantumScope(
+            this.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS,
+            () => Promise.resolve(work()),
+          )
+      : work;
     return this.laneScheduler.scheduleLane(
       key,
       priority,
-      hostId ? () => this.withHost(hostId, work) : work,
+      hostId ? () => this.withHost(hostId, scoped) : scoped,
       options,
     );
   }

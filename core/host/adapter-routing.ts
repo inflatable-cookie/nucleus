@@ -12,8 +12,10 @@ import type { Adapter, AgentObservation, OriginAgent } from "./adapter";
 import {
   QuantumDeadlineExceededError,
   currentTaskQuantumScope,
+  expiredQuantumDeadlineError,
   isQuantumDeadlineExceeded,
   raceQuantumDeadline,
+  runUnderQuantumDeadline,
 } from "../scheduling/pass-snapshot";
 import type { Engine } from "../engine";
 import { isTransportFailure } from "../../shared/transport";
@@ -199,10 +201,11 @@ export function routeHostAdapter(
           taskId?: string,
           suppliedProof?: { origin: OriginAgent; state: AgentObservation },
         ) => {
+          const preExpired = expiredQuantumDeadlineError("inspectReviewEntry");
+          if (preExpired) throw preExpired;
           try {
             if (suppliedProof || !taskId)
-              return await raceQuantumDeadline(
-                "inspectReviewEntry",
+              return await runUnderQuantumDeadline("inspectReviewEntry", () =>
                 Promise.resolve(
                   value.call(selected, input, taskId, suppliedProof),
                 ),
@@ -214,8 +217,7 @@ export function routeHostAdapter(
                 "Transport not connected: review-entry origin host is unknown",
               );
             if (originHost === task.hostId)
-              return await raceQuantumDeadline(
-                "inspectReviewEntry",
+              return await runUnderQuantumDeadline("inspectReviewEntry", () =>
                 Promise.resolve(value.call(selected, input, taskId)),
               );
             if (
@@ -231,8 +233,7 @@ export function routeHostAdapter(
               originHost,
               input.submission.originAgentId,
             );
-            return await raceQuantumDeadline(
-              "inspectReviewEntry",
+            return await runUnderQuantumDeadline("inspectReviewEntry", () =>
               Promise.resolve(value.call(selected, input, taskId, proof)),
             );
           } catch (error) {
@@ -278,10 +279,19 @@ export function routeHostAdapter(
                   role: "worker" as const,
                 };
           const attempt = readCreationAttempt(owner.store, binding);
+          const preExpired = expiredQuantumDeadlineError(String(property));
+          if (preExpired) {
+            if (
+              attempt &&
+              attempt.producerId === creationProducerId &&
+              !creating.has(attempt.attemptId)
+            )
+              settleCreationAttempt(owner.store, attempt, "threw");
+            throw preExpired;
+          }
           if (!attempt) {
             try {
-              return await raceQuantumDeadline(
-                String(property),
+              return await runUnderQuantumDeadline(String(property), () =>
                 Promise.resolve(Reflect.apply(value, selected, args)),
               );
             } catch (error) {
@@ -290,8 +300,7 @@ export function routeHostAdapter(
           }
           let admitted = false;
           try {
-            return await raceQuantumDeadline(
-              String(property),
+            return await runUnderQuantumDeadline(String(property), () =>
               trackHostCreation(selected, property, args, async (create) => {
                 admitted = true;
                 const current = readCreationAttempt(owner.store, binding);
@@ -322,7 +331,7 @@ export function routeHostAdapter(
             if (
               !admitted &&
               !(error instanceof HostCallAbandonedError) &&
-              !isQuantumDeadlineExceeded(error) &&
+              (!isQuantumDeadlineExceeded(error) || error.preSend) &&
               attempt.producerId === creationProducerId &&
               !creating.has(attempt.attemptId)
             )
@@ -417,6 +426,10 @@ export function routeHostAdapter(
         }
         if (property === "observationInventory" && Array.isArray(normalized[0]))
           normalized[0] = (normalized[0] as unknown[]).map(native);
+        if (property !== "capabilities") {
+          const preExpired = expiredQuantumDeadlineError(String(property));
+          if (preExpired) return Promise.reject(preExpired);
+        }
         try {
           const result: unknown = value.apply(selected, normalized);
           return result instanceof Promise

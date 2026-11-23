@@ -15,8 +15,11 @@ import type {
 import {
   PassSnapshot,
   boundedRead,
+  isQuantumDeadlineExceeded,
   runInTaskQuantumScope,
 } from "../core/scheduling/pass-snapshot";
+import { HostFacade } from "../core/host/host-facade";
+import { LANE_PRIORITY_TASK } from "../core/scheduling/lane-priorities";
 import { readProcessSubset } from "../core/machine/host-process-listing";
 import { observeAssignedThread } from "../core/dispatch/run-launch/assigned-thread";
 import type { LaunchThreadContext } from "../core/dispatch/launch";
@@ -3800,5 +3803,412 @@ test("a slow process table scan does not exhaust the independent timeline warmin
     mergeCalls,
     1,
     `healthy timeline-dependent task advances and merges despite slow process scan (reason: ${f.store.task(task.id).reason})`,
+  );
+});
+
+test("audit branch-PR recovery runs inside the task-lane quantum deadline and releases the lane for queued callers", async (t) => {
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  let findOpenBranchPrCalls = 0;
+  let queuedCallerRan = false;
+  let queuedLanePromise: Promise<void> | null = null;
+
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-branch-pr-hang",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt: idleAt,
+          },
+        ]),
+      ),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-branch-pr-hang",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: idleAt,
+    }),
+    agentTimelinePage: async () => toolTimelinePage([]),
+    hostProcessListing: async () => [],
+    findOpenBranchPr: (taskArg: Task) => {
+      findOpenBranchPrCalls++;
+      // Queue another caller on the exact same exclusive task:<id> lane while
+      // the audit branch-PR lookup is in flight.
+      queuedLanePromise = f.engine.scheduleLane(
+        `task:${taskArg.id}`,
+        LANE_PRIORITY_TASK,
+        () => {
+          queuedCallerRan = true;
+        },
+      );
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve([]), 60_000);
+        timer.unref?.();
+        timers.push(timer);
+      });
+    },
+  });
+  f.store.setMeta("paused", false);
+  (f.engine as { idleGraceMs: number }).idleGraceMs = 0;
+  f.engine.resolution.quantumReadTimeoutMs = 50;
+  f.engine.resolution.quantumReadBudgetMs = 60;
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-branch-pr-hang",
+      title: "Branch PR lookup hang in audit",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const task = f.store.update(inserted.id, {
+    phase: "working",
+    workspaceId: "ws-branch-pr-hang",
+    directory: "/tmp/synthetic-branch-pr-hang",
+    branch: "ns-branch-pr-hang",
+    agentId: "agent-branch-pr-hang",
+    runId: "run-branch-pr-hang",
+    idleSince: idleAt,
+    lastObservedAt: idleAt,
+    lastAgentStatus: "idle",
+    agentActive: false,
+  });
+
+  await f.engine.auditPass(true);
+  assert.ok(
+    queuedLanePromise,
+    "audit branch-PR recovery invoked findOpenBranchPr on the task lane",
+  );
+  await queuedLanePromise;
+
+  assert.ok(
+    findOpenBranchPrCalls >= 1,
+    "real audit route called findOpenBranchPr",
+  );
+  assert.equal(
+    queuedCallerRan,
+    true,
+    "caller queued on the same exclusive task:<id> lane ran after the unknown branch-PR lookup deferred",
+  );
+  assert.equal(
+    f.store.task(task.id).resolution.attention,
+    false,
+    "quantum deadline expiry in branch-PR lookup must defer without escalating attention",
+  );
+  assert.equal(
+    f.store
+      .events(task.id)
+      .filter((event) => event.kind === "observation_outage").length,
+    0,
+    "branch-PR recovery must not hit the 120 s observation_outage bound",
+  );
+});
+
+test("merge reconciliation defers on quantum deadline expiry without mutating pending/uncertain guarded retry or escalating", async (t) => {
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  const oldRequestedAt = new Date(Date.now() - 45 * 60_000).toISOString();
+  let mergedLookupCalls = 0;
+
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-merge-defer",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt: idleAt,
+          },
+        ]),
+      ),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-merge-defer",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: idleAt,
+    }),
+    agentTimelinePage: async () => toolTimelinePage([]),
+    hostProcessListing: async () => [],
+    merged: () => {
+      mergedLookupCalls++;
+      return new Promise((resolve) => {
+        const timer = setTimeout(
+          () => resolve({ merged: false, head: HEAD }),
+          60_000,
+        );
+        timer.unref?.();
+        timers.push(timer);
+      });
+    },
+    createRun: async () => {
+      throw new Error("unexpected createRun during merge reconciliation defer");
+    },
+  });
+  f.store.setMeta("paused", false);
+  f.engine.hostHealth.answered(HOST);
+  f.engine.resolution.quantumReadTimeoutMs = 50;
+  f.engine.resolution.quantumReadBudgetMs = 80;
+
+  const seedMergingRetryTask = (
+    slug: string,
+    prNumber: number,
+    retryOutcome: "pending" | "uncertain",
+  ) => {
+    const inserted = f.store.insert(
+      submission({
+        submissionId: `sub-${slug}`,
+        title: `Merge defer ${slug}`,
+        repoPath: `/repo-${slug}`,
+        skipPRReview: true,
+      }),
+      HOST,
+      "handoff",
+      HEAD,
+    );
+    return f.store.update(inserted.id, {
+      phase: "merging",
+      workspaceId: "ws-merge-defer",
+      directory: `/tmp/synthetic-${slug}`,
+      agentId: `agent-${slug}`,
+      runId: `run-${slug}`,
+      prHead: HEAD,
+      prUrl: `https://github.com/example/repo/pull/${prNumber}`,
+      completion: {
+        eventId: `ev-comp-${slug}`,
+        taskId: inserted.id,
+        runId: `run-${slug}`,
+        status: "ready_for_review",
+        head: HEAD,
+        prNumber,
+        summary: "done",
+      },
+      reason: "Reconciling merge intent",
+      resolution: {
+        ...inserted.resolution,
+        integrationTurn: { sequence: 1, acceptedAt: oldRequestedAt },
+        mergeIntent: true,
+        mergeHead: HEAD,
+        mergeRequestedAt: oldRequestedAt,
+        mergeResponseOutcome: "uncertain",
+        mergeRetryAt: oldRequestedAt,
+        mergeRetryOutcome: retryOutcome,
+      },
+    });
+  };
+
+  const pendingTask = seedMergingRetryTask("merge-pending", 101, "pending");
+  const uncertainTask = seedMergingRetryTask(
+    "merge-uncertain",
+    102,
+    "uncertain",
+  );
+
+  // Run through a full audit pass so executionLease passes with warmed tool
+  // pages and reaches reconcileMergeIntent -> adapter.merged under the quantum deadline.
+  await f.engine.auditPass(true);
+
+  assert.ok(
+    mergedLookupCalls >= 2,
+    `both tasks reached adapter.merged inside reconcileMergeIntent, got ${mergedLookupCalls}`,
+  );
+  const pendingAfter = f.store.task(pendingTask.id);
+  assert.equal(
+    pendingAfter.resolution.mergeIntent,
+    true,
+    "pending guarded retry keeps durable mergeIntent",
+  );
+  assert.equal(
+    pendingAfter.resolution.mergeRetryOutcome,
+    "pending",
+    "quantum deadline expiry must not flip mergeRetryOutcome from pending to uncertain",
+  );
+  assert.equal(
+    pendingAfter.resolution.attention,
+    false,
+    "pending guarded retry must not escalate on quantum deadline expiry",
+  );
+  assert.equal(pendingAfter.resolution.stop, null);
+
+  const uncertainAfter = f.store.task(uncertainTask.id);
+  assert.equal(
+    uncertainAfter.resolution.mergeIntent,
+    true,
+    "uncertain guarded retry keeps durable mergeIntent",
+  );
+  assert.equal(
+    uncertainAfter.resolution.mergeRetryOutcome,
+    "uncertain",
+    "uncertain guarded retry preserves its retry outcome",
+  );
+  assert.equal(
+    uncertainAfter.resolution.attention,
+    false,
+    "uncertain guarded retry must not escalate on quantum deadline expiry",
+  );
+  assert.equal(uncertainAfter.resolution.stop, null);
+});
+
+test("already-expired quantum scope rejects before invoking native host or forge reads and mutations", async (t) => {
+  let observeCalls = 0;
+  let originAgentCalls = 0;
+  let findOpenBranchPrCalls = 0;
+  let archiveAgentCalls = 0;
+  let mergeCalls = 0;
+  let createRunCalls = 0;
+
+  const f = engineFixture(t, {
+    observe: async (id: string) => {
+      observeCalls++;
+      return {
+        id,
+        workspaceId: "ws-expired",
+        status: "idle",
+        active: false,
+        activeTurnId: null,
+        permissions: false,
+        error: "",
+      };
+    },
+    originAgent: async (id: string) => {
+      originAgentCalls++;
+      return {
+        id,
+        workspaceId: "ws-expired",
+        archived: false,
+        deleted: false,
+      };
+    },
+    findOpenBranchPr: async () => {
+      findOpenBranchPrCalls++;
+      return [];
+    },
+    archiveAgent: async () => {
+      archiveAgentCalls++;
+    },
+    merge: async () => {
+      mergeCalls++;
+      return "merged-commit";
+    },
+    createRun: async () => {
+      createRunCalls++;
+      return { id: "agent-new", workspaceId: "ws-expired" };
+    },
+  });
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-expired-scope",
+      title: "Expired scope pre-send guard",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const run = runSchema.parse({
+    id: "run-expired-scope",
+    taskId: inserted.id,
+    role: "reviewer",
+    generation: 1,
+    head: HEAD,
+    base: HEAD,
+    agentId: null,
+    workspaceId: "ws-expired",
+    hostId: HOST,
+    profile: null,
+    status: "intent",
+    createdAt: new Date().toISOString(),
+    lastObservedAt: null,
+    active: false,
+    idleSince: null,
+    completion: null,
+    released: false,
+  });
+
+  const rawFacade = new HostFacade({ adapter: f.adapter });
+  await runInTaskQuantumScope(0, async () => {
+    const calls: Array<() => Promise<unknown>> = [
+      () => f.engine.host.observe("agent-expired"),
+      () => rawFacade.originAgent("agent-expired"),
+      () => f.engine.adapter.findOpenBranchPr!(inserted),
+      () => f.engine.host.archiveAgent("agent-expired"),
+      () =>
+        (
+          f.engine.adapter as unknown as {
+            merge: (t: Task, allowed: () => boolean) => Promise<unknown>;
+          }
+        ).merge(inserted, () => true),
+      () => f.engine.adapter.createRun!(inserted, run, "prompt"),
+    ];
+    for (const invoke of calls) {
+      await assert.rejects(invoke, (error: unknown) => {
+        assert.ok(
+          isQuantumDeadlineExceeded(error),
+          `expected QuantumDeadlineExceededError, got ${String(error)}`,
+        );
+        assert.equal(
+          error.preSend,
+          true,
+          "already-expired scope must report definite preSend: true",
+        );
+        return true;
+      });
+    }
+  });
+
+  assert.equal(observeCalls, 0, "expired scope must not invoke native observe");
+  assert.equal(
+    originAgentCalls,
+    0,
+    "expired scope must not invoke native originAgent via HostFacade",
+  );
+  assert.equal(
+    findOpenBranchPrCalls,
+    0,
+    "expired scope must not invoke native findOpenBranchPr",
+  );
+  assert.equal(
+    archiveAgentCalls,
+    0,
+    "expired scope must not invoke native archiveAgent mutation",
+  );
+  assert.equal(
+    mergeCalls,
+    0,
+    "expired scope must not invoke native merge mutation",
+  );
+  assert.equal(
+    createRunCalls,
+    0,
+    "expired scope must not invoke native createRun mutation",
   );
 });

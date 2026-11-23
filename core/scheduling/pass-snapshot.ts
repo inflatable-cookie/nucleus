@@ -89,10 +89,13 @@ export function currentTaskQuantumScope(): TaskQuantumReadScope | undefined {
 export class QuantumDeadlineExceededError extends Error {
   readonly label: string;
   readonly unknown = true as const;
-  constructor(label: string, detail?: string) {
+  /** True when the quantum budget was already spent before the native call started. */
+  readonly preSend: boolean;
+  constructor(label: string, detail?: string, preSend = false) {
     super(detail ?? `${label} deferred: task quantum deadline exceeded`);
     this.name = "QuantumDeadlineExceededError";
     this.label = label;
+    this.preSend = preSend;
   }
 }
 
@@ -106,12 +109,52 @@ export function isQuantumDeadlineExceeded(
 }
 
 /**
- * Enforce the active task quantum's deadline at a single boundary choke point
- * (routing proxy / host facade). Outside a task quantum, returns `promise`
- * untouched with zero added turns. Inside a task quantum, races `promise`
- * against the remaining quantum budget and rejects with
- * `QuantumDeadlineExceededError` on expiry, swallowing any late rejection from
- * the underlying transport call.
+ * Check whether the active task quantum's deadline is already expired BEFORE
+ * invoking a native host/forge call. Returns a pre-send
+ * `QuantumDeadlineExceededError` when expired, or `null` when time remains or
+ * outside a task quantum.
+ */
+export function expiredQuantumDeadlineError(
+  label: string,
+): QuantumDeadlineExceededError | null {
+  const scope = quantumReadScope.getStore();
+  if (!scope?.inTaskQuantum) return null;
+  if (scope.deadlineAt - Date.now() <= 0) {
+    return new QuantumDeadlineExceededError(
+      label,
+      `${label} deferred before send: task quantum deadline exceeded`,
+      true,
+    );
+  }
+  return null;
+}
+
+/**
+ * Enforce the active task quantum's deadline lazily at a single boundary choke
+ * point (routing proxy / host facade). If the quantum budget is already spent,
+ * rejects with a pre-send `QuantumDeadlineExceededError` WITHOUT invoking
+ * `invoke()`. Otherwise invokes `invoke()` and races it against the remaining
+ * budget, rejecting with a post-send `QuantumDeadlineExceededError` on expiry.
+ */
+export function runUnderQuantumDeadline<T>(
+  label: string,
+  invoke: () => Promise<T>,
+): Promise<T> {
+  const expired = expiredQuantumDeadlineError(label);
+  if (expired) return Promise.reject(expired);
+  let promise: Promise<T>;
+  try {
+    promise = invoke();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  return raceQuantumDeadline(label, promise);
+}
+
+/**
+ * Race an already-started promise against the active task quantum's remaining
+ * deadline. Callers at host/forge boundaries should prefer
+ * `runUnderQuantumDeadline` so expired scopes never start the native call.
  */
 export function raceQuantumDeadline<T>(
   label: string,
@@ -126,6 +169,7 @@ export function raceQuantumDeadline<T>(
       new QuantumDeadlineExceededError(
         label,
         `${label} deferred: task quantum deadline exceeded`,
+        false,
       ),
     );
   }
@@ -141,6 +185,7 @@ export function raceQuantumDeadline<T>(
         new QuantumDeadlineExceededError(
           label,
           `${label} deferred: task quantum deadline exceeded (${remaining} ms remaining)`,
+          false,
         ),
       );
     }, remaining);

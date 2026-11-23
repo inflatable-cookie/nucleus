@@ -143,7 +143,11 @@ export async function settleArchive(
     // or deferred wait — preserve the durable archive intent without burning
     // retries or recording an error stop.
     if (isQuantumDeadlineExceeded(error)) {
-      if (!sent && fresh && effect.status === "ready") {
+      // Definite pre-send deferral (`!sent || error.preSend`): no archive or
+      // delete crossed the send boundary, so keep `ready` without burning
+      // retries. Post-send timeout (`sent && !error.preSend`) preserves the
+      // durable `intent` already written above so the next pass observes first.
+      if ((!sent || error.preSend) && (fresh || effect.status === "ready")) {
         store.putThreadArchiveEffect(key, agentId, {
           status: "ready",
           at: now(),

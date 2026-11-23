@@ -1,6 +1,7 @@
 import type { Task } from "../../shared/contracts";
 import { UNCERTAIN_MERGE_PROOF_TIMEOUT_MS } from "../../shared/contracts";
 import { ForgeOutageError } from "../forge/forge-health";
+import { isQuantumDeadlineExceeded } from "../scheduling/pass-snapshot";
 import type {
   MergeGateResult,
   Resolution,
@@ -222,6 +223,10 @@ export class MergeIntent {
     try {
       result = await this.adapter.merged!(t);
     } catch (error) {
+      // Spec 068 §6 / Spec 066 R1: a quantum deadline expiry is an unknown read,
+      // never a non-merge proof or failure. Defer cleanly without resetting
+      // proof, mutating mergeRetryOutcome, or escalating.
+      if (isQuantumDeadlineExceeded(error)) return;
       if (this.paused()) return;
       const current = this.store.task(t.id);
       if (!matchesObservedRequest(current)) return;
@@ -457,6 +462,7 @@ export class MergeIntent {
       try {
         fresh = await this.mergeGateEvidence(t);
       } catch (error) {
+        if (isQuantumDeadlineExceeded(error)) return;
         if (this.paused()) return;
         const currentAfterError = this.store.task(t.id);
         if (!matchesObservedRequest(currentAfterError)) return;
