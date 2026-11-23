@@ -331,9 +331,9 @@ reviewer processes receive their own report credentials.
 
 Use `bind-acp --read-only <task>` for a session that can only read the task,
 its history and its event stream. A writable binding has a separate command
-credential. The service checks the current controller and planner authority
-in the same local transaction as a command. The scheduler refreshes the
-project's authority from the shared host roster and routing provenance. A
+credential. The service checks current authority locally before committing
+an ACP command or a planner's answer through the API. The scheduler refreshes
+the project's authority from the shared host roster and routing provenance. A
 closure invalidates affected authority. If the authority is unknown, the
 service asks the caller to retry. Rebinding keeps the session ID and rotates
 the credentials. Reaching Done revokes command access and keeps the final view

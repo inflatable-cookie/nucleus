@@ -641,9 +641,15 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
         get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
     ))
     .await;
-    let (_home, service) = fixture(forge);
+    let (_home, mut service) = fixture(forge);
+    let (host, _, _, native) = planner_roster_fixture("planner", "spare-planner").await;
+    service.host = host;
     let head = service.project.start.clone();
     let exact = seed_review_work_question(&service, &head).await;
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("planner roster");
     let prior = service.task("reviewer").await.expect("seeded question");
     let service = Arc::new(service);
     let api = router(
@@ -654,20 +660,7 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     let path = "/v1/tasks/reviewer/commands";
     let answer = json!({"answer":{"work":"Use the fixture greeting"}});
     let amend = json!({"amend":"Use the fixture wording"});
-    let changed_forge = Observed::Known(Forge::Open {
-        pr: PullRequest {
-            url: PR.into(),
-            head: (if head.as_str().starts_with('a') {
-                "b"
-            } else {
-                "a"
-            })
-            .repeat(40)
-            .parse()
-            .expect("new head"),
-        },
-        checks: nucleus_core::CheckState::Ready,
-    });
+    let changed_forge = changed_open_head(&head);
     service
         .observe_commands(&prior, &changed_forge)
         .await
@@ -736,7 +729,25 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
             .ends_with("Use the fixture greeting")
     );
     assert!(answered.task.question().is_none());
+    native.abort();
     server.abort();
+}
+
+fn changed_open_head(head: &nucleus_core::Head) -> Observed<Forge> {
+    Observed::Known(Forge::Open {
+        pr: PullRequest {
+            url: PR.into(),
+            head: (if head.as_str().starts_with('a') {
+                "b"
+            } else {
+                "a"
+            })
+            .repeat(40)
+            .parse()
+            .expect("new head"),
+        },
+        checks: nucleus_core::CheckState::Ready,
+    })
 }
 
 async fn seed_review_work_question(
@@ -802,7 +813,9 @@ async fn serve_merged_forge(
 
 #[tokio::test]
 async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (host, replaced, reads, native) = planner_roster_fixture("origin", "responsible").await;
+    service.host = host;
     let (reserved, _, _) = reservation("worker", Entry::Brief, &service.project.start);
     let mut identity = reserved.identity().clone();
     identity.origin_thread = Some("origin".into());
@@ -845,8 +858,9 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
         .observe_commands(&row, &forge)
         .await
         .expect("exact merged observation");
+    let service = Arc::new(service);
     let api = router(
-        Arc::new(service),
+        Arc::clone(&service),
         [
             Controller {
                 credential: PLANNER_KEY,
@@ -865,6 +879,18 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
     let next_path = "/v1/tasks/worker/next";
     let command_path = "/v1/tasks/worker/commands";
     let answer = json!({"answer":{"accept":{"head":head, "reason":"Accepted the observed merge"}}});
+    let cold = json_body(get_as(&api, next_path, &BOUND_KEY).await).await;
+    expect_command(&cold, "answer", None, "unavailable");
+    assert_eq!(
+        post_json(&api, command_path, &BOUND_KEY, &answer).await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    replaced.store(true, Ordering::Relaxed);
+    service
+        .refresh_planner_authority()
+        .await
+        .expect("published replacement");
     let origin = json_body(get_as(&api, next_path, &PLANNER_KEY).await).await;
     expect_command(&origin, "answer", None, "unavailable");
     assert_eq!(
@@ -877,6 +903,8 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
         post_json(&api, command_path, &BOUND_KEY, &answer).await,
         StatusCode::OK
     );
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    native.abort();
 }
 
 #[tokio::test]
@@ -1030,7 +1058,8 @@ async fn post_as(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> Re
 #[tokio::test]
 async fn an_acp_planner_command_is_refused_after_handover() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    let (host, replaced, reads, native) = planner_roster_fixture().await;
+    let (host, replaced, reads, native) =
+        planner_roster_fixture("old-planner", "new-planner").await;
     service.host = host;
     seed_task(
         &service,
@@ -1129,7 +1158,10 @@ async fn an_acp_planner_command_is_refused_after_handover() {
     native.abort();
 }
 
-async fn planner_roster_fixture() -> (
+async fn planner_roster_fixture(
+    old: &'static str,
+    new: &'static str,
+) -> (
     nucleus_hosts::T3,
     Arc<AtomicBool>,
     Arc<AtomicUsize>,
@@ -1144,9 +1176,9 @@ async fn planner_roster_fixture() -> (
         calls.fetch_add(1, Ordering::Relaxed);
         json!({"_tag":"Chunk","requestId":request["id"],"values":[
             {"kind":"snapshot","snapshot":{"threads":[
-                {"id":"old-planner","projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z",
+                {"id":old,"projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z",
                     "archivedAt":changed.load(Ordering::Relaxed).then_some("2026-11-23T18:10:00Z")},
-                {"id":"new-planner","projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z"}
+                {"id":new,"projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z"}
             ]}},
             {"kind":"synchronized"}
         ]})

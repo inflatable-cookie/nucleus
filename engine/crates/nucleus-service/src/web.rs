@@ -27,7 +27,7 @@ use subtle::ConstantTimeEq;
 use crate::{
     CommandOutcome, Preflight, Service, ServiceError, State as EngineState,
     acp::{MintedSession, WriteAccess},
-    now_ms, preflight,
+    now_ms,
     presentation::{HistoryEvent, RunView},
 };
 
@@ -292,7 +292,7 @@ async fn next(
         wait: summary.wait,
         next_check_at: summary.next_check_at,
         question: summary.question,
-        commands: command_options(task, &authority, &state.command_observation(&row)),
+        commands: command_options(task, &authority, &state.command_observation(&row), &state),
     }))
 }
 
@@ -300,6 +300,7 @@ fn command_options(
     task: &Task,
     authority: &Authority,
     observation: &Observation,
+    state: &EngineState,
 ) -> Vec<CommandView> {
     let mut commands = vec![
         ("cancel", Command::Cancel),
@@ -321,7 +322,8 @@ fn command_options(
         };
         commands.push(("answer", Command::Answer(answer)));
     }
-    let check = |command| match preflight(&mut task.clone(), authority, observation, command) {
+    let check = |command| match state.preflight(&mut task.clone(), authority, observation, command)
+    {
         Ok(Preflight::Ready) => CommandReadiness::Ready,
         Ok(Preflight::Pending) => CommandReadiness::Pending,
         Err(_) => CommandReadiness::Unavailable,

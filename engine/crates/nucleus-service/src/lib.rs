@@ -504,7 +504,11 @@ impl Service {
         session: Option<&acp::WriteAccess>,
     ) -> Result<CommandOutcome, ServiceError> {
         let fence = self.task_fence(id).await;
-        let _fence = if session.is_some() {
+        let local_planner_answer = matches!(
+            (&command, authority),
+            (Command::Answer(_), Authority::Planner { .. })
+        );
+        let _fence = if session.is_some() || local_planner_answer {
             fence
                 .try_lock_owned()
                 .map_err(|_| ServiceError::EffectInProgress)?
@@ -518,14 +522,16 @@ impl Service {
             if acp::writer_controller(&state, id, &session.credential) != Some(session.controller) {
                 return Err(ServiceError::AcpUnauthorized);
             }
-            if let Authority::Planner { actor } = authority {
+            if let Authority::Planner { actor } = authority
+                && !matches!(command, Command::Answer(_))
+            {
                 state.check_planner_authority(&prior.task, actor)?;
             }
         }
         let observation = state.command_observation(&prior);
         let mut task = prior.task.clone();
         let explicit_move = matches!(command, Command::Move(_));
-        match preflight(&mut task, authority, &observation, command)? {
+        match state.preflight(&mut task, authority, &observation, command)? {
             Preflight::Ready => {
                 let version = if explicit_move || prior.task != task {
                     let mut audit = event("command");
@@ -874,28 +880,38 @@ fn active(task: &Task) -> bool {
     ) || task.run().is_some()
 }
 
-fn preflight(
-    task: &mut Task,
-    actor: &Authority,
-    observation: &Observation,
-    command: Command,
-) -> Result<Preflight, ServiceError> {
-    let awaiting_planner = if let (Command::Answer(_), Authority::Planner { actor }) =
-        (&command, actor)
-    {
-        match task.question_delivery() {
-            Some(binding) if binding.thread != *actor => return Err(ServiceError::QuestionPlanner),
-            Some(_) => false,
-            None => true,
+impl State {
+    fn preflight(
+        &self,
+        task: &mut Task,
+        actor: &Authority,
+        observation: &Observation,
+        command: Command,
+    ) -> Result<Preflight, ServiceError> {
+        let planner_answer = match (&command, actor) {
+            (Command::Answer(_), Authority::Planner { actor }) => Some(actor.as_str()),
+            _ => None,
+        };
+        let awaiting_planner = if let Some(actor) = planner_answer {
+            match task.question_delivery() {
+                Some(binding) if binding.thread != actor => {
+                    return Err(ServiceError::QuestionPlanner);
+                }
+                Some(_) => false,
+                None => true,
+            }
+        } else {
+            false
+        };
+        let ready = match task.command(command, actor, observation) {
+            Ok(()) if !awaiting_planner => Preflight::Ready,
+            Ok(()) | Err(CommandError::HeadUnverified) => Preflight::Pending,
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(actor) = planner_answer {
+            self.check_planner_authority(task, actor)?;
         }
-    } else {
-        false
-    };
-    match task.command(command, actor, observation) {
-        Ok(()) if awaiting_planner => Ok(Preflight::Pending),
-        Ok(()) => Ok(Preflight::Ready),
-        Err(CommandError::HeadUnverified) => Ok(Preflight::Pending),
-        Err(error) => Err(error.into()),
+        Ok(ready)
     }
 }
 
