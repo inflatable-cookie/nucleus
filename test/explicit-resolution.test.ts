@@ -690,6 +690,127 @@ test("run.release cancels a current revision on the retained worker thread", asy
   assert.equal(result.resolution.currentRunId, null);
 });
 
+test("unknown custody warns live_turn instead of releasing the worker", async (t) => {
+  let pid: number | undefined;
+  const scan = async () => {
+    if (!pid) return [];
+    const result = await readProcessSubset([pid]);
+    return result.state === "listed" ? result.processes : null;
+  };
+  const f = await fixture(t, { hostProcessListing: scan });
+  const directory = join(f.root, "worktree");
+  mkdirSync(directory);
+  const runId = "initial-worker";
+  const observe = () => ({
+    MountPoint: f.root,
+    VolumeUUID: "fixture",
+    Internal: false,
+    Writable: true,
+    WritableVolume: true,
+  });
+  const placement = checkoutRunScratchPlacement({
+    mount: f.root,
+    uuid: "fixture",
+    observe,
+  });
+  const scratch = runTemporaryEnvironment(runId, placement).TMPDIR;
+  mkdirSync(scratch, { recursive: true });
+  (
+    f.store as unknown as { runScratchRemover: (path: string) => boolean }
+  ).runScratchRemover = (path) =>
+    removeRecordedRunScratchDirectory(path, {
+      mount: f.root,
+      uuid: "fixture",
+      observe,
+    });
+  const coordinator = f.run("recovery-run", "recovery", "coordinator");
+  f.store.putRun(coordinator);
+  const task = f.current();
+  f.store.update(task.id, {
+    phase: "needs_attention",
+    workspaceId: "workspace",
+    directory,
+    temporaryDirectory: scratch,
+    runId,
+    agentId: "worker",
+    agentActive: true,
+    resolution: {
+      ...task.resolution,
+      stop: taskStopRecord(
+        "run_stalled",
+        "Stalled worker",
+        null,
+        new Date().toISOString(),
+        ["restart"],
+      ),
+      recoveryActive: true,
+      recovery: {
+        id: "episode",
+        key: "key",
+        generation: 1,
+        runId: coordinator.id,
+        agentId: coordinator.agentId,
+        status: "running",
+        summary: "Mechanical stop",
+        idleSince: null,
+        incidentId: null,
+      },
+    },
+  });
+  // The child's cwd is outside every guarded root, and it holds a file in the
+  // run scratch. Only an open-file read can see it, and that read overruns.
+  const file = join(scratch, "held output");
+  const fd = openSync(file, "w");
+  const child = spawn(
+    process.execPath,
+    ["-e", "console.log('ready'); setInterval(() => {}, 1000)"],
+    {
+      cwd: f.root,
+      stdio: ["ignore", "pipe", "inherit", fd],
+    },
+  );
+  closeSync(fd);
+  const exited = once(child, "exit");
+  const shimDir = join(f.root, "lsof-shim");
+  mkdirSync(shimDir);
+  writeFileSync(
+    join(shimDir, "lsof"),
+    `#!/bin/sh
+case "$*" in
+  *"+D"*) exec sleep 6 ;;
+  *) exec /usr/sbin/lsof "$@" ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const path = process.env.PATH ?? "";
+  process.env.PATH = `${shimDir}${delimiter}${path}`;
+  try {
+    assert.ok(child.stdout);
+    await once(child.stdout, "data");
+    pid = child.pid;
+    assert.ok(pid);
+    f.store.update(task.id, { agentActive: false });
+    const refused = await f.command({
+      action: "run.release",
+      run: runId,
+      caller: formatAgentId(host, "coordinator"),
+      accept: ["unreported_result"],
+    });
+    assert.equal(refused.explicitResolution?.status, "warnings");
+    assert.ok(
+      refused.explicitResolution?.warnings.some(
+        (warning) => warning.id === "live_turn",
+      ),
+    );
+    assert.equal(f.current().runId, runId);
+  } finally {
+    process.env.PATH = path;
+    child.kill();
+    await exited;
+  }
+});
+
 test("an open-file deadline does not hide a live process the cwd listing already shows", async (t) => {
   let pid: number | undefined;
   const scan = async () => {

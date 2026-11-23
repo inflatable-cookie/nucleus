@@ -523,18 +523,22 @@ async function readOpenFilesUnder(
   const directories = [
     ...new Set(roots.flatMap((root) => (root ? [resolve(root)] : []))),
   ];
-  const existing: string[] = [];
-  for (const directory of directories)
-    if (
-      await stat(directory).then(
-        (entry) => entry.isDirectory(),
-        () => false,
-      )
-    )
-      existing.push(directory);
   const uid = String(uidOf());
   const found = new Map<number, Set<string>>();
+  // Complete only for roots this read inspected: a directory an lsof pass
+  // covered, or a path confirmed absent. A root that is not a directory, or
+  // that cannot be stat'd, is not inspected, so the read is not complete.
   let complete = true;
+  const existing: string[] = [];
+  for (const directory of directories) {
+    const status = await stat(directory).then(
+      (entry) => (entry.isDirectory() ? "directory" : "other"),
+      (error: NodeJS.ErrnoException) =>
+        error.code === "ENOENT" ? "missing" : "unreadable",
+    );
+    if (status === "directory") existing.push(directory);
+    else if (status !== "missing") complete = false;
+  }
   for (const directory of existing) {
     const pass = await processListing("lsof", [
       "-nP",

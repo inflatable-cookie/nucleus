@@ -397,3 +397,30 @@ test(
     }
   },
 );
+
+test(
+  "a root that is not a directory is not inspected, so the scoped read is not complete",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    assert.ok(process.getuid);
+    const uid = process.getuid();
+    const root = await mkdtemp(join(tmpdir(), "host-process-file-root-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const notADirectory = join(root, "a-file");
+    await writeFile(notADirectory, "x");
+    const fact: HostProcessFact = {
+      pid: process.pid,
+      ppid: 1,
+      state: "S",
+      pgid: 1,
+      uid,
+      startIdentity: `${process.pid}@fixture`,
+      command: "fixture",
+      cwd: null,
+    };
+    assert.deepEqual(await readOpenFileFacts([fact], [notADirectory]), {
+      state: "listed",
+      processes: [{ ...fact, openFiles: { paths: [], complete: false } }],
+    });
+  },
+);
