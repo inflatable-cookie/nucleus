@@ -330,16 +330,18 @@ The rules:
   outcome is looked up under its original command ID and is never resent
   blindly.
 
-For a T3 planner on the ladder, each question keeps its original recipient,
-host, prompt and command ID. Delivery updates belong to that message under the
-same escalation occurrence. T3 can verify the answering thread, so opening the
-rung sends the question without a separate ticket message. The task activity
-shows when delivery is waiting on the host or queued behind the planner's
-active turn. The answer window opens when Nucleus observes the run started by
-the exact message. A proven pre-send refusal gets up to three attempts,
-750 ms apart, before the ladder
-can try the next eligible planner. After an unknown outcome, only the original
-command receipt or its exact message and run on T3 can settle delivery.
+Each ladder question keeps its original recipient, host, prompt and command ID
+under one escalation occurrence. On T3 the host queues it immediately. On Paseo
+and BB the durable queue waits for a positively idle planner, then sends through
+the host's queue-only path. Task activity shows the queue or host wait.
+
+T3 and Paseo open the answer window when the host links the original message to
+a turn. BB reports acceptance in its write journal and lacks a per-message turn
+link. Its unanswered window can close after the answer allowance and a positive
+idle read, which excludes queued work. A proven pre-send refusal gets up to
+three attempts, 750 ms apart, before the ladder tries the next eligible planner.
+After an unknown outcome, lookup uses the original command receipt or exact
+message evidence. An unread or incomplete host response leaves delivery pending.
 
 Targets on a healthy host with an idle planner: classified within one minute
 of a terminal fact (plus the callback grace), board update within 30 seconds

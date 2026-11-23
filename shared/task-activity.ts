@@ -380,9 +380,14 @@ export function taskActivity({
             : "Waiting on the host to deliver the planner message";
       const exhausted =
         delivery.state === "refused" && delivery.retryAt === undefined;
-      return answer(exhausted ? "needs_person" : "nucleus", detail, stop.since, {
-        occurrence: `planner-delivery:${delivery.occurrence}`,
-      });
+      return answer(
+        exhausted ? "needs_person" : "nucleus",
+        detail,
+        stop.since,
+        {
+          occurrence: `planner-delivery:${delivery.occurrence}`,
+        },
+      );
     }
   }
   if (stop && personStops.has(stop.reason))
