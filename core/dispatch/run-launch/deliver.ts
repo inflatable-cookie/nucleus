@@ -580,10 +580,19 @@ export class RunLaunchDeliver {
         }
       }
       if (this.store.run(run.id)?.explicitlyReleasedAt) return;
-      this.store.putRun({
-        ...this.store.run(run.id)!,
-        agentId,
-        status: "running",
+      this.store.transaction(() => {
+        this.store.putRun({
+          ...this.store.run(run.id)!,
+          agentId,
+          status: "running",
+        });
+        const delivered = this.store.task(t.id);
+        if (
+          role === "reviewer" &&
+          delivered.resolution.currentRunId === run.id &&
+          delivered.resolution.reviewPassProofWait
+        )
+          this.resolution.update(delivered, { reviewPassProofWait: null });
       });
       this.resolution.clearHostReadTransient?.(t.id, "task");
       this.resolution.waiting(
@@ -694,11 +703,19 @@ export class RunLaunchDeliver {
             ...unsentReviewIntent(latest, run),
           };
           const prior = latest.resolution.stop;
+          const priorRunId = run.priorRunId ?? null;
+          const previousWait = latest.resolution.reviewPassProofWait;
+          const since =
+            previousWait?.head === run.head &&
+            previousWait.priorRunId === priorRunId
+              ? previousWait.since
+              : !previousWait && prior?.fact?.code === "pass_proof"
+                ? prior.since
+                : new Date().toISOString();
           if (
             pendingProof &&
-            prior?.fact?.code === "pass_proof" &&
             this.resolution.currentPassSnapshot()?.hostPassCompleted(latest.hostId) &&
-            waitAgeMs(this.store, latest.hostId, prior.since) >=
+            waitAgeMs(this.store, latest.hostId, since) >=
               REVIEW_PASS_PROOF_LIMIT_MINUTES * 60_000
           ) {
             const reason = `${error.subject} could not be proved after ${REVIEW_PASS_PROOF_LIMIT_MINUTES} minutes while the host was up. ${error.reason}`;
@@ -717,7 +734,7 @@ export class RunLaunchDeliver {
             );
             this.resolution.update(
               latest,
-              { ...release, attention: true, stop },
+              { ...release, attention: true, stop, reviewPassProofWait: null },
               { phase: "needs_attention", reason, reasonFact: fact },
               "review_pass_proof_exhausted",
               reason,
@@ -726,7 +743,13 @@ export class RunLaunchDeliver {
           }
           const waiting = this.resolution.update(
             latest,
-            { ...release, attention: false },
+            {
+              ...release,
+              attention: false,
+              ...(pendingProof
+                ? { reviewPassProofWait: { priorRunId, head: run.head, since } }
+                : {}),
+            },
             { phase: role === "reviewer" ? "reviewing" : latest.phase },
             pendingProof
               ? "review_waiting_on_pass_proof"
@@ -850,6 +873,9 @@ export class RunLaunchDeliver {
               {
                 currentRunId: null,
                 attention: true,
+                ...(role === "reviewer" && current.resolution.reviewPassProofWait
+                  ? { reviewPassProofWait: null }
+                  : {}),
                 ...unsentReviewIntent(current, run),
               },
               { phase: "needs_attention", reason },

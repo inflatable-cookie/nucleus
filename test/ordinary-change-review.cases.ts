@@ -26,6 +26,7 @@ import { supersedeIdleRunInTx } from "../core/recovery/fence-settlement";
 import { reviewPublicationBody } from "../core/forge/index";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import type { ResolutionAdapter } from "../core/resolution";
+import { HostReadRefusalError } from "../core/host/errors";
 import {
   ordinaryReviewSource,
   ordinaryReviewDelta,
@@ -3289,6 +3290,7 @@ async function waitForOrdinaryPassProof(f: ReturnType<typeof fixture>) {
     released: true,
     explicitlyReleasedAt: releasedAt,
     status: "superseded",
+    temporaryDirectory: join(f.root, "retired-scratch"),
   });
   f.idle(retired);
   const task = f.store.task(f.task.id);
@@ -3384,12 +3386,13 @@ test("ordinary review waits for a pass proof and sends the full review with its 
     assert.match(prompt, /You are the independent reviewer/);
     assert.ok(prompt.includes(namedCheck), "the sent review keeps the named check");
     assert.doesNotMatch(prompt, /Recover your own finished findings/);
+    assert.equal(sent.resolution.reviewPassProofWait, null);
   } finally {
     await f.close();
   }
 });
 
-test("an ordinary pass proof that stays unreadable on a healthy host becomes a typed stop", async () => {
+test("an intervening host-read wait preserves the ordinary pass proof deadline", async () => {
   const f = fixture();
   try {
     await waitForOrdinaryPassProof(f);
@@ -3401,12 +3404,24 @@ test("an ordinary pass proof that stays unreadable on a healthy host becomes a t
     await f.engine.auditPass(true);
     const missed = f.store.task(f.task.id);
     assert.equal(missed.resolution.stop?.since, stop.since, "a missed pass preserves the wait's start");
+    const proofWait = missed.resolution.reviewPassProofWait;
+    assert.ok(proofWait);
+    const since = new Date(Date.now() - 6 * 60_000).toISOString();
     f.store.update(f.task.id, {
       resolution: {
         ...missed.resolution,
-        stop: { ...stop, since: new Date(Date.now() - 6 * 60_000).toISOString() },
+        reviewPassProofWait: { ...proofWait, since },
       },
     });
+    const custody = f.engine.resolution.ordinaryRoundCustody.bind(f.engine.resolution);
+    f.engine.resolution.ordinaryRoundCustody = async (...args) => {
+      f.engine.resolution.ordinaryRoundCustody = custody;
+      throw new HostReadRefusalError("The participant inventory changed during the read");
+    };
+    await f.engine.auditPass(true);
+    const transient = f.store.task(f.task.id);
+    assert.equal(transient.resolution.stop?.reason, "external_unavailable");
+    assert.equal(transient.resolution.reviewPassProofWait?.since, since);
     await f.engine.auditPass(true);
     const exhausted = f.store.task(f.task.id);
     assert.equal(f.sends.length, 0);
@@ -3414,6 +3429,39 @@ test("an ordinary pass proof that stays unreadable on a healthy host becomes a t
     assert.equal(exhausted.resolution.stop?.reason, "operator_needed");
     assert.equal(exhausted.resolution.stop?.fact?.code, "pass_proof_exhausted");
     assert.match(exhausted.reason, /Ordinary review participant .*host pass timeline warming budget .* exhausted/);
+  } finally {
+    await f.close();
+  }
+});
+
+test("ordinary review defers when a retired worker changes after an empty process scan", async () => {
+  const f = fixture();
+  try {
+    const { retiredAgentId } = await waitForOrdinaryPassProof(f);
+    const retired = f.states.get(retiredAgentId);
+    assert.ok(retired);
+    f.states.set(retiredAgentId, { ...retired, status: "closed" });
+    let scans = 0;
+    f.adapter.noLiveWorkspaceProcesses = async () => null;
+    f.adapter.hostProcessListing = async () => {
+      if (++scans === 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        f.states.set(retiredAgentId, {
+          ...retired,
+          status: "closed",
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      return [];
+    };
+    await f.engine.auditPass(true);
+    const waiting = f.store.task(f.task.id);
+    assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
+    assert.match(waiting.reason, /predates the participant's latest activity/);
+    assert.equal(f.sends.length, 0);
+    assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
+    await f.engine.auditPass(true);
+    assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
   } finally {
     await f.close();
   }

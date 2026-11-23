@@ -20,7 +20,6 @@ import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
-import { readHostReadTransientEpisode } from "../recovery/host-read-transient";
 
 /**
  * Tasks reconciled per bounded safety-sweep window (Spec 013). The minute sweep
@@ -486,10 +485,7 @@ export class Sweep {
       const awayHosts = new Set<string>();
       // Take the waiting set before warming starts. An operation that first
       // misses during this pass has asked the following pass for its proof.
-      const proofRetries = this.engine.store.operations({ states: ["pending", "running"] })
-        .filter((operation) =>
-          readHostReadTransientEpisode(this.engine.store, operation.id, "op")?.retryOnPass,
-        );
+      const proofRetries = this.engine.store.passProofOperations();
       const openDecisionsBefore = new Set(
         this.engine.store
           .listDecisions({ status: "open" })
@@ -556,7 +552,9 @@ export class Sweep {
         for (const [id, task] of passed.finishedCatchUp)
           finishedCatchUp.set(id, task);
       }
-      if (proofRetries.length && passSnapshot && !startsNoRuns(this.engine.store, this.engine.stopped)) {
+      // Pre-send proof settlement is allowed while paused. Each verb still
+      // owns its own pause gate for any work the proof would allow it to start.
+      if (proofRetries.length && passSnapshot && !this.engine.stopped) {
         const retries = proofRetries.flatMap((operation) =>
           operation.taskId && passSnapshot.hostPassCompleted(operation.hostId)
             ? [this.boundTaskQuantum(

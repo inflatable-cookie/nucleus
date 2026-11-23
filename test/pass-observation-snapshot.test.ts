@@ -400,13 +400,12 @@ test("a process snapshot predating a new child or idle transition never clears a
 
   assert.equal(
     hold.kind,
-    "hold",
-    `pre-idle pass process snapshot must keep lease held, got: ${JSON.stringify(hold)}`,
+    "deferred",
+    `pre-idle pass process snapshot must defer, got: ${JSON.stringify(hold)}`,
   );
-  assert.ok(
-    hold.kind === "hold" &&
-      /predates|before the participant was proven inactive/i.test(hold.reason),
-    `pre-idle pass process snapshot must keep lease held, got: ${JSON.stringify(hold)}`,
+  assert.match(
+    hold.reason,
+    /predates|before the participant was proven inactive/i,
   );
   assert.equal(
     f.store
@@ -1587,7 +1586,7 @@ test("an unbound launch reservation without an agentId does not abort the host p
   );
 });
 
-test("bounded tool projection holds when a newer turn advances updatedAt after the host pass snapshot", async (t) => {
+test("bounded tool projection defers when a newer turn advances updatedAt after the host pass snapshot", async (t) => {
   const t1 = new Date(Date.now() - 60_000).toISOString();
   let currentUpdatedAt = t1;
   const f = engineFixture(t, {
@@ -1663,20 +1662,16 @@ test("bounded tool projection holds when a newer turn advances updatedAt after t
     });
     assert.equal(
       hold.kind,
-      "hold",
-      "bounded tool proof must hold when fresh observation has a newer updatedAt than the pass snapshot",
+      "deferred",
+      "bounded tool proof must defer when fresh observation has a newer updatedAt than the pass snapshot",
     );
-    if (hold.kind === "hold")
-      assert.match(
-        hold.reason,
-        /predates|active after the pass process snapshot/i,
-      );
+    assert.match(hold.reason, /predates|active after the pass process snapshot/i);
   } finally {
     snapshot.expire();
   }
 });
 
-test("unstamped bounded tool window and unstamped complete tool page both hold without task-lane timeline RPCs", async (t) => {
+test("unstamped tool evidence never clears a hold or reads a timeline on the task lane", async (t) => {
   const t1 = new Date(Date.now() - 60_000).toISOString();
   let timelineCalls = 0;
   let boundedMode = true;
@@ -1739,7 +1734,7 @@ test("unstamped bounded tool window and unstamped complete tool page both hold w
     temporaryDirectory: "/tmp/synthetic-unstamped-tool-scratch",
   });
 
-  // 1. Bounded window with unstamped fresh observation must hold on process proof.
+  // 1. An unstamped observation cannot establish process snapshot freshness.
   const snap1 = f.engine.resolution.beginPassSnapshot();
   try {
     await (
@@ -1755,12 +1750,8 @@ test("unstamped bounded tool window and unstamped complete tool page both hold w
       taskId: seeded.task.id,
       workspaceId: "ws-unstamped-tool",
     });
-    assert.equal(hold.kind, "hold", "unstamped bounded tool window must hold");
-    if (hold.kind === "hold")
-      assert.match(
-        hold.reason,
-        /positive activity stamp|active after the pass process/i,
-      );
+    assert.equal(hold.kind, "deferred", "unstamped process proof must defer");
+    assert.match(hold.reason, /positive activity stamp|active after the pass process/i);
     assert.equal(
       timelineCalls,
       callsAfterWarm,

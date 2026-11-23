@@ -353,6 +353,16 @@ export const resolutionSchema = z.object({
     .strict()
     .nullable()
     .default(null),
+  /** First unread custody proof for one ordinary review round. The visible stop can change. */
+  reviewPassProofWait: z
+    .object({
+      priorRunId: z.string().nullable(),
+      head: z.string(),
+      since: z.string().datetime({ offset: true }),
+    })
+    .strict()
+    .nullable()
+    .optional(),
   ...resolutionMergeRecordFields,
   // Retained so older task rows parse without rewriting live data. New review
   // intake never creates or acts on shared-checkout branch-switch state.

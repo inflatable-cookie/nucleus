@@ -590,7 +590,7 @@ export class OwnedTools {
       );
       if (verdict.state === "empty") {
         if (predates) {
-          hold = `${toolLabel}; ${predates}`;
+          return { kind: "deferred", reason: `${toolLabel}; ${predates}` };
         } else {
           const heldRunId = options.runId ?? verdict.runId;
           this.recordOwnedToolSettlement(
@@ -609,7 +609,7 @@ export class OwnedTools {
         this.adapter.noLiveWorkspaceProcesses
       ) {
         if (predates) {
-          hold = `${toolLabel}; ${predates}`;
+          return { kind: "deferred", reason: `${toolLabel}; ${predates}` };
         } else {
           const workspaceRead = await boundedRead(
             "workspace process probe",
@@ -836,7 +836,6 @@ export class OwnedTools {
       turn,
       entries,
     );
-    if (predates) return { kind: "hold", reason: predates };
     let workspaceRead: Awaited<ReturnType<typeof boundedRead<string | null>>>;
     try {
       workspaceRead = await boundedRead(
@@ -876,7 +875,7 @@ export class OwnedTools {
       );
       if (issue) return { kind: "hold", reason: issue };
     }
-    return { kind: "clear" };
+    return predates ? { kind: "deferred", reason: predates } : { kind: "clear" };
   }
 
   private acceptOwnedToolHold(

@@ -1,7 +1,7 @@
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import { TaskChangedRefusal, taskChangedHint } from "../../shared/task-version";
 import type { Engine } from "../engine";
-import { PassProofPendingError } from "../host/errors";
+import { HostReadRefusalError, PassProofPendingError } from "../host/errors";
 
 /**
  * Apply one owner control and record its outcome (round 4: the applied and
@@ -12,7 +12,7 @@ import { PassProofPendingError } from "../host/errors";
  * A stale-version refusal names the version the task is now at and the read to
  * make, so a caller re-reads `next` once instead of resending the stale payload
  * (lean audit 2026-10-15). The hint comes from the typed refusal, never from its
- * words. Nothing is retried.
+ * words. The durable operation owns retries of incomplete host reads.
  */
 export async function applyControlWithVersionHint(engine: Engine, input: TaskControlInput, operationId?: string): Promise<Task> {
   const recordOutcome = (outcome: "applied" | "refused", reason?: string) => {
@@ -40,7 +40,11 @@ export async function applyControlWithVersionHint(engine: Engine, input: TaskCon
       recordOutcome("applied");
       return engine.store.task(input.taskId);
     }
-    if (error instanceof PassProofPendingError && !committed?.preSendBoundaryStartedAt)
+    if (
+      !committed?.preSendBoundaryStartedAt &&
+      (error instanceof PassProofPendingError ||
+        (committed && error instanceof HostReadRefusalError))
+    )
       throw error;
     const message = error instanceof Error ? error.message : String(error);
     recordOutcome("refused", message);

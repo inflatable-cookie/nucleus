@@ -693,7 +693,9 @@ export class TaskWakes {
       }
       return "exhausted";
     }
-    const retryOnPass = operation && error instanceof PassProofPendingError;
+    const retryOnPass =
+      operation &&
+      (error instanceof PassProofPendingError || activeOld?.retryOnPass === true);
     const scopeParts = [
       next.hostId ? `host ${next.hostId}` : null,
       next.target || null,
