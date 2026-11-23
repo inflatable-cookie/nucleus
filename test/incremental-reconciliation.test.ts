@@ -2515,10 +2515,12 @@ test("quiesce waits for a timer wake after the original lane releases", async ()
 test("quiesce waits for a wake still in its prelude, before the drain has a lane", async () => {
   const f = tempStore();
   const engine = new Engine(f.store, fakeAdapter({}, f.root));
-  const inventory = gate();
-  (
-    engine as unknown as { archivePlannerGrants(): Promise<void> }
-  ).archivePlannerGrants = () => inventory.promise.then(() => {});
+  const prerequisites = gate();
+  const flushPrerequisiteReleases = engine.flushPrerequisiteReleases.bind(engine);
+  engine.flushPrerequisiteReleases = async () => {
+    await prerequisites.promise;
+    await flushPrerequisiteReleases();
+  };
   let quiet = false;
   try {
     f.store.setMeta("paused", false);
@@ -2532,11 +2534,11 @@ test("quiesce waits for a wake still in its prelude, before the drain has a lane
       false,
       "a fire-and-forget wake is accepted work before its drain starts",
     );
-    inventory.open();
+    prerequisites.open();
     await Promise.all([wake, quiescence]);
     assert.equal(quiet, true);
   } finally {
-    inventory.open();
+    prerequisites.open();
     await engine.stop();
     f.close();
   }

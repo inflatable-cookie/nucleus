@@ -97,7 +97,9 @@ export interface HostThreadPresentation {
    * Reconcile native thread titles from task identity during the ordinary host
    * sweep. `rows` is the pass's complete set of task rows, derived from the same
    * attention projection the row writes read, so a title that counts tasks never
-   * depends on how far those writes got (nucleus#1443).
+   * depends on how far those writes got (nucleus#1443). The pass presents its live
+   * tasks that have a thread and one page of finished ones (Spec 069 §4), so
+   * finished history is caught up a page at a time.
    */
   reconcileThreadTitles?(
     tasks: readonly Task[],
@@ -105,13 +107,18 @@ export interface HostThreadPresentation {
   ): Promise<void>;
   /**
    * Settle the finished-parent archive obligation (nucleus#1459), from the host's
-   * durable parent bindings and the pass's own task list. It is the terminal step's
-   * work alone: no Inbox, decision-card, row or title read can gate it, and one
-   * host's parent fault never covers another. A pass visits a bounded batch of the
-   * oldest attempts, and every entry it cannot settle comes back as a typed wait for
-   * the caller to record. A host that keeps no parent binding omits the method.
+   * durable parent bindings. Each open binding's task comes from the pass's own
+   * task list or, failing that, `lookup` (Spec 069 §4): the host pass gives the
+   * store's single-task read, so the selection costs one read per open binding,
+   * survives a service roll and never depends on which finished tasks the pass
+   * happened to list. It is the terminal step's work alone: no Inbox,
+   * decision-card, row or title read can gate it, and one host's parent fault never
+   * covers another. A pass visits a bounded batch of the oldest attempts, and every
+   * entry it cannot settle comes back as a typed wait for the caller to record. A
+   * host that keeps no parent binding omits the method.
    */
   reconcileFinishedParents?(
     tasks: readonly Task[],
+    lookup?: (taskId: string) => Task | null,
   ): Promise<readonly ParentArchiveWait[]>;
 }

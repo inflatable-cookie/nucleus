@@ -1,3 +1,4 @@
+import { hostOutageIntervals } from "../scheduling/host-outage";
 import { callbackTransportPhase } from "../../shared/service/transport.mjs";
 import { hostKindOf } from "../../shared/host-kind";
 import { randomUUID } from "node:crypto";
@@ -152,10 +153,10 @@ export class TaskStops {
       current.resolution.attention === true &&
       current.reasonFact?.code === "pre_send_refused";
     const closingOutage = Boolean(outage) && Boolean(options.returned);
-    // The task's own host wait is a Nucleus-side cause of its own (nucleus#1198
-    // review): it pauses the clock whether or not the stop beside it belongs to
-    // an owner answer, and the interval is dated from the outage's start.
-    const hostWait = current.resolution.hostWait ?? null;
+    // A host outage is not a per-task cause here (Spec 069 §3): the budget read
+    // discounts the host's own outage record (`hostOutageIntervals`), so an outage
+    // opens and closes no clock on any task. A transport deferral's own
+    // `host_unavailable` stop still holds the clock through its stop reason.
     const held = terminal
       ? null
       : nucleusHeldReason({
@@ -167,7 +168,6 @@ export class TaskStops {
               ? current.resolution.incident.cause
               : null,
           presendRefusal,
-          hostWaitSince: hostWait?.since ?? null,
           // While the lane is wedged only the outage may hold it; the returned quantum
           // has to be able to close the interval.
           observationOutage: Boolean(outage) && !closingOutage,
@@ -181,7 +181,7 @@ export class TaskStops {
     // the open `since`, and for an outage the observation itself — so an interval
     // opened for an outage is dated from the observation, and a return that beats
     // every visit still books the outage time.
-    const starts = [clock.since, outage, hostWait?.since]
+    const starts = [clock.since, outage]
       .map((value) => (value ? Date.parse(value) : Number.NaN))
       .filter((started) => Number.isFinite(started) && started <= at);
     const pausedTo = starts.length ? Math.min(...starts) : at;
@@ -305,6 +305,7 @@ export class TaskStops {
       Date.now(),
       this.store.eventsAll(task.id),
       this.store.canonicalRepository(task.repoPath, task.repository),
+      hostOutageIntervals(this.store, task.hostId),
     );
     if (budget.exhausted) return task;
     // A queued task's own wait is dispatch; every other phase is progressing under

@@ -613,14 +613,16 @@ export function terminalThreadCleanupWaits(
  * Finished tasks on this host whose threads this rule has not cleaned up yet.
  * The selection is the store's own query over the durable effect records
  * (`Store.finishedTasksOwingThreadCleanup`), so the meta-key format lives in the
- * store that writes it.
+ * store that writes it. `taskIds` narrows it to the host pass's page of finished
+ * tasks (Spec 069 §4).
  */
 export function finishedThreadCleanupCatchUp(
   store: Store,
   hostId: string,
   removal: boolean,
+  taskIds?: readonly string[],
 ): Task[] {
-  return store.finishedTasksOwingThreadCleanup(hostId, removal);
+  return store.finishedTasksOwingThreadCleanup(hostId, removal, taskIds);
 }
 
 /** One finished task's cleanup, called on its existing task lane by the sweep. */

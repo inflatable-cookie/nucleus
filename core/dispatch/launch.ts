@@ -1,3 +1,4 @@
+import { hostOutageIntervals } from "../scheduling/host-outage";
 import type { Profile, Run, Task } from "../../shared/contracts";
 import {
   isDispositionActive,
@@ -56,7 +57,7 @@ export type LaunchThreadContext = Pick<
   | "retainedProfileIssue"
   | "reviewerCapabilityIssue"
   | "select"
-  | "signoffIssue"
+  | "retainedRouteIssue"
   | "store"
   | "update"
   | "usageCeilingNote"
@@ -159,6 +160,7 @@ export class DispatchLaunch {
           current.repoPath,
           current.repository,
         ),
+        hostOutageIntervals(this.context.store, current.hostId),
       );
       if (budget.exhausted) {
         this.context.waiting(t, budgetPauseDetail(budget), "budget");

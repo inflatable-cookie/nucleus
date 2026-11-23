@@ -1,3 +1,5 @@
+import { hostOutageIntervals } from "../scheduling/host-outage";
+import type { WaitStateContext } from "../../shared/wait-state";
 import { taskWaitStateContext } from "../recovery/wait-context";
 import { taskDetailView } from "../../shared/task-view";
 import { taskNeverDispatched, liveRun } from "../task-decision-rules";
@@ -51,6 +53,7 @@ import {
 export interface OwnerVerbFacts {
   /** Live wait wording for next. Verb guards still read the authoritative task. */
   waitTask?: Task;
+  activityWaitContext?: WaitStateContext;
   store: Store;
   task: Task;
   runs: Run[];
@@ -337,6 +340,7 @@ export const ownerTaskBudget = (facts: OwnerVerbFacts) =>
     Date.now(),
     facts.events,
     facts.store.canonicalRepository(facts.task.repoPath, facts.task.repository),
+    hostOutageIntervals(facts.store, facts.task.hostId),
   );
 
 /**

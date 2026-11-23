@@ -67,7 +67,8 @@ for (const role of ['reviewer', 'revision', 'closeout', 'recovery', 'executor'] 
       f.store.putRun(first); f.store.setCredential(first.id, 'secret-first-run');
       const released = { ...first, status: 'superseded' as const, released: true };
       f.store.putRun(released);
-      assert.equal(existsSync(spec.mcpBindingPath!), false, 'the superseded first run was purged');
+      assert.equal(existsSync(spec.mcpBindingPath!), role === 'reviewer',
+        'only a reportless reviewer keeps a verdict-only ticket on release');
       const current = f.run('current-run', role); f.activate(current);
       await f.send(current);
       // A later release observation repeats cleanup for the earlier run on the same task.

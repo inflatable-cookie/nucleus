@@ -36,8 +36,7 @@ export function demandRank(value: DemandLevel): number {
   return DEMAND_LEVELS.indexOf(value);
 }
 /**
- * Spec 052: each level's permission rule is about a profile's bracket, not a
- * rating elsewhere. "The top two" are Heavyweight and Frontier (Tom, 2026-11-19).
+ * Spec 052: each level uses the profile's capability bracket. "The top two" are Heavyweight and Frontier (Tom, 2026-11-19).
  */
 export const TOP_TIERS: readonly ProfileCapability[] = [
   "heavyweight",
@@ -62,25 +61,25 @@ export const USAGE_LABELS: Record<
     summary:
       "Starts one bracket below the task; high-complexity work needs permission at submission",
     detail:
-      "Every task starts one bracket below the one it may climb to. High and very-high complexity work needs permission when it is submitted. Frontier always needs permission, and Heavyweight does unless the task starts or climbs there. The reviewer runs one bracket below the worker.",
+      "Every task starts one bracket below the one it may climb to. High and very-high complexity work needs permission when it is submitted. Frontier requires a profile request, as does Heavyweight unless the task starts or climbs there. The reviewer runs one bracket below the worker.",
   },
   normal: {
     label: "Normal",
     summary:
       "Low complexity on Mechanical, medium and high on Worker, very high on Heavyweight",
     detail:
-      "Very-low and low complexity start on Mechanical, medium and high on Worker, and very high on Heavyweight. A high task may climb once to Heavyweight after review changes; a very-high one to Frontier only with permission. The reviewer runs one bracket below the worker.",
+      "Very-low and low complexity start on Mechanical, medium and high on Worker, and very high on Heavyweight. A high task may climb once to Heavyweight after review changes; a very-high task uses Frontier only on request. The reviewer runs one bracket below the worker.",
   },
   high: {
     label: "High",
     summary:
-      "High-complexity work starts on Heavyweight; Frontier needs permission",
+      "High-complexity work starts on Heavyweight; Frontier is request-only",
     detail:
-      "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles need permission. The reviewer runs on the worker's bracket.",
+      "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles require an explicit request. The reviewer runs on the worker's bracket.",
   },
   extra_high: {
     label: "Extra high",
-    summary: "Starts as at High; nothing needs permission",
+    summary: "Same starting brackets as High, with automatic Frontier selection",
     detail:
       "Every task starts as at High, and no run needs permission. The reviewer runs on the worker's bracket.",
   },
@@ -93,11 +92,10 @@ export const USAGE_LABELS: Record<
 };
 
 /**
- * Whether automatic selection needs the operator's sign-off to run this pool
- * entry (Spec 052, Tom 2026-11-17 and 2026-11-19). `requested` is the bracket
+ * Whether this pool entry requires an explicit profile request (Spec 052). `requested` is the bracket
  * the task may climb to and `climbTier` the bracket a recorded climb earned.
- * At Low and Normal, Frontier always needs sign-off and Heavyweight does unless
- * the task starts there (a very-high task, which may climb to Frontier) or a
+ * At Low and Normal, Frontier is request-only and Heavyweight is too unless
+ * the task starts there (a very-high task) or a
  * recorded climb reached it. Rotation weight (Spec 053) is never a
  * permission rule.
  */
@@ -140,58 +138,10 @@ export function submissionNeedsPermission(
     level === "low" && (complexity === "high" || complexity === "very_high")
   );
 }
-/** Spec 052: the operator signed this request off on the board. */
-export const requestSignedOff = (
-  request: { signoff?: { status: string } | null } | null | undefined,
-) => request?.signoff?.status === "approved";
-/**
- * Whether an explicit request reaches this pool entry. A profile the level
- * covers needs none; a held top-two profile at Low or Normal or a Frontier
- * profile at High needs the request with a reason
- * and the operator's board sign-off (Tom, 2026-10-21; 2026-11-17).
- */
-export const requestReaches = (
-  entry: Pick<PoolEntry, "capability" | "profileId">,
-  usage: UsageLevel,
-  request:
-    | { profileId: string; reason: string; signoff?: { status: string } | null }
-    | null
-    | undefined,
-  requested?: DemandLevel | null,
-  climbTier?: DemandLevel | null,
-) =>
-  !requestOnly(entry, usage, requested, climbTier) ||
-  (request?.profileId === entry.profileId &&
-    Boolean(request.reason.trim()) &&
-    requestSignedOff(request));
-/**
- * The request a selection honours: unchanged when its profile is within the
- * level, or signed off; otherwise none, so an unsigned request never pins a
- * profile, waits for one, or sets its thinking (automatic selection applies).
- */
-export function honouredRequest<
-  T extends {
-    profileId: string;
-    reason: string;
-    signoff?: { status: string } | null;
-  },
->(
-  request: T | null | undefined,
-  pool: readonly Pick<PoolEntry, "capability" | "profileId">[],
-  usage: UsageLevel,
-  requested?: DemandLevel | null,
-  climbTier?: DemandLevel | null,
-): T | null {
-  if (!request) return null;
-  const entry = pool.find((item) => item.profileId === request.profileId);
-  return !entry || requestReaches(entry, usage, request, requested, climbTier)
-    ? request
-    : null;
-}
 /**
  * Whether automatic selection may ever reach this profile at this level: within
  * the task's own requested tier (Maximum is the exception, where workers and
- * reviewers use the top two tiers), and not held by the level's permission rule.
+ * reviewers use the top two tiers), and eligible under the usage level.
  */
 export function automaticReachable(
   entry: Pick<PoolEntry, "capability">,
@@ -203,7 +153,7 @@ export function automaticReachable(
   const tier = entry.capability;
   if (level === "maximum" && role !== "coordinator") return topTier(tier);
   // Only a worker is capped at the climb bracket (Tom, 2026-11-18 reviewer; 2026-11-19 coordinator):
-  // only the level's permission rule bounds it.
+  // the usage level bounds the other roles.
   if (
     role === "worker" &&
     requested &&
@@ -264,9 +214,7 @@ export function describeAutomaticSelection(
           ? "below Heavyweight and Frontier, which Maximum reserves for workers and reviewers"
           : aboveRequested
             ? `above the task's ${BRACKET_LABELS[requested]} bracket, so an explicit route is required`
-            : usage.level === "high"
-              ? "request-only at High"
-              : `needs permission at ${label}`;
+            : `request-only at ${label}`;
       return `${tier}: ${rule}${ended}`;
     }
   }
@@ -296,22 +244,9 @@ export function describeRoutePolicy(
   requested?: DemandLevel | null,
   climbTier?: DemandLevel | null,
 ): string {
-  const asked =
-    policy.source === "request" && policy.automatic?.startsWith("request");
-  const signoff = policy.signoff;
-  if (signoff?.endedGrantId)
-    return `Explicit ${policy.role} request was covered by grant ${signoff.endedGrantId.slice(0, 8)}, which has ended; automatic selection applies`;
   const source =
     policy.source === "request"
-      ? !asked
-        ? `Explicit ${policy.role} request`
-        : signoff?.status === "approved" && signoff.grantId
-          ? `Explicit ${policy.role} request, covered by grant ${signoff.grantId.slice(0, 8)}`
-          : signoff?.status === "approved"
-            ? `Explicit ${policy.role} request, signed off on the board`
-            : signoff?.status === "declined"
-              ? `Explicit ${policy.role} request, declined${signoff.note ? ` (${signoff.note})` : ""}: automatic selection applies`
-              : `Explicit ${policy.role} request awaiting the operator's board sign-off${signoff?.decisionId ? ` (decision ${signoff.decisionId.slice(0, 8)})` : ""}: automatic selection runs meanwhile`
+      ? `Explicit ${policy.role} request${policy.reason ? `: ${policy.reason}` : ""}`
       : policy.source === "preference"
         ? "Worker preference"
         : `Recorded ${policy.role} run used it (history, not today's policy)`;
@@ -462,64 +397,13 @@ export function workerThinking(task: {
     ""
   );
 }
-/**
- * The worker thinking level selection may carry: the worker request's level only
- * while that request is honoured (Spec 052), otherwise the task's own level, so
- * an unsigned request's level never narrows automatic or replacement selection.
- */
-export function honouredWorkerThinking(
-  task: {
-    thinkingOptionId?: string;
-    profileRequests?: {
-      worker?: {
-        profileId: string;
-        reason: string;
-        thinkingOptionId?: string;
-        signoff?: { status: string } | null;
-      } | null;
-    } | null;
-  },
-  pool: readonly Pick<PoolEntry, "capability" | "profileId">[],
-  usage: UsageLevel,
-  requested?: DemandLevel | null,
-  climbTier?: DemandLevel | null,
-): string {
-  return honouredRequest(
-    task.profileRequests?.worker ?? null,
-    pool,
-    usage,
-    requested,
-    climbTier,
-  )
-    ? workerThinking(task)
-    : task.thinkingOptionId || "";
-}
-
-/**
- * The worker profile the next worker run takes. A required request (an owner
- * route or a required submission) wins over the profile
- * that last ran; a soft request does not (consumer-b #658: a fresh restart pinned
- * the last profile over the owner's required route). An owner route is intent,
- * not a boundary: a required owner route remains effective until the owner
- * routes again.
- */
-/**
- * Task 515: one general rule for every role's dispatch and replacement
- * selection. A recorded selection (the dispatched profile, the retained
- * reviewer, the bound coordinator) that predates a required route the
- * selection honours yields to it: an approval the operator already gave for
- * the same task and profile is never asked again, and an approved route never
- * leaves an older selection in force. Returns the winning profile, or null
- * when nothing supersedes the recorded selection. A soft request never
- * displaces: like a fresh dispatch, it only decides when it is eligible.
- */
+/** A required request or a request-only profile supersedes an older binding. */
 export function supersedingRouteProfile(
   request:
     | {
         profileId: string;
         reason: string;
         required?: boolean;
-        signoff?: { status: string } | null;
       }
     | null
     | undefined,
@@ -529,15 +413,10 @@ export function supersedingRouteProfile(
   requested?: DemandLevel | null,
   climbTier?: DemandLevel | null,
 ): string | null {
-  const honoured = honouredRequest(
-    request ?? null,
-    pool,
-    usage,
-    requested,
-    climbTier,
-  );
-  return honoured?.required && honoured.profileId !== recordedProfileId
-    ? honoured.profileId
+  if (!request || request.profileId === recordedProfileId) return null;
+  const entry = pool.find((item) => item.profileId === request.profileId);
+  return request.required || (entry && requestOnly(entry, usage, requested, climbTier))
+    ? request.profileId
     : null;
 }
 

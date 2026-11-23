@@ -42,6 +42,7 @@ const CAPACITY: CapacityAuthorityValues = {
   hostOutageNoticeMinutes: 120,
   operatorDefaultHostKind: "paseo",
   threadRetentionDays: 3,
+  threadRetentionIntervalHours: 12,
 };
 /** A recorded change that moved the named limits, each as [before, after]. */
 const change = (
@@ -77,7 +78,6 @@ const authority = (
 const state = (overrides: Record<string, unknown> = {}) =>
   ({
     usage: { level: "normal", setLevel: "normal", until: null, expired: false },
-    routingGrants: [],
     profiles: [],
     projects: [],
     projectLimit: 5,
@@ -170,7 +170,7 @@ test("limits show applied values beside controls, and the recorded changes stay 
   }
 });
 
-test("a full record adds nothing to the screen: Frontier grants is the last section", async () => {
+test("a full record adds nothing to the screen: Project overrides is the last section", async () => {
   const twenty = Array.from({ length: 20 }, (_, index) =>
     change(
       index + 1,
@@ -205,7 +205,6 @@ test("a full record adds nothing to the screen: Frontier grants is the last sect
       "Usage level",
       "Task slots",
       "Project overrides",
-      "Frontier grants",
     ]);
     assert.doesNotMatch(
       ui.text(),
@@ -369,10 +368,7 @@ test("empty states name what is absent and the next meaningful action", async ()
       ui.text(),
       /None\. Every project uses the per-project limit\./,
     );
-    assert.match(
-      ui.text(),
-      /None\. A planner asks once, and the request arrives on the board\./,
-    );
+    assert.doesNotMatch(ui.text(), /Frontier grants/);
   } finally {
     done();
   }
@@ -657,63 +653,6 @@ async function settle(probe: () => boolean) {
 function escape(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-
-test("a frontier grant is one full-width row: planner, profiles, (?) and a revoke icon that asks first", async () => {
-  const grant = {
-    id: "g1",
-    planner: "agent-1",
-    reason: "UI work",
-    profiles: ["opus"],
-    until: null,
-    status: "active",
-    requestedAt: "2026-11-08T09:00:00.000Z",
-    requestedBy: "planner",
-    decisionId: null,
-    activatedAt: "2026-11-08T09:00:00.000Z",
-    activatedBy: "operator",
-    runCount: 3,
-  };
-  const { ui, done } = await mountLimits({
-    state: state({
-      routingGrants: [grant],
-      profiles: [{ id: "opus", name: "Opus Oracle" }],
-      projects: [
-        { key: "nucleus", name: "nucleus", planner: { agentId: "agent-1" } },
-      ],
-    }),
-  });
-  try {
-    const card = ui.get("Grant for nucleus planner, 3 runs");
-    assert.equal(card.props.style.maxWidth, undefined, "full width");
-    assert.equal(card.props.style.flexBasis, undefined);
-    assert.match(
-      ui.text(),
-      /nucleus planner[\s\S]*Opus Oracle/,
-      "planner then profiles",
-    );
-    assert.equal(
-      ui.query("Grant for nucleus planner actions"),
-      undefined,
-      "no ⋯ menu",
-    );
-    assert.ok(ui.get("Grant for nucleus planner help"));
-    const revoke = ui.get("Revoke the grant for nucleus planner");
-    assert.equal(
-      revoke.props.accessibilityHint,
-      "Revoke the grant for nucleus planner",
-    );
-    ui.press("Revoke the grant for nucleus planner");
-    assert.match(
-      ui.text(),
-      /Revoke nucleus planner's grant\?/,
-      "revoking asks first",
-    );
-    ui.press("Keep grant for nucleus planner");
-    assert.doesNotMatch(ui.text(), /Revoke nucleus planner's grant\?/);
-  } finally {
-    done();
-  }
-});
 
 type Node = {
   type: string;

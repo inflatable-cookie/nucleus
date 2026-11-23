@@ -1018,10 +1018,11 @@ test("don't normalise: store.events is the newest 100; eventsAll is everything, 
   assert.equal(recent.at(-1)!.detail, "20");
 });
 
-// The split map says only `Resolution.update` nulls the stop. Today both do on a
-// reason or phase change (store.ts `lifecycleChanged`). What differs, and must not
-// be normalised, is the merge and the event.
-test("don't normalise: both updates null the stop on a reason or phase change, and keep it otherwise", (t) => {
+// Spec 069 §3, one owner per field: only `Resolution.update`, the stop's owner,
+// nulls the stop on a reason change. The store funnel keeps it on a reason-only
+// write and ends it only on a phase change. What also differs, and must not be
+// normalised, is the merge and the event.
+test("don't normalise: Resolution.update nulls the stop on a reason change, the funnel only on a phase change", (t) => {
   const f = fixture(t);
   const stop = {
     reason: "lifecycle",
@@ -1037,7 +1038,23 @@ test("don't normalise: both updates null the stop on a reason or phase change, a
   };
   const viaStore = stopped();
   f.store.update(viaStore.id, { reason: "Changed" });
-  assert.equal(f.store.task(viaStore.id).resolution.stop, null);
+  assert.equal(
+    f.store.task(viaStore.id).resolution.stop?.reason,
+    "lifecycle",
+    "a reason-only funnel write keeps the stop's owner's record",
+  );
+  f.store.update(viaStore.id, {
+    resolution: { ...f.store.task(viaStore.id).resolution },
+    reason: "Changed again",
+  });
+  assert.equal(
+    f.store.task(viaStore.id).resolution.stop?.reason,
+    "lifecycle",
+    "repeating the current stop beside a reason change keeps it too",
+  );
+  const viaPhase = stopped();
+  f.store.update(viaPhase.id, { phase: "working" });
+  assert.equal(f.store.task(viaPhase.id).resolution.stop, null);
   const viaResolution = stopped();
   f.resolution.update(viaResolution, {}, { reason: "Changed" });
   assert.equal(f.store.task(viaResolution.id).resolution.stop, null);
@@ -1607,7 +1624,7 @@ responsible_question_stale_answered:1:1 responsible_question_superseded:2:2 revi
 review_delivery_delivered:1:0 review_delivery_refused:1:0 review_delivery_reserved:1:1 review_delivery_uncertain:1:0 review_published:1:2
 review_reapplied:4:4 review_result_applied:4:5 reviewer_consult:1:2 reviewer_consult_answered:1:2 reviewer_consult_missed:1:3
 reviewer_consult_payload:1:2 reviewer_consult_reviewer:1:2 reviewer_consult_sent:1:2 reviewer_consult_unknown:2:4 revision_budget_exhausted:2:1
-revision_requested:4:3 role_replacement:1:6 routing_signoff:1:7 run_completion:1:1 run_completion_corrected:1:1 run_intent:1:1
+revision_requested:4:3 role_replacement:1:6 run_completion:1:1 run_completion_corrected:1:1 run_intent:1:1
 runnable_proof_refused:1:1 runnable_proof_started:1:1 shell_notice_cleared:1:1 shell_notice_shown:1:1 state:2:40 submitted:1:1 telemetry_recovery:1:2
 telemetry_stage:1:5 transport_deferred:1:3 unchanged_check_revision_refused:2:1 unfinished_continuation:2:2 unfinished_pushback:2:2
 unused_workspace_archive_intent:1:1 worker_resume_requested:5:4 workspace_archived:2:4 workspace_cleanup_wait:1:1 workspace_contents_discarded:2:3

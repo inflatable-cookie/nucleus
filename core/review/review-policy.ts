@@ -208,7 +208,7 @@ export class ReviewPolicy {
       if (reviewerRuntimeChanged(run.profile, { provider: boundaryRuntime?.provider ?? boundaryCurrent.provider, model: boundaryRuntime?.model ?? boundaryCurrent.model, modeId: boundaryRuntime?.modeId, thinkingOptionId: boundaryRuntime?.thinkingOptionId }))
         return refuse('Original reviewer model/profile changed during workspace placement verification; no delivery was sent');
       if (!stillAllowed()) return refuse('A Queue fence changed immediately before delivery; no delivery was sent');
-      if (run.ordinaryDetached) assertOrdinaryReviewIdentity(task, run.head, true);
+      if (run.ordinaryDetached) assertOrdinaryReviewIdentity(task, run.head);
       // Once send is invoked its outcome can be uncertain. Callers retain the
       // durable intent and must reconcile from this exact message ID, never retry.
       beforeSend?.();
@@ -239,7 +239,7 @@ export async function retainedWorkspacePlacement(workspace: { directory?: string
   const record = workspace.current();
   if (!record || !workspace.directory || !existsSync(workspace.directory) || workspace.directory !== source.directory)
     return refuse(`Original reviewer workspace is missing or changed ${phase}; no delivery was sent`);
-  if (run.ordinaryDetached) await ordinaryReviewSource(task, run.head, true);
+  if (run.ordinaryDetached) await ordinaryReviewSource(task, run.head);
   if (record.projectRootPath === task.repoPath) return { placed: true };
   // Only the primary task checkout has a second legitimate placement: a distinct
   // run workspace keeps the canonical project
@@ -252,8 +252,12 @@ export async function retainedWorkspacePlacement(workspace: { directory?: string
   catch { return refuse(`Retained reviewer checkout is unreadable ${phase}; no delivery was sent`); }
   if (!common || (common !== checkout.commonDir && !(task.directory && safeRealpathSync(source.directory) === safeRealpathSync(task.directory) && commonDirMatchesTask(task, checkout.commonDir, common, source.directory))))
     return refuse(`Retained reviewer checkout is not a worktree of the task repository ${phase}; no delivery was sent`);
-  if (run.ordinaryDetached) await ordinaryReviewSource(task, run.head, true);
-  if (checkout.branch !== (run.ordinaryDetached ? '' : task.branch) || checkout.head !== run.head)
+  if (run.ordinaryDetached) await ordinaryReviewSource(task, run.head);
+  // Every ordinary round reads its exact head on the attached task branch
+  // (planner ruling, 2026-11-22). A checkout an earlier round left detached is
+  // returned by the reattach step before this proof, so a detached checkout here
+  // is a changed checkout and refuses.
+  if (checkout.branch !== task.branch || checkout.head !== run.head)
     return refuse(`Retained reviewer checkout is not the reviewed branch and head ${phase}; no delivery was sent`);
   // The workspace descriptor was sampled before those awaited Git reads, so it is
   // re-read here and must describe the same placement, and the Git evidence is

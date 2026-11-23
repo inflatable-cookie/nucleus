@@ -16,7 +16,11 @@ import {
   supersededResumeRefusal,
 } from "../recovery/superseded-resume";
 import { ownerArmedRetainedWorker } from "../recovery/task-reasons";
-import { reportRunBinding } from "./report-run-binding";
+import {
+  reportRunBinding,
+  reviewerVerdictCanReadopt,
+  STALE_REVIEWER_VERDICT,
+} from "./report-run-binding";
 import { reportRunFor } from "../dispatch/acting-run";
 // recoveryAction and replacementAgentId are retired (Spec 050); stored records keep them readable.
 export const reportSchema = completionBaseSchema
@@ -51,8 +55,9 @@ export class Reports {
   private async perform(input: ReportInput, token: string) {
     const store = this.engine.store;
     const identityRunId = input.runId;
+    let credential;
     try {
-      store.authenticate(input.runId, token);
+      credential = store.authenticateCompletion(input.runId, token, input);
     } catch (error) {
       const credentialRunId = store.credentialRunForToken(token);
       if (!credentialRunId) throw error;
@@ -86,15 +91,20 @@ export class Reports {
     // credential that arrived stays the one this delivery authenticated — the
     // receipt hash above is the delivered bytes, so an identical retry matches.
     const original = store.run(identityRunId);
-    const run = original?.mergeRetirement
+    const run = original?.mergeRetirement || credential === "verdict_only"
       ? original
       : reportRunFor(store, task, identityRunId);
     if (run?.mergeRetirement && input.head && input.head !== run.head)
       throw Error("Recovery report does not match its original head");
     if (run && run.id !== input.runId) input = { ...input, runId: run.id };
     const binding = run ? reportRunBinding(task, run, input) : null;
-    if (binding === "stale")
+    if (
+      (binding === "stale" || credential === "verdict_only") &&
+      (!run || !reviewerVerdictCanReadopt(store, task, run, input))
+    ) {
+      if (credential === "verdict_only") throw Error(STALE_REVIEWER_VERDICT);
       throw this.staleRun(identityRunId, identityRunId, input.taskId);
+    }
     // Spec 050: an owner-armed replacement that has not retired the retained
     // worker yet is that worker's own binding, so its genuine authenticated
     // result is accepted here exactly as the completion handler accepts it. The

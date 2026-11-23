@@ -1,5 +1,6 @@
+import { endsStopOnReason } from "../../shared/task-stop";
 import {
-  FORCE_CALLER_REFUSAL,
+  forceCallerRefusal,
   FORCE_MOVE_REFUSAL,
   FORCE_MERGED_REFUSAL,
   FORCE_PAUSED_REFUSAL,
@@ -436,7 +437,10 @@ export class ForceVerbs {
       : input.caller === OPERATOR_BOARD_CALLER
         ? "operator_board"
         : input.caller && (await this.forcePlannerSource(task, input.caller));
-    if (!source) throw new DurableFenceRefusal(FORCE_CALLER_REFUSAL);
+    if (!source)
+      throw new DurableFenceRefusal(
+        forceCallerRefusal(input.caller, task.critical),
+      );
     this.engine.requireOwnerControlCurrent(
       task,
       input.version,
@@ -906,7 +910,14 @@ export class ForceVerbs {
               task.id,
               {
                 reason: "Forced merge was stopped before sending; read next",
-                resolution: { ...current.resolution, mergeIntent: false },
+                resolution: {
+                  ...current.resolution,
+                  ...endsStopOnReason(
+                    current,
+                    "Forced merge was stopped before sending; read next",
+                  ),
+                  mergeIntent: false,
+                },
               },
               "merge_request_withdrawn",
               reason,
@@ -918,6 +929,10 @@ export class ForceVerbs {
                 reason: `Forced merge outcome is uncertain: ${String(error).slice(0, 1000)}`,
                 resolution: {
                   ...current.resolution,
+                  ...endsStopOnReason(
+                    current,
+                    `Forced merge outcome is uncertain: ${String(error).slice(0, 1000)}`,
+                  ),
                   mergeResponseOutcome: "uncertain",
                 },
               },

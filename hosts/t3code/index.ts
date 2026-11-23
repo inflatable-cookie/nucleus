@@ -23,7 +23,7 @@ import { T3CodeHost, type T3CodeConfig } from "./adapter";
 
 export { T3CodeHost, type T3CodeConfig } from "./adapter";
 export { T3CompatibilityError } from "./contracts";
-export { T3InventoryChurnError } from "./reads";
+export { T3TransientReadError } from "./reads";
 export { T3RpcError, T3RpcClient } from "./rpc";
 export function createHost(config: T3CodeConfig): T3CodeHost {
   return new T3CodeHost(config);
@@ -420,8 +420,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     ) {
       return this.native.reconcileThreadTitles(tasks, rows);
     }
-    reconcileFinishedParents(tasks: readonly Task[]) {
-      return this.native.reconcileFinishedParents(tasks);
+    reconcileFinishedParents(
+      tasks: readonly Task[],
+      lookup?: (taskId: string) => Task | null,
+    ) {
+      return this.native.reconcileFinishedParents(tasks, lookup);
     }
     agentTimelinePage(id: string, limit?: number) {
       return this.native.agentTimelinePage(id, limit);

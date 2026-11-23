@@ -63,6 +63,7 @@ export type OwnerEffect = {
     | "disposition_workspace"
     | "task_control_operation"
     | "recovery_effect"
+    | "branch_cleanup"
     | "owned_tool";
   summary: string;
   /** An effect can still hold the task while its observer owns settlement. */
@@ -174,6 +175,17 @@ export function ownerEffectOccurrence(
       (item) => item.workspaceId === workspaceId,
     );
     return JSON.stringify([workspaceId, retry?.attempts ?? null]);
+  }
+  if (effect.kind === "branch_cleanup") {
+    const branch = ownerEffectIdentity(effect.effect, "branch_cleanup")!;
+    const record = facts.task.resolution.branchCleanups.find(
+      (item) => item.branch === branch,
+    );
+    return JSON.stringify([
+      branch,
+      record?.at ?? null,
+      record?.attempts ?? null,
+    ]);
   }
   return effect.effect;
 }
@@ -376,6 +388,19 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
         task.resolution.workspaceRetirement?.detail ??
         "Cancelled workspace is preserved; an owner may authorize retirement after fresh source and idle proofs",
     });
+  // nucleus#1548: a branch closeout could not delete, or whose delete it must
+  // observe first, is the owner's to retry. The retry observes the branch again and
+  // re-proves every safety rule before it deletes anything.
+  for (const record of task.resolution.branchCleanups)
+    if (record.state === "intent" || record.state === "wait")
+      effects.push({
+        effect: `branch_cleanup.${record.branch}`,
+        kind: "branch_cleanup",
+        summary:
+          record.state === "intent"
+            ? `Branch ${record.branch} deletion outcome is unconfirmed; the retry observes it before anything else`
+            : `Branch ${record.branch} cleanup is waiting: ${record.detail}`,
+      });
   // Spec 017: a merged review-entry task's preserved external workspace owes a
   // catalog archive per registration. A held or unknown answer is the owner's to
   // retry; the retry re-proves placement, membership, source and idleness before

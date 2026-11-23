@@ -1,7 +1,7 @@
 import { defineRpc } from "../rpc";
 import { telemetryFilterSchema, telemetrySnapshotSchema } from "../telemetry";
 import { z } from "zod";
-import { capacityAuthorityStateSchema, capacitySchema, poolRecordFromLegacy, poolSchema, routingGrantViewSchema, usageLevelSchema, usageViewSchema } from "../schema/settings";
+import { capacityAuthorityStateSchema, capacitySchema, poolRecordFromLegacy, poolSchema, usageLevelSchema, usageViewSchema } from "../schema/settings";
 import { nucleusProfileInputSchema, nucleusProfileSchema, nucleusProfileUpdateSchema } from "../profiles";
 import { hostCatalogSchema, storedHostCatalogSchema } from "../host";
 import { hostKindSchema } from "../host-kind";
@@ -61,7 +61,12 @@ export type ProfileCompatibilityHost = z.infer<typeof profileCompatibilityHostSc
 export const readProfileCompatibility = defineRpc({ name: "profile.compatibility", input: z.object({}).strict(),
   output: z.object({ hosts: z.array(profileCompatibilityHostSchema), rows: z.array(profileCompatibilityRowSchema) }).strict() });
 
-export const configureProfile = defineRpc({name:"queue.profile",input:z.preprocess(raw=>poolRecordFromLegacy(raw),poolSchema),output:z.object({ok:z.literal(true)})});
+export const configureProfile = defineRpc({
+  name: "queue.profile",
+  input: z.preprocess((raw) => poolRecordFromLegacy(raw), poolSchema),
+  // An older service can still answer ok. Settings needs the stored entry to confirm a save.
+  output: z.object({ ok: z.literal(true), entry: poolSchema.optional() }),
+});
 
 export const queueControl = defineRpc({ name: "queue.control", input: z.object({ paused: z.boolean().optional(), dispatchHeld: z.boolean().optional() }).strict().refine(input => input.paused !== undefined || input.dispatchHeld !== undefined, "Provide paused or dispatchHeld"), output: z.object({ ok: z.literal(true) }) });
 
@@ -95,23 +100,5 @@ export const capacityState = defineRpc({ name: "queue.capacity-state", input: z.
 
 
 export const configureUsage = defineRpc({ name: "queue.usage", input: z.object({ level: usageLevelSchema, until: z.string().datetime({ offset: true }).nullable().optional() }).strict(), output: usageViewSchema });
-
-/** Spec 052: a planner asks for a standing frontier grant; the operator answers on the board; the planner ends it or the operator revokes. */
-export const routingGrant = defineRpc({
-  name: "queue.routing-grant",
-  input: z.object({
-    action: z.enum(["request", "end", "revoke"]),
-    caller: z.string().trim().min(1).max(300),
-    reason: z.string().trim().min(1).max(4000).optional(),
-    profiles: z.array(z.string().trim().min(1)).max(32).optional(),
-    until: z.string().datetime({ offset: true }).nullable().optional(),
-    grantId: z.string().min(1).optional(),
-  }).strict().refine(input => input.action !== "request" || Boolean(input.reason?.trim()), "A grant request needs a reason"),
-  output: z.object({
-    grant: routingGrantViewSchema,
-    joined: z.boolean(),
-    alreadyActive: z.boolean(),
-  }).strict(),
-});
 
 export const configureProjectDispatchLimit = defineRpc({ name: "queue.project-dispatch-limit", input: projectDispatchLimitSchema, output: z.object({ ok: z.literal(true) }) });

@@ -190,6 +190,13 @@ export function moveTaskToWorkerHost(params: MoveTaskToWorkerHostParams): Task {
           ...current.resolution,
           ...patchResolution,
           ...params.resolutionPatch,
+          // The move answers the task's stop when it writes a new reason (Spec 069
+          // §3: the funnel no longer clears it), unless the mover names one.
+          ...(typeof restPatch.reason === "string" &&
+          restPatch.reason !== current.reason &&
+          !(params.resolutionPatch && "stop" in params.resolutionPatch)
+            ? { stop: null }
+            : {}),
           currentRunId: null,
           reviewerAgentId: null,
           reviewerProfile: null,

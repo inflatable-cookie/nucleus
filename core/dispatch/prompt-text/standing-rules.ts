@@ -1,7 +1,7 @@
 import type { PromptSection } from "./measure";
 
 /** Standing guidance shared with the Nucleus skill and the per-run context store. */
-export const WORKER_RULES = `Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions. Bring product or scope changes, releases, outward actions and profiles that require board approval to the planner. For a board discussion, include the headline, two or three choices and consequences, your recommended choice and the details.
+export const WORKER_RULES = `Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions. Bring product or scope changes, releases and outward actions to the planner. For a board discussion, include the headline, two or three choices and consequences, your recommended choice and the details.
 
 Work around blockers within the approved scope first. If a second opinion is needed, ask the retained reviewer. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. After one reviewer consult, report a remaining blocker with what you tried. Nucleus escalates once per cause to the project planner and joins repeats to the open escalation.
 

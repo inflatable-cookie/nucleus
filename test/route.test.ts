@@ -22,12 +22,6 @@ import {
   collectOwnerVerbFacts,
   ownerTaskNext,
 } from "../core/verbs/owner-verbs";
-import { Decisions } from "../core/planning/decisions";
-import {
-  reconcileRoutingSignoffs,
-  SIGNOFF_DECLINE,
-  signoffApprove,
-} from "../core/dispatch/routing-signoff";
 
 /**
  * Spec 050 `route`: an owner points one role's next run at a named profile on
@@ -87,7 +81,7 @@ function fixture() {
     capability: "mechanical",
     
   });
-  // Spec 052: a frontier profile automatic selection never lands on below Maximum (task 577 routes to it).
+  // Spec 052: Frontier needs a request at High.
   const nova = profile("nova", "nova-model", ["worker"], undefined, {
     
     capability: "frontier",
@@ -1447,419 +1441,32 @@ test("route now stops and replaces a live revision worker without losing the PR 
   }
 });
 
-test("an approved pending worker request routes the live automatic run now and keeps its workspace and branch", async () => {
+test("a planner routes to Frontier for the next worker run without opening a decision", async () => {
   const f = fixture();
   try {
-    const nova = f.engine.profiles.find((p) => p.id === "nova")!;
+    const reason = "The revision needs Frontier for cross-system analysis";
+    await assert.rejects(
+      f.control({ role: "worker", profileId: "nova", caller: "worker", reason }),
+      /worker and reviewer cannot request a profile/,
+    );
     f.store.update(f.task.id, {
-      phase: "working",
-      completion: null,
-      profileRequests: {
-        worker: {
-          profileId: "nova",
-          reason: "Frontier analysis",
-          required: true,
-        },
-      },
+      resolution: { ...f.current().resolution, reviewerAgentId: "reviewer-thread" },
     });
-    f.store.putRun({
-      id: "rev-live",
-      taskId: f.task.id,
-      role: "revision",
-      generation: 1,
-      head,
-      base,
-      agentId: "worker",
-      workspaceId: "workspace",
-      profile: f.engine.profiles.find((p) => p.id === "author")!,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: true,
-      idleSince: null,
-      completion: null,
-      released: false,
-    } as Run);
-    f.store.setCredential("rev-live", "token");
-    f.store.update(f.task.id, {
-      resolution: { ...f.current().resolution, currentRunId: "rev-live" },
-    });
-    f.observations.set("worker", {
-      id: "worker",
-      workspaceId: "workspace",
-      status: "running",
-      active: true,
-      permissions: false,
-      error: "",
-      activeTurnId: "turn-1",
-    });
-    reconcileRoutingSignoffs(
-      f.store,
-      new Decisions(f.store),
-      f.task.id,
-      f.engine.profiles,
+    await assert.rejects(
+      f.control({ role: "reviewer", profileId: "nova", caller: "reviewer-thread", reason }),
+      /worker and reviewer cannot request a profile/,
     );
-    const pending = f.current().profileRequests!.worker!.signoff!;
-    const decision = f.engine.signoffDecisions.get({ id: pending.decisionId! });
-    f.engine.signoffDecisions.answer({
-      id: decision.id,
-      version: decision.version,
-      answer: signoffApprove(nova.name),
-      answeredBy: "operator (board)",
-      relayed: false,
-      note: "",
-    });
-
-    await f.engine.taskQuantumOwner.taskQuantum(f.task.id);
-    assert.deepEqual(f.stops, ["worker"]);
-    assert.equal(f.current().workspaceId, "workspace");
-    assert.equal(f.current().branch, f.task.branch);
-    assert.equal(f.current().directory, "/worktree");
-    assert.equal(
-      f.current().profileRequests!.worker!.signoff!.decisionId,
-      decision.id,
-    );
-    assert.match(
-      f.current().profileRequests!.worker!.reason,
-      /Frontier analysis/,
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test("approval reroutes and stops a live initial worker turn through route now", async () => {
-  const f = fixture();
-  try {
-    const nova = f.engine.profiles.find((p) => p.id === "nova")!;
-    f.store.update(f.task.id, {
-      phase: "working",
-      completion: null,
-      profileRequests: {
-        worker: {
-          profileId: "nova",
-          reason: "Frontier analysis",
-          required: true,
-        },
-      },
-      resolution: { ...f.current().resolution, currentRunId: null },
-    });
-    f.observations.set("worker", {
-      id: "worker",
-      workspaceId: "workspace",
-      status: "running",
-      active: true,
-      permissions: false,
-      error: "",
-      activeTurnId: "initial-turn",
-    });
-    reconcileRoutingSignoffs(
-      f.store,
-      new Decisions(f.store),
-      f.task.id,
-      f.engine.profiles,
-    );
-    const pending = f.current().profileRequests!.worker!.signoff!;
-    const decision = f.engine.signoffDecisions.get({ id: pending.decisionId! });
-    f.engine.signoffDecisions.answer({
-      id: decision.id,
-      version: decision.version,
-      answer: signoffApprove(nova.name),
-      answeredBy: "operator (board)",
-      relayed: false,
-      note: "",
-    });
-
-    await f.engine.taskQuantumOwner.taskQuantum(f.task.id);
-    const routed = f.current();
-    assert.deepEqual(
-      f.stops,
-      ["worker"],
-      "approval uses the same live-turn stop as an owner route now",
-    );
-    assert.equal(routed.replacementProfile?.profileId, "nova");
-    assert.equal(routed.workspaceId, "workspace");
-    assert.equal(routed.branch, f.task.branch);
-    assert.equal(
-      routed.reason,
-      `Rerouted to nova after approval ${decision.id}`,
-    );
-    const event = f.events("route_changed").at(-1)!;
-    assert.match(
-      event.detail,
-      new RegExp(`Rerouted to nova after approval ${decision.id}`),
-    );
-    assert.equal(f.events("routing_signoff_live_route_refused").length, 0);
+    const routed = await f.control({ role: "worker", profileId: "nova", caller: "origin", reason });
+    assert.equal(routed.profileRequests?.worker?.reason, reason);
+    assert.equal(routed.agentId, "worker");
+    assert.deepEqual(f.stops, []);
+    assert.equal(f.store.listDecisions({ task: f.task.id }).length, 0);
 
     await f.engine.wake();
-    assert.equal(
-      f.current().profile?.id,
-      "nova",
-      "the replacement starts on the approved profile",
-    );
-    assert.equal(
-      f.current().workspaceId,
-      "workspace",
-      "the existing workspace is retained",
-    );
-    assert.equal(
-      f.current().branch,
-      f.task.branch,
-      "the existing branch is retained",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test("an approval after worker handoff sets its next route without interrupting the reviewer", async () => {
-  const f = fixture();
-  try {
-    const nova = f.engine.profiles.find((p) => p.id === "nova")!;
-    f.store.update(f.task.id, {
-      phase: "awaiting_review",
-      profileRequests: {
-        worker: {
-          profileId: "nova",
-          reason: "Frontier analysis",
-          required: true,
-        },
-      },
-    });
-    f.store.putRun({
-      id: "review-live",
-      taskId: f.task.id,
-      role: "reviewer",
-      generation: 1,
-      head,
-      base,
-      agentId: "reviewer",
-      workspaceId: "workspace",
-      profile: f.engine.profiles.find((p) => p.id === "luna")!,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: true,
-      idleSince: null,
-      completion: null,
-      released: false,
-    } as Run);
-    f.store.update(f.task.id, {
-      resolution: {
-        ...f.current().resolution,
-        currentRunId: "review-live",
-        reviewerAgentId: "reviewer",
-        reviewerProfile: f.engine.profiles.find((p) => p.id === "luna")!,
-      },
-    });
-    reconcileRoutingSignoffs(
-      f.store,
-      new Decisions(f.store),
-      f.task.id,
-      f.engine.profiles,
-    );
-    const pending = f.current().profileRequests!.worker!.signoff!;
-    const decision = f.engine.signoffDecisions.get({ id: pending.decisionId! });
-    f.engine.signoffDecisions.answer({
-      id: decision.id,
-      version: decision.version,
-      answer: signoffApprove(nova.name),
-      answeredBy: "operator (board)",
-      relayed: false,
-      note: "",
-    });
-
-    await f.engine.taskQuantumOwner.taskQuantum(f.task.id);
-    assert.equal(f.current().resolution.currentRunId, "review-live");
-    assert.equal(f.store.run("review-live")!.released, false);
-    assert.equal(f.stops.length, 0);
-    assert.equal(f.current().profileRequests!.worker!.profileId, "nova");
-    assert.equal(
-      f.current().profileRequests!.worker!.signoff!.decisionId,
-      decision.id,
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test("declining a pending worker profile request leaves its live automatic run alone", async () => {
-  const f = fixture();
-  try {
-    f.store.update(f.task.id, {
-      phase: "working",
-      completion: null,
-      profileRequests: {
-        worker: {
-          profileId: "nova",
-          reason: "Frontier analysis",
-          required: true,
-        },
-      },
-    });
-    f.store.putRun({
-      id: "rev-live",
-      taskId: f.task.id,
-      role: "revision",
-      generation: 1,
-      head,
-      base,
-      agentId: "worker",
-      workspaceId: "workspace",
-      profile: f.engine.profiles.find((p) => p.id === "author")!,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: true,
-      idleSince: null,
-      completion: null,
-      released: false,
-    } as Run);
-    f.store.setCredential("rev-live", "token");
-    f.store.update(f.task.id, {
-      resolution: { ...f.current().resolution, currentRunId: "rev-live" },
-    });
-    f.observations.set("worker", {
-      id: "worker",
-      workspaceId: "workspace",
-      status: "running",
-      active: true,
-      permissions: false,
-      error: "",
-      activeTurnId: "turn-1",
-    });
-    reconcileRoutingSignoffs(
-      f.store,
-      new Decisions(f.store),
-      f.task.id,
-      f.engine.profiles,
-    );
-    const pending = f.current().profileRequests!.worker!.signoff!;
-    const decision = f.engine.signoffDecisions.get({ id: pending.decisionId! });
-    f.engine.signoffDecisions.answer({
-      id: decision.id,
-      version: decision.version,
-      answer: SIGNOFF_DECLINE,
-      answeredBy: "operator (board)",
-      relayed: false,
-      note: "",
-    });
-
-    await f.engine.taskQuantumOwner.taskQuantum(f.task.id);
-    assert.deepEqual(f.stops, []);
-    assert.equal(f.current().resolution.currentRunId, "rev-live");
-    assert.equal(f.store.run("rev-live")!.released, false);
-    assert.equal(
-      f.current().profileRequests!.worker!.signoff!.status,
-      "declined",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test("route now to a frontier profile preserves the request and leaves the retained worker untouched until sign-off", async () => {
-  const f = fixture();
-  try {
-    f.store.putRun({
-      id: "rev-live",
-      taskId: f.task.id,
-      role: "revision",
-      generation: 1,
-      head,
-      base,
-      agentId: "worker",
-      workspaceId: "workspace",
-      profile: f.engine.profiles.find((p) => p.id === "author")!,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: true,
-      idleSince: null,
-      completion: null,
-      released: false,
-    } as Run);
-    f.store.setCredential("rev-live", "token");
-    f.store.update(f.task.id, {
-      phase: "working",
-      completion: null,
-      resolution: { ...f.current().resolution, currentRunId: "rev-live" },
-    });
-    f.observations.set("worker", {
-      id: "worker",
-      workspaceId: "workspace",
-      status: "running",
-      active: true,
-      permissions: false,
-      error: "",
-      activeTurnId: "turn-2",
-    });
-
-    // effigy#531 10:30 with now: true (review 825): the unsigned route used to
-    // throw before recording its request, so the operator was never asked. The
-    // `now` replacement is refused, the request stands, and the retained
-    // worker and its run are untouched until the sign-off is approved.
-    await assert.rejects(
-      f.control({
-        role: "worker",
-        profileId: "nova",
-        now: true,
-        reason: "Nova for the revision, now",
-      }),
-      /needs the operator's board sign-off/,
-    );
-    assert.deepEqual(f.stops, [], "the live worker turn was not stopped");
-    assert.equal(
-      f.store.run("rev-live")!.released,
-      false,
-      "the live run was not released",
-    );
-    assert.equal(
-      f.store.run("rev-live")!.status,
-      "running",
-      "the live run was not superseded",
-    );
-    const routed = f.current();
-    assert.equal(
-      routed.resolution.currentRunId,
-      "rev-live",
-      "the run stays bound",
-    );
-    assert.equal(routed.agentId, "worker", "the retained worker is untouched");
-    assert.equal(routed.phase, "working", "the phase is untouched");
-    assert.equal(
-      routed.replacementProfile,
-      null,
-      "nothing is armed while sign-off is pending",
-    );
-    assert.equal(routed.failoverReason, "", "no failover is armed");
-    assert.equal(
-      routed.profileRequests?.worker?.profileId,
-      "nova",
-      "the route request is recorded",
-    );
-    assert.equal(routed.profileRequests?.worker?.ownerRoute, true);
-    const refused = f.events("worker_replacement_refused");
-    assert.equal(refused.length, 1);
-    assert.match(
-      refused[0]!.detail,
-      /^signoff_pending:/,
-      "the refusal names its rule",
-    );
-
-    // The preserved request still opens the operator's sign-off decision.
-    const decisions = new Decisions(f.store);
-    reconcileRoutingSignoffs(f.store, decisions, f.task.id, f.engine.profiles);
-    const signoff = f.current().profileRequests?.worker?.signoff;
-    assert.equal(
-      signoff?.status,
-      "pending",
-      "the request waits for the operator",
-    );
-    assert.ok(signoff?.decisionId, "the sign-off decision is linked");
-    const open = decisions.get({ id: signoff!.decisionId! });
-    assert.equal(open.status, "open");
-    assert.match(open.question, /nova/);
+    assert.equal(f.current().profile?.id, "nova");
+    assert.equal(f.current().resumePrNumber, 1);
+    assert.equal(f.current().workspaceId, "workspace");
+    assert.equal(f.store.listDecisions({ task: f.task.id }).length, 0);
   } finally {
     await f.close();
   }

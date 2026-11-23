@@ -87,7 +87,8 @@ test('052: the climb is one bracket from the worker\'s actual profile, capped at
   const climb = (complexity: CapabilityLevel, profileId: string | null, usage: UsageLevel = 'normal') => workerClimbTarget({ complexity, profile: profileId ? { id: profileId } : null,
     resolution: { review: { status: 'changes_required', runId: 'review-1' }, workerClimb: null } }, rated, usage);
   assert.deepEqual(climb('high', 'w'), { from: 'worker', to: 'heavyweight', reviewRunId: 'review-1' });
-  assert.deepEqual(climb('very_high', 'h'), { from: 'heavyweight', to: 'frontier', reviewRunId: 'review-1' });
+  assert.equal(climb('very_high', 'h'), null);
+  assert.deepEqual(climb('very_high', 'h', 'extra_high'), { from: 'heavyweight', to: 'frontier', reviewRunId: 'review-1' });
   assert.equal(climb('medium', 'w'), null, 'a medium task never climbs past Worker');
   assert.equal(climb('low', 'm'), null, 'low stays on Mechanical');
   assert.equal(climb('high', 'w', 'high'), null, 'at High a high task already starts on Heavyweight');
@@ -97,7 +98,7 @@ test('052: the climb is one bracket from the worker\'s actual profile, capped at
   assert.equal(workerStepUp('frontier', 'heavyweight'), 'frontier', 'an explicit route above it is not pulled back');
 });
 
-test('052 permission: Frontier needs sign-off below Extra high; Heavyweight at Low and Normal only when the task neither starts nor climbs there', () => {
+test('052 permission: Frontier is request-only below Extra high; Heavyweight at Low and Normal only when the task neither starts nor climbs there', () => {
   const cases = [
     ['low', 'frontier', 'frontier', null, true], ['normal', 'frontier', 'frontier', 'frontier', true],
     ['normal', 'heavyweight', 'worker', null, true], ['normal', 'heavyweight', 'heavyweight', null, true],
@@ -112,26 +113,25 @@ test('052 permission: Frontier needs sign-off below Extra high; Heavyweight at L
     assert.equal(requestOnly({ capability }, level, 'mechanical'), false, `${level}/${capability}`);
 });
 
-test('053 rows: only profiles the level covers form the automatic set; gated ones meet the demand as sign-off only, and weight never excludes', () => {
-  assert.deepEqual(pick('worker', 'normal', [], 'worker'), { profileIds: ['deepseek', 'haiku', 'grok'], shortfall: false, signoffOnly: ['opus', 'sol'] },
+test('053 rows: only profiles the level covers form the automatic set; gated ones meet the demand only on request, and weight never excludes', () => {
+  assert.deepEqual(pick('worker', 'normal', [], 'worker'), { profileIds: ['deepseek', 'haiku', 'grok'], shortfall: false },
     'a medium task selects the Worker pool; Heavyweight is above it and held');
   assert.deepEqual(pick('worker', 'normal', ['haiku'], 'worker').profileIds, ['deepseek', 'grok'], 'an excluded author model leaves the set');
-  assert.deepEqual(pick('worker', 'normal', [], 'heavyweight'), { profileIds: ['deepseek', 'haiku', 'grok'], shortfall: false, signoffOnly: ['opus', 'sol'] },
+  assert.deepEqual(pick('worker', 'normal', [], 'heavyweight'), { profileIds: ['deepseek', 'haiku', 'grok'], shortfall: false },
     'a high task\'s first run is on Worker; Heavyweight is held before the climb');
-  assert.deepEqual(pick('heavyweight', 'normal', [], 'heavyweight', 'heavyweight'), { profileIds: ['sol'], shortfall: false, signoffOnly: ['opus'] },
+  assert.deepEqual(pick('heavyweight', 'normal', [], 'heavyweight', 'heavyweight'), { profileIds: ['sol'], shortfall: false },
     'the recorded climb to Heavyweight needs no request at Normal');
-  assert.deepEqual(pick('heavyweight', 'normal', [], 'frontier'), { profileIds: ['sol'], shortfall: false, signoffOnly: ['opus'] },
+  assert.deepEqual(pick('heavyweight', 'normal', [], 'frontier'), { profileIds: ['sol'], shortfall: false },
     'a very-high task starts on Heavyweight at Normal without a request');
-  assert.deepEqual(pick('frontier', 'normal', [], 'frontier', 'frontier'), { profileIds: ['sol'], shortfall: true, signoffOnly: ['opus'] },
-    'its climb to Frontier still needs sign-off: the best covered profile serves');
-  assert.deepEqual(pick('frontier', 'high', [], 'frontier', 'frontier'), { profileIds: ['sol'], shortfall: true, signoffOnly: ['opus'] }, 'at High too');
-  assert.deepEqual(pick('frontier', 'extra_high', [], 'frontier', 'frontier'), { profileIds: ['opus'], shortfall: false, signoffOnly: [] }, 'at Extra high Frontier is automatic');
-  assert.deepEqual(pick('heavyweight', 'maximum', [], 'worker'), { profileIds: ['opus', 'sol'], shortfall: false, signoffOnly: [] }, 'at Maximum workers use Heavyweight and Frontier');
+  assert.deepEqual(pick('frontier', 'normal', [], 'frontier', 'frontier'), { profileIds: ['sol'], shortfall: true },
+    'its climb to Frontier is request-only: the best covered profile serves');
+  assert.deepEqual(pick('frontier', 'high', [], 'frontier', 'frontier'), { profileIds: ['sol'], shortfall: true }, 'at High too');
+  assert.deepEqual(pick('frontier', 'extra_high', [], 'frontier', 'frontier'), { profileIds: ['opus'], shortfall: false }, 'at Extra high Frontier is automatic');
+  assert.deepEqual(pick('heavyweight', 'maximum', [], 'worker'), { profileIds: ['opus', 'sol'], shortfall: false }, 'at Maximum workers use Heavyweight and Frontier');
   assert.deepEqual(pick('mechanical', 'extra_high', [], 'mechanical').profileIds, ['glm', 'muse'], 'Mechanical demand selects its own bracket whatever the cost');
   const short = pick('heavyweight', 'normal', ['sol'], 'frontier');
   assert.deepEqual(short.profileIds, ['deepseek', 'haiku', 'grok'], 'the nearest covered bracket below on a shortfall');
   assert.equal(short.shortfall, true);
-  assert.deepEqual(short.signoffOnly, ['opus']);
 });
 
 test('053: unavailable groups, disabled and catalog-missing profiles are never picked', () => {
@@ -147,13 +147,12 @@ test('053 preview: per-role rows from the level start bracket, the reviewer excl
     pool, profiles, 'normal', new Set());
   assert.deepEqual(rows.map(row => [row.role, row.demand]), [['worker', 'worker'], ['reviewer', 'mechanical'], ['coordinator', 'mechanical']]);
   assert.deepEqual(rows[2]!.pick.profileIds, ['glm', 'muse'], 'the coordinator runs on Mechanical');
-  const signed = { status: 'approved' as const, decisionId: 'd', by: 'operator (board)', at: 'now', note: '' };
   const requested = taskDemandPreview({ complexity: 'medium', profileRequests: {
-    worker: { profileId: 'sol', reason: 'needs it', signoff: signed }, reviewer: { profileId: 'sol', reason: 'needs it' }, coordinator: { profileId: 'glm', reason: 'cheap' },
+    worker: { profileId: 'sol', reason: 'needs it' }, reviewer: { profileId: 'sol', reason: 'needs it' }, coordinator: { profileId: 'glm', reason: 'cheap' },
   } }, pool, profiles, 'normal', new Set());
   assert.deepEqual(requested.map(row => row.request), [
-    { profileId: 'sol', replaces: true }, { profileId: 'sol', replaces: false }, { profileId: 'glm', replaces: true },
-  ], 'a signed-off or covered request replaces the result; an unsigned gated one does not');
+    { profileId: 'sol', replaces: true }, { profileId: 'sol', replaces: true }, { profileId: 'glm', replaces: true },
+  ], 'each explicit request is shown with its role');
 });
 
 test('053 preview: an opaque author blocks review, and a review-entry author is excluded from its own review', () => {
@@ -242,17 +241,16 @@ test('1385 real pool: a high task starts on Worker and climbs once to Heavyweigh
   assert.equal(workerClimbTarget({ ...recorded, profile: profileOf(idAt('heavyweight')) }, realPool, 'normal'), null, 'one climb per review run');
 });
 
-test('1385 real pool: a very-high task starts on Heavyweight and climbs to Frontier only with sign-off below Extra high', () => {
+test('1385 real pool: a very-high task starts on Heavyweight and uses Frontier on request below Extra high', () => {
   const task = realTask('very_high');
   assert.equal(select(task), 'heavyweight');
   const reviewed = changes(task, 'heavyweight');
-  assert.deepEqual(workerClimbTarget(reviewed, realPool, 'normal')?.to, 'frontier');
-  assert.equal(select(reviewed), 'heavyweight', 'Normal holds Frontier without sign-off');
+  assert.equal(workerClimbTarget(reviewed, realPool, 'normal'), null);
+  assert.equal(select(reviewed), 'heavyweight', 'Normal holds Frontier without a request');
   assert.equal(select(reviewed, 'worker', 'high'), 'heavyweight', 'High holds it too');
   assert.equal(select(reviewed, 'worker', 'extra_high'), 'frontier', 'Extra high does not');
-  const signed = { ...reviewed, profileRequests: { worker: { profileId: idAt('frontier'), reason: 'needs it', required: false,
-    signoff: { status: 'approved', decisionId: 'd', by: 'operator (board)', at: 'now', note: '' } } } } as Task;
-  assert.equal(select(signed), 'frontier', 'a signed-off request reaches Frontier at Normal');
+  const requested = { ...reviewed, profileRequests: { worker: { profileId: idAt('frontier'), reason: 'needs it', required: false } } } as Task;
+  assert.equal(select(requested), 'frontier', 'an explicit request reaches Frontier at Normal');
 });
 
 test('1385 real pool: usage levels shift the worker by whole brackets', () => {

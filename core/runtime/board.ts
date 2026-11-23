@@ -1,3 +1,4 @@
+import { activityReadContext } from "../telemetry/task-activity-observation";
 import {
   effectiveDefaultHostKind,
   type HostKind,
@@ -15,6 +16,7 @@ import {
   DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
   DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
   DEFAULT_THREAD_RETENTION_DAYS,
+  DEFAULT_THREAD_RETENTION_INTERVAL_HOURS,
 } from "../../shared/contracts";
 import type {
   SnapshotInput,
@@ -37,10 +39,6 @@ import type { PrState } from "../forge/pr-status";
 import { holdsQueueWorkspace } from "../dispatch/capacity";
 import { boundDrainProjection } from "../closeout/queue-drain";
 import { summarizeOperation } from "../../shared/operations";
-import {
-  activeRoutingGrants,
-  reconcileRoutingGrants,
-} from "../dispatch/routing-signoff";
 import {
   readBbSidebarGroups,
   type BbSidebarThreadRecord,
@@ -66,7 +64,7 @@ export interface BoardContext {
   store: Store;
   engine: Pick<
     Engine,
-    "profiles" | "retiredObservationKey" | "queuedExternalWait"
+    "profiles" | "retiredObservationKey" | "currentExternalWait"
   > &
     Partial<
       Pick<Engine, "profilesFor" | "workerRoutingProfiles" | "routingHostViews">
@@ -194,7 +192,7 @@ export class RuntimeBoard {
             this.context.store,
             task,
             context,
-            (candidate) => this.context.engine.queuedExternalWait(candidate),
+            (candidate) => this.context.engine.currentExternalWait(candidate),
           ).reason,
         };
       }),
@@ -222,7 +220,6 @@ export class RuntimeBoard {
         this.context.store.getMeta<number>("projectLimit") ??
         DEFAULT_PROJECT_LIMIT,
       usage: this.context.store.usageView(),
-      routingGrants: activeRoutingGrants(this.context.store),
       papercutProjectLimit:
         this.context.store.getMeta<number>("papercutProjectLimit") ??
         DEFAULT_PAPERCUT_PROJECT_LIMIT,
@@ -249,6 +246,9 @@ export class RuntimeBoard {
       threadRetentionDays:
         this.context.store.getMeta<number>("threadRetentionDays") ??
         DEFAULT_THREAD_RETENTION_DAYS,
+      threadRetentionIntervalHours:
+        this.context.store.getMeta<number>("threadRetentionIntervalHours") ??
+        DEFAULT_THREAD_RETENTION_INTERVAL_HOURS,
       operatorDefaultHostKind: effectiveDefaultHostKind(
         this.context.store.getMeta<HostKind | null>("operatorDefaultHostKind"),
       ),
@@ -419,7 +419,6 @@ export class RuntimeBoard {
       this.advanceRevisionForProjection("usage level");
     }
     this.boardUsageLevel = usage;
-    reconcileRoutingGrants(this.context.store, this.context.decisions);
     // Spec 028: a snapshot settling, or a location failing, changes the board with no
     // durable write. Advance the revision once when that health changes, so a poller
     // holding a bounded acknowledgement re-projects instead of keeping the old fact.
@@ -594,7 +593,7 @@ export class RuntimeBoard {
         this.context.store,
         task,
         contexts.get(task.id)!,
-        (candidate) => this.context.engine.queuedExternalWait(candidate),
+        (candidate) => this.context.engine.currentExternalWait(candidate),
       ),
     );
     const events = new Map(
@@ -619,6 +618,7 @@ export class RuntimeBoard {
         this.context.hostId,
         events,
         repositorySettings,
+        activityReadContext(this.context.store),
       ),
       nextOffset: page.nextOffset,
     };
@@ -656,6 +656,7 @@ export class RuntimeBoard {
         this.context.hostId,
         events,
         repositorySettings,
+        activityReadContext(this.context.store),
       ),
       total: page.total,
       nextOffset: page.nextOffset,
@@ -674,9 +675,7 @@ export class RuntimeBoard {
         ? this.context.store.resolveTaskId(input.taskId)
         : this.context.store.taskIdByNumber(input),
     );
-    const heavyRun = this.context
-      .cachedUiSnapshotFacts()
-      .summaries.find((task) => task.id === result.task.id)?.heavyRun;
+    const heavyRun = this.context.cachedUiSnapshotFacts.heavyRunFor(result.task);
     return heavyRun
       ? { ...result, task: { ...result.task, heavyRun } }
       : result;
@@ -718,11 +717,12 @@ export class RuntimeBoard {
         hostProfiles:
           this.context.engine.workerRoutingProfiles?.(task) ?? hostProfiles,
         hostViews: this.context.engine.routingHostViews?.(task),
+        activityWaitContext: { ...context, decisionId: this.context.store.listDecisions({ status: "open", task: task.id })[0]?.id ?? null },
         waitTask: taskWithCurrentWait(
           this.context.store,
           task,
           context,
-          (candidate) => this.context.engine.queuedExternalWait(candidate),
+          (candidate) => this.context.engine.currentExternalWait(candidate),
         ),
       });
     } catch (error) {

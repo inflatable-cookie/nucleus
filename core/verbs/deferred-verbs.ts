@@ -1,3 +1,4 @@
+import { endsStopOnReason } from "../../shared/task-stop";
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import {
   isDispositionComplete,
@@ -96,6 +97,7 @@ export class DeferredOwnerVerbs {
         reason: deferredVerbReason(input.action, why),
         resolution: {
           ...task.resolution,
+          ...endsStopOnReason(task, deferredVerbReason(input.action, why)),
           deferredVerb: {
             input: rest as Record<string, unknown>,
             at: now(),

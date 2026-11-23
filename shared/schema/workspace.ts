@@ -279,6 +279,30 @@ export const workspaceArchiveRetrySchema = z
 
 export type WorkspaceArchiveRetry = z.infer<typeof workspaceArchiveRetrySchema>;
 
+/**
+ * One Nucleus-created branch a finished task owes cleanup for (nucleus#1548).
+ * The branch is deleted only after a verified merge, and the record says what the
+ * attempt observed: `intent` is a delivery whose outcome is not yet observed,
+ * `wait` is an owed retry with its cause and deadline, and `deleted`/`kept` are
+ * settled history. A settled record is never reopened by a later pass.
+ */
+export const taskBranchCleanupSchema = z
+  .object({
+    branch: z.string().min(1).max(240),
+    /** Whether the forge holds the same branch and owes its deletion too. */
+    forge: z.boolean(),
+    head: z.string().max(64).default(""),
+    state: z.enum(["intent", "deleted", "kept", "wait"]),
+    detail: z.string().max(2000),
+    intentAt: z.string().nullable().default(null),
+    at: z.string(),
+    attempts: z.number().int().nonnegative().default(0),
+    nextAttemptAt: z.string().nullable().default(null),
+  })
+  .strict();
+
+export type TaskBranchCleanup = z.infer<typeof taskBranchCleanupSchema>;
+
 /** One operator-authorized stop for the exact turn on a retained task run. */
 export const stalledTurnStopSchema = z
   .object({

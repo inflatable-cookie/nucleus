@@ -1671,7 +1671,6 @@ test("the full screen wires the writes: set-planner as the operator, then a re-r
     projectCapacities: [],
     prStates: {},
     usage: { level: "normal", setLevel: "normal", until: null, expired: false },
-    routingGrants: [],
     backup: { newestSnapshotAt: new Date().toISOString(), localError: null },
   };
   const { QueueSettingsScreen } = await import("../client/settings-screen");
@@ -1851,7 +1850,6 @@ test("Settings lists projects before any host read settles; the thread picker an
     projectCapacities: [],
     prStates: {},
     usage: { level: "normal", setLevel: "normal", until: null, expired: false },
-    routingGrants: [],
     backup: { newestSnapshotAt: new Date().toISOString(), localError: null },
   };
   const { QueueSettingsScreen } = await import("../client/settings-screen");
@@ -1952,7 +1950,6 @@ test("T3-only with a saved offline Paseo planner: Settings lists the project, th
     projectCapacities: [],
     prStates: {},
     usage: { level: "normal", setLevel: "normal", until: null, expired: false },
-    routingGrants: [],
     backup: { newestSnapshotAt: new Date().toISOString(), localError: null },
   };
   const { QueueSettingsScreen } = await import("../client/settings-screen");

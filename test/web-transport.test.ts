@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createWebTransport, pairWebSession } from "../client/web/transport";
 import { RPC_CATALOGUE } from "../shared/rpc-catalogue";
 import { uiBoardSchema } from "../shared/contracts";
+import { configureProfile } from "../shared/rpc/settings";
 import type { RpcContract } from "../shared/rpc";
 
 const board = uiBoardSchema.parse({
@@ -69,4 +70,27 @@ test("read calls retry after a service restart without retrying mutations", asyn
   assert.ok(reads >= 2, "the read reconnects after the service returns");
   const mutation = RPC_CATALOGUE.find(entry => entry.name === "queue.control")!.contract as unknown as RpcContract;
   await assert.rejects(transport.rpc(mutation, { paused: true } as never), /service stopped/);
+});
+
+test("a stalled profile save reports its deadline and sends the write only once", async (t) => {
+  const deadline = new AbortController();
+  t.mock.method(AbortSignal, "timeout", (ms: number) => {
+    assert.equal(ms, 10_000);
+    return deadline.signal;
+  });
+  let writes = 0;
+  const transport = createWebTransport(async (_url, options) => {
+    writes++;
+    assert.equal(options?.signal, deadline.signal);
+    return new Promise((_, reject) => {
+      deadline.signal.addEventListener("abort", () => reject(deadline.signal.reason), { once: true });
+    });
+  });
+  const save = transport.rpc(configureProfile, {
+    profileId: "worker", enabled: true, group: "fixture", weight: "more",
+    roles: ["worker"], scopes: ["general"],
+  }, true);
+  deadline.abort(new Error("Fixture filesystem stalled"));
+  await assert.rejects(save, /did not confirm the save within 10 seconds/);
+  assert.equal(writes, 1);
 });

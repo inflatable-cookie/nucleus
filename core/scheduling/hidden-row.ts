@@ -510,9 +510,11 @@ export function rowHiddenRecipient(store: Store, task: Task): string | null {
 }
 
 /**
- * The tasks one host's hidden-row pass visits: every task it still keeps a record
- * for. A finished task is visited too, because the terminal lane is the fact that
- * ends its episode — its record and any pending notice are cleared there.
+ * Every task one host keeps a record for, for a caller with no narrower set. A
+ * finished task is visited too, because the terminal lane is the fact that ends
+ * its episode — its record and any pending notice are cleared there. The host pass
+ * passes its own presented set instead (Spec 069 §4): live tasks with a thread and
+ * a page of finished ones.
  */
 export function rowHiddenTasks(store: Store, hostId: string): Task[] {
   return store
@@ -540,11 +542,19 @@ export class HiddenRows {
     return this.context.store;
   }
 
-  /** Reconcile every open task of one host. A task that cannot be read keeps its recorded episode. */
-  async observe(hostId: string): Promise<void> {
+  /**
+   * Reconcile the given tasks of one host, or every task it keeps a record for. The
+   * host pass passes its presented tasks (Spec 069 §4): live tasks with a thread and
+   * its page of finished ones, so finished history is cleared a page at a time. A
+   * task that cannot be read keeps its recorded episode.
+   */
+  async observe(
+    hostId: string,
+    tasks: readonly Task[] = rowHiddenTasks(this.store, hostId),
+  ): Promise<void> {
     const visibility = this.context.adapter.rowSnoozeVisibility;
     if (!visibility) return;
-    for (const task of rowHiddenTasks(this.store, hostId)) {
+    for (const task of tasks) {
       let read: RowSnoozeVisibility;
       try {
         read = await visibility.call(this.context.adapter, task.id);

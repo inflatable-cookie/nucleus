@@ -1,3 +1,4 @@
+import { activityReadContext } from "./task-activity-observation";
 import type {
   Task,
   TaskSummary,
@@ -8,7 +9,7 @@ import type {
   HeavyRunView,
 } from "../../shared/contracts";
 import { projectActivityRows, type ProjectActivity } from "../../shared/project-activity";
-import { visibleTaskSummaries } from "../../shared/contracts";
+import { isVisibleBoardTask, visibleTaskSummaries } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import {
   taskWaitStateContext,
@@ -62,6 +63,49 @@ export function taskForHostRun(
   });
 }
 
+function activeHeavyRuns(runs: HostRunInternalRecord[], at: number) {
+  return runs
+    .filter(
+      (
+        run,
+      ): run is HostRunInternalRecord & {
+        state: "queued" | "admitted" | "running";
+      } =>
+        run.runClass === "heavy" &&
+        run.state !== "settled" &&
+        !overdueHostRun(run, at),
+    )
+    .sort((a, b) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt));
+}
+
+function taskHeavyRuns(
+  tasks: readonly Task[],
+  live: ReturnType<typeof activeHeavyRuns>,
+) {
+  const firstHolder = live.find(
+    (run) => run.state === "running" || run.state === "admitted",
+  );
+  const holderTask = firstHolder ? taskForHostRun(tasks, firstHolder) : undefined;
+  // Only task-attached runs reach a task card; a milestone QA run has no task and is its own card.
+  const heavyByTask = new Map<string, HeavyRunView>();
+  for (const run of live) {
+    const task = taskForHostRun(tasks, run);
+    if (!task || heavyByTask.has(task.id)) continue;
+    heavyByTask.set(task.id, {
+      selector: run.selector,
+      state: run.state,
+      position: run.position,
+      submittedAt: run.submittedAt,
+      launchedAt: run.launchedAt,
+      holder:
+        run.state === "queued" && firstHolder
+          ? (holderTask?.reference ?? "host run")
+          : null,
+    });
+  }
+  return heavyByTask;
+}
+
 export interface UiSnapshotFacts {
   revision: number;
   tasks: Task[];
@@ -97,7 +141,8 @@ export function createUiSnapshotFactsCache(
   let liveSignature: string | null = null;
   let lastStoreRevision = store.boardRevision();
   let projectionRevision = lastStoreRevision;
-  return (): UiSnapshotFacts => {
+  let refreshActivityAt = Infinity;
+  const read = (): UiSnapshotFacts => {
     const storeRevision = store.boardRevision();
     const currentLive = liveHostRuns();
     const nowMs = Date.now();
@@ -119,6 +164,7 @@ export function createUiSnapshotFactsCache(
       boardHostId,
     ]);
     if (
+      nowMs >= refreshActivityAt ||
       storeRevision !== lastStoreRevision ||
       (liveSignature !== null && liveSignature !== signature)
     )
@@ -161,41 +207,14 @@ export function createUiSnapshotFactsCache(
         externalWait,
       ),
     );
-    const taskForRun = (hostRun: HostRunInternalRecord) =>
-      taskForHostRun(tasks, hostRun);
-    const live = currentLive
-      .filter(
-        (
-          run,
-        ): run is HostRunInternalRecord & {
-          state: "queued" | "admitted" | "running";
-        } =>
-          run.runClass === "heavy" &&
-          run.state !== "settled" &&
-          !overdueHostRun(run, Date.now()),
-      )
-      .sort((a, b) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt));
-    const firstHolder = live.find(
-      (run) => run.state === "running" || run.state === "admitted",
-    );
-    const holderTask = firstHolder ? taskForRun(firstHolder) : undefined;
-    // Only task-attached runs reach a task card; a milestone QA run has no task and is its own card.
-    const heavyByTask = new Map<string, HeavyRunView>();
-    for (const run of live) {
-      const task = taskForRun(run);
-      if (!task || heavyByTask.has(task.id)) continue;
-      heavyByTask.set(task.id, {
-        selector: run.selector,
-        state: run.state,
-        position: run.position,
-        submittedAt: run.submittedAt,
-        launchedAt: run.launchedAt,
-        holder:
-          run.state === "queued" && firstHolder
-            ? (holderTask?.reference ?? "host run")
-            : null,
-      });
-    }
+    const heavyByTask = taskHeavyRuns(tasks, activeHeavyRuns(currentLive, nowMs));
+    // Observation stamps can move without a board write and quiet turns age
+    // across the activity boundary. Reuse the projection between reads.
+    refreshActivityAt = tasks.some(task => task.runId && task.agentId &&
+      (task.participantActivity || (task.agentActive && task.lastActivityAt)))
+      || runs.some(run => !run.released && run.agentId &&
+        (run.participantActivity || (run.active && run.lastActivityAt)))
+      ? nowMs + 30_000 : Infinity;
     cached = {
       revision,
       tasks,
@@ -216,6 +235,8 @@ export function createUiSnapshotFactsCache(
             store.canonicalRepository(task.repoPath, task.repository),
           ]),
         ),
+        activityReadContext(store),
+        nowMs,
       ).map((summary) => {
         const heavyRun = heavyByTask.get(summary.id);
         return heavyRun ? { ...summary, heavyRun } : summary;
@@ -231,4 +252,13 @@ export function createUiSnapshotFactsCache(
     };
     return cached;
   };
+  return Object.assign(read, {
+    // A task read needs the scheduler badge only. Rebuilding unrelated task
+    // summaries here made a detail request pay for the next board publication.
+    heavyRunFor(task: Task): HeavyRunView | undefined {
+      const live = activeHeavyRuns(liveHostRuns(), Date.now());
+      if (!live.length || !isVisibleBoardTask(task)) return undefined;
+      return taskHeavyRuns(store.boardTasks(5), live).get(task.id);
+    },
+  });
 }

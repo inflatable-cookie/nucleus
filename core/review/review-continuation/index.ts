@@ -5,6 +5,7 @@
  * `delivery.ts`'s and the result fence is `result-fence.ts`'s; this module
  * composes them and owns the public surface every caller imports.
  */
+import { stopClearedPatch } from "../../../shared/task-stop";
 import { isDeepStrictEqual } from "node:util";
 import { existsSync, readFileSync } from "node:fs";
 import { TaskChangedRefusal } from "../../../shared/task-version";
@@ -46,6 +47,7 @@ import {
   reviewInProgress,
 } from "./reader";
 import { ordinaryReviewSource } from "../ordinary-review";
+import { reattachStoredTaskCheckout } from "../../git/checkout-reattach";
 import { reviewContinuationLocalRefusal } from "./gate";
 
 export * from "./checkpoints";
@@ -296,13 +298,18 @@ export class ReviewContinuations {
         );
       const verifyPr = run.ordinaryDetached
         ? async (task: Task, number: number) => {
-            await ordinaryReviewSource(task, run.head, true);
+            await reattachStoredTaskCheckout(
+              this.store,
+              run.taskId,
+              run.id,
+            );
+            await ordinaryReviewSource(task, run.head);
             if (!this.adapter.verifyPrIdentity)
               throw Error(
                 "Ordinary review canonical PR observation unavailable",
               );
             const pr = await this.adapter.verifyPrIdentity(task, number);
-            await ordinaryReviewSource(task, run.head, true);
+            await ordinaryReviewSource(task, run.head);
             return pr;
           }
         : this.adapter.verifyPr;
@@ -479,7 +486,13 @@ export class ReviewContinuations {
         this.store.putRun(nextRun);
         const nextTask = this.store.update(
           task.id,
-          { reason: reviewDeliveryReason(deliveryId, "reserved") },
+          {
+            reason: reviewDeliveryReason(deliveryId, "reserved"),
+            ...stopClearedPatch(
+              this.store.task(task.id),
+              reviewDeliveryReason(deliveryId, "reserved"),
+            ),
+          },
           "review_delivery_reserved",
           authorizationId,
           expectedVersion,

@@ -63,6 +63,22 @@ export const HOST_WAIT_PRESERVED_STOPS = [
 export const HOST_OUTAGES_META_KEY = "hostOutages";
 
 /**
+ * Spec 069 §3: the closed outages of each host, newest last, so a task's budget
+ * read discounts the time its host was away without one write per task. Closing
+ * an outage appends one entry; the list keeps the newest `HOST_OUTAGE_HISTORY_LIMIT`.
+ */
+export const HOST_OUTAGE_HISTORY_META_KEY = "hostOutageHistory";
+export const HOST_OUTAGE_HISTORY_LIMIT = 50;
+export const hostOutageIntervalSchema = z.object({
+  since: z.string().datetime({ offset: true }),
+  /** When the host came back; null while the outage is still open. */
+  until: z.string().datetime({ offset: true }).nullable(),
+}).strict();
+export type HostOutageInterval = z.infer<typeof hostOutageIntervalSchema>;
+export const hostOutageHistorySchema = z.record(z.string().min(1), z.array(hostOutageIntervalSchema));
+export type HostOutageHistory = z.infer<typeof hostOutageHistorySchema>;
+
+/**
  * The host as a person reads it on a card: the host kind's own name plus a short
  * stable suffix of its native identity. The durable record and the planner
  * notice keep the whole identity; a card must not print a raw UUID (the board

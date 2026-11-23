@@ -491,7 +491,6 @@ test("Settings override removal stays locked across tab switches, distinguishes 
     projectLimit: 4,
     papercutProjectLimit: 2,
     usage: { level: "normal", setLevel: "normal", until: null, expired: false },
-    routingGrants: [],
     tasks: [],
     profiles: [],
     pool: [],
@@ -578,6 +577,7 @@ test("Settings override removal stays locked across tab switches, distinguishes 
           hostOutageNoticeMinutes: 120,
           operatorDefaultHostKind: "paseo",
           threadRetentionDays: 3,
+          threadRetentionIntervalHours: 12,
         },
         changes: [],
       };

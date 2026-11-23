@@ -33,6 +33,7 @@ import { REPOSITORY_CONTENTION_GRACE_MS } from "../core/scheduling/repository-co
 import { stepEngine } from "./support/engine-step";
 import { taskStopRecord } from "../shared/task-stop";
 import { HostCallAbandonedError } from "../core/host/errors";
+import { T3UnobservedThreadError } from "../hosts/t3code/reads";
 import {
   collectOwnerVerbFacts,
   ownerTaskNext,
@@ -297,6 +298,36 @@ function enableRecovery(f: ReturnType<typeof fixture>) {
   ).supportsCoordinatorRecovery = true;
   return f.reminders;
 }
+
+test("an initial worker's authenticated result advances after its thread leaves observation", async () => {
+  const f = fixture(60_000);
+  try {
+    const task = f.current();
+    f.engine.wakeTask = async () => {};
+    f.store.setCredential(task.runId!, "worker-token");
+    const result = await f.engine.complete({
+      eventId: "unobservable-worker-result",
+      taskId: task.id,
+      runId: task.runId!,
+      status: "ready_for_review",
+      summary: "PR is ready",
+      head,
+      prNumber: 1,
+    }, "worker-token");
+    assert.equal(result.accepted, true);
+    const observe = f.adapter.observe;
+    f.adapter.observe = async (id) => {
+      if (id === task.agentId) throw new T3UnobservedThreadError(id);
+      return observe(id);
+    };
+    await f.engine.reconcile(f.current());
+    assert.equal(f.current().phase, "awaiting_review");
+    assert.equal(f.current().agentActive, false);
+    assert.equal(f.current().completion?.eventId, "unobservable-worker-result");
+  } finally {
+    await f.close();
+  }
+});
 
 test("a successful worktree scan clears its temporary reason on a blocked worker task", async () => {
   const f = fixture();

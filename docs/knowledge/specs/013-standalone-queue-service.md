@@ -164,6 +164,15 @@ durable `processOwner` lease inside the service process, drain forwards into
 `RuntimeOwner.drain()` under a bounded release guard, and a lost executor
 fails closed instead of leaving the store owned by a dead thread.
 
+The audit yields between fleet steps and each task visit, including tasks
+with unavailable hosts. A profile pool write commits its settings and board
+revision together, then schedules its reconciliation wake on a later turn.
+`queue.detail` reads a task's scheduler badge directly from the live runs
+and board membership, without rebuilding the board summaries. The executor
+still has one SQLite owner and a synchronous store call or projection can
+occupy a turn. See the [service-boundary contract](../contracts/service-boundary.md#responsiveness)
+for the observable save and timeout behavior.
+
 ### Write boundary and executor faults (2026-10-12)
 
 Tom's ruling, 2026-10-12: "Can you look into why the executor stopped and

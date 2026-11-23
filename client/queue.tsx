@@ -501,6 +501,11 @@ export function MainSurface({
                     changeLaneStatus({ key: lane, status: "done" }),
                   )
                 }
+                onReopenLane={(lane) =>
+                  void act(() =>
+                    changeLaneStatus({ key: lane, status: "active" }),
+                  )
+                }
                 busy={busy}
                 step={planningStep}
                 onStep={setPlanningStep}
@@ -708,6 +713,7 @@ export function MainSurface({
                     busy={busy}
                     act={act}
                     pipeline={pipeline}
+                    plans={planQuery.data ?? []}
                   />
                 </View>
                 {wide && detailPane}

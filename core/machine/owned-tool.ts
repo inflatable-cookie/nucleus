@@ -1,3 +1,4 @@
+import { observeRunningTool, recordActivityTool } from "../telemetry/task-activity-observation";
 import type { Run, Task } from "../../shared/contracts";
 import { isTransportFailure } from "../../shared/transport";
 import { agentSettled } from "./agent-settled";
@@ -59,7 +60,7 @@ export class OwnedTools {
    * reading half of the owned-tool proof: it never settles anything and never
    * reads absent, unreadable or inconclusive evidence as a live job.
    */
-  async ownedJobWait(agentId: string): Promise<string | null> {
+  async ownedJobWait(agentId: string, binding?: { taskId: string; runId: string }): Promise<string | null> {
     if (!this.adapter.agentTimelinePage) return null;
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
     try {
@@ -68,6 +69,9 @@ export class OwnedTools {
       return null;
     }
     if ("issue" in read) return null;
+    if (binding)
+      recordActivityTool(this.store, binding.taskId, binding.runId, agentId, null,
+        observeRunningTool(read.entries, null, entry => !turnBoundTool(entry)));
     const running = runningOwnedTool(read.entries);
     return running
       ? `${running.name} (${running.kind}) has been running since ${running.since}`

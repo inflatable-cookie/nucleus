@@ -58,7 +58,10 @@ export type AcpAnswerInput = AcpCaller & { id: string; version: number } & (
     | { action: "cancel"; requestId: string }
   );
 
-/** Where a host's decision cards live: one inbox, or one task's parent thread. */
+/**
+ * Where one host's read of T3 looked for decision cards: its Inbox, or a task thread
+ * whose leftover card is settled. Only the Inbox ever raises one (Spec 032).
+ */
 export type AcpCardScope =
   | { hostId: string }
   | { taskId: string; sessionId?: string };
@@ -118,12 +121,17 @@ export interface AcpSessionSurface {
     directory: string;
     bindingPath: string;
   };
-  /** Read-only projection used by a host to hold and settle native cards. */
-  pendingDecisionKey?(taskId: string): string | null;
+  /**
+   * Whether this task still has an open decision the operator must answer, wherever its
+   * card lives. A host shows the task's row as needing a person and keeps it out of the
+   * inbox's running count; no decision holds the task's own thread (Spec 032).
+   */
+  openDecisionKey?(taskId: string): string | null;
   /**
    * Record the decision cards a host's own read of T3 shows still pending on a thread,
    * so a turn offers no version that already has a live card. `null` means the thread was
-   * not read, so offers wait for a successful observation.
+   * not read, so offers wait for a successful observation. A task thread's cards are
+   * settled and never offered again; only the host Inbox raises cards (Spec 032).
    */
   observedCards?(scope: AcpCardScope, cards: AcpPendingCard[] | null): void;
   /** The host inbox's offer, cap applied: a host re-enters the inbox only while this is non-null. */

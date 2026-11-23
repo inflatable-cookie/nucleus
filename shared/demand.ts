@@ -8,7 +8,7 @@
  * and the board's preview.
  */
 import { weightShare, type CapabilityLevel, type DemandLevel, type PoolEntry, type ProfileCapability, type ProfileWeight, type UsageLevel } from "./contracts";
-import { CAPABILITY_LEVELS, DEMAND_LEVELS, USAGE_LABELS, capabilityRank, demandRank, honouredRequest, requestOnly } from "./pool";
+import { CAPABILITY_LEVELS, DEMAND_LEVELS, USAGE_LABELS, capabilityRank, demandRank, requestOnly } from "./pool";
 import { taskAuthorModelKeys } from "./authors";
 
 export type DemandRole = "worker" | "reviewer" | "coordinator";
@@ -40,7 +40,7 @@ export function complexityBracket(complexity: CapabilityLevel | null | undefined
  * The bracket a task may climb to (Tom, 2026-11-19): its own bracket, one
  * above for high and very-high complexity. The step-up decides the difference:
  * a medium task stays on Worker, a high task may climb once to Heavyweight and
- * a very-high one to Frontier (which still needs sign-off below Extra high).
+ * a very-high one to Frontier when the usage level allows automatic selection there.
  */
 export function requestedTier(complexity: CapabilityLevel | null | undefined): DemandLevel {
   const own = demandRank(complexityBracket(complexity));
@@ -107,6 +107,12 @@ export function workerActualTier(task: { profile?: { id?: string; [key: string]:
   return entry ? DEMAND_LEVELS[profileRank(entry.capability)] : null;
 }
 
+function automaticClimbCeiling(requested: DemandLevel, usage: UsageLevel): DemandLevel {
+  return requested === "frontier" && requestOnly({ capability: "frontier" }, usage)
+    ? "heavyweight"
+    : requested;
+}
+
 /**
  * The one climb an applied changes-required review authorizes (Tom,
  * 2026-11-17): the next worker run moves one tier above the worker's actual
@@ -123,6 +129,7 @@ export function workerClimbTarget(task: {
   if (!review || review.status !== "changes_required") return null;
   if (task.resolution?.workerClimb?.reviewRunId === review.runId) return null;
   const requested = requestedTier(task.complexity);
+  const ceiling = automaticClimbCeiling(requested, usage);
   const start = workerStartTier(usage, task.complexity);
   // The step-up exists because the level started the task below the bracket it
   // may climb to. A task the level starts there (a medium task, or a high task
@@ -132,7 +139,7 @@ export function workerClimbTarget(task: {
   // the shortfall path must climb to the missing intermediate tier, never skip
   // it (Tom, 2026-11-17).
   const from = workerActualTier(task, pool) ?? start;
-  const target = Math.min(demandRank(from) + 1, demandRank(requested));
+  const target = Math.min(demandRank(from) + 1, demandRank(ceiling));
   if (target <= demandRank(from)) return null;
   return { from, to: DEMAND_LEVELS[target], reviewRunId: review.runId };
 }
@@ -227,8 +234,6 @@ export type DemandPick = {
   /** Every profile rated at or above the demand (rotation by weight share decides among them), or the most capable available on a shortfall. */
   profileIds: string[];
   shortfall: boolean;
-  /** Profiles that would meet the demand but need a signed-off request at this level (a top-tier profile above the task's own requested tier, or frontier at High). */
-  signoffOnly: string[];
 };
 
 /**
@@ -247,29 +252,23 @@ export function demandPick(demand: DemandLevel, usage: UsageLevel, candidates: r
   const within = requested ?? demand;
   const gated = (candidate: DemandCandidate) => requestOnly(candidate, usage, within, climbTier);
   const automatic = usable.filter(candidate => !gated(candidate));
-  // A signed-off request reaches a profile the level's permission rule holds,
-  // including one above the task's requested tier (an explicit route); the
-  // requested-tier bound only stops automatic selection.
-  const signoffOnly = usable.filter(candidate => gated(candidate) && profileRank(candidate.capability) >= demandRank(demand))
-    .map(candidate => candidate.profileId);
   const { tier: chosen, shortfall } = selectionTier(demand, automatic, topOnly, ceiling ?? usageCeiling(usage, within));
   return {
     profileIds: chosen.map(candidate => candidate.profileId),
     shortfall: shortfall || !chosen.length,
-    signoffOnly,
   };
 }
 
 export type DemandPreviewRow = {
   role: DemandRole; demand: DemandLevel; pick: DemandPick;
-  /** A request on the task for this role: a signed-off (or within-level) one replaces the demand result. */
+  /** The explicit profile request stored for this role. */
   request: { profileId: string; replaces: boolean } | null;
   /** Why the role has no automatic pick regardless of the pool, if so. */
   blocked: string | null;
 };
 type PreviewTask = Parameters<typeof taskAuthorModelKeys>[0] & {
   complexity?: CapabilityLevel | null;
-  profileRequests?: Partial<Record<DemandRole, { profileId: string; reason: string; signoff?: { status: string } | null } | null>> | null;
+  profileRequests?: Partial<Record<DemandRole, { profileId: string; reason: string } | null>> | null;
   resolution?: Parameters<typeof taskAuthorModelKeys>[0]["resolution"];
 };
 /**
@@ -292,16 +291,16 @@ export function taskDemandPreview(task: PreviewTask, pool: readonly PoolEntry[],
   return (["worker", "reviewer", "coordinator"] as const).map(role => {
     const fullDemand = runDemand(task.complexity, role, usage);
     const roleDemand = role === "reviewer" ? reviewerDemand(task, pool, usage) : fullDemand;
-    const demand = role === "worker" ? (climb ? climb.to : reviewed ? workerStepUp(roleDemand, requested) : roleDemand) : roleDemand;
+    const demand = role === "worker" ? (climb ? climb.to : reviewed ? workerStepUp(roleDemand, automaticClimbCeiling(requested, usage)) : roleDemand) : roleDemand;
     // A coordinator takes the lowest permitted bracket with a profile, so only
     // a worker is bounded by the bracket the task may climb to.
     const ceiling = role === "worker" && usage !== "maximum" ? requested : "frontier";
     const exception = role === "worker" ? climb?.to ?? climbed : climbed;
     const raw = task.profileRequests?.[role] ?? null;
-    const request = raw ? { profileId: raw.profileId, replaces: Boolean(honouredRequest(raw, pool, usage, requested, exception)) } : null;
+    const request = raw ? { profileId: raw.profileId, replaces: true } : null;
     // Runtime never picks a reviewer for an opaque author: independence cannot be proved.
     const blocked = role === "reviewer" && authors.has("default") ? "an opaque author model cannot prove review independence" : null;
-    const pick = blocked ? { profileIds: [], shortfall: true, signoffOnly: [] }
+    const pick = blocked ? { profileIds: [], shortfall: true }
       // A reviewer never runs on an opaque provider-default model either, as runtime refuses.
       : demandPick(demand, usage, role === "reviewer" ? candidates.filter(candidate => candidate.model.trim() && candidate.model.split("/").at(-1)!.toLowerCase() !== "default") : candidates,
         unavailableGroups, role === "reviewer" ? authors : new Set(), requested, exception, ceiling, usage === "maximum" && role !== "coordinator");

@@ -1,3 +1,4 @@
+import { climbedTier, requestedTier } from "../../../shared/demand";
 import type { LaunchThreadContext } from '../launch';
 import type { Run, Task } from '../../../shared/contracts';
 import { authorModelKey, taskAuthorModelKeys } from '../../../shared/authors';
@@ -45,10 +46,9 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
   // Task 515: the same general rule as the worker and coordinator yields
   // here too: a required honoured reviewer route supersedes the retained
   // selection, so the next reviewer run is selected instead of reusing a
-  // stale binding or profile. signoffIssue keeps covering the bound profile
-  // that now needs sign-off and the approved route it already names.
+  // stale binding or profile.
   const supersedingReviewer = !options.profile
-    ? supersedingRouteProfile(t.profileRequests?.reviewer, profile?.id, ctx.store.pool(), ctx.store.usageLevel())
+    ? supersedingRouteProfile(t.profileRequests?.reviewer, profile?.id, ctx.store.pool(), ctx.store.usageLevel(), requestedTier(t.complexity), climbedTier(t))
     : null;
   if (agentId) {
     // Spec 036: a recorded reviewer that authored a run on the task (worker, revision or checkpoint turn,
@@ -70,7 +70,7 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
         head: t.prHead ?? null, at: new Date().toISOString() }));
       agentId = null;
     } else {
-      const issue = ctx.retainedProfileIssue(profile) ?? ctx.signoffIssue(t, profile, 'reviewer')
+      const issue = ctx.retainedProfileIssue(profile) ?? ctx.retainedRouteIssue(t, profile, 'reviewer')
         ?? ctx.reviewerCapabilityIssue(t, profile)
         ?? (supersedingReviewer ? `a required reviewer route names ${supersedingReviewer}, superseding the retained reviewer` : null);
       if (issue) {
@@ -161,7 +161,7 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
   }
   if (!agentId && profile && reviewerThreadDecision({
     stage: 'unbound_profile',
-    drop: Boolean(ctx.retainedProfileIssue(profile) || (!options.profile && ctx.signoffIssue(t, profile, 'reviewer'))
+    drop: Boolean(ctx.retainedProfileIssue(profile) || (!options.profile && ctx.retainedRouteIssue(t, profile, 'reviewer'))
       || (!options.profile && supersedingReviewer && profile.id !== supersedingReviewer)),
   }) === 'fresh') profile = null;
   return { kind: 'binding', binding: { ...binding, agentId, profile, group }, replacingReviewer };

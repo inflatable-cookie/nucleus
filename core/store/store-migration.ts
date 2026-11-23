@@ -6,6 +6,7 @@ import {
   migrateProfileVocabulary,
 } from "./profile-vocabulary-migration";
 import type { HostVocabulary } from "../../shared/profile-vocabulary";
+import type { Decisions } from "../planning/decisions";
 import {
   bracketFor,
   migratePoolCapabilities,
@@ -23,11 +24,13 @@ export const PROFILE_OPTION_MIGRATION_KEY = "profileOptionMigration";
 export const CAPABILITY_BRACKET_MIGRATION_KEY = "capabilityBracketMigration";
 /** The record of the hold-tag migration: each lead that became a park, and when (nucleus#1543). */
 export const LEAD_PARKING_MIGRATION_KEY = "leadParkingMigration";
+export const ROUTING_APPROVAL_MIGRATION_KEY = "routingApprovalMigration";
 
 /** The archive-key facts a migration reads and prunes; retention owns them. */
 export interface MigrationHooks {
   retainedArchiveKeys: () => Set<string>;
   pruneThreadArchiveKeys: () => void;
+  withdrawDecision: (input: Parameters<Decisions["withdrawInTransaction"]>[0]) => void;
 }
 
 /**
@@ -155,6 +158,62 @@ export class StoreMigration {
       console.warn(
         `[nucleus] ${item.id} keeps ${item.field} ${JSON.stringify(item.value)}: not a capability bracket, left as stored`,
       );
+  }
+
+  /** Retire profile approvals on open while keeping the recorded requests and their reasons. */
+  retireRoutingApprovals(): void {
+    const grants = this.core.getMeta<unknown>("routingGrants");
+    const droppedGrants = Array.isArray(grants) ? grants.length : 0;
+    const decisions = [...this.db.prepare(`
+      SELECT id, json_extract(data, '$.version') AS version
+      FROM decisions
+      WHERE status = 'open' AND id IN (
+        SELECT json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.decisionId')
+        FROM events WHERE kind = 'routing_signoff_requested'
+        UNION
+        SELECT json_extract(value, '$.decisionId') FROM json_each(?)
+        WHERE type = 'object'
+        UNION
+        SELECT json_extract(request.value, '$.signoff.decisionId')
+        FROM tasks, json_each(tasks.data, '$.profileRequests') AS request
+        WHERE request.type = 'object'
+      )
+    `).iterate(JSON.stringify(Array.isArray(grants) ? grants : []))];
+    // The old approval flow could turn a legacy preference into a request
+    // itself. Keep the preference, but give direct routing only to requests
+    // somebody actually made.
+    this.db.exec(`
+      UPDATE tasks SET data=json_remove(data,'$.profileRequests.worker')
+      WHERE json_extract(data,'$.profileRequests.worker.reason')='Required worker preference in the submitted task'
+        AND json_type(data,'$.profileRequests.worker.requestedBy') IS NULL
+        AND EXISTS (SELECT 1 FROM events WHERE taskId=tasks.id AND kind='routing_preference_requested')
+    `);
+    for (const [table, prefix] of [["tasks", "$.profileRequests"], ["outcomes", "$.routing.profileRequests"]]) {
+      const fields = ["worker", "reviewer", "coordinator"].map((role) => `${prefix}.${role}.signoff`);
+      this.db.prepare(
+        `UPDATE ${table} SET data=json_remove(data, ?, ?, ?)
+        WHERE json_type(data, ?) IS NOT NULL OR json_type(data, ?) IS NOT NULL OR json_type(data, ?) IS NOT NULL`,
+      ).run(...fields, ...fields);
+    }
+    const withdrawn: string[] = [];
+    for (const { id, version } of decisions) {
+      if (typeof id !== "string" || typeof version !== "number")
+        throw Error("A retired routing decision is missing its stored identity");
+      this.hooks.withdrawDecision({
+        id, version, withdrawnBy: "queue",
+        reason: "Overtaken by the 2026-11-22 ruling that explicit profile requests apply directly.",
+      });
+      withdrawn.push(id);
+    }
+
+    if (grants !== undefined) this.core.deleteMeta("routingGrants");
+    const previous = this.core.getMeta<{ droppedGrants: number; withdrawn: string[] }>(ROUTING_APPROVAL_MIGRATION_KEY);
+    if (previous && grants === undefined && !withdrawn.length) return;
+    this.core.setMeta(ROUTING_APPROVAL_MIGRATION_KEY, {
+      at: new Date().toISOString(),
+      droppedGrants: (previous?.droppedGrants ?? 0) + droppedGrants,
+      withdrawn: [...(previous?.withdrawn ?? []), ...withdrawn],
+    });
   }
 
   /** Schema 59 (task 1302): subscription usage readings now belong to host apps and plugins. */

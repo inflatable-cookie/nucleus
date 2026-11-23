@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import {
@@ -6,7 +7,8 @@ import {
 } from "../machine/run-process-cleanup";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
-import { reconcileRoutingSignoffs } from "../dispatch/routing-signoff";
+import { reconcileUsageGate } from "../dispatch/usage-gate";
+import { reconcileUnavailablePreference } from "../dispatch/unavailable-preference";
 import { provisionHostMovedWorkspace } from "../dispatch/worker-host-move";
 import { archiveFinishedThreads } from "../workspaces/thread-archive";
 import { archiveSupersededWorkers } from "../workspaces/thread-archive-replacement";
@@ -55,20 +57,18 @@ export type TaskQuantumContext = Pick<
   | "profileCatalogKnown"
   | "profileCatalogKnownFor"
   | "profiles"
-  | "profilesFor"
   | "quantumFinish"
   | "quantumSteps"
   | "reconcile"
   | "reconcileBlockedEffects"
   | "reconcileClosedRetainedReviewer"
   | "recoverExistingWorkspace"
-  | "routeTask"
   | "scheduleLane"
   | "settleFinishedRuns"
   | "settleHistoricalProofExecutions"
   | "settleRunBuildOutputs"
   | "settleSupersededIdleRuns"
-  | "signoffDecisions"
+  | "routingDecisions"
   | "stopped"
   | "store"
   | "wakeRepository"
@@ -122,70 +122,6 @@ export class TaskQuantum {
     }
   }
 
-  private async applyApprovedRoutes(taskId: string): Promise<void> {
-    let task: Task;
-    try {
-      task = this.context.store.task(taskId);
-    } catch {
-      return;
-    }
-    const hostProfiles = this.context.profileCatalogKnownFor(task.hostId)
-      ? this.context.profilesFor(task.hostId)
-      : this.context.profiles;
-    const workerCatalogs = this.context.workerHostCatalogs(task);
-    if (
-      !this.context.profileCatalogKnown() &&
-      !this.context.profileCatalogKnownFor(task.hostId) &&
-      !workerCatalogs.length
-    )
-      return;
-    const routes = reconcileRoutingSignoffs(
-      this.context.store,
-      this.context.signoffDecisions,
-      taskId,
-      hostProfiles,
-      {
-        workerProfiles: this.context.workerRoutingProfiles(task),
-        workerCatalogPending: this.context.workerHostCatalogPending(task),
-      },
-    );
-    for (const route of routes) {
-      const task = this.context.store.task(taskId);
-      const run = async (replaceNow: boolean) =>
-        this.context.routeTask({
-          taskId,
-          version: this.context.store.task(taskId).version,
-          action: "route",
-          role: route.role,
-          profileId: route.profileId,
-          reason: route.reason,
-          caller: `decision ${route.decisionId}`,
-          ...(replaceNow ? { now: true } : {}),
-        });
-      try {
-        await run(route.now);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        if (route.now) {
-          this.context.store.event(
-            task.id,
-            "routing_signoff_live_route_refused",
-            JSON.stringify({
-              role: route.role,
-              profileId: route.profileId,
-              decisionId: route.decisionId,
-              reason: detail,
-            }),
-          );
-          try {
-            await run(false);
-          } catch (fallbackError) {
-            this.context.noteStepFailure(taskId, fallbackError);
-          }
-        } else this.context.noteStepFailure(taskId, error);
-      }
-    }
-  }
   prerequisiteWaitYieldsToLiveWork(task: Task): boolean {
     if (task.resolution.recoveryActive) return true;
     const runs = this.context.store.runs(task.id);
@@ -235,16 +171,28 @@ export class TaskQuantum {
       });
   }
 
+  reconcileProfileAdmission(task: Task): Task {
+    const { store, routingDecisions } = this.context;
+    reconcileUsageGate(store, routingDecisions, task.id);
+    const current = store.task(task.id);
+    if (current.removedAt) return current;
+    if (
+      this.context.profileCatalogKnown() ||
+      this.context.profileCatalogKnownFor(current.hostId) ||
+      this.context.workerHostCatalogs(current).length > 0
+    )
+      return reconcileUnavailablePreference(
+        store,
+        routingDecisions,
+        current,
+        this.context.workerRoutingProfiles(current),
+        this.context.workerHostCatalogPending(current),
+      );
+    return current;
+  }
+
   async taskQuantum(taskId: string): Promise<void> {
-    let task = this.context.store.task(taskId);
-    if (this.context.profileCatalogKnown()) {
-      await this.applyApprovedRoutes(taskId);
-      try {
-        task = this.context.store.task(taskId);
-      } catch {
-        return;
-      }
-    }
+    const task = this.reconcileProfileAdmission(this.context.store.task(taskId));
     const quantum = { pausedForPrerequisiteWait: false };
     // One pass, one worktree-validation scan: every read this quantum makes for
     // the same task worktree and selector argv shares it, and the next quantum
@@ -332,7 +280,10 @@ export class TaskQuantum {
           if (this.context.store.task(task.id).reason !== reason)
             this.context.store.update(
               task.id,
-              { reason },
+              {
+                reason,
+                ...stopClearedPatch(this.context.store.task(task.id), reason),
+              },
               "stalled_turn_binding_changed",
               reason,
             );
@@ -636,13 +587,7 @@ export class TaskQuantum {
             current.originError ? { code: "origin_error" } : undefined,
           );
         }
-        // Spec 052 sign-off: ask, apply or withdraw the operator's routing decisions.
-        if (
-          this.context.profileCatalogKnown() ||
-          this.context.profileCatalogKnownFor(current.hostId) ||
-          this.context.workerHostCatalogs(current).length > 0
-        )
-          await this.applyApprovedRoutes(taskId);
+        this.reconcileProfileAdmission(current);
         // A checkpointed reviewer whose own agent was positively observed
         // closed can never receive its same-run continuation. Record that
         // terminal observation before recovery reads the task, so neither

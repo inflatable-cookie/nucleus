@@ -172,7 +172,7 @@ test("Sol's weight saves Default to More and back through the Settings path, sur
         ...session.store.pool()[0],
         weight: "more",
       });
-      assert.deepEqual(session.settings.configureProfile(more), { ok: true });
+      assert.deepEqual(session.settings.configureProfile(more), { ok: true, entry: more });
       assert.equal(session.store.pool()[0]?.weight, "more");
       assert.equal(
         reads.count,
@@ -193,7 +193,7 @@ test("Sol's weight saves Default to More and back through the Settings path, sur
         ...session.store.pool()[0],
         weight: "default",
       });
-      assert.deepEqual(session.settings.configureProfile(back), { ok: true });
+      assert.deepEqual(session.settings.configureProfile(back), { ok: true, entry: back });
       assert.equal(reads.count, beforeBack, "the return save reads no host");
       session.close();
       session = await open(path, reads);

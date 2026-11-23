@@ -1,3 +1,4 @@
+import type { TaskActivity } from "../../shared/schema/task-activity";
 import { useTaskQuestions } from "../native-questions";
 import { formatAgentId } from "../../shared/agent-identity";
 import {
@@ -17,6 +18,8 @@ import {
   taskNumberLabel,
   type HoldKind,
   type LaneView,
+  type Project,
+  type ProjectPlan,
   type Task,
   type TaskSummary,
 } from "../../shared/contracts";
@@ -52,6 +55,7 @@ import {
   longShellCommandStart,
 } from "./text";
 import { useTick } from "../use-tick";
+import { MarkDoneConfirm } from "../lane-mark-done";
 import {
   HoldBadge,
   PullRequestBadge,
@@ -190,6 +194,19 @@ export function CardProject({
       </Text>
     </>
   );
+}
+
+const activityTone: Record<TaskActivity["state"], CardTone> = {
+  active: "accent",
+  nucleus: "muted",
+  recovering: "accent",
+  needs_person: "warning",
+  finished: "success",
+  unclassified: "warning",
+};
+
+export function activityStatus(activity: TaskActivity): CardStatus {
+  return { tone: activityTone[activity.state], state: activity.detail };
 }
 
 /** The row's status line, one line: dot, state, then ` · detail`. */
@@ -707,7 +724,9 @@ export const TaskCard = React.memo(function TaskCard({
   // The one status line (nucleus#1515): the wait or stop that moves the task next,
   // else its phase and latest report. The host's name and the routing sentence behind
   // the host choice stay in the task detail.
-  const status: CardStatus = hostWait
+  const status: CardStatus = task.activity
+    ? { ...activityStatus(task.activity), holds: blockingHoldKinds(task) }
+    : hostWait
     ? ownStop && !stopWait && !stopHeld
       ? {
           tone: "warning",
@@ -788,6 +807,7 @@ export const TaskCard = React.memo(function TaskCard({
                           }
                     : taskFallbackStatus(task, cardAttention);
   const since =
+    task.activity?.since ??
     stopRecord?.since ??
     hostWait?.since ??
     dispatchWait?.since ??
@@ -803,7 +823,7 @@ export const TaskCard = React.memo(function TaskCard({
       `Wait state: ${waitStateLabels[task.waitState.state]}; owner ${waitOwnerLabel(task.waitState.owner)}; next ${task.waitState.nextAction}`)
     : undefined;
   const rowStatus: CardStatus = waitWording
-    ? { ...status, a11y: waitWording }
+    ? { ...status, a11y: task.activity ? `${task.activity.detail}. ${waitWording}` : waitWording }
     : status;
   // A hold flag is dropped only when the branch that chose the status stands for that
   // hold; any other status (a host wait, a question, a report) keeps it as a flag.
@@ -1103,7 +1123,8 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
 });
 /**
  * Spec 041: a drained lane that outlived its escalation timer is the operator's to answer.
- * Close finishes the step (lane.status done); Keep records a reason and ends the episode.
+ * Mark done finishes the step (lane.status done), always asking first; Keep records a
+ * reason and ends the episode.
  * The lane's aim is in the plan view the row opens.
  */
 export const LaneDrainCard = React.memo(function LaneDrainCard({
@@ -1116,6 +1137,8 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   onClose,
   onKeep,
   project,
+  projects = [],
+  plans = [],
 }: {
   lane: LaneView;
   selected: boolean;
@@ -1127,6 +1150,9 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   onKeep: (reason: string) => void;
   /** Line 1's project: the lane's projects with their badges; the lane key when it has none. */
   project?: React.ReactNode;
+  /** Every project and plan, so the mark-done confirmation names each plan that lists the lane. */
+  projects?: Project[];
+  plans?: ProjectPlan[];
 }) {
   useTick(lane.drain?.escalatedAt ? 30_000 : null);
   const laneStatus: CardStatus = {
@@ -1136,6 +1162,8 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   };
   const [keeping, setKeeping] = useState(false),
     [reason, setReason] = useState("");
+  // Marking the drained lane done always asks first (nucleus#1536).
+  const [confirmingDone, setConfirmingDone] = useState(false);
   return (
     <BoardCard
       label={`Drained lane: ${lane.title}, ${statusLabel(laneStatus)}`}
@@ -1156,9 +1184,9 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
               small
               c={c}
               disabled={busy}
-              text="Close lane"
-              label={plainCardText(`Close drained lane ${lane.key}`)}
-              onPress={onClose}
+              text="Mark done"
+              label={plainCardText(`Mark drained lane ${lane.key} done`)}
+              onPress={() => setConfirmingDone(true)}
             />
             <Button
               small
@@ -1193,6 +1221,20 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
                 }}
               />
             </View>
+          )}
+          {confirmingDone && (
+            <MarkDoneConfirm
+              c={c}
+              lane={lane}
+              projects={projects}
+              plans={plans}
+              busy={busy}
+              onConfirm={() => {
+                setConfirmingDone(false);
+                onClose();
+              }}
+              onCancel={() => setConfirmingDone(false)}
+            />
           )}
         </View>
       }

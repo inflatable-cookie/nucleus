@@ -1,3 +1,6 @@
+import { activityReadContext } from "../telemetry/task-activity-observation";
+import { taskDetailView } from "../../shared/task-view";
+import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { ownerStopPendingRefusal } from "./owner-stop";
 import { taskNeverDispatched } from "../task-decision-rules";
@@ -132,23 +135,10 @@ function reviewerSwapView(facts: OwnerVerbFacts): TaskNext["reviewerSwap"] {
 function currentReviewOutcome(facts: OwnerVerbFacts): TaskNextReviewOutcome {
   const { task, runs, events } = facts;
   const head = task.prHead ?? null;
-  // Task 576: the cap counts review rounds, not author returns. While an
-  // owner-approved round is still open (an author revision started after the
-  // latest cap park), the count is not a fresh owner gate: a worker stopping
-  // inside that round is ordinary recovery, and only the next new
-  // changes_required parks at the cap again. This is the read-side twin of the
-  // engine's parkedAtCap gate, so coordinators and planners are not misled.
-  const capAt = events
-    .filter((event) => event.kind === "revision_budget_exhausted")
-    .at(-1)?.at;
-  const approvedRoundOpen =
-    Boolean(capAt) &&
-    runs.some((run) => run.role === "revision" && run.createdAt > capAt!);
   const revision = {
     runs: task.resolution.revisionRuns,
     budget: REVISION_BUDGET,
-    exhausted:
-      task.resolution.revisionRuns >= REVISION_BUDGET && !approvedRoundOpen,
+    exhausted: revisionAllowanceExhausted(task, runs, events),
   };
   // Every durable application, newest event first: the event is what makes a
   // recorded reviewer result the applied verdict, and it survives the task row's
@@ -503,6 +493,15 @@ export function assembleOwnerTaskNext(
     // budget pause the measured budget no longer shows cannot keep its text.
     reason: taskVisibleReason(facts.waitTask ?? task, ownerTaskBudget(facts)),
     activeRun: ownerActiveRun(facts),
+    activity: taskDetailView(
+      facts.waitTask ?? task,
+      facts.activityWaitContext,
+      facts.runs,
+      facts.events,
+      facts.store.canonicalRepository(task.repoPath, task.repository),
+      Date.now(),
+      activityReadContext(facts.store),
+    ).activity,
     prHead: task.prHead,
     prUrl: task.prUrl,
     branch: task.branch,

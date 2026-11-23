@@ -24,6 +24,7 @@ import { Engine } from "../core/engine";
 import { AcpSessions } from "../core/acp/sessions";
 import { readAcpBinding } from "../shared/acp/binding";
 import { decisionSchema, submissionSchema } from "../shared/contracts";
+import { storedT3Labels } from "./support/t3code-labels";
 import { fakeAdapter } from "./support/fakes";
 import type { Adapter } from "../core/host";
 
@@ -341,7 +342,7 @@ test("the inbox's project is named Nucleus Inbox and its registration is renamed
   const { fake, host } = await idleInbox(t);
   await host.reconcileThreadTitles([]);
   const inbox = host.state.read().inbox!;
-  const projects = (await host.reads.inventory()).projects.filter(
+  const projects = (await host.reads.shell()).projects.filter(
     (project) => project.id === inbox.projectId,
   );
   assert.equal(projects.length, 1);
@@ -891,13 +892,17 @@ test("inbox ui shows the board once per operator message, replacing a retained t
   assert.equal(archiveReads(), archiveReadsBefore, "live ui uses the shell");
 
   await t.test(
-    "ui refuses to open when the inbox is missing and inventory keeps moving",
+    "ui refuses to open when the inbox is missing, read by its exact id",
     async () => {
       const opensBefore = previewOpens().length;
       projection.thread.deletedAt = new Date().toISOString();
       try {
-        await assert.rejects(host.openInboxUi(), /inventory kept moving/);
-        assert.ok(archiveReads() > archiveReadsBefore);
+        await assert.rejects(host.openInboxUi(), /Nucleus inbox is unavailable/);
+        assert.equal(
+          archiveReads(),
+          archiveReadsBefore,
+          "no archived inventory is read (Spec 069 batch 5)",
+        );
         assert.equal(previewOpens().length, opensBefore);
         assert.equal(issuedLinks, linksBefore + 1);
       } finally {
@@ -1054,7 +1059,7 @@ test("decisionHold advances on a bounded long thread unless a previous hold is u
   assert.equal(sent.length, 3);
 });
 
-test("a queued parentless T3 task decision and an unknown parent status both reach the Inbox title and card on the real adapter and AcpSessions (nucleus#1516)", async (t) => {
+test("a task-linked decision and an unlinked one both reach the Inbox title and card while the task keeps a live parent thread (nucleus#1538)", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "t3-inbox-queued-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const fake = await t3Fake(t, root);
@@ -1067,7 +1072,16 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
       status: "ready",
       models: [{ slug: "nucleus", name: "Nucleus" }],
     },
+    {
+      instanceId: "synthetic-provider",
+      displayName: "Synthetic provider",
+      driver: "codex",
+      enabled: true,
+      status: "ready",
+      models: [{ slug: "synthetic-model", name: "Synthetic model" }],
+    },
   ];
+  fake.controls.runOnLaunch = true;
   const store = new Store(join(root, "queue.sqlite"));
   const engine = new Engine(
     store,
@@ -1079,17 +1093,11 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
     store.close();
   });
 
-  let forceUnknown = false;
-  let host!: T3CodeHost;
   const acp = new AcpSessions(engine, {
     dataHome: root,
     socketPath: join(root, "cb.sock"),
-    parentStatus: (hostId, taskId) =>
-      forceUnknown || hostId !== host.hostId
-        ? { state: "unknown" }
-        : host.decisionParent(taskId),
   });
-  host = new T3CodeHost({
+  const host = new T3CodeHost({
     endpoint: fake.endpoint,
     bearer: "synthetic-bearer",
     statePath: join(root, "state.json"),
@@ -1107,10 +1115,10 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
   for (const run of projection.runs) run.status = "completed";
   assert.equal(projection.thread.title, "All quiet");
 
-  // 1. A queued, parentless T3 task's open decision reaches the Inbox title, wakes it, and offers a card.
+  // A queued T3 task with a live parent thread of its own.
   const queuedTask = store.insert(
     submissionSchema.parse({
-      submissionId: "queued-parentless",
+      submissionId: "queued-with-parent",
       title: "Queued T3 task",
       repoPath: join(root, "repo"),
       planningCommit: "a".repeat(40),
@@ -1121,13 +1129,52 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
     "brief",
     "a".repeat(40),
   );
+  mkdirSync(join(root, "repo"), { recursive: true });
+  store.update(queuedTask.id, { directory: join(root, "repo") });
+  const workspace = await host.createWorkspace({
+    title: "Queued T3 task",
+    requestId: "workspace-1538",
+    directory: join(root, "repo"),
+    project: { projectId: "synthetic-project" },
+  });
+  await host.createAgent({
+    workspaceId: workspace.id,
+    profile: {
+      id: "synthetic-profile",
+      name: "Synthetic",
+      provider: "synthetic-provider",
+      model: "synthetic-model",
+      available: true,
+      problem: "",
+      notes: "",
+      supportedThinking: [],
+    },
+    title: "Queued T3 task",
+    taskNumber: queuedTask.number,
+    mcpBindingPath: null,
+    attempt: () => ({
+      requestId: "worker-launch-1538",
+      prompt: "Do the work",
+      labels: storedT3Labels("worker", {
+        taskId: queuedTask.id,
+        runId: "run-1538",
+      }),
+      environment: {},
+    }),
+  });
+  const parent = host.state.read().parents?.[queuedTask.id];
+  assert.ok(
+    parent && !parent.archivedAt,
+    "the task keeps a live parent thread",
+  );
+
+  // 1. The task's open decision reaches the Inbox title and raises its card there.
   const stamp = new Date().toISOString();
-  const id1 = "11111111-1111-4111-8111-111111111516";
+  const id1 = "11111111-1111-4111-8111-111111111538";
   store.addDecision(
     decisionSchema.parse({
       id: id1,
       version: 1,
-      headline: "nucleus#1515 worker: use Opus frontier?",
       question: "Approve Opus frontier for this queued task?",
       askedBy: { agentId: "planner" },
       choices: [
@@ -1156,22 +1203,41 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
     turn1.elicitations?.map((item) => item.id),
     [id1],
   );
+  // The card names the task it asks about, as the board's task link does.
+  assert.equal(
+    turn1.elicitations?.[0]?.headline,
+    [queuedTask.reference, queuedTask.title].filter(Boolean).join(" · "),
+  );
 
-  // 2. A second queued task whose parent lookup transiently returns `unknown` is still counted and offered to the Inbox.
-  forceUnknown = true;
-  const id2 = "22222222-2222-4222-8222-222222221516";
+  // The task's own thread raises no card, even with its live parent.
+  const taskBinding = acp.bind({ taskId: queuedTask.id });
+  const taskTurn = await acp.turn(
+    {
+      taskId: queuedTask.id,
+      sessionId: taskBinding.sessionId,
+      waitMs: 0,
+    },
+    readAcpBinding(taskBinding.bindingPath).token,
+  );
+  assert.equal("elicitations" in taskTurn, false);
+  assert.ok(
+    acp.openDecisionKey(queuedTask.id)?.includes(id1),
+    "the task's row still names the decision that needs the operator",
+  );
+
+  // 2. A decision that links no task is offered in the same Inbox.
+  const id2 = "22222222-2222-4222-8222-222222221538";
   store.addDecision(
     decisionSchema.parse({
       id: id2,
       version: 1,
-      headline: "Transient unknown parent decision?",
-      question: "Should this still reach the Inbox?",
+      question: "Should this unlinked question reach the Inbox?",
       askedBy: { agentId: "planner" },
       choices: [
         { label: "Yes", consequence: "Offer" },
         { label: "No", consequence: "Drop" },
       ],
-      links: { tasks: [queuedTask.id] },
+      links: { tasks: [] },
       status: "open",
       createdAt: stamp,
       updatedAt: stamp,
@@ -1185,10 +1251,8 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
     [id1, id2].sort(),
   );
 
-  // 3. A task on a different registered T3 host causes T3HostConnection.decisionParent
-  // to answer `unknown`; proposedOwner must fall back to the connected Inbox rather than
-  // pinning the unavailable host's Inbox.
-  forceUnknown = false;
+  // 3. A decision about another registered host's task belongs to that host's Inbox,
+  //    so the connected Inbox neither counts nor offers it.
   const foreignTask = store.insert(
     submissionSchema.parse({
       submissionId: "queued-other-t3-host",
@@ -1202,13 +1266,12 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
     "brief",
     "b".repeat(40),
   );
-  const id3 = "33333333-3333-4333-8333-333333331516";
+  const id3 = "33333333-3333-4333-8333-333333331538";
   store.addDecision(
     decisionSchema.parse({
       id: id3,
       version: 1,
-      headline: "Different registered host decision?",
-      question: "Should this fall back to the connected Inbox?",
+      question: "Should this reach the other host's Inbox?",
       askedBy: { agentId: "planner" },
       choices: [
         { label: "Yes", consequence: "Offer" },
@@ -1220,15 +1283,16 @@ test("a queued parentless T3 task decision and an unknown parent status both rea
       updatedAt: stamp,
     }),
   );
-  assert.ok(
+  assert.equal(
     acp.pendingInboxDecisionKey(host.hostId)?.includes(id3),
-    "connected Inbox key counts decision whose linked host answered unknown",
+    false,
+    "the host that owns the linked task owns the decision",
   );
   await host.reconcileThreadTitles([queuedTask, foreignTask]);
-  assert.equal(projection.thread.title, "3 decisions to answer");
+  assert.equal(projection.thread.title, "2 decisions to answer");
   const turn3 = await acp.turn({ ...caller, waitMs: 0 }, token);
   assert.deepEqual(
     turn3.elicitations?.map((item) => item.id).sort(),
-    [id1, id2, id3].sort(),
+    [id1, id2].sort(),
   );
 });

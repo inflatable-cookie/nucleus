@@ -3,6 +3,17 @@ import { availabilitySchema } from "../../shared/contracts";
 import type { Completion } from "../../shared/contracts";
 import { StoreCore, digest } from "./store-core";
 
+export const VERDICT_ONLY_CREDENTIAL = 2;
+
+export type CompletionIdentity = Pick<
+  Completion,
+  "taskId" | "runId" | "status" | "head"
+>;
+
+export function isReviewerVerdict(status: Completion["status"]): boolean {
+  return status === "ready_to_merge" || status === "changes_required";
+}
+
 /**
  * A callback that presented no credential, a revoked one, or another run's
  * token. It carries the refusal as a type so a caller (the callback socket's
@@ -108,18 +119,48 @@ export class StoreAuth {
       .prepare("UPDATE receipts SET report_response=? WHERE id=?")
       .run(JSON.stringify({ hash, response }), id);
   }
-  authenticate(run: string, token: string) {
+  authenticate(run: string, token: string): void {
+    this.authenticateCredential(run, token);
+  }
+  authenticateCompletion(run: string, token: string, input: CompletionIdentity) {
+    return this.authenticateCredential(run, token, input);
+  }
+  private authenticateCredential(
+    run: string,
+    token: string,
+    input?: CompletionIdentity,
+  ) {
     const credential = this.db
       .prepare("SELECT hash, revoked FROM credentials WHERE run=?")
       .get(run);
-    if (!credential || credential.revoked || credential.hash !== digest(token))
+    if (!credential || credential.hash !== digest(token))
+      throw new UnauthorizedCallbackError();
+    const verdictOnly = credential.revoked === VERDICT_ONLY_CREDENTIAL;
+    if (
+      credential.revoked &&
+      !(verdictOnly && input && input.runId === run && isReviewerVerdict(input.status))
+    )
       throw new UnauthorizedCallbackError();
     const binding = this.db
       .prepare(
-        `SELECT json_extract(r.data,'$.hostId') AS runHost,
+        `SELECT r.taskId, json_extract(r.data,'$.role') AS role,
+        json_extract(r.data,'$.head') AS head,
+        json_extract(r.data,'$.released') AS released,
+        json_extract(r.data,'$.hostId') AS runHost,
         json_extract(t.data,'$.hostId') AS taskHost FROM runs r LEFT JOIN tasks t ON t.id=r.taskId WHERE r.id=?`,
       )
       .get(run);
+    if (verdictOnly) {
+      if (
+        !input ||
+        binding?.role !== "reviewer" ||
+        binding.released !== 1 ||
+        binding.taskId !== input.taskId
+      )
+        throw new UnauthorizedCallbackError();
+      if (input.head !== undefined && input.head !== binding.head)
+        throw new Error("Reviewer verdict does not match its original head");
+    }
     if (binding && (!binding.taskHost || binding.runHost !== binding.taskHost))
       throw new Error("Waiting for a proven run host");
     if (!binding) {
@@ -131,6 +172,7 @@ export class StoreAuth {
       if (tasks.length > 1 || tasks.some((task) => !task.host))
         throw new Error("Waiting for a proven run host");
     }
+    return verdictOnly ? "verdict_only" : "full";
   }
   credentialRunForToken(token: string): string | null {
     const rows = this.db
@@ -157,7 +199,7 @@ export class StoreAuth {
     token: string,
     credentialRunId = input.runId,
   ): { accepted: true; eventId: string } | null {
-    this.authenticate(credentialRunId, token);
+    this.authenticateCompletion(credentialRunId, token, input);
     const row = this.db
       .prepare("SELECT * FROM receipts WHERE id=?")
       .get(input.eventId);

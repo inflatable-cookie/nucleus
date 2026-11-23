@@ -1,3 +1,4 @@
+import { hostOutageIntervals } from "../scheduling/host-outage";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ import {
 } from "../../shared/contracts";
 import { climbedTier, requestedTier } from "../../shared/demand";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { groupIsUnavailable, requestReaches } from "../../shared/pool";
+import { groupIsUnavailable, requestOnly } from "../../shared/pool";
 import type {
   ExplicitResolution,
   ResolutionWarningId,
@@ -31,6 +32,10 @@ import { usageGateBlocked } from "../dispatch/usage-gate";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
 import { queueCheckoutStatus } from "../git/index";
+import {
+  reattachRefusal,
+  reattachStoredTaskCheckout,
+} from "../git/checkout-reattach";
 import {
   commonDirMatchesTask,
   originsMatchForTask,
@@ -297,7 +302,6 @@ function selectProfileForStart(
 ): {
   profile: Profile | null;
   group: string | null;
-  needsPolicySignoff: boolean;
 } {
   const store = engine.store;
   const pool = store.pool();
@@ -317,32 +321,6 @@ function selectProfileForStart(
     profile
       ? (pool.find((entry) => entry.profileId === profile.id)?.group ?? null)
       : null;
-  const policySignoffFor = (profile: Profile | null) => {
-    const entry = profile
-      ? pool.find((item) => item.profileId === profile.id)
-      : null;
-    const tierBlocked = Boolean(
-      entry &&
-        !requestReaches(
-          entry,
-          usage,
-          request,
-          requestedTier(task.complexity),
-          climbedTier(task),
-        ),
-    );
-    const roleSignoff =
-      role !== "worker" && profile
-        ? engine.resolution.signoffIssue(task, profile, role)
-        : null;
-    return Boolean(
-      tierBlocked ||
-        roleSignoff ||
-        request?.signoff?.status === "pending" ||
-        (role === "worker" && usageGateBlocked(task, usage)),
-    );
-  };
-
   if (agentMode === "retained") {
     const profile =
       role === "worker"
@@ -365,7 +343,6 @@ function selectProfileForStart(
     return {
       profile,
       group: groupOf(profile),
-      needsPolicySignoff: policySignoffFor(profile),
     };
   }
 
@@ -385,7 +362,6 @@ function selectProfileForStart(
     return {
       profile,
       group: selected?.entry.group ?? groupOf(profile),
-      needsPolicySignoff: policySignoffFor(profile),
     };
   }
 
@@ -413,19 +389,22 @@ function selectProfileForStart(
   }
   if (!profile) {
     const entry = pool.find(
-      (item) => item.enabled && item.roles.includes(role),
+      (item) => item.enabled && item.roles.includes(role) &&
+        !requestOnly(item, usage, requestedTier(task.complexity), climbedTier(task)),
     );
     profile =
       (entry
         ? allProfiles.find((item) => item.id === entry.profileId)
         : null) ??
-      allProfiles[0] ??
+      allProfiles.find((candidate) => {
+        const entry = pool.find((item) => item.profileId === candidate.id);
+        return !entry || !requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task));
+      }) ??
       null;
   }
   return {
     profile,
     group: groupOf(profile),
-    needsPolicySignoff: policySignoffFor(profile),
   };
 }
 
@@ -481,17 +460,28 @@ function assertReviewSourceAvailable(task: Task): void {
 }
 
 /**
- * Preflight reviewer source availability, forge PR head, checkout HEAD and live
- * writer observation before the transaction creates a run. Makes no Git writes.
- * If the forge head differs from the checkout HEAD or cannot be read,
- * `runStartPlan` returns `head_mismatch` and accepting starts the run on the
- * checkout as it is.
+ * Preflight a `run.start`: its one Git write is the reattach step, which runs
+ * for every role, so any run starts on the task branch rather than on a checkout
+ * a review round left detached. A reviewer start then proves its source
+ * availability, forge PR head, checkout HEAD and live writer observation before
+ * the transaction creates a run. If the forge head differs from the checkout HEAD
+ * or cannot be read, `runStartPlan` returns `head_mismatch` and accepting starts
+ * the run on the checkout as it is.
  */
 export async function preflightExplicitRunStart(
   engine: Engine,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.start" }>,
 ): Promise<ExplicitRunStartPreflight> {
+  // Spec 068 §4: every run.start launches into the task checkout, so the one
+  // reattach step runs first. It moves no commit and names its refusal instead
+  // of leaving a detached checkout unexplained.
+  const reattach = await reattachStoredTaskCheckout(engine.store, task.id);
+  const reattachRefused = reattachRefusal(reattach);
+  if (reattachRefused)
+    throw Error(
+      `The task checkout was not returned to ${task.branch}: ${reattachRefused}`,
+    );
   if (input.role !== "reviewer") {
     return {
       forgeHead: null,
@@ -554,12 +544,12 @@ export async function preflightExplicitRunStart(
 
 /**
  * Read-only verification of the task checkout before delivering a reviewer run.
- * `run.start` makes no Git writes at all.
+ * The reattach step in preflight is the only Git write `run.start` makes.
  */
 async function verifyReviewerCheckout(task: Task, run: Run): Promise<void> {
   if (task.entrypoint === "proof" || !task.directory) return;
   assertReviewSourceAvailable(task);
-  await ordinaryReviewSource(task, run.head, false);
+  await ordinaryReviewSource(task, run.head);
 }
 
 export function runStartPlan(
@@ -632,7 +622,7 @@ export function runStartPlan(
       })
     : null;
 
-  const { profile, group, needsPolicySignoff } = selectProfileForStart(
+  const { profile, group } = selectProfileForStart(
     engine,
     task,
     input.role,
@@ -735,6 +725,7 @@ export function runStartPlan(
     Date.now(),
     store.eventsAll(task.id),
     store.canonicalRepository(task.repoPath, task.repository),
+    hostOutageIntervals(store, task.hostId),
   );
   if (
     (input.role === "worker" &&
@@ -749,12 +740,16 @@ export function runStartPlan(
       "The task's replacement ceiling, revision cap or execution budget is reached.",
     );
   }
-  if (needsPolicySignoff) {
-    warn(
-      "route_policy",
-      `Starting ${input.role} on ${profile?.id ?? "this route"} requires Spec 052 operator sign-off.`,
-    );
-  }
+  const entry = engine.store.pool().find((item) => item.profileId === profile?.id);
+  const usage = engine.store.usageLevel();
+  if (
+    entry &&
+    task.profileRequests?.[input.role]?.profileId !== entry.profileId &&
+    requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task))
+  )
+    throw Error(`Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`);
+  if (input.role === "worker" && usageGateBlocked(task, usage))
+    warn("route_policy", "The Low usage level requires approval to admit this high-complexity task.");
 
   let createdRun: Run | null = null;
   let token = "";
@@ -883,14 +878,14 @@ export function runStartPlan(
         allowed: async () => {
           if (!isRunStillOwned()) return false;
           if (runRole === "reviewer" && latestTask.entrypoint !== "proof") {
-            await ordinaryReviewSource(store.task(task.id), run.head, false);
+            await ordinaryReviewSource(store.task(task.id), run.head);
           }
           return isRunStillOwned();
         },
         stillAllowed: () => {
           if (!isRunStillOwned()) return false;
           if (runRole === "reviewer" && latestTask.entrypoint !== "proof") {
-            assertOrdinaryReviewIdentity(store.task(task.id), run.head, false);
+            assertOrdinaryReviewIdentity(store.task(task.id), run.head);
           }
           return true;
         },

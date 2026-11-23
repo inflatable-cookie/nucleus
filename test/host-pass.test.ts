@@ -50,14 +50,29 @@ function fixture(
     store.close();
   });
   // The row step visits one task on the host; the other steps here are
-  // host-level calls.
-  if (options.task)
-    store.insert(
+  // host-level calls. A row belongs to a task that has a thread (Spec 069 §4), so
+  // the task is a launched one, with the worker a dispatch records, now idle.
+  if (options.task) {
+    const task = store.insert(
       submission({ submissionId: "row-host-pass", title: "Row step" }),
       HOST,
       "handoff",
       "a".repeat(40),
     );
+    store.update(
+      task.id,
+      {
+        phase: "working",
+        workspaceIntent: true,
+        agentIntent: true,
+        workspaceId: "workspace-row-host-pass",
+        agentId: "worker-row-host-pass",
+        agentActive: false,
+        runId: "initial",
+      },
+      "dispatched",
+    );
+  }
   const hostPass = new HostPass(
     enginePorts(
       engine,
@@ -143,7 +158,7 @@ test("the finished-parent archive step runs before presentation and records its 
       .filter((event) => event.kind === "parent_archive_uncertain").length,
     1,
   );
-  assert.equal(result.transportAnswered, true);
+  assert.equal(result.callFault, null);
 });
 
 test("a finished-parent archive fault stays that step's own and the host still passes", async (t) => {
@@ -168,7 +183,7 @@ test("a finished-parent archive fault stays that step's own and the host still p
     String(f.store.getMeta("hostPassError")),
     /reconcileFinishedParents: parent archive fault/,
   );
-  assert.equal(result.transportAnswered, true);
+  assert.equal(result.callFault, null);
 });
 
 test("a step that throws is recorded and the host's later steps still run", async (t) => {
@@ -214,16 +229,15 @@ test("a clean pass records no failure and answers the inventory it read", async 
     "a clean pass writes no failure",
   );
   assert.equal(result.inventory, observations);
-  assert.equal(result.transportAnswered, true, "the host answered its pass");
+  assert.equal(result.callFault, null, "the host answered its pass");
 });
 
 /**
- * Spec 066 C2 (R1/R6): the pass's own reading of a host. A step that fails at the
- * transport boundary means the host did not answer, even while the registry claims
- * a connection — the reading is the failure, not the claim — and a host's own
- * failure never answers for another host's wait.
+ * Spec 069 §2 (superseding Spec 066 R6): a step that fails at the transport
+ * boundary fails only itself. The pass hands it back as the host's call fault, a
+ * `degraded` sample for HostHealth, and one host's fault never answers for another.
  */
-test("a step that fails at the transport boundary answers nothing for that host and nothing for another", async (t) => {
+test("a step that fails at the transport boundary is that host's call fault and nothing for another", async (t) => {
   const ran: string[] = [];
   const f = fixture(
     t,
@@ -243,10 +257,10 @@ test("a step that fails at the transport boundary answers nothing for that host 
   );
 
   const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
-  assert.equal(
-    result.transportAnswered,
-    false,
-    "a connected claim is not an answer",
+  assert.match(
+    String(result.callFault),
+    /Transport not connected/,
+    "the failed step is the host's call fault",
   );
   assert.deepEqual(ran, ["titles"], "the host's later steps still run");
   assert.match(
@@ -259,8 +273,8 @@ test("a step that fails at the transport boundary answers nothing for that host 
     f.hostPass.run("host-2"),
   );
   assert.equal(
-    other.transportAnswered,
-    true,
+    other.callFault,
+    null,
     "one host's transport failure never answers for another",
   );
 });
@@ -268,12 +282,11 @@ test("a step that fails at the transport boundary answers nothing for that host 
 /**
  * nucleus#1469: the observation inventory is optional, so its read used to swallow
  * its own transport loss and leave the host reading as though it answered. It is a
- * host read like any other: a lost transport is this host not answering its pass,
- * which is what keeps that host's tasks on their host-scoped wait, while an
- * inventory that merely cannot be read is only unavailable. A host that recovers
- * answers its next pass.
+ * host read like any other: a lost transport is this host's call fault for the pass
+ * (a HostHealth sample, Spec 069 §2), while an inventory that merely cannot be read
+ * is only unavailable. A host that recovers answers its next pass.
  */
-test("an inventory that loses the transport is the host not answering, and the next pass recovers", async (t) => {
+test("an inventory that loses the transport is the host's call fault, and the next pass recovers", async (t) => {
   let connected = false;
   const observations = new Map<string, AgentObservation>([
     ["agent-1", { active: true } as AgentObservation],
@@ -288,10 +301,9 @@ test("an inventory that loses the transport is the host not answering, and the n
   f.engine.resolution.observationTargets = () => ["agent-1"];
 
   const lost = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
-  assert.equal(
-    lost.transportAnswered,
-    false,
-    "an inventory transport loss is the host not answering, not an empty answer",
+  assert.ok(
+    lost.callFault,
+    "an inventory transport loss is the host's call fault, not an empty answer",
   );
   assert.equal(
     lost.inventory,
@@ -306,8 +318,8 @@ test("an inventory that loses the transport is the host not answering, and the n
   connected = true;
   const recovered = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
   assert.equal(
-    recovered.transportAnswered,
-    true,
+    recovered.callFault,
+    null,
     "the returning host answers its own pass",
   );
   assert.equal(
@@ -327,9 +339,9 @@ test("an inventory that cannot be read answers nothing while the host still answ
 
   const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
   assert.equal(
-    result.transportAnswered,
-    true,
-    "an unreadable list is unavailability, not a lost host",
+    result.callFault,
+    null,
+    "an unreadable list is unavailability, not a host fault",
   );
   assert.equal(
     result.inventory,

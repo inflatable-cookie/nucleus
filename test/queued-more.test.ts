@@ -68,39 +68,3 @@ test("the Queue counts every queued task, and queue paging stays out of the boar
     "a project's held-back tasks are drawn as ordinary cards",
   );
 });
-
-test("frontier grants live on the Limits tab, not the board header", () => {
-  const board = boardSource();
-  // The Limits panel moved to client/limits.tsx; Settings renders it on the capacity tab.
-  const settings = readFileSync(
-    new URL("../client/settings-screen.tsx", import.meta.url),
-    "utf8",
-  );
-  const limits = readFileSync(
-    new URL("../client/limits.tsx", import.meta.url),
-    "utf8",
-  );
-  assert.ok(!board.includes("routingGrants"), "the board renders no grants");
-  assert.ok(
-    !board.includes("api.routingGrant"),
-    "the board holds no revoke control",
-  );
-  assert.match(settings, /settingsTab === "capacity"[\s\S]*?<DispatchLimits\b/);
-  assert.match(limits, /<FrontierGrants\b/);
-  // Tom, 2026-11-06: each grant is a card, and its reason opens from a ? rather than sitting in it.
-  assert.match(limits, /<GrantCard\b/);
-  assert.match(
-    limits,
-    /const detail = `\$\{grant\.reason[\s\S]*?<HelpTip[\s\S]*?label=\{`Grant for \$\{planner\}`\}[\s\S]*?text=\{detail\}/,
-  );
-  assert.equal(
-    limits.match(/\{grant\.reason\}<\/Text>/g),
-    null,
-    "the reason isn't printed in the card",
-  );
-  assert.equal(
-    limits.match(/\{detail\}<\/Text>/g),
-    null,
-    "nor is the detail that carries it",
-  );
-});

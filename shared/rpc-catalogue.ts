@@ -856,12 +856,6 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     mutating: true,
   },
   {
-    name: "queue.routing-grant",
-    contract: contracts.routingGrant,
-    method: "routingGrant",
-    mutating: true,
-  },
-  {
     name: "queue.project-dispatch-limit",
     contract: contracts.configureProjectDispatchLimit,
     method: "configureProjectDispatchLimit",

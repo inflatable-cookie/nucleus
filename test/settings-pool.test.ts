@@ -82,6 +82,7 @@ const CAPACITY_LIMITS = {
   laneDrainEscalationMinutes: 1440,
   hostOutageNoticeMinutes: 120,
   threadRetentionDays: 3,
+  threadRetentionIntervalHours: 12,
 };
 const CAPACITY_VALUES = {
   ...CAPACITY_LIMITS,
@@ -188,7 +189,7 @@ function screenTree(
     if (method === "backup.list") return { snapshots: [], localError: null };
     if (method === "queue.pool" || method === "queue.profile") {
       onPool?.(input);
-      return { ok: true };
+      return method === "queue.profile" ? { ok: true, entry: input } : { ok: true };
     }
     return {};
   };

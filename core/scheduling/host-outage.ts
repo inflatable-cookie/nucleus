@@ -1,7 +1,8 @@
 import type { Task } from "../../shared/contracts";
 import {
-  DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, HOST_OUTAGES_META_KEY, hostOutageNoticeId, hostOutagesSchema,
-  outageDuration, type HostOutage, type HostOutages as HostOutageRecord,
+  DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, HOST_OUTAGE_HISTORY_LIMIT, HOST_OUTAGE_HISTORY_META_KEY, HOST_OUTAGES_META_KEY,
+  hostOutageHistorySchema, hostOutageNoticeId, hostOutagesSchema, outageDuration,
+  type HostOutage, type HostOutageHistory, type HostOutageInterval, type HostOutages as HostOutageRecord,
 } from "../../shared/host-outage";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { now, type Store } from "../store/store";
@@ -57,6 +58,12 @@ export class HostOutages {
       const next = { ...record };
       delete next[hostId];
       this.write(next);
+      // Spec 069 §3: the closed outage joins the host's history, the one record a
+      // task's budget read discounts, so closing an outage writes nothing per task.
+      const history = readHostOutageHistory(this.store);
+      const closed = [...(history[hostId] ?? []), { since: existing.since, until: at }]
+        .slice(-HOST_OUTAGE_HISTORY_LIMIT);
+      this.store.setMeta(HOST_OUTAGE_HISTORY_META_KEY, { ...history, [hostId]: closed });
       return null;
     }
     if (existing) return existing;
@@ -95,7 +102,8 @@ export class HostOutages {
       for (const [hostId, outage] of due) {
         const current = latest[hostId];
         if (!current || current.since !== outage.since) continue;
-        const waiting = this.store.tasks().filter(task => task.hostId === hostId && isLive(task));
+        // Spec 069 §4: the host's live set, never a copy of every retained row.
+        const waiting = this.store.liveHostTasks(hostId).filter(isLive);
         let changed = false;
         for (const [projectKey, tasks] of this.groupByProject(waiting)) {
           if (current.notifiedProjects[projectKey]) continue;
@@ -130,6 +138,50 @@ export class HostOutages {
     }
     return groups;
   }
+}
+
+function readHostOutageHistory(store: Pick<Store, "getMeta">): HostOutageHistory {
+  try {
+    const raw = store.getMeta<unknown>(HOST_OUTAGE_HISTORY_META_KEY);
+    return raw === undefined ? {} : hostOutageHistorySchema.parse(raw);
+  } catch { return {}; }
+}
+
+/**
+ * Spec 069 §3: every outage of one host the record still holds, closed ones from
+ * its history and the open one with `until: null`. A task's budget read discounts
+ * these from its wall time, so a host going away or coming back writes one record,
+ * never one per task. Every budget reader passes the same list (`taskBudget`).
+ * It reads the task's current host, so a task moved to another host keeps no
+ * discount for its old host's outages.
+ */
+export function hostOutageIntervals(
+  store: Pick<Store, "getMeta">,
+  hostId: string | null | undefined,
+): HostOutageInterval[] {
+  if (!hostId) return [];
+  const open = openHostOutage(store, hostId);
+  return [...hostOutageHistoryFor(store, hostId), ...(open ? [{ since: open.since, until: null }] : [])];
+}
+
+/**
+ * One host's closed outages, read structurally rather than through the schema:
+ * every budget read on the board asks for them. An entry that is not a
+ * well-formed interval is skipped and discounts nothing.
+ */
+function hostOutageHistoryFor(store: Pick<Store, "getMeta">, hostId: string): HostOutageInterval[] {
+  const raw = store.getMeta<Record<string, unknown> | undefined>(HOST_OUTAGE_HISTORY_META_KEY);
+  const entries = raw && typeof raw === "object" ? raw[hostId] : undefined;
+  if (!Array.isArray(entries)) return [];
+  return entries.filter((entry): entry is HostOutageInterval =>
+    Boolean(entry) && typeof entry.since === "string" && (entry.until === null || typeof entry.until === "string"));
+}
+
+/** One host's open outage, read without a write: the record HostHealth keeps while the host is down. */
+export function openHostOutage(store: Pick<Store, "getMeta">, hostId: string): { since: string } | null {
+  const raw = store.getMeta<Record<string, { since?: unknown } | undefined> | undefined>(HOST_OUTAGES_META_KEY);
+  const current = raw && typeof raw === "object" ? raw[hostId] : undefined;
+  return current && typeof current.since === "string" ? { since: current.since } : null;
 }
 
 /** The one notice a project's planner receives for an outage past the bound. */

@@ -149,9 +149,7 @@ halts". Don't put a yes/no approval in front of Tom, and that includes extending
 2×: decide it (approve) and record why. Only two kinds still go to Tom: releases and outward actions
 (tag, publish, external resources), as a decision; and product or scope changes, as a proper
 discussion with the context, the options and your recommendation, never a bare approve/hold
-question. Profiles the usage level holds keep their board sign-off, or a
-planner grant the operator has already said yes to (below). A grant is permission to request
-them where needed, not an instruction to use them.
+question. Planners request profiles for the roles that need them.
 
 ## Settle questions within the task
 
@@ -175,7 +173,7 @@ existing route; a silent reviewer advances after the delegate window, and a clos
 capable as the worker, using Spec 053 ratings, and disables every task-owned force. Each fresh
 selection rechecks the worker's current profile. When no eligible rated profile is available,
 ordinary selection proceeds immediately and records the fallback on the task, in `next` and closeout;
-profiles needing sign-off count as unavailable. Only a planner or operator can change the flag
+Frontier requires a reviewer request at Low, Normal and High. Only a planner or operator can change the flag
 after dispatch through `set_routing` with `critical: true` or `false`.
 
 ## When to contact the Nucleus planner
@@ -205,10 +203,14 @@ records existing operator authorization; the brief itself grants none. Routine d
 needs no per-brief operator approval: under Tom's 2026-11-20 standing ruling the
 planner decides whether to dispatch an ordinary in-scope brief (see
 [Spec 026](../../docs/knowledge/specs/026-planning-records.md)). Product or scope
-changes, held-profile requests, releases and other explicitly reserved operator
+changes, releases and other explicitly reserved operator
 actions still need the operator. A relayed note under the standing ruling names
 that ruling and the brief it covers, never a per-brief conversation that did not
-happen; the check, digest, attribution and promotion gates still apply. A failed
+happen; the check, digest, attribution and promotion gates still apply. For a project
+with no registered planner (Northstar, for example), any project planner may brief and
+dispatch routine, in-scope work the same way (Tom, 2026-11-22). You become that task's
+planner, and your note names the 2026-11-22 ruling and the project. Its product or
+scope changes still go to Tom. A failed
 check returns `{lead}` with `check.message` and no approval or task. An existing
 same-title lead or task in that repository is returned without creating another
 or changing the lead; inspect an existing lead before deciding its next step.
@@ -500,7 +502,7 @@ four capability brackets: **Mechanical**, **Worker**, **Heavyweight** and
 Mechanical, `medium` and `high` on Worker, and `very_high` on Heavyweight. The
 difference between `medium` and `high` is the step-up: a `medium` task stays on
 Worker, while a `high` task may climb once to Heavyweight after a review asks for
-changes, and a `very_high` one to Frontier (sign-off below Extra high). Roles have no
+changes, and a `very_high` task can climb to Frontier at Extra high and Maximum. Roles have no
 offsets: the reviewer's bracket follows the usage level and the coordinator runs
 on Mechanical when one is available. Nucleus rotates among the profiles at the
 run's bracket, leaning toward cheaper ones, so rate honestly: `medium` for
@@ -519,28 +521,20 @@ what needs permission:
 
 | Level | Worker starts | Reviewer | Permission |
 | --- | --- | --- | --- |
-| `low` | one bracket below the one it may climb to | one bracket below the worker | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); Frontier needs permission, and Heavyweight unless the task starts or climbs there |
-| `normal` | Mechanical, Worker or Heavyweight by complexity (above) | one bracket below the worker | Frontier needs permission, and Heavyweight unless the task starts or climbs there |
-| `high` | `high` and `very_high` on Heavyweight; lower as at `normal` | the worker's bracket | Frontier needs permission |
+| `low` | one bracket below the one it may climb to | one bracket below the worker | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); Frontier is request-only, and Heavyweight unless the task starts or climbs there |
+| `normal` | Mechanical, Worker or Heavyweight by complexity (above) | one bracket below the worker | Frontier is request-only, and Heavyweight unless the task starts or climbs there |
+| `high` | `high` and `very_high` on Heavyweight; lower as at `normal` | the worker's bracket | Frontier is request-only |
 | `extra_high` | as at `high` | the worker's bracket | none |
 | `maximum` | workers and reviewers on Heavyweight or Frontier whatever the complexity | the worker's bracket | none |
 
 A Mechanical worker gets a Mechanical reviewer, and a `critical` task still
 prefers a reviewer at least as capable as the worker.
 
-A request for a profile the level's permission rule holds (Frontier, or a
-Heavyweight profile the task neither starts nor climbs on, at `low` or `normal`;
-Frontier at `high`) is a question to the operator, not a pin. An applied review
-that asks for changes lets the next worker run climb one bracket, on a fresh
-worker agent, and records that climb for the round. A profile above the bracket
-the task may climb to is never automatic for a worker; an explicit request reaches it: Nucleus opens a decision on the board, and
-the role runs on automatic selection until the operator approves, picks another
-profile or declines. Nothing waits for the answer, except the `low` submission
-gate described above. Prefer setting `complexity` over naming a profile; ask for
-a specific profile only when the work needs it, with a reason the operator can
-judge. `routingPolicy` shows each request's sign-off. Before rerouting a
-frontier dispatch, read `routingPolicy` on `task.next` (or `queue.detail`),
-which explains each profile the task names under the current level.
+An applied review that asks for changes can move the worker up one bracket
+on a fresh agent and records the climb for that round. At Low, Normal and High
+the automatic climb stops at Heavyweight. See [Requesting a profile](#requesting-a-profile)
+for per-role requests. `routingPolicy` on `task.next` and `queue.detail` shows the
+effective level, each named profile and the reason for each request.
 Change it only on the operator's word (Spec 052):
 
 ```sh
@@ -549,61 +543,37 @@ nucleus queue.usage - <<'JSON'
 JSON
 ```
 
-### Planner frontier grant
+### Requesting a profile
 
-**A grant is permission, not an instruction.** Frontier and other top-tier profiles the level needs permission for cost the most,
-so naming one for a task normally needs the operator's sign-off on that task. A grant gives one
-planner standing permission to name them without a per-task question, for a block of work. It does not
-say which model to use, and it changes nothing about how other tasks route.
+Set the task's `complexity` and let Nucleus select automatically for ordinary
+work. At Low, Normal and High, a planner requests Frontier only for a role
+that needs it and records why. Heavyweight outside automatic selection at Low
+or Normal works the same way.
 
-What a grant does and doesn't do:
+Use `queue.profileRequests` in a brief for the first run, or the owner verb
+`route` with `role`, `profileId` and `reason` for the next run of an existing
+task. The request applies directly and `task.next` shows its reason. A worker
+or reviewer cannot request a profile for their own task. The Low submission
+gate still requires operator approval for high and very-high complexity work.
 
-- It **does** let your own `profileRequests` (and `route`) name a frontier or top-tier profile the
-  level's permission rule holds and take effect immediately, for the tasks where you ask.
-- It **does not** pin anything. A task without a `profileRequests` entry routes automatically, exactly
-  as before: Nucleus picks among every eligible ordinary profile by `complexity`, role and usage
-  level, leaning cheaper. Ordinary profiles stay the default for everything.
-- It **does not** move automatic selection or a run's start tier. Frontier profiles don't join the
-  automatic pool because you hold a grant (the level's permission rule decides that).
-- It **is not** "the profile to use". Holding a grant for a frontier model and then requesting it on
-  every task, or routing trivial work to it, is the misuse to avoid.
+### Queue every approved brief; Nucleus paces the runs
 
-How to use one:
+Slots (per project and global) and in-flight capacity (twice a project's slots)
+limit how many tasks *run* at once. They never limit how many tasks you
+*queue*. A task submitted beyond them waits in `queued` and starts on its own,
+in order, as capacity frees. So:
 
-1. Set `complexity` honestly on every task and let automatic selection do the work. That covers
-   nearly everything.
-2. Request a frontier profile for a specific task only when that task needs it: the work is at the
-   top of the scale and the ordinary pool can't serve it, or the operator asked for that model on
-   that work. Give the reason in the request.
-3. End the grant when that block of work is done.
-
-Right: a grant for a strong model while a hard migration runs. Its two hard tasks request that model;
-the docs fix and the test cleanup in the same week have no request and route to cheaper profiles.
-Wrong: requesting the granted model on every task "because we have a grant", or treating
-non-frontier profiles as unavailable while it stands.
-
-Ask for one:
-
-```sh
-nucleus queue.routing-grant - <<'JSON'
-{"action":"request","reason":"why this block of work needs frontier"}
-JSON
-```
-
-The CLI fills `caller` from the calling thread (its Nucleus ticket or host identity). Optional `profiles` (named set; omit for every profile
-that needs permission) and `until`. A repeat while a request is open joins it. An active grant is
-reported as already standing. Only a board yes activates it; a relayed `decision.answer` does not. The
-operator revokes from Settings → Limits.
-
-End it:
-
-```sh
-nucleus queue.routing-grant - <<'JSON'
-{"action":"end","reason":"this block of work is done"}
-JSON
-```
-
-`routingPolicy` on `task.next` says when a request was covered by a grant. When that grant ends, expires, is revoked or is archived, the request quietly returns to automatic selection and the policy names the ended grant; a new grant or a fresh explicit request after the end enables frontier again.
+- **Submit every approved brief now.** Don't hold work back because the board
+  looks full, and don't feed it in one task at a time waiting for slots.
+- **Control order with `dependsOn`.** A task with prerequisites waits until all
+  of them reach `done`. Use it for real order: work that builds on another
+  task's merged code, or tasks that would edit the same files and conflict. Use
+  `set_dependencies` to change the order before dispatch. Leave independent
+  work without dependencies so it runs as soon as there's room.
+- **The only reasons to hold a brief** are that the operator asked you to wait,
+  or that the brief depends on a ruling or design not settled yet. A
+  prerequisite that hasn't been briefed is not a reason: brief it too, and link
+  them with `dependsOn`.
 
 ### Dispatch limits are the operator's, in Settings
 
@@ -615,8 +585,9 @@ screen, on the plugin or on the local board with a link from `nucleus ui`.
 changes Nucleus's dispatch limits, in Settings. Nothing changed; do not retry." The
 CLI refuses `capacity` too, and a repeated call changes nothing. Never look for
 another way in, including invoking the plugin bridge yourself: that is the
-Settings surface, not an agent route, and an agent must not use it. If a limit
-blocks approved work, say which limit and why, and pick up other ready work.
+Settings surface, not an agent route, and an agent must not use it. A limit never
+blocks submitting: queued work waits for capacity and starts on its own. If a
+limit is holding up urgent work, tell the operator which one; only they change it.
 The same Settings control sets the preferred host kind for new tasks: `paseo`, `t3code`, `bb`, or planner host. Repository host preferences come first, then the operator default and planner host. At first dispatch the worker profile is selected across online hosts; a profile that only one host can launch takes the task there. The chosen host is recorded with its reason and remains fixed for every later role and run. Repository `hostKind` may be unset to inherit the default preference.
 `queue.capacity-state` reads the values in force and the record of applied
 changes — each with its time, surface and full before and after values. This is
@@ -637,8 +608,7 @@ them. The contract is the service-boundary contract, "Local web board".
 
 When the operator wants to work with the worker before it submits, add
 `interactive: true` to `queue:`. Pair it with a strong worker through
-`profileRequests.worker`, and give the reason for a frontier profile (the
-operator signs a frontier request off on the board):
+`profileRequests.worker`, and give the reason for a Frontier profile:
 
 ```yaml
 queue:
@@ -974,7 +944,7 @@ Unknown delivery remains held until observed.
 
 Owner verbs use current forge, checkout, integration and participant facts.
 Exact-head review or operator source acceptance, preservation of uncommitted
-work, one writer per branch and routing sign-off remain required. A recorded
+work, one writer per branch and profile eligibility remain required. A recorded
 merge that matches the forge returns through integration synchronization before
 closeout. A stale phase or missing bookkeeping alone is not a reason to stop.
 
@@ -1249,8 +1219,7 @@ For a queued, never-dispatched brief, amendments also apply changed `dependsOn`,
 `critical`, `siblings`, `interactive` and `laneDocuments` together. Removing a
 previously declared routing field restores its submission default; omitted
 `interactive` keeps the existing mode. Profile
-requests still need their ordinary validation and sign-off; a brief grants no
-operator authority. Changes to `reportOnly`, `reportLane`, `skipPRReview`,
+requests still go through ordinary profile validation. Changes to `reportOnly`, `reportLane`, `skipPRReview`,
 notification recipients or other unsupported routing fields refuse and name every
 field, including delivery-field removal in a body-only amendment. After dispatch, routing
 edits refuse. A refusal leaves both the brief and routing unchanged. Merge holds
@@ -1311,6 +1280,15 @@ messages use the most active live responsible thread, or tell the sender to
 handle the matter when none exists. A task's own dispatching planner remains
 first for its questions. `project.agents` lists named non-task threads;
 `agent.register` and `agent.unregister` maintain explicit addresses (Spec 060).
+
+## Planner handover
+
+Treat "planner handover", "handoff" or "hand this to a new thread" as a request
+to run the whole [handover](references/handover.md) without stopping. Use the
+model the operator names, or ask with a question card and a recommendation.
+Write a thorough handoff. Start the successor thread, then move the planner role
+and every open task this thread owns to it, check that everything moved, and
+stop acting for the project.
 
 ## Review entry for external PRs
 
@@ -1463,7 +1441,7 @@ JSON
 
 ## Worker rules
 
-Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions. Bring product or scope changes, releases, outward actions and profiles that require board approval to the planner. For a board discussion, include the headline, two or three choices and consequences, your recommended choice and the details.
+Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions. Bring product or scope changes, releases, and outward actions to the planner. For a board discussion, include the headline, two or three choices and consequences, your recommended choice and the details.
 
 Work around blockers within the approved scope first. If a second opinion is needed, ask the retained reviewer. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. After one reviewer consult, report a remaining blocker with what you tried. Nucleus escalates once per cause to the project planner and joins repeats to the open escalation.
 

@@ -122,7 +122,9 @@ Selection for a run then:
    permitted bracket above or the most capable permitted profile rather than
    wait ([Spec 052](052-usage-level.md)).
 3. Gives each kept profile its **share**: the weight stop's relative share,
-   80%, 90%, 100%, 110% or 120% of Default (Tom, 2026-11-21). A share only
+   80%, 90%, 100%, 110% or 120% of Default (Tom, 2026-11-21). Tom, 2026-11-22:
+   steeper stops of 50%, 75%, 100%, 150% and 200%, with rotation counted within
+   each role. Until nucleus#1558 lands, the code still uses the earlier stops. A share only
    orders rotation; it never removes a kept profile. `weightShare` lives with
    the weight enum and `rotationShare` in `shared/demand.ts`.
 4. Rotates among them over the last 50 assignments: the profile with the lowest
@@ -234,7 +236,7 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | 2 | Complexity high, Normal, worker | Starts on Worker; after an applied changes-required review, climbs once to Heavyweight |
 | 2b | Same task, reviewer, Worker author | Mechanical (one bracket below); on the author's bracket at High |
 | 3 | Any complexity, coordinator | Mechanical when available, else the lowest permitted bracket with a profile |
-| 4 | Complexity very_high, Normal | Starts on Heavyweight; climbs to Frontier only with sign-off |
+| 4 | Complexity very_high, Normal | Starts on Heavyweight. Frontier requires an explicit request. |
 | 5 | Same task at Maximum | Heavyweight or Frontier |
 | 6 | Same task at Low after an approved submission | Starts one bracket below the bracket it may climb to |
 | 7 | Reviewer shares the author's model | Excluded, as today |

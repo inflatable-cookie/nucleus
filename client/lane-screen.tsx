@@ -21,6 +21,7 @@ import {
   lanePlanContext,
 } from "../shared/planning-read";
 import { ActionButton, Button, row, type Colors } from "./controls";
+import { MarkDoneConfirm, ReopenHelp } from "./lane-mark-done";
 import { planningRead, radius, roles, space, type } from "./design";
 import {
   BoardCard,
@@ -297,6 +298,8 @@ export function LaneScreen({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [details, setDetails] = useState(false);
+  // Marking the lane done always asks first (nucleus#1536); closing the dialog cancels.
+  const [confirmingDone, setConfirmingDone] = useState(false);
   // See all's read of the lane's finished work: the rows so far and the next page's cursor.
   const [allFinished, setAllFinished] = useState<{
     rows: Array<
@@ -1199,11 +1202,24 @@ export function LaneScreen({
             <Button
               small
               c={c}
-              text="Close lane"
-              label={`Close lane ${name}`}
+              text="Mark done"
+              label={`Mark done ${name}`}
               disabled={busy}
-              onPress={() => onSetStatus("done")}
+              onPress={() => setConfirmingDone(true)}
             />
+          )}
+          {!open && onSetStatus && (
+            <View style={row}>
+              <Button
+                small
+                c={c}
+                text="Reopen"
+                label={`Reopen lane ${name}`}
+                disabled={busy}
+                onPress={() => onSetStatus("active")}
+              />
+              <ReopenHelp c={c} laneTitle={name} />
+            </View>
           )}
           {canEdit && loaded && (
             <ActionButton
@@ -1294,6 +1310,20 @@ export function LaneScreen({
           {decisionAge(lane.drain.escalatedAt)} · the plan owner has not
           answered the close-out prompt
         </Text>
+      )}
+      {confirmingDone && onSetStatus && (
+        <MarkDoneConfirm
+          c={c}
+          lane={lane}
+          projects={projects}
+          plans={plans}
+          busy={busy}
+          onConfirm={() => {
+            setConfirmingDone(false);
+            onSetStatus("done");
+          }}
+          onCancel={() => setConfirmingDone(false)}
+        />
       )}
       {shown === "preview" && (
         <>

@@ -526,31 +526,3 @@ test("nucleus#1500: a genuinely incompatible profile still refuses on the task's
     await f.close();
   }
 });
-
-test("nucleus#1500: the sign-off fence still holds a route the level withholds", async () => {
-  const f = await fixture({ providerFailure: false });
-  try {
-    await assert.rejects(
-      f.control({
-        profileId: f.profiles.oracle.id,
-        reason: "Frontier review of the failed provider",
-        now: true,
-      }),
-      /needs the operator's board sign-off/,
-    );
-    const held = f.current();
-    assert.equal(
-      held.profileRequests?.worker?.profileId,
-      f.profiles.oracle.id,
-      "the request is recorded for the operator",
-    );
-    assert.equal(held.profileRequests?.worker?.signoff, undefined);
-    assert.equal(held.agentId, "ag-retained", "the retained run is untouched");
-    assert.equal(held.replacementProfile ?? null, null);
-    assert.equal(held.phase, "working");
-    assert.deepEqual(f.stoppedAgents, []);
-    assert.equal(f.events("route_stop_settled").length, 0);
-  } finally {
-    await f.close();
-  }
-});

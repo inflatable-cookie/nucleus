@@ -20,6 +20,14 @@ import {
 import { plannerEscalations, type LadderEvent } from "../questions/ladder";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { releaseRunFromRecordedCompletion } from "./fence-settlement";
+import { resultApplied } from "../intake/applied-result";
+import type { AgentObservation } from "../host/adapter";
+import {
+  completedTurnCanRelease,
+  timestampCompletion,
+  type CompletionObservation,
+} from "./completed-run-observation";
+import { runActivityObservation } from "../telemetry/task-activity-observation";
 import {
   reportNamesNoAction,
   retiredNarrowAction,
@@ -452,10 +460,11 @@ export class CoordinatorPass {
         }
         continue;
       }
+      let run = this.store.run(incident.runId);
       if (
         isDispositionActive(t) ||
         isDispositionComplete(t) ||
-        dispatchBlocked(t)
+        (dispatchBlocked(t) && !run?.completion)
       )
         continue;
       // Queue #691: a finished task's coordinator gets no further authority. Its silence never escalates
@@ -468,8 +477,15 @@ export class CoordinatorPass {
         await this.episode.settleAuthorizationFencedRun(t);
         continue;
       }
-      let run = this.store.run(incident.runId);
-      if (!run || run.released) continue;
+      if (
+        !run ||
+        (run.released && (
+          !run.completion ||
+          resultApplied(this.store, t.id, run.id) ||
+          this.episode.bindingFrom(run, incident)?.status !== "pending"
+        ))
+      )
+        continue;
       try {
         if (run.generation !== t.coordinatorGeneration) {
           const latest = this.store.run(run.id)!;
@@ -493,7 +509,7 @@ export class CoordinatorPass {
           this.episode.save(t, { status: "resolved" });
           continue;
         }
-        if (!run.agentId) {
+        if (!run.agentId && !run.released) {
           if (this.resolution.startsNoRuns()) continue;
           const observed = await observeRecoveryCreation(
             this.resolution,
@@ -541,46 +557,82 @@ export class CoordinatorPass {
           run = bound;
           t = this.store.task(t.id);
         }
-        const state = await this.resolution.onTaskHost(t, () =>
-          this.resolution.host.observe(run!.agentId!),
-        );
-        if (this.resolution.stopped()) return;
-        const idle =
-          !state.active &&
-          !state.permissions &&
-          ["idle", "error", "closed"].includes(state.status);
-        if (state.workspaceId !== run.workspaceId)
-          throw Error("Recovery coordinator workspace changed");
-        // Re-read before writing observation: complete() can land during observe and
-        // a stale putRun would wipe the accepted completion (#2016).
-        const observed = this.store.run(run.id);
-        if (!observed || observed.released) continue;
-        run = {
-          ...observed,
-          active: !idle,
-          lastObservedAt: now(),
-          idleSince: idle ? (observed.idleSince ?? now()) : null,
-        };
-        this.store.putRun(run);
-        if (reviewFenceHoldsCoordinators(this.store.task(t.id), this.store)) {
-          await this.episode.settleAuthorizationFencedRun(
-            this.store.task(t.id),
-          );
-          continue;
+        let state: AgentObservation | null = null;
+        if (!run.released) {
+          const at = now();
+          const agentId = run.agentId!;
+          let observation: CompletionObservation;
+          try {
+            observation = {
+              kind: "observed",
+              state: await this.resolution.onTaskHost(t, () =>
+                this.resolution.host.observe(agentId),
+              ),
+            };
+          } catch (error) {
+            observation = { kind: "unobservable", error };
+          }
+          if (this.resolution.stopped()) return;
+          const latest = this.store.run(run.id);
+          if (!latest || JSON.stringify(latest) !== JSON.stringify(run))
+            continue;
+          t = this.store.task(t.id);
+          if (
+            t.resolution.recovery?.runId !== run.id ||
+            t.coordinatorGeneration !== run.generation ||
+            isDispositionActive(t) ||
+            isDispositionComplete(t)
+          )
+            continue;
+          state = observation.kind === "observed" ? observation.state : null;
+          if (state && (state.id !== agentId || state.workspaceId !== run.workspaceId))
+            throw Error("Recovery coordinator workspace changed");
+          const idle = state !== null &&
+            !state.active && !state.activeTurnId && !state.permissions &&
+            ["idle", "error", "closed"].includes(state.status);
+          const reported = timestampCompletion(this.store, run, at);
+          const ready = completedTurnCanRelease(reported, observation, at, this.resolution.graceMs);
+          const changed = state !== null || reported !== run;
+          run = state ? {
+            ...reported,
+            active: !idle,
+            lastObservedAt: at,
+            idleSince: idle ? (run.idleSince ?? at) : null,
+            participantActivity: runActivityObservation(run, state, at),
+          } : reported;
+          if (changed) this.store.putRun(run);
+          if (this.resolution.startsNoRuns()) continue;
+          if (reviewFenceHoldsCoordinators(t, this.store)) {
+            await this.episode.settleAuthorizationFencedRun(t);
+            continue;
+          }
+          if (ready) {
+            this.store.transaction(() =>
+              releaseRunFromRecordedCompletion(this.store, t.id, run!),
+            );
+            run = this.store.run(run.id)!;
+          } else if (!state) {
+            if (run.completionReceivedAt) continue;
+            if (observation.kind === "unobservable") throw observation.error;
+          } else if (
+            (!run.completion &&
+              (await this.resolution.resumeTransientProviderThread(t, run, state))) ||
+            !idle
+          )
+            continue;
         }
-        if (dispatchBlocked(this.store.task(t.id))) continue;
         if (
-          !run.completion &&
-          (await this.resolution.resumeTransientProviderThread(t, run, state))
+          this.resolution.startsNoRuns() ||
+          dispatchBlocked(this.store.task(t.id))
         )
           continue;
-        if (!idle || this.resolution.startsNoRuns()) continue;
         t = this.store.task(t.id);
         incident = t.resolution.recovery;
         if (!incident) continue;
         run = this.store.run(run.id)!;
         if (
           run.status === "running" &&
+          state &&
           !run.completion &&
           !incident.action &&
           Date.now() - Date.parse(run.idleSince!) >= this.resolution.graceMs
@@ -742,7 +794,7 @@ export class CoordinatorPass {
           if (accepted.reportStatus === "escalate")
             this.store.transaction(() => {
               const latest = this.store.run(finishedRun.id);
-              if (latest && !latest.released)
+              if (latest)
                 this.episode.settleFinishedRun(
                   this.store.task(t.id),
                   latest,

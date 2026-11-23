@@ -53,18 +53,18 @@ convention.
   for ordinary work (Worker profiles), `high` for subtle or cross-cutting
   changes (starts on Worker and may step up to Heavyweight after review
   changes), and `very_high` only when the work needs Heavyweight from the
-  start. Request a profile (`profileRequests`) only when the work needs it,
-  with a reason the operator can judge. A request for a profile the usage
-  level's permission rule holds (Frontier, or a Heavyweight profile the task
-  neither starts nor climbs on, at Low or Normal; Frontier at High) opens a decision for the operator, and the role runs on
-  automatic selection meanwhile; nothing waits for the answer. Only the operator answers those
-  decisions; never answer or withdraw them for them.
+  start. For work that needs a particular profile, a planner can name it in
+  `profileRequests` with a reason for each role. At Low, Normal and High,
+  this is how a role gets Frontier. The request applies on that role's first run.
 - Keep it short. If it needs pages of context, that context belongs in
   `docs/knowledge/` or the lane document, and the brief links to it.
 - Name what the worker must update in `docs/knowledge/` if the work changes
   what is true.
 - One brief per independently reviewable PR, in one repository. Cross-repository
   work is several linked tasks (`queue.dependsOn`).
+- Submit approved briefs straight away, however full the board is. Slots limit
+  running, not queueing, and `queue.dependsOn` sets the order (see "Queue every
+  approved brief" in [SKILL.md](../SKILL.md)).
 - Queue numbers each task per repository (`repo#N`). Quote it to the operator,
   and start the PR title with the bare number (`304: Title`). On GitHub, `#304`
   would link an unrelated PR.
@@ -99,7 +99,7 @@ line; see [SKILL.md](../SKILL.md)):
 3. **Approve:** only after the operator has authorized this brief, or under the
    standing routine-dispatch ruling recorded in [Spec 026](../../docs/knowledge/specs/026-planning-records.md)
    (Tom, 2026-11-20: the planner decides whether to dispatch an ordinary
-   in-scope brief). Product or scope changes, held-profile requests, releases
+   in-scope brief). Product or scope changes, releases
    and other reserved operator actions still need the operator. A relayed
    approval under the standing ruling names that ruling and the brief it
    covers, with `relayed: true`.
