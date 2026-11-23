@@ -96,6 +96,7 @@ import { settlementHeld } from "../closeout/queue-drain";
 import { reviewInProgress } from "../review/review-continuation";
 import { settleProofExecution, type ProofOutcome } from "./proof-settlement";
 import { settleReportReady } from "./report-ready";
+import { openHostOutage } from "../scheduling/host-outage";
 
 /** Publication may add an ID after the authenticated callback was received. */
 function authenticatedReviewResult(
@@ -286,7 +287,13 @@ export function publishedReviewDecision(
   });
   const later = runs
     .slice(runs.indexOf(run) + 1)
-    .find((item) => item.role === "reviewer" || item.role === "revision");
+    .find((item) =>
+      item.role === "revision" ||
+      (item.role === "reviewer" &&
+        // Re-adoption binds the result as current and settles the reportless
+        // replacement. Its history cannot block publication reconciliation.
+        !(currentRunId === run.id && item.released && !item.completion && item.status === "superseded")),
+    );
   if (later)
     return blocked(
       `The ${later.role} run ${later.id} is newer than this verdict. The retained participants own the current source`,
@@ -402,10 +409,13 @@ export function publishedReviewDecision(
     );
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
     return blocked("The prerequisite wait owner must release the task");
-  if (task.resolution.hostWait)
-    return blocked(
-      `The host observer must settle the wait for ${task.resolution.hostWait.hostId}`,
-    );
+  // Spec 069 §3: the host wait is read from the host's open outage record; a
+  // wait an older service stored on the row still holds until it is settled.
+  const waitingHost =
+    task.resolution.hostWait?.hostId ??
+    (task.hostId && openHostOutage(store, task.hostId) ? task.hostId : null);
+  if (waitingHost)
+    return blocked(`The host observer must settle the wait for ${waitingHost}`);
   const ladder = reviewLadderWait(store, task);
   if (ladder.refusal) return blocked(ladder.refusal);
 
@@ -1199,7 +1209,7 @@ export class ResultApplication {
       return;
     }
     if (
-      !(await this.resolution.lease(t)) ||
+      !(await this.resolution.lease(t, undefined, run.id)) ||
       settlementHeld(this.store, this.resolution.stopped())
     )
       return;
@@ -1685,10 +1695,8 @@ export class ResultApplication {
       if (this.verdictApplied(t.id, run.id)) return changed;
       const published = admitPublished?.();
       if (published?.kind === "blocked") return published;
-      // Replaced is not released (planner ruling, 2026-11-09): this verdict
-      // settles the review, so replaced runs that never delivered are released
-      // and their credentials revoked unconditionally — after release nothing
-      // authenticates.
+      // This verdict settles the review. Displaced runs can release, and their
+      // verdict-only credentials can no longer win at this head.
       for (const replaced of this.store.runs(t.id)) {
         if (
           replaced.id !== run.id &&

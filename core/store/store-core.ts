@@ -65,10 +65,18 @@ export class StoreCore {
     this.db.prepare("DELETE FROM meta WHERE key=?").run(key);
   }
 
+  /**
+   * Spec 069 §3: a meta write compares first. Writing the value a key already
+   * holds is a no-op (no row write, no observer call), so a pass that resets a
+   * diagnostic every time writes only when it changes.
+   */
   setMeta(key: string, value: unknown) {
     if (this.maintenanceOpen) throw new StoreMaintenanceError();
-    const previous = key === "hostRunAuthority" ? this.getMeta(key) : undefined;
-    this.db.prepare("INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, JSON.stringify(value));
+    const serialized = JSON.stringify(value);
+    const stored = this.statement("SELECT value FROM meta WHERE key=?").get(key);
+    if (stored && String(stored.value) === serialized) return;
+    const previous = key === "hostRunAuthority" && stored ? JSON.parse(String(stored.value)) : undefined;
+    this.statement("INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, serialized);
     if (key === "hostRunAuthority") {
       try { this.hostRunAuthorityObserver?.(previous, value); } catch { /* Scheduler observation never changes the authority write. */ }
     }

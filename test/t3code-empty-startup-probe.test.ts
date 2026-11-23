@@ -212,7 +212,7 @@ test("empty startup with only archived, deleted or terminal rows leaves shape pe
     },
   ]);
   await host.listLiveAgents();
-  await host.reads.inventory();
+  await host.reads.shell();
   await host.endHostPass();
 
   assert.equal(server.snapshots.length, 0);
@@ -277,7 +277,7 @@ test("malformed first projection on shell or task observation inside a pass fail
             ? host.observe(liveId)
             : probeEntry === "originAgent"
               ? host.originAgent(liveId)
-              : host.reads.inventory(),
+              : host.reads.shell(),
       (error: unknown) =>
         error instanceof T3CompatibilityError &&
         /subscribeThread\.hasMoreHistory/.test(error.message),
@@ -463,7 +463,7 @@ test("concurrent shell and observation callers coalesce onto one bounded probe i
         host.observe(liveId),
         host.observationInventory([liveId]),
         host.originAgent(liveId),
-        host.reads.inventory(),
+        host.reads.shell(),
       ]);
     server.controls.slowSnapshotMs = 0;
     host.endHostPass();
@@ -503,7 +503,7 @@ test("concurrent shell and observation callers coalesce onto one bounded probe i
     const [active, live, fullInventory] = await Promise.all([
       host.activeThreads(),
       host.listLiveAgents(),
-      host.reads.inventory(),
+      host.reads.shell(),
     ]);
     server.controls.slowSnapshotMs = 0;
 
@@ -527,7 +527,7 @@ test("concurrent shell and observation callers coalesce onto one bounded probe i
       host.activeThreads(),
       host.listLiveAgents(),
       host.observe(liveId),
-      host.reads.inventory(),
+      host.reads.shell(),
     ]);
     server.controls.slowSnapshotMs = 0;
     host.endHostPass();

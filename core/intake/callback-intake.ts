@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import { readToolTimeline } from "../recovery/stall";
 import { timelineSelectorEvidence } from "../qa/proof-selector-evidence";
 import { verifyProofSource } from "../qa/proof-source";
@@ -42,7 +43,8 @@ import {
   verifyReviewEntryCanonicalAuthor,
 } from "../review/review-entry";
 import { assertReviewResponsibility } from "../review/review-verdicts";
-import { digest, now } from "../store/store";
+import { digest, now, type Store } from "../store/store";
+import { reviewerVerdictCanReadopt, STALE_REVIEWER_VERDICT } from "./report-run-binding";
 import { reportRunFor } from "../dispatch/acting-run";
 import { recordProofFiles } from "./proof-files";
 import {
@@ -149,7 +151,7 @@ export class CallbackIntake {
   ) {
     const presentedRunId = credentialRunId;
     const presented = this.store.run(presentedRunId);
-    this.store.authenticate(presentedRunId, token);
+    const credential = this.store.authenticateCompletion(presentedRunId, token, input);
     const identityTask = this.store.task(input.taskId);
     return this.engine.onTaskHost(identityTask, () =>
       this.completeOnHost(
@@ -158,6 +160,7 @@ export class CallbackIntake {
         presentedRunId,
         presented,
         identityTask,
+        credential,
       ),
     );
   }
@@ -167,6 +170,7 @@ export class CallbackIntake {
     presentedRunId: string,
     presented: Run | null,
     identityTask: Task,
+    credential: ReturnType<Store["authenticateCompletion"]>,
   ) {
     if (
       presented
@@ -180,7 +184,7 @@ export class CallbackIntake {
     // it is named wherever authentication or a receipt is checked. A settled run
     // answers its own identical retry here; acceptance applies every liveness
     // rule below, so a settled run never acquires a second result.
-    const sourceRun = presented?.mergeRetirement
+    const sourceRun = presented?.mergeRetirement || credential === "verdict_only"
       ? presented
       : reportRunFor(this.store, identityTask, presentedRunId);
     if (sourceRun && sourceRun.id !== presentedRunId)
@@ -191,6 +195,11 @@ export class CallbackIntake {
       presentedRunId,
     );
     if (priorReceipt) return priorReceipt;
+    if (
+      credential === "verdict_only" &&
+      (!sourceRun || !reviewerVerdictCanReadopt(this.store, identityTask, sourceRun, input))
+    )
+      throw new Error(STALE_REVIEWER_VERDICT);
     let verifiedPr: { url: string; head: string } | null = null;
     // A worker report is bound to this task by typed identity: the canonical source,
     // the task branch, the base branch and the exact head. Its prose may name no
@@ -414,7 +423,11 @@ export class CallbackIntake {
       );
     const runRoute = completionRoute(input.status, sourceRun);
     if (runRoute === "run" || runRoute === "reviewer") {
-      if (isDispositionActive(this.store.task(input.taskId))) {
+      if (
+        credential !== "verdict_only" &&
+        isDispositionActive(this.store.task(input.taskId))
+      ) {
+        this.store.authenticate(presentedRunId, token);
         return recordLateCallbackEvidence(
           this.store,
           { ...input, runId: presentedRunId },
@@ -737,6 +750,7 @@ export class CallbackIntake {
         eventId: input.eventId,
         checkpoint: { ordinal, budget: CHECKPOINT_BUDGET, continued: true },
       };
+      const progress = `Checkpoint ${ordinal}/${CHECKPOINT_BUDGET} accepted; continuing the retained worker`;
       this.store.update(
         current.id,
         {
@@ -744,7 +758,8 @@ export class CallbackIntake {
             records: [...current.checkpoints.records, record],
             intent,
           },
-          reason: `Checkpoint ${ordinal}/${CHECKPOINT_BUDGET} accepted; continuing the retained worker`,
+          reason: progress,
+          ...stopClearedPatch(this.store.task(current.id), progress),
         },
         "progress_checkpoint",
         `${record.summary} @ ${record.head}`,
@@ -961,6 +976,10 @@ export class CallbackIntake {
       if (current.task.resolution.currentRunId === current.run.id)
         this.store.update(current.task.id, {
           reason: REVIEW_AUTHORIZATION_REQUIRED,
+          ...stopClearedPatch(
+            this.store.task(current.task.id),
+            REVIEW_AUTHORIZATION_REQUIRED,
+          ),
         });
       this.store.event(
         current.task.id,
@@ -1036,7 +1055,10 @@ export class CallbackIntake {
       );
       // A replaced reader keeps its evidence without moving the current task.
       if (current.resolution.currentRunId === run.id)
-        this.store.update(task.id, { reason: REVIEW_READER_EXHAUSTED });
+        this.store.update(task.id, {
+          reason: REVIEW_READER_EXHAUSTED,
+          ...stopClearedPatch(this.store.task(task.id), REVIEW_READER_EXHAUSTED),
+        });
       return receipt;
     });
     void this.engine.wake().catch(() => {

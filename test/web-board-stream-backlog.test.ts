@@ -80,6 +80,8 @@ async function startBoard(options: { limit?: number; stallMs?: number } = {}) {
     port: 0,
     streamBufferLimitBytes: options.limit ?? LIMIT,
     streamStallMs: options.stallMs ?? 60_000,
+    // These cases drive the backlog bound frame by frame, so every revision publishes.
+    publishIntervalMs: 0,
   });
   const port = await web.listen();
   const link = web.issueLink(5);

@@ -342,7 +342,7 @@ test("the inbox's project is named Nucleus Inbox and its registration is renamed
   const { fake, host } = await idleInbox(t);
   await host.reconcileThreadTitles([]);
   const inbox = host.state.read().inbox!;
-  const projects = (await host.reads.inventory()).projects.filter(
+  const projects = (await host.reads.shell()).projects.filter(
     (project) => project.id === inbox.projectId,
   );
   assert.equal(projects.length, 1);
@@ -892,13 +892,17 @@ test("inbox ui shows the board once per operator message, replacing a retained t
   assert.equal(archiveReads(), archiveReadsBefore, "live ui uses the shell");
 
   await t.test(
-    "ui refuses to open when the inbox is missing and inventory keeps moving",
+    "ui refuses to open when the inbox is missing, read by its exact id",
     async () => {
       const opensBefore = previewOpens().length;
       projection.thread.deletedAt = new Date().toISOString();
       try {
-        await assert.rejects(host.openInboxUi(), /inventory kept moving/);
-        assert.ok(archiveReads() > archiveReadsBefore);
+        await assert.rejects(host.openInboxUi(), /Nucleus inbox is unavailable/);
+        assert.equal(
+          archiveReads(),
+          archiveReadsBefore,
+          "no archived inventory is read (Spec 069 batch 5)",
+        );
         assert.equal(previewOpens().length, opensBefore);
         assert.equal(issuedLinks, linksBefore + 1);
       } finally {

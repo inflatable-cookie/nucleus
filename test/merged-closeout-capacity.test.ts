@@ -136,7 +136,8 @@ test('a landed closeout breaks mixed slot and idle integration waits without byp
     assert.equal(f.engine.resolution.claimIntegrationTurn(waiting), false);
     assert.equal(f.engine.resolution.holdsIntegrationTurn(landed), true);
     f.store.deleteMeta(`closeoutTurn:${landed.repoPath}`);
-    f.store.update(waiting.id, { reason: 'Reacquiring repository integration turn after capacity admission' });
+    // The real reacquire step replaces the stop through its owner (merge-gates.ts), not a reason-only write.
+    f.engine.resolution.waiting(f.store.task(waiting.id), 'Reacquiring repository integration turn after capacity admission', 'lifecycle');
     assert.equal(f.engine.resolution.claimIntegrationTurn(landed), false);
   } finally { await f.close(); }
 });

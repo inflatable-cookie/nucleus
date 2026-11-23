@@ -75,11 +75,12 @@ export const USAGE_LABELS: Record<
     summary:
       "High-complexity work starts on Heavyweight; Frontier is request-only",
     detail:
-      "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles require an explicit request. The reviewer runs on the worker's bracket.",
+      "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles require an explicit request. The reviewer runs one bracket below the worker.",
   },
   extra_high: {
     label: "Extra high",
-    summary: "Same starting brackets as High, with automatic Frontier selection",
+    summary:
+      "Same starting brackets as High, with automatic Frontier selection",
     detail:
       "Every task starts as at High, and no run needs permission. The reviewer runs on the worker's bracket.",
   },
@@ -415,7 +416,8 @@ export function supersedingRouteProfile(
 ): string | null {
   if (!request || request.profileId === recordedProfileId) return null;
   const entry = pool.find((item) => item.profileId === request.profileId);
-  return request.required || (entry && requestOnly(entry, usage, requested, climbTier))
+  return request.required ||
+    (entry && requestOnly(entry, usage, requested, climbTier))
     ? request.profileId
     : null;
 }

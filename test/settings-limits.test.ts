@@ -42,6 +42,7 @@ const CAPACITY: CapacityAuthorityValues = {
   hostOutageNoticeMinutes: 120,
   operatorDefaultHostKind: "paseo",
   threadRetentionDays: 3,
+  threadRetentionIntervalHours: 12,
 };
 /** A recorded change that moved the named limits, each as [before, after]. */
 const change = (
@@ -955,6 +956,19 @@ test("Low and Normal show no end time; the slider is the section body on its own
     } finally {
       done();
     }
+  }
+});
+
+test("the Dispatch-limits level description says the High reviewer runs one bracket below the worker", async () => {
+  const { ui, done } = await mountUsage("high");
+  try {
+    assert.match(
+      ui.get("Usage level help").props.accessibilityHint,
+      /High and very-high complexity start on Heavyweight.*The reviewer runs one bracket below the worker/,
+      "the (?) carries the new High text",
+    );
+  } finally {
+    done();
   }
 });
 

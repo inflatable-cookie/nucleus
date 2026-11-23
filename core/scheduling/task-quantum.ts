@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import {
@@ -170,7 +171,7 @@ export class TaskQuantum {
       });
   }
 
-  private reconcileProfileAdmission(task: Task): Task {
+  reconcileProfileAdmission(task: Task): Task {
     const { store, routingDecisions } = this.context;
     reconcileUsageGate(store, routingDecisions, task.id);
     const current = store.task(task.id);
@@ -279,7 +280,10 @@ export class TaskQuantum {
           if (this.context.store.task(task.id).reason !== reason)
             this.context.store.update(
               task.id,
-              { reason },
+              {
+                reason,
+                ...stopClearedPatch(this.context.store.task(task.id), reason),
+              },
               "stalled_turn_binding_changed",
               reason,
             );

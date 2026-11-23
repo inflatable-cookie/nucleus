@@ -113,11 +113,9 @@ test("a fault sink that throws is contained too, and the window's other quanta s
         },
       },
     ),
-    boundQuantum(
-      new Promise<void>(() => {}),
-      () => ran.push("hung"),
-      { bound: 25 },
-    ),
+    boundQuantum(new Promise<void>(() => {}), () => ran.push("hung"), {
+      bound: 25,
+    }),
   ]);
   assert.deepEqual(ran, ["hung"], "a contained fault never stops the window");
 });
@@ -451,9 +449,7 @@ test("real catch-up sweep bounds a hung cleanup, advances both hosts and seriali
  * unrelated work beside the stuck task.
  */
 test("a failed outage telemetry write stays inside the pass and unrelated cleanup still runs", async (t) => {
-  const f = catchUpSweepFixture(
-    (file) => new FaultyOutageTelemetryStore(file),
-  );
+  const f = catchUpSweepFixture((file) => new FaultyOutageTelemetryStore(file));
   const stuck = f.add();
   const healthy = f.add();
   f.hold(stuck.agentId);
@@ -492,7 +488,11 @@ test("a failed outage telemetry write stays inside the pass and unrelated cleanu
       new RegExp(`${stuck.task.id}/observation_outage: SQLite write failed`),
       "the real fault is kept on the pass's diagnostic",
     );
-    assert.equal(f.engine.stopped, false, "the sweep survives the observer fault");
+    assert.equal(
+      f.engine.stopped,
+      false,
+      "the sweep survives the observer fault",
+    );
   } finally {
     f.releaseHung();
     t.mock.timers.tick(TASK_QUANTUM_BOUND_MS);
@@ -510,25 +510,19 @@ test("real catch-up sweep rotates past 25 permanently pending tasks to a later c
     ).sort((a, b) => a.task.id.localeCompare(b.task.id));
     const last = tasks.at(-1)!;
     f.agents.get(last.agentId)!.owned = true;
+    // After a service restart no finish is fresh: the start-up backlog (owed
+    // cleanups, most recent first) and the slow cursor each take one page per pass
+    // (Spec 069 §4), so 25 pending tasks never hold the later candidate back for
+    // longer than the next pass.
+    f.store.takeRecentlyFinishedHostTasks(f.hosts[0], tasks.length);
     assert.equal((await f.engine.auditPass(false)).fault, null);
-    assert.equal(
-      f.engine.sweepStats.swept,
-      25,
-      "a safety pass visits one bounded window",
-    );
-    assert.equal(
-      f.calls.includes(last.agentId),
-      false,
-      "the later candidate is outside the first window",
-    );
     assert.equal((await f.engine.auditPass(false)).fault, null);
     assert.deepEqual(
       f.calls,
       [last.agentId],
-      "the next window reaches the later owned thread",
+      "within two passes the later owned thread is reached, once",
     );
     assert.ok(f.store.getMeta(finishedThreadCleanupKey(last.task.id)));
-    assert.equal(f.engine.sweepStats.swept, 30);
     assert.equal(
       f.store.getMeta(finishedThreadCleanupKey(tasks[0].task.id)),
       undefined,

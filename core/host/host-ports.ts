@@ -23,6 +23,12 @@ export interface HostPorts {
   withHost<T>(hostId: string, fn: () => T): T;
   /** Registered and connected, read independent of the ambient host context. */
   online(hostId: string): boolean;
+  /**
+   * Spec 069 §2: why a host admits no new first dispatch for this task now (down,
+   * unknown, or degraded with another launch in flight), or null. Absent on the
+   * ambient host, which always admits.
+   */
+  launchWait?(hostId: string, taskId?: string): string | null;
   /** Hosts registered with the runtime; absent only for older synthetic ports. */
   ids?(): readonly string[];
   inventoryMatches(hostId: string): boolean;

@@ -727,7 +727,10 @@ export class T3Presentation {
    * row this host snoozed itself, proven by the exact horizon this read shows, is
    * delivered over; a cleared row is not snoozed and delivers as it always did.
    */
-  private refuseManuallySnoozed(id: string, observed: Projection): void {
+  private refuseManuallySnoozed(
+    id: string,
+    observed: { thread: Projection["thread"] },
+  ): void {
     const snoozedUntil = observed.thread.snoozedUntil ?? null;
     const wakeAt = snoozedUntil ? Date.parse(snoozedUntil) : Number.NaN;
     if (!snoozedUntil || !Number.isFinite(wakeAt) || wakeAt <= Date.now())
@@ -741,10 +744,20 @@ export class T3Presentation {
     );
   }
 
-  /** One thread's projection read after forgetting any held snapshot, so the answer is current. */
-  private async observeFresh(id: string) {
+  /**
+   * One thread's current record. T3's live shell row is current to its stream and
+   * carries every field this gate reads (archive, removal, settle and snooze), so a
+   * thread it lists that no command has gone to since answers from that row
+   * (Spec 069 batch 5). Otherwise — a thread the shell does not list, or one just
+   * written to — one exact read by id answers, after forgetting any held snapshot.
+   */
+  private async observeFresh(
+    id: string,
+  ): Promise<{ thread: Projection["thread"] }> {
+    const row = await this.core.reads.currentShellRow(id);
+    if (row) return { thread: row };
     this.core.reads.forget?.(id);
-    return this.core.reads.readProjection(id, "observation");
+    return this.core.reads.readDirectProjection(id, "observation", true);
   }
 
   /**

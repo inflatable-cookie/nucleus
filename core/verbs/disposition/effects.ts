@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../../shared/task-stop";
 import type { Disposition, Task } from "../../../shared/contracts";
 import {
   dispositionWorkPolicy,
@@ -601,6 +602,7 @@ async function progressDispositionStep(
             current.id,
             {
               reason: retention.detail,
+              ...stopClearedPatch(store.task(current.id), retention.detail),
               disposition: {
                 ...current.disposition!,
                 workspaceId: task.workspaceId,

@@ -51,6 +51,7 @@ import {
   row,
   type Colors,
 } from "./controls";
+import { MarkDoneConfirm, ReopenHelp } from "./lane-mark-done";
 import {
   overlay,
   radius,
@@ -117,6 +118,9 @@ function PlanEditor({
   onCancel,
   onRetry,
   onCloseLane,
+  onReopenLane,
+  projects,
+  plans,
   c,
 }: {
   section: PlanSection;
@@ -133,10 +137,16 @@ function PlanEditor({
   onCancel: (project: string) => void;
   onRetry?: () => void;
   onCloseLane?: (lane: string) => void;
+  onReopenLane?: (lane: string) => void;
+  /** Every project and plan, so the mark-done confirmation names each plan that lists the lane. */
+  projects: Project[];
+  plans: ProjectPlan[];
   c: Colors;
 }) {
   const [showDone, setShowDone] = useState(false),
     [showUnplanned, setShowUnplanned] = useState(false);
+  // Marking a lane done always asks first (nucleus#1536); closing the dialog cancels.
+  const [confirmLane, setConfirmLane] = useState<string | null>(null);
   const [moveOpen, setMoveOpen] = useState<string | null>(null),
     [showIdle, setShowIdle] = useState(false);
   const [idleReason, setIdleReason] = useState("");
@@ -729,6 +739,19 @@ function PlanEditor({
                   {Boolean(item.note) && (
                     <Text style={muted(c)}>{item.note}</Text>
                   )}
+                  {onReopenLane && (
+                    <View style={row}>
+                      <Button
+                        small
+                        c={c}
+                        text="Reopen"
+                        label={`Reopen lane ${item.title}`}
+                        disabled={busy}
+                        onPress={() => onReopenLane(item.lane)}
+                      />
+                      <ReopenHelp c={c} laneTitle={item.title} />
+                    </View>
+                  )}
                 </View>
               ))}
             {showDone && !roadmap.done.length && (
@@ -798,10 +821,10 @@ function PlanEditor({
                         <Button
                           small
                           c={c}
-                          text="Close"
-                          label={`Close lane ${item.lane}`}
+                          text="Mark done"
+                          label={`Mark done ${item.title}`}
                           disabled={busy}
-                          onPress={() => onCloseLane(item.lane)}
+                          onPress={() => setConfirmLane(item.lane)}
                         />
                       )}
                     </View>
@@ -817,6 +840,29 @@ function PlanEditor({
           triage={section.triage}
           onOpenTask={onOpenTask}
           c={c}
+        />
+      )}
+      {confirmLane && onCloseLane && (
+        <MarkDoneConfirm
+          c={c}
+          lane={
+            lanes.find((lane) => lane.key === confirmLane) ?? {
+              key: confirmLane,
+              title:
+                roadmap.unplanned.find((item) => item.lane === confirmLane)
+                  ?.title ?? confirmLane,
+              repositories: [],
+              liveByPhase: {},
+            }
+          }
+          projects={projects}
+          plans={plans}
+          busy={busy}
+          onConfirm={() => {
+            setConfirmLane(null);
+            onCloseLane(confirmLane);
+          }}
+          onCancel={() => setConfirmLane(null)}
         />
       )}
     </View>
@@ -1061,6 +1107,7 @@ export function PlanningTab({
   onSave,
   onCancel,
   onCloseLane,
+  onReopenLane,
   inbox: inboxLayout,
   repositoryBadges,
   tasks = [],
@@ -1108,6 +1155,7 @@ export function PlanningTab({
   onSave: (project: string, edit: PlanEdit) => void;
   onCancel: (project: string) => void;
   onCloseLane?: (lane: string) => void;
+  onReopenLane?: (lane: string) => void;
   c: Colors;
 }) {
   const [query, setQuery] = useState("");
@@ -1249,6 +1297,9 @@ export function PlanningTab({
     onSave,
     onCancel,
     onCloseLane,
+    onReopenLane,
+    projects,
+    plans,
     c,
   };
   const startEdit = (section: PlanSection) => {
@@ -1279,6 +1330,7 @@ export function PlanningTab({
         onEditPlan={section.latest ? () => startEdit(section) : undefined}
         onRetry={onRetryPlans}
         onOpenTask={onOpenTask}
+        onReopenLane={onReopenLane}
         c={c}
       />
     );
@@ -1570,9 +1622,9 @@ export function PlanningTab({
           c={c}
           title="Lane"
           label="Lane detail"
-          closeLabel="Close lane"
+          closeLabel="Close"
           bodyLabel="Planning lane"
-          backdropLabel="Close lane detail"
+          backdropLabel="Close detail"
           wide
           onClose={() => onStep("plan")}
         >

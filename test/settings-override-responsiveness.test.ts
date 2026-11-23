@@ -577,6 +577,7 @@ test("Settings override removal stays locked across tab switches, distinguishes 
           hostOutageNoticeMinutes: 120,
           operatorDefaultHostKind: "paseo",
           threadRetentionDays: 3,
+          threadRetentionIntervalHours: 12,
         },
         changes: [],
       };

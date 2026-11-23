@@ -8,8 +8,12 @@ import {
   RECLAIM_DRAIN_FREE_PAGES,
   RECLAIM_DRAIN_MAX_PAGES,
 } from "../store/store";
-import { runThreadRetention } from "../workspaces/thread-retention";
+import {
+  runThreadRetention,
+  threadRetentionIntervalMs,
+} from "../workspaces/thread-retention";
 import { evaluateTriage } from "../planning/triage";
+import { unparkDueLeads } from "../planning/parking";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -54,6 +58,17 @@ export class SweepMaintenance {
    * waits on it, so a long walk never holds the audit drain or a service start.
    */
   private startThreadRetention(at: number): void {
+    // A walk that could not read a host is retried after an hour, not after the
+    // whole interval: one failed read must not cost half a day of pruning.
+    const retrySoon = () => {
+      try {
+        const interval = threadRetentionIntervalMs(this.store);
+        if (interval > HOUR_MS)
+          this.store.setMeta("lastThreadRetentionAt", at - interval + HOUR_MS);
+      } catch {
+        /* the store is closed: the next service start reads the pass again */
+      }
+    };
     this.threadRetentionRun = runThreadRetention({
       store: this.store,
       hostIds: this.context.hostIds(),
@@ -63,8 +78,17 @@ export class SweepMaintenance {
       at,
       stopped: () => Boolean(this.context.stopped),
     })
-      .then(() => {
+      .then((health) => {
         this.store.setMeta("threadRetentionError", "");
+        if (
+          health.hosts.some(
+            (fact) =>
+              fact.checkedAt === new Date(at).toISOString() &&
+              (fact.truncated ||
+                fact.error.startsWith("The archived thread walk")),
+          )
+        )
+          retrySoon();
       })
       .catch((error) => {
         try {
@@ -72,6 +96,7 @@ export class SweepMaintenance {
         } catch {
           /* the store is closed: the next service start reads the pass again */
         }
+        retrySoon();
       })
       .finally(() => {
         this.threadRetentionRun = null;
@@ -124,22 +149,29 @@ export class SweepMaintenance {
         // Retained telemetry keeps the rolling 90-day cohort window; detail retention is unchanged.
         this.store.expireRetainedTelemetry(at);
         // A capture fault keeps that task's history and stays visible in retention health.
-        this.store.setMeta("retentionError", this.store.telemetryRetentionError());
+        this.store.setMeta(
+          "retentionError",
+          this.store.telemetryRetentionError(),
+        );
       } catch (error) {
         this.store.setMeta("retentionError", String(error));
         this.store.setMeta("lastRetentionAt", at);
       }
     }
     // Orchestration contract, "Archived thread retention": the service schedules
-    // one retention pass itself, never a system job (Tom, 2026-11-19). Hourly, with
-    // a batch cap per host, so the archived backlog drains over sweeps instead of
-    // in one burst against a host. It runs detached (see `startThreadRetention`):
-    // the first pass walks every archived thread on every host, and the audit pass
-    // this maintenance sits in is what the bootstrap's reconciliation waits on.
+    // one retention pass itself, never a system job (Tom, 2026-11-19). It is the
+    // only reader of a host's archived threads, so it runs on its own interval
+    // (`threadRetentionIntervalHours`, 12 by default: Tom, 2026-11-22, "Once or
+    // twice a day?"), with a batch cap per host so the archived backlog drains over
+    // passes instead of in one burst against a host. It runs detached (see
+    // `startThreadRetention`): the first pass walks every archived thread on every
+    // host, and the audit pass this maintenance sits in is what the bootstrap's
+    // reconciliation waits on.
     if (
       !paused &&
       !this.threadRetentionRun &&
-      at - (this.store.getMeta<number>("lastThreadRetentionAt") ?? 0) >= HOUR_MS
+      at - (this.store.getMeta<number>("lastThreadRetentionAt") ?? 0) >=
+        threadRetentionIntervalMs(this.store)
     ) {
       this.store.setMeta("lastThreadRetentionAt", at);
       this.startThreadRetention(at);
@@ -189,8 +221,18 @@ export class SweepMaintenance {
       }
     }
     // Nucleus#1420: opted-in projects triage their open leads and papercuts; at most a minute apart, one batch per project.
-    if (!paused && at - (this.store.getMeta<number>("lastTriageAt") ?? 0) >= 60_000) {
+    if (
+      !paused &&
+      at - (this.store.getMeta<number>("lastTriageAt") ?? 0) >= 60_000
+    ) {
       this.store.setMeta("lastTriageAt", at);
+      // Nucleus#1543: a parked lead whose recheck is due returns to the to-do list before triage reads it.
+      try {
+        unparkDueLeads(this.store, at);
+        this.store.setMeta("parkingError", "");
+      } catch (error) {
+        this.store.setMeta("parkingError", String(error));
+      }
       try {
         evaluateTriage(this.store, at);
         this.store.setMeta("triageError", "");

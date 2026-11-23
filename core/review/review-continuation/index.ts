@@ -5,6 +5,7 @@
  * `delivery.ts`'s and the result fence is `result-fence.ts`'s; this module
  * composes them and owns the public surface every caller imports.
  */
+import { stopClearedPatch } from "../../../shared/task-stop";
 import { isDeepStrictEqual } from "node:util";
 import { existsSync, readFileSync } from "node:fs";
 import { TaskChangedRefusal } from "../../../shared/task-version";
@@ -485,7 +486,13 @@ export class ReviewContinuations {
         this.store.putRun(nextRun);
         const nextTask = this.store.update(
           task.id,
-          { reason: reviewDeliveryReason(deliveryId, "reserved") },
+          {
+            reason: reviewDeliveryReason(deliveryId, "reserved"),
+            ...stopClearedPatch(
+              this.store.task(task.id),
+              reviewDeliveryReason(deliveryId, "reserved"),
+            ),
+          },
           "review_delivery_reserved",
           authorizationId,
           expectedVersion,

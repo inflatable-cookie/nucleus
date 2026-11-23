@@ -19,6 +19,7 @@ import {
   operationInputHash,
 } from "../core/store/store";
 import { Engine } from "../core/engine";
+import { T3UnobservedThreadError } from "../hosts/t3code/reads";
 import { taskProgressDigest } from "../core/recovery/coordinator-report";
 import {
   collectOwnerVerbFacts,
@@ -635,6 +636,31 @@ async function workerErrorEpisode(
   );
   return episode;
 }
+
+test("a reported recovery settles its action after its thread leaves observation", async () => {
+  const f = fixture();
+  try {
+    const episode = await workerErrorEpisode(f);
+    f.engine.resolution.complete({
+      eventId: "gone-coordinator",
+      taskId: f.submitted.id,
+      runId: episode.id,
+      status: "recovered",
+      summary: "Observed the worker's state",
+      coordinatorGeneration: episode.generation,
+      coordinatorAction: { verb: "none", reason: "No owner verb is needed" },
+    }, f.tokens.get(episode.id)!);
+    f.hooks.onObserve = (id) => {
+      if (id === episode.agentId) throw new T3UnobservedThreadError(id);
+    };
+    await f.engine.resolution.recovery.pass(f.submitted.id);
+    assert.equal(f.store.run(episode.id)?.released, true);
+    assert.equal(f.current().resolution.recovery?.action?.status, "applied");
+    assert.equal(f.current().resolution.recoveryActive, false);
+  } finally {
+    await f.close();
+  }
+});
 
 test("a coordinator actually launched during a worker provider outage is not charged", async () => {
   const f = fixture();

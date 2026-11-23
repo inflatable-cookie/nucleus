@@ -1,4 +1,3 @@
-import type { OwnerVerbFacts } from "../../verbs/owner-facts";
 import type { Completion, Task, TaskNextVerb } from "../../../shared/contracts";
 import { taskContextLines } from "../question-delegation";
 
@@ -37,36 +36,10 @@ export type EscalationVerbChoice = {
   label: string;
   verb: string;
   args: Record<string, unknown>;
-  binding?: string;
 };
 
-/** The participants and source an offered direction can act on. */
-export function escalationChoiceBinding({
-  task,
-  runs,
-}: Pick<OwnerVerbFacts, "task" | "runs">): string {
-  return JSON.stringify([
-    task.hostId,
-    task.workspaceId,
-    task.agentId,
-    task.runId,
-    task.resolution.currentRunId,
-    task.prUrl,
-    task.prHead,
-    runs
-      .filter((run) => !run.released)
-      .map((run) => [
-        run.id,
-        run.hostId,
-        run.agentId,
-        run.workspaceId,
-        run.head,
-      ]),
-  ]);
-}
 export function escalationVerbChoices(
   views: readonly TaskNextVerb[],
-  binding?: string,
 ): EscalationVerbChoice[] {
   return views.flatMap((view) => {
     if (
@@ -108,7 +81,6 @@ export function escalationVerbChoices(
         label: description ? `${target}: ${description}` : target,
         verb: view.verb,
         args,
-        ...(binding !== undefined ? { binding } : {}),
       },
     ];
   });

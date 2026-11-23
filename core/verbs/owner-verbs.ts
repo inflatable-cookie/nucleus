@@ -1,3 +1,4 @@
+import { hostOutageIntervals } from "../scheduling/host-outage";
 import { exhaustedReviewer, exhaustedReviewerRefusal } from "./reviewer-report";
 import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { ownerStopPendingRefusal } from "./owner-stop";
@@ -365,6 +366,7 @@ const extendBudget: OwnerVerb = {
       Date.now(),
       events,
       store.canonicalRepository(task.repoPath, task.repository),
+      hostOutageIntervals(store, task.hostId),
     ).exhausted
       ? { available: true, args: { taskId: task.id, version: task.version } }
       : { available: false, refusal: "The task budget is not exhausted" },

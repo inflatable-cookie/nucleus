@@ -207,6 +207,7 @@ import {
 import { hostRunAdmissionSocketPath } from "../core/host-runs/host-run-paths";
 import type { Papercut } from "../shared/contracts";
 import { HOST_VOCABULARIES } from "../hosts/vocabularies";
+import { HOST_HEALTH_STARTUP_GRACE_MS } from "../core/scheduling/host-health";
 
 /**
  * Sweep cadence. Every step of a task's tail that has no callback of its own waits
@@ -303,6 +304,12 @@ export interface RuntimeOwnerOptions {
    * shorten it so the fault is proved without waiting.
    */
   pluginLostGraceMs?: number;
+  /**
+   * Spec 069 §2: how long a fresh service treats a host it has not yet seen
+   * connected as `unknown` rather than down; defaults to
+   * `HOST_HEALTH_STARTUP_GRACE_MS`. Fixtures that prove an outage at start set 0.
+   */
+  hostStartupGraceMs?: number;
   /** Test-only instrumentation applied to the store immediately after construction; production never sets it. */
   instrumentStore?: (store: Store) => void;
   /**
@@ -794,6 +801,9 @@ export class QueueRuntime {
       this.hostRunStateDir,
     );
     this.engine.currentServiceBuildId = currentServiceBuildId;
+    // A service start never parks tasks: hosts read `unknown` until they connect.
+    this.engine.hostHealth.startupGraceMs =
+      options.hostStartupGraceMs ?? HOST_HEALTH_STARTUP_GRACE_MS;
     this.maintenance = new StoreMaintenance(
       this as unknown as StoreMaintenanceOwner,
     );
@@ -831,7 +841,7 @@ export class QueueRuntime {
           task,
           task.phase === "needs_attention",
         ),
-      externalWait: (task) => this.engine.queuedExternalWait(task),
+      externalWait: (task) => this.engine.currentExternalWait(task),
       profiles: (task) => this.engine.workerRoutingProfiles(task),
       hosts: (task) => this.engine.routingHostViews(task),
     });
@@ -841,7 +851,7 @@ export class QueueRuntime {
       (tasks, runs) =>
         this.engine.resolution.slotAdmissionReader(tasks, runs, true),
       () => this.hostRuns.liveRuns(),
-      (task) => this.engine.queuedExternalWait(task),
+      (task) => this.engine.currentExternalWait(task),
       () => this.engine.queuedWaitSignature(),
       () =>
         this.hostSession?.id ||
@@ -1032,7 +1042,17 @@ export class QueueRuntime {
         // health still reporting ready. The bootstrap reports its own failure, and the
         // sweep needs only the connection.
         void this.ensureBootstrap().catch(() => {});
-        if (this.closing || !this.anyHostConnected()) return;
+        if (this.closing) return;
+        const connected = this.anyHostConnected();
+        // Spec 069 §2: host health is read every tick, even with no host
+        // connected and no sweep, so an unseen host becomes `down` after the
+        // startup grace and a long outage raises its notice. Nothing is sent.
+        try {
+          this.engine.observeHostHealth();
+        } catch {
+          /* a health reading never blocks the tick; the next tick retries */
+        }
+        if (!connected) return;
         if (
           !this.store.getMeta("paused") &&
           this.store.pendingDecisionDeliveries().length > 0
@@ -1742,6 +1762,12 @@ export class QueueRuntime {
   }
   promoteLead(input: Parameters<Leads["promote"]>[0]) {
     return this.planning.promoteLead(input);
+  }
+  parkLead(input: Parameters<Leads["park"]>[0]) {
+    return this.planning.parkLead(input);
+  }
+  unparkLead(input: Parameters<Leads["unpark"]>[0]) {
+    return this.planning.unparkLead(input);
   }
   async checkLead(
     input: {

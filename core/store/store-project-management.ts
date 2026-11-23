@@ -484,6 +484,8 @@ export class StoreProjectManagement {
         this.access.updateLead({
           ...lead,
           state: lead.papercut ? "closed" : "dropped",
+          parked: null,
+          recheck: null,
           dropReason: lead.papercut ? lead.dropReason : input.reason,
           closure: lead.papercut
             ? { reason: "deprecated", note: input.reason, at: stamp }

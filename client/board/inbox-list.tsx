@@ -7,6 +7,7 @@ import {
   type BoardLead,
   type BoardLeadLink,
   type LaneView,
+  type ProjectPlan,
   type TaskSummary,
   type UiQueueState,
 } from "../../shared/contracts";
@@ -21,10 +22,17 @@ import {
   inboxCounts,
   inboxSections,
   leadsCards,
+  parkedCards,
   type InboxView,
 } from "../../shared/inbox-board";
 import { useRpc } from "../shell";
-import { DropdownSelect, muted, row, type Colors } from "../controls";
+import {
+  Disclosure,
+  DropdownSelect,
+  muted,
+  row,
+  type Colors,
+} from "../controls";
 import { projectName } from "./text";
 import {
   BoardCard,
@@ -275,6 +283,8 @@ export type InboxListProps = {
   onSelectPapercut: (id: string) => void;
   /** Opens a lane in the plan view, the drained-lane card's press (nucleus#1511). */
   onOpenLane: (key: string) => void;
+  /** Every project plan, so the drained lane's mark-done confirmation names each plan that lists it. */
+  plans?: ProjectPlan[];
   busy: boolean;
   act: BoardAct;
   /** The list's view state the shell keeps across views (`usePipelineState`). */
@@ -317,6 +327,7 @@ export function InboxList({
   busy,
   act,
   pipeline,
+  plans = [],
 }: InboxListProps) {
   const setTask = useRpc(api.taskControl);
   const changeLaneStatus = useRpc(api.laneStatus);
@@ -336,6 +347,10 @@ export function InboxList({
   } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
   const sections = inboxSections(board, view);
+  // Nucleus#1543: parked leads and papercuts sit under one collapsed row at the end of their list.
+  const parked =
+    view === "leads" || view === "papercuts" ? parkedCards(board, view) : [];
+  const [parkedOpen, setParkedOpen] = useState(false);
   const listMeasurements = useRef<{
     view: typeof view;
     viewportHeight: number;
@@ -518,6 +533,8 @@ export function InboxList({
             }
             onClose={() => closeDrainedLane(card.value)}
             onKeep={(reason) => keepDrainedLane(card.value, reason)}
+            projects={state?.projects ?? []}
+            plans={plans}
           />
         );
       case "task":
@@ -757,6 +774,18 @@ export function InboxList({
               );
             })
           )}
+          {parked.length > 0 && (
+            <View style={{ gap: space.xxs }}>
+              <Disclosure
+                c={c}
+                label={`Parked (${parked.length})`}
+                accessibilityLabel={`Parked, ${parked.length} ${view === "papercuts" ? "papercut" : "lead"}${parked.length === 1 ? "" : "s"}`}
+                expanded={parkedOpen}
+                onToggle={() => setParkedOpen(!parkedOpen)}
+              />
+              {parkedOpen && parked.map(renderCard)}
+            </View>
+          )}
           {queuedPending && (
             <Text
               style={{ ...muted(c), textAlign: "center", padding: space.md }}
@@ -783,7 +812,7 @@ export function InboxList({
           )}
         </BoardCardVariantContext.Provider>
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
-        {(boardRead !== "loaded" || total === 0) && (
+        {(boardRead !== "loaded" || (total === 0 && parked.length === 0)) && (
           <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>
             {boardRead === "failed"
               ? "The board could not be read; see the error above."

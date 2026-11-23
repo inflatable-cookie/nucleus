@@ -168,13 +168,13 @@ Heavyweight if it needs to").
 for a role with a reason in the brief or through an owner route. The request
 takes effect on that role's next run, and routing details show the reason.
 
-| Level | Where a task's worker starts | Permission |
-| --- | --- | --- |
-| **Low** | One bracket below the one it may climb to. | The operator approves admission of high and very-high work. Frontier is request-only, as is Heavyweight unless the task starts or climbs there. |
-| **Normal** (default) | On its own bracket: Mechanical, Worker or Heavyweight. | Frontier is request-only, as is Heavyweight unless the task starts or climbs there. |
-| **High** | At the bracket it may climb to, up to Heavyweight. | Frontier is request-only. |
-| **Extra high** | As at High. | None. |
-| **Maximum** | Workers and reviewers run on Heavyweight or Frontier regardless of complexity. | None. |
+| Level | Where a task's worker starts | Reviewer | Permission |
+| --- | --- | --- | --- |
+| **Low** | One bracket below the one it may climb to. | One bracket below the worker. | The operator approves admission of high and very-high work. Frontier is request-only, as is Heavyweight unless the task starts or climbs there. |
+| **Normal** (default) | On its own bracket: Mechanical, Worker or Heavyweight. | One bracket below the worker. | Frontier is request-only, as is Heavyweight unless the task starts or climbs there. |
+| **High** | At the bracket it may climb to, up to Heavyweight. | One bracket below the worker. | Frontier is request-only. |
+| **Extra high** | As at High. | On the worker's bracket. | None. |
+| **Maximum** | Workers and reviewers run on Heavyweight or Frontier regardless of complexity. | On the worker's bracket. | None. |
 
 - **Above the climb bracket.** A worker run above the bracket the task may
   climb to is an explicit planner or operator route, never automatic.
@@ -212,15 +212,15 @@ takes effect on that role's next run, and routing details show the reason.
   reviewer is below it too.
 - **The usage level sets the reviewer's bracket** (Tom, 2026-11-19: "the
   reviewer should be 1 bracket down from the worker on minimal, low and
-  normal. Above that, it should be same bracket"). At Low and Normal the
-  reviewer runs one bracket below the worker's actual profile (its start
+  normal. Above that, it should be same bracket"). At Low, Normal and High
+  the reviewer runs one bracket below the worker's actual profile (its start
   bracket before a worker ran): Heavyweight → Worker, Worker → Mechanical,
   Frontier → Heavyweight, and a Mechanical worker gets a Mechanical reviewer.
-  At High, Extra high and Maximum it runs on the worker's bracket. Tom,
-  2026-11-22: High moves to the one-bracket-below rule ("I want to use high to
+  At Extra high and Maximum it runs on the worker's bracket. Tom,
+  2026-11-22: High moved to the one-bracket-below rule ("I want to use high to
   make use of Sol as worker, but still have lower bracket profiles do the
   review"), so the reviewer is on the worker's bracket only at Extra high and
-  Maximum. Until nucleus#1559 lands, the code still uses the earlier rule. No reviewer
+  Maximum. No reviewer
   floor parks review: when no independent profile carries the reviewer's
   bracket, the nearest permitted bracket above serves, and otherwise the most
   capable permitted profile. A critical task prefers a reviewer at least as

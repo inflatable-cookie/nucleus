@@ -144,11 +144,11 @@ function fixture(
     coordinator = profile("coordinator");
   store.setMeta("paused", false);
   store.setMeta("hostId", "host"); // Queue #912: the one registered host
-  // Spec 052 (Tom, 2026-11-19): at Normal the reviewer runs one bracket below
-  // the worker, where the coordinator's Mechanical profile sits. The fixture runs
-  // at High, where the reviewer shares the worker's bracket, so each role keeps
-  // its own profile: worker the author, reviewer the reviewer, coordinator the
-  // Mechanical one.
+  // Spec 052 (Tom, 2026-11-19; Tom, 2026-11-22: High joins the one-below
+  // levels): the reviewer runs one bracket below the worker, where the
+  // coordinator's Mechanical profile sits. The fixture runs at High, so a
+  // fresh reviewer also lands on a Mechanical profile; retained Worker
+  // reviewers above the asked bracket keep their threads.
   store.setMeta("usageLevel", {
     level: "high",
     until: null,
@@ -174,7 +174,6 @@ function fixture(
       weight: "default",
       scopes: ["general"],
       capability: "worker",
-      
     },
     {
       profileId: reviewer.id,
@@ -184,7 +183,6 @@ function fixture(
       weight: "default",
       scopes: ["general"],
       capability: "worker",
-      
     },
     {
       profileId: coordinator.id,
@@ -194,7 +192,6 @@ function fixture(
       weight: "default",
       scopes: ["general"],
       capability: "mechanical",
-      
     },
   ]);
   const submitted = store.insert(
@@ -337,7 +334,9 @@ function fixture(
       verifyCleanQueueWorktree: async () => {},
       // nucleus#1425: the merged source is the forge's observed merge, never the open-PR proof.
       verifyMergedReviewSource: async (t, route) => ({
-        ...(await verifyUnreviewedMergeSource(t, route, () => adapter.externalMerge!(t))),
+        ...(await verifyUnreviewedMergeSource(t, route, () =>
+          adapter.externalMerge!(t),
+        )),
         repository: "example/repo",
         headRepository: "example/repo",
         crossRepository: false,
@@ -1670,7 +1669,11 @@ test("applied ordinary review retains its reader across the next exact-head roun
     await f.report("changes_required");
     assert.deepEqual(calls, []);
     assert.equal(f.current().resolution.reviewerAgentId, first.agentId);
-    assert.equal(f.current().resolution.reviewerProfile?.id, "reviewer");
+    assert.equal(
+      f.current().resolution.reviewerProfile?.id,
+      "coordinator",
+      "at High the first reviewer runs one bracket below the worker",
+    );
     assert.equal(f.current().agentId, "worker");
     await f.engine.wake();
     assert.equal(f.run().role, "revision");
@@ -2080,7 +2083,6 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        
       },
     ]);
     await f.engine.wake();
@@ -2144,8 +2146,11 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         .some((event) => event.kind === "worker_climb_armed"),
     );
     // A later review round does not climb again: the worker already sits at the climb bracket.
-    // At High the reviewer runs on the worker's bracket, so a retained Worker
-    // reviewer is replaced by the Heavyweight one the selection itself picks.
+    // At High the reviewer runs one bracket below the worker (Tom, 2026-11-22),
+    // so a retained Worker reviewer is on the asked bracket for the Heavyweight
+    // worker and keeps its thread; at Extra high it runs on the worker's
+    // bracket, so the same retained reviewer is replaced by the Heavyweight one
+    // the selection itself picks.
     const highReviewer = profile("reviewer-high", "test/reviewer-high");
     f.engine.profiles = [...f.engine.profiles, highReviewer];
     f.store.setMeta("pool", [
@@ -2158,7 +2163,6 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        
       },
     ]);
     f.store.setMeta("usageLevel", {
@@ -2174,6 +2178,29 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         reviewerProfile: profile("reviewer"),
       },
     });
+    assert.equal(
+      f.engine.resolution.reviewerCapabilityIssue(
+        f.current(),
+        profile("reviewer"),
+      ),
+      null,
+      "at High the retained Worker reviewer is on the asked bracket and keeps its thread",
+    );
+    const highPick = f.engine.resolution.select(
+      { ...f.current(), profile: highWorker, profileGroup: "worker-high" },
+      "reviewer",
+    );
+    assert.equal(
+      f.store.pool().find((entry) => entry.profileId === highPick?.profile.id)
+        ?.capability,
+      "worker",
+      "at High a fresh reviewer for the Heavyweight worker runs on the Worker bracket",
+    );
+    f.store.setMeta("usageLevel", {
+      level: "extra_high",
+      until: null,
+      setAt: new Date().toISOString(),
+    });
     assert.match(
       String(
         f.engine.resolution.reviewerCapabilityIssue(
@@ -2182,7 +2209,7 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         ),
       ),
       /reviewer profile reviewer is rated worker, below the heavyweight bracket/,
-      "the retained reviewer reads below the bracket this run needs",
+      "at Extra high the retained reviewer reads below the bracket this run needs",
     );
     f.setHead("d".repeat(40));
     await f.report("ready_for_review");
@@ -2219,7 +2246,6 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         roles: ["reviewer"],
         weight: "default",
         scopes: ["general"],
-        
       },
     ]);
     assert.match(
@@ -2239,7 +2265,6 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         weight: "default",
         scopes: ["general"],
         capability: "frontier",
-        
       },
     ]);
     assert.equal(
@@ -2335,31 +2360,38 @@ test("re-review replaces a retained reviewer whose profile or subscription becam
           scopes: ["general"],
         },
       ]);
+      // At High the retained reviewer runs on the Mechanical bracket, so the
+      // outage covers its own profile, not the Worker reviewer profile.
+      const retainedId = old.profile?.id ?? "reviewer";
       if (unavailable === "disabled")
         f.store.setMeta(
           "pool",
           f.store
             .pool()
             .map((p) =>
-              p.profileId === "reviewer" ? { ...p, enabled: false } : p,
+              p.profileId === retainedId ? { ...p, enabled: false } : p,
             ),
         );
       if (unavailable === "catalog")
-        f.engine.profiles[1] = {
-          ...f.engine.profiles[1],
-          available: false,
-          problem: "provider disabled",
-        };
-      if (unavailable === "subscription")
+        f.engine.profiles = f.engine.profiles.map((p) =>
+          p.id === retainedId
+            ? { ...p, available: false, problem: "provider disabled" }
+            : p,
+        );
+      if (unavailable === "subscription") {
+        const group =
+          f.store.pool().find((p) => p.profileId === retainedId)?.group ??
+          "review";
         f.store.db.prepare("INSERT INTO availability VALUES(?,?)").run(
-          "review",
+          group,
           JSON.stringify({
-            group: "review",
+            group,
             unavailable: true,
             reason: "credit exhausted",
             retryAt: null,
           }),
         );
+      }
       f.setHead("d".repeat(40));
       await f.report("ready_for_review");
       await f.engine.wake();
@@ -2432,10 +2464,12 @@ test("a stopped callback-free reviewer is replaced when its stored subscription 
         scopes: ["general"],
       },
     ]);
+    // At High the retained reviewer runs on the Mechanical bracket, so the pause
+    // covers the coordinator group its run charged, not the Worker reviewer group.
     f.store.db.prepare("INSERT INTO availability VALUES(?,?)").run(
-      "review",
+      "coordinate",
       JSON.stringify({
-        group: "review",
+        group: "coordinate",
         unavailable: true,
         reason: "disabled by operator",
         retryAt: null,
@@ -2449,7 +2483,11 @@ test("a stopped callback-free reviewer is replaced when its stored subscription 
     assert.equal(f.current().resolution.reviewerAgentId, null);
     await f.engine.wake();
     assert.equal(f.run().role, "reviewer");
-    assert.equal(f.run().profile?.id, backup.id);
+    assert.equal(
+      f.run().profile?.id,
+      backup.id,
+      "with the Mechanical bracket paused, the nearest permitted bracket above serves",
+    );
     assert.equal(f.run().workspaceId, old.workspaceId);
     assert.equal(f.run().head, old.head);
     assert.equal(f.current().resolution.roleReplacements, 1);
@@ -3081,7 +3119,6 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         weight: "default",
         scopes: ["general"],
         capability: "worker",
-        
       },
       {
         profileId: frontier.id,
@@ -3091,7 +3128,6 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         weight: "default",
         scopes: ["general"],
         capability: "worker",
-        
       },
     ]);
     // Spec 052 (Tom, 2026-11-17): Maximum reserves workers for the top two tiers;
@@ -3271,7 +3307,6 @@ test("Spec 052: a non-delivery alternate keeps the climbed bracket in its permis
         weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        
       },
       {
         profileId: alt.id,
@@ -3281,7 +3316,6 @@ test("Spec 052: a non-delivery alternate keeps the climbed bracket in its permis
         weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        
       },
     ]);
     store.setMeta("usageLevel", {
@@ -3958,7 +3992,6 @@ test("versioned worker exclusion is shown to recovery coordinators and replaces 
         weight: "default",
         scopes: ["general"],
         capability: "worker",
-        
       },
     ]);
     f.adapter.verifyResume = async () => {};
@@ -8362,7 +8395,6 @@ test("coordinator exhaustion is stored while paused, then replaced with a fenced
         weight: "default",
         scopes: ["general"],
         capability: "mechanical",
-        
       },
     ]);
     f.store.setMeta("paused", true);
@@ -8433,7 +8465,6 @@ test("closeout provider replacement refreshes main without repeating merge", asy
         weight: "default",
         scopes: ["general"],
         capability: "mechanical",
-        
       },
     ]);
     f.idle(old.agentId!);
@@ -13707,7 +13738,11 @@ test("Consumer #687: an explicit successor and a real origin thread are unaffect
         "queue-planner",
         "the Queue planner is the second fallback",
       );
-      f.store.setProjectPlanner({ key: queueKey, agentId: null, setBy: "test" });
+      f.store.setProjectPlanner({
+        key: queueKey,
+        agentId: null,
+        setBy: "test",
+      });
       assert.equal(
         originRecipient(f.store, f.store.task(task.id)),
         null,
@@ -17045,7 +17080,7 @@ function requestOnlyPool(f: ReturnType<typeof fixture>, frontier: string) {
       roles: ["reviewer"],
       weight: "default",
       scopes: ["general"],
-      
+
       capability: "worker",
     },
     {
@@ -17055,7 +17090,7 @@ function requestOnlyPool(f: ReturnType<typeof fixture>, frontier: string) {
       roles: ["coordinator"],
       weight: "default",
       scopes: ["general"],
-      
+
       capability: "mechanical",
     },
   ]);
@@ -17094,7 +17129,7 @@ test("Spec 052: a fresh reviewer on a retained Frontier profile without a reques
     await f.engine.resolution.launch(t, "reviewer");
     assert.equal(
       f.creates.at(-1)?.profile?.id,
-      "cheap-reviewer",
+      "cheap-coordinator",
       `${f.current().phase}: ${f.current().reason}`,
     );
     const requested = f.store.update(f.task.id, {

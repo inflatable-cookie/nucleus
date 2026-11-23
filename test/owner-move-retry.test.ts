@@ -1,7 +1,4 @@
-import {
-  escalationChoiceBinding,
-  escalationVerbChoices,
-} from "../core/questions/ladder";
+import { escalationVerbChoices } from "../core/questions/ladder";
 import { profile, observeIdle } from "./support/fakes";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -1940,10 +1937,9 @@ for (const variant of [
     const f = fixture();
     try {
       const task = dispatched(f);
-      const offer = escalationVerbChoices(
-        f.next().verbs,
-        escalationChoiceBinding(f.facts()),
-      ).find((choice) => choice.verb === "move" && choice.args.to === "review");
+      const offer = escalationVerbChoices(f.next().verbs).find(
+        (choice) => choice.verb === "move" && choice.args.to === "review",
+      );
       assert.ok(offer?.label.startsWith("Move to review: "));
       const id = "recorded-review-offer";
       const questionId = `ns-escalation-${id}`;
@@ -1984,11 +1980,8 @@ for (const variant of [
         f.store.update(task.id, { prHead: "c".repeat(40) });
       if (variant === "changed run")
         f.store.update(task.id, { runId: "different-run" });
-      if (variant.startsWith("changed")) {
-        await assert.rejects(answer(), /run or PR binding changed/);
-        assert.equal(f.events("owner_control").length, 0);
-        return;
-      }
+      // Spec 067 batch 4: escalation answers bind to the task version, not a
+      // snapshot binding hash, so an answer after the run or PR changed applies.
       assert.equal((await answer()).answer, offer!.label);
       assert.equal((await answer()).answer, offer!.label);
       assert.equal(f.events("planner_escalation_applied").length, 1);
@@ -2002,7 +1995,7 @@ for (const variant of [
 
 for (const followup of [false, true]) {
   for (const drift of ["unchanged", "changed head", "changed run"] as const) {
-    test(`question.answer fences a pre-roll ${followup ? "follow-up" : "initial offer"} with ${drift}`, async () => {
+    test(`question.answer applies a pre-roll ${followup ? "follow-up" : "initial offer"} without a binding hash under ${drift}`, async () => {
       const f = fixture();
       try {
         const task = dispatched(f);
@@ -2064,34 +2057,10 @@ for (const followup of [false, true]) {
               "planner",
             ),
           );
-        const before = f.task();
-        await assert.rejects(
-          answer(questionId),
-          /no recorded run or PR binding/,
-        );
-        await assert.rejects(
-          answer(questionId),
-          /no recorded run or PR binding/,
-        );
-        assert.equal(f.events("planner_escalation_answer_pending").length, 0);
-        assert.equal(f.events("owner_control").length, 0);
-        assert.equal(f.task().prHead, before.prHead);
-        assert.equal(f.task().runId, before.runId);
-
-        if (!followup && drift === "unchanged") {
-          const fresh = escalationVerbChoices(
-            f.next().verbs,
-            escalationChoiceBinding(f.facts()),
-          ).find(
-            (choice) => choice.verb === "move" && choice.args.to === "review",
-          )!;
-          writeFollowup(fresh);
-          openQuestion(followupId, fresh);
-          assert.equal((await answer(followupId)).answer, fresh.label);
-          assert.equal((await answer(followupId)).answer, fresh.label);
-          assert.equal(f.events("owner_control").length, 1);
-          assert.equal(f.events("planner_escalation_applied").length, 1);
-        }
+        assert.equal((await answer(questionId)).answer, legacyOffer.label);
+        assert.equal((await answer(questionId)).answer, legacyOffer.label);
+        assert.equal(f.events("owner_control").length, 1);
+        assert.equal(f.events("planner_escalation_applied").length, 1);
       } finally {
         await f.close();
       }
@@ -4039,8 +4008,14 @@ test("stop is refused for finished work and an uncertain cancellation preserves 
       /could not stop the live reviewer run \(review-run\): daemon unreachable/,
     );
     assert.equal(f.events("owner_stop_uncertain").length, 1);
-    assert.ok(f.task().holds?.dispatch, "accepted stop hold is persisted before native cancellation");
-    assert.equal(f.task().resolution.ownerStop?.cancellations[0]?.status, "uncertain");
+    assert.ok(
+      f.task().holds?.dispatch,
+      "accepted stop hold is persisted before native cancellation",
+    );
+    assert.equal(
+      f.task().resolution.ownerStop?.cancellations[0]?.status,
+      "uncertain",
+    );
     assert.equal(f.view("stop").available, false);
     f.store.update(f.taskId, { phase: "done" });
     assert.equal(f.view("stop").available, false);

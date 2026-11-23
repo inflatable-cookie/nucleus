@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { T3CodeHost } from "../hosts/t3code/adapter";
 import { PARENT_MODEL, PARENT_PROVIDER } from "../hosts/t3code/nesting";
-import { T3InventoryChurnError, T3TransientReadError } from "../hosts/t3code/reads";
+import { T3TransientReadError } from "../hosts/t3code/reads";
 import { t3AdapterClass } from "../hosts/t3code";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import { HostPolicies } from "../core/host/host-policies";
@@ -527,9 +527,11 @@ test("#1448 ordinary reviewer admission's custody check waits boundedly on T3Tra
       currentRunId: detachedReviewerRun.id,
     },
   });
-  server.controls.beforeArchiveRead = () => {
-    server.controls.snapshotSequence++;
-  };
+  // The worker's row moves, so its custody read needs a fresh snapshot (an
+  // unchanged row is answered from the held one, Spec 069 batch 5), and that read
+  // fails transiently.
+  server.threads.get(workerAgent.id)!.thread.updatedAt =
+    "2026-01-02T00:00:00.000Z";
   server.controls.threadProjectionErrors = 1;
   await assert.rejects(
     f.engine.resolution.ordinaryRoundCustody(
@@ -694,7 +696,7 @@ test("recovery coordinator admission waits cleanly on HostReadRefusalError, pres
     supportsCoordinatorRecovery: true,
     supportsRecovery: true,
     observe: async (id: string) => {
-      if (transient) throw new T3InventoryChurnError(5);
+      if (transient) throw new T3TransientReadError(new Error("T3 read kept moving"));
       return {
         id,
         workspaceId: "ws-coord",
@@ -705,7 +707,7 @@ test("recovery coordinator admission waits cleanly on HostReadRefusalError, pres
       };
     },
     createRun: async () => {
-      if (transient) throw new T3InventoryChurnError(5);
+      if (transient) throw new T3TransientReadError(new Error("T3 read kept moving"));
       createdCoords++;
       return { id: "coord-agent-1", workspaceId: "ws-coord" };
     },
@@ -783,7 +785,7 @@ test("question.answer honors recorded answers during unreadable HostReadRefusalE
   let restartsExecuted = 0;
   f.engine.resolution.escalationSettlement.applyDelegatedEscalationAnswer =
     async (_taskId, _escId, _qId, _answer) => {
-      if (transient) throw new T3InventoryChurnError(5);
+      if (transient) throw new T3TransientReadError(new Error("T3 read kept moving"));
       restartsExecuted++;
       return null;
     };
@@ -867,7 +869,7 @@ test("sustained pre-send HostReadRefusalError escalates once cleanly after bound
   assert.equal(
     f.engine.deferHostReadTransient(
       task.id,
-      new T3InventoryChurnError(5),
+      new T3TransientReadError(new Error("T3 read kept moving")),
       false,
       "Ordinary review admission",
     ),
@@ -877,7 +879,7 @@ test("sustained pre-send HostReadRefusalError escalates once cleanly after bound
   assert.equal(
     f.engine.deferHostReadTransient(
       task.id,
-      new T3InventoryChurnError(5),
+      new T3TransientReadError(new Error("T3 read kept moving")),
       false,
       "Ordinary review admission",
     ),
@@ -889,7 +891,7 @@ test("sustained pre-send HostReadRefusalError escalates once cleanly after bound
   assert.equal(
     f.engine.deferHostReadTransient(
       task.id,
-      new T3InventoryChurnError(5),
+      new T3TransientReadError(new Error("T3 read kept moving")),
       false,
       "Ordinary review admission",
     ),
@@ -900,7 +902,7 @@ test("sustained pre-send HostReadRefusalError escalates once cleanly after bound
   assert.match(escalated.reason, /could not read host state after 3 attempts/);
 
   // Same episode re-checking exhaustion does not emit a duplicate escalation event.
-  const episodeDetail = new T3InventoryChurnError(5).message;
+  const episodeDetail = new T3TransientReadError(new Error("T3 read kept moving")).message;
   f.store.setMeta(hostReadTransientKey("task", task.id), {
     startedAt: Number(
       f.store
@@ -915,7 +917,7 @@ test("sustained pre-send HostReadRefusalError escalates once cleanly after bound
   assert.equal(
     f.engine.deferHostReadTransient(
       task.id,
-      new T3InventoryChurnError(5),
+      new T3TransientReadError(new Error("T3 read kept moving")),
       false,
       "Ordinary review admission",
     ),

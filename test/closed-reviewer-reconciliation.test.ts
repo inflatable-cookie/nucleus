@@ -644,21 +644,19 @@ for (const variant of [
         return;
       }
       if (variant === "unavailable") {
-        assert.match(f.current().reason, /Waiting on Paseo host/);
-        assert.equal(f.current().resolution.hostWait?.hostId, "host");
+        // Spec 069 §2: a failed observation fails only itself. The connected host
+        // is not marked down, so the checkpoint stop stands with no host wait.
+        assert.equal(f.current().reason, REVIEW_AUTHORIZATION_REQUIRED);
+        assert.equal(f.current().resolution.hostWait, null);
         assert.equal(f.current().resolution.currentRunId, run.id);
         assert.equal(f.store.run(run.id)!.released, false);
         assert.doesNotThrow(() => f.store.authenticate(run.id, "token"));
         assert.deepEqual(
           f.continuations,
           [],
-          "the unavailable host receives no continuation",
+          "a failed observation sends no continuation",
         );
-        assert.deepEqual(
-          f.createdRuns,
-          [],
-          "the unavailable host receives no launch",
-        );
+        assert.deepEqual(f.createdRuns, [], "and launches nothing");
         return;
       }
       assert.equal(
