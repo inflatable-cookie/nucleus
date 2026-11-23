@@ -198,6 +198,7 @@ pub struct T3 {
 pub struct T3Pass<'a> {
     host: &'a T3,
     processes: OnceCell<Result<Inventory, HostError>>,
+    scratch: Option<&'a Path>,
     sent: AtomicBool,
 }
 
@@ -213,21 +214,23 @@ impl T3 {
     }
 
     #[must_use]
-    pub fn pass(&self) -> T3Pass<'_> {
+    pub fn pass<'a>(&'a self, scratch: &'a Path) -> T3Pass<'a> {
         T3Pass {
             host: self,
             processes: OnceCell::new(),
+            scratch: Some(scratch),
             sent: AtomicBool::new(false),
         }
     }
 
     /// Give a loopback RPC fixture a known process census.
-    #[cfg(feature = "loopback-fixture")]
+    #[cfg(any(test, feature = "loopback-fixture"))]
     #[must_use]
     pub fn fixture_pass(&self) -> T3Pass<'_> {
         T3Pass {
             host: self,
             processes: OnceCell::new_with(Some(Ok(Inventory::quiet_fixture()))),
+            scratch: None,
             sent: AtomicBool::new(false),
         }
     }
@@ -363,7 +366,12 @@ impl T3Pass<'_> {
             .await
             .as_ref()
             .map_err(|error| *error)?;
-        match inventory.activity(Path::new(&binding.worktree_path))? {
+        let checkout = Path::new(&binding.worktree_path);
+        let activity = match self.scratch {
+            Some(scratch) => inventory.activity_for(checkout, scratch).await?,
+            None => inventory.activity(checkout)?,
+        };
+        match activity {
             Activity::Busy => Ok(false),
             Activity::Quiet => Ok(true),
             Activity::Unknown => Err(HostError::Uncertain),
