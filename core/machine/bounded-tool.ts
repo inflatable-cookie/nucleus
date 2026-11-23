@@ -25,7 +25,9 @@ export async function boundedToolHold(
   // Positive live evidence always holds, even when another signal is unknown.
   // An interrupted call needs no more here: the turn and owned-process proofs
   // below decide it, so a child that survived the interrupt still holds.
-  const tool = liveToolIssueFact(read.entries, null, { interruptedSettles: true });
+  const tool = liveToolIssueFact(read.entries, null, {
+    interruptedSettles: true,
+  });
   if (tool) {
     const live =
       tool.kind === "live" &&

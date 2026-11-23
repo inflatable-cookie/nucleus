@@ -6,6 +6,7 @@ import {
   sweepSettledRunProcesses,
 } from "../machine/run-process-cleanup";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
+import { QUANTUM_READ_DEADLINE_MS, boundedRead } from "./pass-snapshot";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileUsageGate } from "../dispatch/usage-gate";
 import { reconcileUnavailablePreference } from "../dispatch/unavailable-preference";
@@ -88,6 +89,7 @@ export type TaskQuantumContext = Pick<
     | "holdProofOnlyGoWait"
     | "ownedToolHold"
     | "owns"
+    | "quantumReadTimeoutMs"
     | "raiseOperatorQuestions"
     | "reconcileHoldUntil"
     | "reconcileUncertainRunDelivery"
@@ -109,20 +111,40 @@ export class TaskQuantum {
   constructor(readonly context: TaskQuantumContext) {
     this.orphanPhases = new OrphanPhases(context);
   }
+  private readonly deliveryOffset = new Map<string, number>();
+
   private async observeReleasedRunDeliveries(taskId: string): Promise<void> {
     const { adapter, resolution, store } = this.context;
     if (!adapter.originAgent || !adapter.agentTimelinePage) return;
-    for (const run of store.runs(taskId)) {
-      if (
-        !run.released ||
-        run.status !== "uncertain" ||
-        !run.agentId ||
-        !run.workspaceId ||
-        releasedRunDeliveryEvidence(store, run)
-      )
-        continue;
+    const eligible = store
+      .runs(taskId)
+      .filter(
+        (run) =>
+          run.released &&
+          run.status === "uncertain" &&
+          Boolean(run.agentId) &&
+          Boolean(run.workspaceId) &&
+          !releasedRunDeliveryEvidence(store, run),
+      );
+    if (!eligible.length) return;
+    const offset = this.deliveryOffset.get(taskId) ?? 0;
+    this.deliveryOffset.set(taskId, (offset + 1) % eligible.length);
+    const start = offset % eligible.length;
+    const ordered =
+      start === 0
+        ? eligible
+        : [...eligible.slice(start), ...eligible.slice(0, start)];
+    const budgetMs =
+      resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const deadlineAt = Date.now() + budgetMs;
+    for (const run of ordered) {
+      if (Date.now() >= deadlineAt) return;
       try {
-        await resolution.reconcileUncertainRunDelivery(taskId, run.id);
+        await resolution.reconcileUncertainRunDelivery(
+          taskId,
+          run.id,
+          deadlineAt,
+        );
       } catch {
         /* An unreadable or changed timeline leaves this occurrence unknown. */
       }
@@ -199,7 +221,9 @@ export class TaskQuantum {
   }
 
   async taskQuantum(taskId: string): Promise<void> {
-    const task = this.reconcileProfileAdmission(this.context.store.task(taskId));
+    const task = this.reconcileProfileAdmission(
+      this.context.store.task(taskId),
+    );
     const quantum = { pausedForPrerequisiteWait: false };
     // One pass, one worktree-validation scan: every read this quantum makes for
     // the same task worktree and selector argv shares it, and the next quantum
@@ -301,11 +325,20 @@ export class TaskQuantum {
         task.phase === "needs_attention" &&
         task.completion?.status === "ready_for_review" &&
         task.workspaceId &&
-        this.context.adapter.workspaceAvailable &&
-        !(await this.context.adapter.workspaceAvailable(task.workspaceId))
+        this.context.adapter.workspaceAvailable
       ) {
-        await this.context.resolution.advance(task);
-        return;
+        const deadlineMs =
+          this.context.resolution.quantumReadTimeoutMs ??
+          QUANTUM_READ_DEADLINE_MS;
+        const avail = await boundedRead(
+          "workspace availability",
+          () => this.context.adapter.workspaceAvailable!(task.workspaceId!),
+          deadlineMs,
+        );
+        if (avail.state === "ok" && !avail.value) {
+          await this.context.resolution.advance(task);
+          return;
+        }
       }
       task = this.context.store.task(taskId);
       const probeExternalMerge = !["done", "cancelled"].includes(task.phase);

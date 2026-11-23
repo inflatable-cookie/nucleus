@@ -132,6 +132,7 @@ function fixture() {
     active: false,
     permissions: false,
     error: "",
+    updatedAt: "2026-01-01T00:00:00.000Z",
     provider: "test",
     model: worker.model,
   });
@@ -142,6 +143,7 @@ function fixture() {
     active: false,
     permissions: false,
     error: "",
+    updatedAt: "2026-01-01T00:00:00.000Z",
     provider: "test",
     model: reviewer.model,
   });
@@ -171,6 +173,7 @@ function fixture() {
         active: false,
         permissions: false,
         error: "",
+        updatedAt: "2026-01-01T00:00:00.000Z",
       },
     notify: async () => {},
     agentTimelinePage: async () => toolTimelinePage([]),

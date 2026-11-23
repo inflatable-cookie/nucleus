@@ -2768,8 +2768,13 @@ export class Resolution {
   reconcileUncertainRunDelivery(
     taskId: string,
     runId: string,
+    deadlineAt?: number,
   ): Promise<boolean> {
-    return this.effectReconcile.reconcileUncertainRunDelivery(taskId, runId);
+    return this.effectReconcile.reconcileUncertainRunDelivery(
+      taskId,
+      runId,
+      deadlineAt,
+    );
   }
   reconcileReviewDeliveryOperations(
     taskId: string,

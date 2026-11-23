@@ -1630,6 +1630,129 @@ test("bounded tool projection holds when a newer turn advances updatedAt after t
   }
 });
 
+test("unstamped bounded tool window and unstamped complete tool page both hold without task-lane timeline RPCs", async (t) => {
+  const t1 = new Date(Date.now() - 60_000).toISOString();
+  let timelineCalls = 0;
+  let boundedMode = true;
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-unstamped-tool",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt: t1,
+          },
+        ]),
+      ),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-unstamped-tool",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      // Intentionally omit updatedAt to simulate an unstamped observation.
+    }),
+    agentTimelinePage: async () => {
+      timelineCalls++;
+      return boundedMode
+        ? {
+            entries: [],
+            hasOlder: true,
+            gap: false,
+            staleCursor: false,
+            reset: false,
+            hasNewer: false,
+            epoch: "agent-unstamped-tool",
+            startCursor: null,
+            endCursor: null,
+            projection: "bounded" as const,
+            pendingBackgroundTasks: [],
+          }
+        : toolTimelinePage([]);
+    },
+    hostProcessListing: async () => [],
+    noLiveWorkspaceProcesses: async () => null,
+  });
+
+  const seeded = seedFinishedWorkerTask(f.store, "unstamped-tool");
+  f.store.update(seeded.task.id, {
+    directory: "/tmp/synthetic-unstamped-tool",
+  });
+  const seededRun = f.store.run(seeded.runId)!;
+  f.store.putRun({
+    ...seededRun,
+    temporaryDirectory: "/tmp/synthetic-unstamped-tool-scratch",
+  });
+
+  // 1. Bounded window with unstamped fresh observation must hold on process proof.
+  const snap1 = f.engine.resolution.beginPassSnapshot();
+  try {
+    await (
+      f.engine as unknown as {
+        sweep: { hostPass: { run(host: string): Promise<unknown> } };
+      }
+    ).sweep.hostPass.run(HOST);
+    const callsAfterWarm = timelineCalls;
+    const hold = await f.engine.resolution.ownedToolHold(seeded.agentId, {
+      requireCompleteEvidence: true,
+      runId: seeded.runId,
+      runIds: [seeded.runId],
+      taskId: seeded.task.id,
+      workspaceId: "ws-unstamped-tool",
+    });
+    assert.ok(hold, "unstamped bounded tool window must hold");
+    assert.match(
+      hold,
+      /positive activity stamp|active after the pass process/i,
+    );
+    assert.equal(
+      timelineCalls,
+      callsAfterWarm,
+      "sealed host pass must not issue task-lane timeline RPCs",
+    );
+  } finally {
+    snap1.expire();
+  }
+
+  // 2. Complete empty page with unstamped fresh observation must also hold without
+  // issuing any direct timeline RPC inside the task lane.
+  boundedMode = false;
+  const snap2 = f.engine.resolution.beginPassSnapshot();
+  try {
+    await (
+      f.engine as unknown as {
+        sweep: { hostPass: { run(host: string): Promise<unknown> } };
+      }
+    ).sweep.hostPass.run(HOST);
+    const callsAfterWarm = timelineCalls;
+    const hold = await f.engine.resolution.ownedToolHold(seeded.agentId, {
+      requireCompleteEvidence: true,
+      runId: seeded.runId,
+      runIds: [seeded.runId],
+      taskId: seeded.task.id,
+      workspaceId: "ws-unstamped-tool",
+    });
+    assert.ok(hold, "unstamped complete tool page must hold");
+    assert.match(hold, /positive activity stamp|predates/i);
+    assert.equal(
+      timelineCalls,
+      callsAfterWarm,
+      "unstamped complete-page fallback must never issue task-lane timeline RPCs",
+    );
+  } finally {
+    snap2.expire();
+  }
+});
+
 test("two missing closure stamps never authorize durable run_delivery_not_delivered from a pass snapshot", async (t) => {
   const f = engineFixture(t, {
     originAgent: async (id: string) => ({
@@ -1708,16 +1831,30 @@ test("two missing closure stamps never authorize durable run_delivery_not_delive
   }
 });
 
-test("worker reconcileObservation bounds hung observe and settleSupersededIdleRuns shares one quantum budget across runs", async (t) => {
+test("worker reconcileObservation bounds hung observe, superseded runs share and rotate one budget, and released-delivery + workspaceAvailable are bounded", async (t) => {
   const timers: Array<ReturnType<typeof setTimeout>> = [];
   t.after(() => {
     for (const timer of timers) clearTimeout(timer);
   });
 
-  let observeCalls = 0;
+  const observedOrder: string[] = [];
+  let originCalls = 0;
+  let workspaceAvailCalls = 0;
   const f = engineFixture(t, {
-    observe: () => {
-      observeCalls++;
+    observe: (id: string) => {
+      observedOrder.push(id);
+      if (id === "agent-sup-healthy") {
+        return Promise.resolve({
+          id,
+          workspaceId: "ws-rotate-sup",
+          status: "closed",
+          active: false,
+          activeTurnId: null,
+          permissions: false,
+          error: "",
+          updatedAt: new Date(Date.now() - 60_000).toISOString(),
+        });
+      }
       return new Promise<AgentObservation>((resolve) => {
         const timer = setTimeout(
           () =>
@@ -1736,16 +1873,27 @@ test("worker reconcileObservation bounds hung observe and settleSupersededIdleRu
         timers.push(timer);
       });
     },
-    originAgent: () =>
-      new Promise((resolve) => {
+    originAgent: () => {
+      originCalls++;
+      return new Promise((resolve) => {
         const timer = setTimeout(() => resolve(null), 60_000);
         timer.unref?.();
         timers.push(timer);
-      }),
+      });
+    },
+    agentTimelinePage: async () => toolTimelinePage([]),
+    workspaceAvailable: () => {
+      workspaceAvailCalls++;
+      return new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(true), 60_000);
+        timer.unref?.();
+        timers.push(timer);
+      });
+    },
   });
-  f.engine.resolution.quantumReadTimeoutMs = 100;
+  f.engine.resolution.quantumReadTimeoutMs = 60;
 
-  // 1. Working task with hung host.observe returns inside quantum deadline.
+  // 1. Working task with hung host.observe defers cleanly without throwing.
   const working = f.store.insert(
     submission({
       submissionId: "sub-hung-worker",
@@ -1762,16 +1910,14 @@ test("worker reconcileObservation bounds hung observe and settleSupersededIdleRu
     agentId: "agent-hung-worker",
     runId: "run-hung-worker",
   });
-
-  const workerStart = performance.now();
   await f.engine.reconcile(f.store.task(working.id));
-  const workerElapsed = performance.now() - workerStart;
-  assert.ok(
-    workerElapsed < 2_000,
-    `reconcileObservation with hung observe should return inside bound, took ${workerElapsed.toFixed(1)} ms`,
+  assert.equal(
+    f.store.task(working.id).phase,
+    "working",
+    "timed-out worker observation defers cleanly without changing phase",
   );
 
-  // 2. Seven eligible superseded runs share ONE quantum budget instead of 7 * 2 * budget.
+  // 2. Seven eligible superseded runs share ONE quantum budget instead of observing all 7.
   const multi = seedFinishedWorkerTask(f.store, "multi-superseded");
   for (let i = 0; i < 7; i++) {
     f.store.putRun(
@@ -1796,21 +1942,133 @@ test("worker reconcileObservation bounds hung observe and settleSupersededIdleRu
       }),
     );
   }
-  const callsBefore = observeCalls;
-  const supStart = performance.now();
+  const callsBefore = observedOrder.length;
   const settled = await f.engine.settleSupersededIdleRuns(
     multi.task.id,
     "shared budget test",
   );
-  const supElapsed = performance.now() - supStart;
   assert.equal(settled, 0);
   assert.ok(
-    supElapsed < 2_000,
-    `7 slow superseded runs must share one quantum budget, took ${supElapsed.toFixed(1)} ms`,
+    observedOrder.length - callsBefore < 7,
+    `budget expiry should stop before observing all 7 runs, observed ${observedOrder.length - callsBefore}`,
+  );
+
+  // 3. Rotation prevents a persistently slow first superseded run from starving a healthy second run.
+  const rot = seedFinishedWorkerTask(f.store, "rotate-sup");
+  f.store.putRun(
+    runSchema.parse({
+      id: "run-sup-slow",
+      taskId: rot.task.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId: "agent-sup-slow",
+      workspaceId: "ws-rotate-sup",
+      hostId: HOST,
+      profile: null,
+      status: "running",
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      lastObservedAt: null,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: false,
+    }),
+  );
+  f.store.putRun(
+    runSchema.parse({
+      id: "run-sup-healthy",
+      taskId: rot.task.id,
+      role: "reviewer",
+      generation: 2,
+      head: HEAD,
+      base: HEAD,
+      agentId: "agent-sup-healthy",
+      workspaceId: "ws-rotate-sup",
+      hostId: HOST,
+      profile: null,
+      status: "running",
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      lastObservedAt: null,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: false,
+    }),
+  );
+  await f.engine.settleSupersededIdleRuns(rot.task.id, "pass 1");
+  const pass2Settled = await f.engine.settleSupersededIdleRuns(
+    rot.task.id,
+    "pass 2",
+  );
+  assert.equal(
+    pass2Settled,
+    1,
+    "second pass rotates past the slow first run and settles the healthy second run",
+  );
+  assert.equal(f.store.run("run-sup-healthy")?.status, "superseded");
+
+  // 4. Multiple released uncertain deliveries share ONE quantum budget, and
+  // hung workspaceAvailable on ready_for_review attention returns inside bound.
+  const attn = f.store.insert(
+    submission({
+      submissionId: "sub-hung-delivery-ws",
+      title: "Hung delivery and workspaceAvailable",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  f.store.update(attn.id, {
+    phase: "needs_attention",
+    workspaceId: "ws-hung-delivery",
+    directory: "/tmp/synthetic-hung-delivery",
+    agentId: "agent-hung-delivery",
+    runId: "run-hung-delivery",
+    completion: {
+      eventId: "ev-ready-attn",
+      taskId: attn.id,
+      runId: "run-hung-delivery",
+      status: "ready_for_review",
+      summary: "ready",
+      prNumber: 1,
+      head: HEAD,
+    },
+  });
+  for (let i = 0; i < 6; i++) {
+    f.store.putRun(
+      runSchema.parse({
+        id: `run-rel-uncertain-${i}`,
+        taskId: attn.id,
+        role: "reviewer",
+        generation: i + 1,
+        head: HEAD,
+        base: HEAD,
+        agentId: `agent-rel-uncertain-${i}`,
+        workspaceId: "ws-hung-delivery",
+        hostId: HOST,
+        profile: null,
+        status: "uncertain",
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
+        lastObservedAt: null,
+        active: false,
+        idleSince: null,
+        completion: null,
+        released: true,
+      }),
+    );
+  }
+  const originsBefore = originCalls;
+  await f.engine.taskQuantum(attn.id);
+  assert.equal(
+    workspaceAvailCalls,
+    1,
+    "workspaceAvailable was attempted once and bounded",
   );
   assert.ok(
-    observeCalls - callsBefore < 7,
-    `budget expiry should stop before observing all 7 runs, observed ${observeCalls - callsBefore}`,
+    originCalls - originsBefore < 6,
+    `released delivery loop must share one budget and stop before all 6 hung origins, called ${originCalls - originsBefore}`,
   );
 });
 

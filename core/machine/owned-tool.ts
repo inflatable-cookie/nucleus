@@ -178,9 +178,13 @@ export class OwnedTools {
     const priorTerminal = Boolean(
       prior && (prior.status === "gone" || prior.archived === true),
     );
-    if (turn?.updatedAt) {
-      if (!priorTerminal && prior?.updatedAt !== turn.updatedAt) {
-        return "the participant was active after the pass process snapshot; waiting for the next host pass";
+    if (!priorTerminal) {
+      if (
+        !turn?.updatedAt ||
+        !prior?.updatedAt ||
+        prior.updatedAt !== turn.updatedAt
+      ) {
+        return "the participant was active after the pass process snapshot or lacks a positive activity stamp; waiting for the next host pass";
       }
     }
     return null;
@@ -405,39 +409,7 @@ export class OwnedTools {
             freshUpdatedAt === coveredUpdatedAt,
         );
         if (!positiveMatch) {
-          // If neither side carries an activity stamp (e.g. a host adapter that
-          // omits `updatedAt`), never settle on the cached pass page: re-read
-          // boundedly directly so a newer tool call is observed and a hung read
-          // returns unknown inside the quantum deadline.
-          if (coveredUpdatedAt === null && freshUpdatedAt === null) {
-            const directHost = {
-              agentTimelinePage: async (id: string, limit?: number) => {
-                const direct = await boundedRead(
-                  "agent timeline page",
-                  () => this.resolution.host.agentTimelinePage(id, limit),
-                  this.readDeadlineMs,
-                );
-                if (direct.state === "unknown") throw new Error(direct.reason);
-                return direct.value;
-              },
-            };
-            let freshRead: Awaited<ReturnType<typeof readToolTimeline>>;
-            try {
-              freshRead = await readToolTimeline(
-                directHost,
-                agentId,
-                this.readDeadlineMs,
-              );
-            } catch {
-              return "owned tool evidence is inconclusive: cached tool timeline has no activity stamp and fresh timeline read failed";
-            }
-            if ("issue" in freshRead)
-              return `owned tool evidence is inconclusive: ${freshRead.issue}`;
-            const freshIssue = liveToolIssueFact(freshRead.entries);
-            if (freshIssue) return formatLiveToolIssue(freshIssue);
-          } else {
-            return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass";
-          }
+          return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation or lacks a positive activity stamp; waiting for the next host pass";
         }
       }
       if (options.taskId)
@@ -467,7 +439,8 @@ export class OwnedTools {
     // call never outlives its turn.
     const processOwnsWork =
       (processIssue?.kind === "live" &&
-        (processIssue.status === "running" || INTERRUPTED_TOOL_STATUSES.has(processIssue.status))) ||
+        (processIssue.status === "running" ||
+          INTERRUPTED_TOOL_STATUSES.has(processIssue.status))) ||
       (processIssue?.kind === "conflicting-identity" && processIssue.running);
     const turnBoundOnly = read.entries.filter(
       (entry) => !processEntries.includes(entry),

@@ -262,7 +262,10 @@ export class Stalls {
       return null;
     // Spec 068 Decision 4: nobody answers a task run's permission prompt, so it
     // is declined at once and the turn continues; the stall is judged next time.
-    if (state.permissions && (await denyPendingPermission(this.resolution, current, run, state)))
+    if (
+      state.permissions &&
+      (await denyPendingPermission(this.resolution, current, run, state))
+    )
       return null;
     // Brief scope: initial workers, revisions and reviewers. Verification and
     // closeout coordinators keep their existing callback-reminder recovery.
@@ -554,8 +557,15 @@ export class Stalls {
       }
       const shell = runningShellCommand(timeline ?? null);
       if (timeline) tool = observeRunningTool(timeline, turnId);
-      shellCall = Boolean(tool && timeline?.some((entry) =>
-        entry.item.type === "tool_call" && entry.item.callId === tool!.callId && entry.item.detail?.type === "shell"));
+      shellCall = Boolean(
+        tool &&
+          timeline?.some(
+            (entry) =>
+              entry.item.type === "tool_call" &&
+              entry.item.callId === tool!.callId &&
+              entry.item.detail?.type === "shell",
+          ),
+      );
       notice = this.shellNoticeText(role, shell);
       live = Boolean(shell || (timeline && runningOwnedTool(timeline)));
     } catch {
@@ -924,7 +934,9 @@ export const TERMINAL_TOOL_STATUSES = new Set([
  * the turn is proven over, and a kind that can outlive a turn still needs the
  * owned-process proof, as a running one does.
  */
-export const INTERRUPTED_TOOL_STATUSES: ReadonlySet<string> = new Set(["interrupted"]);
+export const INTERRUPTED_TOOL_STATUSES: ReadonlySet<string> = new Set([
+  "interrupted",
+]);
 /**
  * The oldest tool call whose latest observed state is still running, or null.
  *
@@ -1479,7 +1491,12 @@ export function liveToolIssueFact(
       // Queue's own MCP tools (nucleus_report, ask, tell) answer inside the agent's turn;
       // a running entry left behind by a finished turn is settled like other turn-bound kinds.
       const entry = latest[0]!;
-      if (turnOver && (status === "running" || interrupted) && turnBoundTool(entry)) continue;
+      if (
+        turnOver &&
+        (status === "running" || interrupted) &&
+        turnBoundTool(entry)
+      )
+        continue;
       return {
         kind: "live",
         callId,

@@ -963,21 +963,35 @@ export class RunRelease {
    * Holds write nothing, so a pass with nothing settleable leaves the task
    * untouched. Returns how many runs released.
    */
+  private readonly supersededOffset = new Map<string, number>();
+
   async settleSupersededIdleRuns(
     taskId: string,
     detail: string,
   ): Promise<number> {
     let settled = 0;
     if (this.store.task(taskId).removedAt) return settled;
+    const eligible = this.store
+      .runs(taskId)
+      .filter(
+        (candidate) =>
+          !candidate.released &&
+          supersededIdleBinding(this.store, taskId, candidate).superseded,
+      );
+    if (!eligible.length) return settled;
+    const offset = this.supersededOffset.get(taskId) ?? 0;
+    this.supersededOffset.set(taskId, (offset + 1) % eligible.length);
+    const start = offset % eligible.length;
+    const ordered =
+      start === 0
+        ? eligible
+        : [...eligible.slice(start), ...eligible.slice(0, start)];
     const budgetMs =
       this.engine.resolution?.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
     const deadlineAt = Date.now() + budgetMs;
-    for (const run of this.store
-      .runs(taskId)
-      .filter((candidate) => !candidate.released)) {
+    for (const run of ordered) {
       if (settlementHeld(this.store, this.stopped)) return settled;
       if (Date.now() >= deadlineAt) return settled;
-      if (!supersededIdleBinding(this.store, taskId, run).superseded) continue;
       if ((await this.engine.supersededIdleFence(run, deadlineAt)) !== null)
         continue;
       if (settlementHeld(this.store, this.stopped)) return settled;

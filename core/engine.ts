@@ -322,6 +322,7 @@ export class Engine {
         "holdProofOnlyGoWait",
         "ownedToolHold",
         "owns",
+        "quantumReadTimeoutMs",
         "raiseOperatorQuestions",
         "reconcileHoldUntil",
         "reconcileUncertainRunDelivery",

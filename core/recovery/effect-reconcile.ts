@@ -306,6 +306,7 @@ export class EffectReconcile {
   async reconcileUncertainRunDelivery(
     taskId: string,
     runId: string,
+    deadlineAt?: number,
   ): Promise<boolean> {
     const task = this.store.task(taskId),
       run = this.store.run(runId);
@@ -321,12 +322,19 @@ export class EffectReconcile {
       throw new Error(
         `Run ${runId} remains uncertain; its exact creation timeline is unavailable`,
       );
-    const deadlineMs =
+    const budgetMs =
       this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const effectiveDeadlineAt = deadlineAt ?? Date.now() + budgetMs;
+    const remaining = (): number =>
+      Math.max(0, effectiveDeadlineAt - Date.now());
+    if (remaining() <= 0)
+      throw new Error(
+        `Run ${runId} remains uncertain; delivery observation budget expired`,
+      );
     const originRead = await boundedRead(
       "origin agent observation",
       () => this.resolution.host.originAgent(run.agentId!),
-      deadlineMs,
+      remaining(),
     );
     if (originRead.state === "unknown")
       throw new Error(`Run ${runId} remains uncertain; ${originRead.reason}`);
@@ -338,10 +346,15 @@ export class EffectReconcile {
     const archived = origin.archived;
     let closedUpdatedAt: string | null = null;
     if (!archived) {
+      const obsRemaining = remaining();
+      if (obsRemaining <= 0)
+        throw new Error(
+          `Run ${runId} remains uncertain; delivery observation budget expired`,
+        );
       const observedRead = await boundedRead(
         "participant observation",
         () => this.resolution.host.observe(run.agentId!),
-        deadlineMs,
+        obsRemaining,
       );
       if (observedRead.state === "unknown")
         throw new Error(
@@ -361,18 +374,23 @@ export class EffectReconcile {
         );
       closedUpdatedAt = observed.updatedAt ?? null;
     }
+    const pageRemaining = remaining();
+    if (pageRemaining <= 0)
+      throw new Error(
+        `Run ${runId} remains uncertain; delivery observation budget expired`,
+      );
     const pageRead: PassTimelinePageRead = this.resolution.readPassTimelinePage
       ? await this.resolution.readPassTimelinePage(
           run.agentId,
           100,
           run.hostId ?? task.hostId,
-          deadlineMs,
+          pageRemaining,
         )
       : {
           ...(await boundedRead(
             "agent timeline page",
             () => this.resolution.host.agentTimelinePage(run.agentId!, 100),
-            deadlineMs,
+            pageRemaining,
           )),
           fromPassSnapshot: false,
         };
