@@ -218,19 +218,21 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
 
   assert.equal(await lease(), true, "merge acquires custody without a timeline page");
 
-  const process = {
+  const fact = {
     pid: 42,
     ppid: 1,
     pgid: 42,
-    uid: 501,
+    uid: process.getuid?.() ?? 501,
     startIdentity: "synthetic-start",
     command: "synthetic-detached-command",
   };
   for (const cwd of [directory, temporaryDirectory]) {
-    processes = [{ ...process, cwd }];
+    processes = [{ ...fact, cwd }];
     assert.equal(await lease(), false);
     assert.match(store.task(task.id).reason, /process 42 remains/);
   }
+  processes = [{ ...fact, state: "Z", cwd: null, openFiles: { paths: [], complete: false } }];
+  assert.equal(await lease(), true, "a zombie cannot hold custody");
   processes = [];
   thread.runtimeRequests = [syntheticRuntimeRequest({ kind: "approval" })];
   assert.equal(await lease(), false);

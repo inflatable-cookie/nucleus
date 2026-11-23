@@ -66,3 +66,37 @@ ROWS
     await handle.close();
   }
 });
+
+test('darwin cwd coverage ignores zombies before and during the file scan', { skip: process.platform !== 'darwin' }, async (t) => {
+  assert.ok(process.getuid);
+  const uid = process.getuid();
+  const root = await mkdtemp(join(tmpdir(), 'host-process-zombies-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const start = 'Mon Nov 23 18:30:00 2026';
+  await writeFile(join(root, 'ps'), `#!/bin/sh
+if [ "$4" = 'pid=,stat=' ]; then
+  printf '${process.pid} Z+\\n'
+  exit 0
+fi
+cat <<'ROWS'
+${uid} 42 1 1 S ${start} live-command
+${uid} 43 1 1 Z ${start} <defunct>
+${uid} ${process.pid} 1 1 S ${start} exiting-command
+ROWS
+`, { mode: 0o755 });
+  await writeFile(join(root, 'lsof'), "#!/bin/sh\nprintf 'p42\\0\\nfcwd\\0n/\\0\\n'\n", { mode: 0o755 });
+  const path = process.env.PATH ?? '';
+  process.env.PATH = `${root}${delimiter}${path}`;
+  try {
+    const read = await readHostUidProcesses();
+    assert.equal(read.state, 'listed');
+    assert.equal(read.cwdComplete, true);
+    assert.deepEqual(read.processes.map(({ state, cwd, openFiles }) => [state, cwd, openFiles?.complete]), [
+      ['S', '/', true],
+      ['Z', null, undefined],
+      ['Z+', null, undefined],
+    ]);
+  } finally {
+    process.env.PATH = path;
+  }
+});
