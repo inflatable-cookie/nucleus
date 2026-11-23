@@ -12,6 +12,7 @@ import {
 import {
   DeferredPassReadError,
   isQuantumDeadlineExceeded,
+  isTerminalParticipant,
   type PassProcessRead,
   type PassTimelinePageRead,
 } from "../scheduling/pass-snapshot";
@@ -91,16 +92,12 @@ export function custodyProofDeferral(
     return defer(
       "the pass process snapshot predates the participant's latest activity; waiting for the next host pass",
     );
-  const terminal =
-    beforeScan?.status === "gone" || beforeScan?.archived === true;
-  if (
-    !beforeScan ||
-    (!terminal && beforeScan.status !== "closed" && !noTurnLive(beforeScan))
-  )
+  if (!noTurnLive(beforeScan) && !isTerminalParticipant(beforeScan))
     return defer(
       "the pass process snapshot was captured before the participant was proven inactive; waiting for the next host pass",
     );
-  if (!terminal && (!stamp || stamp !== beforeScan.updatedAt))
+  const retired = beforeScan?.status === "gone" || beforeScan?.archived === true;
+  if (!retired && (!stamp || stamp !== beforeScan?.updatedAt))
     return defer(
       "the participant was active after the pass process snapshot or lacks a positive activity stamp; waiting for the next host pass",
     );

@@ -49,7 +49,7 @@ import {
   type PassTimelinePageRead,
   type ProvenTerminalSnapshot,
 } from "./scheduling/pass-snapshot";
-import { PassDemand } from "./scheduling/pass-demand";
+import { PassDemand, type PassProofDemand } from "./scheduling/pass-demand";
 import {
   readHostUidProcesses,
   type HostProcessListRead,
@@ -563,13 +563,21 @@ export class Resolution {
   private readonly passDemand = new PassDemand();
 
   /** Ask the next host pass to observe `agentId` before its process snapshot and warm its tool page first. */
-  requestPassProof(hostId: string | null | undefined, agentId: string): void {
-    this.passDemand.request(this.passHostKey(hostId), agentId);
+  requestPassProof(
+    hostId: string | null | undefined,
+    agentId: string,
+    page: PassProofDemand["page"] = null,
+  ): void {
+    this.passDemand.request(this.passHostKey(hostId), agentId, page);
   }
 
-  /** The participants demanded on `hostId` that a live task still has, oldest first; unrenewed demands expire. */
-  takePassProofs(hostId: string, live: ReadonlySet<string>): string[] {
-    return this.passDemand.take(this.passHostKey(hostId), live);
+  /** The participant reads demanded on this host, in fair service order. */
+  takePassProofs(hostId: string): PassProofDemand[] {
+    return this.passDemand.take(this.passHostKey(hostId));
+  }
+
+  completePassProof(hostId: string, agentId: string): void {
+    this.passDemand.served(this.passHostKey(hostId), agentId);
   }
 
   /** Mark one host's timeline warming budget spent for this pass. */
@@ -732,8 +740,13 @@ export class Resolution {
     // Any quantum that reads a participant's pass page (an owned-tool proof, a
     // continuation, an effect reconcile, a fence settlement) asks the next host
     // pass to observe that participant before its process snapshot and to warm
-    // its page first, so no reader is starved two passes running (Spec 068 §6).
-    if (inQuantum) this.requestPassProof(hostId, agentId);
+    // its page first. Demand skipped for budget carries forward (Spec 068 §6).
+    if (inQuantum)
+      this.requestPassProof(
+        hostId,
+        agentId,
+        options.requireCoveredObservation ? "owned-tools" : "timeline",
+      );
     const snapshot = this.currentPassSnapshot();
     if (snapshot)
       return snapshot.timelinePage(key, agentId, limit, read, deadlineMs, {

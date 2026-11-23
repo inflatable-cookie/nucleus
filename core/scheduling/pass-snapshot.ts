@@ -259,6 +259,26 @@ export type CoveredObservationSnapshot = {
   archived?: boolean;
 };
 
+/** A matching observation still needs process proof before it can settle tools. */
+export function isTerminalParticipant(
+  observation: Partial<
+    Pick<
+      HostObservation,
+      "active" | "activeTurnId" | "permissions" | "status" | "archived"
+    >
+  > | null | undefined,
+): boolean {
+  return Boolean(
+    observation &&
+    observation.active === false &&
+    observation.activeTurnId === null &&
+    observation.permissions === false &&
+    (observation.archived === true ||
+      observation.status === "closed" ||
+      observation.status === "gone"),
+  );
+}
+
 /** Timeline-page read annotated with snapshot provenance, capture time and freshness proofs. */
 export type PassTimelinePageRead =
   BoundedReadResult<HostTimelinePage | null> & {
@@ -652,6 +672,8 @@ export class PassSnapshot {
     const agentKey = `${hostKey}\0${agentId}`;
     const entries = this.timelinePageReads.get(agentKey) ?? [];
     const compatible = (entry: CachedTimelinePageEntry): boolean => {
+      if (options.cacheOnly && entry.settled?.state === "unknown")
+        return true;
       if (options.provenTerminal && !entry.settled?.provenTerminal)
         return false;
       if (

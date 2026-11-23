@@ -603,6 +603,7 @@ export class Engine {
         [
           "beginPassSnapshot",
           "checkpoints",
+          "completePassProof",
           "delegateNativeQuestions",
           "delegation",
           "deliverDrainNotices",
@@ -614,6 +615,7 @@ export class Engine {
           "endPassSnapshot",
           "hostPassWarmBudgetMs",
           "markPassTimelineBudgetExhausted",
+          "passObservedBeforeProcesses",
           "takePassProofs",
           "observationTargets",
           "observe",

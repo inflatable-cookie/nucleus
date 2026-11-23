@@ -236,12 +236,21 @@ participant inactive before it captured the process table. A participant outside
 the pass inventory (the task-row worker, a released reviewer) had no such
 observation, and the warm cap could skip its tool page, so merges alternated
 between those two waits forever. A quantum that reads a participant's page or
-process snapshot now registers a demand, keyed by host and participant. The next
-host pass observes every demanded participant, and the rest of its task's
-participants, before its process snapshot, then warms their pages first, outside
-the warm cap but inside the pass budget. A demand that no quantum renews expires
-after one pass. The proof converges in two passes, and a snapshot taken before
-any inactivity proof still never clears a lease.
+process snapshot registers a demand keyed by host and participant, including
+threads a cleanup or recovery proof names outside the execution roster. The host
+pass serves direct demands before sibling proofs and ordinary warming. When
+delivery or shell reads are waiting, demands get up to half the warming slots
+and time first. Each waiting group gets an attempt, then the rotation shares the
+remaining capacity. Demand can pass the ordinary candidate cap when neither
+group is waiting. The first demand rotates each pass, budget skips stay queued,
+and served demand expires unless renewed.
+
+An exact observation that proves the bound participant closed, archived or
+gone can satisfy the thread part of an owned-tool proof. The proof still checks
+current custody and requires a later, complete workspace and run-process scan.
+When a page read is attempted and fails, the lane sees the read failure.
+An unknown observation or a scan that predates confirmed inactivity cannot
+clear a lease.
 
 An ordinary review send that hits an unknown proof releases its unsent run and
 waits with a `pass_proof` fact. The next host pass serves its custody participants,

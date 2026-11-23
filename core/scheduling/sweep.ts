@@ -14,7 +14,7 @@ import { TASK_QUANTUM_BOUND_MS, boundQuantum } from "./quantum-bound";
 import { isQuantumDeadlineExceeded } from "./pass-snapshot";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
-import { HostPass } from "./host-pass";
+import { HostPass, type HostPassContext } from "./host-pass";
 import { SweepMaintenance } from "./sweep-maintenance";
 import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
@@ -90,6 +90,7 @@ export type SweepContext = Pick<
     Resolution,
     | "beginPassSnapshot"
     | "checkpoints"
+    | "completePassProof"
     | "delegation"
     | "delegateNativeQuestions"
     | "deliverDrainNotices"
@@ -101,6 +102,7 @@ export type SweepContext = Pick<
     | "endPassSnapshot"
     | "hostPassWarmBudgetMs"
     | "markPassTimelineBudgetExhausted"
+    | "passObservedBeforeProcesses"
     | "takePassProofs"
     | "observationTargets"
     | "observe"
@@ -141,8 +143,10 @@ export class Sweep {
           "store",
         ],
         [
+          "completePassProof",
           "hostPassWarmBudgetMs",
           "markPassTimelineBudgetExhausted",
+          "passObservedBeforeProcesses",
           "takePassProofs",
           "observationTargets",
           "primePassProcesses",
@@ -153,7 +157,9 @@ export class Sweep {
           "sealPassHost",
           "storePassTimelinePage",
         ],
-      ),
+      ) satisfies {
+        readonly resolution: Required<HostPassContext["resolution"]>;
+      },
     ));
   }
   /** The periodic store and engine chores, on their own cadence. */

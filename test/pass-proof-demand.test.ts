@@ -13,6 +13,7 @@ import {
   HOST_PASS_WARM_CANDIDATE_CAP,
   runInTaskQuantumScope,
 } from "../core/scheduling/pass-snapshot";
+import { PASS_DEMAND_BATCH_SIZE, PassDemand } from "../core/scheduling/pass-demand";
 import { fakeAdapter, submission } from "./support/fakes";
 import { runSchema, type Task } from "../shared/contracts";
 import { taskControlOperation } from "../core/verbs/task-control-key";
@@ -137,8 +138,12 @@ function fixture(
   options: {
     processes?: () => HostProcessFact[];
     workspaces: Map<string, string>;
+    archived?: ReadonlySet<string>;
+    closed?: ReadonlySet<string>;
     recovery?: boolean;
     beforeObserve?: (agentId: string) => void;
+    beforePage?: (agentId: string) => void;
+    shellReads?: string[];
   },
 ) {
   const store = new Store(":memory:");
@@ -158,17 +163,28 @@ function fixture(
       id,
       workspaceId: options.workspaces.get(id) ?? "",
       title: id,
-      archived: false,
+      archived: options.archived?.has(id) ?? false,
       deleted: false,
     }),
     observe: async (id: string) => {
       options.beforeObserve?.(id);
-      return idle(id, options.workspaces.get(id) ?? "");
+      const observation = idle(id, options.workspaces.get(id) ?? "");
+      return options.archived?.has(id)
+        ? { ...observation, status: "closed", archived: true }
+        : options.closed?.has(id)
+          ? { ...observation, status: "closed" }
+          : observation;
     },
     agentTimelinePage: async (id: string) => {
       pageReads.push(id);
+      options.beforePage?.(id);
+      if (options.archived?.has(id)) throw Error("thread is no longer observed");
       return boundedPage(id);
     },
+    agentTimeline: options.shellReads && (async (id: string) => {
+      options.shellReads?.push(id);
+      return [];
+    }),
     hostProcessListing: async () => options.processes?.() ?? [],
     noLiveWorkspaceProcesses: async () => null,
     mergeGate: async () => ({ head: HEAD, base: "main", wait: "" }),
@@ -186,6 +202,24 @@ function fixture(
     store.close();
   });
   return { store, engine, pageReads, inventoryIds, merged };
+}
+
+function seedFinishedRecovery(
+  store: Store,
+  seeded: ReturnType<typeof seedMergingTask>,
+) {
+  const prior = store.runs(seeded.task.id)[0]!;
+  const id = `${prior.id}-recovery`;
+  const run = runSchema.parse({
+    ...prior,
+    id,
+    role: "recovery",
+    agentId: `thread:delegated-task:ns-run-${id}`,
+    temporaryDirectory: "/tmp/synthetic-old-recovery-scratch",
+  });
+  store.putRun(run);
+  assert.ok(run.agentId);
+  return { run, agentId: run.agentId };
 }
 
 function participantWorkspaces(
@@ -296,7 +330,9 @@ test("any quantum read of a pass timeline page registers demand, not only the ow
   const read = await runInTaskQuantumScope(30_000, () =>
     resolution.readPassTimelinePage("agent-continuation", 20, HOST));
   assert.equal(read.state, "unknown", "outside a pass the quantum gets no live read");
-  assert.deepEqual(resolution.takePassProofs(HOST, new Set(["agent-continuation"])), ["agent-continuation"]);
+  assert.deepEqual(resolution.takePassProofs(HOST), [
+    { agentId: "agent-continuation", page: "timeline" },
+  ]);
 });
 
 function seedOwnedToolHold(store: Store, workspaces: Map<string, string>) {
@@ -553,3 +589,158 @@ test("a coordinator's owned-tool proof wait escalates after five minutes of upti
   assert.equal((await engine.auditPass(true)).fault, null);
   assert.equal(reads, 2, "the settled report cannot retry again");
 });
+
+test("an old recovery run's requested page is warmed ahead of a crowded execution roster", async (t) => {
+  const workspaces = new Map<string, string>();
+  const f = fixture(t, { workspaces });
+  const seeded = Array.from({ length: HOST_PASS_WARM_CANDIDATE_CAP + 3 }, (_, i) =>
+    seedMergingTask(f.store, `demand-roster-${i}`),
+  );
+  const target = seeded.at(-1)!;
+  const { run, agentId } = seedFinishedRecovery(f.store, target);
+  for (const [id, ws] of participantWorkspaces(...seeded))
+    workspaces.set(id, ws);
+  workspaces.set(agentId, target.workspaceId);
+
+  const results: string[] = [];
+  const quantum = f.engine.taskQuantum.bind(f.engine);
+  f.engine.taskQuantum = async (taskId) => {
+    if (taskId === target.task.id) {
+      const proof = await f.engine.ownedToolHold(agentId, run.id, taskId, {
+        requireCompleteEvidence: true,
+      });
+      results.push(proof.kind);
+      return;
+    }
+    return quantum(taskId);
+  };
+  await f.engine.auditPass(true);
+  assert.equal(results.at(-1), "deferred");
+  assert.ok(!f.pageReads.includes(agentId));
+  assert.ok(f.pageReads.length >= HOST_PASS_WARM_CANDIDATE_CAP);
+  f.pageReads.length = 0;
+  await f.engine.auditPass(true);
+  assert.ok(f.pageReads.includes(agentId));
+  assert.equal(results.at(-1), "clear");
+});
+
+test("a stored archived recovery participant settles without a timeline only after its scratch is clear", async (t) => {
+  const workspaces = new Map<string, string>();
+  const archived = new Set<string>();
+  let liveChild = true;
+  const f = fixture(t, {
+    workspaces,
+    archived,
+    processes: () => liveChild ? [{
+      pid: 4242,
+      ppid: 1,
+      pgid: 4242,
+      uid: 501,
+      state: "S",
+      startIdentity: "start-4242",
+      command: "sleep 600",
+      cwd: "/tmp/synthetic-old-recovery-scratch",
+    }] : [],
+  });
+  const target = seedMergingTask(f.store, "archived-old-run");
+  const { run, agentId } = seedFinishedRecovery(f.store, target);
+  for (const [id, ws] of participantWorkspaces(target)) workspaces.set(id, ws);
+  workspaces.set(agentId, target.workspaceId);
+  archived.add(agentId);
+
+  const results: Array<Awaited<ReturnType<Engine["ownedToolHold"]>>> = [];
+  f.engine.taskQuantum = async (taskId) => {
+    if (taskId === target.task.id)
+      results.push(await f.engine.ownedToolHold(agentId, run.id, taskId, {
+        requireCompleteEvidence: true,
+      }));
+  };
+  await f.engine.auditPass(true);
+  assert.equal(results.at(-1)?.kind, "deferred");
+  await f.engine.auditPass(true);
+  assert.match(JSON.stringify(results.at(-1)), /process 4242 remains/);
+  liveChild = false;
+  await f.engine.auditPass(true);
+  assert.deepEqual(results.at(-1), { kind: "clear" });
+  assert.ok(!f.pageReads.includes(agentId), "archived thread timeline was never read");
+});
+
+test("continuously renewed pass demand advances even when each pass can serve only its first entry", () => {
+  const demand = new PassDemand();
+  const agents = Array.from({ length: PASS_DEMAND_BATCH_SIZE + 2 }, (_, index) =>
+    `participant-${index}`,
+  );
+  const first = [];
+  for (const _ of agents) {
+    for (const id of agents) demand.request(HOST, id, "owned-tools");
+    first.push(demand.take(HOST)[0]?.agentId);
+  }
+  assert.deepEqual(first, agents);
+  const pending = demand.take(HOST);
+  assert.equal(pending.length, PASS_DEMAND_BATCH_SIZE);
+  for (const { agentId } of pending) demand.served(HOST, agentId);
+  const remaining = demand.take(HOST);
+  assert.equal(remaining.length, 2, "unserved demand survives without renewal");
+  for (const { agentId } of remaining) demand.served(HOST, agentId);
+  assert.deepEqual(demand.take(HOST), []);
+});
+
+test("a served demand disappears from the sweep when no task renews it", async (t) => {
+  const f = fixture(t, { workspaces: new Map() });
+  seedMergingTask(f.store, "one-shot-demand");
+  f.engine.taskQuantum = async () => {};
+  const agentId = "requested-once";
+  f.engine.resolution.requestPassProof(HOST, agentId, "timeline");
+
+  assert.equal((await f.engine.auditPass(true)).fault, null);
+  assert.ok(f.pageReads.includes(agentId));
+  assert.equal((await f.engine.auditPass(true)).fault, null);
+  assert.equal(f.pageReads.filter((id) => id === agentId).length, 1);
+  assert.deepEqual(f.engine.resolution.takePassProofs(HOST), []);
+});
+
+for (const duration of ["fast", "slow"]) {
+  test(`a sustained backlog of ${duration} demands leaves room for delivery and shell reads`, async (t) => {
+    const workspaces = new Map<string, string>();
+    const closed = new Set<string>();
+    const shellReads: string[] = [];
+    const warmBudgetMs = 10_000;
+    let nowMs = Date.now();
+    t.mock.method(Date, "now", () => nowMs);
+    const agents = new Set(
+      Array.from({ length: HOST_PASS_WARM_CANDIDATE_CAP + 4 }, (_, i) =>
+        `requested-${i}`,
+      ),
+    );
+    const f = fixture(t, {
+      workspaces,
+      closed,
+      shellReads,
+      beforePage(id) {
+        if (duration === "slow" && agents.has(id)) nowMs += warmBudgetMs / 2;
+      },
+    });
+    f.engine.resolution.hostPassWarmBudgetMs = warmBudgetMs;
+    f.engine.taskQuantum = async () => {};
+    const delivery = seedMergingTask(f.store, "protected-delivery");
+    const shell = seedMergingTask(f.store, "protected-shell");
+    for (const [id, workspace] of participantWorkspaces(delivery, shell))
+      workspaces.set(id, workspace);
+    closed.add(delivery.reviewerId);
+    const run = f.store.runs(delivery.task.id)[0];
+    assert.ok(run);
+    f.store.putRun({ ...run, status: "uncertain" });
+    f.store.update(shell.task.id, { phase: "working", completion: null });
+
+    for (let pass = 0; pass < 3; pass++) {
+      f.pageReads.length = 0;
+      shellReads.length = 0;
+      for (const agentId of agents)
+        f.engine.resolution.requestPassProof(HOST, agentId, "timeline");
+      assert.equal((await f.engine.auditPass(true)).fault, null);
+      assert.ok(agents.has(f.pageReads[0] ?? ""), "demand gets first use of its reservation");
+      assert.ok(f.pageReads.includes(delivery.reviewerId), "delivery had a warmed page");
+      assert.ok(shellReads.includes(shell.workerId), "shell had a warmed timeline");
+    }
+  });
+}
