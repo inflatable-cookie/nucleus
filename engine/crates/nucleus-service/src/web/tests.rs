@@ -1,5 +1,5 @@
 use axum::{
-    body::{Body, to_bytes},
+    body::{Body, BodyDataStream, to_bytes},
     http::Request,
 };
 use futures_util::StreamExt;
@@ -45,26 +45,9 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
     let review = json!({"review":{"head": service.project.start, "decision": "approve", "summary": "Tested"}});
     let worker_path = format!("/v1/runs/worker/{worker_id}/report");
     let reviewer_path = format!("/v1/runs/reviewer/{reviewer_id}/report");
-    let stream = api
-        .clone()
-        .oneshot(
-            Request::get("/v1/events")
-                .header(
-                    "authorization",
-                    format!("Bearer {}", hex::encode(BOARD_KEY)),
-                )
-                .body(Body::empty())
-                .expect("event request"),
-        )
-        .await
-        .expect("event response");
+    let stream = get(&api, "/v1/events").await;
     let mut events = stream.into_body().into_data_stream();
-    let first = events
-        .next()
-        .await
-        .expect("stream reset")
-        .expect("first event");
-    assert!(String::from_utf8_lossy(&first).contains("event: refresh"));
+    assert_event(&mut events, &["event: refresh"]).await;
 
     assert_eq!(
         post_json(&api, &worker_path, &BOARD_KEY, &work).await,
@@ -92,14 +75,11 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
         post_json(&api, &worker_path, worker_key.as_bytes(), &work).await,
         StatusCode::NO_CONTENT
     );
-    let changed = tokio::time::timeout(std::time::Duration::from_secs(2), events.next())
-        .await
-        .expect("report wakes subscribers")
-        .expect("version event")
-        .expect("event body");
-    let changed = String::from_utf8_lossy(&changed);
-    assert!(changed.contains("event: invalidate"));
-    assert!(changed.contains(r#"{"taskId":"worker","version":2}"#));
+    assert_event(
+        &mut events,
+        &["event: invalidate", r#"{"taskId":"worker","version":2}"#],
+    )
+    .await;
     assert_eq!(
         post_json(&api, &worker_path, worker_key.as_bytes(), &work).await,
         StatusCode::NO_CONTENT
@@ -122,9 +102,32 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
         post_json(&api, &worker_path, worker_key.as_bytes(), &work).await,
         StatusCode::UNAUTHORIZED
     );
-    let response = api
+    let response = get(&api, "/v1/tasks/reviewer").await;
+    let body = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("details");
+    let value: Value = serde_json::from_slice(&body).expect("details JSON");
+    assert_eq!(value["run"]["reported"], true);
+    assert!(value["run"].get("credential").is_none());
+    assert!(value["run"].get("input").is_none());
+}
+
+async fn assert_event(events: &mut BodyDataStream, expected: &[&str]) {
+    let chunk = tokio::time::timeout(std::time::Duration::from_secs(2), events.next())
+        .await
+        .expect("event arrived")
+        .expect("stream remains open")
+        .expect("event body");
+    let message = std::str::from_utf8(&chunk).expect("SSE text");
+    for part in expected {
+        assert!(message.contains(part), "expected {part} in {message}");
+    }
+}
+
+async fn get(api: &Router, path: &str) -> Response {
+    api.clone()
         .oneshot(
-            Request::get("/v1/tasks/reviewer")
+            Request::get(path)
                 .header(
                     "authorization",
                     format!("Bearer {}", hex::encode(BOARD_KEY)),
@@ -133,14 +136,7 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
                 .expect("request"),
         )
         .await
-        .expect("response");
-    let body = to_bytes(response.into_body(), 64 * 1024)
-        .await
-        .expect("details");
-    let value: Value = serde_json::from_slice(&body).expect("details JSON");
-    assert_eq!(value["run"]["reported"], true);
-    assert!(value["run"].get("credential").is_none());
-    assert!(value["run"].get("input").is_none());
+        .expect("response")
 }
 
 async fn post_json(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> StatusCode {
