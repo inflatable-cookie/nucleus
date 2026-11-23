@@ -619,6 +619,45 @@ test("merge.now enforces both hard gates even with accept, warns on turn_held/ch
   assert.equal(applied.resolution.mergeHead, HEAD);
 });
 
+test("a coordinator cannot accept creation_in_flight: no second thread beside a create the host may still answer (Spec 068)", async (t) => {
+  const { store, insertTask, attachCoordinator, callExplicit } = await fixture(t);
+  const task = insertTask("In-flight create", 44);
+  store.update(task.id, {
+    phase: "working",
+    agentIntent: true,
+    agentId: null,
+    runId: "in-flight-worker-run",
+    reason: "Uncertain worker creation in-flight-worker-run: its host may still answer the create command",
+    resolution: {
+      ...store.task(task.id).resolution,
+      stop: {
+        reason: "lifecycle",
+        detail:
+          "Uncertain worker creation in-flight-worker-run: its host may still answer the create command",
+        since: new Date().toISOString(),
+        suggestedVerbs: [],
+        fact: { code: "creation_in_flight", subject: "in-flight-worker-run" },
+      },
+    },
+  });
+  const coordinator = attachCoordinator(task.id);
+  await assert.rejects(
+    () =>
+      callExplicit(
+        task.id,
+        {
+          action: "run.start",
+          role: "worker",
+          agent: "fresh",
+          replacing: "in-flight-worker-run",
+          accept: ["duplicate_thread", "creation_in_flight"],
+        },
+        coordinator,
+      ),
+    /Only the live responsible planner or operator board can accept hold_owner, route_policy, two_writers or creation_in_flight/,
+  );
+});
+
 test("merge.now and closeout.now read forge ports on the task's host, not the unbound fallback", async (t) => {
   const calls: string[] = [];
   let mergedState = false;

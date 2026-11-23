@@ -153,6 +153,15 @@ export function taskActivity({ task, runs, events, stop, wait, budget, read, now
   if (recovery && ["pending", "running", "nudged", "uncertain"].includes(recovery.status))
     return answer("recovering", recovery.status === "uncertain" ? "Checking uncertain coordinator creation" : "Recovering the task",
       incident?.createdAt ?? stop?.since, { role: "coordinator", attempt: resolution.recoveryAttempts });
+  // Spec 068 §3: the host may still answer a launch's create command. That is
+  // Nucleus waiting on a named fact, not a repair: no thread may be started for
+  // the run until the answer lands or its bound passes. The initial worker has no
+  // run row, so its subject is the task's own run id.
+  if (stop?.fact?.code === "creation_in_flight") {
+    const subject = runs.find(run => run.id === stop.fact?.subject);
+    return answer("nucleus", "Waiting for the host to answer a launch", stop.since,
+      { role: subject ? runRoles[subject.role] : stop.fact.subject === task.runId ? "worker" : role });
+  }
   if (live?.status === "uncertain" || isUncertainCreationStop(stop))
     return answer("recovering", `Checking uncertain ${role ?? (stop?.fact?.code === "worker_lookup" ? "worker" : "participant")} creation`,
       stop?.since ?? live?.createdAt, { attempt: incident?.attempt ?? 1 });

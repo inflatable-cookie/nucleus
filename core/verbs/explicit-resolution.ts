@@ -69,6 +69,9 @@ const plannerWarnings = new Set<ResolutionWarningId>([
   "hold_owner",
   "route_policy",
   "two_writers",
+  // Spec 068 §3: a coordinator started before the wait could otherwise accept
+  // a second thread beside a create the host may still answer.
+  "creation_in_flight",
 ]);
 const missing = (kind: string, id: string): never => {
   throw Error(`No current ${kind} ${id} belongs to this task`);
@@ -241,7 +244,7 @@ export async function resolveExplicitly(
       input.accept.some((id) => plannerWarnings.has(id))
     )
       throw Error(
-        "Only the live responsible planner or operator board can accept hold_owner, route_policy or two_writers",
+        "Only the live responsible planner or operator board can accept hold_owner, route_policy, two_writers or creation_in_flight",
       );
     if (
       source !== "operator_board" &&

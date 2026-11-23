@@ -202,6 +202,32 @@ test("a late reply's wait is bounded, after which the read decides", async (t) =
   assert.deepEqual(await host.findRunAgents(labels), [], "the read decides");
 });
 
+test("a resend after the late-reply bound, then the held original answering, still yields one thread", async (t) => {
+  const { server, host, spec } = await fixture(t);
+  server.controls.holdDelegatedLaunch = true;
+  await assert.rejects(host.createAgent(spec(COMMAND)));
+  // Past the bound the read decides: the child is absent, so the create is resent
+  // under its own command id while T3 still holds the original.
+  const realNow = Date.now;
+  Date.now = () => realNow() + LATE_REPLY_WAIT_MS + 1;
+  try {
+    assert.equal(host.intents.lateReplyPossible(COMMAND), false);
+    assert.deepEqual(await host.findRunAgents(labels), []);
+    const created = await host.createAgent(spec(COMMAND));
+    assert.equal(created.id, childThreadId(COMMAND));
+  } finally {
+    Date.now = realNow;
+  }
+  // Now T3 processes the original: the same command id names the same child.
+  server.releaseHeldLaunches();
+  await until(() => requests(server).length === 2);
+  assert.equal(oneChild(server), 1, "one thread, whichever create T3 applied last");
+  assert.deepEqual(
+    (await host.findRunAgents(labels)).map((agent) => agent.id),
+    [childThreadId(COMMAND)],
+  );
+});
+
 test("a create T3 never received is resent under its own command id once no reply can land", async (t) => {
   const { server, host, spec } = await fixture(t);
   await lostCreate(server, host, spec);

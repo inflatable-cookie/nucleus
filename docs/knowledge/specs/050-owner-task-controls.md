@@ -52,7 +52,8 @@ result, warnings and what the scheduler does next.
 `run.start` takes `role` (`worker`, `reviewer` or `coordinator`), optional
 `agent` (`retained` or `fresh`), `head`, `instruction` and `replacing` (which
 releases that run first) and leaves the task phase unchanged. Its warnings are
-`duplicate_thread`, `two_writers`, `head_mismatch`, `budget`, `route_policy` and `discard_reported_verdict`.
+`duplicate_thread`, `two_writers`, `head_mismatch`, `budget`, `route_policy`,
+`discard_reported_verdict` and `creation_in_flight`.
 `run.release` takes `run` and optional `archive`. `record.clear` takes `kind`
 and `id`. Use the stop's `since` for a stop or stop-backed wait, the retained
 prerequisite wait ID for a retained wait, `dispatch` or `merge` for a hold,
@@ -81,7 +82,8 @@ GitHub read in the same call shows the PR unmerged.
 
 The board, the task's live responsible project planner and its coordinator
 may use the explicit commands, including `merge.now` and `closeout.now`. Only
-the board or planner may accept `hold_owner`, `route_policy` or `two_writers`,
+the board or planner may accept `hold_owner`, `route_policy`, `two_writers` or
+`creation_in_flight`,
 or resolve a critical task; only the operator board may accept
 `unverified_merge`. Explicit resolution updates only the named record and
 preserves its previous state in the audit history.
