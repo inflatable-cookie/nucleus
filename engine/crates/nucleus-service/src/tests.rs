@@ -17,7 +17,8 @@ use nucleus_core::{
     PullRequest, Run, Workspace,
 };
 use nucleus_hosts::{
-    Binding, ReplayAuthorization, RoleProfile, RunDispatch, SendOutcome, StopProgress, TaskHost,
+    Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, SendOutcome,
+    StopProgress, TaskHost,
 };
 use nucleus_store::{EngineSettings, PinnedVolume};
 use serde_json::{Value, json};
@@ -241,16 +242,12 @@ impl TaskHost for Due {
         unreachable!("fixture probes the decision before the send marker")
     }
 
-    async fn unarchive(&self, _: &ReplayAuthorization) -> Result<(), HostError> {
+    async fn write_control(&self, _: ControlDispatch) -> Result<(), HostError> {
         unreachable!("fixture probes the decision before any native write")
     }
 
     async fn stop(&self, _: &Run, _: &Binding, _: u64, _: bool) -> Result<StopProgress, HostError> {
         Ok(StopProgress::ReplayDue)
-    }
-
-    async fn stop_rejected(&self, _: &Run, _: bool) -> Result<StopProgress, HostError> {
-        unreachable!("fixture probes the decision before the send marker")
     }
 }
 

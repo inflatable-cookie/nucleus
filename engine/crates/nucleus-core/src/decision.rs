@@ -206,6 +206,10 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
 fn signal(task: &Task, observation: &Observation) -> Signal {
     if let Some(run) = task.run().filter(|run| run.revoked()) {
         return match observation.current(&run.launch.instance) {
+            Some(RunState::Rejected) if run.rejected_awaiting_archive() => {
+                Signal::Stopped(task.phase)
+            }
+            _ if run.rejected_awaiting_archive() => Signal::Wait(WaitReason::Stopping),
             Some(state) if state.quiescent() => Signal::Stopped(task.phase),
             _ => Signal::Wait(WaitReason::Stopping),
         };

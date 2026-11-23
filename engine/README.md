@@ -6,12 +6,10 @@ by default, uses its own settings and database, and admits only the explicitly
 configured fixture repository. The planner checks the run by hand. The board
 switch starts in milestone 2.
 
-Dispatch checks the frozen destination against the fixture's Git origin and
-the current T3 project root. A worker or reviewer needs its owned checkout.
-A planner notice needs an exact thread in the fixture project. Review sends
-check the open PR and clean checkout after native authorization.
 A missing review checkout is recovered at the verified PR head before
 reserving a run. If recovery fails, the task waits for another check.
+An unsent create only has a provisional thread in its run slot. A possible
+send or a positively observed completed turn binds the retained thread.
 
 ## Crates and review slices
 
@@ -149,6 +147,13 @@ apply to manual commands.
 T3 is the engine's only supported host. The host interface describes the reads
 and effects the task engine needs.
 
+Every T3 mutation goes through the destination gate after the exact native
+read. The gate checks the frozen destination against the fixture's Git origin
+and current T3 project root. This includes interrupt, queue cancellation,
+archive, unarchive and unsettle. Role writes need their owned checkout.
+Planner writes need an exact thread in the fixture project. Review sends
+also check the open PR and clean checkout after native authorization.
+
 - Get a ticket with `POST /api/auth/websocket-ticket/rpc`, then open `/ws`
   with `orchestrationProtocol=2`. Use `server.getConfig` to check the configured
   provider and model. Pre-register the single fixture project for milestone 1.
@@ -238,6 +243,9 @@ without spending an attempt. A fresh pass checks process custody after launch.
 A definite GitHub head mismatch retires approval and keeps the bound PR in
 Merging until a read shows a new head. A refusal followed by incomplete
 readback waits for fresh evidence and honours any forge retry deadline.
+A confirmed rejection of a superseded review stays in the revoked run slot
+until T3 confirms archival or absence. Later passes only reconcile that
+disposition. They never replay the rejected launch.
 
 `next` and commands call the same preflight. A command that needs a fresh forge
 fact fetches it at execution. An unavailable check is shown as pending. The

@@ -80,11 +80,11 @@ impl Task {
                 }
             }
             Action::Relaunch(_) => {
-                self.run = None;
+                self.settle_run(observation);
                 self.attempts += 1;
             }
             Action::Ask(question) => {
-                self.run = None;
+                self.settle_run(observation);
                 if let Some(pr) = observation.pr() {
                     self.observe_pr(pr);
                 }
@@ -107,7 +107,7 @@ impl Task {
     }
 
     fn advance(&mut self, phase: Phase, observation: &Observation) {
-        let run = self.run.take();
+        let run = self.settle_run(observation);
         if run.as_ref().is_some_and(|run| run.revoked) {
             return;
         }
@@ -134,6 +134,14 @@ impl Task {
             self.attempts = 0;
             self.phase = phase;
         }
+    }
+
+    fn settle_run(&mut self, observation: &Observation) -> Option<Run> {
+        let run = self.run.take()?;
+        if observation.current(&run.launch.instance) == Some(RunState::Ended) {
+            self.threads.set(run.launch.role, run.launch.thread.clone());
+        }
+        Some(run)
     }
 
     /// Finish closeout with fresh evidence after any requested workspace removal.
@@ -209,7 +217,6 @@ impl Task {
                 .into(),
         );
         self.threads.launch_sequence = sequence;
-        self.threads.set(role, inputs.thread.clone());
         self.run = Some(Run {
             launch: PreparedLaunch {
                 instance,
@@ -224,6 +231,7 @@ impl Task {
             report: None,
             revoked: false,
             last_send_at_ms: None,
+            rejected_awaiting_archive: false,
         });
         Ok(bearer)
     }
@@ -258,10 +266,30 @@ impl Task {
             .as_mut()
             .filter(|run| run.launch.instance == instance)
             .ok_or(CommandError::LaunchNoLongerApplies)?;
-        if run.last_send_at_ms.is_some_and(|prior| prior >= now_ms) {
+        if run.rejected_awaiting_archive || run.last_send_at_ms.is_some_and(|prior| prior >= now_ms)
+        {
             return Err(CommandError::LaunchNoLongerApplies);
         }
         run.last_send_at_ms = Some(now_ms);
+        self.threads.set(run.launch.role, run.launch.thread.clone());
+        Ok(())
+    }
+
+    /// Keep a confirmed rejection while the revoked review's archive is read back.
+    /// # Errors
+    /// Returns an error if this was not a possibly sent, revoked review.
+    pub fn record_rejected_stop(&mut self, instance: &str) -> Result<(), CommandError> {
+        let run = self
+            .run
+            .as_mut()
+            .filter(|run| {
+                run.launch.instance == instance
+                    && run.revoked
+                    && run.launch.role == Role::Reviewer
+                    && run.last_send_at_ms.is_some()
+            })
+            .ok_or(CommandError::LaunchNoLongerApplies)?;
+        run.rejected_awaiting_archive = true;
         Ok(())
     }
 

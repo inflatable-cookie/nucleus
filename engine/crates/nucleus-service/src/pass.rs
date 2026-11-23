@@ -10,7 +10,8 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    Binding, HostError, LaunchRequest, NoticeTarget, SendOutcome, StopProgress, TaskHost,
+    Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, SendOutcome, StopProgress,
+    TaskHost,
 };
 use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
@@ -21,6 +22,7 @@ pub(super) enum DispatchTarget<'a> {
     Run {
         frozen: &'a Binding,
         checkout: &'a Checkout<'a>,
+        launch: bool,
     },
     Planner(&'a NoticeTarget),
 }
@@ -287,18 +289,32 @@ impl Service {
         let target = DispatchTarget::Run {
             frozen: authorization.binding(),
             checkout,
+            launch: true,
         };
         let Some(archive) = self.dispatch_gate(task, target).await? else {
             return Ok(None);
         };
-        if authorization.needs_unarchive() {
-            host.unarchive(&authorization).await?;
+        if let Some(unarchive) = authorization.unarchive() {
+            host.write_control(unarchive).await?;
             return Ok(None);
         }
         let mut sent = task.clone();
         let dispatch = authorization.record(&mut sent)?;
-        let sent = self.save(row, sent, &event("host_send")).await?;
+        let mut sent = self.save(row, sent, &event("host_send")).await?;
         let result = host.send(dispatch).await?;
+        if archive && result == SendOutcome::Rejected {
+            let mut updated = sent.task.clone();
+            let instance = &sent
+                .task
+                .run()
+                .ok_or(ServiceError::Input)?
+                .launch()
+                .instance;
+            updated.record_rejected_stop(instance)?;
+            sent = self
+                .save(&sent, updated, &event("review_rejected_awaiting_archive"))
+                .await?;
+        }
         Ok(Some((sent, result, archive)))
     }
 
@@ -309,7 +325,9 @@ impl Service {
     ) -> Result<Option<bool>, ServiceError> {
         self.project.scope(task.identity())?;
         match &target {
-            DispatchTarget::Run { frozen, checkout } if **frozen != self.binding(checkout)? => {
+            DispatchTarget::Run {
+                frozen, checkout, ..
+            } if **frozen != self.binding(checkout)? => {
                 return Err(HostError::Binding.into());
             }
             DispatchTarget::Planner(target) if target.project_id != self.project.host_project => {
@@ -319,7 +337,12 @@ impl Service {
         }
         self.check_project().await?;
         match target {
-            DispatchTarget::Run { checkout, .. } => {
+            DispatchTarget::Run {
+                checkout, launch, ..
+            } => {
+                if !launch {
+                    return Ok((checkout.observe()? != Workspace::Absent).then_some(false));
+                }
                 let run = task.run().ok_or(ServiceError::Input)?;
                 let Some(head) = run.launch().review_head.as_ref() else {
                     return Ok((checkout.observe()? != Workspace::Absent).then_some(false));
@@ -362,15 +385,14 @@ impl Service {
         let archive = superseded(head, &observation.forge);
         let stopping = Action::Wait(WaitReason::Stopping);
         let binding = self.binding(checkout)?;
-        let progress = {
-            let _fence = self.effect(row).await?;
-            host.stop(run, &binding, now_ms(), archive).await?
-        };
+        let progress = host.stop(run, &binding, now_ms(), archive).await?;
         match progress {
             StopProgress::Waiting => Ok(stopping),
+            StopProgress::Write(dispatch) => self.write_stop(row, checkout, host, dispatch).await,
             StopProgress::Settled(host) => {
                 if head.is_some()
                     && run.last_send_at_ms().is_some()
+                    && !run.rejected_awaiting_archive()
                     && observation.forge == Observed::Unknown
                 {
                     return Ok(stopping);
@@ -393,21 +415,44 @@ impl Service {
                 let Some((sent, outcome, archive)) = self.send(row, checkout, host).await? else {
                     return Ok(stopping);
                 };
-                let _fence = self.effect(&sent).await?;
                 let run = sent.task.run().ok_or(ServiceError::Input)?;
-                let observed = if outcome == SendOutcome::Rejected {
-                    host.stop_rejected(run, archive).await?
+                let observed = if outcome == SendOutcome::Rejected && !archive {
+                    StopProgress::Settled(current(&sent.task, RunState::Rejected)?)
                 } else {
                     host.stop(run, &binding, now_ms(), archive).await?
                 };
-                if let StopProgress::Settled(host) = observed {
-                    observation.host = Observed::Known(host);
-                    let action = decide(&sent.task, &observation);
-                    return self.apply(&sent, &observation, action).await;
+                match observed {
+                    StopProgress::Write(dispatch) => {
+                        self.write_stop(&sent, checkout, host, dispatch).await
+                    }
+                    StopProgress::Settled(host) => {
+                        observation.host = Observed::Known(host);
+                        let action = decide(&sent.task, &observation);
+                        self.apply(&sent, &observation, action).await
+                    }
+                    _ => Ok(stopping),
                 }
-                Ok(stopping)
             }
         }
+    }
+
+    async fn write_stop(
+        &self,
+        row: &TaskRow,
+        checkout: &Checkout<'_>,
+        host: &impl TaskHost,
+        dispatch: ControlDispatch,
+    ) -> Result<Action, ServiceError> {
+        let _fence = self.effect(row).await?;
+        let target = DispatchTarget::Run {
+            frozen: dispatch.binding(),
+            checkout,
+            launch: false,
+        };
+        if self.dispatch_gate(&row.task, target).await?.is_some() {
+            host.write_control(dispatch).await?;
+        }
+        Ok(Action::Wait(WaitReason::Stopping))
     }
 
     async fn merge(
@@ -685,21 +730,7 @@ mod tests {
             checkout.allocate(&head).expect("allocate"),
             Workspace::Clean(head.clone())
         );
-        let (task, _, mut observation) = reservation("reviewer", Entry::ReviewEntry, &head);
-        let launch = task.run().expect("run").launch();
-        let inputs = RunRequest {
-            binding: service.binding(&checkout).expect("binding"),
-            dispatch: Dispatch::Create {
-                title: "Review fixture".into(),
-                profile: service.project.reviewer.clone(),
-            },
-            text: "Review the fixture".into(),
-        }
-        .inputs(&launch.instance, launch.thread.clone(), 1)
-        .expect("wire");
-        let mut restored = serde_json::to_value(&task).expect("stored reservation");
-        restored["run"]["launch"]["input"] = json!(inputs.input);
-        let task: Task = serde_json::from_value(restored).expect("typed reservation");
+        let (task, mut observation) = frozen_review(&service, &checkout, &head);
         let id = task.run().expect("run").launch().instance.clone();
         observation.host = Observed::Known(Host::Current {
             instance: id,
@@ -749,6 +780,120 @@ mod tests {
         assert_eq!(service.task("reviewer").await.expect("no send marker"), row);
         native_server.abort();
         forge_server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_requires_the_current_fixture_project_root() {
+        for retargeted in [false, true] {
+            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let head = service.project.start.clone();
+            let worktrees = service.worktrees().expect("worktrees");
+            let checkout = worktrees
+                .checkout(
+                    &service.project.checkout,
+                    &service.project.repository,
+                    "reviewer",
+                )
+                .expect("checkout");
+            checkout.allocate(&head).expect("checkout at head");
+            let (mut task, observation) = frozen_review(&service, &checkout, &head);
+            let launch = task.run().expect("run").launch();
+            let instance = launch.instance.clone();
+            let thread = launch.thread.clone();
+            task.record_send(&instance, 1).expect("possible send");
+            task.command(
+                Command::Cancel,
+                &Authority::Operator {
+                    actor: "fixture".into(),
+                },
+                &observation,
+            )
+            .expect("revoke");
+            let root = if retargeted {
+                "/synthetic/unrelated".into()
+            } else {
+                service.project.checkout.clone()
+            };
+            let owned = checkout.path().to_owned();
+            let writes = Arc::new(AtomicUsize::new(0));
+            let attempted = Arc::clone(&writes);
+            let (host, server) = native_fixture(move |req| {
+                let snapshot = match req["tag"].as_str() {
+                    Some("orchestration.subscribeThread") => json!({"projection":{
+                        "thread":{"id":thread,"projectId":"local-fixture","worktreePath":owned,"branch":"ns-reviewer"},
+                        "runs":[{"id":"native-review","status":"running","userMessageId":format!("{instance}-message")}],
+                        "messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[]
+                    }}),
+                    Some("orchestration.subscribeShell") => json!({"snapshot":{
+                        "projects":[{"id":"local-fixture","workspaceRoot":root}]
+                    }}),
+                    Some("orchestration.dispatchCommand") => {
+                        assert_eq!(req["payload"]["type"], "run.interrupt");
+                        attempted.fetch_add(1, Ordering::Relaxed);
+                        return json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{"sequence":12}}});
+                    }
+                    _ => panic!("unexpected native method"),
+                };
+                let mut snapshot = snapshot;
+                snapshot["kind"] = json!("snapshot");
+                snapshot["snapshotSequence"] = json!(11);
+                json!({"_tag":"Chunk","requestId":req["id"],"values":[snapshot,{"kind":"synchronized"}]})
+            }).await;
+            service.host = host;
+            service
+                .state
+                .lock()
+                .await
+                .store
+                .create(&task, &event("fixture"))
+                .expect("seed");
+            let row = service.task("reviewer").await.expect("revoked row");
+            let result = service
+                .stop_run(&row, &checkout, observation, &service.host.fixture_pass())
+                .await;
+            if retargeted {
+                assert!(matches!(
+                    result,
+                    Err(ServiceError::Host(HostError::Binding))
+                ));
+            } else {
+                assert_eq!(
+                    result.expect("authorized interrupt"),
+                    Action::Wait(WaitReason::Stopping)
+                );
+            }
+            assert_eq!(writes.load(Ordering::Relaxed), usize::from(!retargeted));
+            assert_eq!(
+                service.task("reviewer").await.expect("custody retained"),
+                row
+            );
+            server.abort();
+        }
+    }
+
+    fn frozen_review(
+        service: &Service,
+        checkout: &Checkout<'_>,
+        head: &Head,
+    ) -> (Task, Observation) {
+        let (task, _, observation) = reservation("reviewer", Entry::ReviewEntry, head);
+        let launch = task.run().expect("run").launch();
+        let inputs = RunRequest {
+            binding: service.binding(checkout).expect("binding"),
+            dispatch: Dispatch::Create {
+                title: "Review fixture".into(),
+                profile: service.project.reviewer.clone(),
+            },
+            text: "Review the fixture".into(),
+        }
+        .inputs(&launch.instance, launch.thread.clone(), 1)
+        .expect("wire");
+        let mut restored = serde_json::to_value(&task).expect("stored reservation");
+        restored["run"]["launch"]["input"] = json!(inputs.input);
+        (
+            serde_json::from_value(restored).expect("typed reservation"),
+            observation,
+        )
     }
 
     #[tokio::test]

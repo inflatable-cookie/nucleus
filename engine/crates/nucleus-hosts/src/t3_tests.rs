@@ -258,13 +258,29 @@ async fn send(pass: &impl TaskHost, task: &mut Task) -> Result<SendOutcome, Host
     let mut permit = pass
         .authorize_send(task.run().expect("reserved run"))
         .await?;
-    if permit.needs_unarchive() {
-        pass.unarchive(&permit).await?;
+    if let Some(unarchive) = permit.unarchive() {
+        pass.write_control(unarchive).await?;
         permit = pass
             .authorize_send(task.run().expect("reserved run"))
             .await?;
     }
     pass.send(permit.record(task)?).await
+}
+
+async fn stop(
+    pass: &impl TaskHost,
+    run: &nucleus_core::Run,
+    binding: &Binding,
+    now: u64,
+    archive: bool,
+) -> Result<StopProgress, HostError> {
+    match pass.stop(run, binding, now, archive).await? {
+        StopProgress::Write(dispatch) => {
+            pass.write_control(dispatch).await?;
+            Ok(StopProgress::Waiting)
+        }
+        progress => Ok(progress),
+    }
 }
 
 async fn ready_notice(
@@ -592,15 +608,14 @@ async fn revoked_replay(archive: bool) {
     );
     let run = task.run().expect("run");
     assert_eq!(
-        pass.stop(run, &binding, expired, archive)
+        stop(&pass, run, &binding, expired, archive)
             .await
             .expect("interrupt"),
         StopProgress::Waiting
     );
     if archive {
         assert_eq!(
-            quiet_pass(&client)
-                .stop(run, &binding, expired, true)
+            stop(&quiet_pass(&client), run, &binding, expired, true)
                 .await
                 .expect("archive"),
             StopProgress::Waiting
@@ -643,6 +658,8 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
     let (mut task, observation, instance) = reserve(binding.clone());
     task.record_send(&instance, 1).expect("possible send");
     revoke(&mut task, &observation);
+    task.record_rejected_stop(&instance)
+        .expect("durable rejection");
     let probe = "orchestration.subscribeThread";
     let command = "orchestration.dispatchCommand";
     let mut idle = snapshot(&binding, &instance, "interrupted", false);
@@ -658,15 +675,28 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
     .await;
     let run = task.run().expect("revoked reservation");
     assert_eq!(
-        quiet_pass(&client)
-            .stop_rejected(run, true)
+        stop(&quiet_pass(&client), run, &binding, 2, true)
             .await
             .expect("archive still unconfirmed"),
         StopProgress::Waiting
     );
+    let durable = serde_json::to_value(&task).expect("persist rejection");
+    let restored: Task = serde_json::from_value(durable).expect("restart");
+    let run = restored.run().expect("rejection holds custody");
+    let late = LATE_REPLY_MS + 2;
+    let pass = quiet_pass(&client);
+    assert!(matches!(
+        pass.authorize_send(run).await,
+        Err(HostError::Uncertain)
+    ));
+    assert!(matches!(
+        pass.stop(run, &binding, late, true)
+            .await
+            .expect("stale archive readback"),
+        StopProgress::Write(_)
+    ));
     assert_eq!(
-        quiet_pass(&client)
-            .stop_rejected(run, true)
+        pass.stop(run, &binding, late, true)
             .await
             .expect("archive confirmed"),
         StopProgress::Settled(Host::Current {
