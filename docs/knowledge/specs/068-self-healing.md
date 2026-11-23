@@ -164,7 +164,13 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
   failover, a provider retry and a blocking side effect. A released revision
   whose authenticated report nothing applied goes back through ordinary result
   application, so a pushed head goes to review and a blocked report climbs the
-  blocker ladder. A refused move, a result application that changes nothing, or
+  blocker ladder. So does an initial worker's report whose binding was released
+  before it applied: it gets its run binding back and the worker's own result
+  acceptance verifies the PR it names at the exact head. A lifecycle wait does
+  not hold that result, since nothing else owns it, and neither does a recovery
+  episode that escalated over that wait; an open planner escalation still does.
+  A resolved recovery episode is history, not an owner, and an intent flag holds the task only while its
+  creation has bound nothing. A refused move, a result application that changes nothing, or
   a fourth readmission in one episode with nothing started records
   `operator_needed` with fact `orphan_phase`. The readmission is the backstop: a
   state that reaches it is some owner deferring silently, and the cause is fixed
@@ -251,7 +257,7 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 3b | nucleus#1552 | Process-death release, and `run_stalled` admits the coordinator. | 1 |
 | 4a | nucleus#1551 | A completion releases its run, `run.release` keeps a reported verdict, and the verdict-only credential. | — |
 | 4b | nucleus#1550 | Branch-attached follow-up review reads, and one reattach step for detached task checkouts. | — |
-| 5a | nucleus#1553 | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. | 1 |
+| 5a | direct PR (nucleus#1553 cancelled) | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. Built: see [Batch 5a as built](#batch-5a-as-built). | 1 |
 | 5b | nucleus#1556 (cancelled; built as a direct PR) | Hung-tool limit, permission policy and orphan-phase readmission. Done. | 1, 3b |
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
 
@@ -293,6 +299,63 @@ the reboot keeps it), and escalation menus are not yet derived from the decision
 
 **Done when:** over one week, no task spends more than 30 minutes outside the four
 states, and no planner or operator action resolves a mechanical stall.
+
+### Batch 5a as built
+
+Built as a direct PR (Tom, 2026-11-23: "fill the gaps using subagents"):
+
+- **Outage time.** Every budget read discounts the task host's outages and the
+  service's own downtime (`budgetOutageIntervals`). The running service stamps
+  itself alive each minute and at the start of a drain; the next start closes the
+  window from that stamp into the history (`serviceDowntimeHistory`). Each beat
+  also records sleep: wall time past monotonic time since the last beat, when over
+  a minute. An event-loop stall advances both clocks and records nothing. The
+  history keeps 30 days of entries. The macOS sleep behaviour still needs one
+  real sleep check after the roll.
+- **Automatic extension.** The first spend of either limit is extended once by
+  one default increment, by the launch gate or the sweep's settle pass, recorded
+  as `budget_extended` with the detail `automatic: <policy>; <figures>`. The sweep
+  extends only in a phase whose next step is a run, so a task verifying or merging
+  keeps its extension for the launch gate. A task extended before (by any source)
+  asks on its next spend. Until then, a first spend is no stop: `next`, the
+  activity reading and the `run.start` warning ignore it.
+- **Typed stops.** The settle pass records the `budget` stop for a spent task
+  with no live run and no other stop whose next step is a run, and its question
+  follows; a task verifying or merging is stopped only if that stage needs a run. `next` and the
+  activity reading type a spent budget or an exhausted revision allowance as a
+  stop for a person, and `next` lists `run.start … accept ["budget"]` (for a spent
+  budget, only in a phase whose next step is a run). Only the planner or the
+  operator board may accept `budget`; a coordinator is refused, and its snapshot
+  leaves out any command whose preset accept or expected warnings name a
+  planner-only warning. The revision launch gate, the
+  `run.start` `budget` warning, the author-round rule and the activity reading
+  share one cap condition (`revisionAllowanceExhausted`: a cap park with no author
+  round, and no accepted round, since).
+- **Revision cap at the launch.** A revision launch holds while the allowance is
+  exhausted, however the task reached `changes_requested` (planner ruling,
+  2026-11-23: `phase.set` passed the cap). The hold goes straight to the planner
+  ladder, as the cap park does: it joins the cap's open escalation, or opens a new
+  occurrence when the last was settled without a round. Its `escalated` stop is a
+  waiting stop, so no coordinator is launched for it. The planner's or operator's
+  `run.start` for the worker accepting `budget` creates the round's run itself. An
+  author-round control (`move to=work`, `restart role=worker`, `route
+  role=worker`, or a forced `move to=work` by the operator board or a live
+  planner) by an authorized caller records `revision_cap_accepted` inside its own
+  transaction, so only a control that applies grants the round (planner ruling,
+  2026-11-23); a coordinator's is refused, and a participant's self-force records
+  nothing. The cap park stays the stop and the planner escalation.
+- **Round 3.** The third non-converging round records `review_round_continued`
+  and tells the task's planner with the reviewer's findings; it asks nothing. A
+  tell that sent nothing (the service stopped before its intent, or no planner or
+  host was there) is sent by a later pass, a missed one at most every five
+  minutes. A tell with a recorded intent is never sent again.
+- **Coordinator cap.** A coordinator run whose owner verb or state-changing
+  explicit command applied is not charged and ends the charged chain
+  (`message.send` does not count); three runs in a row that
+  applied nothing, or six launches at one head, stop the loop.
+- **Explicit command output.** The CLI prints the outcome first and exits 2
+  unless the command applied, and names the warnings only a planner or the
+  operator board may accept. `next` lists each command's expected warnings.
 
 ## Decisions
 

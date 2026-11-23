@@ -313,7 +313,7 @@ test("a worker, a checkout-only thread that is not the pick, an unroutable plann
       );
       await assert.rejects(
         f.command(taskId, refused),
-        /Explicit resolution requires this task's coordinator, its live responsible planner or the operator board; this caller is not one of them/,
+        /Explicit resolution requires this task's coordinator, its live responsible planner or the operator board; this caller is not one of them: (it is not a responsible planner for project Example|its host t3code:elsewhere is not a registered host)/,
       );
     }
     assert.equal(f.store.task(taskId).phase, "awaiting_review");
@@ -322,7 +322,66 @@ test("a worker, a checkout-only thread that is not the pick, an unroutable plann
   }
 });
 
-test("an incomplete shortlist keeps the routing pick and the registered planner, and names the unread host otherwise", async () => {
+test("an unread host still accepts the registered planner and the task's own planner from their stored registration", async () => {
+  const f = fixture([
+    thread("planner", "2099-01-01T00:00:00Z"),
+    thread("owner", "2099-02-01T00:00:00Z"),
+    thread("helper", "2099-03-01T00:00:00Z"),
+  ]);
+  try {
+    const taskId = f.insert({ originAgentId: "owner" });
+    f.insert({ originAgentId: "helper" });
+    f.store.setProjectPlanner({
+      key: "example",
+      agentId: caller("planner"),
+      setBy: "operator",
+    });
+    // The planners' own host cannot be read at all, and nothing was read before.
+    f.during.inventory = () => {
+      throw Error("Responsible host inventory timed out");
+    };
+    const read = await f.engine.resolution.responsibleThread(
+      f.store.projectByKey("example")!,
+    );
+    assert.equal(read.incomplete, true);
+    assert.deepEqual(read.unreadHosts, [host]);
+    assert.equal(read.shortlist.length, 0);
+
+    // Registration is durable: no live read is needed for these two.
+    assert.equal(
+      await livePlannerMatches(f.engine, f.store.task(taskId), caller("planner")),
+      true,
+    );
+    const applied = await f.command(taskId, caller("owner"));
+    assert.equal(applied.explicitResolution?.status, "applied");
+    assert.equal(
+      await f.engine.forceCallerAuthorized(
+        f.store.task(taskId),
+        caller("planner"),
+      ),
+      true,
+    );
+    // Any other planner needs its host read, and the refusal names the unread host.
+    const unread = new RegExp(
+      `the responsible-planner read for project Example is incomplete \\(host ${host} unread\\), and no read of that host finished in the last 10 minutes`,
+    );
+    for (const refused of [caller("helper"), caller("stranger")])
+      await assert.rejects(f.command(taskId, refused), unread);
+    // The same native id on another host is not the registered planner.
+    assert.equal(
+      await livePlannerMatches(
+        f.engine,
+        f.store.task(taskId),
+        formatAgentId("t3code:elsewhere", "planner"),
+      ),
+      false,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("a read that answers for the caller's host decides it, whatever another host does", async () => {
   const f = fixture([
     thread("alpha", "2099-02-01T00:00:00Z"),
     thread("beta", "2099-01-01T00:00:00Z"),
@@ -330,7 +389,8 @@ test("an incomplete shortlist keeps the routing pick and the registered planner,
   try {
     const taskId = f.insert({ originAgentId: "alpha" });
     f.insert({ originAgentId: "beta" });
-    // A second online host whose inventory fails: absence is not proved.
+    // A second online host whose inventory fails: absence there is not proved,
+    // but it cannot add or remove a thread on this host.
     const broken = {
       hostId: "t3code:unreadable",
       listLiveAgents: async () => {
@@ -341,87 +401,102 @@ test("an incomplete shortlist keeps the routing pick and the registered planner,
     f.engine.hostIds = () => [host, "t3code:unreadable"];
     f.engine.resolveHostAdapter = (id) =>
       id === host ? healthy : id === "t3code:unreadable" ? broken : undefined;
-    const project = () => f.store.projectByKey("example")!;
-    const read = await f.engine.resolution.responsibleThread(project());
+    const read = await f.engine.resolution.responsibleThread(
+      f.store.projectByKey("example")!,
+    );
     assert.equal(read.confirmed, true);
     assert.equal(read.incomplete, true);
+    assert.deepEqual(read.readHosts, [host]);
     assert.deepEqual(read.unreadHosts, ["t3code:unreadable"]);
-    assert.equal(read.thread?.agentId, caller("alpha"));
-    const unread =
-      /the responsible-planner read for project Example is incomplete \(host t3code:unreadable unread\)/;
-
-    // The routing pick keeps authority, as before.
-    assert.equal(
-      await livePlannerMatches(f.engine, f.store.task(taskId), caller("alpha")),
-      true,
-    );
-    // Another dispatcher, a stranger and an unroutable thread are refused,
-    // and the refusal names the unread host.
-    for (const refused of [caller("beta"), caller("stranger")]) {
-      await assert.rejects(f.command(taskId, refused), unread);
-    }
-
-    // A registered planner keeps authority on an incomplete read too.
-    f.store.setProjectPlanner({
-      key: "example",
-      agentId: caller("beta"),
-      setBy: "operator",
-    });
-    const registered = await f.engine.resolution.responsibleThread(project());
-    assert.equal(registered.incomplete, true);
-    assert.equal(registered.thread?.agentId, caller("beta"));
-    f.unroutable.add(caller("beta"));
-    f.engine.resolution.responsibleThreads.cache.invalidate("example");
-    await assert.rejects(f.command(taskId, caller("beta")), unread);
-    f.unroutable.delete(caller("beta"));
-    f.engine.resolution.responsibleThreads.cache.invalidate("example");
+    // Beta dispatched another task: a planner whose own host answered.
     const applied = await f.command(taskId, caller("beta"));
     assert.equal(applied.explicitResolution?.status, "applied");
-    // Alpha is now a dispatcher that is not the pick on an incomplete read.
-    assert.equal(
-      await livePlannerMatches(f.engine, f.store.task(taskId), caller("alpha")),
-      false,
+    await assert.rejects(
+      f.command(taskId, caller("stranger")),
+      /this caller is not one of them: it is not a responsible planner for project Example/,
+    );
+    await assert.rejects(
+      f.command(taskId, formatAgentId("t3code:unreadable", "beta")),
+      /is incomplete \(host t3code:unreadable unread\)/,
     );
   } finally {
     f.close();
   }
 });
 
-test("the planner's own activity invalidating its shortlist mid-read does not refuse it", async () => {
+test("a sweep that excludes a failed host neither queries it nor disturbs a healthy read", async () => {
   const f = fixture([
-    thread("planner", "2099-01-01T00:00:00Z"),
+    thread("owner", "2099-02-01T00:00:00Z"),
+    thread("helper", "2099-01-01T00:00:00Z"),
+  ]);
+  try {
+    const taskId = f.insert({ originAgentId: "owner" });
+    f.insert({ originAgentId: "helper" });
+    const project = () => f.store.projectByKey("example")!;
+    let inventories = 0;
+    f.during.inventory = () => {
+      inventories++;
+    };
+    // The sweep's own pass on this host failed, so it refreshes without it while
+    // an ordinary read is observing its threads.
+    let sweeps = 0;
+    f.during.observation = () => {
+      if (sweeps++ < 4)
+        void f.engine.resolution.responsibleThread(
+          project(),
+          undefined,
+          new Set([host]),
+        );
+    };
+    const read = await f.engine.resolution.responsibleThread(project());
+    assert.equal(read.confirmed, true, "the healthy read completes");
+    assert.equal(read.incomplete, false);
+    assert.deepEqual(read.readHosts, [host]);
+    assert.equal(inventories, 1, "the sweep never re-read the excluded host");
+    const swept = await f.engine.resolution.responsibleThread(
+      project(),
+      undefined,
+      new Set([host]),
+    );
+    assert.equal(swept.confirmed, false);
+    assert.equal(inventories, 1);
+    // Helper is a dispatcher of another task, so authority reads its host.
+    assert.equal(
+      await livePlannerMatches(f.engine, f.store.task(taskId), caller("helper")),
+      true,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("the caller's own activity invalidating its shortlist mid-read does not refuse a dispatcher", async () => {
+  const f = fixture([
+    thread("owner", "2099-01-01T00:00:00Z"),
+    thread("helper", "2099-02-01T00:00:00Z"),
     thread("design", "2099-06-01T00:00:00Z"),
   ]);
   try {
-    const planner = caller("planner");
-    const taskId = f.insert({ originAgentId: "planner" });
-    f.store.setProjectPlanner({
-      key: "example",
-      agentId: planner,
-      setBy: "operator",
-    });
-    // Every thread read lands alongside one of the planner's own calls, which
+    const helper = caller("helper");
+    const taskId = f.insert({ originAgentId: "owner" });
+    f.insert({ originAgentId: "helper" });
+    // Every thread read lands alongside one of the helper's own calls, which
     // invalidates the shortlist naming it, so routing discards both attempts.
     f.during.observation = () =>
-      f.engine.resolution.responsibleThreads.recordActivity(planner);
+      f.engine.resolution.responsibleThreads.recordActivity(helper);
     const read = await f.engine.resolution.responsibleThread(
       f.store.projectByKey("example")!,
     );
     assert.equal(read.thread, null, "routing has no verified recipient");
 
-    const applied = await f.command(taskId, planner);
+    const applied = await f.command(taskId, helper);
     assert.equal(applied.explicitResolution?.status, "applied");
     assert.equal(read.confirmed, false);
-    assert.equal(f.store.task(taskId).phase, "reviewing");
     assert.equal(
-      await f.engine.forceCallerAuthorized(f.store.task(taskId), planner),
+      await f.engine.forceCallerAuthorized(f.store.task(taskId), helper),
       true,
     );
     // The fallback serves only a registered planner or a dispatcher.
-    assert.equal(
-      await livePlannerMatches(f.engine, f.store.task(taskId), caller("design")),
-      false,
-    );
     await assert.rejects(
       f.command(taskId, caller("design")),
       /this caller is not one of them: it is not a responsible planner for project Example/,
@@ -431,11 +506,15 @@ test("the planner's own activity invalidating its shortlist mid-read does not re
   }
 });
 
-test("a fallback read older than the bound refuses, and the refusal says the read is unconfirmed", async () => {
-  const f = fixture([thread("planner", "2099-01-01T00:00:00Z")]);
+test("a fallback read older than the bound refuses, and the refusal names the caller's host", async () => {
+  const f = fixture([
+    thread("owner", "2099-01-01T00:00:00Z"),
+    thread("helper", "2099-02-01T00:00:00Z"),
+  ]);
   try {
-    const planner = caller("planner");
-    const taskId = f.insert({ originAgentId: "planner" });
+    const helper = caller("helper");
+    const taskId = f.insert({ originAgentId: "owner" });
+    f.insert({ originAgentId: "helper" });
     // One confirmed read, then every inventory is invalidated before it lands,
     // so no later read finishes.
     await f.engine.resolution.responsibleThread(f.store.projectByKey("example")!);
@@ -447,19 +526,22 @@ test("a fallback read older than the bound refuses, and the refusal says the rea
     );
     assert.equal(unconfirmed.thread, null, "routing has no verified recipient");
     assert.equal(
-      await livePlannerMatches(f.engine, f.store.task(taskId), planner),
+      await livePlannerMatches(f.engine, f.store.task(taskId), helper),
       true,
       "within the bound the finished read stands in",
     );
-    assert.equal(unconfirmed.confirmed, false);
 
     f.engine.resolution.plannerAuthorityMaxAgeMs = 0;
     await new Promise((resolve) => setTimeout(resolve, 5));
     await assert.rejects(
-      f.command(taskId, planner),
-      /Explicit resolution requires this task's coordinator, its live responsible planner or the operator board; the responsible-planner read for project Example is unconfirmed, and no confirmed read finished in the last 0 minutes/,
+      f.command(taskId, helper),
+      new RegExp(
+        `the responsible-planner read for project Example is unconfirmed \\(host ${host} not read in this call\\), and no read of that host finished in the last 0 minutes`,
+      ),
     );
-    assert.equal(f.store.task(taskId).phase, "awaiting_review");
+    // The task's own planner needs no read at all.
+    const applied = await f.command(taskId, caller("owner"));
+    assert.equal(applied.explicitResolution?.status, "applied");
   } finally {
     f.close();
   }

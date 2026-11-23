@@ -15,7 +15,13 @@ import { z } from "zod";
  * facts by the read boundary. Stale task reason text cannot keep a task in one
  * of those waits.
  */
-export const waitStates = ["waiting_capacity", "waiting_prerequisite", "needs_operator_input", "needs_source_rights", "merge_hold"] as const;
+export const waitStates = [
+  "waiting_capacity",
+  "waiting_prerequisite",
+  "needs_operator_input",
+  "needs_source_rights",
+  "merge_hold",
+] as const;
 export type WaitState = (typeof waitStates)[number];
 export const waitStateSchema = z.enum(waitStates);
 
@@ -34,13 +40,99 @@ export const PREREQUISITE_WAIT_PREFIX = "Waiting for prerequisites:";
 export const CAPACITY_WAIT_PREFIX = "Waiting for a project slot…";
 export const PROJECT_IN_FLIGHT_WAIT_PREFIX = "Waiting: ";
 /** `Resolution.slotAdmissionReason` when in-flight requests rank ahead of this wait. */
-export const inFlightSlotWaitReason = (count: number, tasks: readonly string[] = []) =>
+export const inFlightSlotWaitReason = (
+  count: number,
+  tasks: readonly string[] = [],
+) =>
   `${CAPACITY_WAIT_PREFIX} waiting behind ${count} in-flight${tasks.length ? `: ${tasks.join(", ")}` : ""}`;
 /** The reason a project-validation host run writes while it waits in the QA queue. */
 export const QA_CAPACITY_WAIT_PREFIX = "Waiting for QA capacity (position ";
-export const qaCapacityWaitReason = (position: number) => `${QA_CAPACITY_WAIT_PREFIX}${position})`;
-export const RETAINED_PREREQUISITE_WAIT_ACTION = "Wait for the listed prerequisites; Nucleus will notify the owner. Explicitly revise or retry a changes-requested task after the notice";
-export const RETAINED_PREREQUISITE_FIX_ACTION = "Clear or replace this wait with set_prerequisite_wait";
+export const qaCapacityWaitReason = (position: number) =>
+  `${QA_CAPACITY_WAIT_PREFIX}${position})`;
+/** The sentence each slot limit is written as after `CAPACITY_WAIT_PREFIX` (`capacityReason` in core). */
+export const CAPACITY_LIMIT_SENTENCES = {
+  global: "Global concurrent task-slot limit reached",
+  project: "Project concurrent task-slot limit reached",
+  papercut: "Project papercut task-slot limit reached",
+} as const;
+
+/**
+ * What a capacity wait is actually waiting on, read from the admission reason the
+ * slot check wrote: the global cap, the task's own slot pool (normal or papercut),
+ * earlier reservations, in-flight requests ranked ahead, the project's in-flight
+ * cap, or the machine-wide QA queue. Counts and positions are the admission's own.
+ */
+export type CapacityWaitCause =
+  | { kind: "global"; occupied: number | null; limit: number | null }
+  | {
+      kind: "project" | "papercut";
+      occupied: number | null;
+      limit: number | null;
+      reserved: number;
+    }
+  | {
+      kind: "reservations";
+      ahead: number;
+      occupied: number | null;
+      limit: number | null;
+    }
+  | { kind: "in_flight_ahead"; ahead: number }
+  | { kind: "in_flight_cap"; inFlight: number; limit: number }
+  | { kind: "qa"; position: number | null };
+
+export function capacityWaitCause(
+  reason: string | null | undefined,
+): CapacityWaitCause | null {
+  const text = (reason ?? "").trim();
+  if (text.startsWith(QA_CAPACITY_WAIT_PREFIX)) {
+    const position = Number(/position (\d+)/.exec(text)?.[1]);
+    return {
+      kind: "qa",
+      position: Number.isFinite(position) ? position : null,
+    };
+  }
+  const cap = /^Waiting: (\d+) of (\d+) tasks in flight for this project$/.exec(
+    text,
+  );
+  if (cap)
+    return {
+      kind: "in_flight_cap",
+      inFlight: Number(cap[1]),
+      limit: Number(cap[2]),
+    };
+  if (!text.startsWith(CAPACITY_WAIT_PREFIX)) return null;
+  const rest = text.slice(CAPACITY_WAIT_PREFIX.length).trim();
+  const counts = /\((\d+)\/(\d+)/.exec(rest);
+  const occupied = counts ? Number(counts[1]) : null;
+  const limit = counts ? Number(counts[2]) : null;
+  const ahead = /^waiting behind (\d+) in-flight/i.exec(rest);
+  if (ahead) return { kind: "in_flight_ahead", ahead: Number(ahead[1]) };
+  const reservations = /^Waiting behind (\d+) earlier queued reservations/.exec(
+    rest,
+  );
+  if (reservations)
+    return {
+      kind: "reservations",
+      ahead: Number(reservations[1]),
+      occupied,
+      limit,
+    };
+  if (rest.startsWith(CAPACITY_LIMIT_SENTENCES.global))
+    return { kind: "global", occupied, limit };
+  const reserved = Number(
+    /(\d+) reserved by earlier requests/.exec(rest)?.[1] ?? 0,
+  );
+  if (rest.startsWith(CAPACITY_LIMIT_SENTENCES.papercut))
+    return { kind: "papercut", occupied, limit, reserved };
+  if (rest.startsWith(CAPACITY_LIMIT_SENTENCES.project))
+    return { kind: "project", occupied, limit, reserved };
+  return null;
+}
+
+export const RETAINED_PREREQUISITE_WAIT_ACTION =
+  "Wait for the listed prerequisites; Nucleus will notify the owner. Explicitly revise or retry a changes-requested task after the notice";
+export const RETAINED_PREREQUISITE_FIX_ACTION =
+  "Clear or replace this wait with set_prerequisite_wait";
 
 /**
  * Every current waiting reason Queue writes that is one of the five declared
@@ -81,7 +173,8 @@ export const PREREQUISITE_MISSING_STATUS = "missing";
  */
 export const PREREQUISITE_GOAL_UNMET_STATUS = "goal unmet";
 /** A prerequisite task id, the only token `Store.dependencyWait` writes before a missing status. */
-const PREREQUISITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PREREQUISITE_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * The generated status of one entry of a `dependencyWait` reason. A present
  * prerequisite is `${title} (${id}): ${status}`, so the status is the text after
@@ -90,27 +183,54 @@ const PREREQUISITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
  */
 function prerequisiteEntryCannotComplete(entry: string): boolean {
   const fact = prerequisiteEntryFacts(entry);
-  return Boolean(fact.id) && (fact.status === PREREQUISITE_REMOVED_STATUS || fact.status === PREREQUISITE_CANCELLED_STATUS
-    || fact.status === PREREQUISITE_GOAL_UNMET_STATUS || fact.status === PREREQUISITE_MISSING_STATUS);
+  return (
+    Boolean(fact.id) &&
+    (fact.status === PREREQUISITE_REMOVED_STATUS ||
+      fact.status === PREREQUISITE_CANCELLED_STATUS ||
+      fact.status === PREREQUISITE_GOAL_UNMET_STATUS ||
+      fact.status === PREREQUISITE_MISSING_STATUS)
+  );
 }
 /** Facts in the generated prerequisite reason, decoded once for board and wait views. */
-function prerequisiteEntryFacts(entry: string): { id: string | null; title: string; status: string } {
+function prerequisiteEntryFacts(entry: string): {
+  id: string | null;
+  title: string;
+  status: string;
+} {
   const afterId = entry.lastIndexOf("): ");
   if (afterId >= 0) {
     const open = entry.lastIndexOf("(", afterId);
     const id = open >= 0 ? entry.slice(open + 1, afterId) : "";
-    if (PREREQUISITE_ID.test(id)) return { id, title: entry.slice(0, open).trim(), status: entry.slice(afterId + 3).trim() };
+    if (PREREQUISITE_ID.test(id))
+      return {
+        id,
+        title: entry.slice(0, open).trim(),
+        status: entry.slice(afterId + 3).trim(),
+      };
   }
   const afterToken = entry.lastIndexOf(": ");
   if (afterToken >= 0) {
     const id = entry.slice(0, afterToken).trim();
-    if (PREREQUISITE_ID.test(id)) return { id, title: "Prerequisite", status: entry.slice(afterToken + 2).trim() };
+    if (PREREQUISITE_ID.test(id))
+      return {
+        id,
+        title: "Prerequisite",
+        status: entry.slice(afterToken + 2).trim(),
+      };
   }
   return { id: null, title: entry, status: "" };
 }
-export function prerequisiteReasonEntries(reason: string): Array<{ id: string | null; title: string; status: string }> {
-  const body = reason.startsWith(PREREQUISITE_WAIT_PREFIX) ? reason.slice(PREREQUISITE_WAIT_PREFIX.length) : reason;
-  return body.split("; ").map(value => value.trim()).filter(Boolean).map(prerequisiteEntryFacts);
+export function prerequisiteReasonEntries(
+  reason: string,
+): Array<{ id: string | null; title: string; status: string }> {
+  const body = reason.startsWith(PREREQUISITE_WAIT_PREFIX)
+    ? reason.slice(PREREQUISITE_WAIT_PREFIX.length)
+    : reason;
+  return body
+    .split("; ")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map(prerequisiteEntryFacts);
 }
 /**
  * True when a prerequisite reason names a dependency that can never reach
@@ -122,11 +242,14 @@ export function prerequisiteReasonEntries(reason: string): Array<{ id: string | 
  * that happens to contain one of these words stays an ordinary wait.
  */
 export function prerequisiteCannotComplete(reason: string): boolean {
-  const body = reason.startsWith(PREREQUISITE_WAIT_PREFIX) ? reason.slice(PREREQUISITE_WAIT_PREFIX.length) : reason;
+  const body = reason.startsWith(PREREQUISITE_WAIT_PREFIX)
+    ? reason.slice(PREREQUISITE_WAIT_PREFIX.length)
+    : reason;
   return body.split("; ").some(prerequisiteEntryCannotComplete);
 }
 /** The operator's pre-dispatch dependency-list correction, shared by the table and its tests. */
-export const PREREQUISITE_DEPENDENCY_ACTION = "Correct the dependency list before dispatch (set_dependencies): drop the missing, removed, cancelled or goal-unmet prerequisite";
+export const PREREQUISITE_DEPENDENCY_ACTION =
+  "Correct the dependency list before dispatch (set_dependencies): drop the missing, removed, cancelled or goal-unmet prerequisite";
 /** The one durable bound on a wait's `owner` line, shared by the projection and its declarations. */
 export const WAIT_OWNER_LIMIT = 240;
 /**
@@ -138,10 +261,15 @@ export const WAIT_OWNER_LIMIT = 240;
  * from the task itself: `dependsOn` and the dependency-wait reason keep every
  * identity, and dispatch still reads the full list.
  */
-export function boundedPrerequisiteOwner(owner: string | null | undefined): string | null {
+export function boundedPrerequisiteOwner(
+  owner: string | null | undefined,
+): string | null {
   const text = (owner ?? "").trim();
   if (!text || text.length <= WAIT_OWNER_LIMIT) return text || null;
-  const entries = text.split(",").map(entry => entry.trim()).filter(Boolean);
+  const entries = text
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
   for (let keep = entries.length - 1; keep > 0; keep -= 1) {
     const remainder = entries.length - keep;
     const candidate = `${entries.slice(0, keep).join(", ")}, +${remainder} more`;
@@ -151,26 +279,55 @@ export function boundedPrerequisiteOwner(owner: string | null | undefined): stri
   return `${entries.length} prerequisite${entries.length === 1 ? "" : "s"} (see task detail)`;
 }
 export const waitReasonStates: ReadonlyArray<WaitReasonEntry> = [
-  { prefix: PROJECT_IN_FLIGHT_WAIT_PREFIX, state: "waiting_capacity", owner: "operator",
-    nextAction: "Wait for in-flight tasks to finish; Nucleus starts work when the project is under its cap",
-    matches: reason => /^Waiting: \d+ of \d+ tasks in flight for this project$/.test(reason) },
-  { prefix: CAPACITY_WAIT_PREFIX, state: "waiting_capacity", owner: "operator",
-    nextAction: "Free a task slot or raise the limit; Nucleus dispatches when capacity allows" },
-  { prefix: QA_CAPACITY_WAIT_PREFIX, state: "waiting_capacity", owner: "Queue QA scheduler",
-    nextAction: "Waits for machine-wide QA capacity; it starts automatically when admitted" },
+  {
+    prefix: PROJECT_IN_FLIGHT_WAIT_PREFIX,
+    state: "waiting_capacity",
+    owner: "operator",
+    nextAction:
+      "Wait for in-flight tasks to finish; Nucleus starts work when the project is under its cap",
+    matches: (reason) =>
+      /^Waiting: \d+ of \d+ tasks in flight for this project$/.test(reason),
+  },
+  {
+    prefix: CAPACITY_WAIT_PREFIX,
+    state: "waiting_capacity",
+    owner: "operator",
+    nextAction:
+      "Free a task slot or raise the limit; Nucleus dispatches when capacity allows",
+  },
+  {
+    prefix: QA_CAPACITY_WAIT_PREFIX,
+    state: "waiting_capacity",
+    owner: "Queue QA scheduler",
+    nextAction:
+      "Waits for machine-wide QA capacity; it starts automatically when admitted",
+  },
   // A prerequisite that can still finish: Queue resumes this task automatically.
-  { prefix: PREREQUISITE_WAIT_PREFIX, state: "waiting_prerequisite", owner: "Queue",
-    nextAction: "Wait for the prerequisite to finish; Nucleus dispatches this task automatically",
-    matches: reason => !prerequisiteCannotComplete(reason) },
+  {
+    prefix: PREREQUISITE_WAIT_PREFIX,
+    state: "waiting_prerequisite",
+    owner: "Queue",
+    nextAction:
+      "Wait for the prerequisite to finish; Nucleus dispatches this task automatically",
+    matches: (reason) => !prerequisiteCannotComplete(reason),
+  },
   // A prerequisite that can never finish: the operator corrects the dependency list.
-  { prefix: PREREQUISITE_WAIT_PREFIX, state: "waiting_prerequisite", owner: "operator",
+  {
+    prefix: PREREQUISITE_WAIT_PREFIX,
+    state: "waiting_prerequisite",
+    owner: "operator",
     nextAction: PREREQUISITE_DEPENDENCY_ACTION,
-    matches: prerequisiteCannotComplete },
+    matches: prerequisiteCannotComplete,
+  },
 ];
 
 /** The one current waiting reason entry a reason matches, or null for operational detail. */
 export function waitReasonFor(reason: string): WaitReasonEntry | null {
-  const matches = waitReasonStates.filter(entry => reason.startsWith(entry.prefix) && (!entry.matches || entry.matches(reason)));
+  const matches = waitReasonStates.filter(
+    (entry) =>
+      reason.startsWith(entry.prefix) &&
+      (!entry.matches || entry.matches(reason)),
+  );
   return matches.length ? matches[0] : null;
 }
 
@@ -179,7 +336,9 @@ export function waitStateForReason(reason: string): WaitState | null {
   // Only the separate project-validation scheduler uses its own current wait
   // reason as the fact. Task-slot and prerequisite waits require read-boundary
   // evidence and must not be revived by stale task.reason text.
-  return reason.startsWith(QA_CAPACITY_WAIT_PREFIX) ? waitReasonFor(reason)?.state ?? null : null;
+  return reason.startsWith(QA_CAPACITY_WAIT_PREFIX)
+    ? (waitReasonFor(reason)?.state ?? null)
+    : null;
 }
 
 /**
@@ -189,12 +348,22 @@ export function waitStateForReason(reason: string): WaitState | null {
  * so neither can express a wait with a missing or stray decision.
  */
 type WaitDecisionLink = { state: WaitState; decisionId?: string | null };
-function decisionLinkIssues(value: WaitDecisionLink): Array<{ code: "custom"; message: string; path: string[] }> {
+function decisionLinkIssues(
+  value: WaitDecisionLink,
+): Array<{ code: "custom"; message: string; path: string[] }> {
   const issues: Array<{ code: "custom"; message: string; path: string[] }> = [];
   if (value.state === "needs_operator_input" && !value.decisionId)
-    issues.push({ code: "custom", message: "needs_operator_input requires the Spec 032 decisionId", path: ["decisionId"] });
+    issues.push({
+      code: "custom",
+      message: "needs_operator_input requires the Spec 032 decisionId",
+      path: ["decisionId"],
+    });
   if (value.state !== "needs_operator_input" && value.decisionId)
-    issues.push({ code: "custom", message: `${value.state} must not carry a decisionId`, path: ["decisionId"] });
+    issues.push({
+      code: "custom",
+      message: `${value.state} must not carry a decisionId`,
+      path: ["decisionId"],
+    });
   return issues;
 }
 
@@ -203,23 +372,33 @@ function decisionLinkIssues(value: WaitDecisionLink): Array<{ code: "custom"; me
  * over the derived reading, so an explicit declaration is never confused with
  * free text.
  */
-export const waitDeclarationSchema = z.object({
-  state: waitStateSchema,
-  owner: z.string().min(1).max(WAIT_OWNER_LIMIT),
-  nextAction: z.string().min(1).max(600),
-  decisionId: z.string().min(1).max(160).nullable().default(null),
-}).strict().superRefine((value, context) => { for (const issue of decisionLinkIssues(value)) context.addIssue(issue); });
+export const waitDeclarationSchema = z
+  .object({
+    state: waitStateSchema,
+    owner: z.string().min(1).max(WAIT_OWNER_LIMIT),
+    nextAction: z.string().min(1).max(600),
+    decisionId: z.string().min(1).max(160).nullable().default(null),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    for (const issue of decisionLinkIssues(value)) context.addIssue(issue);
+  });
 export type WaitDeclaration = z.infer<typeof waitDeclarationSchema>;
 
 /** The derived wait view: one state, its owner and the next action that clears it. */
-export const waitStateViewSchema = z.object({
-  state: waitStateSchema,
-  owner: z.string().min(1).max(WAIT_OWNER_LIMIT),
-  nextAction: z.string().min(1).max(600),
-  reason: z.string().trim().min(1).max(4000).optional(),
-  /** Present exactly for `needs_operator_input`: the Spec 032 decision to answer. */
-  decisionId: z.string().min(1).max(160).optional(),
-}).strict().superRefine((value, context) => { for (const issue of decisionLinkIssues(value)) context.addIssue(issue); });
+export const waitStateViewSchema = z
+  .object({
+    state: waitStateSchema,
+    owner: z.string().min(1).max(WAIT_OWNER_LIMIT),
+    nextAction: z.string().min(1).max(600),
+    reason: z.string().trim().min(1).max(4000).optional(),
+    /** Present exactly for `needs_operator_input`: the Spec 032 decision to answer. */
+    decisionId: z.string().min(1).max(160).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    for (const issue of decisionLinkIssues(value)) context.addIssue(issue);
+  });
 export type WaitStateView = z.infer<typeof waitStateViewSchema>;
 
 /** The task facts the derivation reads; `holdKind` is Spec 040's derived hold kind. */
@@ -249,7 +428,7 @@ export interface WaitStateContext {
   declaration?: WaitDeclaration | null;
   /**
    * Spec 069 §3: the outages of the task's host, read from the host's own record
-   * (`hostOutageIntervals`), which the budget figure discounts. Never a task write.
+   * and the service's own downtime (`budgetOutageIntervals`), which the budget figure discounts. Never a task write.
    */
   hostOutages?: readonly { since: string; until: string | null }[];
 }
@@ -263,36 +442,89 @@ export interface WaitStateContext {
  * prerequisite reason is never sufficient. A dispatch hold is a Spec 040 badge,
  * not a wait.
  */
-export function deriveWaitState(task: WaitStateTask, context: WaitStateContext = {}): WaitStateView | null {
+export function deriveWaitState(
+  task: WaitStateTask,
+  context: WaitStateContext = {},
+): WaitStateView | null {
   // The declaration is revalidated here, not merely forwarded: an invalid shape
   // (needs_operator_input without its decision, or an id on another state) is a
   // caller error and must never reach the board.
-  const declaration = context.declaration ? waitDeclarationSchema.parse(context.declaration) : null;
-  if (context.decisionId) return { state: "needs_operator_input", owner: "operator", nextAction: `Answer decision ${context.decisionId}`, decisionId: context.decisionId };
-  const dependency = context.dependencyWait ? waitReasonFor(context.dependencyWait) : null;
+  const declaration = context.declaration
+    ? waitDeclarationSchema.parse(context.declaration)
+    : null;
+  if (context.decisionId)
+    return {
+      state: "needs_operator_input",
+      owner: "operator",
+      nextAction: `Answer decision ${context.decisionId}`,
+      decisionId: context.decisionId,
+    };
+  const dependency = context.dependencyWait
+    ? waitReasonFor(context.dependencyWait)
+    : null;
   if (dependency?.state === "waiting_prerequisite") {
     const cannotComplete = prerequisiteCannotComplete(context.dependencyWait!);
     const retained = Boolean(context.prerequisiteReason);
     return {
       state: "waiting_prerequisite",
-      owner: cannotComplete ? "operator" : boundedPrerequisiteOwner(context.prerequisiteOwner) || dependency.owner,
+      owner: cannotComplete
+        ? "operator"
+        : boundedPrerequisiteOwner(context.prerequisiteOwner) ||
+          dependency.owner,
       nextAction: cannotComplete
-        ? retained ? RETAINED_PREREQUISITE_FIX_ACTION : PREREQUISITE_DEPENDENCY_ACTION
-        : retained ? RETAINED_PREREQUISITE_WAIT_ACTION : dependency.nextAction,
+        ? retained
+          ? RETAINED_PREREQUISITE_FIX_ACTION
+          : PREREQUISITE_DEPENDENCY_ACTION
+        : retained
+          ? RETAINED_PREREQUISITE_WAIT_ACTION
+          : dependency.nextAction,
       ...(retained ? { reason: context.prerequisiteReason! } : {}),
     };
   }
-  const capacity = context.slotAdmissionReason ? waitReasonFor(context.slotAdmissionReason) : null;
-  if (capacity?.state === "waiting_capacity") return { state: capacity.state, owner: capacity.owner, nextAction: capacity.nextAction };
-  if (declaration) return waitStateViewSchema.parse(declaration.decisionId
-    ? { state: declaration.state, owner: declaration.owner, nextAction: declaration.nextAction, decisionId: declaration.decisionId }
-    : { state: declaration.state, owner: declaration.owner, nextAction: declaration.nextAction });
+  const capacity = context.slotAdmissionReason
+    ? waitReasonFor(context.slotAdmissionReason)
+    : null;
+  if (capacity?.state === "waiting_capacity")
+    return {
+      state: capacity.state,
+      owner: capacity.owner,
+      nextAction: capacity.nextAction,
+    };
+  if (declaration)
+    return waitStateViewSchema.parse(
+      declaration.decisionId
+        ? {
+            state: declaration.state,
+            owner: declaration.owner,
+            nextAction: declaration.nextAction,
+            decisionId: declaration.decisionId,
+          }
+        : {
+            state: declaration.state,
+            owner: declaration.owner,
+            nextAction: declaration.nextAction,
+          },
+    );
   // Project-validation QA waits are owned by their separate machine-wide
   // scheduler. Task-slot capacity is read only from the current admission check.
-  const schedulerWait = task.reasonFact?.code === "qa_capacity" ? waitReasonStates.find(entry => entry.prefix === QA_CAPACITY_WAIT_PREFIX) : null;
-  if (schedulerWait) return { state: schedulerWait.state, owner: schedulerWait.owner, nextAction: schedulerWait.nextAction };
+  const schedulerWait =
+    task.reasonFact?.code === "qa_capacity"
+      ? waitReasonStates.find(
+          (entry) => entry.prefix === QA_CAPACITY_WAIT_PREFIX,
+        )
+      : null;
+  if (schedulerWait)
+    return {
+      state: schedulerWait.state,
+      owner: schedulerWait.owner,
+      nextAction: schedulerWait.nextAction,
+    };
   const mergeHeld = task.mergeHeld ?? task.holdKind === "merge";
   if (mergeHeld && (task.phase === "verifying" || task.phase === "merging"))
-    return { state: "merge_hold", owner: task.holdOwner ?? task.originAgentId ?? "operator", nextAction: "Release the hold, or keep it with a reason" };
+    return {
+      state: "merge_hold",
+      owner: task.holdOwner ?? task.originAgentId ?? "operator",
+      nextAction: "Release the hold, or keep it with a reason",
+    };
   return null;
 }

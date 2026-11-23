@@ -166,11 +166,14 @@ test("a backpressured queue.remove surfaces its reason and retry delay and keeps
     );
     await settle(() => tree.text().includes("Removable task"));
     tree.press(/Removable task/);
-    // Task 538: the queue controls live on the Technical tab.
-    await settle(() => Boolean(tree.query("Technical")));
-    tree.press("Technical");
-    await settle(() => Boolean(tree.query("Remove task from queue")));
-    tree.press("Remove task from queue");
+    // nucleus#1537: the queue controls live in the task's ⋯ menu.
+    const openMenu = async () => {
+      await settle(() => Boolean(tree.query("Task actions menu")));
+      tree.press("Task actions menu");
+      await settle(() => Boolean(tree.query("Remove from queue")));
+    };
+    await openMenu();
+    tree.press("Remove from queue");
     await settle(() => tree.text().includes("backpressured"));
     assert.match(
       tree.text(),
@@ -183,15 +186,16 @@ test("a backpressured queue.remove surfaces its reason and retry delay and keeps
       "the banner names the retry delay",
     );
     assert.ok(
-      tree.query("Remove task from queue"),
+      tree.query("Task actions menu"),
       "the detail stays open so the operator can retry",
     );
     // Once the removal settles removed, the same action closes the detail.
     removeResponse = store.update(task.id, {
       removedAt: new Date().toISOString(),
     });
-    tree.press("Remove task from queue");
-    await settle(() => !tree.query("Remove task from queue"));
+    await openMenu();
+    tree.press("Remove from queue");
+    await settle(() => !tree.query("Task actions menu"));
     tree.update(h("View", null));
   } finally {
     store.close();
@@ -319,8 +323,10 @@ test("task detail offers withdrawal while a cancel has only a pending thread-sto
     );
     await settle(() => tree.text().includes("Reversible cancellation"));
     tree.press(/Reversible cancellation/);
-    await settle(() => Boolean(tree.query("Technical")));
-    tree.press("Technical");
+    await settle(() => Boolean(tree.query("Task actions menu")));
+    tree.press("Task actions menu");
+    await settle(() => Boolean(tree.query("Cancellation & withdrawal")));
+    tree.press("Cancellation & withdrawal");
     await settle(() => tree.text().includes("Withdraw cancellation"));
     tree.type("Withdrawal reason (required)", "Planner reversed the decision");
     tree.press("Withdraw cancellation");
@@ -457,8 +463,8 @@ test("cancelling detail names the interrupted turn and refs pushed after disposi
     );
     await settle(() => tree.text().includes("Release after cancel"));
     tree.press(/Release after cancel/);
-    await settle(() => Boolean(tree.query("Technical")));
-    tree.press("Technical");
+    await settle(() => Boolean(tree.query("Details")));
+    tree.press("Details");
     await settle(() => tree.text().includes("refs/tags/v0.11.0"));
     assert.match(
       tree.text(),

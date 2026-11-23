@@ -234,7 +234,6 @@ export class PassSnapshot {
   >();
   private readonly timelineBudgetExhausted = new Map<string, string>();
   private readonly sealedHosts = new Set<string>();
-  private readonly reapInvalidatedHosts = new Set<string>();
 
   /** True only while the owning sweep pass is still running. */
   get active(): boolean {
@@ -250,7 +249,6 @@ export class PassSnapshot {
     this.timelinePageReads.clear();
     this.timelineBudgetExhausted.clear();
     this.sealedHosts.clear();
-    this.reapInvalidatedHosts.clear();
   }
 
   /**
@@ -331,7 +329,7 @@ export class PassSnapshot {
     hostId: string | null | undefined,
     read: () => Promise<HostProcessListRead>,
     deadlineMs: number = PASS_PROCESS_READ_DEADLINE_MS,
-    options: { allowMissFetch?: boolean } = {},
+    options: { allowMissFetch?: boolean; cacheOnly?: boolean } = {},
   ): Promise<PassProcessRead> {
     const run = (fromPassSnapshot: boolean): Promise<PassProcessRead> => {
       const capturedAt = Date.now();
@@ -357,8 +355,10 @@ export class PassSnapshot {
     const key = hostKeyOf(hostId);
     const existing = this.processReads.get(key);
     if (existing) return existing;
-    const postReap = this.reapInvalidatedHosts.delete(key);
-    if (this.sealedHosts.has(key) && !postReap && !options.allowMissFetch) {
+    if (
+      (options.cacheOnly || this.sealedHosts.has(key)) &&
+      !options.allowMissFetch
+    ) {
       return Promise.resolve({
         state: "unknown",
         reason:
@@ -367,26 +367,24 @@ export class PassSnapshot {
         fromPassSnapshot: true,
       });
     }
-    const promise = run(!postReap);
+    const promise = run(true);
     this.processReads.set(key, promise);
     return promise;
   }
 
   /**
    * Drop one host's cached process table after an in-pass mutation (such as
-   * reaping stray task processes) so a post-mutation verification reads fresh
-   * process state.
+   * reaping stray task processes) so stale pre-reap process facts are never
+   * reused by later tasks in the same pass.
    */
   invalidateProcesses(hostId?: string | null): void {
-    const key = hostKeyOf(hostId);
-    this.processReads.delete(key);
-    if (this.isActive) this.reapInvalidatedHosts.add(key);
+    this.processReads.delete(hostKeyOf(hostId));
   }
 
   /**
    * Read or share one agent's bounded timeline snapshot for this pass.
-   * On a sealed host, a cache miss returns explicit `unknown` without starting
-   * an inline RPC in the task lane.
+   * On a sealed host or in cache-only task-quantum mode, a cache miss returns
+   * explicit `unknown` without starting an inline RPC in the task lane.
    */
   timeline(
     hostId: string | null | undefined,
@@ -394,7 +392,7 @@ export class PassSnapshot {
     limit: number | undefined,
     read: () => Promise<HostTimelineEntry[] | null>,
     deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
-    options: { allowMissFetch?: boolean } = {},
+    options: { allowMissFetch?: boolean; cacheOnly?: boolean } = {},
   ): Promise<BoundedReadResult<HostTimelineEntry[] | null>> {
     const run = () => boundedRead("agent timeline", read, deadlineMs);
     if (!this.isActive) return run();
@@ -405,7 +403,10 @@ export class PassSnapshot {
     const exhausted = this.timelineBudgetExhausted.get(hostKey);
     if (exhausted)
       return Promise.resolve({ state: "unknown", reason: exhausted });
-    if (this.sealedHosts.has(hostKey) && !options.allowMissFetch) {
+    if (
+      (options.cacheOnly || this.sealedHosts.has(hostKey)) &&
+      !options.allowMissFetch
+    ) {
       return Promise.resolve({
         state: "unknown",
         reason:
@@ -462,6 +463,7 @@ export class PassSnapshot {
       coveredObservation?: CoveredObservationSnapshot;
       requireCoveredObservation?: boolean;
       allowMissFetch?: boolean;
+      cacheOnly?: boolean;
     } = {},
   ): Promise<PassTimelinePageRead> {
     const run = (fromPassSnapshot: boolean): Promise<PassTimelinePageRead> => {
@@ -522,7 +524,10 @@ export class PassSnapshot {
         reason: exhausted,
         fromPassSnapshot: true,
       });
-    if (this.sealedHosts.has(hostKey) && !options.allowMissFetch) {
+    if (
+      (options.cacheOnly || this.sealedHosts.has(hostKey)) &&
+      !options.allowMissFetch
+    ) {
       return Promise.resolve({
         state: "unknown",
         reason:

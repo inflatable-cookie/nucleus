@@ -294,6 +294,37 @@ export function writeProjectScope(
   }
 }
 
+/** Open lanes in scope (nucleus#1546): every active lane listed by a selected
+ * project's repository, one per lane key. A lane two selected projects list
+ * counts once; paused, done and abandoned lanes never count. An empty selection
+ * means all projects, so All projects counts every open lane. */
+export function openScopeLanes(
+  projects: Project[],
+  lanes: Array<{
+    key: string;
+    status: string;
+    repositories: Array<{ origin: string; path: string }>;
+  }>,
+  selection: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  for (const project of scopedProjects(projects, selection))
+    for (const lane of lanes) {
+      if (lane.status !== "active" || seen.has(lane.key)) continue;
+      if (
+        (lane.repositories ?? []).some((member) =>
+          (project.repositories ?? []).some((repo) =>
+            member.origin && repo.origin
+              ? member.origin === repo.origin
+              : Boolean(member.path && member.path === repo.path),
+          ),
+        )
+      )
+        seen.add(lane.key);
+    }
+  return [...seen];
+}
+
 /** Lanes the Planning tab may show for the selection: every lane in a selected
  * project's plan, plus lanes listing a selected project's repository. */
 export function planningScopeLanes(

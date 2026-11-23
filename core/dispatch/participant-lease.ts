@@ -27,6 +27,7 @@ import type { Resolution } from "../resolution";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
+  currentTaskQuantumScope,
 } from "../scheduling/pass-snapshot";
 
 /** Proves a task's participants are settled before its work, merge or closeout goes on. */
@@ -170,6 +171,16 @@ export class ParticipantLease {
         "participant_tool_reaped",
         `Stopped participant ${agentId} after its reported turn ended and stray-tool grace elapsed: ${formatHostProcessSweepEvent(result)}`,
       );
+      // Spec 068 §6: inside a task quantum, never re-scan the full host process
+      // table inline after reaping; hold the lease on a lifecycle wait so the
+      // next host pass captures a fresh pre-process observation and table.
+      if (currentTaskQuantumScope()?.inTaskQuantum) {
+        return {
+          issue:
+            "reaped stray participant process; waiting for the next host pass to verify the process tree is clear",
+          needsOwner: false,
+        };
+      }
     } else
       this.store.event(
         t.id,

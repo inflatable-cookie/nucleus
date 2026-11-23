@@ -28,7 +28,7 @@ import { taskControlChanges } from "../../shared/task-control-changes";
 import { withdrawCancellation } from "./disposition";
 import { applyBudgetExtension } from "./budget-extension";
 import { applyControlWithVersionHint } from "./control-outcomes";
-import { assertAuthorRevisionAllowance } from "./author-revision-cap";
+import { authorRevisionAcceptance, forcedRevisionAcceptance } from "./author-revision-cap";
 import {
   assertDelegatedAuthority,
   assertOwnerAuthority,
@@ -206,6 +206,24 @@ export class TaskControlDispatcher {
     input: TaskControlInput,
     operationId?: string,
   ): Promise<Task> {
+    // An author-round control past the revision cap: authority is decided here,
+    // and the acceptance rides with the control into its own transaction, which
+    // records it only if the control applies (`recordAcceptedRevisionRound`).
+    const task = this.store.task(input.taskId);
+    const acceptance = input.force
+      ? forcedRevisionAcceptance(this.engine, input, task)
+      : authorRevisionAcceptance(this.engine, input, task);
+    return acceptance
+      ? this.engine.revisionCapAcceptance.run(acceptance, () =>
+          this.applyAuthorizedControl(input, operationId),
+        )
+      : this.applyAuthorizedControl(input, operationId);
+  }
+
+  private async applyAuthorizedControl(
+    input: TaskControlInput,
+    operationId?: string,
+  ): Promise<Task> {
     const operated = <T>(result: T) => {
       this.store.event(input.taskId, "operator_control", input.action);
       return result;
@@ -237,7 +255,6 @@ export class TaskControlDispatcher {
         return operated(await this.engine.forceMove(task, input, operationId));
       throw new DurableFenceRefusal(FORCE_ACTION_REFUSAL);
     }
-    assertAuthorRevisionAllowance(this.engine, input, task);
     if (
       (input.action === "route" ||
         (input.action === "set_routing" &&

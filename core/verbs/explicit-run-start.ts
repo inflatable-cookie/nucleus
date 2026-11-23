@@ -1,4 +1,4 @@
-import { hostOutageIntervals } from "../scheduling/host-outage";
+import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +22,12 @@ import type {
   ExplicitResolution,
   ResolutionWarningId,
 } from "../../shared/schema/task-control";
-import { taskBudget } from "../../shared/task-budget";
+import {
+  automaticBudgetExtensionDue,
+  budgetPauseDetail,
+  taskBudget,
+} from "../../shared/task-budget";
+import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import {
   chooseProfile,
   isOwnerRoutedReviewer,
@@ -48,13 +53,13 @@ import {
   ordinaryReviewSource,
 } from "../review/ordinary-review";
 import { reviewerSettingOf } from "../review/reviewer-setting";
-import { digest, now } from "../store/store";
+import { digest, now, type Store } from "../store/store";
 import type {
   ExplicitFinishResult,
   ExplicitPlan,
   ExplicitWarning,
 } from "./explicit-resolution";
-import { releasePlan } from "./explicit-resolution";
+import { releasePlan, releaseWarnings } from "./explicit-resolution";
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 
 export type MessageTarget = {
@@ -570,13 +575,13 @@ async function verifyReviewerCheckout(task: Task, run: Run): Promise<void> {
   await ordinaryReviewSource(task, run.head);
 }
 
-export function runStartPlan(
-  engine: Engine,
-  task: Task,
-  input: Extract<ExplicitResolution, { action: "run.start" }>,
-  preflight?: ExplicitRunStartPreflight,
-): ExplicitPlan {
-  const store = engine.store;
+type RunStartShape = Pick<
+  Extract<ExplicitResolution, { action: "run.start" }>,
+  "role" | "agent" | "replacing" | "head"
+>;
+
+/** Which run a `run.start` would create, from the stored task and runs alone. */
+function runStartTarget(store: Store, task: Task, input: RunStartShape) {
   const runs = store.runs(task.id);
   const runRole: Run["role"] =
     input.role === "reviewer"
@@ -584,7 +589,6 @@ export function runStartPlan(
       : input.role === "coordinator"
         ? "recovery"
         : "revision";
-
   const activeRevision = runs.findLast(
     (r) => r.role === "revision" && !r.released && Boolean(r.agentId),
   );
@@ -599,58 +603,75 @@ export function runStartPlan(
           task.coordinatorAgentId ??
           runs.findLast((r) => r.role === "recovery" && r.agentId)?.agentId ??
           null);
-
   const agentMode =
     input.agent ??
     (input.replacing ? "fresh" : retainedAgentId ? "retained" : "fresh");
-  if (agentMode === "retained" && !retainedAgentId) {
-    throw Error(`No retained ${input.role} thread is bound to this task`);
-  }
-
   const replacedRun = input.replacing ? store.run(input.replacing) : null;
   const replacedInitial = Boolean(
     input.replacing && !replacedRun && task.runId === input.replacing,
   );
-  if (input.replacing && (replacedRun || replacedInitial)) {
-    const replacedRole = replacedInitial
-      ? "worker"
-      : replacedRun!.role === "revision"
-        ? "worker"
-        : replacedRun!.role === "reviewer"
-          ? "reviewer"
-          : replacedRun!.role === "recovery"
-            ? "coordinator"
-            : replacedRun!.role;
-    if (replacedRole !== input.role) {
-      throw Error(
-        `Run ${input.replacing} is a ${replacedRole} run and cannot be replaced by run.start ${input.role}`,
-      );
-    }
-  }
+  return { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial };
+}
 
-  const replacingPlan = input.replacing
-    ? releasePlan(engine, task, {
-        action: "run.release",
-        taskId: input.taskId,
-        version: input.version,
-        reason: input.reason,
-        accept: input.accept,
-        caller: input.caller,
-        run: input.replacing,
-      })
-    : null;
-
-  const { profile, group } = selectProfileForStart(
-    engine,
+/**
+ * The policy stop a `run.start` would pass, worded as the stop it is, or null. It
+ * reads the scheduler's own conditions, never a looser one: the measured budget the
+ * launch gate reads, the revision allowance the cap park and the author-round rule
+ * read (`revisionAllowanceExhausted`: a cap stop with no author round since), and the
+ * replacement ceiling worker failover reads. Papercut 677c378d: the old check fired
+ * at six rounds inside a round the planner had approved. A first spend is no stop:
+ * the launch gate and the sweep extend it once on their own (Spec 068 Decision 1).
+ */
+export function runStartPolicyStop(
+  store: Store,
+  task: Task,
+  role: RunStartShape["role"],
+  agentMode: "fresh" | "retained",
+  runs: Run[] = store.runs(task.id),
+  /** False leaves the budget out: `next` offers it only where a run is next. */
+  budgetApplies = true,
+): string | null {
+  const events = store.eventsAll(task.id);
+  const budget = taskBudget(
     task,
-    input.role,
-    agentMode,
     runs,
+    Date.now(),
+    events,
+    store.canonicalRepository(task.repoPath, task.repository),
+    budgetOutageIntervals(store, task.hostId),
   );
-  if (agentMode === "fresh" && !profile) {
-    throw Error(`No eligible profile is available for ${input.role}`);
-  }
+  const reached: string[] = [];
+  if (budgetApplies && budget.exhausted && !automaticBudgetExtensionDue(task))
+    reached.push(budgetPauseDetail(budget));
+  if (role === "worker" && revisionAllowanceExhausted(task, runs, events))
+    reached.push(
+      `Revision cap reached: ${task.resolution.revisionRuns} of ${REVISION_BUDGET} review rounds, and no author round has started since the cap stopped the task`,
+    );
+  if (
+    role === "worker" &&
+    agentMode === "fresh" &&
+    task.retiredWorkers.length >= WORKER_REPLACEMENT_CEILING
+  )
+    reached.push(
+      `Replacement ceiling reached: ${task.retiredWorkers.length} of ${WORKER_REPLACEMENT_CEILING} workers retired`,
+    );
+  return reached.length ? reached.join("; ") : null;
+}
 
+/**
+ * Every warning a `run.start` names that the stored task and runs show. The command
+ * itself adds what only its preflight reads (the forge head, the checkout HEAD and a
+ * live worker turn); `next` lists these as each command's expected warnings, so a
+ * caller sends the `accept` list once (papercut ee6e634c).
+ */
+export function runStartWarnings(
+  store: Store,
+  task: Task,
+  input: RunStartShape,
+  preflight?: ExplicitRunStartPreflight,
+): ExplicitWarning[] {
+  const { runs, runRole, agentMode, replacedRun, replacedInitial } =
+    runStartTarget(store, task, input);
   const warnings: ExplicitWarning[] = [];
   const warn = (id: ResolutionWarningId, text: string) => {
     if (!warnings.some((item) => item.id === id)) warnings.push({ id, text });
@@ -666,8 +687,8 @@ export function runStartPlan(
           !task.completion &&
           task.agentIntent,
   );
-  if (replacingPlan && !replacedAgentlessUncertain) {
-    for (const warning of replacingPlan.warnings) {
+  if (input.replacing && (replacedRun || replacedInitial) && !replacedAgentlessUncertain) {
+    for (const warning of releaseWarnings(store, task, input.replacing)) {
       warn(warning.id, warning.text);
     }
   }
@@ -778,44 +799,75 @@ export function runStartPlan(
       `Requested head ${input.head.slice(0, 12)} differs from task checkout HEAD ${preflight.localHead.slice(0, 12)}; checkout will not be moved.`,
     );
   }
-  const budgetState = taskBudget(
-    task,
-    runs,
-    Date.now(),
-    store.eventsAll(task.id),
-    store.canonicalRepository(task.repoPath, task.repository),
-    hostOutageIntervals(store, task.hostId),
-  );
-  if (
-    (input.role === "worker" &&
-      agentMode === "fresh" &&
-      task.retiredWorkers.length >= WORKER_REPLACEMENT_CEILING) ||
-    (input.role === "worker" &&
-      task.resolution.revisionRuns >= REVISION_BUDGET) ||
-    budgetState.exhausted
-  ) {
-    warn(
-      "budget",
-      "The task's replacement ceiling, revision cap or execution budget is reached.",
-    );
+  const policyStop = runStartPolicyStop(store, task, input.role, agentMode, runs);
+  if (policyStop) warn("budget", `${policyStop}. Accepting starts the run past it.`);
+  if (input.role === "worker" && usageGateBlocked(task, store.usageLevel()))
+    warn("route_policy", "The Low usage level requires approval to admit this high-complexity task.");
+  return warnings;
+}
+
+export function runStartPlan(
+  engine: Engine,
+  task: Task,
+  input: Extract<ExplicitResolution, { action: "run.start" }>,
+  preflight?: ExplicitRunStartPreflight,
+): ExplicitPlan {
+  const store = engine.store;
+  const { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial } =
+    runStartTarget(store, task, input);
+  if (agentMode === "retained" && !retainedAgentId) {
+    throw Error(`No retained ${input.role} thread is bound to this task`);
   }
-  const entry = engine.store
-    .pool()
-    .find((item) => item.profileId === profile?.id);
+
+  if (input.replacing && (replacedRun || replacedInitial)) {
+    const replacedRole = replacedInitial
+      ? "worker"
+      : replacedRun!.role === "revision"
+        ? "worker"
+        : replacedRun!.role === "reviewer"
+          ? "reviewer"
+          : replacedRun!.role === "recovery"
+            ? "coordinator"
+            : replacedRun!.role;
+    if (replacedRole !== input.role) {
+      throw Error(
+        `Run ${input.replacing} is a ${replacedRole} run and cannot be replaced by run.start ${input.role}`,
+      );
+    }
+  }
+
+  const replacingPlan = input.replacing
+    ? releasePlan(engine, task, {
+        action: "run.release",
+        taskId: input.taskId,
+        version: input.version,
+        reason: input.reason,
+        accept: input.accept,
+        caller: input.caller,
+        run: input.replacing,
+      })
+    : null;
+
+  const { profile, group } = selectProfileForStart(
+    engine,
+    task,
+    input.role,
+    agentMode,
+    runs,
+  );
+  if (agentMode === "fresh" && !profile) {
+    throw Error(`No eligible profile is available for ${input.role}`);
+  }
+
+  const warnings = runStartWarnings(store, task, input, preflight);
+  const entry = engine.store.pool().find((item) => item.profileId === profile?.id);
   const usage = engine.store.usageLevel();
   if (
     entry &&
     task.profileRequests?.[input.role]?.profileId !== entry.profileId &&
     requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task))
   )
-    throw Error(
-      `Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`,
-    );
-  if (input.role === "worker" && usageGateBlocked(task, usage))
-    warn(
-      "route_policy",
-      "The Low usage level requires approval to admit this high-complexity task.",
-    );
+    throw Error(`Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`);
 
   let createdRun: Run | null = null;
   let token = "";

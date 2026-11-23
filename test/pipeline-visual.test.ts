@@ -681,8 +681,8 @@ const navigationButtons = (ui: ReturnType<typeof mount>) =>
     );
 const navigationLabels = (ui: ReturnType<typeof mount>) =>
   navigationButtons(ui).map((node) => String(node.props.accessibilityLabel));
-/** A menu entry's name, without its count. */
-const viewName = (label: string) => label.replace(/, \d+$/, "");
+/** A menu entry's name, without its count. Planning's count names its unit (nucleus#1546). */
+const viewName = (label: string) => label.replace(/, \d+( open lanes)?$/, "");
 const navigationButton = (ui: ReturnType<typeof mount>, name: string) => {
   const button = navigationButtons(ui).find(
     (node) => viewName(String(node.props.accessibilityLabel)) === name,
@@ -1658,13 +1658,19 @@ test("030-7 bundled dark-theme task detail offers routing before dispatch with e
       const routingCard = findCard(ui, (label) => label.includes("Routing UI"));
       assert.ok(routingCard, "the board never offered the queued task");
       routingCard.props.onPress();
-      // PR #538 reads the detail in ten seconds: routing sits in the collapsed Technical group.
+      // nucleus#1537: every editing action, routing included, lives in the ⋯ menu.
       await settleUntil(
         ui,
-        () => ui.query("Technical") !== undefined,
-        "the task detail never rendered its Technical tab",
+        () => ui.query("Task actions menu") !== undefined,
+        "the task detail never rendered its actions menu",
       );
-      ui.press("Technical");
+      ui.press("Task actions menu");
+      await settleUntil(
+        ui,
+        () => ui.query("Change routing & profiles") !== undefined,
+        "the queued task's menu never offered routing",
+      );
+      ui.press("Change routing & profiles");
       await settleUntil(
         ui,
         () => ui.query("Change routing") !== undefined,
@@ -1702,10 +1708,10 @@ test("030-7 bundled dark-theme task detail offers routing before dispatch with e
       await settleUntil(
         ui,
         () => {
-          const cancel = ui.query("Cancel task");
+          const menu = ui.query("Task actions menu");
           return (
-            Boolean(cancel) &&
-            cancel!.props.accessibilityState?.disabled === false &&
+            Boolean(menu) &&
+            menu!.props.accessibilityState?.disabled !== true &&
             ui.query("Reason (required)") === undefined
           );
         },
@@ -1752,8 +1758,16 @@ test("030-7 bundled dark-theme task detail offers routing before dispatch with e
         () => ui.query("Close task detail") !== undefined,
         "the started task detail never reopened",
       );
+      ui.press("Task actions menu");
+      await settleUntil(
+        ui,
+        () =>
+          ui.query("Cancel or supersede") !== undefined ||
+          ui.query("Extend budget") !== undefined,
+        "the started task's menu never opened",
+      );
       assert.equal(
-        ui.query("Change routing"),
+        ui.query("Change routing & profiles"),
         undefined,
         "a started task offers no routing change",
       );
@@ -2273,40 +2287,37 @@ test("043 (a) bundled dark-theme task detail names the derived wait, its owner a
       );
       assert.ok(waitCard, "the capacity wait card remains available");
       waitCard!.props.onPress();
-      // The Overview opens first and leads with the wait: its state, owner and next action.
+      // The Overview opens first and leads with the wait in plain words: who acts and what Nucleus does.
       await settleUntil(
         ui,
-        () => Boolean(ui.query(/^Wait: /)),
+        () => Boolean(ui.query(/^What is happening: /)),
         "the task detail omitted its wait state",
       );
       assert.match(
-        String(ui.query(/^Wait: /)?.props.accessibilityLabel),
-        /^Wait: Waiting for capacity; owner operator; next .+$/,
-        "the Overview names the capacity wait, its owner and next action",
+        String(ui.query(/^What is happening: /)?.props.accessibilityLabel),
+        /^What is happening: Waiting · nothing to do\. Waiting for a machine-wide task slot$/,
+        "the Overview names the global slot wait without blaming the project limit",
       );
       assert.ok(
-        ui.text().includes("Waiting for capacity"),
-        "the wait state is visible on the Overview",
+        ui
+          .text()
+          .includes(
+            "Nucleus starts it automatically when any task frees a slot",
+          ),
+        "the Overview says what Nucleus does next",
       );
-      // Technical no longer repeats the wait state; its reference stays there.
+      // Details opens beside it, and the header keeps the wait in view on every tab.
+      ui.press("Details");
       await settleUntil(
         ui,
-        () => ui.query("Technical") !== undefined,
-        "the task detail never rendered its Technical tab",
+        () => ui.query("Details")?.props.accessibilityState?.selected === true,
+        "the Details tab did not open",
       );
-      ui.press("Technical");
-      await settleUntil(
-        ui,
-        () =>
-          ui.query("Technical")?.props.accessibilityState?.selected === true,
-        "the Technical tab did not open",
+      assert.ok(
+        ui.query("Task details"),
+        "Details lists the task's reference facts",
       );
-      // The list row beside the detail keeps its own wait badge; the detail's visible wait line is what must not repeat.
-      assert.equal(
-        ui.text().includes("· next:"),
-        false,
-        "the wait state is not repeated on Technical",
-      );
+      assert.ok(ui.text().includes(task.id), "Details names the task ID");
       assertDarkTheme(ui);
     } finally {
       unmount(ui);
@@ -2509,7 +2520,7 @@ for (const compact of [false, true]) {
         navigationLabels(empty),
         [
           "Needs you, 0",
-          "Planning",
+          "Planning, 2 open lanes",
           "Leads, 0",
           "Papercuts, 0",
           "Queue, 0",
@@ -2517,7 +2528,7 @@ for (const compact of [false, true]) {
           "In review, 0",
           "Closing, 0",
         ],
-        "every menu entry reads its real zero total",
+        "every menu entry reads its real total, Planning its open lanes",
       );
       assert.ok(
         empty.text().includes("Nothing here."),
@@ -2658,16 +2669,20 @@ for (const compact of [false, true]) {
         );
       assert.ok(ui.query("Working, 1"), "Working carries its own count");
       assert.ok(ui.query("In review, 1"), "In review carries its own count");
+      assert.ok(
+        ui.query("Planning, 2 open lanes"),
+        "Planning carries its open lanes",
+      );
       assert.ok(ui.query("Closing, 0"), "Closing reads its real zero");
       assert.equal(ui.query(/^Active/), undefined, "no Active entry remains");
-      // Dimming: a zero-count entry dims, while the selected zero entry, the
-      // uncounted Planning entry and non-zero entries do not.
+      // Dimming: a zero-count entry dims, while the selected entry and
+      // non-zero entries do not.
       const opacityOf = (name: string) =>
         navigationButton(ui, name).props.style.opacity;
       assert.equal(
         opacityOf("Planning"),
         1,
-        "Planning carries no count and never dims",
+        "a non-zero Planning count never dims",
       );
       assert.equal(opacityOf("Working"), 1, "a non-zero entry never dims");
       assert.equal(opacityOf("Closing"), 0.55, "a zero-count entry dims");

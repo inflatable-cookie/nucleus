@@ -235,11 +235,11 @@ test("task detail shows a pending native question and answers it in place", asyn
       true,
       "an unanswered question cannot be submitted",
     );
-    tree.press("Technical");
+    tree.press("Details");
     assert.equal(
-      tree.query("Technical")?.props.accessibilityState.selected,
+      tree.query("Details")?.props.accessibilityState.selected,
       true,
-      "the Technical tab is selected",
+      "the Details tab is selected",
     );
     assert.match(
       tree.text(),
@@ -261,7 +261,7 @@ test("task detail shows a pending native question and answers it in place", asyn
           ?.revision === 2,
     );
     assert.equal(
-      tree.query("Technical")?.props.accessibilityState.selected,
+      tree.query("Details")?.props.accessibilityState.selected,
       true,
       "a board refresh preserves the selected tab",
     );

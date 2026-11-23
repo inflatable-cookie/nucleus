@@ -279,25 +279,21 @@ test("CLI, native UI and Queue MCP forward task controls through the shared cont
     );
   const ui = boardSource();
   assert.match(ui, /useRpc\(api\.taskControl\)/);
-  // #895 puts low-value technical events behind a disclosure while retaining the original audit row.
+  // #895 and nucleus#1537: low-value technical events hide behind "Show raw events (N)",
+  // which keeps every original audit row with its original kind.
   assert.match(
     ui,
-    /function TechnicalActivityEvents[\s\S]*events\.map\(\s*\(?event\)?\s*=>\s*\(?\s*<EventRow key=\{event\.id\} event=\{event\} c=\{c\} \/>\s*\)?\s*\)/,
+    /title=\{`Show raw events \(\$\{rawCount\}\)`\}[\s\S]*events\.map\(\(ev\) => \(\s*<EventRow key=\{ev\.id\} event=\{ev\} c=\{c\} \/>/,
+    "technical records remain reachable from the raw events disclosure",
   );
   assert.match(
     ui,
     /accessibilityLabel="Original event kind"[\s\S]*\{event\.kind\}/,
   );
-  assert.ok(
-    ui.includes(
-      '.filter(event => !lowValueActivityKinds.has(event.kind) && !event.kind.endsWith("_duration")).map((e) => (',
-    ),
-    "ordinary activity, including reconciled-head events, remains in the main feed",
-  );
   assert.match(
-    ui,
-    /TechnicalActivityEvents events=\{\(detailQuery\.data\?\.events \?\? \[\]\)\.filter\(event => lowValueActivityKinds\.has\(event\.kind\) \|\| event\.kind\.endsWith\("_duration"\)\)\}/,
-    "technical records, including reconciled-head events, remain reachable from the Activity disclosure",
+    read("shared/task-detail-view.ts"),
+    /\.\.\.lowValueActivityKinds,[\s\S]*if \(kind\.endsWith\("_duration"\)\) return true;/,
+    "the readable timeline hides the low-value and duration kinds; ordinary activity stays in it",
   );
   assert.match(ui, /function OperationState/);
   assert.match(ui, /operation\.diagnostic/);

@@ -264,14 +264,12 @@ test("the card and detail show the live dispatch hold, and next names the same f
     // Detail: the stale stored reason is not shown, and next names the fence.
     assert.ok(showInView(tree, "stale-hold"), "the stale-hold card is listed");
     tree.press(/stale-hold/);
-    await settle(() => Boolean(tree.query(`Stop: hold; held; ${DISPATCH}`)));
-    // Task 538: the hold lines and the stored routing errors live in the collapsed
-    // Technical tab; the summary carries the live hold as its own row.
-    assert.ok(
-      tree.query(/^dispatch hold: operator, Dispatch held by operator/),
-      "the summary names the dispatch hold and its holder",
+    // nucleus#1537: the Overview names the live hold and its holder in plain words;
+    // the hold lines and the stored routing errors live in Details.
+    await settle(() =>
+      Boolean(tree.query(/^What is happening: .*Dispatch is held by operator/)),
     );
-    tree.press("Technical");
+    tree.press("Details");
     await settle(() => Boolean(tree.query("Dispatch hold owner and reason")));
     assert.ok(
       tree.query("Dispatch hold owner and reason"),
@@ -286,8 +284,10 @@ test("the card and detail show the live dispatch hold, and next names the same f
     assert.ok(showInView(tree, "both-holds"), "the both-holds card is listed");
     tree.press(/both-holds/);
     // Selecting a task opens on its Overview tab.
-    await settle(() => Boolean(tree.query(`Stop: hold; held; ${DISPATCH}`)));
-    tree.press("Technical");
+    await settle(() =>
+      Boolean(tree.query(/^What is happening: .*Dispatch is held by/)),
+    );
+    tree.press("Details");
     await settle(() => Boolean(tree.query("Merge hold owner and reason")));
     assert.ok(
       tree.query("Dispatch hold owner and reason"),
@@ -298,7 +298,7 @@ test("the card and detail show the live dispatch hold, and next names the same f
       "the merge hold stays discoverable on the detail",
     );
     assert.ok(
-      !tree.query(`Stop: hold; held; ${MERGE}`),
+      !tree.query(/^What is happening: .*Merge is held/),
       "next does not name the merge fence for a queued task",
     );
 
@@ -309,10 +309,9 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
     tree.press(/real-origin-error/);
     await settle(
-      () =>
-        tree.query("Technical")?.props.accessibilityState.selected === false,
+      () => tree.query("Details")?.props.accessibilityState.selected === false,
     );
-    tree.press("Technical");
+    tree.press("Details");
     await settle(() =>
       tree.text().includes("Origin routing: Origin thread 0b355fd4 not found"),
     );
@@ -329,10 +328,9 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
     tree.press(/merge-review/);
     await settle(
-      () =>
-        tree.query("Technical")?.props.accessibilityState.selected === false,
+      () => tree.query("Details")?.props.accessibilityState.selected === false,
     );
-    tree.press("Technical");
+    tree.press("Details");
     await settle(() => Boolean(tree.query("Merge hold owner and reason")));
     assert.ok(
       tree.text().includes("Reviewer run is reading the diff"),
@@ -350,11 +348,11 @@ test("the card and detail show the live dispatch hold, and next names the same f
     await settle(
       () =>
         tree.text().includes("Worker is editing") &&
-        Boolean(tree.query("Technical")),
+        Boolean(tree.query("Details")),
     );
-    tree.press("Technical");
+    tree.press("Details");
     await settle(
-      () => tree.query("Technical")?.props.accessibilityState.selected === true,
+      () => tree.query("Details")?.props.accessibilityState.selected === true,
     );
     assert.equal(tree.query("Dispatch hold owner and reason"), undefined);
     assert.equal(tree.query("Merge hold owner and reason"), undefined);

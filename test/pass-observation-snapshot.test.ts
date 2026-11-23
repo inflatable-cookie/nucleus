@@ -1,5 +1,9 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
 import type {
@@ -8,11 +12,20 @@ import type {
   HostProcessFact,
   TimelinePage,
 } from "../core/host";
-import { PassSnapshot, boundedRead } from "../core/scheduling/pass-snapshot";
+import {
+  PassSnapshot,
+  boundedRead,
+  runInTaskQuantumScope,
+} from "../core/scheduling/pass-snapshot";
+import { readProcessSubset } from "../core/machine/host-process-listing";
 import { observeAssignedThread } from "../core/dispatch/run-launch/assigned-thread";
 import type { LaunchThreadContext } from "../core/dispatch/launch";
 import { fakeAdapter, submission } from "./support/fakes";
-import { toolTimelinePage } from "./support/tool-timeline";
+import {
+  longToolHistory,
+  toolTimelinePage,
+  toolTimelineTail,
+} from "./support/tool-timeline";
 import { runSchema, type Task } from "../shared/contracts";
 
 const HOST = "host-1";
@@ -2605,5 +2618,618 @@ test("task quantum shares one read-phase budget across serial participant observ
   assert.ok(
     observeCalls > 0 && observeCalls < 12,
     `quantum-wide read budget must stop serial observations well before all 12 participant/tool reads, ran ${observeCalls}`,
+  );
+});
+
+test("task-scope lookups stay strictly cache-only when unsealed or post-reap, and settleStrayTool defers verification to the next host pass", async (t) => {
+  let processListCalls = 0;
+  let timelineCalls = 0;
+  let timelinePageCalls = 0;
+  let mergeCalls = 0;
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  const strayDir = mkdtempSync(join(tmpdir(), "ns-reap-defer-"));
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
+    cwd: strayDir,
+    stdio: "ignore",
+    detached: true,
+  });
+  t.after(() => {
+    try {
+      if (child.pid) process.kill(-child.pid, "SIGKILL");
+    } catch {}
+    try {
+      child.kill("SIGKILL");
+    } catch {}
+    rmSync(strayDir, { recursive: true, force: true });
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-unsealed-reap",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt: idleAt,
+          },
+        ]),
+      ),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-unsealed-reap",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: idleAt,
+    }),
+    agentTimeline: async () => {
+      timelineCalls++;
+      return [];
+    },
+    agentTimelinePage: async () => {
+      timelinePageCalls++;
+      return toolTimelinePage([runningShellEntry("call-reap-stray")]);
+    },
+    hostProcessListing: async (): Promise<HostProcessFact[]> => {
+      processListCalls++;
+      const listing = await readProcessSubset([child.pid!]);
+      if (listing.state === "listed" && listing.processes.length > 0)
+        return listing.processes;
+      return [];
+    },
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "",
+    }),
+    createRun: async () => {
+      throw new Error("unexpected createRun during reap defer test");
+    },
+    merge: async () => {
+      mergeCalls++;
+      return "merged-commit";
+    },
+  });
+  f.store.setMeta("paused", false);
+
+  // Part A: Inside a task quantum, an unsealed PassSnapshot (e.g., while a
+  // concurrent sweep is still warming) and an invalidated process entry must
+  // never execute host RPCs on the task lane.
+  const snap = f.engine.resolution.beginPassSnapshot();
+  try {
+    await runInTaskQuantumScope(
+      5_000,
+      async () => {
+        const proc = await f.engine.resolution.readPassProcesses(HOST);
+        assert.equal(proc.state, "unknown");
+        const tl = await f.engine.resolution.readPassTimeline(
+          "agent-unsealed",
+          HOST,
+          200,
+        );
+        assert.equal(tl.state, "unknown");
+        const page = await f.engine.resolution.readPassTimelinePage(
+          "agent-unsealed",
+          200,
+          HOST,
+        );
+        assert.equal(page.state, "unknown");
+      },
+      snap,
+    );
+    assert.equal(
+      processListCalls,
+      0,
+      "unsealed pass snapshot must not start hostProcessListing on the task lane",
+    );
+    assert.equal(
+      timelineCalls,
+      0,
+      "unsealed pass snapshot must not start agentTimeline on the task lane",
+    );
+    assert.equal(
+      timelinePageCalls,
+      0,
+      "unsealed pass snapshot must not start agentTimelinePage on the task lane",
+    );
+
+    // Prime processes, seal, invalidate, and confirm task-scope lookup stays cache-only.
+    await f.engine.resolution.primePassProcesses(HOST);
+    f.engine.resolution.sealPassHost(HOST);
+    assert.equal(processListCalls, 1);
+    snap.invalidateProcesses(HOST);
+    await runInTaskQuantumScope(
+      5_000,
+      async () => {
+        const procAfter = await f.engine.resolution.readPassProcesses(HOST);
+        assert.equal(procAfter.state, "unknown");
+      },
+      snap,
+    );
+    assert.equal(
+      processListCalls,
+      1,
+      "invalidated process snapshot must not re-scan hostProcessListing on the task lane",
+    );
+  } finally {
+    snap.expire();
+  }
+
+  // Part B: End-to-end settleStrayTool inside a task quantum reaps the stray
+  // process and defers post-reap verification to the next host pass without
+  // re-scanning hostProcessListing on the task lane.
+  processListCalls = 0;
+  timelinePageCalls = 0;
+  (f.engine.resolution as { graceMs: number }).graceMs = 0;
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-unsealed-reap",
+      title: "Post-reap defer task",
+      skipPRReview: true,
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const task = f.store.update(inserted.id, {
+    phase: "merging",
+    workspaceId: "ws-unsealed-reap",
+    directory: strayDir,
+    agentId: "agent-unsealed-reap",
+    runId: "run-unsealed-reap",
+    prHead: HEAD,
+    prUrl: "https://github.com/example/repo/pull/93",
+    completion: {
+      eventId: "ev-comp-unsealed-reap",
+      taskId: inserted.id,
+      runId: "run-unsealed-reap",
+      status: "ready_for_review",
+      head: HEAD,
+      prNumber: 93,
+      summary: "done",
+    },
+    reason: "Ready to merge",
+    resolution: {
+      ...inserted.resolution,
+      integrationTurn: { sequence: 1, acceptedAt: idleAt },
+      mergeIntent: false,
+      review: {
+        eventId: "ev-unsealed-reap",
+        taskId: inserted.id,
+        runId: "rev-unsealed-reap",
+        reviewId: 93,
+        status: "ready_to_merge",
+        head: HEAD,
+        summary: "ok",
+      },
+    },
+  });
+
+  await f.engine.auditPass(true);
+  assert.equal(
+    f.store
+      .events(task.id)
+      .filter((event) => event.kind === "participant_tool_reaped").length,
+    1,
+    `participant_tool_reaped event is recorded (reason: ${f.store.task(task.id).reason}, events: ${JSON.stringify(f.store.events(task.id).map((e) => [e.kind, e.detail]))})`,
+  );
+  assert.equal(
+    processListCalls,
+    1,
+    "post-reap settleStrayTool must not re-scan hostProcessListing on the task lane",
+  );
+  assert.equal(
+    mergeCalls,
+    0,
+    "post-reap quantum waits for the next host pass to verify the process tree is clear",
+  );
+  assert.match(
+    f.store.task(task.id).reason,
+    /reaped stray participant process; waiting for the next host pass/i,
+  );
+});
+
+test("retained-run observation and creation lookup respect the quantum read deadline and preserve pending state", async (t) => {
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  let observeCalls = 0;
+  let findRunAgentsCalls = 0;
+  const f = engineFixture(t, {
+    observe: () => {
+      observeCalls++;
+      return new Promise<AgentObservation>((resolve) => {
+        const timer = setTimeout(
+          () =>
+            resolve({
+              id: "agent-hung-obs",
+              workspaceId: "ws-hung-obs",
+              status: "running",
+              active: true,
+              activeTurnId: "turn-1",
+              permissions: false,
+              error: "",
+            }),
+          60_000,
+        );
+        timer.unref?.();
+        timers.push(timer);
+      });
+    },
+    findRunAgents: () => {
+      findRunAgentsCalls++;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve([]), 60_000);
+        timer.unref?.();
+        timers.push(timer);
+      });
+    },
+  });
+  f.store.setMeta("paused", false);
+  f.engine.hostHealth.answered(HOST);
+  f.engine.resolution.quantumReadTimeoutMs = 40;
+  f.engine.resolution.quantumReadBudgetMs = 80;
+
+  // Part A: Observation.observe fallback (e.g. callback prelude without pass inventory)
+  // bounds a hung host.observe inside the shared quantum deadline.
+  const obsInserted = f.store.insert(
+    submission({
+      submissionId: "sub-hung-obs",
+      title: "Hung retained-run observation",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const obsTask = f.store.update(obsInserted.id, {
+    phase: "reviewing",
+    workspaceId: "ws-hung-obs",
+    directory: "/tmp/synthetic-hung-obs",
+    agentId: "agent-worker-obs",
+    runId: "run-worker-obs",
+  });
+  f.store.putRun(
+    runSchema.parse({
+      id: "run-reviewer-hung-obs",
+      taskId: obsTask.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId: "agent-hung-obs",
+      workspaceId: "ws-hung-obs",
+      hostId: HOST,
+      profile: null,
+      status: "running",
+      createdAt: new Date(Date.now() - 25_000).toISOString(),
+      lastObservedAt: new Date(Date.now() - 25_000).toISOString(),
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    }),
+  );
+
+  await runInTaskQuantumScope(80, async () => {
+    await f.engine.resolution.observation.observe(null, obsTask.id);
+  });
+  assert.equal(observeCalls, 1, "fallback host.observe was attempted once");
+  assert.equal(
+    f.store.run("run-reviewer-hung-obs")?.released,
+    false,
+    "timed-out retained-run observation must preserve the pending run",
+  );
+
+  // Part B: Uncertain creation lookup bounds a hung findRunAgents inside the
+  // quantum deadline and preserves the creation intent.
+  const lookupInserted = f.store.insert(
+    submission({
+      submissionId: "sub-hung-lookup",
+      title: "Hung creation lookup",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const lookupTask = f.store.update(lookupInserted.id, {
+    phase: "reviewing",
+    workspaceId: "ws-hung-lookup",
+    directory: "/tmp/synthetic-hung-lookup",
+    agentId: "agent-worker-lookup",
+    runId: "run-worker-lookup",
+  });
+  f.store.putRun(
+    runSchema.parse({
+      id: "run-intent-hung-lookup",
+      taskId: lookupTask.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId: null,
+      workspaceId: "ws-hung-lookup",
+      hostId: HOST,
+      profile: null,
+      status: "intent",
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      lastObservedAt: null,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: false,
+    }),
+  );
+
+  await runInTaskQuantumScope(80, async () => {
+    await f.engine.resolution.observation.observe(null);
+  });
+  assert.equal(findRunAgentsCalls, 1, "findRunAgents was attempted once");
+  const intentRunAfter = f.store.run("run-intent-hung-lookup");
+  assert.equal(
+    intentRunAfter?.status,
+    "intent",
+    "timed-out creation lookup must preserve the pending creation intent",
+  );
+  assert.equal(intentRunAfter?.released, false);
+  assert.match(
+    f.store.task(lookupTask.id).reason,
+    /timed out|unreadable|creation lookup/i,
+  );
+});
+
+test("healthy task with 10 idle participants completes in one pass via both host pass and wake prefetch without 8-page starvation", async (t) => {
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  const warmedAgents = new Set<string>();
+  let mergeCalls = 0;
+
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-ten-participants",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt: idleAt,
+          },
+        ]),
+      ),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-ten-participants",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: idleAt,
+    }),
+    agentTimelinePage: async (id: string) => {
+      warmedAgents.add(id);
+      return toolTimelinePage([]);
+    },
+    hostProcessListing: async () => [],
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "",
+    }),
+    createRun: async () => {
+      throw new Error("unexpected createRun during reap defer test");
+    },
+    merge: async () => {
+      mergeCalls++;
+      return "merged-commit";
+    },
+  });
+  f.store.setMeta("paused", false);
+
+  const seedTenParticipantMergingTask = (
+    slug: string,
+    prNumber: number,
+    repoPath = `/repo-${slug}`,
+  ) => {
+    const inserted = f.store.insert(
+      submission({
+        submissionId: `sub-${slug}`,
+        title: `Ten-participant task ${slug}`,
+        repoPath,
+        skipPRReview: true,
+      }),
+      HOST,
+      "handoff",
+      HEAD,
+    );
+    return f.store.update(inserted.id, {
+      phase: "merging",
+      workspaceId: "ws-ten-participants",
+      directory: `/tmp/synthetic-${slug}`,
+      agentId: `agent-${slug}-main`,
+      runId: `run-${slug}-main`,
+      retiredWorkers: Array.from({ length: 9 }, (_, i) => ({
+        agentId: `agent-${slug}-retired-${i}`,
+        runId: `run-${slug}-retired-${i}`,
+        profile: {
+          id: "claude:sonnet",
+          name: "Claude Sonnet",
+          provider: "claude",
+          model: "sonnet",
+          notes: "",
+          available: true,
+          problem: "",
+          supportedThinking: [],
+        },
+        reason: "rotated",
+        hostId: HOST,
+      })),
+      prHead: HEAD,
+      prUrl: `https://github.com/example/repo/pull/${prNumber}`,
+      completion: {
+        eventId: `ev-comp-${slug}`,
+        taskId: inserted.id,
+        runId: `run-${slug}-main`,
+        status: "ready_for_review",
+        head: HEAD,
+        prNumber,
+        summary: "done",
+      },
+      reason: "Ready to merge",
+      resolution: {
+        ...inserted.resolution,
+        integrationTurn: { sequence: 1, acceptedAt: idleAt },
+        mergeIntent: false,
+        review: {
+          eventId: `ev-${slug}`,
+          taskId: inserted.id,
+          runId: `rev-${slug}`,
+          reviewId: prNumber,
+          status: "ready_to_merge",
+          head: HEAD,
+          summary: "ok",
+        },
+      },
+    });
+  };
+
+  // Part A: Host pass warms all 10 participants of the primary task in one pass.
+  const hostPassTask = seedTenParticipantMergingTask("host-pass-10", 94);
+  await f.engine.auditPass(true);
+  assert.equal(
+    mergeCalls,
+    1,
+    `host pass must warm all 10 participants of one task so it merges in a single pass (phase: ${f.store.task(hostPassTask.id).phase}, reason: ${f.store.task(hostPassTask.id).reason}, warmed: ${warmedAgents.size}, events: ${JSON.stringify(f.store.events(hostPassTask.id).map((e) => [e.kind, e.detail]))})`,
+  );
+  assert.equal(
+    warmedAgents.size,
+    10,
+    "all 10 participants were warmed in the host pass",
+  );
+
+  // Part B: Wake prefetch warms all 10 participants without slicing at 8.
+  warmedAgents.clear();
+  mergeCalls = 0;
+  const wakeTaskObj = seedTenParticipantMergingTask("wake-10", 95);
+  await f.engine.wakeTask(wakeTaskObj.id);
+  assert.equal(
+    mergeCalls,
+    1,
+    `wake prefetch must warm all 10 participants without truncating at 8 (phase: ${f.store.task(wakeTaskObj.id).phase}, reason: ${f.store.task(wakeTaskObj.id).reason}, warmed: ${warmedAgents.size}, events: ${JSON.stringify(f.store.events(wakeTaskObj.id).map((e) => [e.kind, e.detail]))})`,
+  );
+  assert.equal(
+    warmedAgents.size,
+    10,
+    "all 10 participants were warmed in wake prefetch",
+  );
+});
+
+test("wake prefetch expands a partial first tool page (200) to a complete second page (400) and merges cleanly", async (t) => {
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  const requestedLimits: number[] = [];
+  let mergeCalls = 0;
+
+  const history250 = longToolHistory(250);
+  const f = engineFixture(t, {
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-wake-expand",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: idleAt,
+    }),
+    agentTimelinePage: async (_id: string, limit: number) => {
+      requestedLimits.push(limit);
+      return toolTimelineTail(history250, limit);
+    },
+    hostProcessListing: async () => [],
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "",
+    }),
+    createRun: async () => {
+      throw new Error("unexpected createRun during reap defer test");
+    },
+    merge: async () => {
+      mergeCalls++;
+      return "merged-commit";
+    },
+  });
+  f.store.setMeta("paused", false);
+  f.engine.hostHealth.answered(HOST);
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-wake-expand",
+      title: "Wake partial page expansion",
+      skipPRReview: true,
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const task = f.store.update(inserted.id, {
+    phase: "merging",
+    workspaceId: "ws-wake-expand",
+    directory: "/tmp/synthetic-wake-expand",
+    agentId: "agent-wake-expand",
+    runId: "run-wake-expand",
+    prHead: HEAD,
+    prUrl: "https://github.com/example/repo/pull/96",
+    completion: {
+      eventId: "ev-comp-wake-expand",
+      taskId: inserted.id,
+      runId: "run-wake-expand",
+      status: "ready_for_review",
+      head: HEAD,
+      prNumber: 96,
+      summary: "done",
+    },
+    reason: "Ready to merge",
+    resolution: {
+      ...inserted.resolution,
+      integrationTurn: { sequence: 1, acceptedAt: idleAt },
+      mergeIntent: false,
+      review: {
+        eventId: "ev-wake-expand",
+        taskId: inserted.id,
+        runId: "rev-wake-expand",
+        reviewId: 96,
+        status: "ready_to_merge",
+        head: HEAD,
+        summary: "ok",
+      },
+    },
+  });
+
+  await f.engine.wakeTask(task.id);
+
+  assert.deepEqual(
+    requestedLimits,
+    [200, 400],
+    "wake prefetch must expand from 200 to 400 when the first page hasOlder: true",
+  );
+  assert.equal(
+    mergeCalls,
+    1,
+    `task merges cleanly using the expanded 400-entry page from wake prefetch (phase: ${f.store.task(task.id).phase}, reason: ${f.store.task(task.id).reason}, events: ${JSON.stringify(f.store.events(task.id).map((e) => [e.kind, e.detail]))})`,
   );
 });

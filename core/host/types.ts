@@ -296,6 +296,8 @@ export interface RecoveryDispatchSnapshot {
     args: Record<string, unknown>;
     fill?: string[];
     note?: string;
+    /** The warning IDs the command will name (papercut ee6e634c). */
+    warnings?: string[];
   }>;
 }
 

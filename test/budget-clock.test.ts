@@ -35,15 +35,31 @@ const settle = async (ready: () => boolean) => {
   for (let pass = 0; pass < 30 && !ready(); pass++) await tick();
   assert.ok(ready());
 };
+/**
+ * Spec 068 Decision 1: Nucleus extends a task's first spent budget itself, so a
+ * budget stop and its question belong to a later spend. The stored shape after that
+ * automatic extension: one recorded extension, so each limit is two increments.
+ */
+const automaticExtensionSpent = (f: ReturnType<typeof fixture>) => {
+  const current = f.current();
+  f.store.update(
+    current.id,
+    { resolution: { ...current.resolution, budgetExtensions: 1 } },
+    "budget_extended",
+    "automatic: Spec 068 Decision 1 (test fixture)",
+  );
+};
 
 test("a budget stop at awaiting_review names extend_budget and asks its question", async () => {
   const f = fixture({ responsible: true });
   try {
-    // The worker reported and opened the PR hours ago; the wall-time limit is spent.
+    // The worker reported and opened the PR hours ago; the wall-time limit is spent
+    // again after its one automatic extension (360 minutes for a medium task).
+    automaticExtensionSpent(f);
     f.store.update(f.submitted.id, {
-      budgetSince: iso(Date.now() - 4 * 60 * MINUTE),
+      budgetSince: iso(Date.now() - 7 * 60 * MINUTE),
     });
-    f.recordRunStart(iso(Date.now() - 4 * 60 * MINUTE));
+    f.recordRunStart(iso(Date.now() - 7 * 60 * MINUTE));
     await f.engine.wake();
     const stopped = f.current();
     assert.equal(stopped.phase, "awaiting_review");
@@ -153,14 +169,15 @@ test("a budget question is recorded for every phase, even with the task host off
     // pause was recorded; neither may silence it: the board records questions
     // without the task's host (#1153).
     f.engine.hostAvailable = (id) => id !== "host";
+    automaticExtensionSpent(f);
     f.store.update(f.submitted.id, {
-      budgetSince: iso(Date.now() - 4 * 60 * MINUTE),
+      budgetSince: iso(Date.now() - 7 * 60 * MINUTE),
     });
-    f.recordRunStart(iso(Date.now() - 4 * 60 * MINUTE));
+    f.recordRunStart(iso(Date.now() - 7 * 60 * MINUTE));
     f.engine.resolution.recordStop(
       f.current(),
       "budget",
-      "Budget reached: 180 minutes of wall time since the responsible lifecycle began",
+      "Budget reached: 360 minutes of wall time since the responsible lifecycle began",
     );
     assert.deepEqual(f.current().resolution.stop?.suggestedVerbs, [
       "extend_budget",
@@ -864,7 +881,9 @@ test("a task with real runs over its wall-time budget is still stopped, and its 
   const f = fixture({ responsible: true });
   try {
     f.store.update(f.submitted.id, { complexity: "low" });
-    // A real resolution run that started two hours ago; the low wall limit is one hour.
+    automaticExtensionSpent(f);
+    // A real resolution run that started 150 minutes ago; the low wall limit is one
+    // hour, two after its automatic extension.
     f.store.putRun(
       runSchema.parse({
         id: "old-revision",
@@ -877,7 +896,7 @@ test("a task with real runs over its wall-time budget is still stopped, and its 
         workspaceId: "workspace",
         profile: null,
         status: "finished",
-        createdAt: iso(Date.now() - 120 * MINUTE),
+        createdAt: iso(Date.now() - 150 * MINUTE),
         lastObservedAt: null,
         active: false,
         idleSince: null,
@@ -903,7 +922,7 @@ test("a task with real runs over its wall-time budget is still stopped, and its 
     await f.engine.wake();
     const stopped = f.current();
     assert.equal(stopped.resolution.stop?.reason, "budget", stopped.reason);
-    assert.match(stopped.reason, /Budget reached: 60 minutes of wall time/);
+    assert.match(stopped.reason, /Budget reached: 120 minutes of wall time/);
     assert.equal(f.reviewerRuns().length, 0, "no run starts over budget");
     const next = ownerTaskNext(collectOwnerVerbFacts(f.store, stopped));
     assert.equal(next.stop?.reason, "budget");
@@ -1048,6 +1067,7 @@ test("praxis#328: a budget stop at the merge stage keeps the stage, and one exte
       },
       "review_accepted_fixture",
     );
+    automaticExtensionSpent(f);
     f.recordRunStart(startedAt);
     const mergeRuns = () =>
       f.store
@@ -1073,7 +1093,7 @@ test("praxis#328: a budget stop at the merge stage keeps the stage, and one exte
       Date.now(),
       f.store.eventsAll(stopped.id),
     );
-    assert.equal(paused.wallMs.limit, 960 * MINUTE);
+    assert.equal(paused.wallMs.limit, 1920 * MINUTE, "960 minutes and its automatic extension");
     assert.equal(paused.exhausted, "wall_time");
 
     // One answer.
@@ -1112,11 +1132,11 @@ test("praxis#328: a budget stop at the merge stage keeps the stage, and one exte
       `granted ${resumed.wallMs.limit} for use ${paused.wallMs.used}`,
     );
     assert.ok(resumed.wallMs.limit <= paused.wallMs.used + 961 * MINUTE);
-    assert.equal(extended.resolution.budgetLimits!.effectiveTokens, 50_000_000);
+    assert.equal(extended.resolution.budgetLimits!.effectiveTokens, 75_000_000);
     // The extension event records both figures, so the answer is auditable.
     const event = f.events("budget_extended").at(-1)!;
-    assert.match(event.detail, /wall limit 960 -> 2885 minutes \(use 1925\)/);
-    assert.match(event.detail, /token limit 25000000 -> 50000000 \(use 0\)/);
+    assert.match(event.detail, /wall limit 1920 -> 2885 minutes \(use 1925\)/);
+    assert.match(event.detail, /token limit 50000000 -> 75000000 \(use 0\)/);
 
     // The next pass continues the merge stage: the gate is read and the merge is
     // requested. No revision and no review run is created by the cleared pause.
@@ -1175,10 +1195,11 @@ test("a budget stop during review resumes the same retained reviewer, not a revi
     // follows it meets the pause.
     f.store.update(
       inFlight.id,
-      { complexity: "low", budgetSince: iso(Date.now() - 70 * MINUTE) },
+      { complexity: "low", budgetSince: iso(Date.now() - 130 * MINUTE) },
       "budget_fixture",
     );
-    f.recordRunStart(iso(Date.now() - 70 * MINUTE));
+    automaticExtensionSpent(f);
+    f.recordRunStart(iso(Date.now() - 130 * MINUTE));
     await f.report("ready_for_review");
     const stopped = f.current();
     assert.equal(

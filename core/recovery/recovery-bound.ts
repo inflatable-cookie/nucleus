@@ -7,12 +7,22 @@
  * dispatch share one derivation without importing the recovery class: the count
  * an owner reads is the count that stops the loop. Nothing here writes.
  */
-import type { Task } from '../../shared/contracts';
+import type { Run, Task } from '../../shared/contracts';
 import { digest, type Store } from '../store/store';
 
-/** Consecutive coordinator runs that moved no work before Queue stops launching them (Tom, 2026-10-19). */
+/** Consecutive coordinator runs that applied nothing before Nucleus stops launching them (Tom, 2026-10-19). */
 export const COORDINATOR_LOOP_LIMIT = 3;
-export const COORDINATOR_LOOP_SUMMARY = `Coordinator recovery stopped: ${COORDINATOR_LOOP_LIMIT} coordinator runs in a row moved no work, so Queue launches no more for this task. Read next and apply the verb this task needs; work, source or coverage progress resets the count, and so does one explicit restart role=coordinator, while ordinary retained restarts and route changes do not.`;
+export const COORDINATOR_LOOP_SUMMARY = `Coordinator recovery stopped: ${COORDINATOR_LOOP_LIMIT} coordinator runs in a row applied nothing, so Nucleus launches no more for this task. Read next and apply the verb this task needs; a coordinator repair that applies, or work, source or coverage progress, resets the count, and so does one explicit restart role=coordinator, while ordinary retained restarts and route changes do not.`;
+/**
+ * Spec 068 §4: the hard ceiling on coordinator launches at one exact head, whatever
+ * they applied, before the planner is asked. Successful repairs no longer spend the
+ * loop limit, so this is what still bounds a task that keeps breaking the same way.
+ */
+export const COORDINATOR_HEAD_CEILING = 6;
+export const COORDINATOR_HEAD_CEILING_SUMMARY = `Coordinator recovery stopped: ${COORDINATOR_HEAD_CEILING} coordinator runs at this exact head, so Nucleus launches no more for it and the planner decides. A new head resets the ceiling, and so does one explicit restart role=coordinator.`;
+
+/** Coordinator report verbs that apply nothing: an observation or an inability. */
+const NO_OP_COORDINATOR_VERBS = new Set(['none', 'cannot']);
 
 /**
  * The task's work identity for the recovery loop only: the exact source head,
@@ -98,6 +108,40 @@ function reviewCoverageAtHead(task: Task, store: Pick<Store, 'runs'>): number {
 }
 
 /**
+ * Spec 068 §4 (2026-11-22: three successful repairs at one head spent the cap and
+ * left tasks blocked until `restart role=coordinator`): a coordinator run whose
+ * command applied is progress, not a charge. It applied when its report's owner
+ * verb was applied (`coordinator_action_applied`, never `none` or `cannot`), or when
+ * an explicit command it sent as the coordinator applied (`owner_resolution` with
+ * source `coordinator`) between its launch and the next coordinator launch. Only a
+ * command that changes task or run state counts: `message.send` changes neither,
+ * so a run that only sent messages is still charged.
+ */
+const STATELESS_EXPLICIT_COMMANDS = new Set(['message.send']);
+function coordinatorRunApplied(
+  run: Run,
+  events: ReturnType<Store['eventsAll']>,
+  launchEventId: number | undefined,
+  nextLaunchEventId: number | undefined,
+): boolean {
+  const completion = run.completion;
+  const verb = completion?.coordinatorAction?.verb;
+  if (completion && verb && !NO_OP_COORDINATOR_VERBS.has(verb)
+    && events.some(event => event.kind === 'coordinator_action_applied' && event.detail === completion.eventId))
+    return true;
+  if (launchEventId === undefined) return false;
+  return events.some(event => {
+    if (event.kind !== 'owner_resolution' || event.id <= launchEventId) return false;
+    if (nextLaunchEventId !== undefined && event.id >= nextLaunchEventId) return false;
+    try {
+      const record = JSON.parse(event.detail) as { source?: unknown; command?: unknown };
+      return record.source === 'coordinator' && typeof record.command === 'string'
+        && !STATELESS_EXPLICIT_COMMANDS.has(record.command);
+    } catch { return false; }
+  });
+}
+
+/**
  * Coordinator runs charged to the task's current work: the trailing chain, from
  * the newest launch back, of runs made for this work identity. A launch that
  * recorded another work identity, or was made at another exact head, proves the
@@ -135,9 +179,16 @@ export function unproductiveCoordinatorRuns(store: Store, taskId: string): numbe
     // provably older than the reset.
     return launch ? launch.eventId > reset.eventId : run.createdAt >= reset.at;
   });
+  const events = store.eventsAll(taskId);
+  // Launch event ids in launch order, so a run's window ends at the next launch.
+  const launchIds = [...launched.values()].map(launch => launch.eventId).sort((a, b) => a - b);
+  const nextLaunch = (eventId: number | undefined) =>
+    eventId === undefined ? undefined : launchIds.find(id => id > eventId);
   let charged = 0;
   for (const run of runs.reverse()) {
     const launch = launched.get(run.id);
+    // Spec 068 §4: a repair that applied is progress, so it ends the charged chain.
+    if (coordinatorRunApplied(run, events, launch?.eventId, nextLaunch(launch?.eventId))) break;
     // An outage launch does not spend the bound, but its work identity still
     // separates earlier work from the current trailing chain.
     if (launch?.outage) {
@@ -166,6 +217,34 @@ export function unproductiveCoordinatorRuns(store: Store, taskId: string): numbe
   return charged;
 }
 
+/**
+ * Spec 068 §4: coordinator launches at the task's current exact head since the last
+ * deliberate re-arm, whatever they applied. Outage launches spend nothing.
+ */
+export function coordinatorLaunchesAtHead(store: Store, taskId: string): number {
+  const task = store.task(taskId), head = task.prHead ?? task.planningBase;
+  const launched = coordinatorLaunches(store, taskId), reset = lastRecoveryReset(store, taskId);
+  return store.runs(taskId).filter(run => {
+    if (run.role !== 'recovery' || run.head !== head) return false;
+    const launch = launched.get(run.id);
+    if (launch?.outage) return false;
+    if (!reset) return true;
+    return launch ? launch.eventId > reset.eventId : run.createdAt >= reset.at;
+  }).length;
+}
+
+/**
+ * Whether the bounded recovery loop stops launching coordinators for the task, and
+ * the summary its escalation records: three runs in a row that applied nothing, or
+ * the per-head ceiling of six launches. Recovery's dispatch and the explicit
+ * coordinator restart read this one answer.
+ */
+export function coordinatorBoundExhausted(store: Store, taskId: string): string | null {
+  if (unproductiveCoordinatorRuns(store, taskId) >= COORDINATOR_LOOP_LIMIT) return COORDINATOR_LOOP_SUMMARY;
+  if (coordinatorLaunchesAtHead(store, taskId) >= COORDINATOR_HEAD_CEILING) return COORDINATOR_HEAD_CEILING_SUMMARY;
+  return null;
+}
+
 /** The current work basis in words, so `next` explains what the count is charged to. */
 function recoveryWorkBasis(task: Task, store: Pick<Store, 'runs'>): string {
   const head = task.prHead ?? task.planningBase;
@@ -176,6 +255,9 @@ function recoveryWorkBasis(task: Task, store: Pick<Store, 'runs'>): string {
 }
 
 /** The charged launch count, the bound, and the work basis `next` and task detail report. */
-export function recoveryBoundStatus(store: Store, task: Task): { charged: number; limit: number; basis: string } {
-  return { charged: unproductiveCoordinatorRuns(store, task.id), limit: COORDINATOR_LOOP_LIMIT, basis: recoveryWorkBasis(task, store) };
+export function recoveryBoundStatus(store: Store, task: Task): { charged: number; limit: number; basis: string; atHead: number; ceiling: number } {
+  return {
+    charged: unproductiveCoordinatorRuns(store, task.id), limit: COORDINATOR_LOOP_LIMIT, basis: recoveryWorkBasis(task, store),
+    atHead: coordinatorLaunchesAtHead(store, task.id), ceiling: COORDINATOR_HEAD_CEILING,
+  };
 }

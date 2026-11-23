@@ -921,15 +921,20 @@ export class HostPass {
     // and within-group candidate order across passes) so a stable backlog in
     // one group or a persistently slow candidate cannot starve other groups.
     let warmed = 0;
-    const canWarmMore = (): boolean =>
+    let primaryToolTaskId: string | null = null;
+    const canWarmMore = (candidate?: WarmItem): boolean =>
       !this.context.stopped &&
-      warmed < HOST_PASS_WARM_CANDIDATE_CAP &&
-      budgetRemaining() > 0;
+      budgetRemaining() > 0 &&
+      (warmed < HOST_PASS_WARM_CANDIDATE_CAP ||
+        (candidate?.kind === "tool" &&
+          primaryToolTaskId !== null &&
+          candidate.taskId === primaryToolTaskId));
 
     type WarmItem =
       | { kind: "delivery"; agentId: string; workspaceId: string }
       | {
           kind: "tool";
+          taskId: string;
           agentId: string;
           coveredObservation?: {
             updatedAt?: string | null;
@@ -967,37 +972,39 @@ export class HostPass {
       }
     }
 
-    const toolItems: WarmItem[] = [];
+    const toolGroupsByTask: WarmItem[][] = [];
     if (
       this.adapter.agentTimelinePage &&
       this.context.resolution.primePassTimelinePage
     ) {
       const seenTool = new Set<string>();
-      const addTool = (
-        agentId: string,
-        state?: AgentObservation | null,
-      ): void => {
-        if (seenTool.has(agentId)) return;
-        seenTool.add(agentId);
-        toolItems.push({
-          kind: "tool",
-          agentId,
-          ...(state
-            ? {
-                coveredObservation: {
-                  updatedAt: state.updatedAt ?? null,
-                  status: state.status,
-                  archived: state.archived,
-                },
-              }
-            : {}),
-        });
-      };
       const observedMap = observed as ReadonlyMap<
         string,
         AgentObservation
       > | null;
       for (const task of activeTasks) {
+        const taskGroup: WarmItem[] = [];
+        const addTool = (
+          agentId: string,
+          state?: AgentObservation | null,
+        ): void => {
+          if (seenTool.has(agentId)) return;
+          seenTool.add(agentId);
+          taskGroup.push({
+            kind: "tool",
+            taskId: task.id,
+            agentId,
+            ...(state
+              ? {
+                  coveredObservation: {
+                    updatedAt: state.updatedAt ?? null,
+                    status: state.status,
+                    archived: state.archived,
+                  },
+                }
+              : {}),
+          });
+        };
         const runs = this.store.runs(task.id);
         for (const run of runs) {
           if (
@@ -1037,8 +1044,10 @@ export class HostPass {
             addTool(agentId, null);
           }
         }
+        if (taskGroup.length) toolGroupsByTask.push(taskGroup);
       }
     }
+    const toolItems: WarmItem[] = rotate(toolGroupsByTask, passOffset).flat();
 
     const shellItems: WarmItem[] = [];
     if (
@@ -1100,7 +1109,7 @@ export class HostPass {
     const rotatedGroups = rotate(
       [
         rotate(deliveryItems, passOffset),
-        rotate(toolItems, passOffset),
+        toolItems,
         rotate(shellItems, passOffset),
       ].filter((group) => group.length > 0),
       passOffset,
@@ -1120,7 +1129,11 @@ export class HostPass {
       await this.step(host, "timelineWarmSnapshot", async () => {
         for (const candidate of interleaved) {
           await yieldToLoop();
-          if (!canWarmMore()) return;
+          if (this.context.stopped || budgetRemaining() <= 0) return;
+          if (candidate.kind === "tool") {
+            primaryToolTaskId ??= candidate.taskId;
+          }
+          if (!canWarmMore(candidate)) continue;
           const cap = perCandidateCap(interleaved.length);
           if (cap <= 0) return;
           if (candidate.kind === "delivery") {

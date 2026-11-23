@@ -1,4 +1,4 @@
-import { hostOutageIntervals } from "../scheduling/host-outage";
+import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { OPERATOR_BOARD_CALLER, type Task, type TaskControlInput } from "../../shared/contracts";
 import { taskBudget } from "../../shared/task-budget";
 import type { Engine } from "../engine";
@@ -14,7 +14,7 @@ export function applyBudgetExtension(engine: Engine, input: TaskControlInput, op
   const current = engine.store.task(input.taskId);
   const events = engine.store.eventsAll(current.id);
   if (!taskBudget(current, engine.store.runs(current.id), Date.now(), events,
-    engine.store.canonicalRepository(current.repoPath, current.repository), hostOutageIntervals(engine.store, current.hostId)).exhausted)
+    engine.store.canonicalRepository(current.repoPath, current.repository), budgetOutageIntervals(engine.store, current.hostId)).exhausted)
     throw Error("Budget extension applies only while the task budget is exhausted");
   const authorizedBoard = input.caller === OPERATOR_BOARD_CALLER;
   const authorizedRelay = input.relayed === true && Boolean(input.caller) && Boolean(input.note?.trim());

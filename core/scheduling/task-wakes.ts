@@ -44,7 +44,6 @@ import {
 import { LANE_PRIORITY_TASK } from "./lane-priorities";
 import {
   HOST_PASS_WARM_BUDGET_MS,
-  HOST_PASS_WARM_CANDIDATE_CAP,
   PASS_PROCESS_READ_DEADLINE_MS,
   PassSnapshot,
   QUANTUM_READ_DEADLINE_MS,
@@ -842,10 +841,7 @@ export class TaskWakes {
     if (!adapter.agentTimelinePage && !adapter.hostProcessListing)
       return undefined;
     const runs = this.store.runs(taskId);
-    const participants = knownExecutionParticipantIds(task, runs).slice(
-      0,
-      HOST_PASS_WARM_CANDIDATE_CAP,
-    );
+    const participants = knownExecutionParticipantIds(task, runs);
     if (!participants.length) return undefined;
 
     const hostId = task.hostId;
@@ -957,23 +953,22 @@ export class TaskWakes {
               remaining() > 0
             ) {
               let limit = TOOL_TIMELINE_LIMIT;
-              while (
-                limit < TOOL_TIMELINE_READ_BUDGET &&
+              for (
+                let step = 1;
+                step < TOOL_TIMELINE_READ_BUDGET &&
                 page &&
-                page.hasOlder &&
+                page.hasOlder === true &&
                 !page.gap &&
                 !page.staleCursor &&
                 !page.reset &&
                 page.projection !== "bounded" &&
-                remaining() > 0
+                remaining() > 0;
+                step++
               ) {
-                const nextLimit = Math.min(
-                  limit * 2,
-                  TOOL_TIMELINE_READ_BUDGET,
-                );
+                limit *= 2;
                 const expanded = await boundedRead(
                   "agent timeline page",
-                  () => this.engine.host.agentTimelinePage(agentId, nextLimit),
+                  () => this.engine.host.agentTimelinePage(agentId, limit),
                   Math.min(remaining(), perReadMs),
                 ).catch(() => ({
                   state: "unknown" as const,
@@ -981,7 +976,7 @@ export class TaskWakes {
                 }));
                 if (expanded.state !== "ok") break;
                 page = expanded.value;
-                snapshot.storeTimelinePage(hostId, agentId, nextLimit, {
+                snapshot.storeTimelinePage(hostId, agentId, limit, {
                   state: "ok",
                   value: page,
                   capturedAt: Date.now(),
@@ -992,7 +987,6 @@ export class TaskWakes {
                     archived: obs.archived,
                   },
                 });
-                limit = nextLimit;
               }
             }
             if (

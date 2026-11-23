@@ -1,4 +1,5 @@
 import { Decisions } from "../planning/decisions";
+import type { Task } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { busyGoAnswerRefusal } from "../qa/proof-only-go";
 import { operatorQuestionFor } from "./operator-question";
@@ -23,6 +24,21 @@ export class QuestionRecovery {
   }
   get adapter() {
     return this.resolution.adapter;
+  }
+  /**
+   * Whether the task's own host is available, read in that host's context. A
+   * fleet loop runs in no host context, where availability answers only for the
+   * primary host: read there, every task on a secondary host (T3, BB) was
+   * skipped, so an escalation wait whose target settled was never woken or
+   * superseded and kept a reported verdict blocked.
+   */
+  private onAvailableHost(task: Task): boolean {
+    return Boolean(
+      task.hostId &&
+        this.resolution.withHost(task.hostId, () =>
+          this.resolution.hostAvailable(task),
+        ),
+    );
   }
   async resumeBusyProofGoAnswers(): Promise<void> {
     for (const candidate of this.store.maintenanceTasks(true)) {
@@ -54,8 +70,8 @@ export class QuestionRecovery {
         decision.answer.answeredBy,
       );
       try {
-        if (task.hostId && this.resolution.hostAvailable(task))
-          await this.resolution.withHost(task.hostId, () =>
+        if (this.onAvailableHost(task))
+          await this.resolution.withHost(task.hostId!, () =>
             this.resolution.settleOperatorQuestion(
               task.id,
               question,
@@ -72,8 +88,8 @@ export class QuestionRecovery {
     if (this.resolution.paused()) return;
     if (!scopedTaskId) {
       for (const task of this.store.maintenanceTasks(true))
-        if (task.hostId && this.resolution.hostAvailable(task))
-          await this.resolution.withHost(task.hostId, () =>
+        if (this.onAvailableHost(task))
+          await this.resolution.withHost(task.hostId!, () =>
             this.resumeAskQuestions(task.id),
           );
       this.resolution.agentAsks.resumePendingAskAnswers();

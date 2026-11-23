@@ -1,4 +1,5 @@
 import { taskActivitySchema } from "./task-activity";
+import { resolutionWarningId } from "./resolution-warnings";
 import { z } from "zod";
 import { taskPhaseSchema } from "./task-primitives";
 import { routingPolicySchema } from "./settings";
@@ -248,6 +249,13 @@ const taskNextExplicitCommandSchema = z
     args: z.record(z.string(), z.unknown()),
     fill: z.array(z.string()),
     note: z.string(),
+    /**
+     * The warning IDs this command will name from the task's stored state, so the
+     * caller sends its `accept` list once (papercut ee6e634c). A command can still
+     * name a warning only its own preflight reads (`head_mismatch`, a live worker
+     * turn's `two_writers`); absent when Nucleus cannot tell before the call.
+     */
+    warnings: z.array(resolutionWarningId).optional(),
   })
   .strict();
 

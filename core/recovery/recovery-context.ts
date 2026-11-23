@@ -5,6 +5,7 @@ import type {
   TaskNextReviewOutcome,
   TaskNextVerb,
 } from "../../shared/contracts";
+import { PLANNER_ONLY_WARNINGS } from "../../shared/schema/resolution-warnings";
 import {
   ownerTaskNext,
   retainedCheckpointRun,
@@ -76,7 +77,18 @@ export function recoveryDispatchSnapshot(
         summary: bounded(outcome.authorResult.summary),
       }
     : null;
-  const explicitCommands = (next.explicitCommands ?? []).map((command) => ({
+  // A command whose preset `accept` or expected warnings name a planner-only
+  // warning (`budget`, `two_writers`, `creation_in_flight` …) would be refused for
+  // the coordinator, so its snapshot leaves it out.
+  const plannerOnly = (ids: unknown): boolean =>
+    Array.isArray(ids) &&
+    ids.some((id) => (PLANNER_ONLY_WARNINGS as ReadonlySet<unknown>).has(id));
+  const explicitCommands = (next.explicitCommands ?? [])
+    .filter(
+      (command) =>
+        !plannerOnly(command.args.accept) && !plannerOnly(command.warnings),
+    )
+    .map((command) => ({
     action: command.action,
     args: Object.fromEntries(
       Object.entries(command.args).filter(
@@ -85,6 +97,7 @@ export function recoveryDispatchSnapshot(
     ),
     ...(command.fill?.length ? { fill: command.fill } : {}),
     ...(command.note ? { note: bounded(command.note) ?? undefined } : {}),
+    ...(command.warnings ? { warnings: command.warnings } : {}),
   }));
   const explicitCoveredRoles = new Set(
     explicitCommands

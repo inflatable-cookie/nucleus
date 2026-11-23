@@ -6,6 +6,7 @@ import {
   defaultProjectScope,
   effectiveSelection,
   isAdditivePress,
+  openScopeLanes,
   planningScopeLanes,
   projectHasRepository,
   projectSelectorRowGroup,
@@ -29,7 +30,7 @@ const project = (
   key,
   name,
   version: 1,
-  
+
   repositories: repos,
   primary: repos[0],
   drain: null,
@@ -78,11 +79,15 @@ test("Spec 027 #11 retired 2026-11-22: no project is hidden; a quiet one is Dorm
   const quiet = { ...projectA, version: 2 };
   const all = [other, quiet, consumer];
   assert.deepEqual(
-    projectSelectorRows(all, [], "", [], []).map((row) => row.key).sort(),
+    projectSelectorRows(all, [], "", [], [])
+      .map((row) => row.key)
+      .sort(),
     ["consumer-b-v2", "other", "project-a-accelerator"],
   );
   assert.deepEqual(
-    scopedProjects(all, []).map((project) => project.key).sort(),
+    scopedProjects(all, [])
+      .map((project) => project.key)
+      .sort(),
     ["consumer-b-v2", "other", "project-a-accelerator"],
   );
   assert.equal(scopeContains(all, [])("/project-a", "owner/project-a"), true);
@@ -477,6 +482,43 @@ test("026-14a Planning lanes in scope: selected plans plus lanes listing a selec
   ]);
 });
 
+test("1546 Planning menu counts the open lanes in scope, once per lane", () => {
+  const lane = (
+    key: string,
+    status: string,
+    repositories: ReturnType<typeof repo>[],
+  ) => ({ key, status, repositories });
+  const lanes = [
+    lane("shared", "active", [repo("consumer"), repo("project-a")]),
+    lane("consumer-only", "active", [repo("consumer-web")]),
+    lane("done", "done", [repo("consumer")]),
+    lane("abandoned", "abandoned", [repo("consumer")]),
+    lane("paused", "paused", [repo("project-a")]),
+    lane("other", "active", [repo("other")]),
+  ];
+  // A lane two selected projects list counts once; closed and done lanes never count.
+  assert.deepEqual(
+    openScopeLanes(projects, lanes, ["consumer-b-v2", "project-a-accelerator"]),
+    ["shared", "consumer-only"],
+  );
+  assert.deepEqual(openScopeLanes(projects, lanes, ["other"]), ["other"]);
+  // The count follows the project selection; all projects counts every open lane.
+  assert.deepEqual(openScopeLanes(projects, lanes, ["project-a-accelerator"]), [
+    "shared",
+  ]);
+  assert.deepEqual(openScopeLanes(projects, lanes, []), [
+    "shared",
+    "consumer-only",
+    "other",
+  ]);
+  assert.deepEqual(openScopeLanes(projects, [], []), []);
+  assert.deepEqual(
+    openScopeLanes(projects, lanes, ["gone"]),
+    openScopeLanes(projects, lanes, []),
+    "a stale key drops out, so every open lane counts",
+  );
+});
+
 test("026-14b one header selector scopes every view through the selection alone", () => {
   const ui = boardSource();
   const controls = readFileSync(
@@ -698,7 +740,9 @@ test("1529 held-back queued tasks count toward the selector order", () => {
 });
 
 test("1529 the selector has two groups: active rows, then Dormant (parking is retired, 2026-11-22)", () => {
-  const row = (dormant: boolean): Parameters<typeof projectSelectorRowGroup>[0] => ({ dormant });
+  const row = (
+    dormant: boolean,
+  ): Parameters<typeof projectSelectorRowGroup>[0] => ({ dormant });
   assert.equal(projectSelectorRowGroup(row(false)), 0);
   assert.equal(projectSelectorRowGroup(row(true)), 1);
 });

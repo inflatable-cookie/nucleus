@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // own SDK imports resolve to (one React context instance).
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { boardShellPlugin, mount, useNativeStubs } from "./support/render";
-import { acrossViews, openView } from "./support/inbox";
+import { acrossViews, openView, planningEntry } from "./support/inbox";
 /** The inbox lists one view at a time; card reads reach every view (support/inbox.ts). */
 const mountInbox = (element: React.ReactElement) => acrossViews(mount(element));
 import { build } from "esbuild";
@@ -196,9 +196,9 @@ test("026-14c both surfaces hydrate one board projection: a surface mounting aft
     "the second surface renders the board without waiting for its own poll",
   );
   // Both surfaces reach the planning projection: sections and plan reads work on each.
-  second.press("Planning");
+  second.press(planningEntry);
   await settle(() => Boolean(second.raw.query("Plan for App")));
-  first.press("Planning");
+  first.press(planningEntry);
   await settle(() => Boolean(first.raw.query("Plan for App")));
   // An unchanged refresh merges the bounded counters into the shared projection.
   await client.refetchQueries({ queryKey: ["nucleus", "state"] });

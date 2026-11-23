@@ -2481,7 +2481,7 @@ test("the revision cap escalates to the planner instead of the owner, and the de
   }
 });
 
-test("the joint question on the third non-converging round is answered by the planner first", async () => {
+test("the third non-converging round tells the task planner and asks no one (Spec 068 Decision 2)", async () => {
   const f = fixture({
     responsible: true,
     delegates: {
@@ -2502,27 +2502,23 @@ test("the joint question on the third non-converging round is answered by the pl
     });
     await f.reviews(3);
     await f.settle(2);
-    assert.equal(
-      f.asks.length,
-      1,
-      "one joint question on the task's own thread",
-    );
-    await until(() => f.events("responsible_question_answered").length > 0);
+    assert.equal(f.asks.length, 0, "no joint question on the task's thread");
     assert.equal(
       f.delegated.planner.length,
-      1,
-      "the planner answered before any operator",
+      0,
+      "the planner is told, not asked to decide",
     );
-    assert.equal(f.delegated.deciders.length, 0);
-    assert.match(
-      f.events("responsible_question_answered")[0]!.detail,
-      /delegated planner origin/,
+    await until(() => f.events("review_round_planner_told").length > 0);
+    const tell = f.prompts.find((prompt) =>
+      prompt.messageId.startsWith("ns-review-round-"),
     );
+    assert.ok(tell, "the planner tell was sent");
+    assert.match(tell!.text, /No answer is needed/);
     await f.settle(3);
     assert.equal(
       f.sends.filter((item) => item.role === "revision").length,
       3,
-      "the answered question releases the next round",
+      "the next round continues without an answer",
     );
     assert.equal(f.coordinatorRuns().length, 0);
   } finally {

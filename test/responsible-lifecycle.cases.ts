@@ -131,40 +131,37 @@ test('a lead promotion and a papercut promotion without the flag each create a r
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a responsible task asks the planner one joint question at three non-converging rounds without upgrading the author', async () => {
+test('a responsible task continues automatically at three non-converging rounds and tells its planner, without upgrading the author', async () => {
   const f = fixture({ responsible: true });
   try {
     await f.reviews(3);
     await f.settle(2);
     assert.equal(f.current().responsible, true);
-    assert.equal(f.sends.filter(item => item.role === 'revision').length, 2, 'only the two returned revisions ran before the question');
-    assert.equal(f.asks.length, 1, 'exactly one joint native question');
-    const asked = f.asks[0]!;
-    assert.match(asked.question, /Three review rounds have not converged/);
-    // The reviewer's complete authenticated finding (reviewText), not its summary
-    // and not an excerpt.
-    const fullFinding = f.finding('changes_required');
-    assert.ok(fullFinding.length > 1800, 'the fixture finding exceeds the old excerpt bound');
-    assert.ok(asked.question.includes(fullFinding), 'the complete authenticated reviewer finding travels in the question');
-    assert.doesNotMatch(asked.question, /The reviewer's authenticated findings: reviewer reported changes_required/, 'the summary does not replace the finding');
-    assert.match(asked.question, /revision reported ready_for_review/, 'the worker returns are stated');
-    assert.match(asked.question, new RegExp(head), 'the reviewed exact head is named');
-    assert.deepEqual(asked.options, ['Continue the current approach', 'Change the approach', 'Stop and keep the work']);
-    assert.equal(f.events('responsible_question').length, 1);
-    assert.equal(f.current().resolution.stop?.reason, 'responsible_question');
-    assert.equal(f.current().reason, RESPONSIBLE_QUESTION_WAIT);
-    // Waiting is not an incident and opens no coordinator.
+    // Spec 068 Decision 2: nothing is asked; the current approach continues.
+    assert.equal(f.asks.length, 0, 'no joint question at the third round');
+    assert.equal(f.events('responsible_question').length, 0);
+    assert.equal(f.events('review_round_continued').length, 1);
+    assert.match(f.events('review_round_continued')[0]!.detail, new RegExp(`head ${head}; the current approach continues automatically \\(Spec 068 Decision 2\\)`));
+    assert.notEqual(f.current().resolution.stop?.reason, 'responsible_question');
+    assert.notEqual(f.current().reason, RESPONSIBLE_QUESTION_WAIT);
+    assert.equal(f.sends.filter(item => item.role === 'revision').length, 3, 'the third revision runs without waiting');
+    assert.equal(f.run().role, 'revision');
+    // The task's planner gets one tell with the reviewer's complete findings.
+    for (let i = 0; i < 30 && !f.events('review_round_planner_told').length; i++) await tick();
+    const tells = f.prompts.filter(prompt => prompt.messageId.startsWith('ns-review-round-'));
+    assert.equal(tells.length, 1, 'exactly one tell');
+    const told = tells[0]!;
+    assert.match(f.events('review_round_planner_told')[0]!.detail, new RegExp(`planner ${told.agentId}$`));
+    assert.match(told.text, /third non-converging review round/);
+    assert.match(told.text, /No answer is needed/);
+    assert.ok(told.text.includes(f.finding('changes_required')), 'the complete authenticated reviewer finding travels in the tell');
+    assert.match(told.text, /revision reported ready_for_review/, 'the worker return is stated');
+    assert.match(told.text, new RegExp(head), 'the reviewed exact head is named');
+    // Nothing repeats, and no coordinator is involved.
     await f.settle(2);
-    assert.equal(f.asks.length, 1, 'the question is never resent');
+    assert.equal(f.prompts.filter(prompt => prompt.messageId.startsWith('ns-review-round-')).length, 1, 'the tell is never resent');
+    assert.equal(f.events('review_round_continued').length, 1);
     assert.equal(f.coordinatorRuns().length, 0);
-    assert.equal(f.current().resolution.stop?.reason, 'responsible_question');
-    // The operator answers: the next round continues in the same worker thread.
-    f.answer('Continue the current approach');
-    await tick();
-    assert.equal(f.events('responsible_question_answered').length, 1);
-    await f.settle(2);
-    assert.equal(f.sends.filter(item => item.role === 'revision').length, 3, 'the answered question releases the next revision');
-    assert.equal(f.asks.length, 1);
     // The worker returns and the retained reviewer approves; mechanical gates
     // verify and merge with no coordinator, no verification run and no hold.
     await f.report('ready_for_review');
@@ -969,20 +966,33 @@ async function revisionInFlight(f: ReturnType<typeof fixture>) {
   return f.reviewerRuns().length;
 }
 const LOW_TOKENS = 2_000_000;
+/**
+ * Spec 068 Decision 1: Nucleus extends a task's first spent budget itself, so the
+ * budget question belongs to a later spend. The stored shape after that automatic
+ * extension is one recorded extension: each limit is two default increments.
+ */
+function automaticExtensionSpent(f: ReturnType<typeof fixture>): void {
+  const current = f.current();
+  f.store.update(current.id, { resolution: { ...current.resolution, budgetExtensions: 1 } }, 'budget_fixture',
+    'automatic: Spec 068 Decision 1 (test fixture)');
+}
+/** The low token limit after its automatic extension. */
+const SPENT_TOKENS = 2 * LOW_TOKENS;
 
 test('a responsible task over its token budget starts no new run, asks one question, and an extension resumes it', async () => {
   const f = fixture({ responsible: true });
   try {
     const reviewers = await revisionInFlight(f);
-    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: LOW_TOKENS }));
+    automaticExtensionSpent(f);
+    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: SPENT_TOKENS }));
     // The revision returns; the next reviewer is what the budget refuses.
     await f.report('ready_for_review');
     await f.settle(2);
     assert.equal(f.reviewerRuns().length, reviewers, 'no run starts over budget');
     assert.equal(f.current().resolution.stop?.reason, 'budget');
-    assert.match(f.current().resolution.stop!.detail, /Budget reached: 2,000,000 effective tokens/);
+    assert.match(f.current().resolution.stop!.detail, /Budget reached: 4,000,000 effective tokens/);
     assert.equal(f.asks.length, 1, 'the pause raises exactly one question');
-    assert.match(f.asks[0]!.question, /2,000,000 of 2,000,000 effective tokens/);
+    assert.match(f.asks[0]!.question, /4,000,000 of 4,000,000 effective tokens/);
     assert.deepEqual(f.asks[0]!.options, ['Extend the budget', 'Change the approach', 'Stop and keep the work']);
     // No duplicate question while it waits, and nothing is resent.
     await f.settle(3);
@@ -993,7 +1003,7 @@ test('a responsible task over its token budget starts no new run, asks one quest
     f.answer('Extend the budget');
     await tick();
     assert.equal(f.events('budget_extended').length, 1);
-    assert.equal(f.current().resolution.budgetExtensions, 1);
+    assert.equal(f.current().resolution.budgetExtensions, 2, 'the operator extension follows the automatic one');
     assert.equal(f.current().resolution.stop, null);
     await f.settle(2);
     assert.equal(f.reviewerRuns().length, reviewers + 1, 'the extended budget lets the next run start');
@@ -1007,13 +1017,14 @@ test('a responsible task over its wall-time budget pauses on the time limit, cou
   const f = fixture({ responsible: true });
   try {
     const reviewers = await revisionInFlight(f);
+    automaticExtensionSpent(f);
     const first = f.reviewerRuns()[0]!;
-    f.store.putRun({ ...f.store.run(first.id)!, createdAt: new Date(Date.now() - 61 * 60_000).toISOString() });
+    f.store.putRun({ ...f.store.run(first.id)!, createdAt: new Date(Date.now() - 121 * 60_000).toISOString() });
     await f.report('ready_for_review');
     await f.settle(2);
     assert.equal(f.reviewerRuns().length, reviewers, 'no run starts past the time limit');
     assert.equal(f.current().resolution.stop?.reason, 'budget');
-    assert.match(f.current().resolution.stop!.detail, /60 minutes of wall time since the responsible lifecycle began/);
+    assert.match(f.current().resolution.stop!.detail, /120 minutes of wall time since the responsible lifecycle began/);
     assert.equal(f.asks.length, 1);
     assert.match(f.asks[0]!.question, /minutes of wall time since the responsible lifecycle began/);
   } finally { await f.close(); }
@@ -1023,7 +1034,8 @@ test('change approach extends the budget and sends the operator text to the work
   const f = fixture({ responsible: true });
   try {
     await revisionInFlight(f);
-    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: LOW_TOKENS }));
+    automaticExtensionSpent(f);
+    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: SPENT_TOKENS }));
     await f.report('ready_for_review');
     await f.settle(2);
     assert.equal(f.asks.length, 1);
@@ -1043,7 +1055,8 @@ test('stop and keep the work parks the task under a dispatch hold and starts not
   const f = fixture({ responsible: true });
   try {
     const reviewers = await revisionInFlight(f);
-    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: LOW_TOKENS }));
+    automaticExtensionSpent(f);
+    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: SPENT_TOKENS }));
     await f.report('ready_for_review');
     await f.settle(2);
     f.answer('Stop and keep the work');
@@ -1061,7 +1074,8 @@ test('an interrupted budget question is unknown, is never resent, and grants no 
   const f = fixture({ responsible: true });
   try {
     await revisionInFlight(f);
-    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: LOW_TOKENS }));
+    automaticExtensionSpent(f);
+    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: SPENT_TOKENS }));
     await f.report('ready_for_review');
     await f.settle(2);
     assert.equal(f.asks.length, 1);
@@ -1316,7 +1330,8 @@ test('a budget extension past twice the limit is delegated and records Tom’s d
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
     await revisionInFlight(f);
-    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: 2 * LOW_TOKENS * 2 }));
+    automaticExtensionSpent(f);
+    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: 3 * SPENT_TOKENS }));
     await f.report('ready_for_review');
     await f.settle(2);
     await settleUntil(f, () => f.events('operator_question_answered').length > 0);
@@ -1335,12 +1350,13 @@ test('a budget pause within twice the limit is delegable: a decider extends it o
   const f = fixture({ responsible: true, delegates: { planner: null, decider: 'Choice: Extend the budget\nReason: The task is close to done.' } });
   try {
     await revisionInFlight(f);
-    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: LOW_TOKENS }));
+    automaticExtensionSpent(f);
+    f.store.updateRunUsage(f.run().id, () => ({ ...EMPTY_RUN_USAGE, turns: 1, reportedTurns: 1, inputTokens: SPENT_TOKENS }));
     await f.report('ready_for_review');
     await settleUntil(f, () => f.events('operator_question_answered').length > 0);
     assert.match(f.events('operator_question')[0]!.detail, /kind budget/);
     assert.equal(f.delegated.deciders.length, 1);
-    assert.equal(f.current().resolution.budgetExtensions, 1, 'the delegated extension adds one default increment');
+    assert.equal(f.current().resolution.budgetExtensions, 2, 'the delegated extension adds one default increment');
     assert.notEqual(f.current().resolution.stop?.reason, 'budget');
   } finally { await f.close(); }
 });
@@ -1748,12 +1764,23 @@ test('a decider that fails to answer is recorded as unknown, asks nothing again,
   } finally { await f.close(); }
 });
 
-test('an owner move past the joint question releases the task, and the worker gets its instruction', async () => {
+test('an owner move past a joint question recorded before Spec 068 releases the task, and the worker gets its instruction', async () => {
   const f = fixture({ responsible: true });
   try {
-    await f.reviews(3);
+    // A joint question raised before the automatic continue (Spec 068 Decision 2)
+    // is a stored record: it still holds the task until it is answered or superseded.
+    await f.reviews(2);
+    await f.engine.wake();
+    assert.equal(f.run().role, 'revision');
+    await f.report('ready_for_review');
+    await f.engine.wake();
+    assert.equal(f.run().role, 'reviewer');
+    const id = digest(`responsible-question:${f.current().id}:${f.run().id}`);
+    f.store.event(f.current().id, 'responsible_question', `${id}: head ${head}; question recorded before Spec 068 Decision 2`);
+    await f.report('changes_required');
     await f.settle(2);
     assert.equal(f.current().resolution.stop?.reason, 'responsible_question');
+    assert.equal(f.events('review_round_continued').length, 0, 'a recorded question is not continued over');
     const revisions = f.sends.filter(item => item.role === 'revision').length;
     await f.engine.performTaskControl(taskControlInputSchema.parse({ taskId: f.current().id, version: f.current().version, action: 'move', to: 'work',
       instruction: 'Delete the one unsupported sentence', reason: 'The owner decided', caller: OPERATOR_BOARD_CALLER }));
@@ -1763,6 +1790,6 @@ test('an owner move past the joint question releases the task, and the worker ge
     assert.notEqual(f.current().reason, RESPONSIBLE_QUESTION_WAIT);
     assert.equal(f.sends.filter(item => item.role === 'revision').length, revisions + 1, 'the worker runs');
     assert.match(f.run().instruction ?? '', /Delete the one unsupported sentence/);
-    assert.equal(f.asks.length, 1, 'the question is not raised again');
+    assert.equal(f.asks.length, 0, 'no question is raised');
   } finally { await f.close(); }
 });

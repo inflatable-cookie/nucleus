@@ -12,8 +12,10 @@
  *
  * - The explicit command recorded no publication form on the run, so the reviewer
  *   was told to post a PR comment. A formal-review repository applies a verdict
- *   only with a review ID, so admission refused it on every pass, and the pass
- *   dropped that refusal: no typed wait named the owner that must act.
+ *   only with a review ID, and no later fact gives that report one: it is
+ *   superseded, never applied, and the next pass admits a fresh formal reviewer.
+ * - A refusal that waits on another owner keeps the report governing, as the
+ *   task's visible typed wait.
  * - The released, never-bound superseded run is history: it does not keep a
  *   formal verdict from applying on the next pass.
  */
@@ -27,7 +29,7 @@ import { Store, digest } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { resultApplied } from '../core/intake/applied-result';
 import { threadReleasePendingReason } from '../core/intake/thread-waits';
-import { runSchema, submissionSchema, type Completion, type Profile, type Run, type Task } from '../shared/contracts';
+import { runSchema, submissionSchema, taskControlInputSchema, type Completion, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
@@ -91,8 +93,11 @@ function fixture() {
   engine.profiles = all;
   const current = () => store.task(submitted.id);
   const settle = async () => { await engine.wake(); await engine.quiesce(); };
+  const control = (args: Record<string, unknown>) => engine.performTaskControl(taskControlInputSchema.parse({
+    taskId: submitted.id, version: current().version, reason: 'Owner control', caller: 'owner-thread', ...args,
+  }));
   return {
-    store, engine, taskId: submitted.id, profiles: { worker, reviewer }, current, settle, published, createdRuns,
+    store, engine, taskId: submitted.id, control, profiles: { worker, reviewer }, current, settle, published, createdRuns,
     close: async () => { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); },
   };
 }
@@ -137,17 +142,59 @@ function reportedVerdictShape(f: ReturnType<typeof fixture>, published: 'comment
     reviewerAgentId: REVIEWER_AGENT, reviewerProfile: f.profiles.reviewer } });
 }
 
-test('a comment-only verdict in a formal-review repository records a visible typed wait instead of a release wait', async () => {
+test('a comment-only verdict in a formal-review repository is superseded and the next pass admits a fresh formal reviewer', async () => {
   const f = fixture(); try {
     reportedVerdictShape(f, 'comment');
     await f.settle();
     const task = f.current();
-    assert.equal(resultApplied(f.store, f.taskId, 'reported-review'), false, 'a verdict without a review ID is never applied');
-    assert.equal(task.resolution.stop?.reason, 'lifecycle', JSON.stringify(task.resolution.stop));
-    assert.match(task.resolution.stop?.detail ?? '', /Review publication must prove a review ID/);
-    assert.match(task.reason, /Review publication must prove a review ID/);
-    assert.notEqual(task.reason, threadReleasePendingReason('reviewer'));
+    // Never applied: no accepted verdict, nothing published for it.
+    assert.equal(task.resolution.review, null, 'a verdict without a review ID is never accepted');
     assert.deepEqual(f.published, [], 'nothing is published for a refused verdict');
+    const superseded = f.store.eventsAll(f.taskId).filter(event => event.kind === 'reported_verdict_superseded');
+    assert.equal(superseded.length, 1, JSON.stringify(f.store.eventsAll(f.taskId).slice(-8).map(event => event.kind)));
+    assert.match(superseded[0]!.detail, /^reported-review ready_to_merge at a{40}: Review publication must prove a review ID/);
+    // The report stops governing: a fresh reviewer is admitted at the exact head, told to publish formally.
+    const fresh = f.createdRuns.filter(run => run.role === 'reviewer');
+    assert.equal(fresh.length, 1, `${task.phase}: ${task.reason}`);
+    assert.notEqual(fresh[0]!.id, 'reported-review');
+    assert.equal(fresh[0]!.head, head);
+    assert.equal(f.store.run(fresh[0]!.id)?.formalReview, true);
+    assert.equal(task.resolution.currentRunId, fresh[0]!.id);
+    assert.notEqual(task.reason, threadReleasePendingReason('reviewer'));
+  } finally { await f.close(); }
+});
+
+for (const [verb, args] of [
+  ['restart', { action: 'restart', role: 'reviewer' }],
+  ['route', { action: 'route', role: 'reviewer', profileId: 'reviewer' }],
+] as const) {
+  test(`${verb} role=reviewer on a permanently refused report launches a fresh formal reviewer`, async () => {
+    const f = fixture(); try {
+      reportedVerdictShape(f, 'comment');
+      await f.control(args);
+      await f.settle();
+      const fresh = f.createdRuns.filter(run => run.role === 'reviewer' && run.id !== 'reported-review');
+      assert.ok(fresh.length >= 1, `${f.current().phase}: ${f.current().reason}`);
+      assert.ok(fresh.every(run => f.store.run(run.id)?.formalReview === true), 'every new reviewer run publishes formally');
+      assert.equal(f.current().resolution.review, null, 'the refused report is never accepted');
+    } finally { await f.close(); }
+  });
+}
+
+test('a refusal that waits on another owner keeps the report governing and names the wait', async () => {
+  const f = fixture(); try {
+    // A comment-path repository: the published comment verdict is valid evidence.
+    f.store.patchRepository({ path: '/repo', origin: null }, { reviewer: null });
+    reportedVerdictShape(f, 'comment');
+    // A dispatch hold's owner must release the task before this verdict applies.
+    f.store.update(f.taskId, { holds: { dispatch: { owner: 'planner', reason: 'Waiting on a source ruling', at: new Date().toISOString(), generation: 1, until: null } } });
+    await f.settle();
+    const task = f.current();
+    assert.equal(resultApplied(f.store, f.taskId, 'reported-review'), false, JSON.stringify(f.store.eventsAll(f.taskId).slice(-12).map(e => `${e.kind}: ${e.detail.slice(0, 120)}`)));
+    assert.equal(f.store.eventsAll(f.taskId).some(event => event.kind === 'reported_verdict_superseded'), false);
+    assert.deepEqual(f.createdRuns.filter(run => run.role === 'reviewer'), [], 'no fresh review while the report can still apply');
+    assert.equal(task.resolution.currentRunId, 'reported-review');
+    assert.match(`${task.resolution.stop?.detail ?? ''} ${task.reason}`, /held/i, JSON.stringify(task.resolution.stop));
   } finally { await f.close(); }
 });
 

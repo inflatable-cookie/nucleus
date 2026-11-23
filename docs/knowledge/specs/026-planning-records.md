@@ -530,9 +530,11 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   **Closing** (verifying, merging and closing tasks). The menu reads Needs you, a
   divider, Planning, Leads, Papercuts, Queue, a divider, Working, In review and
   Closing; both dividers read at half the border's contrast against the menu
-  background. Each entry shows its real total; only Needs you is highlighted.
+  background. Each entry shows its real total — Planning shows the number of
+  open (active) lanes the selected projects list, counting a lane two selected
+  projects list once; only Needs you is highlighted.
   An entry whose count is 0 renders dimmed but stays selectable; the selected
-  entry keeps its selected styling, and Planning (which carries no count) never dims.
+  entry keeps its selected styling.
   Opening a view clears the open record and resets Leads and Papercuts to their
   first page. The card-once projection below decides where a card goes; the menu
   groups its columns. Milestone QA is not a board surface: QA
@@ -655,11 +657,16 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   - **Detail only:** routing sentences, host identity and kind, profile names, host
     waits beyond "on the host", attempt counts, report headlines beyond the status
     line, prerequisite counts and promotion, a decision's choices, a lane's aim, and the
-    Lead and Papercut kind chips. The task detail's header carries the stop category,
-    a stop while paused, linked open decisions and, for an escalated hold, the
-    Nucleus-raised badge; its summary names a host outage recorded beside a stop (the
-    host and since when); a decision's Links name each task by reference, title and
-    project; a drained lane's Planning screen names its Nucleus-raised escalation. The
+    Lead and Papercut kind chips. The task detail (nucleus#1537) uses a header
+    (reference, project badge and name, age, title, status line with PR link and
+    elapsed chip, plus Open thread and a ⋯ menu for every editing action) and
+    three tabs — Overview, Activity and Details. Its header carries the stop
+    category, a stop while paused, linked open decisions and, for an escalated
+    hold, the Nucleus-raised badge; Details names a host outage recorded beside a
+    stop (the host and since when), raw stop text, owner verb refusals, runs,
+    build-output records and raw IDs; a decision's Links name each task by
+    reference, title and project; a drained lane's Planning screen names its
+    Nucleus-raised escalation. The
     row's accessible name keeps the record's own title as written, the status with its
     detail, and the wording the row shortens, with identifiers sanitized only in
     operational text; like the row, it names a host wait and its age, never the host

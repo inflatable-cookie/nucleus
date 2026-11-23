@@ -305,6 +305,9 @@ are unchanged.
   `route role=worker`; Nucleus does not upgrade it automatically. The task
   waits in the `responsible_question` stop, which clears when the answer arrives; a
   lost observation is recorded as unknown and is never resent.
+  Superseded by [Spec 068](068-self-healing.md#decisions) Decision 2 (Tom,
+  2026-11-22): the third round now continues the current approach automatically and
+  tells the task's planner; a question recorded before then still waits for its answer.
 
 ### Slice 4 — `task.register` (task 513)
 

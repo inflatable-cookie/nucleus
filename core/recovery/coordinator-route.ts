@@ -28,8 +28,7 @@ import {
 } from "../scheduling/repository-contention";
 import { collectOwnerVerbFacts } from "../verbs/owner-verbs";
 import {
-  COORDINATOR_LOOP_LIMIT,
-  COORDINATOR_LOOP_SUMMARY,
+  coordinatorBoundExhausted,
   taskWorkIdentity,
   unproductiveCoordinatorRuns,
 } from "./recovery-bound";
@@ -551,7 +550,7 @@ export class CoordinatorRoute {
           runs.every(
             (run) => run.completion && refused.has(run.completion.eventId),
           )) ||
-        charged >= COORDINATOR_LOOP_LIMIT
+        coordinatorBoundExhausted(this.store, t.id)
       ) {
         const summary = `Coordinator actions were refused: ${refusal}`;
         this.store.transaction(() => {
@@ -616,10 +615,10 @@ export class CoordinatorRoute {
       // COORDINATOR_LOOP_LIMIT runs with no applied coordinator action and no owner
       // or operator control since, Queue launches no further coordinator for the
       // task and escalates to its owner; the owner's next verb resets the count.
-      if (
-        unproductiveCoordinatorRuns(this.store, t.id) >= COORDINATOR_LOOP_LIMIT
-      )
-        return this.episode.escalate(t, COORDINATOR_LOOP_SUMMARY);
+      // Spec 068 §4: a repair that applied is not charged, and six launches at one
+      // exact head stop the loop whatever they applied.
+      const bound = coordinatorBoundExhausted(this.store, t.id);
+      if (bound) return this.episode.escalate(t, bound);
       const episodeId = randomUUID();
       incident = {
         id: episodeId,

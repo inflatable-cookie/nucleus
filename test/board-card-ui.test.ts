@@ -6,7 +6,12 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
-import { acrossViews, openView } from "./support/inbox";
+import {
+  acrossViews,
+  openPlanning,
+  openView,
+  planningEntry,
+} from "./support/inbox";
 import { Store } from "../core/store/store";
 import {
   LEAD_PREVIEW_MAX,
@@ -1301,7 +1306,7 @@ test("the card keeps two-line titles, drops the repository and phase chips, and 
   assert.match(ui, /Stop category · \{taskSummaryStop\.reason\}/);
   assert.match(
     ui,
-    /Suggested owner verbs · \{taskSummaryStop\.suggestedVerbs\.join\(\", \"\)\}/,
+    /Suggested owner verbs ·\{" "\}\s*\{taskSummaryStop\.suggestedVerbs\.join\(", "\)\}/,
   );
 });
 
@@ -1763,7 +1768,7 @@ test("the Leads tag and the queue's held-back pages survive view changes while t
     queueList.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
     queueList.props.onContentSizeChange(390, 200);
     await settle(() => tree.raw.text().includes("Held two"));
-    openView(tree, "Planning");
+    openPlanning(tree);
     await settle(() => !tree.raw.query("Queue list"));
     openView(tree, "Queue");
     await settle(() => Boolean(tree.raw.query("Queue list")));
@@ -1783,7 +1788,7 @@ test("the Leads tag and the queue's held-back pages survive view changes while t
     tree.press("Filter leads by tag, All tags (2)");
     tree.press("Filter leads by tag: idea (1)");
     await settle(() => tree.raw.all(/^(?:Lead|Papercut): Plain /).length === 0);
-    openView(tree, "Planning");
+    openPlanning(tree);
     await settle(() => !tree.raw.query("Leads list"));
     openView(tree, "Leads");
     await settle(() => Boolean(tree.raw.query("Leads list")));
@@ -2604,8 +2609,7 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
           nodeHas(
             node,
             (child) =>
-              child.props.accessibilityLabel ===
-                "Mark drained lane alpha done",
+              child.props.accessibilityLabel === "Mark drained lane alpha done",
           ) &&
           nodeHas(node, (child) =>
             /^Drained lane: Alpha lane, Status: Drained/.test(
@@ -2705,7 +2709,11 @@ test("a drained lane asks before it is marked done, and cancel writes nothing", 
   );
   assert.match(ui.text(), /App \(Now\)/);
   assert.match(ui.text(), /2 live tasks/);
-  assert.deepEqual(calls, [], "the confirmation writes nothing until it is confirmed");
+  assert.deepEqual(
+    calls,
+    [],
+    "the confirmation writes nothing until it is confirmed",
+  );
   ui.press("Cancel marking Alpha lane done");
   assert.equal(ui.query("Mark Alpha lane done"), undefined);
   assert.deepEqual(calls, [], "cancel writes nothing");
@@ -3026,8 +3034,12 @@ test("Planning lists its projects as inbox rows, grouped, with the selected surf
       return [];
     });
     const tree = mounted;
-    await settle(() => Boolean(tree.raw.query("Nucleus header controls")));
-    openView(tree, "Planning");
+    await settle(
+      () =>
+        Boolean(tree.raw.query("Nucleus header controls")) &&
+        Boolean(tree.raw.query(planningEntry)),
+    );
+    openPlanning(tree);
     await settle(() => Boolean(tree.raw.query("Project row Second")));
     // nucleus#1531: inbox rows with no divider or card frame; the open row takes the selected surface.
     const row = (name: string) => tree.raw.get(`Project row ${name}`);
