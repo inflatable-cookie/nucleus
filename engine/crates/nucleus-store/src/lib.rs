@@ -1,6 +1,9 @@
 //! The Rust engine's independent `SQLite` database.
 
-use std::{fs, path::Path, time::Duration};
+mod settings;
+mod volume;
+
+use std::time::Duration;
 
 use nucleus_core::Task;
 use rusqlite::{
@@ -8,6 +11,9 @@ use rusqlite::{
     params,
 };
 use serde_json::{Value, json};
+
+pub use settings::{EngineSettings, EngineStorage, SettingsFile, StorageError};
+pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
 const SCHEMA_VERSION: i32 = 1;
@@ -17,7 +23,7 @@ const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("could not prepare the engine data directory")]
-    Directory(#[source] std::io::Error),
+    Storage(#[from] StorageError),
     #[error("unsupported engine database (application {application}, version {version})")]
     Incompatible { application: i32, version: i32 },
     #[error("task identity is immutable")]
@@ -48,15 +54,16 @@ pub struct Store {
 }
 
 impl Store {
-    /// Open the database at `data_root/engine.sqlite`.
+    /// Open `engine.sqlite` under the engine's verified database root.
     ///
     /// # Errors
     /// Returns an error if storage is inaccessible or the file belongs to
     /// another application or schema version.
-    pub fn open(data_root: &Path) -> Result<Self, StoreError> {
-        fs::create_dir_all(data_root).map_err(StoreError::Directory)?;
+    pub fn open(storage: &EngineStorage) -> Result<Self, StoreError> {
+        let directory = storage.database();
+        directory.ensure()?;
         let mut connection = Connection::open_with_flags(
-            data_root.join(DATABASE_FILE),
+            directory.path().join(DATABASE_FILE),
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_CREATE
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW,

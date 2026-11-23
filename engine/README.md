@@ -44,7 +44,14 @@ setting after a compatible dependency pin and a hold that covers the T3 turn
 and its tools are available. `existing_worktree` passes a path to T3 and carries
 no Barge hold. A Rust service-side hold survives neither its own crash nor a
 tool left behind by T3. For both backends, inspect cleanliness just before
-retirement and keep dirty or unpublished local work in place.
+retirement and keep dirty or unpublished local work in place. Index flags that
+can hide edits also keep the checkout in place.
+
+The engine opens its own explicit Longhorn portable profile. Its machine-state
+settings are versioned in `state/engine.json`, with the engine disabled by
+default. The database, work and scratch roots must stay on the configured
+writable volume. Check the pinned native volume ID and walk directories without
+following links before creating storage.
 
 ## State and decisions
 

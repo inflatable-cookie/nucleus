@@ -9,6 +9,7 @@ use std::{
 use longhorn_git_workspace::{Git, GitFailure, GitFailureCode, GitPolicy};
 use longhorn_redact::Redactor;
 use nucleus_core::{Head, InvalidHead, Workspace};
+use nucleus_store::{EngineStorage, StorageDirectory, StorageError};
 use sha2::{Digest, Sha256};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -25,6 +26,8 @@ pub enum WorkError {
     InvalidPath,
     #[error("worktree filesystem operation failed")]
     Filesystem(#[from] std::io::Error),
+    #[error("the work volume or layout cannot be verified")]
+    Storage(#[from] StorageError),
     #[error("worktree Git operation failed")]
     Git(#[from] GitFailure),
     #[error("worktree head could not be read")]
@@ -39,7 +42,7 @@ pub enum Retirement {
 }
 
 pub struct Worktrees<'a> {
-    root: PathBuf,
+    root: StorageDirectory,
     git: Git<'a>,
 }
 
@@ -56,13 +59,14 @@ impl<'a> Worktrees<'a> {
     /// # Errors
     /// Returns an error if the root cannot be created or resolved.
     pub fn new(
-        root: &Path,
+        storage: &EngineStorage,
         policy: &'a dyn GitPolicy,
         redactor: Redactor,
     ) -> Result<Self, WorkError> {
-        fs::create_dir_all(root)?;
+        let root = storage.work().clone();
+        root.ensure()?;
         Ok(Self {
-            root: root.canonicalize()?,
+            root,
             git: Git::new(policy, redactor),
         })
     }
@@ -89,7 +93,7 @@ impl<'a> Worktrees<'a> {
         Ok(Checkout {
             worktrees: self,
             repository: repository.canonicalize()?,
-            path: self.root.join(bucket).join(&branch),
+            path: self.root.path().join(bucket).join(&branch),
             branch,
         })
     }
@@ -112,6 +116,7 @@ impl Checkout<'_> {
     /// # Errors
     /// Returns an error if the checkout cannot be inspected or belongs elsewhere.
     pub fn observe(&self) -> Result<Workspace, WorkError> {
+        self.worktrees.root.verify()?;
         let metadata = match fs::symlink_metadata(&self.path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -143,7 +148,10 @@ impl Checkout<'_> {
                 "--ignore-submodules=none",
             ],
         )?;
-        if status.is_empty() {
+        // Flags that hide working-tree changes invalidate ordinary status evidence.
+        // Git uses S for skip-worktree and lowercase tags for assume-unchanged.
+        let index = self.git(&self.path, &["ls-files", "-v"])?;
+        if status.is_empty() && index.lines().all(|line| line.starts_with("H ")) {
             Ok(Workspace::Clean(
                 self.git(&self.path, &["rev-parse", "HEAD"])?
                     .trim_end_matches('\n')
@@ -166,10 +174,10 @@ impl Checkout<'_> {
             return Ok(existing);
         }
         let parent = self.path.parent().ok_or(WorkError::InvalidPath)?;
-        fs::create_dir_all(parent)?;
-        if parent.canonicalize()? != parent {
-            return Err(WorkError::WrongCheckout);
-        }
+        let bucket = parent
+            .strip_prefix(self.worktrees.root.path())
+            .map_err(|_| WorkError::WrongCheckout)?;
+        self.worktrees.root.ensure_child(bucket)?;
         let path = self.path.to_str().ok_or(WorkError::InvalidPath)?;
         let branch_ref = format!("refs/heads/{}", self.branch);
         let found = self.git(
