@@ -22,6 +22,7 @@ import { reviewAuthorizationRequired } from '../review/review-continuation';
 import { latestRunCompletion, now } from '../store/store';
 import { missingCallbackStopReason, reminderClock } from '../recovery/task-reasons';
 import { MISSING_CALLBACK_CAUSE } from '../../shared/incident';
+import { waitAgeMs } from '../scheduling/host-outage';
 
 /** One bounded reminder outcome over already-read facts. */
 export type ReminderDecision = 'skip' | 'skip_undispatched' | 'extend' | 'escalate' | 'wait_grace' | 'already_sent' | 'no_channel' | 'send' | 'relaunch';
@@ -142,9 +143,10 @@ export class CallbackReminders {
     const clock = reminderClock(events, runId);
     const current = this.store.task(t.id);
     const incident = current.resolution.incident;
-    const eventDue = !clock || Date.now() - Date.parse(clock) >= this.graceMs;
+    // Spec 068 Decision 1: downtime and host outages never age the reminder grace.
+    const eventDue = !clock || waitAgeMs(this.store, current.hostId, clock) >= this.graceMs;
     const incidentDue = incident?.runId === runId && incident.action === 'callback_reminder' && incident.status !== 'escalated'
-      && Date.now() - Date.parse(incident.updatedAt) >= this.graceMs;
+      && waitAgeMs(this.store, current.hostId, incident.updatedAt) >= this.graceMs;
     if (!eventDue && !incidentDue) return;
     const extended = events.find(event => event.kind === 'callback_reminder_extended' && event.detail === runId);
     if (extended) this.store.touchEvent(extended.id);
@@ -188,7 +190,8 @@ export class CallbackReminders {
       if (incident.action === 'callback_reminder') {
         // The durable reminder event is the clock: repeated detail updates never restart the grace.
         const sentAt = reminderClock(this.store.events(t.id), runId);
-        graceExpired = Boolean(sentAt && Date.now() - Date.parse(sentAt) >= this.graceMs);
+        // Measured as budgets measure time, so a reminder sent before a roll keeps its grace.
+        graceExpired = Boolean(sentAt && waitAgeMs(this.store, t.hostId, sentAt) >= this.graceMs);
       } else {
         alreadySent = this.store.events(t.id).some(event => event.kind === 'callback_reminder' && event.detail === runId);
         if (!alreadySent) hasChannel = Boolean(this.adapter.notify);

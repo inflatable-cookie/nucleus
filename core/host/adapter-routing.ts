@@ -31,7 +31,7 @@ import {
   HostReadRefusalError,
   ProvenPreSendRefusalError,
 } from "./errors";
-import { createUnboundAdapter } from "./unbound-adapter";
+import { createUnboundAdapter, isUnboundAdapter } from "./unbound-adapter";
 const faultHosts = new WeakMap<object, string>();
 const HOST_CALL_FAILED = Symbol("host-call-failed");
 
@@ -128,6 +128,14 @@ export interface HostAdapterRoutingOwner {
   hostAvailable: (id: string) => boolean;
   host: OriginReviewHost;
   hostOnline: (id: string) => boolean;
+  hostIds?: () => readonly string[];
+  /**
+   * Optional diagnostic: called when a port some registered host serves is read
+   * with no host context, so the unbound fallback answers instead of that host.
+   * That read is the silent skip a fleet loop makes when it forgets the task's
+   * host. Production leaves it unset; tests use it as a tripwire.
+   */
+  unboundPortRead?: (port: string) => void;
 }
 
 /**
@@ -187,6 +195,20 @@ export function routeHostAdapter(
             error,
           );
       const id = owner.activeHostId;
+      if (
+        !id &&
+        owner.unboundPortRead &&
+        typeof property === "string" &&
+        isUnboundAdapter(selectedFallback) &&
+        (owner.hostIds?.() ?? []).some(
+          (hostId) =>
+            typeof Reflect.get(
+              owner.resolveHostAdapter(hostId) ?? {},
+              property,
+            ) === "function",
+        )
+      )
+        owner.unboundPortRead(property);
       const selected = id ? owner.resolveHostAdapter(id) : selectedFallback;
       if (!selected)
         throw record(

@@ -28,6 +28,8 @@ import type {
   AcpInboxUiInput,
   AcpInboxUiReply,
   AcpMessageInput,
+  AcpTaskPresentation,
+  AcpToolCall,
   AcpTurnInput,
   AcpTurnReply,
 } from "./surface";
@@ -36,6 +38,8 @@ export type {
   AcpInboxUiInput,
   AcpInboxUiReply,
   AcpMessageInput,
+  AcpTaskPresentation,
+  AcpToolCall,
   AcpTurnInput,
   AcpTurnReply,
 };
@@ -126,6 +130,8 @@ export interface AcpAgentOptions {
   attachAttempts?: number;
   /** Consecutive transport failures before the one fault line is shown. The held turn is never ended by them. */
   faultLineAfter?: number;
+  /** Emit native ACP `plan`, `tool_call` and `tool_call_update` updates (default true). False falls back to one status line. */
+  structuredUpdates?: boolean;
   version?: string;
   log?(line: string): void;
 }
@@ -146,13 +152,37 @@ const isObject = (value: unknown): value is Json =>
 const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** One emitted call: the occurrence it renders, and its current state. */
+interface ShownToolCall {
+  occurrence: string;
+  call: AcpToolCall;
+  /** The occurrence vanished after this call ended, so seeing it again is a new lifetime. */
+  retired: boolean;
+}
+
 interface SessionState {
   sessionId: string;
   caller: AcpCaller;
   binding: AcpBinding;
   transport: AcpSessionTransport;
-  /** Lifecycle lines the service already sent, waiting for the next prompt to show them. */
+  /** Human-facing messages the service already sent, waiting for the next prompt to show them. */
   pending: string[];
+  /** Structured presentation from attach, waiting for the opening prompt (or emitted on load). */
+  pendingPresentation: AcpTaskPresentation | null;
+  /** Whether this session emits structured `plan` + `tool_call` updates, or the single-line text fallback. */
+  structuredUpdates: boolean;
+  /** JSON of the last `plan` sent on this session, so unchanged plans are not re-emitted. */
+  lastPlan: string | null;
+  /**
+   * Tool calls already emitted on this session, by their wire id, for in-place
+   * `tool_call_update` diffing. A call keeps the occurrence it renders, so a settled
+   * occurrence that reappears opens a new lifetime rather than reviving this one.
+   */
+  shownToolCalls: Map<string, ShownToolCall>;
+  /** The wire id each occurrence currently renders under, and how many lifetimes it had. */
+  callLifetimes: Map<string, { wireId: string; generation: number }>;
+  /** Last status line emitted in text-fallback mode. */
+  lastStatusLine: string | null;
   /** Whether the thread's opening prompt has been consumed. */
   prompted: boolean;
   cancelled: boolean;
@@ -179,6 +209,8 @@ export class AcpAgent {
   private readonly inertSessions = new Set<string>();
   private readonly work = new Set<Promise<unknown>>();
   private model: string = ACP_MODELS[0].modelId;
+  /** Whether the connected client supports structured `plan` / `tool_call` updates. */
+  private clientStructuredUpdates = true;
   private readonly elicitationReplies = new Map<Id, (response: Json) => void>();
   /** The last line each session showed, so an identical line is never sent twice in a row. */
   private readonly lastLine = new Map<string, string>();
@@ -322,7 +354,16 @@ export class AcpAgent {
   ): Promise<void> {
     const input = isObject(params) ? params : {};
     switch (method) {
-      case "initialize":
+      case "initialize": {
+        const caps = isObject(input.clientCapabilities)
+          ? input.clientCapabilities
+          : {};
+        const meta = isObject(input._meta) ? input._meta : {};
+        this.clientStructuredUpdates =
+          caps.structuredUpdates !== false &&
+          caps.plan !== false &&
+          caps.toolCalls !== false &&
+          meta.structuredUpdates !== false;
         this.result(send, id, {
           protocolVersion: ACP_PROTOCOL_VERSION,
           agentCapabilities: {
@@ -341,6 +382,7 @@ export class AcpAgent {
           authMethods: [],
         });
         return;
+      }
       case "authenticate":
         // A Nucleus session is authorized by its minted binding, not by an ACP auth flow.
         this.result(send, id, {});
@@ -405,12 +447,28 @@ export class AcpAgent {
         );
     }
     const attached = await this.attach(source);
+    const meta = isObject(params._meta) ? params._meta : {};
+    const attachStructured =
+      params.structuredUpdates !== false &&
+      params.plan !== false &&
+      params.toolCalls !== false &&
+      meta.structuredUpdates !== false;
     const session: SessionState = {
       sessionId: binding.sessionId,
       caller: callerFor(binding),
       binding,
       transport: source.transport,
       pending: attached.messages,
+      pendingPresentation:
+        "presentation" in attached ? (attached.presentation ?? null) : null,
+      structuredUpdates:
+        (this.options.structuredUpdates ?? true) &&
+        this.clientStructuredUpdates &&
+        attachStructured,
+      lastPlan: null,
+      shownToolCalls: new Map(),
+      callLifetimes: new Map(),
+      lastStatusLine: null,
       prompted: false,
       cancelled: false,
       controller: new AbortController(),
@@ -420,11 +478,16 @@ export class AcpAgent {
     };
     this.sessions.set(session.sessionId, session);
     this.result(send, id, this.sessionResult(session.sessionId));
-    // A reloaded thread shows where the task stands now; nothing else is replayed, because
-    // Nucleus holds the task's history.
-    if (loading)
-      for (const line of session.pending.splice(0))
-        this.emit(send, session.sessionId, line);
+    // A reloaded thread rebuilds where the task stands now from the service; nothing
+    // else is replayed, because Nucleus holds the task's history.
+    if (loading) {
+      if (session.pendingPresentation) {
+        const presentation = session.pendingPresentation;
+        session.pendingPresentation = null;
+        this.emitPresentation(send, session, presentation);
+      }
+      this.emitPending(send, session);
+    }
   }
 
   /** The models block every session answer carries. */
@@ -523,8 +586,12 @@ export class AcpAgent {
       session.turn += 1;
       for (const [key, card] of session.cards)
         if (card.turn < session.turn) session.cards.delete(key);
-      for (const line of session.pending.splice(0))
-        this.emit(send, sessionId, line);
+      if (session.pendingPresentation) {
+        const presentation = session.pendingPresentation;
+        session.pendingPresentation = null;
+        this.emitPresentation(send, session, presentation);
+      }
+      this.emitPending(send, session);
       if (
         session.caller.kind === "inbox" &&
         !holding &&
@@ -677,6 +744,8 @@ export class AcpAgent {
         faultShown = false;
         for (const question of reply.elicitations ?? [])
           this.elicit(session, question, send);
+        if ("presentation" in reply && reply.presentation)
+          this.emitPresentation(send, session, reply.presentation);
         for (const line of reply.messages)
           this.emit(send, session.sessionId, line);
         if (reply.state === "release") return "end_turn";
@@ -814,6 +883,12 @@ export class AcpAgent {
     void work.finally(() => this.work.delete(work));
   }
 
+  /** Everything an attach carried that has not been shown yet. */
+  private emitPending(send: Send, session: SessionState): void {
+    for (const line of session.pending.splice(0))
+      this.emit(send, session.sessionId, line);
+  }
+
   /**
    * One lifecycle line on the wire. Clients join message chunks without a separator,
    * so each line ends its own paragraph; a line identical to the one just shown is not
@@ -839,19 +914,164 @@ export class AcpAgent {
     this.chunk(send, sessionId, text);
   }
 
-  private chunk(send: Send, sessionId: string, text: string): void {
+  /**
+   * Spec 068 §2: render the service's structured `plan` and `tool_call` / `tool_call_update`
+   * presentation, or — when the client or attach does not support structured updates —
+   * append one deduplicated status line per real change. `agent_message_chunk` is
+   * append-only, so a line is never replaced and an unchanged status is never repeated.
+   * Diffing is strictly in-memory per process; a relaunched agent rebuilds the full plan
+   * and tool calls from the service on attach.
+   */
+  private emitPresentation(
+    send: Send,
+    session: SessionState,
+    presentation: AcpTaskPresentation,
+  ): void {
+    if (!session.structuredUpdates) {
+      if (
+        presentation.statusLine &&
+        presentation.statusLine !== session.lastStatusLine
+      ) {
+        session.lastStatusLine = presentation.statusLine;
+        this.emit(send, session.sessionId, presentation.statusLine);
+      }
+      return;
+    }
+
+    const planJson = JSON.stringify(presentation.plan);
+    if (planJson !== session.lastPlan) {
+      session.lastPlan = planJson;
+      this.sendUpdate(send, session.sessionId, {
+        sessionUpdate: "plan",
+        entries: presentation.plan,
+      });
+    }
+
+    const activeOccurrences = new Map(
+      presentation.toolCalls.map((call) => [call.toolCallId, call]),
+    );
+    // A wait whose occurrence is gone ends where it stands. A repair attempt never ends
+    // from absence: it lives from its reservation until its own settlement fact arrives,
+    // so a reading that temporarily hides it (an operator decision, say) cannot complete
+    // it and its coordinator's bind keeps the one call.
+    for (const [wireId, shown] of session.shownToolCalls) {
+      if (
+        shown.call.status === "in_progress" &&
+        !activeOccurrences.has(shown.occurrence) &&
+        !isAttemptCall(shown.occurrence)
+      ) {
+        shown.call = { ...shown.call, status: "completed" };
+        shown.retired = true;
+        this.sendUpdate(send, session.sessionId, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: wireId,
+          title: shown.call.title,
+          kind: shown.call.kind,
+          status: "completed",
+        });
+      }
+    }
+
+    for (const call of presentation.toolCalls) {
+      const occurrence = call.toolCallId;
+      const lifetime = session.callLifetimes.get(occurrence);
+      const shown = lifetime
+        ? session.shownToolCalls.get(lifetime.wireId)
+        : undefined;
+      const content = call.detail
+        ? [{ type: "content", content: { type: "text", text: call.detail } }]
+        : undefined;
+      // A settled call is never revived, and an unchanged settled record stays quiet:
+      // a participant that finished, or a repair that settled, is still in every later
+      // presentation and must keep its one call. A new lifetime is opened only for a
+      // recurring wait whose occurrence vanished and came back (a board hold released
+      // and set again), or one that settled and now reads live again. A repair attempt
+      // never reopens: a stale live snapshot of an already-settled attempt falls to the
+      // settled-repair guard below instead of opening a `~N` call.
+      const settled =
+        shown?.call.status === "completed" || shown?.call.status === "failed";
+      const reopening =
+        settled &&
+        !isAttemptCall(occurrence) &&
+        (call.status === "in_progress" || call.status === "pending");
+      if (!shown || shown.retired || reopening) {
+        const generation = (lifetime?.generation ?? 0) + 1;
+        const wireId =
+          generation === 1 ? occurrence : `${occurrence}~${generation}`;
+        session.callLifetimes.set(occurrence, { wireId, generation });
+        session.shownToolCalls.set(wireId, {
+          occurrence,
+          call: { ...call },
+          retired: false,
+        });
+        this.sendUpdate(send, session.sessionId, {
+          sessionUpdate: "tool_call",
+          toolCallId: wireId,
+          title: call.title,
+          kind: call.kind,
+          status: call.status,
+          ...(content ? { content } : {}),
+        });
+        continue;
+      }
+      if (
+        shown.call.title !== call.title ||
+        shown.call.kind !== call.kind ||
+        shown.call.status !== call.status ||
+        shown.call.detail !== call.detail
+      ) {
+        // One repair attempt has one status history. A settled attempt never returns to
+        // pending or in progress, so a report and its settlement can never contradict
+        // each other; a genuinely new attempt is a new lifetime with its own id.
+        if (
+          isAttemptCall(occurrence) &&
+          regressedStatus(shown.call.status, call.status)
+        )
+          continue;
+        shown.call = { ...call };
+        this.sendUpdate(send, session.sessionId, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: lifetime!.wireId,
+          title: call.title,
+          kind: call.kind,
+          status: call.status,
+          ...(content ? { content } : {}),
+        });
+      }
+    }
+  }
+
+  private sendUpdate(send: Send, sessionId: string, update: Json): void {
     send({
       jsonrpc: "2.0",
       method: "session/update",
       params: {
         sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: `${text}\n\n` },
-        },
+        update,
       },
     });
   }
+
+  private chunk(send: Send, sessionId: string, text: string): void {
+    this.sendUpdate(send, sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: `${text}\n\n` },
+    });
+  }
+}
+
+/** Whether this call id is one automatic repair attempt's own lifetime. */
+function isAttemptCall(toolCallId: string): boolean {
+  return toolCallId.startsWith("repair:");
+}
+
+/** Whether a status would move a call backwards from a settled one. */
+function regressedStatus(
+  previous: AcpToolCall["status"],
+  next: AcpToolCall["status"],
+): boolean {
+  const settled = previous === "completed" || previous === "failed";
+  return settled && (next === "pending" || next === "in_progress");
 }
 
 /** Whether a transport error is this process's own abort (the operator's Stop). */

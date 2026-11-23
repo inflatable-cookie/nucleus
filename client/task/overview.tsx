@@ -297,7 +297,7 @@ export function OverviewTab({
                 {findings.summary}
               </Text>
             )}
-            {findings.items.map((item, idx) => (
+            {findings.items.map((item) => (
               <View
                 key={item.id}
                 style={{
@@ -305,8 +305,6 @@ export function OverviewTab({
                   alignItems: "flex-start",
                   gap: space.sm,
                   paddingVertical: space.xs,
-                  borderTopWidth: idx === 0 && !findings.summary ? 0 : 1,
-                  borderTopColor: r.border,
                 }}
               >
                 <SeverityPill severity={item.severity} c={c} />

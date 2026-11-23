@@ -260,6 +260,21 @@ other lane keeps the host its scheduling call ran on. Without that, an
 agent-naming call inside the quantum resolved the default host and the review
 answered `Agent was not found` (swallowtail#226).
 
+The same rule covers work that runs in no host context at all: the sweep's fleet
+steps, operator controls on a queue lane (stop active threads, bulk disposition)
+and retention. Outside a context the routed adapter is the unbound fallback,
+which has no forge or agent ports, and host availability answers only for the
+legacy Paseo primary, so a port or availability read made there skips every task
+on T3 or BB without a word. Such a step reads both inside the task's own host
+context (`withHost(task.hostId, …)` or `onTaskHost`): a bulk disposition runs
+each item on its task's host, and stop active threads names any task whose host
+it cannot reach as a failure, marking nothing for it. An operator control is
+gated on any connected host, not the Paseo connection. Run tickets live in the
+service's data directory for every host, so retention removes them without a
+host connection (2026-11-23 audit). In
+tests, `Engine.unboundPortRead` reports each port a registered host serves that
+was read with no host context; production leaves it unset.
+
 T3's project and existing Git worktree form its workspace handle. Persist their
 mapping through the service's durable intent boundary, including the canonical
 directory, project ID, task/run ownership and native thread ID. Do not recover
@@ -1331,6 +1346,30 @@ T3's in-process MCP `PreviewAutomationBroker`). **A retained preview tab therefo
 cannot be revealed through any supported call; `ui` shows the board by replacing
 the tab with a freshly revealed open** (nucleus#1415). The adapter keeps T3's
 native manual maximize control with no T3 patches or client-state hacks.
+
+#### Board appearance in the browser pane
+
+The web board uses the browser's `prefers-color-scheme` for its light and dark
+palettes. A paired T3 tab also reads `/api/theme` when it loads, independently of
+the board snapshot and live channel. The adapter uses the existing
+`orchestration:read` bearer for `server.getSettings` and the first
+`environmentThemesUpdated` event from `subscribeServerConfig` with
+`environmentThemes: true`. The event provides published theme definitions.
+The settings read provides the environment's `defaultTheme` and
+`defaultAppearance`.
+
+The spike against nightly `0.1.12-nightly.20261122.5098` found that definitions
+may supply colours and light/dark variants, canvas/accent seeds, or both. The
+renderer resolves the seeds itself. Nucleus maps supplied roles to the board,
+uses its own surface steps for seeds, and fills missing roles from the board
+palette. A fixed environment appearance takes precedence over the browser's
+preference. A theme with one usable appearance uses that palette. An unavailable
+read or missing definition leaves a usable board palette.
+
+The planner ruled on 2026-11-23 that the board follows the environment defaults.
+T3 stores per-renderer choices and built-in palettes in its renderer. The board
+can use a built-in's colours only if the server supplies its definition. Exact
+parity with local T3 choices needs a supported T3 API.
 
 ### Native question answers
 

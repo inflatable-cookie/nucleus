@@ -6,8 +6,9 @@ import {
   type stopThreads,
 } from "../../shared/contracts";
 import type { Engine } from "../engine";
-import type { AgentObservation } from "../host/adapter";
+import type { Adapter, AgentObservation } from "../host/adapter";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
+import { isTransportOrConnectionLoss } from "../../shared/transport";
 
 import { digest, now } from "../store/store";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
@@ -101,12 +102,21 @@ export class PausedStops {
         const workspaceId = run?.workspaceId ?? task.workspaceId!;
         const role = run ? run.role : ("worker" as const);
         const runId = run?.id ?? task.runId ?? null;
+        const host = HOST_KIND_LABELS[hostKindOf(task.hostId)];
         let observed: AgentObservation | null = null;
         try {
           observed = await this.engine.onTaskHost({ hostId: task.hostId }, () =>
             this.engine.host.observe(agentId),
           );
-        } catch {
+        } catch (error) {
+          // A host that cannot be reached proves nothing about the turn: it is a
+          // failure of this control, named, never a silent skip. Nothing is marked.
+          if (isTransportOrConnectionLoss(error)) {
+            failures.push(
+              `Nucleus could not reach ${host} host ${task.hostId} to stop the live ${role} thread (${agentId}) of task ${task.id}: ${error instanceof Error ? error.message : String(error)}; retry the same control`,
+            );
+            continue;
+          }
           observed = null;
         }
         // Only a matching observation proves a live turn; an unreadable or
@@ -119,9 +129,22 @@ export class PausedStops {
           continue;
         if (!(observed.active || observed.activeTurnId || observed.permissions))
           continue;
-        const cancel = this.adapter.stopAgentTurn;
+        // The control runs on a queue lane with no host context: read and call the
+        // cancel port on the task's own host, where the unbound fallback never answers.
+        // A host that drops mid-control fails this thread, never the whole control.
+        let cancel: Adapter["stopAgentTurn"];
+        try {
+          cancel = this.engine.onTaskHost(
+            { hostId: task.hostId },
+            () => this.adapter.stopAgentTurn,
+          );
+        } catch (error) {
+          failures.push(
+            `Nucleus could not reach ${host} host ${task.hostId} to stop the live ${role} thread (${agentId}) of task ${task.id}: ${error instanceof Error ? error.message : String(error)}; retry the same control`,
+          );
+          continue;
+        }
         if (!cancel) {
-          const host = HOST_KIND_LABELS[hostKindOf(task.hostId)];
           failures.push(
             `${host} active-turn cancellation is unavailable, so Nucleus cannot stop the live ${role} thread (${agentId}); retry once ${host} offers it`,
           );
@@ -138,7 +161,9 @@ export class PausedStops {
         };
         this.store.event(task.id, "paused_stop_intent", JSON.stringify(intent));
         try {
-          await cancel.call(this.adapter, agentId);
+          await this.engine.onTaskHost({ hostId: task.hostId }, () =>
+            cancel!.call(this.adapter, agentId),
+          );
         } catch (error) {
           const message =
             error instanceof Error ? error.message : String(error);

@@ -29,7 +29,7 @@ import {
   type ProjectQaRun,
 } from "../shared/contracts";
 import { CAPACITY_WAIT_PREFIX } from "../shared/wait-state";
-import { planningRead, toneSurface } from "../client/design";
+import { planningRead, space, toneSurface, wash } from "../client/design";
 import { createTaskDetailCache } from "../core/telemetry/task-detail";
 import { leadFromPapercut } from "../shared/papercut-lead";
 import type { Papercut } from "../shared/contracts";
@@ -736,11 +736,12 @@ function assertDarkTheme(ui: ReturnType<typeof mount>) {
   const palette: Set<string> = new Set([
     ...Object.values(dark),
     ...Object.values(dark).map((value) => toneSurface(value, value)),
-    // Planning's review segment and idle banner tint a role at their own token alphas (nucleus#1531).
+    // Planning's review segment and idle banner tint a role at their own token alphas (nucleus#1531);
+    // hover, selection, hairlines and status cards are washes at the `wash` alphas (nucleus#1540).
     ...[
       planningRead.reviewAlpha,
       planningRead.bannerAlpha,
-      planningRead.bannerBorderAlpha,
+      ...Object.values(wash),
     ].flatMap((alpha) =>
       Object.values(dark).map((value) => toneSurface(value, value, alpha)),
     ),
@@ -1083,9 +1084,14 @@ test("141 the bundled inbox distinguishes dispatch and merge holds in the dark t
         .find((node) => node.props.accessibilityLabel === label);
       assert.ok(badge, `${label} badge renders`);
       assert.equal(
-        (badge.props.style as { borderColor: string }).borderColor,
-        color,
-        `${label} uses its distinct dark-theme tone`,
+        (badge.props.style as { backgroundColor: string }).backgroundColor,
+        toneSurface(color, dark.surface2),
+        `${label} uses its distinct dark-theme tone as a tinted fill`,
+      );
+      assert.equal(
+        (badge.props.style as { borderWidth?: number }).borderWidth,
+        undefined,
+        `${label} draws no outline`,
       );
     }
     assertDarkTheme(ui);
@@ -2601,8 +2607,8 @@ for (const compact of [false, true]) {
   });
 
   // nucleus#1525: Working, In review and Closing are top-level menu entries with
-  // their own counts and lists, behind dimmer dividers; zero-count entries dim.
-  test(`the inbox menu splits Working, In review and Closing top-level with dimmer dividers at the ${viewport} viewport`, async () => {
+  // their own counts and lists, behind group gaps; zero-count entries dim.
+  test(`the inbox menu splits Working, In review and Closing top-level with group gaps at the ${viewport} viewport`, async () => {
     const respond =
       (uiBoard: unknown) => async (method: string, input: unknown) => {
         if (method === "queue.ui-snapshot") return uiBoard;
@@ -2634,7 +2640,7 @@ for (const compact of [false, true]) {
       const kinds = menu.map((node) =>
         node.type === "Pressable"
           ? `entry:${viewName(String(node.props.accessibilityLabel))}`
-          : node.type === "View" && node.props.style?.height === 1
+          : node.type === "View" && node.props.style?.height === space.md
             ? "divider"
             : `other:${node.type}`,
       );
@@ -2654,18 +2660,16 @@ for (const compact of [false, true]) {
         ],
         "two dividers split Needs you and the Working entries off",
       );
-      // The dividers read at half the border's contrast: the same border token, translucent.
+      // nucleus#1540: the groups part with spacing, never a drawn line.
       const dividers = menu.filter(
-        (node) => node.type === "View" && node.props.style?.height === 1,
+        (node) => node.type === "View" && node.props.style?.height === space.md,
       );
       assert.equal(dividers.length, 2);
       for (const divider of dividers)
-        assert.deepEqual(
-          {
-            backgroundColor: divider.props.style.backgroundColor,
-            opacity: divider.props.style.opacity,
-          },
-          { backgroundColor: dark.border, opacity: 0.5 },
+        assert.equal(
+          divider.props.style.backgroundColor,
+          undefined,
+          "a group gap draws nothing",
         );
       assert.ok(ui.query("Working, 1"), "Working carries its own count");
       assert.ok(ui.query("In review, 1"), "In review carries its own count");
@@ -2719,7 +2723,7 @@ for (const compact of [false, true]) {
 
 // nucleus#1525: at a narrow panel the same split menu lives in the drawer; each
 // entry opens its own list and closes the drawer.
-test("the narrow drawer lists Working, In review and Closing top-level with dimmer dividers", async () => {
+test("the narrow drawer lists Working, In review and Closing top-level with group gaps", async () => {
   const respond = async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot")
       return {
@@ -2762,7 +2766,7 @@ test("the narrow drawer lists Working, In review and Closing top-level with dimm
       menu.map((node) =>
         node.type === "Pressable"
           ? `entry:${viewName(String(node.props.accessibilityLabel))}`
-          : node.type === "View" && node.props.style?.height === 1
+          : node.type === "View" && node.props.style?.height === space.md
             ? "divider"
             : `other:${node.type}`,
       ),
@@ -2781,17 +2785,14 @@ test("the narrow drawer lists Working, In review and Closing top-level with dimm
       "the drawer carries the same split menu",
     );
     const dividers = menu.filter(
-      (node) => node.type === "View" && node.props.style?.height === 1,
+      (node) => node.type === "View" && node.props.style?.height === space.md,
     );
     assert.equal(dividers.length, 2);
     for (const divider of dividers)
-      assert.deepEqual(
-        {
-          backgroundColor: divider.props.style.backgroundColor,
-          opacity: divider.props.style.opacity,
-        },
-        { backgroundColor: dark.border, opacity: 0.5 },
-        "the drawer dividers read at half the border's contrast",
+      assert.equal(
+        divider.props.style.backgroundColor,
+        undefined,
+        "the drawer's group gaps draw nothing",
       );
     assert.ok(ui.query("Working, 1"), "Working carries its own count");
     assert.ok(ui.query("Closing, 0"), "Closing reads its real zero");

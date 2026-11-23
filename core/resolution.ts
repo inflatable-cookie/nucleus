@@ -5,6 +5,7 @@ import {
 } from "../shared/task-budget";
 import type { FormalReviewRuntime } from "./forge/reviews";
 import { portsContext } from "./port-context";
+import type { DeadParticipantProof } from "./recovery/dead-participant";
 import {
   ambientHostPorts,
   onOwnerHost,
@@ -1176,6 +1177,7 @@ export class Resolution {
   readonly recovery: Recovery = new Recovery(
     portsContext(this, [
       "adapter",
+      "participantGoneProof",
       "attention",
       "closeout",
       "automaticHookReplayPending",
@@ -1631,7 +1633,7 @@ export class Resolution {
       "continuedProgressWait",
       "deliverLaunchRun",
       "ensureIncident",
-      "extendTaskBudgetAutomatically",
+      "holdForSpentBudget",
       "host",
       "launch",
       "launchingRuns",
@@ -2057,6 +2059,10 @@ export class Resolution {
   /** Spec 058 budgets (nucleus#1153): open or close the wall-clock pause interval for one task. */
   settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task {
     return this.taskStops.settleBudgetClock(task, options);
+  }
+  /** The one budget gate every run start passes (Spec 068 Decision 1). */
+  holdForSpentBudget(task: Task): boolean {
+    return this.taskStops.holdForSpentBudget(task);
   }
   /** nucleus#1437: settle a stored settled-wait prose stop once nothing owns it. */
   settleSettledWaitStop(task: Task): Task {
@@ -3899,6 +3905,15 @@ export class Resolution {
    * positively reports gone, so the revision continues on a fresh worker.
    */
   retireGoneRetainedWorker?: (task: Task) => Promise<boolean>;
+  /**
+   * Engine-provided (Spec 068 §3): proof that one participant's agent is dead
+   * (its process gone, or its thread absent or removed on an exact host read),
+   * or null. The coordinator pass reads it for a coordinator it cannot observe.
+   */
+  participantGoneProof?: (
+    task: Task,
+    run: Run | null,
+  ) => Promise<DeadParticipantProof | null>;
   gitTransientFailure?: (task: Task, error: unknown) => boolean;
   hostReadTransientFailure?: (
     task: Task,

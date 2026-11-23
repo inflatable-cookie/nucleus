@@ -100,7 +100,7 @@ test("706: pause chevron menu acts on one press and has no Stop arm", () => {
   }
   assert.match(
     ui,
-    /accessibilityRole="menuitem" accessibilityLabel=\{item\.label\}/,
+    /role="menuitem" label=\{item\.label\}/,
   );
   assert.match(
     ui,

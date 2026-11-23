@@ -56,6 +56,7 @@ import {
   isHostOperationTimeout,
 } from "../../host/errors";
 import { threadRunningReason } from "../../intake/thread-waits";
+import { waitOnUncertainCreation } from "../../recovery/creation-lookup";
 import { declaredLaneDocumentKeys } from "../../planning/brief-lane-documents";
 import { dirname } from "node:path";
 import { ensureTaskNodeModules } from "../../workspaces/task-node-modules";
@@ -791,11 +792,12 @@ export class RunLaunchDeliver {
         !run.ordinaryDetached &&
         creationRoles.has(role)
       ) {
-        this.resolution.waiting(
+        waitOnUncertainCreation(
+          this.resolution,
           this.store.task(t.id),
-          `Uncertain ${role} creation ${run.id}: its creation call did not answer; Nucleus looks it up by its label on the next pass`,
-          "lifecycle",
-          { fact: { code: "creation_lookup", subject: run.id } },
+          role,
+          run.id,
+          error,
         );
         return;
       }

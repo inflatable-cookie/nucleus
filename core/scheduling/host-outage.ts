@@ -6,6 +6,7 @@ import {
 } from "../../shared/host-outage";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { now, type Store } from "../store/store";
+import { elapsedOutsideOutages } from "../../shared/task-budget";
 import { serviceDowntimeIntervals } from "./service-downtime";
 
 /** How many waiting tasks one notice lists before it names the rest as a count. */
@@ -176,6 +177,21 @@ export function budgetOutageIntervals(
   hostId: string | null | undefined,
 ): HostOutageInterval[] {
   return [...hostOutageIntervals(store, hostId), ...serviceDowntimeIntervals(store)];
+}
+
+/**
+ * How long a wait that began at `since` has been open while Nucleus and the task's
+ * host were up: the wall span less `budgetOutageIntervals`, the list budgets
+ * discount (Spec 068 Decision 1). Every stall window on the coordinator route reads
+ * a wait's age through this, so a restart never makes an ordinary wait look stalled.
+ */
+export function waitAgeMs(
+  store: Pick<Store, "getMeta">,
+  hostId: string | null | undefined,
+  since: string,
+  at = Date.now(),
+): number {
+  return elapsedOutsideOutages(Date.parse(since), at, budgetOutageIntervals(store, hostId));
 }
 
 /**

@@ -17,7 +17,7 @@
  * again. The directive is memory-only, so a service restart re-derives the answer
  * from the task and never invents a release.
  */
-import type { Task } from "../../shared/contracts";
+import { taskDetailView, type Task } from "../../shared/contracts";
 import type { AgentMessageReceipt } from "../questions/agent-messages";
 import { verifyAcpSession, mintAcpSession } from "./binding";
 import type {
@@ -30,15 +30,16 @@ import type {
   AcpPendingCard,
   AcpSessionBinding,
   AcpSessionSurface,
+  AcpTaskPresentation,
   AcpTurnInput,
   AcpTurnReply,
 } from "../../shared/acp/surface";
 import {
-  acpFinishedLine,
-  acpLifecycleLine,
-  acpLifecycleSignature,
+  acpPresentationSignature,
   acpTaskFinished,
+  acpTaskMessages,
   acpTaskName,
+  acpTaskPresentation,
   type AcpLineMemory,
 } from "./lifecycle";
 import type { Engine } from "../engine";
@@ -53,6 +54,11 @@ import {
   proposedOwner,
   type DecisionScope,
 } from "./decisions";
+import { activityReadContext } from "../telemetry/task-activity-observation";
+import {
+  taskWaitStateContext,
+  taskWithCurrentWait,
+} from "../recovery/wait-context";
 
 /** How long one long-poll may wait; the agent asks again after this. */
 export const ACP_TURN_WAIT_MAX_MS = 25_000;
@@ -432,24 +438,49 @@ export class AcpSessions implements AcpSessionSurface {
     const first = !this.shown.has(record.sessionId);
     for (;;) {
       const task = this.engine.store.task(record.taskId);
-      const signature = acpLifecycleSignature(task);
-      const messages: string[] = [];
+      const runs = this.engine.store.runs(task.id);
+      const events = this.engine.store.eventsAll(task.id);
+      const decisions = this.engine.store.listDecisions({
+        status: "open",
+        task: task.id,
+      });
+      const decisionId = decisions[0]?.id ?? null;
+      const waitContext = taskWaitStateContext(
+        this.engine.store,
+        task,
+        decisionId,
+      );
+      const view = taskDetailView(
+        taskWithCurrentWait(this.engine.store, task, waitContext),
+        waitContext,
+        runs,
+        events,
+        this.engine.store.canonicalRepository(task.repoPath, task.repository),
+        Date.now(),
+        activityReadContext(this.engine.store),
+      );
+      const facts = {
+        task,
+        runs,
+        activity: view.activity!,
+        decisions,
+        events,
+      };
+      const presentation = acpTaskPresentation(facts);
+      const signature = acpPresentationSignature(presentation, facts);
       const previous = this.shown.get(record.sessionId);
-      if (first || input.attach === true || previous?.signature !== signature) {
-        // A reattached session has nothing on screen to build on, so its line is whole.
+      const changed =
+        first || input.attach === true || previous?.signature !== signature;
+      let messages: string[] = [];
+      if (changed) {
+        // A reattached session has nothing on screen to build on, so its view is rebuilt whole.
         const memory: AcpLineMemory =
           previous && input.attach !== true
             ? previous.memory
             : { named: false, prUrl: null };
-        messages.push(
-          acpTaskFinished(task)
-            ? acpFinishedLine(task)
-            : acpLifecycleLine(task, memory),
-        );
-        this.remember(record.sessionId, signature, {
-          named: true,
-          prUrl: task.prUrl ?? null,
-        });
+        const derived = acpTaskMessages(facts, memory);
+        messages = derived.messages;
+        this.remember(record.sessionId, signature, derived.nextMemory);
       }
       const release = this.releases.get(record.sessionId);
       if (release !== undefined || acpTaskFinished(task)) {
@@ -459,10 +490,17 @@ export class AcpSessions implements AcpSessionSurface {
           "release",
           release ?? `the task is ${task.phase}`,
           messages,
+          presentation,
         );
       }
-      if (messages.length || input.attach || Date.now() >= deadline)
-        return this.reply(task, "hold", `the task is ${task.phase}`, messages);
+      if (changed || input.attach || Date.now() >= deadline)
+        return this.reply(
+          task,
+          "hold",
+          `the task is ${task.phase}`,
+          messages,
+          presentation,
+        );
       await this.wait(
         record.sessionId,
         Math.min(this.pollMs, deadline - Date.now()),
@@ -633,6 +671,7 @@ export class AcpSessions implements AcpSessionSurface {
     state: AcpTurnReply["state"],
     reason: string,
     messages: string[],
+    presentation?: AcpTaskPresentation,
   ): AcpTurnReply {
     return {
       state,
@@ -644,6 +683,7 @@ export class AcpSessions implements AcpSessionSurface {
         phase: task.phase,
         name: acpTaskName(task),
       },
+      ...(presentation ? { presentation } : {}),
     };
   }
 

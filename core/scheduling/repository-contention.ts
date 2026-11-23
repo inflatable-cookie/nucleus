@@ -1,5 +1,6 @@
 import type { Task } from "../../shared/contracts";
 import { digest, now, type Store } from "../store/store";
+import { waitAgeMs } from "./host-outage";
 
 /**
  * Canonical-main movement is ordinary repository contention. A Chatterbox
@@ -58,5 +59,6 @@ export function repositoryContentionNeedsAttention(store: Store, task: Task, rea
     episode = { ...episode, reason: reason.slice(0, 2000) };
     store.setMeta(metaKey, episode);
   }
-  return episode.taskId === task.id && at - Date.parse(episode.since) >= REPOSITORY_CONTENTION_GRACE_MS;
+  // Spec 068 Decision 1: downtime and host outages never age the episode.
+  return episode.taskId === task.id && waitAgeMs(store, task.hostId, episode.since, at) >= REPOSITORY_CONTENTION_GRACE_MS;
 }

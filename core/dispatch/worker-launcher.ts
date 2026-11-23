@@ -22,7 +22,12 @@ import {
   PROFILE_CATALOG_PENDING_REASON,
   ProvenPreSendRefusalError,
 } from "../recovery/task-reasons";
-import { HostReadRefusalError } from "../host";
+import {
+  HostReadRefusalError,
+  HostUnknownDeliveryError,
+  isHostOperationTimeout,
+} from "../host";
+import { waitOnUncertainCreation } from "../recovery/creation-lookup";
 import { isQuantumDeadlineExceeded } from "../scheduling/pass-snapshot";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { agentSettled } from "../machine/agent-settled";
@@ -106,6 +111,11 @@ export class WorkerLauncher {
       );
       return;
     }
+    // Every worker creation passes here: a first dispatch, a dead worker's
+    // redispatch, a resumed dispatch and a failover. The budget gate is the one
+    // run launches pass (Spec 068 Decision 1), read after the drain, hold and
+    // catalog refusals so a held or draining task keeps its own reason.
+    if (this.resolution.holdForSpentBudget(task)) return;
     if (!task.directory || !task.workspaceId || !task.profile)
       throw new Error("Missing workspace or route");
     task = await this.engine.ensureSiblings(task);
@@ -544,6 +554,27 @@ export class WorkerLauncher {
       );
       const detail = error instanceof Error ? error.message : String(error);
       const current = this.store.task(task.id);
+      // Spec 068 §3: a create whose delivery is unknown is Nucleus's to settle,
+      // never a person's stop. It records the same wait every run launch does,
+      // and the quantum's creation lookup binds, relaunches or keeps waiting. It
+      // comes before the text classifiers: an unknown delivery that mentions a
+      // rate limit is still unknown, never requeued under a fresh run id.
+      if (
+        (error instanceof HostUnknownDeliveryError ||
+          isHostOperationTimeout(error)) &&
+        current.agentIntent &&
+        !current.agentId &&
+        current.runId === runId
+      ) {
+        waitOnUncertainCreation(
+          this.resolution,
+          current,
+          "worker",
+          runId,
+          error,
+        );
+        return;
+      }
       const failure = classifyWorkerLaunchFailure(detail);
       // Task 646: a 429 at creation paces the provider group (short cool-down
       // in capacity state so new launches prefer other profiles) and requeues

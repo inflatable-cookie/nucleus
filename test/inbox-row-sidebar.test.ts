@@ -91,7 +91,7 @@ for (const [name, c] of [
     const expectedHover = design.hoverSurface(c as never);
     assert.notEqual(
       expectedHover,
-      (c as { surface2: string }).surface2,
+      design.selectedSurface(c as never),
       "hover reads dimmer than the selected surface",
     );
     const { ui, frame } = mountRow(c, false);
@@ -149,21 +149,21 @@ for (const [name, c] of [
     try {
       assert.equal(
         open.frame.props.style.backgroundColor,
-        (c as { surface2: string }).surface2,
+        design.selectedSurface(c as never),
         "the open record keeps the selected surface",
       );
       open.pressable.props.onHoverIn();
       assert.equal(
         frameOf(open.ui, "Task: an inbox row").frame.props.style
           .backgroundColor,
-        (c as { surface2: string }).surface2,
+        design.selectedSurface(c as never),
         "hover keeps the selected background",
       );
       open.pressable.props.onFocus();
       assert.equal(
         frameOf(open.ui, "Task: an inbox row").frame.props.style
           .backgroundColor,
-        (c as { surface2: string }).surface2,
+        design.selectedSurface(c as never),
         "focus keeps the selected background",
       );
     } finally {
@@ -275,19 +275,19 @@ test("menu entries hover and focus dimmed; the selected entry keeps its surface"
     const workingFrame = working;
     assert.equal(
       workingFrame.props.style.backgroundColor,
-      (dark as { surface2: string }).surface2,
+      design.selectedSurface(dark as never),
     );
     working.props.onHoverIn();
     assert.equal(
       ui.query("Working, 3").props.style.backgroundColor,
-      (dark as { surface2: string }).surface2,
+      design.selectedSurface(dark as never),
       "hover keeps the selected entry",
     );
     working.props.onHoverOut();
     ui.query("Working, 3").props.onFocus();
     assert.equal(
       ui.query("Working, 3").props.style.backgroundColor,
-      (dark as { surface2: string }).surface2,
+      design.selectedSurface(dark as never),
       "focus keeps the selected entry",
     );
     ui.query("Working, 3").props.onBlur();

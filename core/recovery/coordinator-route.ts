@@ -38,6 +38,7 @@ import {
 } from "./recovery-context";
 import { groupIsUnavailable, supersedingRouteProfile } from "../../shared/pool";
 import { requiredCheckPollMetaKey } from "../forge/checks";
+import { waitAgeMs } from "../scheduling/host-outage";
 import {
   HostSnapshotPendingError,
   ProvenPreSendRefusalError,
@@ -49,6 +50,7 @@ import {
   readHostReadTransientEpisode,
 } from "./host-read-transient";
 import { refusedLaunchProfiles } from "./refused-launch";
+import { readRepairJournal } from "./repair-attempts";
 import { unreleasedExecutorRun } from "../qa/proof-admission";
 import {
   CoordinatorEpisode,
@@ -281,7 +283,9 @@ export class CoordinatorRoute {
       const stallWindowMs =
         (this.store.getMeta<number>("stallThresholdMinutes") ??
           DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
-      const stopAgeMs = Math.max(0, Date.now() - Date.parse(stop.since));
+      // Spec 068 Decision 1: a wait's age is measured as budgets are, so the time
+      // the service or the task's host was down never makes it look stalled.
+      const stopAgeMs = waitAgeMs(this.store, t.hostId, stop.since);
       const hasUncertainCreation =
         isUncertainCreationStop(stop) ||
         (stop.reason === "lifecycle" &&
@@ -469,7 +473,11 @@ export class CoordinatorRoute {
     // against a released run was superseded by the run that replaced it.
     if (
       incidentBindsCurrentWork(t, this.store.runs(t.id)) &&
-      automaticIncidentPending(t.resolution.incident, this.resolution.graceMs)
+      automaticIncidentPending(
+        t.resolution.incident,
+        this.resolution.graceMs,
+        (since) => waitAgeMs(this.store, t.hostId, since),
+      )
     )
       return null;
     // A live worktree QA, or an incomplete scan of it, is not proven absence. The
@@ -587,7 +595,7 @@ export class CoordinatorRoute {
           return null;
         }
         if (
-          Date.now() - Date.parse(incident.idleSince) >=
+          waitAgeMs(this.store, t.hostId, incident.idleSince) >=
           this.resolution.graceMs
         )
           return this.episode.escalate(
@@ -960,6 +968,18 @@ export class CoordinatorRoute {
             cause: cause(t, this.store.runs(t.id)),
             work: taskWorkIdentity(current, this.store),
             outage,
+            // The attempt's own identity (its episode and index under it) and the
+            // action it takes, so an ACP thread keeps each repair's title and call id
+            // after a later repair replaces the task's current episode (Spec 068 §2).
+            episodeId: incident!.id,
+            attempt:
+              readRepairJournal(this.store.eventsAll(t.id)).attempts(
+                incident!.id,
+              ) + 1,
+            action:
+              current.resolution.incident?.status === "resolved"
+                ? ""
+                : (current.resolution.incident?.action ?? ""),
           }),
         );
         this.episode.save(t, {

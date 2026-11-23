@@ -775,6 +775,8 @@ export async function t3Fake(t: TestContext, directory: string) {
      * no test reads or writes one, so the served block keeps its previous shape.
      */
     providerInstances: undefined as Value | undefined,
+    /** The files the opt-in environment theme event publishes. */
+    environmentThemes: [] as unknown[],
     /** Authorization headers this fake refuses, for a token-rotation case. */
     rejectBearers: [] as string[],
     /**
@@ -1257,6 +1259,15 @@ export async function t3Fake(t: TestContext, directory: string) {
           }
           return success(null);
         }
+        case "server.getSettings":
+          return success(controls.settings);
+        case "subscribeServerConfig":
+          return stream([
+            { version: 1, type: "snapshot", config: { settings: controls.settings } },
+            ...(payload.environmentThemes === true
+              ? [{ version: 1, type: "environmentThemesUpdated", payload: { themes: controls.environmentThemes } }]
+              : []),
+          ]);
         case "server.getConfig": {
           const reasoning: Value = {
             id: "reasoningEffort",

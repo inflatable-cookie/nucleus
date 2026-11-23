@@ -1789,3 +1789,556 @@ test("an inbox ui inside the nightly harness prompt opens the board and answers 
     await client.closed();
   }
 });
+
+test("structured presentation diffs plan and tool_call_update in place and completes disappeared waits", async () => {
+  const presentation = (
+    step: number,
+    toolCalls: import("../shared/acp/surface").AcpToolCall[],
+    statusLine: string,
+  ): import("../shared/acp/surface").AcpTaskPresentation => ({
+    plan: [
+      {
+        content: "Queued",
+        priority: step === 0 ? "high" : "medium",
+        status: step > 0 ? "completed" : "in_progress",
+      },
+      {
+        content: "Working",
+        priority: step === 1 ? "high" : "medium",
+        status: step > 1 ? "completed" : step === 1 ? "in_progress" : "pending",
+      },
+      {
+        content: "Review round 1 of 6",
+        priority: step === 2 ? "high" : "medium",
+        status: step > 2 ? "completed" : step === 2 ? "in_progress" : "pending",
+      },
+      {
+        content: "Merge",
+        priority: step === 3 ? "high" : "medium",
+        status: step > 3 ? "completed" : step === 3 ? "in_progress" : "pending",
+      },
+      {
+        content: "Close",
+        priority: step === 4 ? "high" : "medium",
+        status: step > 4 ? "completed" : step === 4 ? "in_progress" : "pending",
+      },
+    ],
+    toolCalls,
+    statusLine,
+  });
+
+  const makeReply = (
+    state: "hold" | "release",
+    pres: import("../shared/acp/surface").AcpTaskPresentation,
+    messages: string[] = [],
+  ): AcpTurnReply => ({
+    state,
+    reason: state === "hold" ? "the task is working" : "the task is done",
+    messages,
+    task: {
+      taskId: "task-1",
+      reference: "nucleus#1554",
+      phase: "working",
+      name: "nucleus#1554",
+    },
+    presentation: pres,
+  });
+
+  const p1 = presentation(
+    1,
+    [
+      {
+        toolCallId: "run:w1",
+        title: "Worker: implementing the brief",
+        kind: "edit",
+        status: "in_progress",
+        detail: "Running `effigy test` · 1 min",
+      },
+    ],
+    "Working · Running `effigy test` · 1 min",
+  );
+  const p2 = presentation(
+    1,
+    [
+      {
+        toolCallId: "run:w1",
+        title: "Worker: implementing the brief",
+        kind: "edit",
+        status: "in_progress",
+        detail: "waiting on a permission prompt",
+      },
+    ],
+    "Attention · waiting on a permission prompt",
+  );
+  const p3 = presentation(
+    5,
+    [
+      {
+        toolCallId: "run:w1",
+        title: "Worker: implementing the brief",
+        kind: "edit",
+        status: "completed",
+        detail: "Ready for review",
+      },
+    ],
+    "Done",
+  );
+
+  const client = harness({
+    replies: [
+      makeReply("hold", p1), // attach
+      makeReply("hold", p1), // unchanged poll: emits nothing
+      makeReply("hold", p2), // detail changes -> tool_call_update, no duplicate plan
+      makeReply("release", p3, ["nucleus#1554 is done."]),
+    ],
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      }),
+    );
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/fixture/checkout" }),
+    );
+    const { updates, result } = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: binding.sessionId,
+        prompt: [{ type: "text", text: "opening" }],
+      }),
+    );
+    assert.deepEqual(result.result, { stopReason: "end_turn" });
+    const types = updates.map(
+      (m) => ((m.params as Json).update as Json).sessionUpdate,
+    );
+    assert.deepEqual(types, [
+      "plan",
+      "tool_call",
+      "tool_call_update",
+      "plan",
+      "tool_call_update",
+      "agent_message_chunk",
+    ]);
+    const permUpdate = (updates[2]!.params as Json).update as Json;
+    assert.match(
+      JSON.stringify(permUpdate.content),
+      /waiting on a permission prompt/,
+    );
+  } finally {
+    await client.closed();
+  }
+});
+
+test("attach with structuredUpdates: false appends exactly one status line per real change, never one per tick", async () => {
+  const p1: import("../shared/acp/surface").AcpTaskPresentation = {
+    plan: [
+      { content: "Queued", priority: "medium", status: "completed" },
+      { content: "Working", priority: "high", status: "in_progress" },
+      { content: "Review round 1 of 6", priority: "medium", status: "pending" },
+      { content: "Merge", priority: "medium", status: "pending" },
+      { content: "Close", priority: "medium", status: "pending" },
+    ],
+    toolCalls: [
+      {
+        toolCallId: "run:w1",
+        title: "Worker: implementing the brief",
+        kind: "edit",
+        status: "in_progress",
+        detail: "Working",
+      },
+    ],
+    statusLine: "Working · Running `effigy test` · 2 min",
+  };
+  const p2: import("../shared/acp/surface").AcpTaskPresentation = {
+    ...p1,
+    statusLine: "Reviewing · PR #430 · Reviewer is working",
+  };
+  const makeReply = (
+    state: "hold" | "release",
+    pres: import("../shared/acp/surface").AcpTaskPresentation,
+  ): AcpTurnReply => ({
+    state,
+    reason: state === "hold" ? "the task is working" : "the task is done",
+    messages: [],
+    task: {
+      taskId: "task-1",
+      reference: "nucleus#1554",
+      phase: "working",
+      name: "nucleus#1554",
+    },
+    presentation: pres,
+  });
+
+  const client = harness({
+    replies: [
+      makeReply("hold", p1), // attach: the opening status line
+      makeReply("hold", p1), // a tick with no change appends nothing
+      makeReply("hold", p2), // one real change: exactly one line
+      makeReply("hold", p2), // the same reading again appends nothing
+      makeReply("release", p2), // the release adds no line of its own
+    ],
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("session/new", {
+        cwd: "/fixture/checkout",
+        structuredUpdates: false,
+      }),
+    );
+    const { updates } = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: binding.sessionId,
+        prompt: [{ type: "text", text: "opening" }],
+      }),
+    );
+    const types = updates.map(
+      (m) => ((m.params as Json).update as Json).sessionUpdate,
+    );
+    assert.deepEqual(types, ["agent_message_chunk", "agent_message_chunk"]);
+    assert.equal(
+      updates.length,
+      2,
+      "two real status changes leave two lines; five ticks never append more",
+    );
+    assert.match(
+      String(
+        (((updates[0]!.params as Json).update as Json).content as Json).text,
+      ),
+      /Working · Running `effigy test` · 2 min/,
+    );
+    assert.match(
+      String(
+        (((updates[1]!.params as Json).update as Json).content as Json).text,
+      ),
+      /Reviewing · PR #430/,
+    );
+  } finally {
+    await client.closed();
+  }
+});
+
+test("a settled tool call never returns to in progress, so a report and its settlement never contradict", async () => {
+  const plan = (): import("../shared/acp/surface").AcpPlanEntry[] => [
+    { content: "Queued", priority: "medium", status: "completed" },
+    { content: "Working", priority: "high", status: "in_progress" },
+    { content: "Review round 1 of 6", priority: "medium", status: "pending" },
+    { content: "Merge", priority: "medium", status: "pending" },
+    { content: "Close", priority: "medium", status: "pending" },
+  ];
+  const attempt = (
+    status: import("../shared/acp/surface").AcpToolCallStatus,
+    detail: string,
+  ): import("../shared/acp/surface").AcpTaskPresentation => ({
+    plan: plan(),
+    toolCalls: [
+      {
+        toolCallId: "repair:ep-1:1",
+        title: "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+        kind: "other",
+        status,
+        detail,
+      },
+    ],
+    statusLine: `Recovering · ${detail}`,
+  });
+  const reply = (
+    pres: import("../shared/acp/surface").AcpTaskPresentation,
+    state: "hold" | "release" = "hold",
+  ): AcpTurnReply => ({
+    state,
+    reason: state === "hold" ? "the task is recovering" : "the task is done",
+    messages: [],
+    task: {
+      taskId: "task-1",
+      reference: "nucleus#1554",
+      phase: "working",
+      name: "nucleus#1554",
+    },
+    presentation: pres,
+  });
+
+  const inProgress = attempt("in_progress", "Recovering the task");
+  const reported = attempt("completed", "Recovered");
+  const regressed = attempt("in_progress", "Recovering the task");
+  const client = harness({
+    replies: [
+      reply(inProgress), // attach
+      reply(reported), // the coordinator's report completes the attempt
+      reply(regressed), // a settlement tick that would read as live again
+      reply(attempt("completed", "Recovered"), "release"),
+    ],
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      }),
+    );
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/fixture/checkout" }),
+    );
+    const { updates } = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: binding.sessionId,
+        prompt: [{ type: "text", text: "opening" }],
+      }),
+    );
+    const calls = updates
+      .map((message) => (message.params as Json).update as Json)
+      .filter(
+        (update) =>
+          update.sessionUpdate === "tool_call" ||
+          update.sessionUpdate === "tool_call_update",
+      )
+      .map((update) => [String(update.toolCallId), String(update.status)]);
+    assert.deepEqual(
+      calls,
+      [
+        ["repair:ep-1:1", "in_progress"],
+        ["repair:ep-1:1", "completed"],
+      ],
+      "one repair attempt is one call from reservation to settlement; a stale live snapshot never reopens it",
+    );
+  } finally {
+    await client.closed();
+  }
+});
+
+test("a later wait after work started is a new call the client still receives", async () => {
+  const plan = (): import("../shared/acp/surface").AcpPlanEntry[] => [
+    { content: "Queued", priority: "medium", status: "completed" },
+    { content: "Working", priority: "high", status: "in_progress" },
+    { content: "Review round 1 of 6", priority: "medium", status: "pending" },
+    { content: "Merge", priority: "medium", status: "pending" },
+    { content: "Close", priority: "medium", status: "pending" },
+  ];
+  const pres = (
+    toolCalls: import("../shared/acp/surface").AcpToolCall[],
+    statusLine: string,
+  ): import("../shared/acp/surface").AcpTaskPresentation => ({
+    plan: plan(),
+    toolCalls,
+    statusLine,
+  });
+  const reply = (
+    presentation: import("../shared/acp/surface").AcpTaskPresentation,
+    state: "hold" | "release" = "hold",
+  ): AcpTurnReply => ({
+    state,
+    reason: state === "hold" ? "the task is working" : "the task is done",
+    messages: [],
+    task: {
+      taskId: "task-1",
+      reference: "nucleus#1554",
+      phase: "working",
+      name: "nucleus#1554",
+    },
+    presentation,
+  });
+  const dispatchWait: import("../shared/acp/surface").AcpToolCall = {
+    toolCallId: "activity:nucleus:1764000000000",
+    title: "Nucleus: between steps",
+    kind: "think",
+    status: "in_progress",
+    detail: "between steps: waiting for dispatch",
+  };
+  const workerCall: import("../shared/acp/surface").AcpToolCall = {
+    toolCallId: "run:w1",
+    title: "Worker: implementing the brief",
+    kind: "edit",
+    status: "in_progress",
+    detail: "Running `effigy test` · 1 min",
+  };
+  const reviewWait: import("../shared/acp/surface").AcpToolCall = {
+    toolCallId: "activity:needs_person:1764000300000",
+    title: "Nucleus: waiting for a person",
+    kind: "think",
+    status: "in_progress",
+    detail: "Needs an owner decision",
+  };
+  // The same reading recurring after a review ends is a fresh occurrence with its own id.
+  const firstGap: import("../shared/acp/surface").AcpToolCall = {
+    toolCallId: "activity:unclassified:1111111111",
+    title: "Nucleus: waiting",
+    kind: "think",
+    status: "in_progress",
+    detail: "Reviewing · no live run or wait",
+  };
+  const secondGap: import("../shared/acp/surface").AcpToolCall = {
+    ...firstGap,
+    toolCallId: "activity:unclassified:2222222222",
+  };
+
+  const client = harness({
+    replies: [
+      reply(
+        pres([dispatchWait], "Queued · between steps: waiting for dispatch"),
+      ),
+      reply(pres([workerCall], "Working · Running `effigy test` · 1 min")),
+      reply(pres([reviewWait], "Attention · Needs an owner decision")),
+      reply(pres([firstGap], "Review · no live run or wait")),
+      reply(pres([secondGap], "Review · no live run or wait")),
+      reply(pres([], "Review · no live run or wait"), "release"),
+    ],
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      }),
+    );
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/fixture/checkout" }),
+    );
+    const { updates } = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: binding.sessionId,
+        prompt: [{ type: "text", text: "opening" }],
+      }),
+    );
+    const calls = updates
+      .map((message) => (message.params as Json).update as Json)
+      .filter(
+        (update) =>
+          update.sessionUpdate === "tool_call" ||
+          update.sessionUpdate === "tool_call_update",
+      )
+      .map((update) => [String(update.toolCallId), String(update.status)]);
+    assert.deepEqual(
+      calls,
+      [
+        [dispatchWait.toolCallId, "in_progress"],
+        [dispatchWait.toolCallId, "completed"],
+        [workerCall.toolCallId, "in_progress"],
+        [workerCall.toolCallId, "completed"],
+        [reviewWait.toolCallId, "in_progress"],
+        [reviewWait.toolCallId, "completed"],
+        [firstGap.toolCallId, "in_progress"],
+        [firstGap.toolCallId, "completed"],
+        [secondGap.toolCallId, "in_progress"],
+        [secondGap.toolCallId, "completed"],
+      ],
+      "a wait that recurs after work started, or the same gap returning, opens its own call on the wire and ends with it",
+    );
+  } finally {
+    await client.closed();
+  }
+});
+
+test("a wait whose owner key returns after it completed opens a new lifetime", async () => {
+  const plan = (): import("../shared/acp/surface").AcpPlanEntry[] => [
+    { content: "Queued", priority: "high", status: "in_progress" },
+    { content: "Working", priority: "medium", status: "pending" },
+    { content: "Review round 1 of 6", priority: "medium", status: "pending" },
+    { content: "Merge", priority: "medium", status: "pending" },
+    { content: "Close", priority: "medium", status: "pending" },
+  ];
+  // The board-wide dispatch hold has no per-window fact, so a second hold repeats the
+  // occurrence id the first hold used.
+  const hold: import("../shared/acp/surface").AcpToolCall = {
+    toolCallId: "activity:needs_person:9f9f9f9f9f",
+    title: "Nucleus: waiting for a person",
+    kind: "think",
+    status: "in_progress",
+    detail: "Dispatch held by the operator",
+  };
+  // Settled history stays in every presentation: one call each, forever.
+  const finishedWorker: import("../shared/acp/surface").AcpToolCall = {
+    toolCallId: "run:w1",
+    title: "Worker: implementing the brief",
+    kind: "edit",
+    status: "completed",
+    detail: "Ready for review",
+  };
+  const settledRepair: import("../shared/acp/surface").AcpToolCall = {
+    toolCallId: "repair:ep-1:1",
+    title: "Reviewer thread vanished · starting a fresh reviewer (1 of 3)",
+    kind: "other",
+    status: "completed",
+    detail: "Recovered",
+  };
+  const pres = (
+    toolCalls: import("../shared/acp/surface").AcpToolCall[],
+    statusLine: string,
+  ): import("../shared/acp/surface").AcpTaskPresentation => ({
+    plan: plan(),
+    toolCalls,
+    statusLine,
+  });
+  const reply = (
+    presentation: import("../shared/acp/surface").AcpTaskPresentation,
+    state: "hold" | "release" = "hold",
+  ): AcpTurnReply => ({
+    state,
+    reason: state === "hold" ? "the task is queued" : "the task is queued",
+    messages: [],
+    task: {
+      taskId: "task-1",
+      reference: "nucleus#1554",
+      phase: "queued",
+      name: "nucleus#1554",
+    },
+    presentation,
+  });
+  const client = harness({
+    replies: [
+      reply(
+        pres(
+          [finishedWorker, settledRepair, hold],
+          "Queued · Dispatch held by the operator",
+        ),
+      ),
+      reply(
+        pres([finishedWorker, settledRepair], "Queued · waiting for dispatch"),
+      ),
+      reply(
+        pres(
+          [finishedWorker, settledRepair, hold],
+          "Queued · Dispatch held by the operator",
+        ),
+        "release",
+      ),
+    ],
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      }),
+    );
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/fixture/checkout" }),
+    );
+    const { updates } = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: binding.sessionId,
+        prompt: [{ type: "text", text: "opening" }],
+      }),
+    );
+    const calls = updates
+      .map((message) => (message.params as Json).update as Json)
+      .filter(
+        (update) =>
+          update.sessionUpdate === "tool_call" ||
+          update.sessionUpdate === "tool_call_update",
+      )
+      .map((update) => [String(update.toolCallId), String(update.status)]);
+    assert.deepEqual(
+      calls,
+      [
+        [finishedWorker.toolCallId, "completed"],
+        [settledRepair.toolCallId, "completed"],
+        [hold.toolCallId, "in_progress"],
+        [hold.toolCallId, "completed"],
+        [`${hold.toolCallId}~2`, "in_progress"],
+      ],
+      "settled history keeps one quiet call per run and per repair, and the second hold is a new call",
+    );
+  } finally {
+    await client.closed();
+  }
+});

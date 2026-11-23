@@ -515,6 +515,7 @@ export class QueueService {
     return {
       call: (method, input) => this.webCall(method, input),
       board: () => this.executor.current().board,
+      t3Theme: () => this.executor.callHandler("t3BoardTheme", {}),
       unavailable: () => this.executor.unavailableReason(),
       subscribe: (listener) => this.executor.onSnapshot(listener),
       isMutating: (method) => this.catalogue.get(method)?.mutating ?? false,

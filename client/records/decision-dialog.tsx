@@ -6,6 +6,7 @@ import {
   Button,
   ConfirmReplaceAnswer,
   DetailSection,
+  SurfacePress,
   controlFrame,
   controlText,
   muted,
@@ -25,7 +26,13 @@ import {
   type RecordNoticeValue,
 } from "../task/parts";
 import { RecordModal } from "./record-modal";
-import { type as typeScale, space, radius } from "../design";
+import {
+  type as typeScale,
+  space,
+  radius,
+  roles,
+  toneWash,
+} from "../design";
 
 /**
  * The decision dialog (Spec 032). It owns its answer, withdraw reason, pending option and
@@ -184,10 +191,11 @@ export function DecisionDialog({
             <DetailSection title="Choices" c={c}>
               <View style={{ gap: space.xs }}>
                 {decisionDetailPresentation!.choices.map((choice) => (
-                  <Pressable
+                  <SurfacePress
                     key={choice.label}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Use option: ${choice.label}${choice.label === decisionDetailPresentation!.recommended ? ", recommended" : ""}`}
+                    c={c}
+                    label={`Use option: ${choice.label}${choice.label === decisionDetailPresentation!.recommended ? ", recommended" : ""}`}
+                    selected={decisionAnswerText === choice.label}
                     onPress={() => {
                       if (
                         decisionAnswerText.trim() &&
@@ -199,13 +207,7 @@ export function DecisionDialog({
                     style={{
                       paddingHorizontal: space.xs,
                       paddingVertical: space.xs,
-                      borderRadius: radius.card,
-                      borderWidth: 1,
-                      borderColor:
-                        choice.label === decisionDetailPresentation!.recommended
-                          ? c.accent
-                          : c.border,
-                      backgroundColor: c.surface2,
+                      backgroundColor: roles(c).raised,
                     }}
                   >
                     <Text
@@ -221,7 +223,7 @@ export function DecisionDialog({
                       {choice.label}
                       {choice.consequence ? ` — ${choice.consequence}` : ""}
                     </Text>
-                  </Pressable>
+                  </SurfacePress>
                 ))}
               </View>
               <ConfirmReplaceAnswer
@@ -241,9 +243,7 @@ export function DecisionDialog({
                 gap: space.xs,
                 padding: space.sm,
                 borderRadius: radius.card,
-                borderWidth: 1,
-                borderColor: c.statusWarning,
-                backgroundColor: c.surface1,
+                backgroundColor: toneWash(c.statusWarning, roles(c).section),
               }}
             >
               <Text

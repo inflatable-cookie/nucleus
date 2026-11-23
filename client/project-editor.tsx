@@ -588,8 +588,6 @@ function OpenedProject({
         style={{
           gap: space.xs,
           paddingTop: space.sm,
-          borderTopWidth: 1,
-          borderTopColor: r.border,
         }}
       >
         <View style={{ ...row, flexWrap: "nowrap" }}>

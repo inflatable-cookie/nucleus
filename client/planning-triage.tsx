@@ -32,7 +32,7 @@ function BatchRecords({ batch, onOpenTask, c }: { batch: Batch; onOpenTask?: (id
     ? <TextLink c={c} text={reference} label={`Open task ${reference}`} onPress={() => onOpenTask(id)} />
     : <Text selectable style={meta}>{reference}</Text>;
   return <View style={{ gap: space.xs }}>
-    {batch.items.map(({ recordId, title, kind, outcome, taskId, canonicalTaskId }) => <View key={recordId} style={{ borderTopColor: r.border, borderTopWidth: 1, paddingTop: space.xs, gap: space.xxs }}>
+    {batch.items.map(({ recordId, title, kind, outcome, taskId, canonicalTaskId }) => <View key={recordId} style={{ paddingTop: space.xs, gap: space.xxs }}>
       <Text style={{ color: r.foreground, fontWeight: "600", ...type.body }}>{title}</Text>
       <Text style={meta}>{[
         kind === "lead" ? "Lead" : kind === "papercut" ? "Papercut" : null,
@@ -63,7 +63,7 @@ export function ProjectTriage({ project, triage, onOpenTask, c }: { project: str
       {expanded && <BatchRecords batch={data} onOpenTask={onOpenTask} c={c} />}
     </View>;
   };
-  return <View accessibilityLabel={`Triage for ${project}`} style={{ gap: space.xxs, borderTopColor: r.border, borderTopWidth: 1, paddingTop: space.sm }}>
+  return <View accessibilityLabel={`Triage for ${project}`} style={{ gap: space.xxs, paddingTop: space.sm }}>
     <Text accessibilityRole="header" style={{ color: r.foreground, fontWeight: "600", ...type.body }}>Triage</Text>
     {!triage.enabled && <Text style={muted(c)}>Automatic triage is off.</Text>}
     {triage.awaitingPlanner && <Text style={muted(c)}>Waiting for a project planner.</Text>}

@@ -69,7 +69,7 @@ export function AgentsSection({ c, project, agents, disabled, actions, r }: {
     catch (error) { setFailure(withoutHostPaths(errorText(error))); }
     finally { setBusy(false); }
   };
-  return <View accessibilityLabel={`Agents for ${project.name}`} style={{ gap: space.xs, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: r.border }}>
+  return <View accessibilityLabel={`Agents for ${project.name}`} style={{ gap: space.xs, paddingTop: space.sm }}>
     <View style={{ ...row, flexWrap: "nowrap" }}>
       <Text accessibilityRole="header" style={{ color: r.foreground, fontWeight: "600", fontSize: type.section.fontSize, lineHeight: type.section.lineHeight, flex: 1 }}>Agents</Text>
       <ActionButton c={c} action="add" label="Register agent" disabled={disabled || busy || !chosen.length} onPress={() => setAdding(true)} />

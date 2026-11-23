@@ -27,7 +27,7 @@ import { ActivityTab } from "./activity";
 import { DetailsTab } from "./details";
 import type { BoardNavigation } from "../shell/types";
 import type { TaskDrafts } from "./drafts";
-import { overlay, radius, space, taskDetail } from "../design";
+import { overlay, radius, roles, space, taskDetail } from "../design";
 
 /** What `queue.detail` returns for the open task. */
 export type TaskDetailRead = ZodOutput<typeof api.detail.output>;
@@ -109,14 +109,14 @@ export function TaskDialog({
       accessibilityLabel="Task detail"
       style={
         inline
-          ? { flex: 1, minHeight: 0, backgroundColor: c.surface0 }
+          ? { flex: 1, minHeight: 0, backgroundColor: roles(c).canvas }
           : {
               width: "100%",
               maxWidth: taskDetail.maxWidth,
               maxHeight: "92%",
               alignSelf: "center",
-              backgroundColor: c.surface0,
-              borderColor: c.border,
+              backgroundColor: roles(c).canvas,
+              borderColor: roles(c).hairline,
               borderWidth: 1,
               borderRadius: radius.panel,
               overflow: "hidden",

@@ -1,6 +1,15 @@
 import { Linking, Platform, Pressable, Text, View } from "react-native";
 import { Icon } from "../shell";
-import { muted, row, type Colors } from "../controls";
+import React, { useState } from "react";
+import {
+  FocusRing,
+  StateWash,
+  muted,
+  noOutline,
+  row,
+  type Colors,
+} from "../controls";
+import { useFocusVisible } from "../focus-modality";
 import type {
   HeavyRunView,
   HoldKind,
@@ -39,6 +48,7 @@ import {
   cardRow,
   roles,
   space,
+  toneSurface,
   touchSlop,
   type as typeScale,
   radius,
@@ -189,29 +199,16 @@ export function PullRequestBadge({
   };
   if (flag)
     return (
-      <Pressable
-        accessibilityRole="link"
-        accessibilityLabel={`${label}, open on GitHub`}
-        hitSlop={touchSlop(cardRow.tile)}
-        {...(anchor as object)}
-        onPress={(event?: { stopPropagation?: () => void }) => {
-          event?.stopPropagation?.();
+      <LinkChip
+        label={`${label}, open on GitHub`}
+        anchor={anchor}
+        onPress={() => {
           if (!web) void Linking.openURL(prUrl);
         }}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: space.xxs,
-          paddingHorizontal: space.xs,
-          paddingVertical: space.xxs / 2,
-          borderRadius: radius.control,
-          backgroundColor: c.surface2,
-          borderWidth: 1,
-          borderColor: c.border,
-        }}
+        c={c}
       >
         {content}
-      </Pressable>
+      </LinkChip>
     );
   return (
     <View
@@ -221,6 +218,56 @@ export function PullRequestBadge({
     >
       {content}
     </View>
+  );
+}
+/**
+ * A borderless link chip (nucleus#1540): the raised surface at rest, the hover wash
+ * under the pointer. Its press never reaches the row around it.
+ */
+function LinkChip({
+  label,
+  anchor,
+  onPress,
+  c,
+  children,
+}: {
+  label: string;
+  anchor: object;
+  onPress: () => void;
+  c: Colors;
+  children: React.ReactNode;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const focus = useFocusVisible();
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={label}
+      hitSlop={touchSlop(cardRow.tile)}
+      {...anchor}
+      onPress={(event?: { stopPropagation?: () => void }) => {
+        event?.stopPropagation?.();
+        onPress();
+      }}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      onFocus={focus.onFocus}
+      onBlur={focus.onBlur}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: space.xxs,
+        paddingHorizontal: space.xs,
+        paddingVertical: space.xxs / 2,
+        borderRadius: radius.control,
+        backgroundColor: roles(c).raised,
+        ...noOutline(),
+      }}
+    >
+      <StateWash c={c} hovered={hovered} />
+      {children}
+      <FocusRing c={c} visible={focus.visible} />
+    </Pressable>
   );
 }
 /** The theme colour for a badge tone; neutral keeps the muted badge. */
@@ -250,6 +297,7 @@ export function Badge({
   a11y?: string;
 }) {
   const color = toneColor(tone, c);
+  // A toned badge reads by its tinted fill and coloured text, with no outline (nucleus#1540).
   return (
     <View
       accessible={Boolean(a11y)}
@@ -259,9 +307,7 @@ export function Badge({
         paddingHorizontal: space.xs,
         paddingVertical: space.xxs / 2,
         borderRadius: radius.control,
-        backgroundColor: c.surface2,
-        borderWidth: 1,
-        borderColor: color ?? c.surface2,
+        backgroundColor: color ? toneSurface(color, roles(c).raised) : roles(c).raised,
       }}
     >
       <Text

@@ -810,6 +810,7 @@ test("the UI notice appears when the client bundle is older than the service bui
   assert.deepEqual(serviceNotices({ ...base, buildId: "c".repeat(16) }), [
     {
       tone: "quiet",
+      label: "Reload to update",
       text: "Nucleus updated; reload the plugin to refresh the UI",
     },
   ]);
@@ -820,7 +821,13 @@ test("the UI notice appears when the client bundle is older than the service bui
       buildId: null,
       detail: "draining",
     }),
-    [{ tone: "warning", text: "Nucleus service upgrading · draining" }],
+    [
+      {
+        tone: "warning",
+        label: "Service upgrading",
+        text: "Nucleus service upgrading · draining",
+      },
+    ],
   );
   assert.deepEqual(
     serviceNotices({
@@ -838,6 +845,7 @@ test("the UI notice appears when the client bundle is older than the service bui
     [
       {
         tone: "quiet",
+        label: "Roll deferred",
         text: "Nucleus is deferring a service roll: a heavy run has an attached follower",
       },
     ],

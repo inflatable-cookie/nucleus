@@ -12,7 +12,10 @@ import { dispatchBlocked } from "../dispatch/capacity";
 import { coordinative } from "./task-reasons";
 import type { Run, Task } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
-import { HostCreateInFlightError } from "../host/errors";
+import {
+  HostCreateInFlightError,
+  HostUnknownDeliveryError,
+} from "../host/errors";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
@@ -163,7 +166,7 @@ function relaunchesAtHead(
 
 /** A stable wait naming the uncertain creation and why it is still open. */
 function waitOn(
-  ctx: CreationLookupContext,
+  ctx: Pick<CreationLookupContext, "store" | "waiting">,
   task: Task,
   role: string,
   runId: string,
@@ -193,7 +196,7 @@ function waitOn(
  * brings.
  */
 function waitInFlight(
-  ctx: CreationLookupContext,
+  ctx: Pick<CreationLookupContext, "store" | "waiting">,
   task: Task,
   role: string,
   runId: string,
@@ -208,6 +211,33 @@ function waitInFlight(
       fact: { code: "creation_in_flight", subject: runId },
     });
   return "waiting";
+}
+
+/**
+ * Whether the host may still answer a create whose call did not: the adapter
+ * holds a late reply for it on its live connection (T3's intent ledger).
+ */
+function createReplyMayLand(error: unknown): boolean {
+  return error instanceof HostUnknownDeliveryError && error.late !== undefined;
+}
+
+/**
+ * A launch's create call did not answer, so its delivery is unknown. Every
+ * launch path (a run's, or the initial worker's on the task row) records the
+ * same wait on its own cause: `creation_in_flight` while the host may still
+ * answer, else the creation lookup the next pass runs. Neither is a person's
+ * stop, and nothing is resent until the lookup settles it.
+ */
+export function waitOnUncertainCreation(
+  ctx: Pick<CreationLookupContext, "store" | "waiting">,
+  task: Task,
+  role: Run["role"] | "worker",
+  runId: string,
+  error: unknown,
+): CreationSettlement {
+  return createReplyMayLand(error)
+    ? waitInFlight(ctx, task, role, runId)
+    : waitOn(ctx, task, role, runId, "its creation call did not answer");
 }
 
 function stopOn(

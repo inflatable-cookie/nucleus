@@ -366,8 +366,6 @@ export function TaskSummaryBlock({
         <View
           style={{
             gap: space.xxs,
-            borderTopWidth: 1,
-            borderTopColor: c.border,
             paddingTop: space.xs,
           }}
         >

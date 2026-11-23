@@ -45,6 +45,8 @@ import {
   Button,
   Dialog,
   Field,
+  PaneSurfaceContext,
+  SurfacePress,
   controlFrame,
   controlText,
   muted,
@@ -57,6 +59,7 @@ import {
   radius,
   roles,
   space,
+  toneWash,
   touchTarget,
   type,
   type as typeScale,
@@ -292,10 +295,9 @@ function PlanEditor({
   const frame = (lane: string) => ({
     padding: space.xs,
     gap: space.xs,
-    borderColor: selectedLane === lane ? c.accent : c.border,
-    borderWidth: 1,
     borderRadius: radius.control,
-    backgroundColor: c.surface0,
+    backgroundColor:
+      selectedLane === lane ? roles(c).selected : roles(c).raised,
   });
   const band = (horizon: (typeof HORIZONS)[number]) => {
     const group = roadmap[horizon];
@@ -498,7 +500,6 @@ function PlanEditor({
     gap: space.xs,
     padding: space.sm,
     borderRadius: radius.control,
-    borderWidth: 1,
     backgroundColor: r.section,
   } as const;
   return (
@@ -580,7 +581,7 @@ function PlanEditor({
             <View
               accessibilityRole="alert"
               accessibilityLabel={`Plan changed for ${name}`}
-              style={{ ...panelBox, borderColor: r.warning }}
+              style={{ ...panelBox, backgroundColor: toneWash(r.warning, r.section) }}
             >
               <Text style={{ color: r.foreground, fontWeight: "600" }}>
                 The plan changed while you were editing
@@ -622,7 +623,7 @@ function PlanEditor({
           {edit ? (
             <View
               accessibilityLabel={`Draft plan for ${name}`}
-              style={{ ...panelBox, borderColor: r.accent }}
+              style={{ ...panelBox, backgroundColor: toneWash(r.accent, r.section) }}
             >
               <Text style={{ color: r.foreground, fontWeight: "600" }}>
                 Draft · based on version {edit.version}
@@ -781,9 +782,8 @@ function PlanEditor({
                     style={{
                       ...row,
                       justifyContent: "space-between",
-                      borderColor: c.border,
-                      borderWidth: 1,
                       borderRadius: radius.control,
+                      backgroundColor: roles(c).raised,
                       padding: space.xs,
                     }}
                   >
@@ -920,9 +920,7 @@ export function LaneFinderResults({
           gap: space.xs,
           padding: space.sm,
           borderRadius: radius.control,
-          borderWidth: 1,
-          borderColor: r.danger,
-          backgroundColor: r.section,
+          backgroundColor: toneWash(r.danger, r.section),
         }}
       >
         <Text style={{ color: r.foreground }}>
@@ -1002,9 +1000,8 @@ export function LaneFinderResults({
             gap: space.xxs,
             padding: space.sm,
             borderRadius: radius.card,
-            borderWidth: 1,
-            borderColor: selectedLane === row.key ? r.accent : r.border,
-            backgroundColor: r.section,
+            backgroundColor:
+              selectedLane === row.key ? r.selected : r.raised,
           }}
         >
           <View
@@ -1073,7 +1070,16 @@ export function LaneFinderResults({
  * the open lane the detail pane, or a modal when the board has no detail pane.
  * The board header's project filter scopes it, so Planning has no chooser of its own.
  */
-export type PlanningInbox = { listWidth: number | null; laneModal: boolean };
+/**
+ * The Planning tab's place on the board: the list pane's width beside the lane page,
+ * whether the lane opens as a dialog, and the list pane's surface (nucleus#1540: a
+ * step up from the menu beside it, the canvas when it stands alone).
+ */
+export type PlanningInbox = {
+  listWidth: number | null;
+  laneModal: boolean;
+  listFill?: string;
+};
 /** What the lane page learns from Planning: the plan it was opened from, and a way to show another project's plan (false when that project is out of scope). */
 export type PlanningLaneContext = {
   project: string | null;
@@ -1452,12 +1458,14 @@ export function PlanningTab({
     ? {
         width: inbox.listWidth,
         minHeight: 0,
-        borderRightWidth: 1,
-        borderRightColor: c.border,
+        backgroundColor: inbox.listFill,
       }
-    : { flex: 1, minHeight: 0 };
+    : { flex: 1, minHeight: 0, backgroundColor: inbox.listFill };
   return (
     <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
+      <PaneSurfaceContext.Provider
+        value={inbox.listFill === roles(c).section ? "section" : "canvas"}
+      >
       <View
         style={listStyle}
         onLayout={
@@ -1584,8 +1592,6 @@ export function PlanningTab({
           style={{
             flex: 1,
             minHeight: 0,
-            borderTopWidth: 1,
-            borderTopColor: c.border,
           }}
           contentContainerStyle={
             searching || drilled
@@ -1596,11 +1602,12 @@ export function PlanningTab({
           {listBody}
         </ScrollView>
       </View>
+      </PaneSurfaceContext.Provider>
       {twoPane && (
         <ScrollView
           accessibilityLabel={laneOpen ? "Planning lane" : "Planning project"}
           onLayout={(event) => setDetailWidth(event.nativeEvent.layout.width)}
-          style={{ flex: 1, minHeight: 0, backgroundColor: c.surface0 }}
+          style={{ flex: 1, minHeight: 0, backgroundColor: roles(c).canvas }}
           contentContainerStyle={{
             paddingHorizontal: space.lg,
             paddingTop: space.md,

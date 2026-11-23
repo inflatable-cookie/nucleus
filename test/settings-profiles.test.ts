@@ -627,9 +627,9 @@ test("Profiles shows loading, an empty list, a catalog error, and long names wit
     loading.press("Profiles");
     await settle(() => loading.text().includes("Reading profiles…"));
     assert.equal(
-      loading.get("Stored profiles").props.style.borderBottomWidth,
-      1,
-      "a loading line keeps the section divider",
+      loading.get("Stored profiles").props.style.borderBottomWidth ?? 0,
+      0,
+      "a loading line draws no section divider: sections part with spacing (nucleus#1540)",
     );
     resolveList!({ profiles: [] });
     await settle(() =>
@@ -638,9 +638,9 @@ test("Profiles shows loading, an empty list, a catalog error, and long names wit
         .includes("No profiles yet. Add one from what your hosts can run."),
     );
     assert.equal(
-      loading.get("Stored profiles").props.style.borderBottomWidth,
-      1,
-      "an empty line keeps the section divider",
+      loading.get("Stored profiles").props.style.borderBottomWidth ?? 0,
+      0,
+      "an empty line draws no section divider (nucleus#1540)",
     );
   } finally {
     loading.update(h("View", null));
@@ -681,9 +681,9 @@ test("Profiles shows loading, an empty list, a catalog error, and long names wit
       /The providers and models could not be read: catalog offline/,
     );
     assert.equal(
-      failed.get("Stored profiles").props.style.borderBottomWidth,
-      1,
-      "an unreadable list with no rows keeps the section divider",
+      failed.get("Stored profiles").props.style.borderBottomWidth ?? 0,
+      0,
+      "an unreadable list draws no section divider (nucleus#1540)",
     );
   } finally {
     failed.update(h("View", null));
@@ -751,7 +751,7 @@ test("nucleus#998: Profiles and Subscriptions are separated by a gap, not a seco
       await settle(() => ui.text().includes(longName));
       const section = ui.get("Stored profiles").props.style;
       assert.equal(
-        section.borderBottomWidth,
+        section.borderBottomWidth ?? 0,
         0,
         `${compact ? "narrow" : "wide"}: the last row's divider is the only line`,
       );
@@ -812,7 +812,7 @@ test("nucleus#998: Subscriptions ending in group rows is the last section, with 
     ui.press("Profiles");
     await settle(() => ui.text().includes("anthropic"));
     assert.equal(
-      ui.get("Subscriptions").props.style.borderBottomWidth,
+      ui.get("Subscriptions").props.style.borderBottomWidth ?? 0,
       0,
       "the last section has no divider",
     );

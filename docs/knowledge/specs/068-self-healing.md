@@ -87,9 +87,14 @@ one of the four. It is never left in place.
 ### 2. One activity reading (the ACP work)
 
 `shared/` gets one derivation, `taskActivity(facts)`, which returns
-`{state, role, since, detail, lastActivityAt, tool?, attempt?}`. The reconciler,
-`next`, the board and the ACP task thread all read it, so what is shown is what
-Nucleus acts on. Its inputs are facts, not host display:
+`{state, role, since, occurrence, detail, lastActivityAt, tool?, attempt?}`. The
+reconciler, `next`, the board and the ACP task thread all read it, so what is shown
+is what Nucleus acts on. `occurrence` names the fact that owns the current reading —
+the decision, stop, host wait, permission, deferred coordinator host read, repair
+episode or last concluded run —
+and stays the same while that fact holds, so a reader can tell one wait from the
+next without reading the task's write timestamps. Its inputs are facts, not host
+display:
 
 - **Process facts.** The participant's recorded process and start identity are
   alive or gone. A process older than the last boot is gone.
@@ -114,7 +119,9 @@ instead of a stream of text lines:
 
 T3's ACP client carries the `plan`, `tool_call` and `tool_call_update` shapes.
 The planner checks how they render after batch 2 rolls. If either renders badly,
-the fallback is one replaced status line.
+the fallback is the deduplicated append-only status line: one line per real status
+change and nothing on a tick that changed nothing (planner ruling, 2026-11-23 —
+ACP `agent_message_chunk` is append-only, so a line is never replaced).
 
 ### 3. Facts that settle things
 
@@ -271,7 +278,19 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   complete host read (the T3 live shell inside its bound plus an exact read by
   id) release a reviewer or revision run through `releasePlan`; ordinary
   admission relaunches it. A live recorded process vetoes thread absence. A host
-  answer that a thread is gone is no longer swallowed as a host fault.
+  answer that a thread is gone is no longer swallowed as a host fault. A
+  coordinator run the pass cannot observe takes the same proof: on proof its run
+  is released, its episode closes (with any escalation it raised over the
+  underlying fault) and its binding clears, so the stop admits a fresh
+  coordinator under the coordinator cap. A failed or partial read and an
+  archived thread prove nothing, and the episode keeps its ordinary handling.
+  Another host fault or a transport failure is a recorded wait
+  (`coordinator_observation_deferred`, read as Nucleus's move) bounded at five
+  minutes unobserved while the host reads as up (outages and downtime excluded);
+  past that the episode escalates, and a host that is down keeps its own outage
+  wait. Three such releases
+  per head, as for every role; past that the task records a typed stop naming
+  `run.start coordinator fresh`.
 - **A dead retained worker means a fresh worker.** The revision launch retires a
   retained worker whose thread is gone and continues the same revision on a fresh
   one; a dead initial worker with a PR continues it the same way. `next` offers
@@ -279,7 +298,8 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
 - **Uncertain creation settles by lookup for every role.** A create that may
   still answer (a late reply on a live connection, for at most ten minutes)
   keeps the run waiting on its own cause, with no replacement offered and no
-  coordinator admitted; a
+  coordinator admitted. The initial worker's create records the same wait as a
+  run's, never a person's stop; a
   complete absent read after that relaunches the same run under the same host
   command id, which T3 resends only after reading the derived child absent, so a
   received create never becomes a second thread. Three relaunches per role and
@@ -292,9 +312,7 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   is unapplied, and a reviewer whose turn keeps running after its report has that
   turn stopped once so the verdict applies.
 
-Two gaps stay open: a dead coordinator run is still settled only by the
-coordinator episode's own observation (a task whose recovery episode was live at
-the reboot keeps it), and escalation menus are not yet derived from the decision
+One gap stays open: escalation menus are not yet derived from the decision
 `next` uses; the states above simply no longer escalate.
 
 **Done when:** over one week, no task spends more than 30 minutes outside the four
@@ -317,7 +335,7 @@ Built as a direct PR (Tom, 2026-11-23: "fill the gaps using subagents"):
   as `budget_extended` with the detail `automatic: <policy>; <figures>`. The sweep
   extends only in a phase whose next step is a run, so a task verifying or merging
   keeps its extension for the launch gate. A task extended before (by any source)
-  asks on its next spend. Until then, a first spend is no stop: `next`, the
+  asks its planner on its next spend (delegated; no Inbox, see Decision 1). Until then, a first spend is no stop: `next`, the
   activity reading and the `run.start` warning ignore it.
 - **Typed stops.** The settle pass records the `budget` stop for a spent task
   with no live run and no other stop whose next step is a run, and its question
@@ -357,6 +375,44 @@ Built as a direct PR (Tom, 2026-11-23: "fill the gaps using subagents"):
   unless the command applied, and names the warnings only a planner or the
   operator board may accept. `next` lists each command's expected warnings.
 
+### Acceptance
+
+`test/spec068-crash-acceptance.test.ts` crashes one board of 17 tasks in one
+step: the service stops mid-pass, every thread vanishes or goes stale, the T3
+connection drops and some creates have unknown delivery. A new service owner
+then runs the real Engine over the real T3 client on the fake Nightly, on a
+shifted clock, with no owner, planner or operator command. It checks one thread
+per run, one live run per role and head, exact-head verdicts and merges, no
+resend without a complete absent read, the orphan bound, and budgets that skip
+the downtime.
+
+All seventeen tasks recover, and the file has no `todo` left. The four gaps the
+first run found are closed:
+
+- **A dead coordinator is a dead participant.** A recovery episode whose
+  coordinator thread is gone releases the run on batch A's proof and admits a
+  fresh coordinator, instead of escalating to the planner
+  (`core/recovery/coordinator-pass.ts`; see batch A above).
+- **An unknown first-dispatch create is Nucleus's wait.** The worker launcher
+  records the same creation wait a run launch records (`creation_in_flight`
+  while the host may still answer, else the creation lookup), never an
+  `operator_needed` stop (`core/dispatch/worker-launcher.ts`).
+- **One budget gate for every start.** Run launches and every worker creation (a
+  first dispatch, a dead initial worker's redispatch, a resumed dispatch and a
+  failover) pass the same gate: the first spend is extended once, and a later
+  spend records the typed `budget` stop and starts nothing. The worker launcher
+  reads it after its own drain, hold and catalog refusals, so a held or draining
+  task keeps its own reason and is neither extended nor asked about. A task that
+  never ran reads nothing used, so the gate holds only a task with a recorded run.
+- **Stall windows skip downtime.** A wait's age is measured as budgets measure
+  time: the wall span less the task host's outages and the service's own downtime
+  (`waitAgeMs`). The coordinator route reads every stall window through it: the
+  mechanical stall window, the idle grace after a coordinator's reporting
+  reminder, the automatic reconciliation window and the repository contention
+  grace, and the callback reminder's own grace reads it too. After a restart an
+  ordinary wait (checks pending, say) admits no coordinator, and a reminder sent
+  just before a roll does not escalate.
+
 ## Decisions
 
 Tom accepted the planner's recommendations on 2026-11-22 ("Sounds good, let's
@@ -364,7 +420,11 @@ do it"):
 
 1. **Budgets.** Time while a host or the service is down never counts; today
    only host outages pause the clock. When a budget is spent, Nucleus extends it
-   automatically once, with an event. The second time, it asks through the Inbox.
+   automatically once, with an event. The second time, it asks the task's
+   planner, which decides; it never needs the operator. Tom, 2026-11-23: "I always
+   end up granting more budget - I don't need it coming to me, it can be
+   automated. Just having the check is enough for the planner to consider
+   whether a task is overdue." The budget stop stays as that check.
 2. **Round-3 question.** Nucleus continues automatically up to the revision cap
    and tells the task's planner. The cap itself stays a question.
 3. **Hung tools.** A command with no output for 30 minutes is terminated. The
