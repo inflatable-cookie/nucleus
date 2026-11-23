@@ -62,6 +62,7 @@ import {
   type Task,
 } from "../shared/contracts";
 import type { Adapter } from "../core/host";
+import { T3ConnectionRefusalError } from "../hosts/t3code/contracts";
 import { exactProofFixture } from "./support/review-entry-fixture";
 import { toolTimelinePage } from "./support/tool-timeline";
 
@@ -2052,6 +2053,66 @@ test("unobservable worker restart is a definite refused operation with no lifecy
     );
     assert.equal(operation.effect?.status, "reconciled");
     assert.deepEqual(restartState(f), before);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a restart refused by the host's connection precondition settles failed and blocks nothing", async () => {
+  const f = fixture();
+  try {
+    retainedWorker(f, "retained_worker", false);
+    // The live shape: the T3 adapter's precondition refuses the first host
+    // call before any request, and its "connection" prose once settled the
+    // restart as an uncertain operation that fenced the task indefinitely.
+    let calls = 0;
+    f.adapter.workspaceAvailable = async () => {
+      calls++;
+      throw new T3ConnectionRefusalError(
+        "authenticated host connection is unavailable",
+      );
+    };
+    const before = restartState(f);
+    const control = taskControlInputSchema.parse({
+      taskId: f.taskId,
+      version: f.current().version,
+      action: "restart",
+      role: "worker",
+      reason: "Upstream blocker cleared",
+      instruction: "Continue under the amended brief",
+      caller: CALLER,
+    });
+    const { key, payload } = taskControlOperation(control);
+    const accepted = await f.engine.startOperation({
+      key,
+      kind: "task_control",
+      payload,
+      taskId: f.taskId,
+      expectedVersion: control.version,
+    });
+    assert.ok("accepted" in accepted);
+    const failed = await f.engine.awaitOperation(accepted.operation.id);
+    assert.equal(calls, 1);
+    // Parent falsification: the prose classifier settled this needs_attention
+    // with an uncertain effect.
+    assert.equal(failed.state, "failed");
+    assert.equal(
+      failed.diagnostic,
+      "T3Code compatibility check failed: authenticated host connection is unavailable",
+    );
+    assert.equal(failed.preSendBoundaryStartedAt ?? null, null);
+    assert.equal(failed.effect?.kind, "task_control");
+    assert.equal(failed.effect?.target, "restart");
+    assert.equal(failed.effect?.status, "reconciled");
+    assert.equal(failed.preSendReceipt?.boundary, "pre-send-refusal-v1");
+    assert.deepEqual(restartState(f), before, "the refusal changed nothing");
+    assert.equal(
+      recoveryEffects(f.store, f.current()).some(
+        (effect) => effect.kind === "operation" && effect.identity === failed.id,
+      ),
+      false,
+      "the refused restart is not an uncertain operation on the task",
+    );
   } finally {
     await f.close();
   }

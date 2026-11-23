@@ -20,6 +20,8 @@ export {
   HostSnapshotPendingError,
   HostUnknownDeliveryError,
   HostCallAbandonedError,
+  HOST_CONNECTION_REFUSAL,
+  isHostConnectionRefusal,
   SAFE_REMOTE_TAGS,
   hostFailureRefusalDetail,
   sanitizeHostDeliveryDiagnostic,
@@ -27,5 +29,5 @@ export {
   sanitizeHostFailureReason,
   sanitizeHostGuidance,
 } from "./errors";
-export type { HostDeliveryDiagnostic } from "./errors";
+export type { HostConnectionRefusal, HostDeliveryDiagnostic } from "./errors";
 export { isHostOperationTimeout } from "./errors";

@@ -6,6 +6,7 @@ import { ProvenPreSendRefusalError, RetainedRunRefusal } from "../recovery/task-
 import { ExternalMergeRefusal } from "../verbs/moves";
 import { PreWriteMergeObservationRefusal } from "../verbs/moves/merge";
 import { ParkedRestartPreSendRefusal } from "../verbs/restart";
+import { isHostConnectionRefusal } from "../host/errors";
 
 /** Prose classifier for unexplained failures only; typed pre-binding refusals never reach it. */
 const uncertainOperationError = (message: string) => /uncertain|unknown|timed out|timeout|connection|socket|transport|interrupted|ambiguous/i.test(message);
@@ -15,10 +16,13 @@ const uncertainOperationError = (message: string) => /uncertain|unknown|timed ou
  * Classification reads that proof, never the diagnostic's words (papercut
  * 4b285a6e: the retained-run gate's own "uncertain delivery" prose settled a
  * definite pre-send refusal as an unknown delivery). An untyped failure keeps
- * the prose classifier and the pre-send boundary evidence.
+ * the prose classifier and the pre-send boundary evidence. A host call refused
+ * by its own connection precondition (no authenticated connection, the executor
+ * offline, a changed durable host identity) is the same proof from the adapter
+ * side; its "connection" prose never makes it an unknown delivery.
  */
 export const typedPreSendRefusal = (error: unknown): boolean =>
-  error instanceof ProvenPreSendRefusalError || error instanceof ReviewEntryRefusal
+  error instanceof ProvenPreSendRefusalError || isHostConnectionRefusal(error) || error instanceof ReviewEntryRefusal
   || error instanceof ExternalMergeRefusal || error instanceof RestartRefusal || error instanceof RepositoryRekeyRefused
   || error instanceof RetainedRunRefusal || error instanceof ParkedRestartPreSendRefusal || error instanceof DurableFenceRefusal
   || error instanceof PreWriteMergeObservationRefusal;

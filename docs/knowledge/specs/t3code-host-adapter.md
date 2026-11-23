@@ -781,8 +781,11 @@ replace an intent's IDs to escape doubt.
 
 Guarded sends retain core's `allowed`, `stillAllowed` and `beforeSend` ordering.
 The last synchronous fence precedes the socket write. A proven local refusal
-uses the existing pre-send error/result. After a possible write, remote errors
-cannot establish non-delivery. A command receipt proves acceptance, not provider
+uses the existing pre-send error/result. The connection precondition (no
+authenticated connection, or a changed durable host identity) is one: it refuses
+before any request, so a durable operation that fails on it settles failed with a
+reconciled effect. Every other compatibility failure can follow a call and stays
+unproven. After a possible write, remote errors cannot establish non-delivery. A command receipt proves acceptance, not provider
 completion or a Nucleus report.
 
 ## Observation and restart

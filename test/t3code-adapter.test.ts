@@ -28,6 +28,8 @@ import {
   hostFailureRefusalDetail,
 } from "../core/host";
 import { T3CompatibilityError, shellThread } from "../hosts/t3code/contracts";
+import { isHostConnectionRefusal } from "../core/host/errors";
+import { typedPreSendRefusal } from "../core/planning/operation-failure";
 import {
   activeStatuses,
   shellThreadStatus,
@@ -2204,6 +2206,37 @@ test("the origin read answers authoritative absence, and only an unread inventor
     host.originAgent(created.id),
     /authenticated host connection/,
   );
+});
+
+test("only the connection precondition is a proven pre-send refusal; a response-shape failure is not", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  // A response-shape check runs after the call, so it proves nothing about delivery.
+  server.controls.incompleteThread = true;
+  server.threads.get(created.id)!.thread.updatedAt = "2026-01-02T00:00:00.000Z";
+  const shape = await host.originAgent(created.id).then(
+    () => assert.fail("the incomplete projection must refuse"),
+    (error: unknown) => error,
+  );
+  assert.ok(shape instanceof T3CompatibilityError);
+  assert.equal(isHostConnectionRefusal(shape), false);
+  assert.equal(typedPreSendRefusal(shape), false);
+  server.controls.incompleteThread = false;
+  host.close();
+  const refused = await host.originAgent(created.id).then(
+    () => assert.fail("a closed connection must refuse"),
+    (error: unknown) => error,
+  );
+  // The same class, name and words every caller and the transport check read.
+  assert.ok(refused instanceof T3CompatibilityError);
+  assert.equal(refused.name, "T3CompatibilityError");
+  assert.equal(
+    refused.message,
+    "T3Code compatibility check failed: authenticated host connection is unavailable",
+  );
+  assert.equal(isTransportFailure(refused), true);
+  assert.equal(isHostConnectionRefusal(refused), true);
+  assert.equal(typedPreSendRefusal(refused), true);
 });
 
 test("an external T3 project thread has a project-scoped origin location without a Nucleus workspace", async (t) => {
