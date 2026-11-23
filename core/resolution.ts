@@ -3483,6 +3483,15 @@ export class Resolution {
         !proofWaitApplies(task)
       )
         return this.blockerLadderStep(task).then(() => undefined);
+      // The refusal names the owner that must act before this verdict applies.
+      // It is the task's visible typed wait, never a stale lifecycle sentence
+      // such as "waiting for thread release" with nothing left to release. A
+      // live run or another owner's stop keeps its own reason.
+      if (
+        (!task.resolution.stop || task.resolution.stop.reason === "lifecycle") &&
+        !this.store.runs(task.id).some((run) => !run.released)
+      )
+        this.waiting(task, published.refusal, "lifecycle");
       return Promise.resolve();
     }
     return this.resultApplication

@@ -29,6 +29,7 @@ import {
   reviewerIndependence,
 } from "../dispatch/routing";
 import { usageGateBlocked } from "../dispatch/usage-gate";
+import { reviewerRunDelivery } from "../dispatch/run-launch/run-intent";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
 import { queueCheckoutStatus } from "../git/index";
@@ -46,6 +47,7 @@ import {
   assertOrdinaryReviewIdentity,
   ordinaryReviewSource,
 } from "../review/ordinary-review";
+import { reviewerSettingOf } from "../review/reviewer-setting";
 import { digest, now } from "../store/store";
 import type {
   ExplicitFinishResult,
@@ -818,6 +820,17 @@ export function runStartPlan(
         completion: null,
         released: false,
         ...(temporaryDirectory ? { temporaryDirectory } : {}),
+        // The same publication form, reason and responsibility requirement a
+        // scheduled reviewer records: a formal-review repository's verdict is
+        // only applied with a review ID, so the reviewer must be told so.
+        ...(runRole === "reviewer"
+          ? reviewerRunDelivery(
+              store,
+              task,
+              reviewerSettingOf(store, task),
+              agentMode === "retained" ? retainedAgentId : null,
+            )
+          : {}),
       });
       token = randomBytes(24).toString("hex");
       store.setCredential(runId, token);
