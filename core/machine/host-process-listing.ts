@@ -46,6 +46,13 @@ const LISTING_MAX_BUFFER = 96 * 1024 * 1024;
 /** Overall deadline for a full uid process-table read (`ps` + `lsof` + env/image checks). */
 export const HOST_PROCESS_LISTING_DEADLINE_MS = 15_000;
 const PS_TIMEOUT_MS = 5_000;
+/**
+ * The host-wide open-file read lists every open file of the user's processes
+ * (about 19 MB on a busy workstation). Under heavy load it outlived the 5 s ps
+ * limit, its output was cut off, every process then looked cwd-less and every
+ * custody proof refused. It gets most of the listing deadline instead.
+ */
+export const LSOF_TIMEOUT_MS = 12_000;
 const execFileAsync = promisify(execFile);
 
 /** What a host process-table read proved: the table, or why there is none. */
@@ -92,11 +99,12 @@ async function processListing(
   command: string,
   args: string[],
   env = process.env,
+  timeout = PS_TIMEOUT_MS,
 ) {
   try {
     const { stdout, stderr } = await execFileAsync(command, args, {
       encoding: "utf8",
-      timeout: PS_TIMEOUT_MS,
+      timeout,
       killSignal: "SIGKILL",
       maxBuffer: LISTING_MAX_BUFFER,
       env,
@@ -344,7 +352,7 @@ async function darwinProcesses(
   const selection = requested ? ["-p", pids.join(",")] : ["-u", String(uid)];
   const listingFiles = pids.length ? await processListing("lsof", [
     "-nP", ...selection, "-F0pfn",
-  ]) : { status: 0, stdout: "", stderr: "" };
+  ], process.env, LSOF_TIMEOUT_MS) : { status: 0, stdout: "", stderr: "" };
   const paths = darwinOpenFiles(listingFiles.stdout);
   const complete = listingFiles.status === 0 && !listingFiles.stderr.trim();
   const cwds = new Map<number, CwdState>();

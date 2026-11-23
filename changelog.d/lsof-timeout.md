@@ -1,0 +1,1 @@
+- Custody proofs no longer refuse under heavy host load because the host-wide open-file listing was cut off by the 5-second `ps` timeout; the listing now has its own 12-second limit inside the existing deadline.
