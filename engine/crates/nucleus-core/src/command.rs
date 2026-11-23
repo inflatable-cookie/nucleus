@@ -410,14 +410,14 @@ impl Task {
             (Some(Question::Accept { head: asked }), Answer::Accept { head, reason })
                 if head == *asked =>
             {
+                if !authority.can_accept(self.identity.entry) {
+                    return Err(CommandError::OperatorRequired);
+                }
                 let Observed::Known(Forge::Merged { pr, .. }) = &observation.forge else {
                     return Err(CommandError::MergedHeadRequired);
                 };
                 if head != pr.head {
                     return Err(CommandError::AnswerDoesNotMatch);
-                }
-                if !authority.can_accept(self.identity.entry) {
-                    return Err(CommandError::OperatorRequired);
                 }
                 self.verdict = Some(Verdict::Accepted {
                     head,

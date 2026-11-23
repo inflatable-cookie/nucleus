@@ -7,6 +7,7 @@ mod schedule;
 #[cfg(test)]
 mod tests;
 mod ticket;
+mod web;
 
 use std::{
     collections::BTreeMap,
@@ -37,6 +38,7 @@ use tokio::{
 
 pub use project::{LaunchBudget, Project, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
+pub use web::router;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {

@@ -323,6 +323,13 @@ interval invalidates the list and visible task views. Task commands use the conf
 credential. Each run has its own callback credential, including its task and
 role checks. The API exposes the run's progress without its ticket or wire.
 
+The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
+--enable` with an existing profile on the pinned volume. Start `serve` with
+that profile, a project file for the authorized fixture, and the local T3
+endpoint. Set the control key, T3 bearer and GitHub token in the environment.
+The CLI's `admit`, `task`, `next`, `history` and task commands use the loopback
+API. `report` reads the role's owner-only ticket and the report from stdin.
+
 | Keep | Reshape | Remove from Rust tasks |
 | --- | --- | --- |
 | `client/web` shell and T3 theme, sidebar shades, board layout and common controls | `client/queue.tsx` and `client/board` read the new list. Queued, Working, Reviewing, Merging and Closing map to phase groups. Done and Cancelled appear in history. | Incident, wait and recovery record cards. A task shows its current wait and hold. |
