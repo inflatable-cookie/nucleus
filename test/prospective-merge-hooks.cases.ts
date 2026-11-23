@@ -60,6 +60,7 @@ import {
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { stepEngine } from "./support/engine-step";
+import { QuantumDeadlineExceededError } from "../core/scheduling/pass-snapshot";
 import { configuredClone, materializeSeed } from "./support/git-seed";
 import { observedParticipantTimeline } from "./support/tool-timeline";
 
@@ -2250,6 +2251,36 @@ weighted(10)(
         1,
         "merge does not re-run the gate",
       );
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+weighted(10)(
+  "a PR read deferred by the quantum deadline retries on a later pass instead of asking for an operator",
+  async (t) => {
+    const f = await resolutionFixture(t);
+    try {
+      const verifyPr = f.adapter.verifyPr!.bind(f.adapter);
+      let deferrals = 1;
+      f.adapter.verifyPr = async (task, number) => {
+        if (deferrals-- > 0)
+          throw new QuantumDeadlineExceededError(
+            "verifyPr",
+            "verifyPr deferred: task quantum deadline exceeded (28969 ms remaining)",
+          );
+        return verifyPr(task, number);
+      };
+      await stepEngine(f.engine);
+      const deferred = f.current();
+      assert.notEqual(deferred.resolution.attention, true, deferred.reason);
+      assert.doesNotMatch(deferred.reason ?? "", /could not prove the reviewed head/);
+      assert.equal(f.store.hookEvents(f.taskId).length, 0, "no gate runs on a deferred read");
+      await stepEngine(f.engine);
+      const passed = f.current();
+      assert.equal(passed.phase, "merging", passed.reason);
+      assert.equal(f.store.hookEvents(f.taskId)[0]?.state, "result");
     } finally {
       await f.close();
     }

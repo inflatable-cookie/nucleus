@@ -1,0 +1,1 @@
+- A merge gate's PR read that runs out of time budget now retries on the next pass instead of stopping the task for an operator.
