@@ -745,6 +745,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     unsettleLagReads: 0,
     refuseMutation: false,
     postEffectDefect: false,
+    queueMessageRuns: false,
     unsupportedProjectCreate: false,
     projectMutationFailure: false,
     projectMutationSecretFailure: false,
@@ -1778,11 +1779,18 @@ export async function t3Fake(t: TestContext, directory: string) {
           )!;
           switch (payload.type) {
             case "message.dispatch": {
-              p.messages.push({
+              const message: {
+                id: string;
+                role: string;
+                text: string;
+                runId: string | null;
+              } = {
                 id: payload.messageId,
                 role: "user",
                 text: payload.text,
-              });
+                runId: null,
+              };
+              p.messages.push(message);
               // The nightly wakes a snoozed thread on an ordinary delivery
               // (dispatchMessage): `snoozedUntil` and `snoozedAt` are cleared unless
               // the dispatch is an automatic notification or a delegated completion
@@ -1802,6 +1810,26 @@ export async function t3Fake(t: TestContext, directory: string) {
               // recordSubagentFollowup does (node:delegated-task:<commandId>). A
               // parent thread's held turn is re-armed by its message (nucleus#1305).
               if (
+                controls.queueMessageRuns &&
+                payload.dispatchMode.type === "queue_after_active"
+              ) {
+                const busy = p.runs.some((run: Value) =>
+                  ["preparing", "starting", "running", "waiting"].includes(
+                    run.status,
+                  ),
+                );
+                message.runId = `run:${payload.commandId}`;
+                p.runs.push(
+                  syntheticRun(payload.threadId, p.runs.length + 1, {
+                    id: message.runId,
+                    userMessageId: message.id,
+                    status: busy ? "queued" : "running",
+                    queuePosition: busy ? 1 : null,
+                    startedAt: busy ? null : new Date().toISOString(),
+                    completedAt: null,
+                  }),
+                );
+              } else if (
                 (controls.runOnLaunch ||
                   (p.thread.providerInstanceId === "nucleus" &&
                     controls.parentHeldTurn !== false)) &&

@@ -1,0 +1,1 @@
+- Send blocker questions promptly to idle T3 planners. Task activity shows when a question is queued behind a planner’s turn or waiting on the host, and Nucleus looks up any unconfirmed send under its original message ID.

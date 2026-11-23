@@ -330,6 +330,17 @@ The rules:
   outcome is looked up under its original command ID and is never resent
   blindly.
 
+For a T3 planner on the ladder, each question keeps its original recipient,
+host, prompt and command ID. Delivery updates belong to that message under the
+same escalation occurrence. T3 can verify the answering thread, so opening the
+rung sends the question without a separate ticket message. The task activity
+shows when delivery is waiting on the host or queued behind the planner's
+active turn. The answer window opens when Nucleus observes the run started by
+the exact message. A proven pre-send refusal gets up to three attempts,
+750 ms apart, before the ladder
+can try the next eligible planner. After an unknown outcome, only the original
+command receipt or its exact message and run on T3 can settle delivery.
+
 Targets on a healthy host with an idle planner: classified within one minute
 of a terminal fact (plus the callback grace), board update within 30 seconds
 of a blocker, and the planner message accepted within one minute of the task
@@ -373,7 +384,7 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
 | 7a | lead | Wake on facts: confirmed turn end, process death, thread absence and callbacks wake the task; the stall threshold stays only for opaque tools ([§7](#7-attention-reaches-the-planner-quickly)). | — |
 | 7b | nucleus#1561 (delivered) | Publish and route on receipt: the blocker opens its ladder rung in the same step, no bare classification wait, recovery due times wake the task, transient deferrals stay Nucleus's move. | — |
-| 7c | lead | One delivery record per planner message (routed, accepted, queued, turn started); an idle planner gets the send at once; no steering. | 7b |
+| 7c | nucleus#1562 (delivered) | One delivery record per planner message (routed, accepted, queued, turn started); an idle planner gets the send at once; no steering. | 7b |
 
 ### Batch A: dead agents and uncertain launches
 
