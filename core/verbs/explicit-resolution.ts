@@ -518,7 +518,12 @@ export function releaseWarnings(
   if (releasedRunLive(task, run) || process?.state === "running")
     warnings.push({
       id: "live_turn",
-      text: "This run may have a live turn. Stopping a worker may lose uncommitted changes.",
+      text: [
+        "This run may have a live turn. Stopping a worker may lose uncommitted changes.",
+        process?.state === "running" && process.processGroupId
+          ? `Recorded process group ${process.processGroupId} may still be running.`
+          : null,
+      ].filter(Boolean).join(" "),
     });
   if (!completion && !run?.released)
     warnings.push({
@@ -632,6 +637,19 @@ export function releasePlan(
           );
         }
       };
+      if (
+        process?.pid &&
+        process.processGroupId === process.pid &&
+        process.startIdentity
+      ) {
+        const { pid, startIdentity } = process;
+        await attempt("Process-group stop", () => {
+          if (!signalProcessGroupByLeader(pid, pid, startIdentity, "SIGKILL"))
+            issues.push(
+              "The recorded process group could not be stopped by its leader identity.",
+            );
+        });
+      }
       // Spec 068 §4: a release settles its run's custody of the checkout, so the
       // same reattach step runs here and reports why a detached checkout stayed
       // detached. The commit never moves.
@@ -643,16 +661,6 @@ export function releasePlan(
       const reattachRefused = reattachRefusal(reattach);
       if (reattachRefused)
         issues.push(`Checkout reattach: ${reattachRefused}.`);
-      if (process?.pid && process.processGroupId && process.startIdentity) {
-        await attempt("Process-group stop", () => {
-          signalProcessGroupByLeader(
-            process.processGroupId!,
-            process.pid!,
-            process.startIdentity!,
-            "SIGTERM",
-          );
-        });
-      }
       if (agentId && (live || input.archive)) {
         const current = store.task(task.id);
         // Stop the released turn without dropping the retained worker binding.

@@ -6,7 +6,6 @@ import { gitTransientPlan, quantumFollowUps, stepFailureRoute } from '../core/sc
 import { stalledStopDecision } from '../core/recovery/stall';
 import { refusalGap } from '../core/recovery/provider-refusal';
 import { reminderDecision } from '../core/intake/callback-reminders';
-import { timelineMessage } from '../core/recovery/effect-reconcile';
 import type { AgentObservation } from '../core/host';
 import type { TimelinePage } from '../core/recovery/stall';
 
@@ -193,22 +192,4 @@ test('reminderDecision gates', () => {
     [{ dispatch: 'absent', validationAbsent: false, reminderAction: true, graceExpired: true }, 'skip_undispatched'],
   ];
   for (const [facts, expected] of cases) assert.equal(reminderDecision(facts), expected, expected);
-});
-
-test('timelineMessage present absent unknown, including map bug 14', () => {
-  const present = { entries: [{ timestamp: 't', item: { type: 'user_message', messageId: 'm' } }] } as unknown as TimelinePage;
-  const client = { entries: [{ timestamp: 't', item: { type: 'user_message', clientMessageId: 'm' } }] } as unknown as TimelinePage;
-  const other = { entries: [{ timestamp: 't', item: { type: 'user_message', messageId: 'other' } }] } as unknown as TimelinePage;
-  const cases: Array<[TimelinePage | null, string]> = [
-    [present, 'present'],
-    [client, 'present'],
-    [other, 'absent'],
-    [{ entries: [] } as unknown as TimelinePage, 'absent'],
-    [null, 'unknown'],
-    [{ ...present, hasOlder: true }, 'unknown'],
-    [{ ...present, gap: true }, 'unknown'],
-    [{ ...present, staleCursor: true }, 'unknown'],
-    [{ ...present, reset: true }, 'unknown'],
-  ];
-  for (const [page, expected] of cases) assert.equal(timelineMessage(page, 'm'), expected, expected);
 });

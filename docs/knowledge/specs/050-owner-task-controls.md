@@ -805,25 +805,11 @@ authorization from the project owner, board operator, or attributed relay
 original disposition and terminal result. The source, participant, hold, retention,
 unknown-delivery and runtime proofs are owned by the
 [terminal cleanup contract](../contracts/orchestration.md#terminal-workspace-cleanup).
-An uncertain `task_control` operation for `retry_effect` remains a blocking
-effect with its operation id and diagnostic in `next`. Retrying that operation
-re-runs its named effect through the ordinary observer, or settles the old
-operation when that effect is no longer pending. A later `move` or `restart`
-settles the stale operation as superseded and records the owner control that
-replaced it. Merge and closeout waits name the blocking operation or participant
-and the reason, so a held integration turn always has an ordinary owner exit.
+`next` names uncertain operations, reviewer deliveries and notices. Clear an
+occurrence with the matching `record.clear` command and accept `effect_may_land`.
+Use `run.release` for custody held by a run. `retry_effect` stays available
+for ordinary retries such as failed hooks and eligible project validation.
 
-Only a blocking uncertainty gates a phase (nucleus#1159). An uncertain operation
-whose host effect later evidence has answered — a workspace binding recorded
-after the control was accepted, then a run used in that workspace — is delivered
-with that evidence recorded, so it gates no review or merge and never needs a
-human step. `retry_effect effect=operation.<id>` applies the same observation and
-settles it without force; an operation nothing answers keeps its fence and
-refuses with what is still unknown, never by resending it. A review phase
-blocked on an uncertain effect past its bound (ten minutes, `blockedEffectAttentionMs`)
-is attention, not a quiet wait: its stop names the blocking set, suggests
-`retry_effect`, and the ordinary attention notice reaches the owner. The phase
-itself is kept, so the answer resumes the same review rather than parking it.
 Uncertain delivery observes the same intent. Only a positive present-workspace
 observation permits another guarded call with fresh proofs and the same native
 idempotency identity. Adapter refusals before the final archive boundary stay
@@ -832,19 +818,6 @@ missing from origin, or behind HEAD, does not hold the retry when a live
 canonical-origin branch contains the exact HEAD; the disposition and adapter
 proofs share that rule ([published source](../contracts/orchestration.md#published-source)).
 No caller-supplied head or workspace proof tuple is accepted.
-
-Every lifecycle refusal or wait that uses the shared recovery-effect projection
-names the full blocking set in stable projection order, including each kind,
-identity, state and diagnostic. `next` exposes the same effect identities as
-`retry_effect` entries. Run delivery, reviewer delivery and continuation, and
-attention-notice retries observe the recorded recipient timeline and never
-resend on an absent or incomplete timeline; merge responses re-read the forge,
-and held, refused or lost project validation returns through the existing operator retry
-path. Retry is offered only when the current-head validation is held, refused,
-or a running validation is proven lost; a settled result for an older PR head is
-superseded and is not offered. The ordinary reviewer refusal names an ordinary review, while the
-review-entry prefix is reserved for review-entry tasks. A blocking effect wait
-does not create a recovery episode while this owner retry can re-prove it.
 
 A structured owner content discard (`discard: true` with the ordinary `reason`
 and owner authority) also applies here (2026-10-25, actual case: Supervisor

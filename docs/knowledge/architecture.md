@@ -235,10 +235,9 @@ owner to the rules it enforces.
 - `core/intake/callback-reminders.ts` sends one bounded reminder to a run that stopped
   without a result, then hands the fault to attention when its grace expires.
   `reminderDecision` is the pure rule over already-read facts.
-- `core/recovery/effect-reconcile.ts` settles an unknown send from its exact message:
-  reviewer deliveries, run creations and attention notices. `timelineMessage`
-  classifies whether a page holds one exact user message. `Resolution` keeps
-  each entry point as a delegate.
+- `core/review/review-continuation/index.ts` records the host's answer to an
+  authorized continuation. Unknown outcomes remain visible for explicit
+  resolution.
 - `core/merge/check-waits.ts` polls pending required checks without the integration
   turn, handles the one same-head rerun of runnerless jobs, and reads merge-gate
   and required-check evidence against the settings revision. `Resolution` keeps a

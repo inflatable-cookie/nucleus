@@ -20,7 +20,6 @@ import {
 import { HostTransportFault } from "../../host/adapter-routing";
 import { isTransportFailure } from "../../../shared/transport";
 import { ProvenPreSendRefusalError } from "../../recovery/task-reasons";
-import { BlockingRecoveryEffectsError } from "../../recovery/recovery-effects";
 import type { RecoveryDispatchSnapshot } from "../../recovery/recovery-context";
 import type { OwnerReviewContext } from "../../review/owner-review-context";
 
@@ -118,7 +117,6 @@ export async function sendRunVia(
     } catch (error) {
       if (
         error instanceof ProvenPreSendRefusalError ||
-        error instanceof BlockingRecoveryEffectsError ||
         error instanceof HostReadRefusalError ||
         error instanceof HostSnapshotPendingError ||
         isTransportFailure(error) ||

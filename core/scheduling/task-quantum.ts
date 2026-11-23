@@ -47,7 +47,6 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { isDispositionActive } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { participantToolRunIds } from "../recovery/task-reasons";
-import { releasedRunDeliveryEvidence } from "../recovery/recovery-effects";
 import { proofExecutionRunning } from "../qa/proof-admission";
 import { hookHoldReason } from "../hooks/hooks";
 import { OrphanPhases } from "../recovery/orphan-phase";
@@ -76,7 +75,6 @@ export type TaskQuantumContext = Pick<
   | "quantumFinish"
   | "quantumSteps"
   | "reconcile"
-  | "reconcileBlockedEffects"
   | "reconcileClosedRetainedReviewer"
   | "recoverExistingWorkspace"
   | "settleWorkspaceCreation"
@@ -111,7 +109,6 @@ export type TaskQuantumContext = Pick<
     | "quantumReadTimeoutMs"
     | "raiseOperatorQuestions"
     | "reconcileHoldUntil"
-    | "reconcileUncertainRunDelivery"
     | "recordStop"
     | "recoverExternalMerge"
     | "recovery"
@@ -131,46 +128,6 @@ export class TaskQuantum {
   constructor(readonly context: TaskQuantumContext) {
     this.orphanPhases = new OrphanPhases(context);
   }
-  private readonly deliveryOffset = new Map<string, number>();
-
-  private async observeReleasedRunDeliveries(taskId: string): Promise<void> {
-    const { adapter, resolution, store } = this.context;
-    if (!adapter.originAgent || !adapter.agentTimelinePage) return;
-    const eligible = store
-      .runs(taskId)
-      .filter(
-        (run) =>
-          run.released &&
-          run.status === "uncertain" &&
-          Boolean(run.agentId) &&
-          Boolean(run.workspaceId) &&
-          !releasedRunDeliveryEvidence(store, run),
-      );
-    if (!eligible.length) return;
-    const offset = this.deliveryOffset.get(taskId) ?? 0;
-    this.deliveryOffset.set(taskId, (offset + 1) % eligible.length);
-    const start = offset % eligible.length;
-    const ordered =
-      start === 0
-        ? eligible
-        : [...eligible.slice(start), ...eligible.slice(0, start)];
-    const budgetMs =
-      resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
-    const deadlineAt = Date.now() + budgetMs;
-    for (const run of ordered) {
-      if (Date.now() >= deadlineAt) return;
-      try {
-        await resolution.reconcileUncertainRunDelivery(
-          taskId,
-          run.id,
-          deadlineAt,
-        );
-      } catch {
-        /* An unreadable or changed timeline leaves this occurrence unknown. */
-      }
-    }
-  }
-
   prerequisiteWaitYieldsToLiveWork(task: Task): boolean {
     if (task.resolution.recoveryActive) return true;
     const runs = this.context.store.runs(task.id);
@@ -710,11 +667,6 @@ export class TaskQuantum {
           taskId,
           "reconciler historical proof settlement",
         );
-        // Nucleus#1159: later task evidence answers an uncertain host effect, and
-        // a phase still blocked on one past its bound becomes attention rather
-        // than staying the quiet wait nobody sees.
-        if (!current.removedAt) await this.observeReleasedRunDeliveries(taskId);
-        this.context.reconcileBlockedEffects(taskId);
         // Superseded idle runs release before recovery observes: a stale
         // run whose episode was cleared must not hold the recovery busy
         // wait or fence the next dispatch. Holds write nothing, so a pass

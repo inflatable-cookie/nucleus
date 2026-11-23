@@ -188,40 +188,6 @@ export function settleSupersededFencesInTx(
       }),
     );
   }
-  // A later owner control explicitly replaces an uncertain task-control
-  // attempt. Retain its diagnostic and record why it no longer owns the task.
-  for (const operation of store.operations({
-    taskId,
-    states: ["needs_attention"],
-    limit: 1000,
-  })) {
-    if (operation.kind !== "task_control") continue;
-    const payload = store.operationPayload(operation.id) as {
-      control?: { action?: string };
-    } | null;
-    if (payload?.control?.action !== "retry_effect") continue;
-    store.putOperation({
-      ...operation,
-      state: "succeeded",
-      settledAt: at,
-      diagnostic: "",
-      result: {
-        taskId,
-        taskVersion: store.task(taskId).version,
-        phase: store.task(taskId).phase,
-        number: store.task(taskId).number ?? null,
-        reference: store.task(taskId).reference ?? null,
-      },
-      effect: operation.effect
-        ? {
-            ...operation.effect,
-            status: "reconciled",
-            result: note,
-            resultAt: at,
-          }
-        : null,
-    });
-  }
   let attentionNotices = 0;
   for (const notice of store.notices(task.id)) {
     if (notice.kind === "attention" && notice.status === "pending") {

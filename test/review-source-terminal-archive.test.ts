@@ -31,8 +31,11 @@ test('terminal retry archives the released pinned view after authentic primary a
     assert.deepEqual(f.calls,[f.task.workspaceId,f.run.workspaceId]);
     assert.equal(JSON.stringify(result.resolution.externalOwnerRevisions),receipts);
     assert.equal(JSON.stringify(result.resolution.review),review);
-    await f.engine.performTaskControl(control,accepted.operation.id);
-    assert.equal(f.calls.length,2,'replaying the durable operation never resends the effect');
+    await assert.rejects(
+      f.engine.performTaskControl(control,accepted.operation.id),
+      /Task changed; refresh before retrying/,
+    );
+    assert.equal(f.calls.length,2,'the stale request sends no additional archive');
   } finally { await f.close(); }
 });
 

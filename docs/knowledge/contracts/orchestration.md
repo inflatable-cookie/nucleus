@@ -439,18 +439,10 @@ durable targeted stop. Enforces
 [Retained worker recovery](#retained-worker-recovery) and the restart arms in
 [Verbs](#verbs). Delegates remain on Engine.
 
-**RetryEffectControls** (`core/verbs/retry-effect.ts`). The owner
-`retry_effect` verb's order: replayed outcomes, branches that answer before
-observed-idle settlement, the observation-only settlement, then the named effect.
-Each half has its owner: `retry-effect-replay.ts` decodes the persisted operation
-and answers a replay from its recorded outcome, `retry-effect-ordinary.ts` owns the
-ordered pre-settlement rule chain and the ordinary effect kinds,
-`retry-effect-recovery.ts` observes and settles each recovery effect, and
-`retry-effect-archive.ts` owns the terminal, superseded-view and cancelled-workspace
-archive retries with their discard authority. The `kind.identity` effect key is
-decoded once by `splitOwnerEffectKey`/`ownerEffectIdentity` in `owner-effects.ts`.
-Enforces [Durable effects](#durable-effects-and-unknown-delivery). Delegates remain
-on Engine.
+**RetryEffectControls** (`core/verbs/retry-effect.ts`). Applies one named
+ordinary retry through its owner. `retry-effect-ordinary.ts` routes ordinary
+effects and `retry-effect-archive.ts` handles workspace archive retries.
+An interrupted retry keeps its operation record for explicit resolution.
 
 **RouteControls** (`core/verbs/route.ts`). The owner `route` verb, its
 live-run stop and subscription-group refusal, and the profile checks submission
@@ -893,11 +885,6 @@ recorded command, reads it back and then sends (Tom, 2026-11-19; the
 gate leaves the message queued and refused, and the next pass delivers it through the
 same path. A refusal names its route ("Project message", "Task role message", "Agent
 message", "Reply message").
-
-**EffectReconcile** (`core/recovery/effect-reconcile.ts`). Settles an unknown send from
-its exact message: reviewer deliveries, run creations and attention notices.
-Enforces [Durable effects](#durable-effects-and-unknown-delivery). Pure:
-`timelineMessage`. Delegates remain on Resolution.
 
 **Notices** (`core/questions/notices.ts`). The one durable send every notice shares,
 intent before the send and never resent blindly, and the attention, completion,
@@ -3573,6 +3560,11 @@ resulting state on its own cadence.
   uncertain delivery with `record.clear kind=effect id=operation.<id>` after
   accepting `effect_may_land`. A repeat of the superseded operation's key
   returns its settled record. Historical pre-send receipts remain readable.
+- Reviewer continuation records the host's acknowledgement against its durable
+  delivery. An unknown reviewer delivery or attention notice stays recorded.
+  A later timeline or task transition does not settle it. Use
+  `record.clear kind=effect` to retire that occurrence. A released run's
+  delivery remains historical.
 - Commands are accepted durably before remote work
   ([Spec 012](../specs/012-durable-asynchronous-operations.md),
   [Spec 013](../specs/013-standalone-queue-service.md)). One operation record

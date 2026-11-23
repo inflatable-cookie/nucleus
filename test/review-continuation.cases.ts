@@ -1365,67 +1365,6 @@ weighted(4)(
   },
 );
 
-weighted(2)(
-  "lost send response and restart reconcile only exact delivery evidence and never resend",
-  async () => {
-    for (const mode of ["lost-visible", "lost-unknown"] as const) {
-      const f = fixture();
-      let restarted: Engine | null = null;
-      try {
-        await f.report({ covered: ["Diff"], remaining: ["Proofs"] });
-        f.setDeliveryMode(mode);
-        const first = await acceptControl(f, reviewControl(f));
-        assert.equal(first.state, "needs_attention");
-        assert.equal(f.reviewerDeliveries.length, 1);
-        assert.equal(f.run().reviewDeliveries?.[0].status, "uncertain");
-        await f.engine.stop();
-        restarted = new Engine(f.store, f.adapter, 3_600_000);
-        restarted.profiles = f.engine.profiles;
-        restarted.resumeOperations();
-        const resumed = await acceptControl(
-          f,
-          reviewControl(f, { version: f.current().version }),
-          `inspect-after-restart-${mode}`,
-          restarted,
-        );
-        if (mode === "lost-visible") {
-          assert.equal(resumed.state, "succeeded");
-          assert.equal(f.run().reviewDeliveries?.[0].status, "delivered");
-          assert.equal(f.store.operation(first.id)?.state, "succeeded");
-        } else {
-          assert.equal(resumed.state, "needs_attention");
-          assert.match(f.current().reason, /uncertain/);
-          assert.equal(f.run().reviewDeliveries?.[0].status, "uncertain");
-          const final = await restarted.complete(
-            {
-              eventId: "callback-proves-unknown-send",
-              taskId: f.submitted.id,
-              runId: f.runId,
-              status: "ready_to_merge",
-              summary: "Review complete",
-              head,
-              reviewCommentId: 9,
-            },
-            "token",
-          );
-          assert.equal(final.accepted, true);
-          // A completion is the run's result, never proof of WHICH occurrence an
-          // unknown send belongs to: an earlier result can land after a later send.
-          // The occurrence stays unknown and keeps its own durable hold until its
-          // exact timeline message or a later authenticated checkpoint settles it.
-          assert.equal(f.run().reviewDeliveries?.[0].status, "uncertain");
-          assert.match(f.current().reason, /uncertain|inspect/);
-          assert.equal(f.store.operation(first.id)?.state, "needs_attention");
-          assert.equal(f.store.operation(resumed.id)?.state, "needs_attention");
-        }
-        assert.equal(f.reviewerDeliveries.length, 1);
-      } finally {
-        await restarted?.stop();
-        await f.close();
-      }
-    }
-  },
-);
 
 weighted(4)(
   "each later checkpoint needs its own authorization and prior coverage stays immutable",
@@ -4055,65 +3994,6 @@ weighted(1)(
   },
 );
 
-weighted(1)(
-  "only the exact timeline message settles a lost-reply send, and it re-pins the run",
-  async () => {
-    const f = fixture({ briefText: continuationBrief() });
-    try {
-      await f.report(
-        { covered: ["Diff"], remaining: ["Native proof"] },
-        "ckpt-1",
-      );
-      await f.engine.performTaskControl({
-        taskId: f.submitted.id,
-        version: f.current().version,
-        action: "amend_brief",
-        brief: continuationBrief(" One additional native proof is allowed."),
-        reason: "Owner allows one more native proof run",
-      } as never);
-      // The v2 continuation reaches the reviewer's timeline but Paseo's response is lost.
-      f.setDeliveryMode("lost-visible");
-      const control = reviewControl(f);
-      const first = await acceptControl(f, control);
-      assert.equal(first.state, "needs_attention");
-      assert.equal(f.run().briefVersion, 1);
-      // A completion is the run's result, never proof of which send produced it: it
-      // neither settles the delivery nor re-pins the run. Only the exact timeline
-      // message for that send is positive evidence.
-      await f.engine.complete(
-        {
-          eventId: "callback-first",
-          taskId: f.submitted.id,
-          runId: f.runId,
-          status: "changes_required",
-          summary: "One finding",
-          head,
-          reviewResponsibility: "author",
-          reviewText: "Fix it.",
-        } as never,
-        "token",
-      );
-      // Round 4: Queue reads the exact timeline message itself after the callback
-      // commits and settles the send from it, upgrading the pin; nothing is resent.
-      const sent = f.reviewerDeliveries.length;
-      for (let tick = 0; tick < 5 && f.run().briefVersion !== 2; tick++)
-        await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(f.reviewerDeliveries.length, sent, "no resend");
-      assert.equal(f.run().reviewDeliveries?.at(-1)?.status, "delivered");
-      assert.match(
-        String(f.run().reviewDeliveries?.at(-1)?.evidence),
-        /Timeline contains exact user message/,
-      );
-      assert.equal(
-        f.run().briefVersion,
-        2,
-        "the exact timeline message proves receipt of v2",
-      );
-    } finally {
-      await f.close();
-    }
-  },
-);
 
 // Tom, 2026-10-19 (Project-E 072): reviewers that got out of step must not block the task.
 weighted(1)(

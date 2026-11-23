@@ -135,9 +135,7 @@ import { ReviewRestarts } from "./verbs/restart-review";
 import { EpisodeRestarts } from "./verbs/restart-episode";
 import { StalledTurnStops } from "./verbs/stalled-turn-stop";
 import { RetryEffectControls } from "./verbs/retry-effect";
-import { RetryEffectReplay } from "./verbs/retry-effect-replay";
 import { ArchiveEffectRetries } from "./verbs/retry-effect-archive";
-import { RecoveryEffectRetries } from "./verbs/retry-effect-recovery";
 import { OrdinaryEffectRetries } from "./verbs/retry-effect-ordinary";
 import { CallbackIntake } from "./intake/callback-intake";
 import {
@@ -215,10 +213,6 @@ import {
   type RestartRole,
 } from "./verbs/owner-verbs";
 import { RunRelease } from "./recovery/fence-settlement";
-import {
-  blockedEffectAttentionReason,
-  settleObservedHostEffectOperations,
-} from "./recovery/effect-gates";
 import { Sweep } from "./scheduling/sweep";
 import { HostOutages } from "./scheduling/host-outage";
 import { HostHealth, healthWait } from "./scheduling/host-health";
@@ -315,7 +309,6 @@ export class Engine {
         "quantumFinish",
         "quantumSteps",
         "reconcile",
-        "reconcileBlockedEffects",
         "reconcileClosedRetainedReviewer",
         "recoverExistingWorkspace",
         "settleWorkspaceCreation",
@@ -347,7 +340,6 @@ export class Engine {
         "quantumReadTimeoutMs",
         "raiseOperatorQuestions",
         "reconcileHoldUntil",
-        "reconcileUncertainRunDelivery",
         "recordStop",
         "recoverExternalMerge",
         "recovery",
@@ -964,9 +956,7 @@ export class Engine {
   private readonly episodeRestarts: EpisodeRestarts;
   private readonly stalledTurnStops: StalledTurnStops;
   private readonly retryEffectControls: RetryEffectControls;
-  private readonly retryEffectReplay: RetryEffectReplay;
   private readonly archiveEffectRetries: ArchiveEffectRetries;
-  private readonly recoveryEffectRetries: RecoveryEffectRetries;
   private readonly ordinaryEffectRetries: OrdinaryEffectRetries;
   private readonly workerReconcile: WorkerReconcile;
   private readonly callbackIntake: CallbackIntake;
@@ -1195,9 +1185,7 @@ export class Engine {
     this.episodeRestarts = new EpisodeRestarts(this);
     this.stalledTurnStops = new StalledTurnStops(this);
     this.retryEffectControls = new RetryEffectControls(this);
-    this.retryEffectReplay = new RetryEffectReplay(this);
     this.archiveEffectRetries = new ArchiveEffectRetries(this);
-    this.recoveryEffectRetries = new RecoveryEffectRetries(this);
     this.ordinaryEffectRetries = new OrdinaryEffectRetries(this);
     this.workerReconcile = new WorkerReconcile(
       enginePorts(
@@ -2585,34 +2573,6 @@ export class Engine {
       intentWorkspaceId,
     );
   }
-  retryHookEffect(
-    input: TaskControlInput,
-    current: Task,
-    eventId: string,
-  ): Promise<Task> {
-    return this.recoveryEffectRetries.retryHookEffect(input, current, eventId);
-  }
-  reconcilePublicationEffect(
-    input: TaskControlInput,
-    current: Task,
-    runId: string,
-  ): Promise<Task> {
-    return this.recoveryEffectRetries.reconcilePublicationEffect(
-      input,
-      current,
-      runId,
-    );
-  }
-  retryRecoveryEffect(
-    task: Task,
-    input: TaskControlInput,
-    found: OwnerEffect,
-  ): Promise<Task> {
-    return this.recoveryEffectRetries.retryRecoveryEffect(task, input, found);
-  }
-  retryTaskControlOperation(task: Task, found: OwnerEffect): Promise<Task> {
-    return this.recoveryEffectRetries.retryTaskControlOperation(task, found);
-  }
   retryOrdinaryEffect(
     task: Task,
     input: TaskControlInput,
@@ -2970,39 +2930,6 @@ export class Engine {
       this.projectionsWaiting(),
     );
   }
-  replayedArchiveOutcome(
-    task: Task,
-    input: TaskControlInput,
-    operationId?: string,
-  ): Task | null {
-    return this.retryEffectReplay.replayedArchiveOutcome(
-      task,
-      input,
-      operationId,
-    );
-  }
-  replayedCatalogArchiveOutcome(
-    task: Task,
-    input: TaskControlInput,
-    operationId?: string,
-  ): Task | null {
-    return this.retryEffectReplay.replayedCatalogArchiveOutcome(
-      task,
-      input,
-      operationId,
-    );
-  }
-  replayedDispositionWorkspaceOutcome(
-    task: Task,
-    input: TaskControlInput,
-    operationId?: string,
-  ): Task | null {
-    return this.retryEffectReplay.replayedDispositionWorkspaceOutcome(
-      task,
-      input,
-      operationId,
-    );
-  }
   drainProjections(options: { cleanup?: boolean } = {}): Promise<void> {
     return drainProjectionCut({
       occurrences: this.occurrences,
@@ -3186,20 +3113,6 @@ export class Engine {
     detail: string,
   ): Promise<number> {
     return this.runRelease.settleHistoricalProofExecutions(taskId, detail);
-  }
-  /**
-   * Nucleus#1159: the ordinary pass observes before it gates. An uncertain
-   * host-effect control whose effect later evidence has answered is settled (and
-   * recorded), and a phase still blocked on an uncertain effect past its bound
-   * becomes attention with `retry_effect` suggested instead of a quiet wait.
-   */
-  reconcileBlockedEffects(taskId: string): void {
-    settleObservedHostEffectOperations(this.store, taskId);
-    const reason = blockedEffectAttentionReason(
-      this.store,
-      this.store.task(taskId),
-    );
-    if (reason) this.note(taskId, reason, "classify");
   }
   supersededIdleFence(run: Run, deadlineAt?: number): Promise<string | null> {
     return this.runRelease.supersededIdleFence(run, deadlineAt);

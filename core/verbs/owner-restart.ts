@@ -1,6 +1,6 @@
+import { ownerStopPendingRefusal } from "./owner-stop";
 import {
   blockingRecoveryEffectsRefusal,
-  unsettledControlRefusal,
 } from "../recovery/recovery-effects";
 import { refusedRunIds } from "../recovery/refused-launch";
 import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
@@ -566,7 +566,6 @@ export function workerRestartRefusal(
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
     return RETAINED_PREREQUISITE_REFUSAL;
   const delivery =
-    unsettledControlRefusal(facts.store, task) ??
     retainedWorkerDeliveryRefusal(facts);
   if (delivery) return delivery;
 
@@ -798,8 +797,8 @@ export const restart: OwnerVerb = {
             fill: ["reason"],
             note: "Return the worker to ordinary dispatch after its refused creation.",
           };
-    const controlRefusal = unsettledControlRefusal(facts.store, task);
-    if (controlRefusal) return { available: false, refusal: controlRefusal };
+    if (task.resolution.ownerStop)
+      return { available: false, refusal: ownerStopPendingRefusal(task.resolution.ownerStop) };
     const exhausted = exhaustedReviewer(task, runs);
     if (exhausted) {
       const refusal = exhaustedReviewerRefusal(facts.store, task, exhausted);

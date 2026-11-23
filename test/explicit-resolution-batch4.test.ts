@@ -10,7 +10,6 @@ import { Decisions } from "../core/planning/decisions";
 import { closeTerminalEscalations } from "../core/questions/escalation-settlement";
 import {
   PLANNER_ESCALATION_CHOICES,
-  escalationVerbChoices,
   plannerEscalations,
   type EscalationVerbChoice,
 } from "../core/questions/ladder";
@@ -18,7 +17,6 @@ import { Store } from "../core/store/store";
 import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   collectOwnerVerbFacts,
-  ownerVerbViews,
   parkedRestart,
 } from "../core/verbs/owner-verbs";
 import {
@@ -270,7 +268,7 @@ test("#1491 shape: first plain-choice answer after PR/run changed installs the w
   }
 });
 
-test("underlay#046 shape: real owner retry guard runs without 'no longer available' or binding-hash loop, and record.clear kind=escalation stays the manual close", async () => {
+test("underlay#046 shape: clear the uncertain review delivery and escalation separately after head drift", async () => {
   const fx = makeFixture();
   try {
     const reviewerRunId = "run-rev-046";
@@ -315,39 +313,29 @@ test("underlay#046 shape: real owner retry guard runs without 'no longer availab
       "review_started",
       "uncertain reviewer delivery",
     );
-    const offered = escalationVerbChoices(
-      ownerVerbViews(collectOwnerVerbFacts(fx.store, fx.task())),
+    recordOpenEscalation(fx.store, fx.engine, fx.taskId, "esc-046", {
+      runId: reviewerRunId,
+    });
+    fx.store.update(fx.taskId, { prHead: HEAD_B }, "pr_head_updated", "head moved");
+    const clearDelivery = {
+      taskId: fx.taskId,
+      version: fx.task().version,
+      action: "record.clear" as const,
+      kind: "effect" as const,
+      id: `review-delivery.${deliveryId}`,
+      reason: "Retire the uncertain delivery",
+      caller: OPERATOR_BOARD_CALLER,
+    };
+    const warned = await resolveExplicitly(fx.engine, { ...clearDelivery, accept: [] }, () => "next");
+    assert.equal(warned.explicitResolution?.status, "warnings");
+    assert.deepEqual(warned.explicitResolution?.warnings.map((warning) => warning.id), ["effect_may_land"]);
+    assert.equal(fx.store.run(reviewerRunId)?.reviewDeliveries?.[0]?.status, "uncertain");
+    const settled = await resolveExplicitly(
+      fx.engine, { ...clearDelivery, accept: ["effect_may_land"] }, () => "next",
     );
-    const retryOffer = offered.find((item) => item.verb === "retry_effect");
-    assert.ok(retryOffer);
-    const { questionId } = recordOpenEscalation(
-      fx.store,
-      fx.engine,
-      fx.taskId,
-      "esc-046",
-      { runId: reviewerRunId, offered },
-    );
-    fx.store.update(
-      fx.taskId,
-      { prHead: HEAD_B },
-      "pr_head_updated",
-      "head moved",
-    );
-    try {
-      await fx.engine.resolution.answerDelegatedQuestion(
-        {
-          questionId,
-          choice: retryOffer.label,
-          reason: "Retry uncertain delivery",
-        },
-        PLANNER,
-      );
-    } catch (error) {
-      assert.doesNotMatch(
-        error instanceof Error ? error.message : String(error),
-        /is no longer available|binding/i,
-      );
-    }
+    assert.equal(settled.explicitResolution?.status, "applied");
+    assert.equal(fx.store.run(reviewerRunId)?.reviewDeliveries?.[0]?.status, "refused");
+    assert.equal(plannerEscalations(fx.store.eventsAll(fx.taskId)).find((e) => e.id === "esc-046")?.answered, false);
 
     // Manual close via record.clear kind=escalation remains the explicit close on non-terminal tasks.
     const cleared = await resolveExplicitly(
@@ -678,15 +666,6 @@ test("round 10: fresh escalations offer plain choices only (no route, restart, m
       "review_started",
       "uncertain reviewer delivery",
     );
-    // Confirm the task actually has executable owner verbs available via next/ownerVerbViews.
-    const availableVerbs = escalationVerbChoices(
-      ownerVerbViews(collectOwnerVerbFacts(fx.store, fx.task())),
-    );
-    assert.ok(
-      availableVerbs.length > 0,
-      "fixture must have at least one available owner verb",
-    );
-
     const escId = "esc-plain-only";
     fx.store.event(
       fx.taskId,

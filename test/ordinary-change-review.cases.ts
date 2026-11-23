@@ -431,170 +431,6 @@ async function pendingVerdict(
   return { f, run, incident };
 }
 
-test("an ordinarily applied earlier review does not hold a displaced restart", async () => {
-  const f = fixture();
-  try {
-    await f.engine.wake();
-    const prior = f.current();
-    await f.report(prior, "changes_required");
-    const history = f.store.run(prior.id)!;
-    assert.equal(history.status, "finished");
-    assert.equal(history.released, true);
-    const events = f.store.eventsAll(f.task.id);
-    assert.ok(
-      events.some(
-        (event) =>
-          event.kind === "review_result_applied" && event.detail === prior.id,
-      ),
-    );
-    assert.equal(
-      events.some(
-        (event) =>
-          [
-            "run_released_from_recorded_completion",
-            "run_released_from_observed_liveness",
-          ].includes(event.kind) && event.detail.includes(prior.id),
-      ),
-      false,
-    );
-    // Make the historical application unambiguously earlier than the new attempt.
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const target = runSchema.parse({
-      id: "restart-target",
-      taskId: f.task.id,
-      role: "reviewer",
-      generation: 1,
-      head: prior.head,
-      base: prior.base,
-      agentId: "target-reader",
-      workspaceId: prior.workspaceId,
-      profile: prior.profile,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: false,
-    });
-    f.store.putRun(target);
-    const input = taskControlInputSchema.parse({
-      taskId: f.task.id,
-      version: f.store.task(f.task.id).version,
-      action: "restart",
-      role: "reviewer",
-      reason: "Continue",
-      caller: "owner",
-    });
-    const { key, payload } = taskControlOperation(input),
-      id = operationIdForKey(key),
-      at = new Date().toISOString();
-    f.store.putOperation(
-      queueOperationSchema.parse({
-        id,
-        key,
-        kind: "task_control",
-        inputHash: operationInputHash(payload),
-        state: "needs_attention",
-        taskId: f.task.id,
-        expectedVersion: input.version,
-        createdAt: at,
-        startedAt: at,
-        settledAt: at,
-        attempts: 1,
-        diagnostic: "Transport",
-        result: null,
-        effect: {
-          kind: "task_control",
-          target: "restart",
-          intentAt: at,
-          status: "uncertain",
-          result: null,
-          resultAt: null,
-        },
-      }),
-      payload,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const replacement = runSchema.parse({
-      ...target,
-      id: "replacement-reader",
-      agentId: "replacement-reader-agent",
-      createdAt: new Date().toISOString(),
-    });
-    f.store.putRun(replacement);
-    const current = f.store.task(f.task.id);
-    f.store.update(current.id, {
-      resolution: { ...current.resolution, currentRunId: replacement.id },
-      reason: "New review binding",
-    });
-    const offered = () =>
-      ownerTaskNext(
-        collectOwnerVerbFacts(f.store, f.store.task(f.task.id)),
-      ).verbs.some(
-        (view) =>
-          view.verb === "retry_effect" &&
-          JSON.stringify(view.args ?? {}).includes(`operation.${id}`),
-      );
-    assert.equal(offered(), true, "the target still owns its run");
-    assert.equal(
-      supersedeIdleRunInTx(f.store, f.task.id, target, "Observed reader idle"),
-      true,
-    );
-    const receipt = f.store.db
-      .prepare("SELECT hash FROM receipts WHERE id=? AND task=? AND run=?")
-      .get(history.completion!.eventId, f.task.id, prior.id) as {
-      hash: string;
-    };
-    f.store.db
-      .prepare("UPDATE receipts SET hash=? WHERE id=?")
-      .run("0".repeat(64), history.completion!.eventId);
-    assert.equal(
-      offered(),
-      true,
-      "a mismatched historical receipt is not terminal evidence",
-    );
-    f.store.db
-      .prepare("UPDATE receipts SET hash=? WHERE id=?")
-      .run(receipt.hash, history.completion!.eventId);
-    const applied = f.store
-      .eventsAll(f.task.id)
-      .find(
-        (event) =>
-          event.kind === "review_result_applied" && event.detail === prior.id,
-      )!;
-    f.store.db
-      .prepare("UPDATE events SET at=? WHERE id=?")
-      .run(new Date(Date.parse(at) + 1000).toISOString(), applied.id);
-    assert.equal(
-      offered(),
-      true,
-      "an application after the attempt is not earlier release evidence",
-    );
-    f.store.db
-      .prepare("UPDATE events SET at=? WHERE id=?")
-      .run(applied.at, applied.id);
-    assert.equal(offered(), false);
-    f.engine.reconcileBlockedEffects(f.task.id);
-    assert.equal(
-      f.store
-        .eventsAll(f.task.id)
-        .filter((event) => event.kind === "operation_superseded").length,
-      1,
-    );
-    f.engine.reconcileBlockedEffects(f.task.id);
-    assert.equal(
-      f.store
-        .eventsAll(f.task.id)
-        .filter((event) => event.kind === "operation_superseded").length,
-      1,
-    );
-    assert.equal(f.store.operation(id)?.effect?.status, "uncertain");
-  } finally {
-    await f.engine.stop();
-    await f.close();
-  }
-});
 
 test("ordinary public changes-required lifecycle retains the reader with a new exact-head credential, delta and clean author return", async () => {
   const f = fixture();
@@ -1633,51 +1469,6 @@ test("ordinary review custody still refuses a concurrent PR head change", async 
   }
 });
 
-test("an ordinary review blocked by a late durable effect waits with its identity and does not start recovery", async () => {
-  const f = fixture();
-  try {
-    await f.engine.wake();
-    const first = f.current();
-    await f.report(first, "changes_required");
-    await f.engine.wake();
-    const revision = f.current();
-    const head = f.pushRevision();
-    f.idle(revision);
-    f.faults.blockOrdinarySend = true;
-    const response = await new Reports(f.engine).report(
-      {
-        taskId: f.task.id,
-        runId: revision.id,
-        eventId: randomUUID(),
-        status: "ready_for_review",
-        summary: "Fixed feature",
-        prNumber: 41,
-        head,
-      },
-      f.tokens.get(revision.id)!,
-    );
-    assert.equal((response as { accepted: boolean }).accepted, true);
-    await f.engine.wake();
-    await f.engine.wake();
-    const task = f.store.task(f.task.id);
-    assert.match(task.reason, /attention-notice attention-race is uncertain/);
-    assert.equal(task.resolution.recoveryActive, false);
-    assert.equal(task.resolution.currentRunId, null);
-    assert.equal(
-      f.store.runs(task.id).filter((run) => !run.released).length,
-      0,
-    );
-    const runCount = f.store.runs(task.id).length;
-    for (let i = 0; i < 3; i++) await f.engine.wake();
-    assert.equal(
-      f.store.runs(task.id).length,
-      runCount,
-      "unchanged effect does not create more reviewer runs",
-    );
-  } finally {
-    await f.close();
-  }
-});
 
 test("ordinary source approval parks once without a coordinator and duplicate reports preserve the receipt", async () => {
   const f = fixture();
@@ -3070,13 +2861,11 @@ test("an ordinary fresh reviewer is re-proved at its native creation and launche
 const freshReviewerRefusals: Array<{
   name: string;
   plant: (f: ReturnType<typeof fixture>, run: Run) => void;
-  settles: "attention" | "waiting";
   reason: RegExp;
 }> = [
   {
     name: "pause",
     plant: (f) => f.store.setMeta("paused", true),
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Ordinary review task reservation changed during custody proof/,
   },
@@ -3096,35 +2885,8 @@ const freshReviewerRefusals: Array<{
           },
         },
       }),
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
-  },
-  {
-    name: "pending effect",
-    plant: (f) =>
-      f.store.putOperation(
-        queueOperationSchema.parse({
-          id: "d".repeat(64),
-          key: "pending-effect-at-launch",
-          kind: "task_control",
-          inputHash: "a".repeat(64),
-          state: "pending",
-          taskId: f.task.id,
-          expectedVersion: null,
-          repoPath: f.repo,
-          submissionId: null,
-          createdAt: new Date().toISOString(),
-          startedAt: null,
-          settledAt: null,
-          attempts: 0,
-          diagnostic: "",
-          result: null,
-          effect: null,
-        }),
-      ),
-    settles: "waiting",
-    reason: /settle it with retry_effect/,
   },
   {
     name: "task version change",
@@ -3132,7 +2894,6 @@ const freshReviewerRefusals: Array<{
       f.store.update(f.task.id, {
         reason: "Concurrent canonical admission changed the source reservation",
       }),
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
@@ -3141,7 +2902,6 @@ const freshReviewerRefusals: Array<{
     plant: (f) => {
       f.state.prSha = f.oldHead;
     },
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
@@ -3162,7 +2922,6 @@ const freshReviewerRefusals: Array<{
         active: true,
       });
     },
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Another run owns the ordinary review checkout$/,
   },
@@ -3191,21 +2950,8 @@ for (const refusal of freshReviewerRefusals) {
       assert.equal(f.store.run(run.id)?.status, "superseded");
       assert.equal(f.store.run(run.id)?.released, true);
       assert.equal(task.resolution.currentRunId, null);
-      if (refusal.settles === "attention") {
-        assert.equal(task.phase, "needs_attention");
-        assert.equal(task.resolution.attention, true);
-      } else {
-        assert.equal(
-          task.resolution.attention,
-          false,
-          "an effect fence waits; it is not a refusal",
-        );
-        assert.ok(
-          f.store
-            .eventsAll(f.task.id)
-            .some((event) => event.kind === "review_waiting_on_effects"),
-        );
-      }
+      assert.equal(task.phase, "needs_attention");
+      assert.equal(task.resolution.attention, true);
       assert.match(task.reason, refusal.reason);
     } finally {
       await f.close();

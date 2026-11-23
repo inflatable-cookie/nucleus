@@ -23,14 +23,6 @@ import {
   redactDiagnostic,
 } from "../../recovery/provider-refusal";
 import {
-  BlockingRecoveryEffectsError,
-  blockingRecoveryEffects,
-  blockingRecoveryEffectsRefusal,
-  recoveryEffectsRefusal,
-  reviewEffectWaitKey,
-} from "../../recovery/recovery-effects";
-import { settleObservedHostEffectOperations } from "../../recovery/effect-gates";
-import {
   assertReviewEntryWriterYielded,
   reviewEntryInputForTask,
   type ReviewEntryAdapter,
@@ -144,10 +136,6 @@ export class RunLaunchDeliver {
       assertOrdinaryReviewIdentity(latest, run.head);
       if (matchesBinding)
         this.resolution.assertReviewProfileIndependent(latest, savedRun);
-      const effects = blockingRecoveryEffects(this.store, latest, {
-        noticeKinds: "all",
-      });
-      if (effects.length) throw new BlockingRecoveryEffectsError(effects);
       return true;
     };
     return {
@@ -197,12 +185,6 @@ export class RunLaunchDeliver {
       token,
     } = context;
     t = this.store.task(t.id);
-    // Observation before any refusal (nucleus#1159): an uncertain host-effect
-    // control whose effect later evidence has answered is settled here, so this
-    // launch gates only on uncertainty the task has yet to answer. Nothing is
-    // resent; the settlement is the observation's own record.
-    if (settleObservedHostEffectOperations(this.store, t.id).length)
-      t = this.store.task(t.id);
     let dispatchInvoked = false;
     try {
       // A follow-up round reads the exact head in the task checkout on its own
@@ -596,40 +578,6 @@ export class RunLaunchDeliver {
         const latestRun = this.store.run(run.id);
         if (latestRun && !latestRun.released)
           this.store.putRun({ ...latestRun, status: "uncertain" });
-        return;
-      }
-      if (error instanceof BlockingRecoveryEffectsError) {
-        const waitReason = `${run.ordinaryDetached ? "Ordinary review" : "Review-entry"} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`;
-        this.store.transaction(() => {
-          const latestRun = this.store.run(run.id);
-          if (latestRun && !latestRun.released)
-            this.store.putRun({
-              ...latestRun,
-              status: "superseded",
-              released: true,
-              active: false,
-            });
-          const latest = this.store.task(t.id);
-          if (latest.resolution.currentRunId === run.id)
-            this.resolution.update(
-              latest,
-              { currentRunId: null, attention: false },
-              { phase: role === "reviewer" ? "reviewing" : latest.phase },
-              "review_waiting_on_effects",
-              recoveryEffectsRefusal(error.effects) ?? "",
-            );
-        });
-        this.resolution.waiting(
-          this.store.task(t.id),
-          waitReason,
-          "lifecycle",
-          {
-            fact: {
-              code: "review_effect_wait",
-              subject: reviewEffectWaitKey(error.effects),
-            },
-          },
-        );
         return;
       }
       // A host that has not settled its model options has not refused this run:

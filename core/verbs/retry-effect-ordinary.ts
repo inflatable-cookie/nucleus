@@ -1,3 +1,4 @@
+import { hookHoldReason, isRecoveredPreDispatchHookHold } from "../hooks/hooks";
 import {
   dispositionWorkPolicy,
   type Task,
@@ -10,6 +11,8 @@ import { archiveUnusedWorkspace } from "../workspaces/unused-workspace";
 import { progressDisposition, reopenDispositionWorkspace } from "./disposition";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
 import type { Engine } from "../engine";
+import { blockingRecoveryEffects } from "../recovery/recovery-effects";
+import { digest } from "../store/store";
 import {
   collectOwnerVerbFacts,
   ownerEffectIdentity,
@@ -275,8 +278,37 @@ export class OrdinaryEffectRetries {
     }
     const identity = ownerEffectIdentity(found.effect, found.kind);
     switch (found.kind) {
-      case "hook":
-        return this.engine.retryHookEffect(input, current, identity!);
+      case "hook": {
+        const result = await this.engine.hooks.retry(
+          current,
+          identity!,
+          input.discard === true,
+        );
+        if (result.hold) throw Error(hookHoldReason(result));
+        const latest = this.store.task(task.id);
+        const { recovery, stop } = latest.resolution;
+        if (
+          ["done", "cancelled"].includes(latest.phase) &&
+          stop?.reason === "operator_needed" &&
+          recovery?.status === "resolved" &&
+          recovery.key === digest(`stop:${stop.reason}:${stop.since}`) &&
+          !blockingRecoveryEffects(this.store, latest, { noticeKinds: "all" }).length
+        )
+          return this.resolution.update(
+            latest,
+            { stop: null },
+            {},
+            "finished_hook_retry_cleared_recovery_stop",
+            identity!,
+          );
+        return isRecoveredPreDispatchHookHold(latest, result)
+          ? this.store.update(
+              latest.id,
+              { phase: "queued", reason: "Repository pre-dispatch hooks settled after retry" },
+              "hook_retry_recovered",
+            )
+          : latest;
+      }
       case "workspace_creation":
         return this.engine.retryValidation({
           taskId: task.id,
@@ -363,11 +395,7 @@ export class OrdinaryEffectRetries {
         );
       }
       case "review_publication":
-        return this.engine.reconcilePublicationEffect(
-          input,
-          this.store.task(task.id),
-          identity!,
-        );
+        return this.retryPublicationBeforeSettlement(current, input, found);
       case "planning_base":
         return this.engine.rerecordPlanningBase({
           taskId: task.id,
@@ -378,8 +406,12 @@ export class OrdinaryEffectRetries {
           "Owned-tool holds are re-proved before ordinary side-effect recovery",
         );
       case "recovery_effect":
-      case "task_control_operation":
-        throw Error(`${found.kind} is settled by its own observer`);
+        if (found.effect === "project-validation.project-validation") {
+          const resumed = this.resolution.retryProjectValidationEffect(current);
+          void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
+          return resumed;
+        }
+        throw Error(`Use record.clear kind=effect id=${found.effect}`);
     }
   }
 }

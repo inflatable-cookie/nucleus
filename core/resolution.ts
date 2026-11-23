@@ -102,7 +102,6 @@ import {
   type Incident,
   type Profile,
   type RepositoryChecksPolicy,
-  type ReviewDeliveryAuthorization,
   type ReviewCheckpointRecord,
   type Run,
   type Task,
@@ -155,7 +154,6 @@ import { Delegation } from "./questions/delegation";
 import type { PlannerRung } from "./questions/delegation";
 import { Ladder } from "./questions/ladder";
 import { TransientResume } from "./recovery/transient-resume";
-import { EffectReconcile } from "./recovery/effect-reconcile";
 import { ValidationEvidence } from "./qa/validation-evidence";
 import { RoleSelection, chooseProfile } from "./dispatch/routing";
 
@@ -1435,7 +1433,6 @@ export class Resolution {
       "completeReceipt",
       "completeValidate",
       "readoptReplacedReviewer",
-      "reconcileReviewDelivery",
       "recordFinishedTaskCompletion",
       "recordSupersededProofEvidence",
       "resolveIncident",
@@ -1535,19 +1532,6 @@ export class Resolution {
   readonly proofAutorun = new ProofAutorun(this);
   readonly nativeQuestions = new NativeQuestions(this);
   readonly ladder = new Ladder(this);
-  readonly effectReconcile = new EffectReconcile(
-    portsContext(this, [
-      "adapter",
-      "deliveryInTimeline",
-      "host",
-      "quantumReadTimeoutMs",
-      "readPassTimelinePage",
-      "reconcileReviewDelivery",
-      "reconcileReviewDeliveryOperations",
-      "settleReviewDelivery",
-      "store",
-    ]),
-  );
   // Annotated: the continuation's own forwarders below are typed by the owner it reads.
   readonly reviewContinuations: ReviewContinuations = new ReviewContinuations(
     portsContext(this, [
@@ -1561,9 +1545,7 @@ export class Resolution {
       "onTaskHost",
       "ownedToolHold",
       "paused",
-      "reconcileReviewDelivery",
       "reviewContinuationGate",
-      "settleReviewDelivery",
       "settleVerbFences",
       "stopResumeState",
       "store",
@@ -2299,9 +2281,6 @@ export class Resolution {
   reconcileMergeIntent(t: Task): Promise<void> {
     return this.mergeIntent.reconcileMergeIntent(t);
   }
-  reconcileMergeResponseEffect(taskId: string): Promise<Task> {
-    return this.mergeIntent.reconcileMergeResponseEffect(taskId);
-  }
   /** Resume a held or lost validation through its existing operator retry path. */
   retryProjectValidationEffect(task: Task): Task {
     return this.validationRetry.retryProjectValidationEffect(task);
@@ -2920,82 +2899,6 @@ export class Resolution {
       task,
       run,
       observed,
-    );
-  }
-
-  settleReviewDelivery(
-    runId: string,
-    deliveryId: string,
-    status: ReviewDeliveryAuthorization["status"],
-    evidence: string,
-    receiptProven = false,
-  ): void {
-    this.effectReconcile.settleReviewDelivery(
-      runId,
-      deliveryId,
-      status,
-      evidence,
-      receiptProven,
-    );
-  }
-  reconcileArchivedReviewerDispatch(
-    taskId: string,
-    runId: string,
-  ): Promise<boolean> {
-    return this.effectReconcile.reconcileArchivedReviewerDispatch(
-      taskId,
-      runId,
-    );
-  }
-  reconcileUncertainRunDelivery(
-    taskId: string,
-    runId: string,
-    deadlineAt?: number,
-  ): Promise<boolean> {
-    return this.effectReconcile.reconcileUncertainRunDelivery(
-      taskId,
-      runId,
-      deadlineAt,
-    );
-  }
-  reconcileReviewDeliveryOperations(
-    taskId: string,
-    runId: string,
-    deliveryId: string,
-    evidence: string,
-  ): void {
-    this.effectReconcile.reconcileReviewDeliveryOperations(
-      taskId,
-      runId,
-      deliveryId,
-      evidence,
-    );
-  }
-  deliveryInTimeline(run: Run, deliveryId: string): Promise<boolean> {
-    return this.effectReconcile.deliveryInTimeline(run, deliveryId);
-  }
-  reconcileReviewDelivery(
-    run: Run,
-    authorization: ReviewDeliveryAuthorization,
-  ): Promise<ReviewDeliveryAuthorization> {
-    return this.effectReconcile.reconcileReviewDelivery(run, authorization);
-  }
-  reconcileReviewDeliveryEffect(
-    taskId: string,
-    deliveryId: string,
-  ): Promise<ReviewDeliveryAuthorization> {
-    return this.effectReconcile.reconcileReviewDeliveryEffect(
-      taskId,
-      deliveryId,
-    );
-  }
-  reconcileAttentionNoticeEffect(
-    taskId: string,
-    noticeId: string,
-  ): Promise<boolean> {
-    return this.effectReconcile.reconcileAttentionNoticeEffect(
-      taskId,
-      noticeId,
     );
   }
 

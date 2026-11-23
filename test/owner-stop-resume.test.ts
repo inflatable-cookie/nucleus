@@ -467,11 +467,6 @@ test("reopen after host acted before confirmation settles via observation withou
           s.runId === "review-run" && s.kind === "newer_turn_untouched" && s.untouchedTurnId === "turn-rev-new",
       ),
     );
-    assert.equal(onlineReopened.store.operation(res.operation.id)?.settlement?.kind, "superseded");
-    assert.equal(
-      onlineReopened.store.eventsAll(task.id).filter((e) => e.kind === "operation_superseded").length,
-      1,
-    );
     assert.equal(nextVerbs(onlineReopened.store, task.id).verbs.find((v) => v.verb === "release")?.available, true);
   } finally {
     await h.close();

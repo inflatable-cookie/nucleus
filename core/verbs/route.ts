@@ -1,9 +1,9 @@
+import { ownerStopPendingRefusal } from "./owner-stop";
 import {
   DurableFenceRefusal,
   matchingInactiveParticipant,
 } from "../intake/run-settlement";
 import { recordAcceptedRevisionRound } from "./author-revision-cap";
-import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { archiveReplacedReviewer } from "../workspaces/thread-archive-replacement";
 import { routeStateRefusal } from "./control-refusals";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
@@ -323,10 +323,8 @@ export class RouteControls {
       const independenceWaived =
         role === "reviewer" && reviewerSharesAuthorModel(task, profile.model);
 
-      const controlRefusal = replaceLive
-        ? unsettledControlRefusal(this.store, task)
-        : null;
-      if (controlRefusal) throw new DurableFenceRefusal(controlRefusal);
+      if (replaceLive && task.resolution.ownerStop)
+        throw new DurableFenceRefusal(ownerStopPendingRefusal(task.resolution.ownerStop));
       const reviewerReplacement =
         replaceLive && role === "reviewer"
           ? await requireReviewerReplacement(

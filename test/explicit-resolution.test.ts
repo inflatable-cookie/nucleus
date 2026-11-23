@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   chmodSync,
   existsSync,
@@ -24,6 +26,7 @@ import { formatAgentId } from "../shared/agent-identity";
 import {
   OPERATOR_BOARD_CALLER,
   REVISION_BUDGET,
+  hostRunRecordSchema,
   runSchema,
   submissionSchema,
   taskControlTaskSchema,
@@ -31,6 +34,7 @@ import {
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
+import { hostRunProcessStartIdentity, startIdentityProves } from "../core/machine/start-identity";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { operationInputHash } from "../core/store/store";
@@ -313,7 +317,7 @@ test("run.release changes an agentless reviewer's durable fence and revokes its 
   assert.equal(audit().length, 1);
 });
 
-test("ordinary reviewer routing resumes after one release and one effect clear", async (t) => {
+test("ordinary reviewer routing can proceed after release while an old operation is uncertain", async (t) => {
   const { store, current, run, command, calls, runtime } = await fixture(t);
   const reviewer = run("review-run", "reviewer", null);
   store.putRun(reviewer);
@@ -373,20 +377,20 @@ test("ordinary reviewer routing resumes after one release and one effect clear",
     runSettlementFence({ store, task }, reviewer) ?? "",
     /uncertain/,
   );
-  await assert.rejects(
-    command(route),
-    new RegExp(`operation ${operation.id} is uncertain`),
-  );
   const released = await command({
     action: "run.release",
     run: reviewer.id,
     accept: ["live_turn", "unreported_result"],
   });
   assert.equal(released.explicitResolution?.status, "applied");
+  const routed = await command(route);
+  assert.equal(routed.phase, "awaiting_review");
+  assert.equal(routed.profileRequests?.reviewer?.profileId, "next-reviewer");
+  assert.equal(store.operation(operation.id)?.state, "needs_attention");
   const clear = {
     action: "record.clear",
     kind: "effect",
-    id: `task_control_operation.${operation.id}`,
+    id: `operation.${operation.id}`,
     caller: planner,
   };
   assert.equal(
@@ -400,14 +404,78 @@ test("ordinary reviewer routing resumes after one release and one effect clear",
   );
   assert.equal(store.operation(operation.id)?.state, "failed");
 
-  const routed = await command(route);
-  assert.equal(routed.phase, "awaiting_review");
-  assert.equal(routed.profileRequests?.reviewer?.profileId, "next-reviewer");
   assert.deepEqual(
     store.runs(task.id).map((run) => [run.id, run.released]),
     [[reviewer.id, true]],
   );
   assert.deepEqual(calls, []);
+});
+
+test("run.release stops the recorded process group after accepting its warnings", async (t) => {
+  const { store, current, run, command, audit } = await fixture(t);
+  const participant = run("review-process-run", "reviewer", null);
+  store.putRun(participant);
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const exited = once(child, "exit");
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  });
+  await once(child, "spawn");
+  const pid = child.pid;
+  assert.ok(pid);
+  const startIdentity = hostRunProcessStartIdentity(pid);
+  assert.ok(startIdentityProves(startIdentity));
+  const at = new Date().toISOString();
+  store.putHostRun(hostRunRecordSchema.parse({
+    id: participant.id,
+    epoch: 1,
+    caller: "fixture",
+    repository: { path: repo, origin: null },
+    selector: "test",
+    runClass: "heavy",
+    classSource: "default",
+    priority: "milestone",
+    state: "running",
+    submittedAt: at,
+    capacityDeadlineAt: at,
+    runTimeoutMs: 60000,
+    budgetFallback: { cpu: 1, memoryBytes: 1000 },
+    budget: { cpu: 1, memoryBytes: 1000, wallMs: 60000, source: "history" },
+    position: null,
+    admittedAt: at,
+    launchedAt: at,
+    settledAt: null,
+    capacitySample: null,
+    pid,
+    processGroupId: pid,
+    startIdentity,
+    settlement: null,
+    wallMs: null,
+    cpuMs: null,
+    containers: [],
+    capacityReleasedAt: null,
+    capacityReleaseReason: null,
+  }));
+
+  const release = { action: "run.release", run: participant.id };
+  const version = current().version;
+  const warnings = await command(release);
+  assert.equal(warnings.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    warnings.explicitResolution?.warnings.map((warning) => warning.id),
+    ["live_turn", "unreported_result"],
+  );
+  assert.equal(current().version, version);
+  assert.equal(child.signalCode, null);
+  assert.equal(audit().length, 0);
+  const released = await command({ ...release, accept: ["live_turn", "unreported_result"] });
+  assert.equal(released.explicitResolution?.status, "applied");
+  assert.deepEqual(await exited, [null, "SIGKILL"]);
+  assert.equal(store.run(participant.id)?.released, true);
+  assert.equal(audit().length, 1);
 });
 
 test("record.clear supersedes a notice and keeps late delivery evidence from restoring the fence", async (t) => {

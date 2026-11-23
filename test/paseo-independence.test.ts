@@ -427,8 +427,6 @@ test("workspace archive and review continuation refusals use the host-kind label
       paused: () => false,
       ownedToolHold: async () => ({ kind: "clear" }),
       settleVerbFences: () => {},
-      settleReviewDelivery: () => {},
-      reconcileReviewDelivery: async () => ({ status: "none" }) as never,
       assertReviewProfileIndependent: () => {},
       stopResumeState: () => ({ kind: "none" }),
       reviewContinuationGate: () =>

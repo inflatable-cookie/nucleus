@@ -10,10 +10,6 @@ import {
   type Run,
   type Task,
 } from "../../shared/contracts";
-import {
-  blockingRecoveryEffects,
-  BlockingRecoveryEffectsError,
-} from "../recovery/recovery-effects";
 import { participantToolRunIds } from "../recovery/task-reasons";
 import { matchingInactiveParticipant } from "../intake/run-settlement";
 import { taskPrNumber } from "../forge/index";
@@ -70,11 +66,6 @@ export class OrdinaryCustody {
         .some((other) => other.id !== run.id && !other.released)
     )
       throw Error("Another run owns the ordinary review checkout");
-    const blockingEffects = blockingRecoveryEffects(this.context.store, t, {
-      noticeKinds: "all",
-    });
-    if (blockingEffects.length)
-      throw new BlockingRecoveryEffectsError(blockingEffects);
     const taskParticipants = new Set(
       [
         t.agentId,

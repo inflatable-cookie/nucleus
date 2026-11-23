@@ -417,127 +417,6 @@ test("a process snapshot predating a new child or idle transition never clears a
   );
 });
 
-test("a creation message appended between pre-closure read and closure is never settled as absent", async (t) => {
-  const runId = "22222222-2222-4222-8222-222222222222";
-  const agentId = "agent-delivery-race";
-  const workspaceId = "ws-delivery-race";
-  let closed = false;
-  let messageAppended = false;
-  let timelineReads = 0;
-
-  const f = engineFixture(t, {
-    originAgent: async (id: string) => ({
-      id,
-      workspaceId,
-      archived: false,
-      deleted: false,
-    }),
-    observe: async (id: string) => ({
-      id,
-      workspaceId,
-      status: closed ? "closed" : "running",
-      active: !closed,
-      activeTurnId: closed ? null : "turn-live",
-      permissions: false,
-      error: "",
-      updatedAt: new Date().toISOString(),
-    }),
-    agentTimelinePage: async () => {
-      timelineReads++;
-      return toolTimelinePage(
-        messageAppended
-          ? [
-              {
-                timestamp: new Date().toISOString(),
-                item: {
-                  type: "user_message",
-                  messageId: `ns-run-${runId}`,
-                  text: "creation prompt",
-                },
-              },
-            ]
-          : [],
-      );
-    },
-  });
-
-  const inserted = f.store.insert(
-    submission({
-      submissionId: "sub-delivery-race",
-      title: "Delivery race",
-    }),
-    HOST,
-    "handoff",
-    HEAD,
-  );
-  const task = f.store.update(inserted.id, {
-    phase: "needs_attention",
-    workspaceId,
-    directory: "/tmp/synthetic-delivery-race",
-    agentId,
-    runId,
-    reason: "Uncertain released run",
-  });
-  f.store.putRun(
-    runSchema.parse({
-      id: runId,
-      taskId: task.id,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD,
-      base: HEAD,
-      agentId,
-      workspaceId,
-      hostId: HOST,
-      profile: null,
-      status: "uncertain",
-      createdAt: new Date(Date.now() - 10_000).toISOString(),
-      lastObservedAt: new Date().toISOString(),
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: true,
-    }),
-  );
-
-  // Pass 1: agent is still live during HostPass; HostPass must NOT prime a
-  // pre-closure page for it. Even if some other reader cached an empty page
-  // before closure, reconciling after closure must never record
-  // `run_delivery_not_delivered`.
-  const snap1 = f.engine.resolution.beginPassSnapshot();
-  await f.engine.resolution.readPassTimelinePage(agentId, 100, HOST);
-  assert.equal(timelineReads, 1);
-
-  // Now the host appends the creation message and closes the agent.
-  messageAppended = true;
-  closed = true;
-
-  await assert.rejects(
-    f.engine.resolution.reconcileUncertainRunDelivery(task.id, runId),
-    /predates agent closure/,
-    "reconciliation must refuse negative settlement from a pre-closure cached page",
-  );
-  f.engine.resolution.endPassSnapshot(snap1);
-
-  assert.equal(
-    f.store
-      .events(task.id)
-      .filter((event) => event.kind === "run_delivery_not_delivered").length,
-    0,
-    "run_delivery_not_delivered must never be recorded from a pre-closure page",
-  );
-
-  // Pass 2: agent is closed, so HostPass proves closure first and primes the
-  // post-closure page containing the creation message -> reconciled as delivered!
-  await f.engine.auditPass(true);
-  assert.equal(
-    f.store
-      .events(task.id)
-      .filter((event) => event.kind === "run_delivery_reconciled").length,
-    1,
-    "next pass observes the post-closure message and settles delivery as reconciled",
-  );
-});
 
 test("a quantum with a 60 s process read returns with unknown without clearing the hold", async (t) => {
   let slowTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1025,97 +904,6 @@ test("an archived participant omitted from live inventory clears scratch process
   );
 });
 
-test("a closed resumable thread that resumes and closes again cannot reuse an earlier closure page for negative delivery", async (t) => {
-  const runId = "44444444-4444-4444-8444-444444444444";
-  const agentId = "agent-resumable-closed";
-  const workspaceId = "ws-resumable-closed";
-  const firstClosureAt = new Date(Date.now() - 30_000).toISOString();
-  const secondClosureAt = new Date(Date.now() - 1_000).toISOString();
-
-  const f = engineFixture(t, {
-    originAgent: async (id: string) => ({
-      id,
-      workspaceId,
-      archived: false,
-      deleted: false,
-    }),
-    observe: async (id: string) => ({
-      id,
-      workspaceId,
-      status: "closed",
-      active: false,
-      activeTurnId: null,
-      permissions: false,
-      error: "",
-      updatedAt: secondClosureAt,
-    }),
-    agentTimelinePage: async () => toolTimelinePage([]),
-  });
-
-  const inserted = f.store.insert(
-    submission({
-      submissionId: "sub-resumable-closed",
-      title: "Resumable closed delivery",
-    }),
-    HOST,
-    "handoff",
-    HEAD,
-  );
-  const task = f.store.update(inserted.id, {
-    phase: "needs_attention",
-    workspaceId,
-    directory: "/tmp/synthetic-resumable-closed",
-    agentId,
-    runId,
-    reason: "Uncertain released run",
-  });
-  f.store.putRun(
-    runSchema.parse({
-      id: runId,
-      taskId: task.id,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD,
-      base: HEAD,
-      agentId,
-      workspaceId,
-      hostId: HOST,
-      profile: null,
-      status: "uncertain",
-      createdAt: new Date(Date.now() - 60_000).toISOString(),
-      lastObservedAt: new Date().toISOString(),
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: true,
-    }),
-  );
-
-  // Pass snapshot holds a page proven terminal at `firstClosureAt`, while the
-  // current closed observation reports `secondClosureAt` after a resumed turn.
-  const snap = f.engine.resolution.beginPassSnapshot();
-  await f.engine.resolution.primePassTimelinePage(agentId, 100, HOST, {
-    provenTerminal: {
-      archived: false,
-      workspaceId,
-      closedUpdatedAt: firstClosureAt,
-    },
-  });
-
-  await assert.rejects(
-    f.engine.resolution.reconcileUncertainRunDelivery(task.id, runId),
-    /predates agent closure/,
-    "negative settlement must refuse a page from an earlier closure of a resumable thread",
-  );
-  f.engine.resolution.endPassSnapshot(snap);
-
-  assert.equal(
-    f.store
-      .events(task.id)
-      .filter((event) => event.kind === "run_delivery_not_delivered").length,
-    0,
-  );
-});
 
 test("supersededIdleFence bounds hung observe, and sealed host passes treat task-lane timeline misses as unknown", async (t) => {
   let observeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1205,141 +993,6 @@ test("supersededIdleFence bounds hung observe, and sealed host passes treat task
   );
 });
 
-test("persistently slow first warming candidate does not starve a healthy candidate across passes", async (t) => {
-  const timers: ReturnType<typeof setTimeout>[] = [];
-  t.after(() => {
-    for (const timer of timers) clearTimeout(timer);
-  });
-
-  const runSlow = "55555555-5555-4555-8555-555555555555";
-  const runFast = "66666666-6666-4666-8666-666666666666";
-  const f = engineFixture(t, {
-    originAgent: async (id: string) => {
-      if (id === "agent-slow-first") {
-        return new Promise((resolve) => {
-          const timer = setTimeout(
-            () =>
-              resolve({
-                id,
-                workspaceId: "ws-slow-first",
-                archived: true,
-                deleted: false,
-              }),
-            60_000,
-          );
-          timer.unref?.();
-          timers.push(timer);
-        });
-      }
-      return {
-        id,
-        workspaceId: "ws-fast-second",
-        archived: true,
-        deleted: false,
-      };
-    },
-    agentTimelinePage: async (id: string) => {
-      if (id === "agent-fast-second") {
-        return toolTimelinePage([
-          {
-            timestamp: new Date().toISOString(),
-            item: {
-              type: "user_message",
-              messageId: `ns-run-${runFast}`,
-              text: "prompt",
-            },
-          },
-        ]);
-      }
-      return toolTimelinePage([]);
-    },
-  });
-  f.engine.resolution.hostPassWarmBudgetMs = 60;
-  f.engine.resolution.quantumReadTimeoutMs = 40;
-
-  const slowInserted = f.store.insert(
-    submission({ submissionId: "sub-slow-first", title: "Slow first" }),
-    HOST,
-    "handoff",
-    HEAD,
-  );
-  const slowTask = f.store.update(slowInserted.id, {
-    phase: "needs_attention",
-    workspaceId: "ws-slow-first",
-    directory: "/tmp/synthetic-slow-first",
-    agentId: "agent-slow-first",
-    runId: runSlow,
-  });
-  f.store.putRun(
-    runSchema.parse({
-      id: runSlow,
-      taskId: slowTask.id,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD,
-      base: HEAD,
-      agentId: "agent-slow-first",
-      workspaceId: "ws-slow-first",
-      hostId: HOST,
-      profile: null,
-      status: "uncertain",
-      createdAt: new Date(Date.now() - 10_000).toISOString(),
-      lastObservedAt: new Date().toISOString(),
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: true,
-    }),
-  );
-
-  const fastInserted = f.store.insert(
-    submission({ submissionId: "sub-fast-second", title: "Fast second" }),
-    HOST,
-    "handoff",
-    HEAD,
-  );
-  const fastTask = f.store.update(fastInserted.id, {
-    phase: "needs_attention",
-    workspaceId: "ws-fast-second",
-    directory: "/tmp/synthetic-fast-second",
-    agentId: "agent-fast-second",
-    runId: runFast,
-  });
-  f.store.putRun(
-    runSchema.parse({
-      id: runFast,
-      taskId: fastTask.id,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD,
-      base: HEAD,
-      agentId: "agent-fast-second",
-      workspaceId: "ws-fast-second",
-      hostId: HOST,
-      profile: null,
-      status: "uncertain",
-      createdAt: new Date(Date.now() - 10_000).toISOString(),
-      lastObservedAt: new Date().toISOString(),
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: true,
-    }),
-  );
-
-  // Run two passes: rotating candidate order guarantees the healthy second
-  // task settles even while the first candidate hangs every pass.
-  await f.engine.auditPass(true);
-  await f.engine.auditPass(true);
-
-  assert.equal(
-    f.store
-      .events(fastTask.id)
-      .filter((event) => event.kind === "run_delivery_reconciled").length,
-    1,
-    "healthy candidate settles across passes without being starved by a persistently slow first candidate",
-  );
-});
 
 test("boundedRead propagates errors thrown before deadline and swallows late rejections after timeout", async () => {
   await assert.rejects(
@@ -1801,92 +1454,14 @@ test("unstamped bounded tool window and unstamped complete tool page both hold w
   }
 });
 
-test("two missing closure stamps never authorize durable run_delivery_not_delivered from a pass snapshot", async (t) => {
-  const f = engineFixture(t, {
-    originAgent: async (id: string) => ({
-      id,
-      workspaceId: "ws-unstamped-close",
-      archived: false,
-      deleted: false,
-    }),
-    observe: async (id: string) => ({
-      id,
-      workspaceId: "ws-unstamped-close",
-      status: "closed",
-      active: false,
-      activeTurnId: null,
-      permissions: false,
-      error: "",
-      // Intentionally omit updatedAt (missing closure stamp).
-    }),
-    agentTimelinePage: async () => toolTimelinePage([]),
-  });
 
-  const seeded = seedFinishedWorkerTask(f.store, "unstamped-close");
-  f.store.putRun(
-    runSchema.parse({
-      id: "run-unstamped-close",
-      taskId: seeded.task.id,
-      role: "reviewer",
-      generation: 1,
-      head: HEAD,
-      base: HEAD,
-      agentId: "agent-unstamped-close",
-      workspaceId: "ws-unstamped-close",
-      hostId: HOST,
-      profile: null,
-      status: "uncertain",
-      createdAt: new Date(Date.now() - 60_000).toISOString(),
-      lastObservedAt: null,
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: true,
-    }),
-  );
-
-  const snapshot = f.engine.resolution.beginPassSnapshot();
-  try {
-    await f.engine.resolution.primePassTimelinePage(
-      "agent-unstamped-close",
-      100,
-      HOST,
-      {
-        provenTerminal: {
-          archived: false,
-          workspaceId: "ws-unstamped-close",
-          closedUpdatedAt: null,
-        },
-      },
-    );
-    await assert.rejects(
-      () =>
-        f.engine.resolution.reconcileUncertainRunDelivery(
-          seeded.task.id,
-          "run-unstamped-close",
-        ),
-      /predates agent closure/i,
-      "missing closure stamps must not compare equal to authorize durable negative delivery",
-    );
-    assert.equal(
-      f.store
-        .events(seeded.task.id)
-        .filter((e) => e.kind === "run_delivery_not_delivered").length,
-      0,
-    );
-  } finally {
-    snapshot.expire();
-  }
-});
-
-test("worker reconcileObservation bounds hung observe, superseded runs share and rotate one budget, and released-delivery + workspaceAvailable are bounded", async (t) => {
+test("worker reconcileObservation bounds hung observe, superseded runs share and rotate one budget, and workspaceAvailable is bounded", async (t) => {
   const timers: Array<ReturnType<typeof setTimeout>> = [];
   t.after(() => {
     for (const timer of timers) clearTimeout(timer);
   });
 
   const observedOrder: string[] = [];
-  let originCalls = 0;
   let workspaceAvailCalls = 0;
   const f = engineFixture(t, {
     observe: (id: string) => {
@@ -1917,14 +1492,6 @@ test("worker reconcileObservation bounds hung observe, superseded runs share and
             }),
           60_000,
         );
-        timer.unref?.();
-        timers.push(timer);
-      });
-    },
-    originAgent: () => {
-      originCalls++;
-      return new Promise((resolve) => {
-        const timer = setTimeout(() => resolve(null), 60_000);
         timer.unref?.();
         timers.push(timer);
       });
@@ -2057,8 +1624,7 @@ test("worker reconcileObservation bounds hung observe, superseded runs share and
   );
   assert.equal(f.store.run("run-sup-healthy")?.status, "superseded");
 
-  // 4. Multiple released uncertain deliveries share ONE quantum budget, and
-  // hung workspaceAvailable on ready_for_review attention returns inside bound.
+  // 4. A hung workspaceAvailable for a ready-for-review report is bounded.
   const attn = f.store.insert(
     submission({
       submissionId: "sub-hung-delivery-ws",
@@ -2084,39 +1650,11 @@ test("worker reconcileObservation bounds hung observe, superseded runs share and
       head: HEAD,
     },
   });
-  for (let i = 0; i < 6; i++) {
-    f.store.putRun(
-      runSchema.parse({
-        id: `run-rel-uncertain-${i}`,
-        taskId: attn.id,
-        role: "reviewer",
-        generation: i + 1,
-        head: HEAD,
-        base: HEAD,
-        agentId: `agent-rel-uncertain-${i}`,
-        workspaceId: "ws-hung-delivery",
-        hostId: HOST,
-        profile: null,
-        status: "uncertain",
-        createdAt: new Date(Date.now() - 60_000).toISOString(),
-        lastObservedAt: null,
-        active: false,
-        idleSince: null,
-        completion: null,
-        released: true,
-      }),
-    );
-  }
-  const originsBefore = originCalls;
   await f.engine.taskQuantum(attn.id);
   assert.equal(
     workspaceAvailCalls,
     1,
     "workspaceAvailable was attempted once and bounded",
-  );
-  assert.ok(
-    originCalls - originsBefore < 6,
-    `released delivery loop must share one budget and stop before all 6 hung origins, called ${originCalls - originsBefore}`,
   );
 });
 
