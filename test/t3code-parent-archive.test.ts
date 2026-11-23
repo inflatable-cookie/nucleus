@@ -11,7 +11,13 @@ import { canonical } from "../hosts/t3code/state";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import type { HostAgentSpec } from "../shared/host";
 import type { Profile, Task } from "../shared/contracts";
-import { syntheticRun, t3Fake, STAMP } from "./support/t3code-fake";
+import {
+  syntheticRun,
+  syntheticRuntimeRequest,
+  syntheticTurnItem,
+  t3Fake,
+  STAMP,
+} from "./support/t3code-fake";
 import { storedT3Labels } from "./support/t3code-labels";
 
 /**
@@ -367,6 +373,11 @@ test("a retired child with held initial work cannot strand a rejected parent arc
     },
   ];
   const rejected = parentArchiveCommand(host, parent.threadId);
+  const dispose = identity(
+    "dispose",
+    canonical([host.hostId, parent.threadId, delegated.id]),
+  );
+  delegated.completionDelivery = { state: "pending", observedByRunId: null };
   server.controls.rejectedArchives.push(rejected);
   server.controls.archiveChecksDelegatedTasks = true;
   host.state.update((state) => {
@@ -376,6 +387,10 @@ test("a retired child with held initial work cannot strand a rejected parent arc
       [childId]: { workspaceId, labels, parentThreadId },
     };
     delete state.agents[childId];
+    const disposal = state.intents[dispose]!;
+    disposal.status = "unknown";
+    disposal.timedOut = true;
+    delete disposal.result;
     state.intents[rejected] = {
       status: "unknown",
       kind: "thread.archive",
@@ -400,11 +415,27 @@ test("a retired child with held initial work cannot strand a rejected parent arc
   assert.match(active[0]!.reason, /active work/);
   assert.equal(commandsOf(server, "queued-run.cancel").length, 0);
   assert.equal(commandsOf(server, "thread.archive").length, 0);
+  assert.equal(
+    commandsOf(server, "delegated_task.completion-delivery.dispose").length,
+    1,
+  );
 
   child.runs[0]!.queueHeld = true;
   server.controls.shellStatuses[childId] = "idle";
+  const beforeClearing = server.commands.length;
   const clearing = await host.reconcileFinishedParents([task]);
   assert.equal(clearing[0]!.state, "unobserved");
+  assert.equal(delegated.completionDelivery.state, "disposed");
+  assert.deepEqual(
+    since(server, beforeClearing).map((command) => command.type),
+    ["delegated_task.completion-delivery.dispose", "queued-run.cancel"],
+  );
+  assert.deepEqual(
+    commandsOf(server, "delegated_task.completion-delivery.dispose").map(
+      (command) => command.commandId,
+    ),
+    [dispose, dispose],
+  );
   assert.equal(child.runs[0]!.status, "cancelled");
   assert.deepEqual(
     commandsOf(server, "queued-run.cancel").map((command) => command.runId),
@@ -433,6 +464,62 @@ test("a retired child with held initial work cannot strand a rejected parent arc
     [rejected, successor],
   );
   assert.equal(commandsOf(server, "thread.settle").length, 0);
+});
+
+test("an idle child with background work or a pending user question keeps the archive waiting", async (t) => {
+  const { server, host, parentFor } = await fixture(t);
+  const parent = await parentFor();
+  const remote = server.threads.get(parent.threadId)!;
+  const childId = remote.subagents[0]!.childThreadId;
+  const child = server.threads.get(childId)!;
+  child.runs = [];
+  child.thread.forkedFrom = null;
+  child.pendingBackgroundTasks = [];
+  child.turnItems = [
+    syntheticTurnItem(childId, 1, {
+      type: "command_execution",
+      status: "running",
+      exitCode: null,
+      completedAt: null,
+    }),
+  ];
+  const task = doneTask(host);
+  const assertWaiting = async () => {
+    const before = server.commands.length;
+    const waits = await host.reconcileFinishedParents([task]);
+    assert.match(waits[0]!.reason, /active work/);
+    assert.deepEqual(since(server, before), []);
+  };
+  await assertWaiting();
+
+  child.turnItems[0]!.status = "completed";
+  child.pendingBackgroundTasks = [
+    { kind: "command", taskId: "synthetic-shell-only" },
+  ];
+  await assertWaiting();
+
+  child.pendingBackgroundTasks = [];
+  const requestId = "synthetic-child-question";
+  child.runtimeRequests = [syntheticRuntimeRequest({ id: requestId })];
+  child.turnItems.push(
+    syntheticTurnItem(childId, 2, {
+      type: "user_input_request",
+      status: "waiting",
+      requestId,
+      completedAt: null,
+    }),
+  );
+  await assertWaiting();
+
+  child.runtimeRequests[0]!.status = "resolved";
+  child.turnItems[1]!.status = "completed";
+  assert.equal(
+    (await host.reconcileFinishedParents([task]))[0]!.state,
+    "unobserved",
+  );
+  assert.equal(commandsOf(server, "subagent.stop").length, 1);
+  assert.deepEqual(await host.reconcileFinishedParents([task]), []);
+  assert.equal(remote.thread.archivedAt, STAMP);
 });
 
 test("a pending background item for an idle orphan clears through the delegated record", async (t) => {

@@ -141,6 +141,10 @@ type ParentThread = NonNullable<T3State["parents"]>[string];
 const terminalTask = (task: Task): boolean =>
   task.removedAt != null || task.phase === "done" || task.phase === "cancelled";
 
+/** T3's work statuses for a delegated record or a background turn item. */
+const activeWork = (status: unknown): boolean =>
+  status === "pending" || status === "running" || status === "waiting";
+
 /**
  * One bounded, remote-text-free reason for a finished parent's archive attempt
  * (nucleus#1459). The adapter's own failure text passes the same sanitizer a host
@@ -983,7 +987,7 @@ export class T3Nesting {
         (child) =>
           child.origin === "app_owned" &&
           child.childThreadId &&
-          ["pending", "running", "waiting"].includes(child.status),
+          activeWork(child.status),
       );
       if (pending) {
         const reason = await this.reconcileArchiveChild(parent, pending);
@@ -1073,9 +1077,17 @@ export class T3Nesting {
       projection?.providerThreads?.some(
         (thread) => thread.pendingBackgroundTasks?.length,
       ) ||
+      projection?.turnItems.some(
+        (item) =>
+          ["command_execution", "dynamic_tool", "subagent"].includes(
+            item.type,
+          ) && activeWork(item.status),
+      ) ||
       projection?.runtimeRequests.some(
         (request) => request.status === "pending",
-      )
+      ) ||
+      (await this.core.reads.currentShellRow(childId))?.pendingBackgroundTasks
+        ?.length
     )
       return "the delegated child still has active work";
 
@@ -1089,7 +1101,7 @@ export class T3Nesting {
         delivery === "pending" ||
         delivery === "claimed"
       )
-        await this.dispose(parent, child.id);
+        await this.dispose(parent, child.id, { replayTimedOutAfterRead: true });
       await this.archiveEffect(
         identity(
           "parent-archive-queued-run",
@@ -1533,7 +1545,11 @@ export class T3Nesting {
   // ---------------------------------------------------------------------- children
 
   /** Dispose one delegated task's completion delivery; a repeat is settled by a read. */
-  private async dispose(parent: ParentThread, taskId: string): Promise<void> {
+  private async dispose(
+    parent: ParentThread,
+    taskId: string,
+    options: Pick<EffectOptions, "replayTimedOutAfterRead"> = {},
+  ): Promise<void> {
     const commandId = identity(
       "dispose",
       canonical([this.core.hostId(), parent.threadId, taskId]),
@@ -1549,7 +1565,7 @@ export class T3Nesting {
       },
       undefined,
       undefined,
-      { resendUnknownAfterRead: true },
+      { resendUnknownAfterRead: true, ...options },
     );
   }
 
@@ -1777,6 +1793,7 @@ export class T3Nesting {
         projection: await this.core.reads.readDirectProjection(
           parent.threadId,
           "observation",
+          fresh,
         ),
       };
     } catch (error) {

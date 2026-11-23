@@ -1788,7 +1788,9 @@ of it. The step is now independent:
   with its completion delivery disposed first. T3 can then update the parent
   through the ordinary run lifecycle. For an idle orphan, `subagent.stop` asks
   T3 to clear the delegated record. The next pass reads the parent again.
-  Live or unreadable children keep the archive waiting.
+  Active runs, background work reported by T3 in a provider thread, turn item
+  or shell row, and pending runtime requests keep the archive waiting.
+  An unreadable child also keeps it waiting.
   T3's settled archive receipt for that exact thread marks the
   binding `archivedAt`; no inventory is read to confirm it (the planner's Spec 069
   batch 5 design, following Tom's 2026-11-22 ruling "We shouldn't need to be
@@ -1797,8 +1799,10 @@ of it. The step is now independent:
 - **Unknown delivery is read, never resent blind.** A recorded intent whose
   delivery is unknown is settled by a fresh positive read of that parent: archived
   settles it, and a live thread is the read that lets the same command replay under
-  its own identity after any late-reply wait. Only T3's explicit replay of a
-  rejected archive receipt permits a new command ID. The binding records that
+  its own identity after any late-reply wait. A timed-out completion disposal
+  follows the same rule when a fresh parent read shows the wake is still owed.
+  Only T3's explicit replay of a rejected archive receipt permits a new
+  command ID. The binding records that
   successor before delivery, after a fresh read shows the parent still needs
   archive and the delegated records have cleared. A proven pre-send refusal may
   be re-sent under its original identity.
