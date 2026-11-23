@@ -640,11 +640,7 @@ fn preflight(
     match task.command(command, actor, observation) {
         Ok(()) if awaiting_planner => Ok(Preflight::Pending),
         Ok(()) => Ok(Preflight::Ready),
-        Err(CommandError::MergedHeadRequired | CommandError::MergeAuthorityRequired)
-            if observation.forge == Observed::Unknown =>
-        {
-            Ok(Preflight::Pending)
-        }
+        Err(CommandError::HeadUnverified) => Ok(Preflight::Pending),
         Err(error) => Err(error.into()),
     }
 }

@@ -206,18 +206,14 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
                     actor: "operator".into(),
                 },
             },
-            Controller {
-                credential: PLANNER_KEY,
-                authority: Authority::Planner {
-                    actor: "planner".into(),
-                },
-            },
+            planner_controller(PLANNER_KEY, "planner"),
         ],
     );
     let next_path = "/v1/tasks/reviewer/next";
     let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
     assert_eq!(view["version"], 1);
     expect_command(&view, "answer", None, "pending");
+    expect_command(&view, "move", Some("merging"), "pending");
     expect_command(&view, "move", Some("done"), "pending");
     let path = "/v1/tasks/reviewer/commands";
     let answer = json!({"answer":{"accept":{"head":head, "reason":"accepted exact merge"}}});
@@ -232,6 +228,8 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
         .pass()
         .await
         .expect("read while forge is unavailable");
+    let merge = post_json(&api, path, &BOARD_KEY, &json!({"move":"merging"})).await;
+    assert_eq!(merge, StatusCode::ACCEPTED);
     let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
     expect_command(&view, "answer", None, "pending");
     assert_eq!(
@@ -263,12 +261,148 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     assert_eq!(reads.load(Ordering::Relaxed), 2);
     let _ = service.pass().await.expect("refresh on the new revision");
     let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
+    expect_command(&view, "move", Some("merging"), "ready");
     expect_command(&view, "move", Some("done"), "ready");
     assert_eq!(
         post_json(&api, path, &BOARD_KEY, &json!({"move":"done"})).await,
         StatusCode::OK
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
+    let (forge, server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls/1"),
+        get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+    ))
+    .await;
+    let (_home, service) = fixture(forge);
+    let head = service.project.start.clone();
+    let exact = seed_review_work_question(&service, &head).await;
+    let prior = service.task("reviewer").await.expect("seeded question");
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
+    let next = "/v1/tasks/reviewer/next";
+    let path = "/v1/tasks/reviewer/commands";
+    let answer = json!({"answer":{"work":"Use the fixture greeting"}});
+    let amend = json!({"amend":"Use the fixture wording"});
+    let changed_forge = Observed::Known(Forge::Open {
+        pr: PullRequest {
+            url: PR.into(),
+            head: (if head.as_str().starts_with('a') {
+                "b"
+            } else {
+                "a"
+            })
+            .repeat(40)
+            .parse()
+            .expect("new head"),
+        },
+        checks: nucleus_core::CheckState::Ready,
+    });
+    service
+        .observe_commands(&prior, &changed_forge)
+        .await
+        .expect("new head");
+    let view = json_body(get_as(&api, next, &PLANNER_KEY).await).await;
+    for (name, command) in [("answer", &answer), ("amend", &amend)] {
+        expect_command(&view, name, None, "unavailable");
+        assert_eq!(
+            post_json(&api, path, &PLANNER_KEY, command).await,
+            StatusCode::CONFLICT
+        );
+    }
+    service
+        .observe_commands(&prior, &exact)
+        .await
+        .expect("same head");
+    let _ = service.pass().await.expect("forge outage through loopback");
+    let view = json_body(get_as(&api, next, &PLANNER_KEY).await).await;
+    for (name, command) in [("answer", &answer), ("amend", &amend)] {
+        expect_command(&view, name, None, "pending");
+        let response = post_as(&api, path, &PLANNER_KEY, command).await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(
+            json_body(response).await,
+            json!({"status":"pending","version":1})
+        );
+    }
+    let pending = service.task("reviewer").await.expect("pending question");
+    assert_eq!(pending, prior);
+
+    service
+        .observe_commands(&prior, &exact)
+        .await
+        .expect("forge recovered");
+    let view = json_body(get_as(&api, next, &PLANNER_KEY).await).await;
+    expect_command(&view, "amend", None, "ready");
+    assert_eq!(
+        post_json(&api, path, &PLANNER_KEY, &amend).await,
+        StatusCode::OK
+    );
+    let revised = service.task("reviewer").await.expect("brief revised");
+    assert_eq!(revised.version, 2);
+    expect_command(
+        &json_body(get_as(&api, next, &PLANNER_KEY).await).await,
+        "answer",
+        None,
+        "pending",
+    );
+    service
+        .observe_commands(&revised, &exact)
+        .await
+        .expect("same head on new version");
+    let view = json_body(get_as(&api, next, &PLANNER_KEY).await).await;
+    expect_command(&view, "answer", None, "ready");
+    assert_eq!(
+        post_json(&api, path, &PLANNER_KEY, &answer).await,
+        StatusCode::OK
+    );
+    let answered = service.task("reviewer").await.expect("question answered");
+    assert_eq!(answered.version, 3);
+    assert!(
+        answered
+            .task
+            .brief()
+            .text
+            .ends_with("Use the fixture greeting")
+    );
+    assert!(answered.task.question().is_none());
+    server.abort();
+}
+
+async fn seed_review_work_question(
+    service: &Service,
+    head: &nucleus_core::Head,
+) -> Observed<Forge> {
+    let (mut task, key, mut observation) = reservation("reviewer", Entry::ReviewEntry, head);
+    let instance = task.run().expect("review run").launch().instance.clone();
+    task.record_report(
+        &instance,
+        key.as_bytes(),
+        Report::Question {
+            prompt: "Which greeting should this revision use?".into(),
+            options: Vec::new(),
+        },
+    )
+    .expect("record review question");
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
+    assert!(matches!(
+        task.reconcile(&observation),
+        Action::Ask(Question::Work { .. })
+    ));
+    let notice =
+        T3::prepare_notice("planner".into(), "notice".into(), "Choose a greeting").expect("notice");
+    assert!(task.bind_question_delivery(notice));
+    seed_task(service, &task).await;
+    observation.forge
 }
 
 async fn serve_merged_forge(
@@ -427,6 +561,15 @@ fn expect_command(view: &Value, name: &str, phase: Option<&str>, readiness: &str
             }),
         "expected {name} {phase:?} to be {readiness} in {view}"
     );
+}
+
+fn planner_controller(credential: [u8; 32], actor: &str) -> Controller {
+    Controller {
+        credential,
+        authority: Authority::Planner {
+            actor: actor.into(),
+        },
+    }
 }
 
 async fn seed_task(service: &Service, task: &Task) {

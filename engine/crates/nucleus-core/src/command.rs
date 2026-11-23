@@ -32,6 +32,8 @@ pub enum Answer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandError {
+    HeadUnverified,
+    HeadChanged,
     MergeAuthorityRequired,
     MergedHeadRequired,
     AnswerDoesNotMatch,
@@ -47,6 +49,8 @@ pub enum CommandError {
 impl fmt::Display for CommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::HeadUnverified => "waiting to check the current PR head",
+            Self::HeadChanged => "the current PR head no longer matches the task",
             Self::MergeAuthorityRequired => "the current PR head needs approval or acceptance",
             Self::MergedHeadRequired => "the current PR head needs a confirmed merge",
             Self::AnswerDoesNotMatch => "the answer does not match the current question",
@@ -335,8 +339,8 @@ impl Task {
     /// observes it quiescent, even when the new phase is terminal.
     ///
     /// # Errors
-    /// Returns an error for a move that fails the merge gate or an answer that
-    /// lacks authority or does not match the current question.
+    /// Returns an error if the command's head evidence is missing or no longer
+    /// matches, a move fails the merge gate, or an answer is invalid.
     pub fn command(
         &mut self,
         command: Command,
@@ -350,7 +354,12 @@ impl Task {
             }
             Command::Cancel => self.move_to(Phase::Cancelled),
             Command::Answer(answer) => self.answer(answer, authority, observation)?,
-            Command::Amend(text) => self.amend(text)?,
+            Command::Amend(text) => {
+                if let Some(pr) = &self.pr {
+                    forge_at_head(observation, Some(&pr.head))?;
+                }
+                self.amend(text)?;
+            }
             Command::Hold(reason) => self.hold = Some(Hold { reason }),
             Command::Release => self.hold = None,
         }
@@ -367,17 +376,17 @@ impl Task {
     }
 
     fn check_move(&self, phase: Phase, observation: &Observation) -> Result<(), CommandError> {
-        match phase {
-            Phase::Merging if !observation.pr().is_some_and(|pr| self.approves(&pr.head)) => {
-                Err(CommandError::MergeAuthorityRequired)
-            }
-            Phase::Closing | Phase::Done => match &observation.forge {
-                Observed::Known(Forge::Merged { pr, .. }) if self.approves(&pr.head) => Ok(()),
-                Observed::Known(Forge::Merged { .. }) => Err(CommandError::MergeAuthorityRequired),
-                _ => Err(CommandError::MergedHeadRequired),
-            },
-            _ => Ok(()),
+        if !matches!(phase, Phase::Merging | Phase::Closing | Phase::Done) {
+            return Ok(());
         }
+        let forge = forge_at_head(observation, self.pr.as_ref().map(|pr| &pr.head))?;
+        if phase != Phase::Merging && !matches!(forge, Forge::Merged { .. }) {
+            return Err(CommandError::MergedHeadRequired);
+        }
+        if !forge.pr().is_some_and(|pr| self.approves(&pr.head)) {
+            return Err(CommandError::MergeAuthorityRequired);
+        }
+        Ok(())
     }
 
     fn amend(&mut self, text: String) -> Result<(), CommandError> {
@@ -399,25 +408,39 @@ impl Task {
         if observation.supersedes_question(self) {
             return Err(CommandError::AnswerDoesNotMatch);
         }
-        match (self.question(), answer) {
-            (Some(Question::Work { .. } | Question::Repair(_)), Answer::Work(answer)) => {
+        let question = self
+            .question
+            .as_ref()
+            .ok_or(CommandError::AnswerDoesNotMatch)?;
+        let check_question_head = || -> Result<(), CommandError> {
+            if let Some(head) = &question.head {
+                forge_at_head(observation, Some(head))?;
+            }
+            Ok(())
+        };
+        match (&question.question, answer) {
+            (Question::Work { .. } | Question::Repair(_), Answer::Work(answer)) => {
+                check_question_head()?;
                 self.amend(format!(
                     "{}\n\nPlanner guidance\n\n{answer}",
                     self.brief.text
                 ))?;
             }
-            (Some(Question::Retry { .. }), Answer::Retry) => self.attempts = 0,
-            (Some(Question::Accept { head: asked }), Answer::Accept { head, reason })
+            (Question::Retry { .. }, Answer::Retry) => {
+                check_question_head()?;
+                self.attempts = 0;
+            }
+            (Question::Accept { head: asked }, Answer::Accept { head, reason })
                 if head == *asked =>
             {
                 if !authority.can_accept(self.identity.entry) {
                     return Err(CommandError::OperatorRequired);
                 }
-                let Observed::Known(Forge::Merged { pr, .. }) = &observation.forge else {
+                if !matches!(
+                    forge_at_head(observation, Some(&head))?,
+                    Forge::Merged { .. }
+                ) {
                     return Err(CommandError::MergedHeadRequired);
-                };
-                if head != pr.head {
-                    return Err(CommandError::AnswerDoesNotMatch);
                 }
                 self.verdict = Some(Verdict::Accepted {
                     head,
@@ -432,4 +455,19 @@ impl Task {
         self.question = None;
         Ok(())
     }
+}
+
+fn forge_at_head<'a>(
+    observation: &'a Observation,
+    head: Option<&Head>,
+) -> Result<&'a Forge, CommandError> {
+    let Observed::Known(forge) = &observation.forge else {
+        return Err(CommandError::HeadUnverified);
+    };
+    if let Some(head) = head
+        && !forge.pr().is_some_and(|pr| pr.head == *head)
+    {
+        return Err(CommandError::HeadChanged);
+    }
+    Ok(forge)
 }

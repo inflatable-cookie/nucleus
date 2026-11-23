@@ -248,7 +248,9 @@ until T3 confirms archival or absence. Later passes only reconcile that
 disposition. They never replay the rejected launch.
 
 `next` and commands run the same preflight using the pass's forge observation
-for the committed task version. On missing evidence, the command returns
+for the committed task version. Answers bound to a PR head, amendments to
+tasks with a bound PR, and moves through the merge gates check that head.
+On missing evidence, the command returns
 HTTP 202 with `status: pending` and the version, and wakes a check. The client
 can retry the command when `next` shows it ready. Merge and worktree removal
 still check fresh evidence at the effect.
