@@ -105,6 +105,11 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - Budgets become one allowance.
     - The profile matrix is unchanged (ruling 9).
 
+18. **One pinned Nucleus Inbox.** Tom, 2026-11-23: "do we get the equivalent pinned Nucleus Inbox thread via Nucleus ACP? That is vital to my workflow".
+    - The ACP agent has an inbox session alongside task sessions, carrying over Specs 032 and 065: one pinned inbox session per host. Each operator decision appears as a native form answered in place, and the answer reaches the asker on the ordinary answer path. A task session never takes a decision; it names the decision and points to the Inbox.
+    - The operator keeps one Inbox throughout the transition (Tom chose this). Until milestone 3, the Rust engine's operator decisions are added to the existing TypeScript decision store, so they appear in the current Inbox, and their answers flow back to the Rust task. The scheduler does that hand-off, never a request path (ruling 11).
+    - At milestone 3, decisions move into the Rust service (ruling 12) and the Rust inbox session replaces the TypeScript Inbox as the one pinned thread.
+
 ## The model
 
 ### Stored state per task
