@@ -1605,7 +1605,11 @@ test("bounded tool projection holds when a newer turn advances updatedAt after t
 
   const snapshot = f.engine.resolution.beginPassSnapshot();
   try {
-    await f.engine.hostPass.run(HOST);
+    await (
+      f.engine as unknown as {
+        sweep: { hostPass: { run(host: string): Promise<unknown> } };
+      }
+    ).sweep.hostPass.run(HOST);
     // Simulate a new turn completing after the host pass captured the bounded
     // window and process table.
     currentUpdatedAt = new Date(Date.now() + 5_000).toISOString();
@@ -1877,7 +1881,11 @@ test("stable idle tool backlog does not starve shell peeks, and unknown shell pe
   // 1. Round-robin warming must include the shell candidate despite 10 idle tool candidates.
   const snap1 = f.engine.resolution.beginPassSnapshot();
   try {
-    await f.engine.hostPass.run(HOST);
+    await (
+      f.engine as unknown as {
+        sweep: { hostPass: { run(host: string): Promise<unknown> } };
+      }
+    ).sweep.hostPass.run(HOST);
     assert.ok(
       shellWarmed.includes("agent-running-shell"),
       "interleaved warming must warm the shell peek despite 10 idle tool candidates",
