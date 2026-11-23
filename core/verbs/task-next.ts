@@ -1,9 +1,10 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
 import { releaseWarnings } from "./explicit-resolution";
+import { unreviewedCloseoutWarning } from "./explicit-integration";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
-import { taskDetailView } from "../../shared/task-view";
+import { taskDetailView, unreviewedMergeRoute } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import { budgetGatesPhase } from "../../shared/task-budget";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
@@ -813,7 +814,22 @@ function explicitCommandsFor(
     });
   }
 
-  if (task.resolution.mergedCommit) {
+  const { mergedCommit, mergeHead, externalMerge } = task.resolution;
+  const observed = externalMerge && mergedCommit && mergeHead
+    ? { head: mergeHead, commit: mergedCommit }
+    : unreviewedMergeRoute(task);
+  const unreviewed = observed
+    ? unreviewedCloseoutWarning(facts.store, task, observed)
+    : null;
+  if (unreviewed) {
+    push({
+      action: "closeout.now",
+      args: { action: "closeout.now", ...base },
+      fill: ["reason"],
+      note: `${unreviewed.text} Only a responsible planner or the operator board may accept this warning.`,
+      warnings: ["unreviewed_merge"],
+    });
+  } else if (mergedCommit) {
     push({
       action: "closeout.now",
       args: { action: "closeout.now", ...base },

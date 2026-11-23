@@ -1,0 +1,1 @@
+Responsible planners can close out externally merged PRs that lack review evidence by explicitly accepting the `unreviewed_merge` warning. Nucleus records who accepted the exact merge and what review evidence was missing.

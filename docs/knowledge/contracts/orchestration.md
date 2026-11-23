@@ -9,8 +9,9 @@ and labelled.
 ## Invariants
 
 - Owner verbs refuse only to protect four invariants (Tom, 2026-10-19):
-  - exact-head review before merge, or an explicit recorded operator source
-    acceptance of that exact head (Tom, 2026-10-20; see
+  - exact-head review before merge, qualified owner acceptance, or explicit
+    recorded operator source acceptance of that head (introduced through an
+    agent relay on 2026-10-20; see
     [Operator source acceptance](#operator-source-acceptance));
   - callback authentication: a stopped or replaced run never reports as current;
   - durable side effects: an effect with unknown delivery is never re-run
@@ -3010,8 +3011,8 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 - When no review evidence binds the current head (no verdict, an unfinished or
   unpublished one, or a head a docs-only conflict resolution moved),
-  `move to=merge` may record an explicit operator source acceptance (Tom,
-  2026-10-20). It binds task, repository, PR, head, actor, authority, ruling,
+  `move to=merge` may record an explicit operator source acceptance (2026-10-20
+  agent relay). It binds task, repository, PR, head, actor, authority, ruling,
   qualification, existing findings and the missing evidence Nucleus derives, and
   binds no review identity.
 - A ready current-head approval keeps the ordinary path, and publication
@@ -3032,8 +3033,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   an observed fact (`external_merge_unreviewed`), supersedes the quiet runs
   the advance would have released, and stops the task for its planner through
   the blocker ladder — never the operator. `next` offers the existing routes:
-  a fresh review of the merged head (`move to=review`) or an operator source
-  acceptance (`move to=closeout`). Nothing is advanced, reverted or synced,
+  a fresh review of the merged head (`move to=review`) or explicit source
+  acceptance by a responsible planner or the operator board (`closeout.now`
+  with `accept: ["unreviewed_merge"]`). Nothing is advanced, reverted or synced,
   and a repeated observation attaches to the open escalation instead of
   asking again. An already-recorded merge re-entry never re-decides an
   accepted route, so the gate lives on the fresh observation only.
@@ -3053,10 +3055,12 @@ movement invalidates source approval and preserves the normal readiness gates.
   not restate the stop. A reobserved unchanged merge honors an answered
   escalation's recorded stop or wait while that disposition is current, and
   re-enters only after it releases. The escalation names the two routes apart:
-  the independent review (`move to=review`), and the operator-only exact-head
-  source acceptance (`move to=closeout`, qualification naming that head). A
-  planner hand-back is neither. A
-  submission that explicitly skipped PR review keeps its previous merge
+  independent review and explicit source acceptance. The latter binds the
+  forge-observed head and merge commit, actor, authority, reason and missing
+  evidence in an `external_merge_source` record. This record applies only to
+  that external merge's closeout and carries no review verdict or authority to
+  merge. See [Tom's 2026-11-23 ruling](../specs/067-explicit-resolution.md#external-merge-source-acceptance).
+  A submission that explicitly skipped PR review keeps its previous merge
   behavior, the same rule the Queue-owned gates apply.
 - `move to=closeout` (reason required) closes out an external merge at a head
   that descends from the recorded work and records both heads. It may settle

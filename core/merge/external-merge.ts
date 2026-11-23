@@ -2,6 +2,7 @@ import { externalMergeStateRefusal } from "../verbs/control-refusals";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  externalMergeSourceAcceptance,
   mergeReviewEvidenceAt,
   type OwnerAcceptanceRecord,
   type Run,
@@ -228,6 +229,15 @@ export class ExternalMerge {
       : null;
     const result = await this.adapter.externalMerge(t, true, Boolean(retained));
     if (!result) throw new Error("The task PR is not merged");
+    if (
+      !reviewEntry &&
+      !retained &&
+      this.resolution.reviewRequired(t) &&
+      !mergeReviewEvidenceAt(t, result.head)
+    )
+      throw new DurableFenceRefusal(
+        "No review evidence binds the merged head; a responsible planner or the operator board can use closeout.now with accept [\"unreviewed_merge\"]",
+      );
     const job: AcceptedExternalMergeJob = {
       reason,
       settleFences,
@@ -673,7 +683,8 @@ export class ExternalMerge {
         observed.head !== t.resolution.mergeHead ||
         observed.commit !== t.resolution.mergedCommit ||
         (this.resolution.reviewRequired(t) &&
-          !mergeReviewEvidenceAt(t, observed.head))
+          !mergeReviewEvidenceAt(t, observed.head) &&
+          !externalMergeSourceAcceptance(t))
       )
         return false;
       if (

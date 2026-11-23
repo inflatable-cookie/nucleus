@@ -381,12 +381,10 @@ export async function resolveExplicitly(
     });
     if (input.version !== task.version) return reply("stale");
     if (task.removedAt) throw Error("Task was removed from the queue");
-    if (
-      source === "coordinator" &&
-      input.accept.some((id) => PLANNER_ONLY_WARNINGS.has(id))
-    )
+    const plannerOnly = input.accept.filter((id) => PLANNER_ONLY_WARNINGS.has(id));
+    if (source === "coordinator" && plannerOnly.length)
       throw Error(
-        `Only the live responsible planner or operator board can accept ${[...PLANNER_ONLY_WARNINGS].join(", ")}`,
+        `Only the live responsible planner or operator board can accept ${plannerOnly.join(", ")}`,
       );
     if (
       source !== "operator_board" &&

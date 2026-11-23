@@ -126,8 +126,19 @@ export async function merge(t: Task, allowed: () => boolean = () => true) {
   const response = await api(t, `repos/${name}/pulls/${taskPrNumber(t)}/merge`, ['-X', 'PUT', '-f', `sha=${t.resolution.mergeHead}`, '-f', 'merge_method=merge']);
   if (!response.merged) throw new Error(response.message || 'GitHub did not confirm merge');
 }
-export async function merged(t: Task) {
-  const p = await api(t, `repos/${await repo(t)}/pulls/${taskPrNumber(t)}`);
+export async function merged(t: Task, options?: { externalOnly: boolean }) {
+  const name = await repo(t), number = taskPrNumber(t);
+  const p = await api(t, `repos/${name}/pulls/${number}`);
+  if (options?.externalOnly) {
+    if (p.merged !== true)
+      return { merged: false, commit: null, head: String(p.head?.sha), base: String(p.base?.ref) };
+    if (p.number !== number || p.head?.ref !== t.branch || p.base?.ref !== t.baseBranch
+      || p.base?.repo?.full_name?.toLowerCase() !== name.toLowerCase()
+      || p.head?.repo?.full_name?.toLowerCase() !== name.toLowerCase()
+      || (t.prUrl && p.html_url !== t.prUrl))
+      throw Error('External merge identity does not match the task PR, repository and branches');
+    return { merged: true, commit: String(p.merge_commit_sha ?? ''), head: String(p.head.sha), base: String(p.base.ref) };
+  }
   if (p.merged) return { merged: true, commit: p.merge_commit_sha as string, head: String(p.head.sha), base: String(p.base.ref) };
   const commit=await exactIntendedMerge(t);
   if (commit) return { merged: true, commit, head: String(p.head.sha), base: String(p.base.ref) };

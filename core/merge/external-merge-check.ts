@@ -118,9 +118,12 @@ function dispositionHolds(task: Task): boolean {
  * quiet runs the advance would have released and records the merge fact;
  * the task then parks inside the blocker ladder for its planner, which owns
  * the route: a fresh review of the merged head (`move to=review`) or an
- * operator source acceptance (`move to=closeout`). A repeated observation
+ * planner source acceptance (`closeout.now`). A repeated observation
  * on the same cause attaches to the open escalation instead of asking again.
  */
+export const unreviewedExternalMergeCause = (taskId: string, head: string) =>
+  digest(["unreviewed-external-merge", taskId, head].join(":"));
+
 export function stopUnreviewedExternalMerge(
   context: ExternalMergeCheckContext,
   current: Task,
@@ -131,7 +134,7 @@ export function stopUnreviewedExternalMerge(
   // The cause is a stable per-task, per-head digest: the ladder's escalation
   // parser reads a 64-hex cause, and a repeated observation on the same cause
   // must join the open escalation instead of opening another one.
-  const cause = digest(["unreviewed-external-merge", current.id, head].join(":"));
+  const cause = unreviewedExternalMergeCause(current.id, head);
   const prNumber = current.reviewEntry?.prNumber ?? current.resumePrNumber ?? current.completion?.prNumber ?? null;
   const detail = `The PR${prNumber ? ` #${prNumber}` : ""} merged outside Queue at head ${head} (merge commit ${commit}), but no recorded ready_to_merge review, reviewer source approval, qualified owner acceptance or operator source acceptance binds that merged head. The merge is recorded as an observed fact; the task stopped for its planner and nothing was advanced, synced or reverted.`;
   const events = store.eventsAll(current.id) as LadderEvent[];
@@ -164,7 +167,7 @@ export function stopUnreviewedExternalMerge(
   const parked = store.task(current.id);
   if (parked.phase !== "blocked" && !["done", "cancelled"].includes(parked.phase))
     resolution.update(parked, {}, { phase: "blocked" }, "external_merge_unreviewed_stopped");
-  const question = `The responsible task "${current.title}"'s PR${prNumber ? ` #${prNumber}` : ""} merged outside Queue at head ${head} (merge commit ${commit}) with no recorded review evidence binding that merged head, so Nucleus did not count the merge. Two routes differ and neither is the other. (1) Independent review: move to=review starts a fresh reviewer at merged head ${head}; only that reviewer's ready_to_merge verdict at ${head} reconciles the merge, and a verdict at any other head does not count. (2) Operator source acceptance: only the operator accepts that exact head, with move to=closeout and qualification ${head}, recording the missing review evidence. A planner hand-back, a generic approval or a review of another head is not that acceptance. Choose how it proceeds: ${PLANNER_ESCALATION_CHOICES.join("; ")}. You may also answer directly with the direction Queue should follow.`;
+  const question = `The responsible task "${current.title}"'s PR${prNumber ? ` #${prNumber}` : ""} merged outside Nucleus at head ${head} (merge commit ${commit}) without recorded review evidence at that head. Read next. A responsible planner or the operator board may run closeout.now with accept ["unreviewed_merge"] and a reason to record explicit source acceptance and start closeout. For independent review, move to=review starts a reviewer at the merged head. Choose how it proceeds: ${PLANNER_ESCALATION_CHOICES.join("; ")}.`;
   resolution.openPlannerEscalation(store.task(current.id), {
     cause, runId: null, question, payload: { cause, head, commit, prNumber, question },
     causeDetail: detail.slice(0, 2000),

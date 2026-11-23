@@ -369,7 +369,7 @@ export interface ResolutionAdapter {
   ): Promise<string>;
   rerunFailedWorkflowRuns?(task: Task, runIds: string[]): Promise<string[]>;
   merge(task: Task, allowed?: () => boolean): Promise<void>;
-  merged(task: Task): Promise<{
+  merged(task: Task, options?: { externalOnly: boolean }): Promise<{
     merged: boolean;
     commit: string | null;
     head: string;

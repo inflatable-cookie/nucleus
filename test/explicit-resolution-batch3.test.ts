@@ -13,6 +13,7 @@ import {
 } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 import { requiredCheckPollMetaKey } from "../core/forge/index";
+import { stopUnreviewedExternalMerge } from "../core/merge/external-merge-check";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
@@ -875,6 +876,108 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
   assert.equal(applied.explicitResolution?.status, "applied");
   assert.equal(applied.resolution.mergedCommit, MERGED_COMMIT);
   assert.equal(applied.phase, "syncing");
+});
+
+test("a planner explicitly accepts a verified external merge without a review and closes it out", async (t) => {
+  let observedHead = HEAD;
+  let observedCommit = MERGED_COMMIT;
+  let observedMerged = true;
+  let mergeRequests = 0;
+  let observedExternalOnly = false;
+  const { runtime, store, insertTask, attachCoordinator, callExplicit } = await fixture(t, {
+    merged: async (_task: Task, options?: { externalOnly: boolean }) => {
+      if (options?.externalOnly) observedExternalOnly = true;
+      return { merged: observedMerged, commit: observedMerged ? observedCommit : null, head: observedHead, base: "main" };
+    },
+    merge: async () => { mergeRequests++; },
+    syncMain: async () => MERGED_COMMIT,
+  });
+  runtime.engine.resolution.closeoutAuthority = async () => "queue";
+
+  const task = insertTask("Merged outside Nucleus without review", 39);
+  store.update(task.id, { phase: "reviewing" });
+  stopUnreviewedExternalMerge(
+    { store, resolution: runtime.engine.resolution },
+    store.task(task.id),
+    HEAD,
+    MERGED_COMMIT,
+  );
+  const command = runtime.taskNext({ taskId: task.id }).explicitCommands?.find(
+    (entry) => entry.action === "closeout.now",
+  );
+  assert.deepEqual(command?.warnings, ["unreviewed_merge"]);
+  assert.match(command?.note ?? "", /No reviewer verdict exists/);
+
+  const before = store.task(task.id);
+  const warned = await callExplicit(task.id, { action: "closeout.now" });
+  assert.equal(warned.explicitResolution?.status, "warnings");
+  assert.deepEqual(warned.explicitResolution?.warnings.map((entry) => entry.id), ["unreviewed_merge"]);
+  assert.match(warned.explicitResolution?.warnings[0]?.text ?? "", /No reviewer verdict exists/);
+  assert.deepEqual(store.task(task.id), before);
+  assert.equal(observedExternalOnly, true);
+
+  const acceptCloseout = { action: "closeout.now", accept: ["unreviewed_merge"] };
+  observedHead = OTHER_HEAD;
+  await assert.rejects(callExplicit(task.id, acceptCloseout), /no applied review verdict/);
+  observedHead = HEAD;
+  observedCommit = OTHER_HEAD;
+  await assert.rejects(callExplicit(task.id, acceptCloseout), /no applied review verdict/);
+  observedCommit = MERGED_COMMIT;
+  await assert.rejects(
+    callExplicit(task.id, acceptCloseout, formatAgentId(HOST, "worker")),
+    /Explicit resolution requires/,
+  );
+
+  const coordinated = insertTask("Unreviewed merge with a coordinator", 41);
+  store.update(coordinated.id, {
+    phase: "blocked",
+    resolution: {
+      ...coordinated.resolution,
+      unreviewedMerge: { head: HEAD, commit: MERGED_COMMIT, prNumber: 41 },
+    },
+  });
+  const coordinator = attachCoordinator(coordinated.id);
+  await assert.rejects(
+    callExplicit(coordinated.id, acceptCloseout, coordinator),
+    /Only the live responsible planner or operator board can accept unreviewed_merge/,
+  );
+  assert.equal(store.task(coordinated.id).resolution.ownerAcceptances.length, 0);
+  const applied = await callExplicit(task.id, acceptCloseout);
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(applied.phase, "syncing");
+  assert.equal(applied.resolution.mergedCommit, MERGED_COMMIT);
+  assert.equal(applied.resolution.review, null);
+  assert.equal(applied.resolution.mergedWithNone, true);
+  assert.equal(applied.resolution.ownerAcceptances.length, 1);
+  const acceptance = applied.resolution.ownerAcceptances[0];
+  assert.equal(acceptance?.kind, "external_merge_source");
+  assert.equal(acceptance?.head, HEAD);
+  assert.equal(acceptance?.mergedCommit, MERGED_COMMIT);
+  assert.equal(acceptance?.prNumber, 39);
+  assert.deepEqual(acceptance?.actor, { agentId: PLANNER, role: "planner" });
+  assert.deepEqual(acceptance?.authority, { kind: "planner", note: null });
+  assert.equal(acceptance?.reason, "Explicit resolution test");
+  assert.match(acceptance?.missingEvidence ?? "", /No reviewer verdict exists/);
+  assert.equal(acceptance?.review, null);
+  assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "owner_acceptance").length, 1);
+  assert.ok(store.eventsAll(task.id).some((event) => event.kind === "planner_escalation_resolved"));
+  await runtime.engine.scheduleTaskQuantum(task.id);
+  await runtime.engine.scheduleTaskQuantum(task.id);
+  assert.equal(store.task(task.id).phase, "done");
+
+  const open = insertTask("Unreviewed PR still open", 40);
+  store.update(open.id, { phase: "verifying" });
+  observedMerged = false;
+  await assert.rejects(
+    callExplicit(open.id, acceptCloseout),
+    /GitHub reports the PR is not merged/,
+  );
+  await assert.rejects(
+    callExplicit(open.id, { action: "merge.now", head: HEAD, accept: ["unreviewed_merge"] }),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+  assert.equal(store.task(open.id).resolution.mergeIntent, false);
+  assert.equal(mergeRequests, 0);
 });
 
 test("deleted levers: restart on merged-but-parked task refuses with closeout.now; stop on done task with turn refuses with turn.release", async (t) => {

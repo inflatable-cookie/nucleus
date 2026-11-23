@@ -102,12 +102,15 @@ No command changes anything it does not name.
 | `message.send role=<worker\|reviewer\|coordinator\|planner> text` | Delivers to the role's bound thread now, steering into or queued after an active turn, and reports `delivered`, `queued` or `unknown`. Changes no task state. | `queued`, `no_thread` |
 | `merge.now head=<sha>` | Moves the task to `merging` (clearing attention and stop), requests GitHub's guarded merge of exactly that head now, and takes the integration turn if free. | `turn_held`, `checks` (non-required checks failed or pending), `holds`, `hold_owner` (planner or operator only) |
 | `turn.take` / `turn.release` | Takes or releases the repository integration turn for this task and wakes the tasks waiting on it. | `turn_held` (take displaces another task), `merge_in_flight` |
-| `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases and cancels it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs` |
+| `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases and cancels it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs`, `unreviewed_merge` (planner or operator only) |
 
 **Hard gates** (never accepted as warnings):
 
-- `merge.now` and `closeout.now` need an applied review verdict at that head or
-  an explicit operator source acceptance of it (AGENTS.md, Tom 2026-10-20).
+- `merge.now` needs an applied exact-head review, qualified owner acceptance
+  or explicit operator source acceptance. The operator-source rule was
+  introduced through an agent relay on 2026-10-20.
+- `closeout.now` uses the same evidence, or an explicit source disposition
+  for a verified external merge as described below.
 - `merge.now` refuses while an earlier merge request's outcome is unknown,
   unless a GitHub read in the same call shows the PR unmerged.
 
@@ -130,12 +133,28 @@ or a caller that is not a responsible planner for the project. The task's
 coordinator (its recovery run): every command, including
 `merge.now` and `closeout.now` (Tom, 2026-11-21: "Coordinators should get merge
 and closeout"), except accepting `hold_owner`, `route_policy`, `two_writers`,
-`creation_in_flight` (Spec 068 batch A follow-up) or `budget` (Spec 068 Decisions
-1 and 2: a second budget spend and the revision cap ask).
+`creation_in_flight` (Spec 068 batch A follow-up), `budget` (Spec 068 Decisions
+1 and 2: a second budget spend and the revision cap ask) or `unreviewed_merge`.
 The hard gates bind every caller. Workers and reviewers ask instead. A `critical` task: planner
 and operator only. Authority comes from the authenticated caller matching the registered thread;
 host observation (`routable`, `unverified`) never gates it, and only decides where a message is
 delivered (Planner direction, 2026-11-22). The same rule holds for force's caller gate.
+
+### External merge source acceptance
+
+Tom, 2026-11-23:
+
+> I have a scenario where the Underlay planner is trying to close compli-me 39 but nucleus refuses, claiming I need to do it manually. This shouldn't happen, the planner should be able to do it. It's merged but the task hasn't closed out.
+>
+> I'm saying that the compli-me scenario shouldn't need me to decide on it. I didn't make that rule, it was written by an earlier agent
+
+For a dispatched task with missing review evidence, the responsible planner
+or operator board can run `closeout.now` with `accept: ["unreviewed_merge"]`
+and a reason. Nucleus verifies the bound PR, head and merge commit on GitHub
+and records an `external_merge_source` disposition with the actor, authority,
+reason and missing evidence. The disposition applies only to that external
+merge during closeout. It carries no review verdict or authority to merge code.
+`next` shows the warning and missing evidence for a recorded unreviewed merge.
 
 ## Normal flow keeps working, and stops being a lever
 

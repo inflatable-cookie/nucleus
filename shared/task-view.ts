@@ -275,6 +275,28 @@ export function operatorSourceAcceptance(
   return null;
 }
 
+/** A source disposition for this observed merge occurrence, usable only in closeout. */
+export function externalMergeSourceAcceptance(
+  task: AcceptanceTask,
+): Extract<OwnerAcceptanceRecord, { kind: "external_merge_source" }> | null {
+  const { externalMerge, mergeHead, mergedCommit, ownerAcceptances } =
+    task.resolution;
+  if (!externalMerge || !mergeHead || !mergedCommit) return null;
+  const prNumber =
+    task.reviewEntry?.prNumber ??
+    task.resumePrNumber ??
+    task.completion?.prNumber;
+  for (const record of (ownerAcceptances ?? []).toReversed()) {
+    if (
+      record.kind === "external_merge_source" &&
+      record.head === mergeHead &&
+      record.mergedCommit === mergedCommit &&
+      record.prNumber === prNumber
+    ) return record;
+  }
+  return null;
+}
+
 /** The kinds of recorded evidence that let a merge count for a task (task 993). */
 export type MergeEvidenceKind =
   | "ready_to_merge"
