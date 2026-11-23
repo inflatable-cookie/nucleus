@@ -81,7 +81,9 @@ export function completionRefusal(
       if (expectedPr && input.prNumber !== expectedPr)
         return "Revision must use the task PR";
     } else if (input.head !== run.head)
-      return "Result must name the requested exact head";
+      return input.head === undefined
+        ? `Result must name the requested exact head: the report has no "head" field; add "head": "${run.head}" (the full 40-character commit SHA)`
+        : `Result must name the requested exact head: "head" is ${input.head}, and this run is for ${run.head}`;
     if (role === "reviewer" && !input.reviewCommentId && !input.reviewText)
       return "Review requires full reviewText or a durable PR comment ID";
   }

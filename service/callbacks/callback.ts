@@ -28,6 +28,13 @@ import { AGENT_MESSAGE_MAX_CHARS } from "../../core/questions/agent-messages";
 import { ACP_TURN_WAIT_MAX_MS } from "../../core/acp/sessions";
 import type { Engine } from "../../core/engine";
 import { z } from "zod";
+import {
+  REPORT_NO_INPUT,
+  REPORT_SHAPE_EXAMPLE,
+  REPORT_STDIN_WAIT_MS,
+  REPORT_USAGE,
+} from "../../shared/service/report-usage.mjs";
+import { formatReportRefusal } from "../../shared/report-refusal";
 
 const callerTicketSchema = z.union([
   z.object({ taskId: z.string().min(1), runId: z.string().min(1) }).strict(),
@@ -224,6 +231,9 @@ import {fileURLToPath} from 'node:url';
 const invokedAsScript=(()=>{try{return Boolean(process.argv[1])&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(${"import.meta"}.url));}catch{return false;}})();
 if(invokedAsScript)await reportFromStdin();
 async function reportFromStdin(){
+const REPORT_USAGE=${JSON.stringify(REPORT_USAGE)},REPORT_NO_INPUT=${JSON.stringify(REPORT_NO_INPUT)},REPORT_SHAPE_EXAMPLE=${JSON.stringify(REPORT_SHAPE_EXAMPLE)};
+// Help reads no ticket and no stdin: an agent shell's stdin is a pipe that never closes.
+if(process.argv.slice(2).some(arg=>arg==='--help'||arg==='-h')){console.log(REPORT_USAGE);return;}
 const continuationTicket=process.env.NUCLEUS_CONTINUATION_TICKET;
 const ticketPath=process.argv[2]??continuationTicket??callbackEnvValue('TICKET');
 const ticket=ticketPath?JSON.parse(readFileSync(ticketPath,'utf8')):null;
@@ -290,14 +300,43 @@ async function deliver(route,payload,options){
     throw new Error('BB report relay failed (' + detail(relayError) + ') and the callback socket failed (' + detail(socketError) + ')');
   }
 }
+// Stdin is read only when it carries a report. A terminal never does, and an agent
+// shell's stdin is a pipe that stays open: a silent pipe ends the helper after the
+// bound instead of waiting for an EOF that never comes, and a pipe that pauses
+// after a complete object sends it. Nothing here waits without a bound.
+function readReportInput(){
+  if(process.stdin.isTTY)return Promise.reject(new Error(REPORT_NO_INPUT));
+  const waitMs=Number(process.env.NUCLEUS_REPORT_STDIN_WAIT_MS)||${String(REPORT_STDIN_WAIT_MS)};
+  return new Promise((resolve,reject)=>{
+    const chunks=[];let bytes=0,timer=null,done=false;
+    const text=()=>Buffer.concat(chunks).toString('utf8');
+    const finish=(error,value)=>{
+      if(done)return;done=true;clearTimeout(timer);
+      process.stdin.off('data',onData);process.stdin.off('end',onEnd);process.stdin.off('error',onError);
+      process.stdin.destroy();
+      if(error)reject(error);else resolve(value);
+    };
+    const idle=()=>{
+      if(!bytes)return finish(new Error(REPORT_NO_INPUT));
+      try{JSON.parse(text());}catch{return finish(new Error('The report on stdin stopped before it was complete JSON and stdin stayed open; nothing was sent. End the heredoc or close the pipe after the JSON object.'));}
+      finish(null,text());
+    };
+    const arm=()=>{clearTimeout(timer);timer=setTimeout(idle,waitMs);};
+    const onData=chunk=>{bytes+=chunk.length;if(bytes>5*1024*1024)return finish(new Error('Callback too large'));chunks.push(Buffer.from(chunk));arm();};
+    const onEnd=()=>bytes?finish(null,text()):finish(new Error(REPORT_NO_INPUT));
+    const onError=error=>finish(error);
+    process.stdin.on('data',onData);process.stdin.on('end',onEnd);process.stdin.on('error',onError);
+    arm();
+  });
+}
 // The next argument reads the task-scoped plan the recovery coordinator launched with; it sends no report and takes no stdin.
 const command=process.argv[3];
 if(command==='context'){const section=process.argv[4];const result=await deliver('/run-context',{callerTaskId:taskId,callerRunId:runId,...(section?{section}:{})});console.log(typeof result==='string'?result:JSON.stringify(result,null,2));return;}
 if(command==='next'){const plan=await deliver('/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
 const route=command==='ask'?'/ask':command==='message'?'/message':command==='answer'?'/answer':'/complete';
-let text='',bytes=0;
-for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>5*1024*1024)throw new Error('Callback too large');text+=chunk;}
-const input=JSON.parse(text);
+const text=await readReportInput();
+let input;
+try{input=JSON.parse(text);}catch(error){throw new Error('The report on stdin is not valid JSON ('+error.message+'); nothing was sent. Expected one object such as '+REPORT_SHAPE_EXAMPLE);}
 // An explicit identity belongs to the report, not to the selected ticket.
 for(const [key,bound] of [['taskId',taskId],['runId',runId]])
   if(input[key]!==undefined&&input[key]!==bound)throw new Error('Report '+key+' does not match the callback ticket');
@@ -322,7 +361,14 @@ const payload={taskId,runId};
 for(const key of order)if(fields[key]!==undefined)payload[key]=fields[key];
 for(const [key,value] of Object.entries(fields))if(!order.includes(key)&&!['taskId','runId','eventId'].includes(key)&&value!==undefined)payload[key]=value;
 const eventId=input.eventId||createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-const result=await deliver('/complete',{eventId,...payload},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry the same JSON'});
+let result;
+try{result=await deliver('/complete',{eventId,...payload},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry the same JSON'});}
+catch(error){
+  // A refusal is shown as its own words, so the shape it repeats can be copied as is.
+  if(!error||!error.callbackStatus)throw error;
+  let detail=error.message;try{detail=JSON.parse(detail).error??detail;}catch{}
+  throw Object.assign(new Error(detail),{callbackStatus:error.callbackStatus});
+}
 console.log(JSON.stringify(result));
 }
 `;
@@ -443,8 +489,14 @@ export async function startCallbacks(
     },
     "/complete": {
       bodyBytes: LARGE_CALLBACK_BODY_BYTES,
-      handle: (input, token) =>
-        engine.complete(completionSchema.parse(input), token),
+      handle: (input, token) => {
+        // The CLI helper's route: a refused field names the field it should be
+        // and repeats the accepted shape, so the sender can fix it in one step.
+        const parsed = completionSchema.safeParse(input);
+        if (!parsed.success)
+          throw new Error(formatReportRefusal(parsed.error, { helper: true }));
+        return engine.complete(parsed.data, token);
+      },
     },
     "/task-control": {
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,

@@ -12,8 +12,10 @@ import { applyVersionedWrite, VersionedWriteError } from './versioned-write.mjs'
 const viaPaseo = process.argv.includes('--via-paseo');
 process.argv = process.argv.filter(arg => arg !== '--via-paseo');
 
+const usage = 'Usage: nucleus helper subscribe TASK_ID subscribe|unsubscribe';
+if (process.argv.slice(2).some(arg => arg === '--help' || arg === '-h')) { console.log(usage); process.exit(0); }
 const [taskId, action] = process.argv.slice(2);
-if (!taskId || !['subscribe', 'unsubscribe'].includes(action)) throw Error('Usage: nucleus helper subscribe TASK_ID subscribe|unsubscribe');
+if (!taskId || !['subscribe', 'unsubscribe'].includes(action)) throw Error(usage);
 const agentId = (await resolveCliCaller({ viaPaseo })).caller;
 const client = await queueClient({ viaPaseo });
 try {

@@ -12,6 +12,7 @@ process.argv = process.argv.filter(arg => arg !== '--via-paseo');
 
 const usage = 'Usage: nucleus helper detach --task TASK_ID [--task TASK_ID ...] [--reason TEXT]';
 const args = process.argv.slice(2);
+if (args.some(arg => arg === '--help' || arg === '-h')) { console.log(usage); process.exit(0); }
 const taskIds = [];
 let reason = null;
 for (let i = 0; i < args.length; i += 2) {
