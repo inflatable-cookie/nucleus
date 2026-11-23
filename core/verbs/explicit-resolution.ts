@@ -384,16 +384,12 @@ export async function resolveExplicitly(
     });
     if (input.version !== task.version) return reply("stale");
     if (task.removedAt) throw Error("Task was removed from the queue");
-    const releasing = input.action === "run.release" ? store.run(input.run) : null;
-    if (
-      input.action === "run.release" &&
-      releasing?.taskId === task.id &&
-      releasing.role === "recovery" &&
-      releasing.released &&
-      !input.archive &&
-      task.resolution.recovery?.runId !== releasing.id
-    )
-      return missing("coordinator binding for run", releasing.id);
+    const releasing =
+      input.action === "run.release" ? store.run(input.run) : null;
+    if (input.action === "run.release") {
+      const refusal = releaseRefusal(store, task, input.run, input.archive);
+      if (refusal) throw Error(refusal);
+    }
     if (
       source === "coordinator" &&
       input.accept.some((id) => PLANNER_ONLY_WARNINGS.has(id))
@@ -409,7 +405,7 @@ export async function resolveExplicitly(
 
     const plan = engine.onTaskHost(task, () =>
       input.action === "run.release"
-        ? releasePlan(engine, task, input)
+        ? releasePlan(engine, task, input, { exactTurn: true })
         : input.action === "record.clear"
           ? clearPlan(engine, task, input)
           : input.action === "run.start"
@@ -659,8 +655,7 @@ function recoveryEpisodeSettlement(
   };
 }
 
-/** The explicit release and the coordinator pass retire the same binding. */
-export function releaseCoordinatorBinding(
+function releaseCoordinatorBinding(
   store: Store,
   task: Task,
   run: Run,
@@ -763,6 +758,31 @@ function recoveryRecordPlan(
   }
 }
 
+/** The explicit command and every `next` offer admit the same release target. */
+export function releaseRefusal(
+  store: Store,
+  task: Task,
+  runId: string,
+  archive?: boolean,
+): string | null {
+  const run = store.run(runId);
+  if (run ? run.taskId !== task.id : task.runId !== runId)
+    return `No current run ${runId} belongs to this task`;
+  if (
+    task.resolution.stop?.fact?.code === "creation_in_flight" &&
+    task.resolution.stop.fact.subject === runId
+  )
+    return `Creation for run ${runId} may still be answered by the host. Wait for its outcome before releasing this run.`;
+  if (
+    run?.role === "recovery" &&
+    run.released &&
+    !archive &&
+    task.resolution.recovery?.runId !== runId
+  )
+    return `No current coordinator binding for run ${runId} belongs to this task`;
+  return null;
+}
+
 export function recoverySettlementOffers(
   store: Store,
   task: Task,
@@ -807,13 +827,7 @@ export function recoverySettlementOffers(
       });
   }
   for (const run of runs) {
-    if (run.role !== "recovery" || run.released || run.mergeRetirement)
-      continue;
-    if (
-      r.stop?.fact?.code === "creation_in_flight" &&
-      r.stop.fact.subject === run.id
-    )
-      continue;
+    if (run.role !== "recovery" || releaseRefusal(store, task, run.id)) continue;
     offers.push({
       action: "run.release",
       args: { action: "run.release", ...base, run: run.id },
@@ -876,6 +890,7 @@ export function releasePlan(
   engine: ReleasePlanContext,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.release" }>,
+  options: { exactTurn?: boolean } = {},
 ): Plan {
   const store = engine.store;
   const run = store.run(input.run);
@@ -888,6 +903,17 @@ export function releasePlan(
   const live = releasedRunLive(task, run);
   const process = store.hostRun(input.run);
   const warnings = releaseWarnings(store, task, input.run);
+  const activity = run ? run.participantActivity : task.participantActivity;
+  const stall = task.resolution.stalledTurnStop;
+  const turnId =
+    activity?.runId === input.run && activity.agentId === agentId
+      ? activity.turnId
+      : null;
+  const recordedTurn =
+    turnId ??
+    (stall?.runId === input.run && stall.agentId === agentId
+      ? stall.turnId
+      : null);
 
   return {
     warnings,
@@ -953,10 +979,12 @@ export function releasePlan(
       const attempt = async (label: string, fn: () => unknown) => {
         try {
           await fn();
+          return true;
         } catch (error) {
           issues.push(
             `${label} could not be confirmed: ${String(error).slice(0, 500)}.`,
           );
+          return false;
         }
       };
       // Spec 068 §4: a release settles its run's custody of the checkout, so the
@@ -999,10 +1027,17 @@ export function releasePlan(
             ],
           };
         const onHost = async () => {
-          if (live)
-            await attempt("Turn cancellation", () =>
-              engine.host.stopAgentTurn(agentId),
-            );
+          if (live) {
+            const stopped = await attempt("Turn cancellation", () => {
+              if (!options.exactTurn) return engine.host.stopAgentTurn(agentId);
+              if (!recordedTurn)
+                throw Error("The released run has no recorded turn ID");
+              return engine.host.stopAgentTurn(agentId, recordedTurn, {
+                exact: true,
+              });
+            });
+            if (!stopped && options.exactTurn) return;
+          }
           if (!input.archive) return;
           const latest = store.task(task.id);
           if (

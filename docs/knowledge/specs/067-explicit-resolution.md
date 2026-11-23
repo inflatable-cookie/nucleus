@@ -110,8 +110,13 @@ the incident and mechanical escalation identified by that episode, leaving
 independent incidents, recorded answers and reserved decisions in place.
 If an unreleased coordinator still owns the episode, use `run.release` on
 that run. Release keeps its completion and receipt and settles its matching
-episode even if the run already reported. The coordinator pass uses the same
-settlement when a bound action is permanently stale.
+episode even if the run already reported. If the host may still answer a
+creation for that run, `next` omits release and the command refuses until
+the outcome is known. For native cancellation, `run.release` passes the
+recorded turn ID to an adapter that can stop that exact turn atomically.
+Without that capability or a recorded turn ID, the local release and
+credential revocation still apply, and the result explains why native
+cancellation was skipped.
 
 For legacy rows, `record.clear kind=recovery id=<taskId>` clears an orphaned
 recovery flag with no episode or unreleased coordinator.

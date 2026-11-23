@@ -1,6 +1,10 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
-import { recoverySettlementOffers, releaseWarnings } from "./explicit-resolution";
+import {
+  recoverySettlementOffers,
+  releaseRefusal,
+  releaseWarnings,
+} from "./explicit-resolution";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
 import { taskDetailView } from "../../shared/task-view";
@@ -623,6 +627,11 @@ function explicitCommandsFor(
   const base = { taskId: task.id, version: task.version };
   const commands: TaskNextExplicitCommand[] = [...settlements];
   const push = (command: TaskNextExplicitCommand) => {
+    if (
+      command.action === "run.release" &&
+      releaseRefusal(facts.store, task, String(command.args.run))
+    )
+      return;
     const sig = `${command.action}:${JSON.stringify(command.args)}`;
     if (
       !commands.some((c) => `${c.action}:${JSON.stringify(c.args)}` === sig)
@@ -662,9 +671,8 @@ function explicitCommandsFor(
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
-    if (run.id === inFlight) continue;
     const role = startRoleFor(run.role);
-    if (role) {
+    if (role && run.id !== inFlight) {
       push({
         action: "run.start",
         args: {
@@ -710,17 +718,12 @@ function explicitCommandsFor(
       const stored = runs.find((r) => r.id === stalledRunId);
       const role = stored ? startRoleFor(stored.role) : "worker";
       const label = role ?? stored?.role ?? "worker";
-      if (
-        stored?.role !== "recovery" ||
-        !stored.released ||
-        task.resolution.recovery?.runId === stored.id
-      )
-        push({
-          action: "run.release",
-          args: { action: "run.release", ...base, run: stalledRunId },
-          fill: ["reason"],
-          note: `Release stalled ${label} run ${stalledRunId}.`,
-        });
+      push({
+        action: "run.release",
+        args: { action: "run.release", ...base, run: stalledRunId },
+        fill: ["reason"],
+        note: `Release stalled ${label} run ${stalledRunId}.`,
+      });
       if (role) {
         push({
           action: "run.start",

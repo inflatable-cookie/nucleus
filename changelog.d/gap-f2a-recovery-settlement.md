@@ -1,1 +1,1 @@
-- Planners can settle stale recovery episodes, coordinator bindings and orphaned records from `next`. A pending exact-head verdict can then apply through ordinary review, and completed coordinator reports stay in history.
+- Planners can settle stale recovery episodes, coordinator bindings and orphaned records with explicit commands from `next`. Run release waits for in-flight creation to settle and limits native cancellation to the recorded turn.

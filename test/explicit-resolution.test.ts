@@ -27,7 +27,9 @@ import {
   runSchema,
   submissionSchema,
   taskControlTaskSchema,
+  type Run,
 } from "../shared/contracts";
+import { taskStopRecord } from "../shared/task-stop";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
@@ -124,6 +126,9 @@ async function fixture(
     }),
     stopAgentTurn: async (id: string) => {
       calls.push(`stop ${id}`);
+    },
+    stopExactAgentTurn: async (id: string, turnId: string) => {
+      calls.push(`stop ${id} turn ${turnId}`);
     },
     archiveAgent: async (id: string) => {
       calls.push(`archive ${id}`);
@@ -458,9 +463,28 @@ test("record.clear supersedes a notice and keeps late delivery evidence from res
   );
 });
 
+function withRecordedTurn(run: Run, turnId: string): Run {
+  assert.ok(run.agentId);
+  return {
+    ...run,
+    participantActivity: {
+      runId: run.id,
+      agentId: run.agentId,
+      turnId,
+      turnStartedAt: run.createdAt,
+      permission: null,
+      process: null,
+      tool: null,
+    },
+  };
+}
+
 test("run.release cancels a current revision on the retained worker thread", async (t) => {
   const { store, current, run, command, calls } = await fixture(t);
-  const revision = run("revision-run", "revision", "worker");
+  const revision = withRecordedTurn(
+    run("revision-run", "revision", "worker"),
+    "revision-turn",
+  );
   store.putRun(revision);
   store.update(current().id, {
     phase: "working",
@@ -475,11 +499,111 @@ test("run.release cancels a current revision on the retained worker thread", asy
     accept: ["live_turn", "unreported_result"],
   });
   assert.equal(result.explicitResolution?.status, "applied");
-  assert.deepEqual(calls, ["stop worker"]);
+  assert.deepEqual(calls, ["stop worker turn revision-turn"]);
   assert.equal(result.agentId, revision.agentId);
   assert.equal(result.runId, "original-worker");
   assert.equal(result.resolution.currentRunId, null);
 });
+
+test("next and run.release refuse a creation the host may still answer", async (t) => {
+  const { store, current, run, command, audit, runtime } = await fixture(t);
+  const coordinator = run("creating-coordinator", "recovery", null);
+  store.putRun(coordinator);
+  const stop = taskStopRecord(
+    "run_stalled",
+    "Coordinator creation is in flight",
+    null,
+    new Date().toISOString(),
+    [],
+    undefined,
+    { code: "creation_in_flight", subject: coordinator.id },
+  );
+  store.update(current().id, {
+    resolution: { ...current().resolution, currentRunId: coordinator.id, stop },
+  });
+  const offer = () =>
+    runtime
+      .taskNext({ taskId: current().id })
+      .explicitCommands?.find(
+        (item) =>
+          item.action === "run.release" && item.args.run === coordinator.id,
+      );
+  assert.equal(offer(), undefined);
+  await assert.rejects(
+    command({
+      action: "run.release",
+      run: coordinator.id,
+      accept: ["creation_in_flight", "live_turn", "unreported_result"],
+    }),
+    /may still be answered by the host/,
+  );
+  assert.equal(store.run(coordinator.id)?.released, false);
+  assert.equal(audit().length, 0);
+
+  store.update(current().id, {
+    resolution: { ...current().resolution, stop: null },
+  });
+  const available = offer();
+  assert.ok(available);
+  assert.deepEqual(available.warnings, ["live_turn", "unreported_result"]);
+  const args = { action: available.action, run: available.args.run };
+  const probe = await command(args);
+  assert.deepEqual(
+    probe.explicitResolution?.warnings.map((warning) => warning.id),
+    available.warnings,
+  );
+  const applied = await command({ ...args, accept: available.warnings });
+  assert.equal(applied.explicitResolution?.status, "applied");
+});
+
+for (const mode of [
+  "newer turn",
+  "thread-wide host",
+  "missing turn ID",
+] as const) {
+  test(`run.release leaves the native turn alone with a ${mode}`, async (t) => {
+    const exactStops: Array<{ id: string; turnId: string }> = [];
+    const f = await fixture(t, {
+      stopExactAgentTurn:
+        mode === "thread-wide host"
+          ? undefined
+          : async (id: string, turnId: string) => {
+              exactStops.push({ id, turnId });
+              throw Error("The requested turn ended. The newer turn is active");
+            },
+    });
+    const run = f.run("old-coordinator", "recovery", "coordinator");
+    f.store.putRun(
+      mode === "missing turn ID" ? run : withRecordedTurn(run, "old-turn"),
+    );
+    f.store.setCredential(run.id, "old-run-secret");
+    const response = await f.command({
+      action: "run.release",
+      run: run.id,
+      archive: true,
+      accept: ["live_turn", "unreported_result"],
+    });
+    assert.equal(response.explicitResolution?.status, "applied");
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.throws(
+      () => f.store.authenticate(run.id, "old-run-secret"),
+      /unauthorized callback/i,
+    );
+    assert.deepEqual(
+      f.calls,
+      [],
+      "the thread-wide stop and archive are both untouched",
+    );
+    assert.deepEqual(
+      exactStops,
+      mode === "newer turn" ? [{ id: "coordinator", turnId: "old-turn" }] : [],
+    );
+    assert.match(
+      response.explicitResolution?.next ?? "",
+      /Turn cancellation could not be confirmed/,
+    );
+  });
+}
 
 test("run.release leaves another live revision using the same thread alone", async (t) => {
   const { store, current, run, command, calls } = await fixture(t);
@@ -509,7 +633,10 @@ test("run.release leaves another live revision using the same thread alone", asy
 test("the coordinator can release or clear its task records within its authority", async (t) => {
   const { store, current, run, command, audit, calls } = await fixture(t);
   const coordinator = run("recovery-run", "recovery", "coordinator");
-  const reviewer = run("review-run", "reviewer", "reviewer");
+  const reviewer = withRecordedTurn(
+    run("review-run", "reviewer", "reviewer"),
+    "reviewer-turn",
+  );
   store.putRun(coordinator);
   store.putRun(reviewer);
   store.update(current().id, {
@@ -591,7 +718,10 @@ test("the coordinator can release or clear its task records within its authority
     executionParticipants(current(), store.runs(current().id)).has("reviewer"),
     false,
   );
-  assert.deepEqual(calls, ["stop reviewer", "archive reviewer"]);
+  assert.deepEqual(calls, [
+    "stop reviewer turn reviewer-turn",
+    "archive reviewer",
+  ]);
 });
 
 test("record.clear retires an owned-tool hold and a stale escalation without using its snapshot", async (t) => {

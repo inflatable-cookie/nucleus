@@ -21,9 +21,6 @@ import { plannerEscalations, type LadderEvent } from "../questions/ladder";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { releaseRunFromRecordedCompletion } from "./fence-settlement";
 import { resultApplied } from "../intake/applied-result";
-import { matchingInactiveParticipant } from "../intake/run-settlement";
-import { releaseCoordinatorBinding } from "../verbs/explicit-resolution";
-import { coordinatorClaim } from "./coordinator-settlement";
 import type { AgentObservation } from "../host/adapter";
 import {
   completedTurnCanRelease,
@@ -32,8 +29,6 @@ import {
 } from "./completed-run-observation";
 import { runActivityObservation } from "../telemetry/task-activity-observation";
 import {
-  coordinatorReportMatches,
-  recoveryContinuationMatches,
   reportNamesNoAction,
   retiredNarrowAction,
   retiredNarrowRefusal,
@@ -132,15 +127,7 @@ export class CoordinatorPass {
     const prove = this.resolution.participantGoneProof;
     if (!prove || !run.agentId) return "none";
     const proof = await prove(t, run);
-    if (
-      !proof ||
-      this.resolution.stopped() ||
-      this.resolution.startsNoRuns() ||
-      !recoveryContinuationMatches({
-        task: [t, this.store.task(t.id)],
-        run: [run, this.store.run(run.id)],
-      })
-    )
+    if (!proof || this.resolution.stopped() || this.resolution.startsNoRuns())
       return "none";
     if (
       this.episode.goneReleasesAtHead(t, proof.head) >= DEAD_PARTICIPANT_ATTEMPTS
@@ -183,109 +170,6 @@ export class CoordinatorPass {
     }
     return true;
   }
-
-  private staleBindingReason(task: Task, run: Run): string | null {
-    if (run.role !== "recovery" || run.mergeRetirement) return null;
-    const episode = task.resolution.recovery;
-    const settled =
-      "The completed coordinator run no longer owns an applicable action.";
-    if (episode?.runId !== run.id)
-      return !run.released && run.completion ? settled : null;
-    const action = episode.action;
-    if (run.generation !== task.coordinatorGeneration)
-      return !run.released ||
-        episode.status !== "resolved" ||
-        action?.status === "pending"
-        ? "coordinator generation changed after the accepted report"
-        : null;
-    if (
-      !run.completion ||
-      action?.runId !== run.id ||
-      action.eventId !== run.completion.eventId
-    )
-      return null;
-    if (!run.released && action.status === "refused") return settled;
-    if (
-      action.status === "pending" &&
-      action.coordinatorAction &&
-      !["none", "cannot"].includes(action.coordinatorAction.verb) &&
-      episode.progress &&
-      !coordinatorReportMatches(task)
-    )
-      return "The task moved on since the coordinator was asked (its results, head, phase, run or routes changed)";
-    return null;
-  }
-
-  /** Staleness retires the action only after the coordinator's turn settles. */
-  private async settleStaleBindings(
-    task: Task,
-    stale: Run[],
-  ): Promise<Task | null> {
-    let current = task;
-    for (const candidate of stale) {
-      const run = this.store.run(candidate.id);
-      if (!run) continue;
-      const reason = this.staleBindingReason(current, run);
-      if (!reason) continue;
-      const episode = current.resolution.recovery;
-      const bound = episode?.runId === run.id;
-      const action = bound ? this.episode.bindingFrom(run, episode) : null;
-      const reportId = run.completion?.eventId ?? action?.eventId;
-      if (!run.released) {
-        if (!run.agentId) continue;
-        const agentId = run.agentId;
-        const observed = await this.resolution
-          .onTaskHost(run, () => this.resolution.host.observe(agentId))
-          .catch(() => null);
-        if (
-          this.resolution.startsNoRuns() ||
-          !recoveryContinuationMatches({
-            task: [current, this.store.task(current.id)],
-            run: [run, this.store.run(run.id)],
-          })
-        )
-          return null;
-        if (!observed || !matchingInactiveParticipant(run, observed)) continue;
-      }
-      const claim =
-        reportId && !resultApplied(this.store, current.id, run.id)
-          ? coordinatorClaim(this.store, current.id, run.id, reportId)
-          : "unclaimed";
-      if (claim === "unknown" || claim === "in_flight") continue;
-      if (bound && (claim === "applied" || claim === "refused")) {
-        // The recorded owner-verb outcome still owns the report, even at an older head.
-        if (
-          action?.runId === run.id &&
-          action.eventId === reportId &&
-          this.coordinatorActionHandler
-        ) {
-          await this.coordinatorActionHandler(current, run, action);
-          current = this.store.task(current.id);
-        }
-        continue;
-      }
-      current = this.store.transaction(() => {
-        const patch = releaseCoordinatorBinding(
-          this.store,
-          current,
-          run,
-          reason,
-        );
-        return this.store.update(
-          current.id,
-          patch,
-          "coordinator_binding_released",
-          run.id,
-        );
-      });
-    }
-    // A stale bound run still waiting on proof or an outcome must stay out of
-    // the ordinary report path, which has its own release and refusal rules.
-    const boundRunId = current.resolution.recovery?.runId;
-    const boundRun = boundRunId ? this.store.run(boundRunId) : null;
-    return boundRun && this.staleBindingReason(current, boundRun) ? null : current;
-  }
-
   async pass(taskId?: string) {
     if (
       !this.resolution.adapter.supportsCoordinatorRecovery ||
@@ -297,39 +181,24 @@ export class CoordinatorPass {
       .filter((task) => !taskId || task.id === taskId)) {
       let t = this.store.task(initial.id),
         incident = t.resolution.recovery;
-      const runs = this.store.runs(t.id);
-      if (
-        (t.entrypoint !== "proof" || !t.proofOnly) &&
-        !this.resolution.startsNoRuns() &&
-        !isDispositionActive(t) &&
-        !isDispositionComplete(t) &&
-        !["done", "cancelled"].includes(t.phase)
-      ) {
-        const stale = runs.filter((run) => this.staleBindingReason(t, run));
-        if (stale.length) {
-          const settled = await this.settleStaleBindings(t, stale);
-          if (!settled) continue;
-          t = settled;
-          incident = t.resolution.recovery;
-        }
-      }
       // The retired report is already history. Release its execution custody
       // only after the ordinary merge lease positively observes participants and
       // effects quiet, and only if neither task nor run changed during that read.
-      for (const retired of runs.filter(
-        (run) => run.mergeRetirement && run.completion && !run.released,
-      )) {
+      for (const retired of this.store
+        .runs(t.id)
+        .filter(
+          (run) => run.mergeRetirement && run.completion && !run.released,
+        )) {
+        const snapshot = JSON.stringify(retired);
         if (!(await this.resolution.executionLease(t, undefined, false, true)))
           continue;
         this.store.transaction(() => {
           const current = this.store.task(t.id),
             latest = this.store.run(retired.id);
           if (
+            current.version === t.version &&
             latest &&
-            recoveryContinuationMatches({
-              task: [t, current],
-              run: [retired, latest],
-            })
+            JSON.stringify(latest) === snapshot
           )
             releaseRunFromRecordedCompletion(this.store, current.id, latest);
         });
@@ -357,10 +226,7 @@ export class CoordinatorPass {
             if (
               !latestRun ||
               latestRun.released ||
-              !recoveryContinuationMatches({
-                task: [t, latest],
-                run: [run, latestRun],
-              }) ||
+              latestRun.agentId !== run.agentId ||
               latestRecovery?.runId !== run.id
             )
               continue;
@@ -508,7 +374,6 @@ export class CoordinatorPass {
               const latestRun = run ? this.store.run(run.id) : null;
               if (
                 !escalations.some((e) => e.answered) &&
-                recoveryContinuationMatches({ task: [t, current] }) &&
                 recovery?.id === incident.id &&
                 ["pending", "escalated"].includes(recovery.status) &&
                 !recovery.runId &&
@@ -639,12 +504,16 @@ export class CoordinatorPass {
             if (
               this.resolution.stopped() ||
               this.resolution.startsNoRuns() ||
-              !recoveryContinuationMatches({
-                task: [t, this.store.task(t.id)],
-                ...(candidate
-                  ? { run: [candidate, this.store.run(candidate.id)] }
-                  : {}),
-              })
+              this.store.task(t.id).version !== t.version
+            )
+              continue;
+            const latest = candidate ? this.store.run(candidate.id) : null;
+            if (
+              candidate &&
+              (!latest ||
+                latest.released ||
+                latest.completion ||
+                latest.agentId !== candidate.agentId)
             )
               continue;
           }
@@ -685,18 +554,36 @@ export class CoordinatorPass {
       }
       if (
         !run ||
-        run.taskId !== t.id ||
-        run.role !== "recovery" ||
-        (run.released &&
-          (!run.completion ||
-            resultApplied(this.store, t.id, run.id) ||
-            this.episode.bindingFrom(run, incident)?.status !== "pending"))
+        (run.released && (
+          !run.completion ||
+          resultApplied(this.store, t.id, run.id) ||
+          this.episode.bindingFrom(run, incident)?.status !== "pending"
+        ))
       )
         continue;
-      const episodeId = incident.id;
-      const episodeRunId = incident.runId;
       try {
-        if (run.generation !== t.coordinatorGeneration) continue;
+        if (run.generation !== t.coordinatorGeneration) {
+          const latest = this.store.run(run.id)!;
+          const binding = this.episode.bindingFrom(latest, incident);
+          if (binding && (binding.status === "pending" || latest.completion)) {
+            this.episode.refuseAcceptedAction(
+              t,
+              latest,
+              binding,
+              "coordinator generation changed after the accepted report",
+              needsAttention(this.store.task(t.id), this.store),
+            );
+            continue;
+          }
+          this.store.putRun({
+            ...latest,
+            released: true,
+            status: "superseded",
+          });
+          this.resolution.update(t, { recoveryActive: false });
+          this.episode.save(t, { status: "resolved" });
+          continue;
+        }
         if (!run.agentId && !run.released) {
           if (this.resolution.startsNoRuns()) continue;
           const observed = await observeRecoveryCreation(
@@ -706,15 +593,7 @@ export class CoordinatorPass {
           );
           if (this.resolution.stopped() || this.resolution.startsNoRuns())
             return;
-          const current = this.store.task(t.id);
-          if (
-            !recoveryContinuationMatches({
-              task: [observed.task, current],
-              run: [observed.run, this.store.run(observed.run.id)],
-            })
-          )
-            continue;
-          t = current;
+          t = this.store.task(t.id);
           if (dispatchBlocked(t) || reviewFenceHoldsCoordinators(t, this.store))
             continue;
           const creation = observed.lookup;
@@ -769,18 +648,12 @@ export class CoordinatorPass {
             observation = { kind: "unobservable", error };
           }
           if (this.resolution.stopped()) return;
-          const current = this.store.task(t.id);
-          if (
-            !recoveryContinuationMatches({
-              task: [t, current],
-              run: [run, this.store.run(run.id)],
-            })
-          )
+          const latest = this.store.run(run.id);
+          if (!latest || JSON.stringify(latest) !== JSON.stringify(run))
             continue;
-          t = current;
+          t = this.store.task(t.id);
           if (
-            t.resolution.recovery?.id !== episodeId ||
-            t.resolution.recovery.runId !== run.id ||
+            t.resolution.recovery?.runId !== run.id ||
             t.coordinatorGeneration !== run.generation ||
             isDispositionActive(t) ||
             isDispositionComplete(t)
@@ -860,18 +733,9 @@ export class CoordinatorPass {
           dispatchBlocked(this.store.task(t.id))
         )
           continue;
-        const observedTask = this.store.task(t.id);
-        if (
-          !recoveryContinuationMatches({
-            task: [t, observedTask],
-            run: [run, this.store.run(run.id)],
-          })
-        )
-          continue;
-        t = observedTask;
+        t = this.store.task(t.id);
         incident = t.resolution.recovery;
-        if (incident?.id !== episodeId || incident.runId !== episodeRunId)
-          continue;
+        if (!incident) continue;
         run = this.store.run(run.id)!;
         if (
           run.status === "running" &&
@@ -931,16 +795,11 @@ export class CoordinatorPass {
             (["blocked", "error"].includes(accepted.reportStatus) &&
               reported?.providerUnavailable !== true))
         ) {
-          await observeRecoveryParticipants(this.resolution, t);
-          const current = this.store.task(t.id);
-          if (
-            !recoveryContinuationMatches({
-              task: [t, current],
-              run: [finishedRun, this.store.run(finishedRun.id)],
-            })
-          )
-            continue;
-          t = current;
+          await observeRecoveryParticipants(
+            this.resolution,
+            this.store.task(t.id),
+          );
+          t = this.store.task(t.id);
         }
         // Nucleus's own observation, not the coordinator's claim: a live no-op
         // settles only while an unreleased non-recovery run still holds the lane.
@@ -987,15 +846,6 @@ export class CoordinatorPass {
         }
         if (!(await this.resolution.lease(t)) || this.resolution.startsNoRuns())
           continue;
-        const current = this.store.task(t.id);
-        if (
-          !recoveryContinuationMatches({
-            task: [t, current],
-            run: [finishedRun, this.store.run(finishedRun.id)],
-          })
-        )
-          continue;
-        t = current;
         if (
           t.responsible &&
           accepted &&
@@ -1082,9 +932,7 @@ export class CoordinatorPass {
         this.store.transaction(() => {
           const latestRun = this.store.run(finishedRun.id)!;
           t = this.store.task(t.id);
-          incident = t.resolution.recovery;
-          if (incident?.id !== episodeId || incident.runId !== episodeRunId)
-            return;
+          incident = t.resolution.recovery!;
           const action = this.episode.bindingFrom(latestRun, incident);
           if (
             !action ||
@@ -1120,17 +968,9 @@ export class CoordinatorPass {
       } catch (error) {
         if (this.resolution.startsNoRuns()) continue;
         const reason = error instanceof Error ? error.message : String(error);
-        const current = this.store.task(t.id);
-        const latest = run ? this.store.run(run.id) : null;
-        if (
-          !recoveryContinuationMatches({
-            task: [t, current],
-            ...(run ? { run: [run, latest] } : {}),
-          })
-        )
-          continue;
-        t = current;
-        incident = current.resolution.recovery;
+        t = this.store.task(t.id);
+        incident = t.resolution.recovery;
+        const latest = incident?.runId ? this.store.run(incident.runId) : null;
         const binding =
           latest && incident
             ? this.episode.bindingFrom(latest, incident)

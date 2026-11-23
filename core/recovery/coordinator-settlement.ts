@@ -1,5 +1,5 @@
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
-import { digest, type Store } from "../store/store";
+import { digest } from "../store/store";
 import type { Task, Run, RecoveryActionBinding } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import type { Resolution } from "../resolution";
@@ -11,7 +11,6 @@ import {
 import {
   coordinatorActionPlan,
   coordinatorReportMatches,
-  recoveryContinuationMatches,
   recoverySettlementPatch,
 } from "./coordinator-report";
 
@@ -24,27 +23,6 @@ import {
  */
 /** Reports currently being applied, so a second pass never applies the same claim twice. */
 export const recoveryApplicationsInFlight = new Set<string>();
-
-/** A persisted claim without an outcome must survive a service restart. */
-export function coordinatorClaim(
-  store: Store,
-  taskId: string,
-  runId: string,
-  eventId: string,
-): "unclaimed" | "in_flight" | "unknown" | "applied" | "refused" {
-  const key = JSON.stringify([taskId, runId, eventId]);
-  if (recoveryApplicationsInFlight.has(key)) return "in_flight";
-  if (
-    !store.eventsAll(taskId).some(
-      (event) => event.kind === "run_result_applying" && event.detail === key,
-    )
-  )
-    return "unclaimed";
-  const outcome = store.db
-    .prepare("SELECT outcome FROM verb_outcomes WHERE taskId=? AND key=?")
-    .get(taskId, `coordinator:${eventId}`)?.outcome;
-  return outcome === "applied" || outcome === "refused" ? outcome : "unknown";
-}
 
 export type RecoverySettlementContext = Pick<
   Engine,
@@ -134,7 +112,6 @@ export class RecoverySettlement {
       this.resolution.recovery.settleObservedNoAction(task, run, binding);
       return;
     }
-    let admitted: Task | null = task;
     const finish = (status: "applied" | "refused", reason?: string) => {
       try {
         this.store.recordVerbOutcome(
@@ -155,11 +132,7 @@ export class RecoverySettlement {
         const current = this.store.task(task.id);
         if (resultApplied(this.store, task.id, run.id)) return;
         const latestRun = this.store.run(run.id);
-        if (
-          latestRun &&
-          !latestRun.released &&
-          recoveryContinuationMatches({ run: [run, latestRun] })
-        )
+        if (latestRun && !latestRun.released)
           this.store.putRun({
             ...latestRun,
             completion: latestRun.completion ?? run.completion,
@@ -173,7 +146,6 @@ export class RecoverySettlement {
           action,
           runId: run.id,
           task: current,
-          admitted,
           at: new Date().toISOString(),
         });
         if (settlement.kind === "event_only")
@@ -186,15 +158,7 @@ export class RecoverySettlement {
             settlement.event,
             binding.eventId,
           );
-        if (
-          action.verb === "cannot" &&
-          status === "refused" &&
-          admitted &&
-          recoveryContinuationMatches({ task: [admitted, current] }) &&
-          settlement.kind === "patch" &&
-          (!current.resolution.stop ||
-            settlement.changes.stop !== current.resolution.stop)
-        )
+        if (action.verb === "cannot" && status === "refused")
           this.resolution.recovery.escalate(
             this.store.task(task.id),
             `The coordinator cannot settle this stop: ${action.reason} — ${binding.summary}`.slice(
@@ -207,30 +171,26 @@ export class RecoverySettlement {
     };
 
     const claimKey = JSON.stringify([task.id, run.id, binding.eventId]);
-    const claim = coordinatorClaim(this.store, task.id, run.id, binding.eventId);
-    if (claim === "in_flight") return;
-    if (claim === "applied" || claim === "refused") {
-      // After a restart, the journal proves the verb's outcome. The original
-      // progress digest and stop key still determine which task state it owns.
-      if (!coordinatorReportMatches(task)) admitted = null;
-      finish(claim);
-      return;
-    }
-    if (claim === "unknown") {
-      const latest = this.store.task(task.id);
-      const episode = latest.resolution.recovery;
-      const reason = `Coordinator result ${run.id} has an uncertain owner-verb outcome; inspect next and settle the existing action before retrying`;
-      if (
-        latest.reason !== reason &&
-        episode?.runId === run.id &&
-        coordinatorReportMatches(latest) &&
-        recoveryContinuationMatches({ task: [task, latest] }) &&
-        (!latest.resolution.stop ||
-          recoveryContinuationMatches({
-            stop: [episode.key, latest.resolution.stop],
-          }))
-      )
-        this.resolution.attention(latest, reason);
+    if (recoveryApplicationsInFlight.has(claimKey)) return;
+    const previousClaim = this.store
+      .eventsAll(task.id)
+      .some(
+        (event) =>
+          event.kind === "run_result_applying" && event.detail === claimKey,
+      );
+    if (previousClaim) {
+      const outcome = this.store.db
+        .prepare("SELECT outcome FROM verb_outcomes WHERE taskId=? AND key=?")
+        .get(task.id, `coordinator:${binding.eventId}`) as
+        | { outcome?: string }
+        | undefined;
+      if (outcome?.outcome === "applied" || outcome?.outcome === "refused") {
+        finish(outcome.outcome);
+      } else {
+        const latest = this.store.task(task.id);
+        const reason = `Coordinator result ${run.id} has an uncertain owner-verb outcome; inspect next and settle the existing action before retrying`;
+        if (latest.reason !== reason) this.resolution.attention(latest, reason);
+      }
       return;
     }
     const claimed = this.store.transaction(() => {
@@ -255,7 +215,6 @@ export class RecoverySettlement {
     recoveryApplicationsInFlight.add(claimKey);
     try {
       const current = this.store.task(task.id);
-      admitted = current;
       const recovery = current.resolution.recovery;
       const stop = current.resolution.stop;
       // Round 4 (2026-10-19 audit): the report binds to its episode and
@@ -332,7 +291,7 @@ export class RecoverySettlement {
             observed.id === worker.agentId &&
             observed.workspaceId === worker.workspaceId &&
             !["closed", "error"].includes(observed.status) &&
-            recoveryContinuationMatches({ task: [current, latest] }) &&
+            latest.version === current.version &&
             (!worker.revision ||
               (latestRun &&
                 !latestRun.released &&
@@ -350,21 +309,13 @@ export class RecoverySettlement {
         // is and the missing decision reaches the planner ladder (nucleus#1388,
         // planner ruling db7b10d9). Nothing is refused and no attention notice is
         // raised; the report's own reason stays visible in both records.
-        if (
-          recoveryContinuationMatches({
-            task: [current, this.store.task(task.id)],
-            run: [run, this.store.run(run.id)],
-          })
-        )
-          this.settleCannot(task, run, binding, action.reason);
-        else finish("applied", action.reason);
+        this.settleCannot(task, run, binding, action.reason);
         return;
       }
 
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const current = this.store.task(task.id);
-          admitted = current;
           if (
             current.resolution.recovery?.runId !== run.id ||
             run.generation !== current.coordinatorGeneration ||
@@ -400,19 +351,16 @@ export class RecoverySettlement {
           });
           if (!plan.ok) throw new Error(plan.refusal);
           const args = plan.args;
-          admitted = await this.engine.coordinatorActionRunId.run(
-            run.id,
-            () => {
-              const apply = () =>
-                verb!.apply((input) => this.engine.performTaskControl(input), {
-                  ...args,
-                  ...(args.force ? { caller: run.agentId } : {}),
-                });
-              return args.force
-                ? this.engine.selfForceRunId.run(run.id, apply)
-                : apply();
-            },
-          );
+          await this.engine.coordinatorActionRunId.run(run.id, () => {
+            const apply = () =>
+              verb!.apply((input) => this.engine.performTaskControl(input), {
+                ...args,
+                ...(args.force ? { caller: run.agentId } : {}),
+              });
+            return args.force
+              ? this.engine.selfForceRunId.run(run.id, apply)
+              : apply();
+          });
           finish("applied");
           return;
         } catch (error) {

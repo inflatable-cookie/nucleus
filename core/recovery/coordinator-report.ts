@@ -1,11 +1,9 @@
-import { isDeepStrictEqual } from "node:util";
 import { digest } from "../store/store";
 import type {
   CapabilityLevel,
   CoordinatorAction,
   ProfileCapability,
   RecoveryActionBinding,
-  Run,
   Task,
   TaskNextVerb,
   UsageLevel,
@@ -14,45 +12,6 @@ import { requestOnly } from "../../shared/pool";
 import { requestedTier } from "../../shared/demand";
 import { retiredNarrowActionInstead } from "../../shared/schema/task-common";
 import type { ResolutionChanges } from "./task-stops";
-import {
-  observationAdvanceSince,
-  runsUnchangedSince,
-} from "./observation-advance";
-
-/** Check the records a recovery continuation intends to write after an await. */
-export function recoveryContinuationMatches(facts: {
-  task?: readonly [before: Task, current: Task];
-  run?: readonly [before: Run, current: Run | null];
-  stop?: readonly [key: string, current: Task["resolution"]["stop"]];
-}): boolean {
-  if (facts.task) {
-    const [before, current] = facts.task;
-    if (
-      before.id !== current.id ||
-      !observationAdvanceSince(current, before.version) ||
-      !isDeepStrictEqual(
-        before.resolution.recovery,
-        current.resolution.recovery,
-      ) ||
-      !isDeepStrictEqual(before.resolution.stop, current.resolution.stop)
-    )
-      return false;
-  }
-  if (facts.run) {
-    const [before, current] = facts.run;
-    if (!current || !runsUnchangedSince([before], [current])) return false;
-  }
-  if (facts.stop) {
-    const [key, current] = facts.stop;
-    if (
-      !current ||
-      current.holderAgentId ||
-      key !== digest(`stop:${current.reason}:${current.since}`)
-    )
-      return false;
-  }
-  return true;
-}
 
 /** A worker return cannot be valid after review; a held lifecycle check is the only cheap recovery left. */
 /**
@@ -314,8 +273,6 @@ export function recoverySettlementPatch(facts: {
   runId: string;
   /** The task as the settlement transaction reads it. */
   task: Task;
-  /** The task whose overlay the action may settle, or null for older work. */
-  admitted: Task | null;
   /** The clock read the settlement records when it resolves an incident. */
   at: string;
 }): RecoverySettlementPatch {
@@ -327,29 +284,24 @@ export function recoverySettlementPatch(facts: {
   if (
     !recovery ||
     recovery.runId !== facts.runId ||
-    recovery.action?.eventId !== facts.binding.eventId ||
-    recovery.action.status !== "pending"
+    recovery.action?.eventId !== facts.binding.eventId
   )
     return { kind: "event_only", event };
   const stop = facts.task.resolution.stop;
-  const ownsOverlay =
-    facts.admitted !== null &&
-    recoveryContinuationMatches({ task: [facts.admitted, facts.task] });
-  const matches =
-    ownsOverlay &&
-    stop &&
-    recoveryContinuationMatches({ stop: [recovery.key, stop] });
+  const matches = Boolean(
+    stop && recovery.key === digest(`stop:${stop.reason}:${stop.since}`),
+  );
   const detail =
     facts.reason ?? (facts.action.verb === "cannot" ? facts.action.reason : "");
-  let updatedStop = stop;
-  if (matches) {
-    if (facts.status === "applied") updatedStop = null;
-    else if (detail)
-      updatedStop = {
-        ...stop,
-        detail: `${detail} — ${facts.binding.summary}`.slice(0, 4000),
-      };
-  }
+  const updatedStop =
+    facts.status === "applied"
+      ? null
+      : matches && stop && detail
+        ? {
+            ...stop,
+            detail: `${detail} — ${facts.binding.summary}`.slice(0, 4000),
+          }
+        : stop;
   const nextAction =
     facts.status === "applied"
       ? { ...facts.binding, status: "applied" as const }
@@ -363,8 +315,6 @@ export function recoverySettlementPatch(facts: {
         };
   const incident = facts.task.resolution.incident;
   const settledIncident =
-    ownsOverlay &&
-    (!stop || matches) &&
     facts.status === "applied" &&
     facts.binding.reportStatus === "recovered" &&
     recovery.incidentId &&
@@ -392,9 +342,7 @@ export function recoverySettlementPatch(facts: {
       stop: updatedStop,
     },
     patch:
-      updatedStop &&
-      updatedStop !== stop &&
-      updatedStop.detail !== facts.task.reason
+      updatedStop && updatedStop.detail !== facts.task.reason
         ? { reason: updatedStop.detail }
         : {},
   };
