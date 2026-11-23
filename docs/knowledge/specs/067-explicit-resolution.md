@@ -108,11 +108,16 @@ response clears preserve the original GitHub write for reconciliation.
 After a publication clear, reconciliation only looks for the original review.
 Clearing an uncertain merge response stops automatic reissue. The clear
 belongs to the initial guarded request and survives changes to the
-observation clock and retry status.
+observation clock and retry status. A reserved retry checks the clear before
+sending and before recording its response. GitHub observation continues.
 Before `run.release` removes an unfinished initial worker, Nucleus
-confirms that the worker's turn has ended. If the host cannot confirm it,
-the binding and callback credential remain. An unbound creation that may
-still deliver a thread keeps its run binding and has no `run.release` offer.
+confirms that the worker's turn has ended and that the thread has no other
+live assignment. If the host cannot confirm the end of the turn, the binding
+and callback credential remain. An unbound creation that may still deliver a
+thread keeps its run binding and has no release or replacement offer. The
+creation journal enforces this from reservation, before a host wait appears.
+An owner stop awaiting cancellation confirmation prevents clearing its
+dispatch hold. The owner stop and the hold are separate records.
 The preview uses local facts and supplies no result for a process, host or
 forge operation.
 

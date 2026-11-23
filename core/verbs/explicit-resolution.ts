@@ -26,6 +26,10 @@ import {
   reattachStoredTaskCheckout,
 } from "../git/checkout-reattach";
 import {
+  MERGE_RESPONSE_EFFECT,
+  mergeResponseClearOccurrence,
+} from "../merge/merge-phase";
+import {
   responsiblePickable,
   type ResponsibleCandidate,
 } from "../questions/responsible-thread-cache";
@@ -56,6 +60,7 @@ import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
 import { threadServesAnotherTask } from "../workspaces/thread-ownership";
 import { collectOwnerVerbFacts, type OwnerVerbFacts } from "./owner-facts";
 import { ownerPendingEffects, splitOwnerEffectKey } from "./owner-effects";
+import { ownerStopPendingRefusal } from "./owner-stop";
 
 import {
   messageSendPlan,
@@ -386,18 +391,18 @@ export async function resolveExplicitly(
   if (
     input.action === "run.release" &&
     input.version === before.version &&
-    !before.removedAt &&
-    input.run === before.runId &&
-    before.agentId &&
-    !before.completion &&
-    !store.run(input.run)
+    !before.removedAt
   ) {
-    const agentId = before.agentId;
     requireWarningAuthority(source, input.accept);
+    const preview = previewRunRelease(store, before, input.run);
+    const agentId = preview?.agentId;
     if (
-      releaseWarnings(store, before, input.run).every((warning) =>
-        input.accept.includes(warning.id),
-      )
+      preview &&
+      !preview.refusal &&
+      preview.initial &&
+      agentId &&
+      !preview.completion &&
+      preview.warnings.every((warning) => input.accept.includes(warning.id))
     )
       confirmedWorkerStop = await onHost(() =>
         confirmInitialWorkerStopped(
@@ -436,8 +441,6 @@ export async function resolveExplicitly(
     if (input.version !== task.version) return reply("stale");
     if (task.removedAt) throw Error("Task was removed from the queue");
     requireWarningAuthority(source, input.accept);
-    if (input.action === "run.release" && runCreationInFlight(store, task, input.run))
-      throw Error(creationInFlightRefusal(input.run));
 
     const plan = engine.onTaskHost(task, () =>
       input.action === "run.release"
@@ -564,8 +567,6 @@ async function confirmInitialWorkerStopped(
     return { ...state, id: agentId };
   };
   try {
-    if (threadServesAnotherTask(engine.store, task, agentId))
-      throw Error("Another live assignment still owns this thread");
     const before = await observe();
     if (matchingInactiveParticipant(task, before)) return true;
     if (!before.active && !before.activeTurnId && !before.permissions)
@@ -573,8 +574,15 @@ async function confirmInitialWorkerStopped(
         `The worker's ${before.status} state does not confirm that its turn ended`,
       );
     if (!acceptLiveTurn) return false;
-    if (engine.store.task(task.id).version !== task.version)
+    const current = engine.store.task(task.id);
+    if (current.version !== task.version || !current.runId)
       throw Error("The task changed before cancellation");
+    const refusal = previewRunRelease(
+      engine.store,
+      current,
+      current.runId,
+    )?.refusal;
+    if (refusal) throw Error(refusal);
     await engine.host.stopAgentTurn(
       agentId,
       ...(before.activeTurnId ? [before.activeTurnId] : []),
@@ -622,9 +630,6 @@ export function runCreationInFlight(
       : task.runId !== runId || task.agentId || task.completion
   )
     return false;
-  const fact = task.resolution.stop?.fact;
-  if (fact?.code === "creation_in_flight" && fact.subject === runId)
-    return true;
   const attempt = readCreationAttempt(
     store,
     run ?? {
@@ -635,12 +640,15 @@ export function runCreationInFlight(
       role: "worker",
     },
   );
-  return (
-    attempt !== null &&
-    (attempt.settlement?.outcome === "returned" ||
-      (attempt.settlement === null &&
-        attempt.producerId === creationProducerId))
-  );
+  if (
+    attempt?.settlement?.outcome === "returned" ||
+    (attempt?.settlement === null && attempt.producerId === creationProducerId)
+  )
+    return true;
+  // The host may still deliver after our call timed out and closed its journal
+  // entry. Its explicit in-flight observation still fences that exact run.
+  const fact = task.resolution.stop?.fact;
+  return fact?.code === "creation_in_flight" && fact.subject === runId;
 }
 
 const creationInFlightRefusal = (runId: string): string =>
@@ -652,6 +660,13 @@ export function previewRunRelease(store: Store, task: Task, runId: string) {
   const initial = !run && task.runId === runId;
   if (run ? run.taskId !== task.id : !initial) return null;
   const completion = run ? run.completion : task.completion;
+  const agentId = run ? run.agentId : task.agentId;
+  const refusal = runCreationInFlight(store, task, runId)
+    ? creationInFlightRefusal(runId)
+    : initial && agentId && !completion &&
+        threadServesAnotherTask(store, task, agentId)
+      ? "Another live assignment still owns this thread"
+      : null;
   const process = store.hostRun(runId);
   const live = releasedRunLive(task, run);
   const warnings: Warning[] = [];
@@ -667,12 +682,13 @@ export function previewRunRelease(store: Store, task: Task, runId: string) {
   return {
     run,
     initial,
-    agentId: run ? run.agentId : task.agentId,
+    agentId,
     hostId: run?.hostId ?? task.hostId,
     completion,
     live,
     process,
     warnings,
+    refusal,
   };
 }
 
@@ -685,6 +701,7 @@ export function releasePlan(
   const store = engine.store;
   const preview = previewRunRelease(store, task, input.run);
   if (!preview) return missing("run", input.run);
+  if (preview.refusal) throw Error(preview.refusal);
   const { run, initial, agentId, hostId, completion, live, process, warnings } =
     preview;
 
@@ -930,6 +947,8 @@ export function previewRecordClear(
       if (id !== "dispatch" && id !== "merge") break;
       const hold = holds[id];
       if (!hold) break;
+      if (id === "dispatch" && r.ownerStop)
+        return { refusal: ownerStopPendingRefusal(r.ownerStop) };
       delete holds[id];
       return patch(hold, syncHoldProjection(holds), ownerWarning(hold.owner));
     }
@@ -1215,7 +1234,7 @@ function clearEffect(
         },
       }),
     };
-  if (id === "merge-response.merge-response") {
+  if (id === MERGE_RESPONSE_EFFECT) {
     const [effect] = blockingRecoveryEffects(store, task, {
       kinds: ["merge-response"],
     });
@@ -1232,29 +1251,10 @@ function clearEffect(
         retry: r.mergeRetryOutcome,
       },
       { mergeAutoRetryExhausted: true },
-      mergeClearOccurrence(store, task),
+      mergeResponseClearOccurrence(store, task),
     );
   }
   return null;
-}
-
-/** The initial guarded send has one durable event, even across observation retries. */
-function mergeClearOccurrence(store: Store, task: Task): string {
-  const origin = store.db
-    .prepare(
-      `
-    SELECT id FROM events WHERE taskId=? AND CASE
-      WHEN kind='merge_intent' THEN 1
-      WHEN kind='owner_resolution' AND json_valid(detail)
-        THEN json_extract(detail,'$.command')='merge.now'
-      WHEN kind='owner_force_move' AND json_valid(detail)
-        THEN json_extract(detail,'$.to')='merge'
-      ELSE 0 END
-    ORDER BY id DESC LIMIT 1
-  `,
-    )
-    .get(task.id);
-  return JSON.stringify([task.resolution.mergeHead, origin?.id ?? null]);
 }
 
 /** Retire the local wait while the original GitHub write still owns observation. */

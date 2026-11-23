@@ -344,6 +344,8 @@ export class WorkerLauncher {
           affectedTestsCommand,
         },
       );
+      // A late create response can only bind the run that sent it.
+      if (this.store.task(task.id).runId !== runId) return;
       recordPromptSize(this.store, task.id, runId, prepared.temporaryDirectory);
       this.store.update(
         task.id,

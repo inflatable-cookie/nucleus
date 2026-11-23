@@ -4,6 +4,27 @@ import { now, type Store } from "../store/store";
 
 export type MergePhaseContext = Pick<Resolution, "store" | "update">;
 
+export const MERGE_RESPONSE_EFFECT = "merge-response.merge-response";
+
+/** The initial guarded send has one durable event, even across observation retries. */
+export function mergeResponseClearOccurrence(store: Store, task: Task): string {
+  const origin = store.db
+    .prepare(
+      `
+    SELECT id FROM events WHERE taskId=? AND CASE
+      WHEN kind='merge_intent' THEN 1
+      WHEN kind='owner_resolution' AND json_valid(detail)
+        THEN json_extract(detail,'$.command')='merge.now'
+      WHEN kind='owner_force_move' AND json_valid(detail)
+        THEN json_extract(detail,'$.to')='merge'
+      ELSE 0 END
+    ORDER BY id DESC LIMIT 1
+  `,
+    )
+    .get(task.id);
+  return JSON.stringify([task.resolution.mergeHead, origin?.id ?? null]);
+}
+
 /** Strictly increasing timestamp token used to bind each guarded merge PUT. */
 export function nextMergeRequestAt(
   previous: string | null | undefined,
@@ -47,7 +68,7 @@ export type GuardedMergeSendParams = {
  * uncertain-merge re-issue, and explicit `merge.now`. Compare-and-sets the
  * durable request identity in the same transaction that reserves the send, and
  * binds both the pre-send permission check and response settlement to that
- * exact request occurrence.
+ * exact request occurrence. A cleared response leaves observation to GitHub.
  */
 export async function sendGuardedMerge(
   params: GuardedMergeSendParams,
@@ -57,18 +78,27 @@ export async function sendGuardedMerge(
     : params.store.transaction(params.reserve);
   if (!reservation) return "superseded";
   const { task, matchesCurrent } = reservation;
+  const occurrence = mergeResponseClearOccurrence(params.store, task);
+  const cleared = (candidate: Task) =>
+    candidate.resolution.ownerSettlements.some(
+      (entry) =>
+        entry.effect === MERGE_RESPONSE_EFFECT && entry.occurrence === occurrence,
+    );
+  if (cleared(task)) return "superseded";
   try {
     await params.send(task, () => {
       const latest = params.store.task(params.taskId);
-      if (!matchesCurrent(latest)) return false;
+      if (cleared(latest) || !matchesCurrent(latest)) return false;
       return params.extraAllowed ? params.extraAllowed(latest) : true;
     });
   } catch (error) {
     const latest = params.store.task(params.taskId);
+    if (cleared(latest)) return "superseded";
     params.onError(latest, error, matchesCurrent(latest));
     return "error";
   }
   const latest = params.store.task(params.taskId);
+  if (cleared(latest)) return "superseded";
   if (matchesCurrent(latest)) {
     params.onAccepted(latest);
   } else {

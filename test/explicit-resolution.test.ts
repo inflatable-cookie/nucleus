@@ -1274,7 +1274,7 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
   assert.doesNotThrow(() => store.authenticate(revId, deliveredToken));
 });
 
-test("review fixes: late createRun acknowledgement does not overwrite replaced reviewer binding", async (t) => {
+test("an open reviewer creation journal prevents release and replacement before a stop exists", async (t) => {
   const { root, adapter, store, current, command, runtime } = await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
   store.update(current().id, {
@@ -1316,24 +1316,52 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
     role: "reviewer",
     agent: "fresh",
   });
-  await firstEntered;
-  const firstRun = store.runs(current().id)[0]!;
-  assert.equal(firstRun.status, "intent");
-
-  const second = await command({
+  const firstRun = await Promise.race([
+    firstEntered.then(() => store.runs(current().id)[0]!),
+    firstPromise.then(() => assert.fail(current().reason)),
+  ]);
+  const replace = {
     action: "run.start",
     role: "reviewer",
     agent: "fresh",
     replacing: firstRun.id,
-    accept: ["duplicate_thread"],
-  });
+    accept: ["duplicate_thread", "live_turn", "unreported_result"],
+  };
+  try {
+    assert.equal(firstRun.status, "intent");
+    assert.equal(firstRun.agentId, null);
+    assert.equal(current().resolution.stop, null);
+    const offers = runtime.taskNext({ taskId: current().id }).explicitCommands;
+    assert.ok(
+      !offers?.some(
+        (item) =>
+          item.args.run === firstRun.id || item.args.replacing === firstRun.id,
+      ),
+    );
+    await assert.rejects(
+      command({
+        action: "run.release",
+        run: firstRun.id,
+        accept: replace.accept,
+      }),
+      /may still bind a thread/,
+    );
+    await assert.rejects(command(replace), /may still bind a thread/);
+    assert.equal(createCalls, 1);
+    assert.equal(store.run(firstRun.id)?.released, false);
+  } finally {
+    resolveFirst({ id: "late-first-agent", workspaceId: "workspace" });
+    await firstPromise;
+  }
+  assert.equal(current().resolution.reviewerAgentId, "late-first-agent");
+
+  const second = await command(replace);
+  assert.equal(second.explicitResolution?.status, "applied");
   const secondRunId = second.explicitResolution!.runId!;
   const replacementAgent = current().resolution.reviewerAgentId;
   assert.ok(replacementAgent?.startsWith("replacement-"));
 
-  resolveFirst({ id: "late-first-agent", workspaceId: "workspace" });
-  await firstPromise;
-
+  assert.equal(createCalls, 2);
   assert.equal(current().resolution.currentRunId, secondRunId);
   assert.equal(current().resolution.reviewerAgentId, replacementAgent);
   assert.equal(store.run(firstRun.id)?.released, true);
@@ -3469,6 +3497,26 @@ test("next previews exact planner record settlements and reports what's left", a
       f.store.putNotice(notice(id, "independent-notice"));
       const before = f.current();
       const read = () => f.runtime.taskNext({ taskId: id });
+      const dispatchHold = () =>
+        read().explicitCommands?.find(
+          (offer) =>
+            offer.action === "record.clear" &&
+            offer.args.kind === "hold" &&
+            offer.args.id === "dispatch",
+        );
+      if (target.kind === "owner_stop") {
+        assert.equal(dispatchHold(), undefined);
+        await assert.rejects(
+          f.command({
+            action: "record.clear",
+            kind: "hold",
+            id: "dispatch",
+            accept: ["hold_owner"],
+            caller: planner,
+          }),
+          /owner stop still awaits cancellation confirmation/,
+        );
+      }
       const find = () =>
         read().explicitCommands?.find(
           (offer) =>
@@ -3506,6 +3554,7 @@ test("next previews exact planner record settlements and reports what's left", a
       assert.equal(result.phase, before.phase);
       assert.ok(settled());
       assert.equal(find(), undefined);
+      if (target.kind === "owner_stop") assert.ok(dispatchHold());
       assert.match(
         result.explicitResolution.next,
         /attention-notice\.independent-notice/,
@@ -3685,19 +3734,23 @@ test("next names the operator's genuine decision and the planner's dependency co
 test("an unconfirmed initial worker cancellation keeps the real scheduler behind the old binding", async (t) => {
   let workerActive = true;
   let stopError = true;
+  let observeCalls = 0;
   let cancelCalls = 0;
   let workerCreates = 0;
   const f = await fixture(t, {
-    observe: async (id: string) => ({
-      id,
-      workspaceId: "workspace",
-      status: workerActive && id === "initial-worker" ? "running" : "idle",
-      active: workerActive && id === "initial-worker",
-      activeTurnId:
-        workerActive && id === "initial-worker" ? "worker-turn" : null,
-      permissions: false,
-      error: "",
-    }),
+    observe: async (id: string) => {
+      observeCalls++;
+      return {
+        id,
+        workspaceId: "workspace",
+        status: workerActive && id === "initial-worker" ? "running" : "idle",
+        active: workerActive && id === "initial-worker",
+        activeTurnId:
+          workerActive && id === "initial-worker" ? "worker-turn" : null,
+        permissions: false,
+        error: "",
+      };
+    },
     stopAgentTurn: async (id: string, turnId?: string) => {
       assert.equal(id, "initial-worker");
       assert.equal(turnId, "worker-turn");
@@ -3732,9 +3785,37 @@ test("an unconfirmed initial worker cancellation keeps the real scheduler behind
   store.setMeta("paused", false);
 
   const read = () => runtime.taskNext({ taskId: task.id });
-  const offer = read().explicitCommands?.find(
-    (item) => item.action === "run.release" && item.args.run === task.runId,
+  const findRelease = () =>
+    read().explicitCommands?.find(
+      (item) => item.action === "run.release" && item.args.run === task.runId,
+    );
+  const sibling = store.insert(
+    submissionSchema.parse({
+      submissionId: "other-assignment",
+      title: "Other assignment",
+      repoPath: repo,
+      planningCommit: head,
+      handoffPath: "handoff.md",
+      originAgentId: "owner",
+    }),
+    host,
+    "Handoff",
+    head,
   );
+  store.update(sibling.id, { phase: "working", agentId: task.agentId });
+  assert.equal(findRelease(), undefined);
+  await assert.rejects(
+    command({
+      action: "run.release",
+      run: task.runId,
+      accept: ["live_turn", "unreported_result"],
+    }),
+    /Another live assignment still owns this thread/,
+  );
+  assert.equal(observeCalls, 0);
+  store.update(sibling.id, { phase: "cancelled" });
+
+  const offer = findRelease();
   assert.ok(offer);
   assert.deepEqual(offer.warnings, ["live_turn", "unreported_result"]);
   const probe = await command({ ...offer.args });
@@ -3982,7 +4063,10 @@ test("clearing a publication wait preserves the receipt-backed verdict and recon
   );
 });
 
-test("next and run.release respect the initial worker's pending native create", async (t) => {
+async function pendingNativeWorkerCreate(
+  t: TestContext,
+  replaceBeforeReply: boolean,
+) {
   let entered = () => {};
   const creating = new Promise<void>((resolve) => {
     entered = resolve;
@@ -4039,6 +4123,16 @@ test("next and run.release respect the initial worker's pending native create", 
       accept: ["live_turn", "unreported_result", "creation_in_flight"],
     };
     await assert.rejects(command(release), /may still bind a thread/);
+    await assert.rejects(
+      command({
+        action: "run.start",
+        role: "worker",
+        agent: "fresh",
+        replacing: runId,
+        accept: release.accept,
+      }),
+      /may still bind a thread/,
+    );
     assert.equal(store.credentialRunForToken(token), runId);
     assert.equal(current().runId, runId);
 
@@ -4061,14 +4155,44 @@ test("next and run.release respect the initial worker's pending native create", 
     );
     await assert.rejects(command(release), /may still bind a thread/);
     assert.equal(f.audit().length, 0);
+    if (replaceBeforeReply) {
+      store.setCredential("replacement-run", "replacement-ticket");
+      store.update(task.id, {
+        runId: "replacement-run",
+        agentId: "replacement-worker",
+        agentIntent: false,
+        phase: "working",
+        reason: "Replacement worker is already bound",
+      });
+    }
   } finally {
     respond();
     await wake;
     await runtime.engine.quiesce();
   }
   assert.equal(creates, 1);
+  if (replaceBeforeReply) {
+    assert.equal(current().runId, "replacement-run");
+    assert.equal(current().agentId, "replacement-worker");
+    assert.equal(current().reason, "Replacement worker is already bound");
+    assert.doesNotThrow(() =>
+      store.authenticate("replacement-run", "replacement-ticket"),
+    );
+    assert.ok(
+      !store.eventsAll(task.id).some((event) => event.kind === "agent_created"),
+    );
+    return;
+  }
   assert.equal(current().runId, runId);
   assert.equal(current().agentId, "original-worker");
+}
+
+test("release and replacement wait for a pending native worker create", async (t) => {
+  await pendingNativeWorkerCreate(t, false);
+});
+
+test("a late native worker create cannot bind under a replacement run", async (t) => {
+  await pendingNativeWorkerCreate(t, true);
 });
 
 test("an outage or retry keeps the same merge clear identity, and a new same-head send gets its own", async (t) => {
@@ -4147,3 +4271,98 @@ test("an outage or retry keeps the same merge clear identity, and a new same-hea
   assert.equal((await command(input)).explicitResolution?.status, "applied");
   await runtime.engine.quiesce();
 });
+
+for (const clearBefore of ["send", "response"] as const) {
+  test(`clearing a merge response fences the reserved retry's ${clearBefore}`, async (t) => {
+    let retryReached = () => {};
+    const retryInFlight = new Promise<void>((resolve) => {
+      retryReached = resolve;
+    });
+    let resumeRetry = () => {};
+    const continueRetry = new Promise<void>((resolve) => {
+      resumeRetry = resolve;
+    });
+    let sends = 0;
+    const f = await fixture(t, {
+      merged: async () => ({
+        merged: false,
+        head,
+        base: "main",
+        commit: null,
+        proof: { proven: true, detail: "Observed open and outside merge queue" },
+      }),
+      merge: async (_task: Task, allowed: () => boolean) => {
+        if (clearBefore === "response" && allowed()) sends++;
+        retryReached();
+        await continueRetry;
+        if (clearBefore === "send") {
+          if (!allowed())
+            throw new ProvenPreSendRefusalError(
+              "Retry no longer owns the request",
+            );
+          sends++;
+        }
+      },
+    });
+    const { store, current, runtime, command } = f;
+    const engine = runtime.engine;
+    t.mock.method(engine, "wakeTask", async () => {});
+    t.mock.method(engine.resolution, "gateSettingsCurrent", () => true);
+    t.mock.method(engine.resolution, "mergeGateEvidence", async () => ({
+      head,
+      base: head,
+      wait: "",
+    }));
+    const requestedAt = new Date(Date.now() - 1000).toISOString();
+    const task = store.update(
+      current().id,
+      {
+        phase: "merging",
+        prHead: head,
+        resolution: {
+          ...current().resolution,
+          mergeIntent: true,
+          mergeHead: head,
+          mergeBase: head,
+          mergeResponseOutcome: "uncertain",
+          mergeRequestedAt: requestedAt,
+          mergeProofSince: new Date(
+            Date.now() - engine.resolution.uncertainMergeRetryMs - 1000,
+          ).toISOString(),
+        },
+      },
+      "merge_intent",
+    );
+    store.setMeta("paused", false);
+    const retry = engine.onTaskHost(task, () =>
+      engine.resolution.reconcileMergeIntent(task),
+    );
+    let settled: Task | undefined;
+    try {
+      await Promise.race([
+        retryInFlight,
+        retry.then(() => assert.fail(current().reason)),
+      ]);
+      assert.equal(current().resolution.mergeRetryOutcome, "pending");
+      const offer = runtime
+        .taskNext({ taskId: task.id })
+        .explicitCommands?.find(
+          (item) =>
+            item.action === "record.clear" &&
+            item.args.id === "merge-response.merge-response",
+        );
+      assert.ok(offer);
+      const clear = await command({ ...offer.args, accept: offer.warnings });
+      assert.equal(clear.explicitResolution?.status, "applied");
+      settled = current();
+    } finally {
+      resumeRetry();
+      await retry;
+    }
+    assert.equal(sends, clearBefore === "response" ? 1 : 0);
+    assert.deepEqual(current().resolution, settled?.resolution);
+    assert.equal(current().resolution.mergeRequestedAt, requestedAt);
+    assert.equal(current().resolution.mergeIntent, true);
+    assert.equal(current().resolution.mergeRetryOutcome, "pending");
+  });
+}

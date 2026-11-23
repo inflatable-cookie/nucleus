@@ -3,7 +3,6 @@ import { activityReadContext } from "../telemetry/task-activity-observation";
 import {
   previewRecordClear,
   previewRunRelease,
-  runCreationInFlight,
   type RecordClearTarget,
 } from "./explicit-resolution";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
@@ -710,6 +709,11 @@ function explicitCommandsFor(
   const base = { taskId: task.id, version: task.version };
   const commands: TaskNextExplicitCommand[] = [];
   const push = (command: TaskNextExplicitCommand) => {
+    const replacing = command.args.replacing;
+    if (command.action === "run.start" && typeof replacing === "string") {
+      const preview = previewRunRelease(facts.store, task, replacing);
+      if (!preview || preview.refusal) return;
+    }
     const sig = `${command.action}:${JSON.stringify(command.args)}`;
     if (
       !commands.some((c) => `${c.action}:${JSON.stringify(c.args)}` === sig)
@@ -717,12 +721,9 @@ function explicitCommandsFor(
       commands.push(command);
     }
   };
-  const inFlight = (runId: string | null) =>
-    runId !== null && runCreationInFlight(facts.store, task, runId);
   const offerRelease = (runId: string, note: string) => {
-    if (inFlight(runId)) return;
     const preview = previewRunRelease(facts.store, task, runId);
-    if (!preview || preview.run?.explicitlyReleasedAt) return;
+    if (!preview || preview.refusal || preview.run?.explicitlyReleasedAt) return;
     push({
       action: "run.release",
       args: { action: "run.release", ...base, run: runId },
@@ -810,7 +811,6 @@ function explicitCommandsFor(
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
-    if (inFlight(run.id)) continue;
     const role = startRoleFor(run.role);
     if (role) {
       push({
@@ -832,7 +832,7 @@ function explicitCommandsFor(
     );
   }
 
-  if (task.agentIntent && !task.agentId && !inFlight(task.runId)) {
+  if (task.agentIntent && !task.agentId) {
     push({
       action: "run.start",
       args: {
@@ -856,7 +856,7 @@ function explicitCommandsFor(
       task.resolution.stalledTurnStop?.runId ??
       task.resolution.currentRunId ??
       task.runId;
-    if (stalledRunId && !inFlight(stalledRunId)) {
+    if (stalledRunId) {
       const stored = runs.find((r) => r.id === stalledRunId);
       const role = stored ? startRoleFor(stored.role) : "worker";
       const label = role ?? stored?.role ?? "worker";
@@ -1033,8 +1033,7 @@ function recordClearTargets(
   const add = (kind: RecordClearTarget["kind"], id: string, note: string) =>
     targets.push({ target: { kind, id }, note });
   const holds = holdsOf(task);
-  if (holds.dispatch && !state.ownerStop)
-    add("hold", "dispatch", "Release the recorded dispatch hold.");
+  if (holds.dispatch) add("hold", "dispatch", "Release the recorded dispatch hold.");
   if (holds.merge) add("hold", "merge", "Release the recorded merge hold.");
   if (state.ownerStop)
     add(
