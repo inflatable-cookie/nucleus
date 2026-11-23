@@ -12,6 +12,7 @@ import { PlannerPresence } from "./questions/planner-presence";
 import { ResponsibleThreadResolver } from "./questions/responsible-thread-resolver";
 import {
   RESPONSIBLE_OBSERVATION_MS,
+  responsiblePickable,
   type ResponsibleCandidate,
   type ResponsibleObservationState,
   type ResponsibleShortlist,
@@ -416,14 +417,6 @@ export class Resolution {
   /** The read budget per shortlisted thread; a read over it is unverified, never gone (tests shorten it). */
   responsibleObservationMs = RESPONSIBLE_OBSERVATION_MS;
 
-  /** Only a routable or unverified candidate can be picked; `unroutable` never is. */
-  private static pickable(candidate: ResponsibleCandidate): boolean {
-    return (
-      candidate.observation?.state === "routable" ||
-      candidate.observation?.state === "unverified"
-    );
-  }
-
   private static threadOf(candidate: ResponsibleCandidate): ResponsibleThread {
     return {
       agentId: candidate.agentId,
@@ -438,7 +431,7 @@ export class Resolution {
     return cached
       ? (this.confirmedResponsible
           .get(cached)
-          ?.find((candidate) => Resolution.pickable(candidate))?.agentId ??
+          ?.find((candidate) => responsiblePickable(candidate))?.agentId ??
           null)
       : null;
   }
@@ -475,10 +468,10 @@ export class Resolution {
           exclude!.hostId,
         );
       const senderIsCandidate = confirmed.candidates.some(
-        (candidate) => isSender(candidate) && Resolution.pickable(candidate),
+        (candidate) => isSender(candidate) && responsiblePickable(candidate),
       );
       const pick = confirmed.candidates.find(
-        (candidate) => !isSender(candidate) && Resolution.pickable(candidate),
+        (candidate) => !isSender(candidate) && responsiblePickable(candidate),
       );
       return {
         thread: pick ? Resolution.threadOf(pick) : null,

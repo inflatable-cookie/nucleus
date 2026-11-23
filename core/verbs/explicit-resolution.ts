@@ -16,12 +16,14 @@ import {
   TASK_PROGRESSING_REASON,
   isWaitingTaskStop,
 } from "../../shared/task-stop";
+import type { ResponsibleThreadReason } from "../../shared/responsible-thread";
 import type { Engine } from "../engine";
 import { signalProcessGroupByLeader } from "../machine/process-group";
 import {
   reattachRefusal,
   reattachStoredTaskCheckout,
 } from "../git/checkout-reattach";
+import { responsiblePickable } from "../questions/responsible-thread-cache";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
@@ -106,10 +108,25 @@ function settleOperation(
 }
 
 /**
- * Planner authority comes from the registered thread and the caller's
- * authenticated identity. Host observation only decides where a message is
- * delivered, so an `unverified` planner (its host not yet proven after a roll)
- * still holds authority; the delivery route waits for the host on its own.
+ * The reasons that make a confirmed candidate one of the project's planners:
+ * registered, dispatching or owning its tasks (a task's own recorded planner and
+ * its origin thread are dispatchers by construction), or named on the project.
+ * A thread that only works in a checkout acts only while it is the routing pick.
+ */
+const PLANNER_REASONS: ReadonlySet<ResponsibleThreadReason> = new Set([
+  "registered-planner",
+  "dispatcher",
+  "registered-agent",
+]);
+
+/**
+ * Planner authority comes from the caller's authenticated identity matching a
+ * confirmed responsible planner of the task's project. Any planner in the
+ * shortlist holds it, not only the thread project messages route to (Tom,
+ * 2026-11-19: no singleton planners). Host observation only decides delivery, so
+ * an `unverified` planner (its host not yet proven after a roll) still holds
+ * authority; an `unroutable` one, or any caller when the shortlist is
+ * unconfirmed or incomplete, does not.
  */
 export async function livePlannerMatches(
   engine: Engine,
@@ -124,22 +141,23 @@ export async function livePlannerMatches(
         normalizeRepositoryOrigin(task.repository ?? ""),
       );
   if (!project) return false;
-  const { thread, shortlist } =
+  const { thread, shortlist, incomplete } =
     await engine.resolution.responsibleThread(project);
-  return Boolean(
-    thread &&
-      shortlist.some((candidate) =>
+  if (incomplete) return false;
+  return shortlist.some(
+    (candidate) =>
+      responsiblePickable(candidate) &&
+      (candidate.reasons.some((reason) => PLANNER_REASONS.has(reason)) ||
         sameCallerIdentity(
-          thread.agentId,
+          thread?.agentId,
           candidate.agentId,
-          thread.hostId,
+          thread?.hostId,
           candidate.hostId,
-        ),
-      ) &&
+        )) &&
       plannerIdMatches(
-        thread.agentId,
+        candidate.agentId,
         caller,
-        thread.hostId,
+        candidate.hostId,
         engine.legacyPaseoHostId(),
       ),
   );

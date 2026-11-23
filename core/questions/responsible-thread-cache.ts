@@ -62,6 +62,14 @@ export interface ResponsibleCandidate extends ResponsibleThread {
   observation: ResponsibleObservation | null;
 }
 
+/** Only a routable or unverified candidate can be picked or act; `unroutable` never is. */
+export function responsiblePickable(candidate: ResponsibleCandidate): boolean {
+  return (
+    candidate.observation?.state === "routable" ||
+    candidate.observation?.state === "unverified"
+  );
+}
+
 /**
  * The bound on one planner-thread read on a busy Paseo daemon. A read that does
  * not finish in time is unverified, never gone, so a busy planner keeps its rank.
