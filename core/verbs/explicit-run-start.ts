@@ -688,6 +688,31 @@ export function runStartPlan(
       `Reviewer run ${displaced!.id} already reported ${reported.status} at ${reported.head.slice(0, 12)}; it is applied on the next pass. Accept discard_reported_verdict to replace it anyway.`,
     );
 
+  // Spec 068 §3: the host may still answer this role's uncertain create. A new
+  // run for the role (a replacement or not) could stand beside the thread that
+  // late answer brings, so only the planner or operator may accept it.
+  const inFlight =
+    task.resolution.stop?.fact?.code === "creation_in_flight"
+      ? task.resolution.stop.fact.subject
+      : undefined;
+  const inFlightRun = inFlight ? store.run(inFlight) : null;
+  const inFlightRole = inFlightRun
+    ? inFlightRun.role === "revision"
+      ? "worker"
+      : inFlightRun.role === "reviewer"
+        ? "reviewer"
+        : inFlightRun.role === "recovery"
+          ? "coordinator"
+          : null
+    : inFlight && inFlight === task.runId
+      ? "worker"
+      : null;
+  if (inFlightRole === input.role)
+    warn(
+      "creation_in_flight",
+      `The host may still answer the create command of ${input.role} run ${inFlight}; a new ${input.role} could stand beside the thread it brings. Nucleus binds or relaunches it once the host answers or its wait ends.`,
+    );
+
   const unreleasedRoleRuns = runs.filter(
     (r) => r.role === runRole && !r.released,
   );

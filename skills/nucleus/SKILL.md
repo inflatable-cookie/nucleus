@@ -760,7 +760,8 @@ or operator can use `nucleus run.start -`, `nucleus run.release -`,
 `nucleus turn.take -`, `nucleus turn.release -`, `nucleus merge.now -` or
 `nucleus closeout.now -`. Use the task version from `next` and include a reason.
 Repeat a warning response with the warning IDs you accept. Only a planner or
-operator may accept `hold_owner`, `route_policy` or `two_writers`, or resolve a
+operator may accept `hold_owner`, `route_policy`, `two_writers` or
+`creation_in_flight`, or resolve a
 critical task; only the operator board may accept `unverified_merge`. Workers
 and reviewers ask one of those roles to act.
 

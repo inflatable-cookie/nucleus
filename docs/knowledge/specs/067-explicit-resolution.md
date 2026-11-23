@@ -92,7 +92,7 @@ No command changes anything it does not name.
 
 | Command | Does exactly | Warnings (overridable) |
 | --- | --- | --- |
-| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. Phase unchanged. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (replacement ceiling or revision cap), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A) |
+| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. Phase unchanged. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (replacement ceiling or revision cap), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
 | `run.release run=<id> [archive]` | Stops treating the run as live: best-effort cancel of its turn and its recorded process group, `released=true`, revokes its credential, clears pointers to it, settles its delivery effects. Optionally archives its thread. Never launches or changes phase. | `live_turn` (agent may be mid-turn; a worker's uncommitted changes may be lost), `unreported_result` (its report will be refused) |
 | `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|effect\|host_wait\|owner_stop\|deferred_verb> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). | `hold_owner` (overrides another owner's hold; planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing) |
 | `phase.set to=<working\|changes_requested\|awaiting_review\|reviewing\|verifying\|needs_attention\|blocked>` | Writes the phase and reason only. | `live_runs` (unreleased runs see an unexpected phase) |
@@ -113,7 +113,8 @@ planner, resolved the way project-addressed messages resolve (not only the
 stored `project.planner.agentId`; Tom, 2026-11-19, no singleton planners): every
 command. The task's coordinator (its recovery run): every command, including
 `merge.now` and `closeout.now` (Tom, 2026-11-21: "Coordinators should get merge
-and closeout"), except accepting `hold_owner`, `route_policy` or `two_writers`.
+and closeout"), except accepting `hold_owner`, `route_policy`, `two_writers` or
+`creation_in_flight` (Spec 068 batch A follow-up).
 The hard gates bind every caller. Workers and reviewers ask instead. A `critical` task: planner
 and operator only. Authority comes from the authenticated caller matching the registered thread;
 host observation (`routable`, `unverified`) never gates it, and only decides where a message is

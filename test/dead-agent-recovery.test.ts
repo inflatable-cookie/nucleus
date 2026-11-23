@@ -1015,6 +1015,25 @@ test("uncertain creation: a create the host may still answer waits on its own ca
         (command.args as { run?: string }).run === run.id,
     );
     assert.deepEqual(offers, [], "next offers neither a replacement nor a release");
+    const activity = f.next().activity;
+    assert.equal(activity?.state, "nucleus");
+    assert.equal(activity?.detail, "Waiting for the host to answer a launch");
+    assert.equal(activity?.role, "reviewer");
+    // A replacement started anyway warns creation_in_flight, which only the
+    // planner or operator board may accept.
+    const task = f.current();
+    const warnings = runStartPlan(f.engine, task, {
+      action: "run.start",
+      taskId: task.id,
+      version: task.version,
+      reason: "replace the reviewer",
+      accept: [],
+      caller: "operator_board",
+      role: "reviewer",
+      agent: "fresh",
+      replacing: run.id,
+    }).warnings.map((item) => item.id);
+    assert.ok(warnings.includes("creation_in_flight"), warnings.join(", "));
 
     // Once the host answers, the ordinary lookup binds the late thread.
     f.lookups.set(run.id, [{ id: "late-agent", workspaceId: "workspace" }]);
@@ -1111,6 +1130,31 @@ test("uncertain worker creation: absent after the grace relaunches the worker on
     assert.equal(f.events("creation_attempt_reserved").length, 2);
     assert.equal(f.current().phase, "working");
     assert.equal(f.current().agentId, `agent-${f.submitted.id}`, "one fresh worker");
+  } finally {
+    await f.close();
+  }
+});
+
+test("uncertain worker creation: a create the host may still answer reads as waiting for the host", async () => {
+  const f = fixture();
+  try {
+    uncertainWorker(f);
+    f.lookups.set(
+      "uncertain-worker-run",
+      new HostCreateInFlightError("the host may still answer this run's create command"),
+    );
+    await f.engine.wake();
+    assert.equal(f.current().resolution.stop?.fact?.code, "creation_in_flight");
+    const activity = f.next().activity;
+    assert.equal(activity?.detail, "Waiting for the host to answer a launch");
+    assert.equal(activity?.role, "worker", "the initial worker has no run row");
+    assert.equal(
+      (f.next().explicitCommands ?? []).some(
+        (command) =>
+          (command.args as { replacing?: string }).replacing === "uncertain-worker-run",
+      ),
+      false,
+    );
   } finally {
     await f.close();
   }

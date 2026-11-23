@@ -2196,7 +2196,10 @@ review or merge credit; live participants and unsettled effects remain fences.
   with its own cause (`HostCreateInFlightError`), and the run keeps a
   `lifecycle` wait with fact `creation_in_flight`: no replacement or release is
   offered in `next` and no coordinator is admitted, because either could start a
-  thread beside the one the late reply brings. An empty read is never absence
+  thread beside the one the late reply brings. `run.start` for that role warns
+  `creation_in_flight`, which only the planner or operator board may accept, so
+  a coordinator already running cannot start one either. The board reads the
+  wait as "Waiting for the host to answer a launch". An empty read is never absence
   while the host may still answer. A child T3 reports removed proves the create
   landed, so it is never resent; the lookup names it instead. Exactly one match in the run's own
   workspace binds it (`creation_bound_by_lookup`). No match on a complete read,
