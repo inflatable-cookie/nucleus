@@ -367,6 +367,7 @@ export class PassSnapshot {
     options: {
       provenTerminal?: ProvenTerminalSnapshot;
       coveredObservation?: CoveredObservationSnapshot;
+      requireCoveredObservation?: boolean;
       allowMissFetch?: boolean;
     } = {},
   ): Promise<PassTimelinePageRead> {
@@ -393,7 +394,10 @@ export class PassSnapshot {
     const compatible = (entry: CachedTimelinePageEntry): boolean => {
       if (options.provenTerminal && !entry.settled?.provenTerminal)
         return false;
-      if (options.coveredObservation && !entry.settled?.coveredObservation)
+      if (
+        (options.coveredObservation || options.requireCoveredObservation) &&
+        !entry.settled?.coveredObservation
+      )
         return false;
       return true;
     };

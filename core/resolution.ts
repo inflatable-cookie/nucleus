@@ -643,6 +643,7 @@ export class Resolution {
     options: {
       provenTerminal?: ProvenTerminalSnapshot;
       coveredObservation?: CoveredObservationSnapshot;
+      requireCoveredObservation?: boolean;
     } = {},
   ): Promise<PassTimelinePageRead> {
     const key = this.passHostKey(hostId);

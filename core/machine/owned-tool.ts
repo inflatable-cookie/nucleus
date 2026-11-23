@@ -84,6 +84,7 @@ export class OwnedTools {
           limit,
           hostId,
           this.readDeadlineMs,
+          { requireCoveredObservation: true },
         );
         onRead?.(read);
         if (read.state === "unknown") throw new Error(read.reason);
