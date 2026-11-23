@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   chmodSync,
+  closeSync,
+  openSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -60,7 +62,9 @@ import {
 import { spawnGate, SPAWN_CONCURRENCY } from "../core/dispatch/spawn-gate";
 import { recoveryDispatchSnapshot } from "../core/recovery/recovery-context";
 import { ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
-import { checkoutRunScratchPlacement } from "../core/workspaces/run-scratch";
+import { checkoutRunScratchPlacement, removeRecordedRunScratchDirectory, runTemporaryEnvironment } from "../core/workspaces/run-scratch";
+import { readProcessSubset } from "../core/machine/host-process-listing";
+import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
@@ -655,6 +659,95 @@ test("run.release cancels a current revision on the retained worker thread", asy
   assert.equal(result.agentId, revision.agentId);
   assert.equal(result.runId, "original-worker");
   assert.equal(result.resolution.currentRunId, null);
+});
+
+test("a coordinator must accept live_turn before releasing an inactive worker with a live process", async (t) => {
+  let pid: number | undefined;
+  const scan = async () => {
+    if (!pid) return [];
+    const result = await readProcessSubset([pid]);
+    return result.state === "listed" ? result.processes : null;
+  };
+  const f = await fixture(t, { hostProcessListing: scan });
+  const directory = join(f.root, "worktree");
+  mkdirSync(directory);
+  const runId = "initial-worker";
+  const observe = () => ({ MountPoint: f.root, VolumeUUID: "fixture", Internal: false, Writable: true, WritableVolume: true });
+  const placement = checkoutRunScratchPlacement({ mount: f.root, uuid: "fixture", observe });
+  const scratch = runTemporaryEnvironment(runId, placement).TMPDIR;
+  (f.store as unknown as { runScratchRemover: (path: string) => boolean }).runScratchRemover =
+    (path) => removeRecordedRunScratchDirectory(path, { mount: f.root, uuid: "fixture", observe });
+  const coordinator = f.run("recovery-run", "recovery", "coordinator");
+  f.store.putRun(coordinator);
+  const task = f.current();
+  f.store.update(task.id, {
+    phase: "needs_attention",
+    workspaceId: "workspace",
+    directory,
+    temporaryDirectory: scratch,
+    runId,
+    agentId: "worker",
+    agentActive: true,
+    resolution: {
+      ...task.resolution,
+      stop: taskStopRecord("run_stalled", "Stalled worker", null, new Date().toISOString(), ["restart"]),
+      recoveryActive: true,
+      recovery: {
+        id: "episode", key: "key", generation: 1, runId: coordinator.id,
+        agentId: coordinator.agentId, status: "running", summary: "Mechanical stop",
+        idleSince: null, incidentId: null,
+      },
+    },
+  });
+  const file = join(scratch, "held output");
+  const fd = openSync(file, "w");
+  const child = spawn(process.execPath, ["-e", "console.log('ready'); setInterval(() => {}, 1000)"], {
+    cwd: f.root,
+    stdio: ["ignore", "pipe", "inherit", fd],
+  });
+  closeSync(fd);
+  const exited = once(child, "exit");
+  try {
+    assert.ok(child.stdout);
+    await once(child.stdout, "data");
+    pid = child.pid;
+    assert.ok(pid);
+    const fact = (await scan())?.find((process) => process.pid === pid);
+    assert.ok(fact);
+    assert.equal(fact.cwd, f.root);
+    assert.ok(fact.openFiles?.paths.includes(file));
+    const offer = (await f.runtime.taskNext({ taskId: task.id })).explicitCommands?.find(
+      (item) => item.action === "run.release" && item.args.run === runId,
+    );
+    assert.ok(offer?.warnings?.includes("live_turn"));
+
+    f.store.update(task.id, { agentActive: false });
+    const release = { action: "run.release", run: runId, caller: formatAgentId(host, "coordinator") };
+    const refused = await f.command({ ...release, accept: ["unreported_result"] });
+    assert.equal(refused.explicitResolution?.status, "warnings");
+    assert.ok(refused.explicitResolution?.warnings.some((warning) => warning.id === "live_turn"));
+    assert.equal(f.current().runId, runId);
+
+    const result = await f.command({ ...release, accept: ["live_turn", "unreported_result"] });
+    assert.equal(result.explicitResolution?.status, "applied");
+    assert.equal(f.current().runId, null);
+    const intentKey = `runProcessCleanup:${runId}`;
+    await sweepSettledRunProcesses(f.store, host, { taskId: task.id, readProcesses: scan });
+    assert.ok(existsSync(scratch));
+    assert.equal(f.store.getMeta<{ pending: boolean }>(intentKey)?.pending, true);
+    assert.ok(f.store.eventsAll(task.id).some((event) =>
+      event.kind === "run_process_cleanup_deferred" && event.detail.includes("live processes")));
+
+    child.kill();
+    await exited;
+    pid = undefined;
+    await sweepSettledRunProcesses(f.store, host, { taskId: task.id, readProcesses: scan });
+    assert.equal(existsSync(scratch), false);
+    assert.equal(f.store.getMeta<{ pending: boolean }>(intentKey)?.pending, false);
+  } finally {
+    child.kill();
+    await exited;
+  }
 });
 
 test("next and run.release refuse a creation the host may still answer", async (t) => {

@@ -1,5 +1,6 @@
 import type {
   HostProcessFact,
+  HostProcessTable,
   HostWorktreeWorkspaceSpec,
 } from "../../host/types";
 import type { Task } from "../../../shared/contracts";
@@ -227,7 +228,7 @@ export interface WorkspaceContinuationHost {
   placement(): WorkspacePlacement;
   dataDir?(): string;
   ownedPathFor(task: Task): Promise<string>;
-  hostProcessListing(): Promise<HostProcessFact[] | null>;
+  hostProcessListing(): Promise<HostProcessTable | null>;
 }
 
 /** The native workspace calls core makes: each returns the host's own answer, unmapped. */

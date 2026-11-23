@@ -93,6 +93,10 @@ export interface HostProcessFact {
   startIdentity: string;
   command: string;
   cwd: string | null;
+  /** Open paths and coverage from the same process inventory as the cwd. */
+  openFiles?: { paths: readonly string[]; complete: boolean };
+  /** ACP identity fields read for this process incarnation by the inventory. */
+  acpIdentity?: import("../machine/run-process-identity").AcpProcessIdentity | null;
   /** BB session identity read from that process's environment; null means unreadable. */
   bbThreadId?: string | null;
   /** The executable resolves to the installed Cua Driver, not a workspace copy. */

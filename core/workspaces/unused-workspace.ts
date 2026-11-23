@@ -45,7 +45,7 @@ export async function archiveUnusedWorkspace(store: Store, adapter: Adapter, inp
   if (displaced && (displaced.id !== id || !new RegExp(`^ns-${task.id}(?:-[0-9]+)?$`).test(branch)))
     throw Error('Displaced workspace does not carry a recorded Nucleus collision branch');
   const archive = async (target: typeof task, directory: string, head: string, allowed: () => boolean, uncertain: boolean) => {
-    try { return await adapter.archiveTaskWorkspace!(target, id, directory, head, allowed, uncertain, { requirePublished: uncertain }); }
+    try { return await adapter.archiveTaskWorkspace!(target, id, directory, head, allowed, uncertain, { requirePublished: uncertain, workspaceRuns: store.runs(task.id) }); }
     catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       if (retirement && archiveFailureKeepsScope(retirement, task.id, id, error))

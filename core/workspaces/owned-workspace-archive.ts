@@ -11,6 +11,16 @@ import { intakeOwnedReviewWorkspace } from "../../shared/workspace-ownership";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import type { AgentObservation } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
+import { bbThreadForAgent, RunProcessTable } from "../machine/run-process-tree";
+import {
+  incompleteRunProcessScan,
+  isLiveProcess,
+  runWorkProcesses,
+} from "../machine/run-process-custody";
+import { boundedPromise } from "../machine/bounded-promise";
+import { HOST_PROCESS_LISTING_DEADLINE_MS } from "../machine/host-process-listing";
+import { participantRuntime } from "../machine/participant-runtime";
+import { participantTemporaryDirectory } from "../machine/participant-roots";
 import { verifyReviewSourceView } from "../review/review-source";
 import {
   verifyRecordedOrigin,
@@ -63,6 +73,8 @@ export interface WorkspaceArchiveOptions {
   primaryArchived?: () => boolean;
   /** Nucleus #1397: branch on a host workspace displaced by a cross-host move. */
   displacedBranch?: string;
+  /** Recorded runs whose scratch may be in use during workspace cleanup. */
+  workspaceRuns?: Run[];
 }
 
 /**
@@ -104,6 +116,7 @@ export class OwnedWorkspaceArchive {
       discard = null,
       primaryArchived,
       displacedBranch,
+      workspaceRuns: runs = reviewRun ? [reviewRun] : [],
     } = options;
     const hostLabel =
       HOST_KIND_LABELS[hostKindOf(this.host.hostId ?? task.hostId)];
@@ -544,6 +557,52 @@ export class OwnedWorkspaceArchive {
     };
     const initial = await prove(false);
     if (!initial) return [];
+    const scan = await boundedPromise(
+      this.host.hostProcessListing(),
+      HOST_PROCESS_LISTING_DEADLINE_MS,
+      () => null,
+    );
+    if (!scan)
+      throw Error("Preserving workspace: the host process inventory is unavailable");
+    const runIds = new Set(
+      runs
+        .filter((run) => run.workspaceId === id || run.reviewSourceView?.workspaceId === id)
+        .map((run) => run.id),
+    );
+    if (id === task.workspaceId) {
+      if (task.runId) runIds.add(task.runId);
+      for (const worker of task.retiredWorkers) runIds.add(worker.runId);
+    }
+    const live = scan.filter(isLiveProcess);
+    const table = new RunProcessTable(live);
+    const providerHosts = table.providerHostPids();
+    const runtime = participantRuntime({
+      dataHome: this.host.dataDir(),
+      tasks: [task],
+      runs,
+      bbThreads: [...attachedAgentIds].flatMap((agentId) => {
+        const thread = bbThreadForAgent(agentId, this.host.hostId ?? task.hostId);
+        return thread ? [thread] : [];
+      }),
+    });
+    const holders = runWorkProcesses({
+      live,
+      byPid: table.byPid,
+      directories: [
+        directory,
+        id === task.workspaceId ? task.temporaryDirectory : undefined,
+        ...[...runIds].map((runId) => participantTemporaryDirectory(task, runs, runId)),
+      ],
+      infrastructure: table.infrastructurePids(runtime),
+      providers: [...table.providerBindings()].flatMap(({ runId, provider }) =>
+        runIds.has(runId) && !providerHosts.has(provider.pid) ? [provider] : [],
+      ),
+    });
+    const holder = holders[0];
+    if (holder)
+      throw Error(`Preserving workspace: process ${holder.pid} still uses the workspace or run scratch`);
+    if (incompleteRunProcessScan({ processes: scan, cwdComplete: scan.cwdComplete }))
+      throw Error("Preserving workspace: working-directory or open-file coverage is incomplete");
     if (buildOutputCleanup) {
       try {
         const cleanup = buildOutputCleanup.begin();

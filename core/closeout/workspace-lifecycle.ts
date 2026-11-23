@@ -450,6 +450,7 @@ export class Lifecycle {
                 requireDirectory: false,
                 attachedAgentIds: new Set(currentEntry.agentIds),
                 displacedBranch: currentEntry.branch,
+                workspaceRuns: this.store.runs(taskId),
               },
             );
             if (result === false) return;
@@ -826,6 +827,7 @@ export class Lifecycle {
         allowIdleForeignThreads: !reviewRun,
         buildOutputCleanup,
         reviewRun: reviewRun ?? undefined,
+        workspaceRuns: runs,
         discard,
         primaryArchived: () =>
           Boolean(
