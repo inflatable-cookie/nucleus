@@ -122,7 +122,7 @@ pub enum Effort {
 
 /// Canonical Settings data. A host translates this selection at the launch seam.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Profile {
     pub id: String,
     #[serde(default)]

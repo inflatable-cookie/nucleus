@@ -363,3 +363,80 @@ fn settings_do_not_create_storage_until_the_configured_volume_is_verified() {
     assert!(!storage.database().path().exists());
     assert!(!storage.scratch().path().exists());
 }
+
+#[test]
+fn profile_domain_defaults_are_read_only_and_stable_ids_survive_name_edits() {
+    use nucleus_store::Profiles;
+
+    let home = tempfile::tempdir().expect("portable root");
+    let home = home.path().canonicalize().expect("canonical fixture");
+    fixture_storage(&home);
+    let file = SettingsFile::open(&home).expect("fixture settings");
+    let original = file.read::<Profiles>().expect("default profiles");
+    assert_eq!(original.revision, "default");
+    assert!(
+        !home.join("config").exists(),
+        "a read creates no config root"
+    );
+
+    let value: Profiles = serde_json::from_value(serde_json::json!({"profiles": [{
+        "name": "Heavy",
+        "selection": {
+            "id": "stable-profile", "capability": "heavyweight", "weight": "fewer",
+            "provider": "codex", "model": "fixture-model", "thinkingOptionId": "high"
+        }
+    }]}))
+    .expect("canonical profile shape");
+    let (first, changed) = file
+        .edit::<Profiles>(&original.revision, |profiles| {
+            *profiles = value;
+            Ok(())
+        })
+        .expect("save profiles");
+    assert!(changed);
+    let document: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(home.join("config/profiles.json")).expect("published settings"),
+    )
+    .expect("versioned JSON");
+    assert_eq!(document["schemaVersion"], 1);
+
+    let reopened = SettingsFile::open(&home).expect("reopen settings");
+    let (saved, changed) = reopened
+        .edit::<Profiles>(&first.revision, |profiles| {
+            profiles.profiles[0].name = "Renamed".into();
+            Ok(())
+        })
+        .expect("rename profile");
+    assert!(changed);
+    assert_eq!(saved.value.profiles[0].selection.id, "stable-profile");
+    let (same, changed) = reopened
+        .edit::<Profiles>(&saved.revision, |_| Ok(()))
+        .expect("no-op");
+    assert!(!changed);
+    assert_eq!(same.revision, saved.revision);
+}
+
+#[test]
+fn storage_settings_reject_a_symlink_without_publishing() {
+    let root = tempfile::tempdir().expect("portable root");
+    let home = root.path().canonicalize().expect("canonical fixture");
+    let storage = fixture_storage(&home);
+    let file = SettingsFile::open(&home).expect("fixture settings");
+    let original = file.read::<EngineSettings>().expect("active settings");
+    let redirect = home.join("redirect");
+    std::os::unix::fs::symlink(storage.database().path(), &redirect).expect("redirect fixture");
+    assert!(
+        file.edit::<EngineSettings>(&original.revision, |settings| {
+            settings.scratch_root = Some(redirect);
+            Ok(())
+        })
+        .is_err()
+    );
+    assert_eq!(
+        file.read::<EngineSettings>().expect("settings").revision,
+        original.revision
+    );
+    let backups = storage.backups().expect("verify absent backup root");
+    assert!(backups.complete);
+    assert!(backups.verified.is_empty());
+}

@@ -18,6 +18,13 @@ pub(super) struct PlannerAuthority {
     expires: Instant,
 }
 
+impl PlannerAuthority {
+    pub(crate) fn resolved(&self) -> Option<&str> {
+        (Instant::now() < self.expires).then_some(())?;
+        self.fallback.as_deref()
+    }
+}
+
 struct PlannerCandidates {
     live: BTreeSet<String>,
     ranked: Vec<(u8, Reverse<String>, PlannerThread)>,
@@ -67,6 +74,16 @@ impl State {
 impl Service {
     pub(super) async fn notify_question(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let wait = Action::Wait(WaitReason::Question);
+        if self
+            .state
+            .lock()
+            .await
+            .settings
+            .fixture_slots(&self.project)
+            .is_none()
+        {
+            return Ok(wait);
+        }
         let bound = if let Some(delivery) = row.task.question_delivery() {
             match self.host.notice_state(delivery).await? {
                 NoticeState::Started => return Ok(wait),
@@ -131,17 +148,36 @@ impl Service {
             } else {
                 T3_RETRY_DELAY
             };
-            tokio::time::sleep(delay).await;
+            tokio::select! {
+                () = tokio::time::sleep(delay) => {}
+                () = self.planner_wake.notified() => {}
+            }
         }
     }
 
     pub(super) async fn refresh_planner_authority(&self) -> Result<(), ServiceError> {
-        let epoch = self.state.lock().await.planner_authority_epoch;
+        let (epoch, enabled) = {
+            let state = self.state.lock().await;
+            (
+                state.planner_authority_epoch,
+                state.settings.fixture_slots(&self.project).is_some(),
+            )
+        };
+        if !enabled {
+            return Ok(());
+        }
         let result = self.read_planner_authority().await;
         let mut state = self.state.lock().await;
         if state.planner_authority_epoch != epoch {
             return Err(HostError::Uncertain.into());
         }
+        state.settings.host = match &result {
+            Ok(_) => crate::web::CachedHost::Reachable,
+            Err(ServiceError::Host(
+                HostError::Deferred { .. } | HostError::Unavailable | HostError::Timeout,
+            )) => crate::web::CachedHost::Unavailable,
+            Err(_) => crate::web::CachedHost::Unknown,
+        };
         state.planner_authority = None;
         state.planner_authority = Some(result?);
         Ok(())
@@ -182,12 +218,15 @@ impl Service {
     async fn planner_candidates(&self) -> Result<PlannerCandidates, ServiceError> {
         let threads = self.host.planner_threads().await?;
         let ids: Vec<_> = threads.iter().map(|thread| thread.id.as_str()).collect();
-        let provenance = self
-            .state
-            .lock()
-            .await
-            .store
-            .routing_provenance(&self.project.repository, &ids)?;
+        let (provenance, use_fixture_registrations) = {
+            let state = self.state.lock().await;
+            (
+                state
+                    .store
+                    .routing_provenance(&self.project.repository, &ids)?,
+                !state.settings.uses_project_registry(),
+            )
+        };
         let mut live = BTreeSet::new();
         let mut ranked = Vec::new();
         for thread in threads {
@@ -209,7 +248,7 @@ impl Service {
                 .project
                 .agents
                 .iter()
-                .filter(|agent| agent.thread == thread.id)
+                .filter(|agent| use_fixture_registrations && agent.thread == thread.id)
                 .map(|agent| match agent.role {
                     RegisteredRole::Planner => 0,
                     RegisteredRole::Agent => 1,
@@ -442,6 +481,7 @@ mod tests {
     async fn a_notice_cannot_send_or_unsettle_outside_the_fixture_project() {
         let (_home, mut service) =
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
+        service.project.acp_provider = Some("fixture-acp".into());
         let checkout = service.project.checkout.clone();
         let (host, server) =
             native_fixture(move |request| snapshot_reply(request, "outside", &checkout)).await;

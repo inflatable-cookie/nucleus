@@ -235,6 +235,11 @@ impl T3 {
         })
     }
 
+    #[must_use]
+    pub fn endpoint(&self) -> &str {
+        self.rpc.endpoint().as_str()
+    }
+
     /// Use the connected T3 server's own runtime descriptor for custody checks.
     #[must_use]
     pub fn with_runtime_descriptor(mut self, path: PathBuf) -> Self {

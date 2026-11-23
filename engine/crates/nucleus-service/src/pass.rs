@@ -210,6 +210,12 @@ impl Service {
                 until: UNIX_EPOCH + std::time::Duration::from_millis(deadline),
             });
         }
+        let required = self
+            .state
+            .lock()
+            .await
+            .settings
+            .fixture_checks(&self.project);
         let branches = Branches::new(
             &self.project.repository,
             &self.project.base,
@@ -226,6 +232,7 @@ impl Service {
         };
         match target {
             Some(target) => {
+                let target = target.with_required_checks(required);
                 let forge = capture_forge(self, self.forge.observe(&target).await)?;
                 Ok((forge, Some(target)))
             }
@@ -306,7 +313,7 @@ impl Service {
         );
         let binding = self.binding(checkout)?;
         let parent = if let Some(provider) = &self.project.acp_provider {
-            if !self.launch_capacity(&task.identity().id).await? {
+            if !self.launch_capacity(&task.identity().id, false).await? {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
             match self
@@ -390,7 +397,7 @@ impl Service {
         ) {
             return self.apply(row, &observation, action).await;
         }
-        if !self.launch_capacity(&task.identity().id).await? {
+        if !self.launch_capacity(&task.identity().id, false).await? {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
         let Some((sent, result, _)) = self.send(row, checkout, host).await? else {
@@ -551,7 +558,7 @@ impl Service {
                 if replay_policy(head, &observation).is_none() {
                     return Ok(stopping);
                 }
-                if !self.launch_capacity(&task.identity().id).await? {
+                if !self.launch_capacity(&task.identity().id, true).await? {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
                 let Some((sent, outcome, archive)) = self.send(row, checkout, host).await? else {
@@ -606,9 +613,17 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
         let task = &row.task;
+        let required = {
+            let state = self.state.lock().await;
+            if state.settings.fixture_slots(&self.project).is_none() {
+                return Ok(Action::Wait(WaitReason::Capacity));
+            }
+            state.settings.fixture_checks(&self.project)
+        };
+        let target = target.clone().with_required_checks(required);
         let attempt = self
             .forge
-            .merge(task, target)
+            .merge(task, &target)
             .await
             .inspect_err(|error| record_forge_failure(self, error))?;
         if let MergeWrite::Deferred { until } = attempt.write {
@@ -1117,9 +1132,13 @@ mod tests {
                 .create(&task, &event("fixture"))
                 .expect("seed");
             let row = service.task("reviewer").await.expect("revoked row");
-            let result = service
-                .stop_run(&row, &checkout, observation, &service.host.fixture_pass())
-                .await;
+            let result = Box::pin(service.stop_run(
+                &row,
+                &checkout,
+                observation,
+                &service.host.fixture_pass(),
+            ))
+            .await;
             if retargeted {
                 assert!(matches!(
                     result,
@@ -1285,7 +1304,10 @@ mod tests {
         assert_eq!(service.forge_retry_secs.load(Ordering::Relaxed), 30);
         let state = service.state.lock().await;
         for id in ["first", "second"] {
-            assert_eq!(state.waits.get(id), Some(&WaitReason::ForgeUnknown));
+            assert_eq!(
+                state.waits.get(id).map(|(reason, _)| *reason),
+                Some(WaitReason::ForgeUnknown)
+            );
             assert!(
                 state
                     .schedule
@@ -1431,7 +1453,7 @@ mod tests {
                 .await
                 .expect("fixture version");
             let result = if revoked {
-                service.stop_run(&row, &checkout, cached, &host).await
+                Box::pin(service.stop_run(&row, &checkout, cached, &host)).await
             } else {
                 service.send_prepared(&row, &checkout, cached, &host).await
             };

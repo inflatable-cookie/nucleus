@@ -87,6 +87,7 @@ pub enum ServiceError {
 
 pub struct Service {
     storage: EngineStorage,
+    settings: SettingsFile,
     project: Project,
     host: T3,
     forge: GitHub,
@@ -97,6 +98,7 @@ pub struct Service {
     watch_lock: Mutex<()>,
     changes: broadcast::Sender<TaskChange>,
     wake: Notify,
+    planner_wake: Notify,
     forge_until: AtomicU64,
     forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
@@ -105,9 +107,10 @@ pub struct Service {
 
 struct State {
     store: Store,
+    settings: web::RuntimeSettings,
     schedule: Schedule,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
-    waits: BTreeMap<String, WaitReason>,
+    waits: BTreeMap<String, (WaitReason, Instant)>,
     capacity_waiters: VecDeque<String>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
@@ -154,6 +157,7 @@ impl Service {
     ) -> Result<Self, ServiceError> {
         project.verify()?;
         let storage = settings.storage()?;
+        let runtime_settings = web::RuntimeSettings::open(settings)?;
         if !callback.ip().is_loopback()
             || callback.port() == 0
             || !report_command.is_absolute()
@@ -175,6 +179,7 @@ impl Service {
         let (changes, _) = broadcast::channel(64);
         Ok(Self {
             storage,
+            settings: settings.clone(),
             project,
             host,
             forge,
@@ -182,6 +187,7 @@ impl Service {
             report_command,
             state: Mutex::new(State {
                 store,
+                settings: runtime_settings,
                 schedule: Schedule::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
@@ -197,6 +203,7 @@ impl Service {
             watch_lock: Mutex::new(()),
             changes,
             wake: Notify::new(),
+            planner_wake: Notify::new(),
             forge_until: AtomicU64::new(0),
             forge_retry_secs: AtomicU64::new(0),
             _profile: profile,
@@ -232,6 +239,9 @@ impl Service {
         self.storage.database().verify()?;
         let task = Task::new(identity, brief, None);
         let mut state = self.state.lock().await;
+        if state.settings.fixture_slots(&self.project).is_none() {
+            return Err(ServiceError::Project);
+        }
         state.store.create(&task, &event("admitted"))?;
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
         Ok(task)
@@ -285,7 +295,10 @@ impl Service {
         host: &impl nucleus_hosts::TaskHost,
         profiles: &OnceCell<Result<(), HostError>>,
     ) -> Result<Action, ServiceError> {
-        if row.task.phase() == Phase::Done && self.project.acp_provider.is_some() {
+        if row.task.phase() == Phase::Done
+            && row.task.run().is_none()
+            && self.project.acp_provider.is_some()
+        {
             return self.archive_done(row).await;
         }
         if row.task.phase() == Phase::Queued
@@ -293,6 +306,16 @@ impl Service {
             && row.task.hold().is_none()
             && row.task.question().is_none()
         {
+            if self
+                .state
+                .lock()
+                .await
+                .settings
+                .fixture_slots(&self.project)
+                .is_none()
+            {
+                return Ok(Action::Wait(WaitReason::Capacity));
+            }
             (*profiles
                 .get_or_init(|| async {
                     self.host
@@ -325,13 +348,18 @@ impl Service {
                     Some(hint) = hints.recv() => self.wake_from_host(hint).await,
                 }
             }
-            self.state.lock().await.invalidate_planner_authority();
+            {
+                let mut state = self.state.lock().await;
+                state.settings.host = web::CachedHost::Unavailable;
+                state.invalidate_planner_authority();
+            }
             tokio::time::sleep(T3_RETRY_DELAY).await;
         }
     }
 
     async fn wake_from_host(&self, hint: ThreadHint) {
         let mut state = self.state.lock().await;
+        state.settings.host = web::CachedHost::Reachable;
         if hint.closed() {
             state.planner_thread_closed(&hint.thread);
         }
@@ -352,11 +380,26 @@ impl Service {
         }
     }
 
-    async fn launch_capacity(&self, id: &str) -> Result<bool, ServiceError> {
-        let budget = &self.project.launch_budget;
-        if self.state.lock().await.store.occupied_slots(id)? >= budget.slots {
-            return Ok(false);
-        }
+    async fn launch_capacity(&self, id: &str, recovery: bool) -> Result<bool, ServiceError> {
+        let max_load = {
+            let state = self.state.lock().await;
+            let project_slots = match state.settings.fixture_slots(&self.project) {
+                Some(slots) => slots,
+                None if recovery => self.project.launch_budget.slots,
+                None => return Ok(false),
+            };
+            let (slots, max_load) = state.settings.dispatch.as_ref().map_or(
+                (
+                    self.project.launch_budget.slots,
+                    self.project.launch_budget.max_load,
+                ),
+                |dispatch| (dispatch.slots, dispatch.max_load),
+            );
+            if state.store.occupied_slots(id)? >= slots.min(project_slots) {
+                return Ok(false);
+            }
+            max_load
+        };
         let mut command = tokio::process::Command::new("/usr/sbin/sysctl");
         command
             .args(["-n", "vm.loadavg"])
@@ -372,7 +415,7 @@ impl Service {
                 .and_then(|raw| raw.trim().strip_prefix('{'))
                 .and_then(|raw| raw.split_whitespace().next())
                 .and_then(|value| value.parse::<f64>().ok())
-                .is_some_and(|value| value.is_finite() && value >= 0.0 && value <= budget.max_load))
+                .is_some_and(|value| value.is_finite() && value >= 0.0 && value <= max_load))
     }
 
     async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {
@@ -415,6 +458,7 @@ impl Service {
         let current = self.lookup(&state, id)?;
         let archive_due = self.project.acp_provider.is_some()
             && current.task.phase() == Phase::Done
+            && current.task.run().is_none()
             && !state.store.archive_confirmed(id)?;
         if !archive_due && !active(&current.task) && !state.forge_requested.contains(id) {
             state.set_wait(id, None);
@@ -805,16 +849,22 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
 
 impl State {
     fn set_wait(&mut self, id: &str, wait: Option<WaitReason>) -> Option<WaitReason> {
-        let prior = match wait {
-            Some(reason) => self.waits.insert(id.into(), reason),
-            None => self.waits.remove(id),
-        };
-        if prior != wait {
-            if prior == Some(WaitReason::Capacity) {
-                self.capacity_waiters.retain(|waiting| waiting != id);
-            } else if wait == Some(WaitReason::Capacity) {
-                self.capacity_waiters.push_back(id.into());
+        let prior = self.waits.get(id).map(|(reason, _)| *reason);
+        if prior == wait {
+            return prior;
+        }
+        match wait {
+            Some(reason) => {
+                self.waits.insert(id.into(), (reason, Instant::now()));
             }
+            None => {
+                self.waits.remove(id);
+            }
+        }
+        if prior == Some(WaitReason::Capacity) {
+            self.capacity_waiters.retain(|waiting| waiting != id);
+        } else if wait == Some(WaitReason::Capacity) {
+            self.capacity_waiters.push_back(id.into());
         }
         prior
     }
