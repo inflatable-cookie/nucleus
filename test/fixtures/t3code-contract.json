@@ -74,6 +74,10 @@
       ],
       "optional": []
     },
+    "queued-run.cancel": {
+      "required": ["type", "commandId", "threadId", "runId"],
+      "optional": []
+    },
     "thread.unarchive": {
       "required": [
         "type",

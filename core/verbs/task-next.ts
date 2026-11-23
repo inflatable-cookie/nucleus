@@ -1,6 +1,11 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
-import { releaseWarnings } from "./explicit-resolution";
+import { closeoutRecoveryRun } from "./explicit-integration";
+import {
+  recoverySettlementOffers,
+  releaseRefusal,
+  releaseWarnings,
+} from "./explicit-resolution";
 import { plannerEscalations } from "../questions/ladder/records";
 import {
   reviewerStartRefusal,
@@ -8,7 +13,7 @@ import {
   runStartWarnings,
 } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
-import { taskDetailView } from "../../shared/task-view";
+import { externalMergeSourceAcceptance, mergeReviewEvidenceAt, taskDetailView } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import { budgetGatesPhase } from "../../shared/task-budget";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
@@ -622,15 +627,30 @@ function explicitCommandsFor(
   stop: TaskNext["stop"],
 ): TaskNextExplicitCommand[] {
   const { task, runs } = facts;
-  if (task.removedAt || ["done", "cancelled"].includes(task.phase)) return [];
+  if (task.removedAt) return [];
+  const settlements = recoverySettlementOffers(facts.store, task, runs);
+  if (["done", "cancelled"].includes(task.phase)) return settlements;
   const base = { taskId: task.id, version: task.version };
-  const commands: TaskNextExplicitCommand[] = [];
+  const commands: TaskNextExplicitCommand[] = [...settlements];
   const reviewerRefusal = reviewerStartRefusal(task, facts.events);
   const push = (command: TaskNextExplicitCommand) => {
     if (
       command.action === "run.start" &&
       command.args.role === "reviewer" &&
       reviewerRefusal
+    )
+      return;
+    const releaseTarget =
+      command.action === "run.release"
+        ? command.args.run
+        : command.action === "run.start"
+          ? command.args.replacing
+          : command.action === "closeout.now"
+            ? closeoutRecoveryRun(facts.store, task)?.id
+            : undefined;
+    if (
+      typeof releaseTarget === "string" &&
+      releaseRefusal(facts.store, task, releaseTarget)
     )
       return;
     const sig = `${command.action}:${JSON.stringify(command.args)}`;
@@ -663,16 +683,9 @@ function explicitCommandsFor(
           ? "coordinator"
           : null;
 
-  // Spec 068 §3: a create the host may still answer offers no replacement and no
-  // release: either would let a second thread stand beside the late one.
-  const inFlight =
-    task.resolution.stop?.fact?.code === "creation_in_flight"
-      ? task.resolution.stop.fact.subject
-      : undefined;
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
-    if (run.id === inFlight) continue;
     const role = startRoleFor(run.role);
     if (role) {
       push({
@@ -696,7 +709,15 @@ function explicitCommandsFor(
     });
   }
 
-  if (task.agentIntent && !task.agentId && task.runId !== inFlight) {
+  if (task.agentIntent && !task.agentId) {
+    if (task.runId) {
+      push({
+        action: "run.release",
+        args: { action: "run.release", ...base, run: task.runId },
+        fill: ["reason"],
+        note: "Release the uncertain initial worker creation.",
+      });
+    }
     push({
       action: "run.start",
       args: {
@@ -824,7 +845,23 @@ function explicitCommandsFor(
     });
   }
 
-  if (task.resolution.mergedCommit) {
+  const { mergedCommit, mergeHead, externalMerge } = task.resolution;
+  const proof = facts.externalCloseout;
+  const unreviewed = proof?.taskId === task.id && proof.version === task.version
+    ? proof.warning
+    : null;
+  if (unreviewed) {
+    push({
+      action: "closeout.now",
+      args: { action: "closeout.now", ...base },
+      fill: ["reason"],
+      note: `${unreviewed.text} Only a responsible planner or the operator board may accept this warning.`,
+      warnings: ["unreviewed_merge"],
+    });
+  } else if (mergedCommit && (
+    !externalMerge || externalMergeSourceAcceptance(task) ||
+    (mergeHead && mergeReviewEvidenceAt(task, mergeHead))
+  )) {
     push({
       action: "closeout.now",
       args: { action: "closeout.now", ...base },
@@ -927,6 +964,7 @@ function explicitCommandsFor(
   }
 
   return commands.map((command) => {
+    if (command.warnings) return command;
     const warnings = expectedWarnings(facts, command);
     return warnings ? { ...command, warnings } : command;
   });

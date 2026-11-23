@@ -198,13 +198,14 @@ export const resolutionSchema = z.object({
     .default(null),
   // nucleus#1425: the verified external merge that stopped this task unreviewed. It
   // binds the exact source head the PR merged at and the distinct integration merge
-  // commit. Only a fresh review of that recorded head (`move to=review`) and its verdict
-  // reconcile the merge; nothing here is acceptance by itself.
+  // commit. A fresh review or an explicit external-merge source acceptance can
+  // reconcile it; this observation grants neither.
   unreviewedMerge: z
     .object({
       prNumber: z.number().int().positive(),
       head: z.string().regex(/^[a-f0-9]{40}$/),
       commit: z.string().regex(/^[a-f0-9]{40}$/),
+      descendsFrom: z.string().regex(/^[a-f0-9]{40}$/).optional(),
     })
     .strict()
     .nullable()

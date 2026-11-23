@@ -2,6 +2,7 @@ import { externalMergeStateRefusal } from "../verbs/control-refusals";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  externalMergeSourceAcceptance,
   mergeReviewEvidenceAt,
   type OwnerAcceptanceRecord,
   type Run,
@@ -46,7 +47,7 @@ import {
   settleMergeEscalations,
 } from "../closeout/closeout";
 import { recordObservedMerge } from "./external-merge-record";
-import { unreviewedMergeRoute } from "../../shared/task-view";
+import { unreviewedMergeObservation } from "../../shared/task-view";
 import {
   recoveredExternalCheckIncident,
   resumeClearedAttention as resumeClearedAttentionFor,
@@ -521,6 +522,13 @@ export class ExternalMerge {
       );
       return derived;
     }
+    if (
+      this.resolution.reviewRequired(current) &&
+      !mergeReviewEvidenceAt(current, result.head)
+    )
+      throw new DurableFenceRefusal(
+        "No review evidence binds the merged head; a responsible planner or the operator board can use closeout.now with accept [\"unreviewed_merge\"]",
+      );
     return null;
   }
 
@@ -600,14 +608,17 @@ export class ExternalMerge {
       t.reviewEntry && !t.agentIntent && !t.agentId,
     );
     const retained = Boolean(
-      !unrunReviewEntry &&
-        t.prHead &&
+      t.prHead &&
         t.resolution.mergeHead &&
         t.prHead !== t.resolution.mergeHead &&
-        t.resolution.ownerAcceptances.some(
-          (item) =>
-            item.kind === "operator_source" &&
-            item.head === t.resolution.mergeHead,
+        (
+          (!unrunReviewEntry && t.resolution.ownerAcceptances.some(
+            (item) =>
+              item.kind === "operator_source" &&
+              item.head === t.resolution.mergeHead,
+          )) ||
+          (externalMergeSourceAcceptance(t) && t.directory &&
+            readGitCheckout(t.directory).head === t.prHead)
         ),
     );
     const witness = retained
@@ -673,7 +684,8 @@ export class ExternalMerge {
         observed.head !== t.resolution.mergeHead ||
         observed.commit !== t.resolution.mergedCommit ||
         (this.resolution.reviewRequired(t) &&
-          !mergeReviewEvidenceAt(t, observed.head))
+          !mergeReviewEvidenceAt(t, observed.head) &&
+          !externalMergeSourceAcceptance(t))
       )
         return false;
       if (
@@ -788,9 +800,10 @@ export class ExternalMerge {
         return false;
       const current = this.store.task(t.id);
       if (this.externalCheckIdentity(current) !== observed) return false;
+      const descendant = result.head !== current.prHead;
       if (
         !current.prHead ||
-        result.head !== current.prHead ||
+        (descendant && result.descendsFrom !== current.prHead) ||
         !/^[a-f0-9]{40}$/.test(result.commit)
       )
         throw new Error("External merge head differs from recorded task work");
@@ -803,13 +816,13 @@ export class ExternalMerge {
       // submission that explicitly skipped PR review keeps its previous merge
       // behavior, the same rule the Queue-owned gates apply.
       if (
-        this.resolution.reviewRequired(current) &&
+        (descendant || this.resolution.reviewRequired(current)) &&
         !mergeReviewEvidenceAt(current, result.head)
       ) {
         // nucleus#1425: the recorded unreviewed merge governs its own re-observation. While
         // the owner's fresh review of that merged source is in flight, the probe neither
         // restates the stop nor answers the route; the review's verdict reconciles the merge.
-        const route = unreviewedMergeRoute(current);
+        const route = unreviewedMergeObservation(current);
         const recordedMerge =
           route !== null &&
           route.head === result.head &&
@@ -824,6 +837,7 @@ export class ExternalMerge {
           current,
           result.head,
           result.commit,
+          descendant ? current.prHead : undefined,
         );
         return true;
       }

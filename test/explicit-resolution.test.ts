@@ -32,12 +32,17 @@ import {
   type Run,
   type Task,
 } from "../shared/contracts";
+import { taskStopRecord } from "../shared/task-stop";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { operationInputHash } from "../core/store/store";
+import {
+  readCreationAttempt,
+  settleCreationAttempt,
+} from "../core/store/store-task-funnel";
 import {
   collectOwnerVerbFacts,
   ownerPendingEffects,
@@ -130,6 +135,9 @@ async function fixture(
     }),
     stopAgentTurn: async (id: string) => {
       calls.push(`stop ${id}`);
+    },
+    stopExactAgentTurn: async (id: string, turnId: string) => {
+      calls.push(`stop ${id} turn ${turnId}`);
     },
     archiveAgent: async (id: string) => {
       calls.push(`archive ${id}`);
@@ -464,9 +472,28 @@ test("record.clear supersedes a notice and keeps late delivery evidence from res
   );
 });
 
+function withRecordedTurn(run: Run, turnId: string): Run {
+  assert.ok(run.agentId);
+  return {
+    ...run,
+    participantActivity: {
+      runId: run.id,
+      agentId: run.agentId,
+      turnId,
+      turnStartedAt: run.createdAt,
+      permission: null,
+      process: null,
+      tool: null,
+    },
+  };
+}
+
 test("run.release cancels a current revision on the retained worker thread", async (t) => {
   const { store, current, run, command, calls } = await fixture(t);
-  const revision = run("revision-run", "revision", "worker");
+  const revision = withRecordedTurn(
+    run("revision-run", "revision", "worker"),
+    "revision-turn",
+  );
   store.putRun(revision);
   store.update(current().id, {
     phase: "working",
@@ -481,11 +508,165 @@ test("run.release cancels a current revision on the retained worker thread", asy
     accept: ["live_turn", "unreported_result"],
   });
   assert.equal(result.explicitResolution?.status, "applied");
-  assert.deepEqual(calls, ["stop worker"]);
+  assert.deepEqual(calls, ["stop worker turn revision-turn"]);
   assert.equal(result.agentId, revision.agentId);
   assert.equal(result.runId, "original-worker");
   assert.equal(result.resolution.currentRunId, null);
 });
+
+test("next and run.release refuse a creation the host may still answer", async (t) => {
+  const { store, current, run, command, audit, runtime } = await fixture(t);
+  const coordinator = run("creating-coordinator", "recovery", null);
+  store.putRun(coordinator);
+  const stop = taskStopRecord(
+    "run_stalled",
+    "Coordinator creation is in flight",
+    null,
+    new Date().toISOString(),
+    [],
+    undefined,
+    { code: "creation_in_flight", subject: coordinator.id },
+  );
+  store.update(current().id, {
+    resolution: { ...current().resolution, currentRunId: coordinator.id, stop },
+  });
+  const offer = async () =>
+    (await runtime.taskNext({ taskId: current().id }))
+      .explicitCommands?.find(
+        (item) =>
+          item.action === "run.release" && item.args.run === coordinator.id,
+      );
+  assert.equal(await offer(), undefined);
+  await assert.rejects(
+    command({
+      action: "run.release",
+      run: coordinator.id,
+      accept: ["creation_in_flight", "live_turn", "unreported_result"],
+    }),
+    /may still be answered by the host/,
+  );
+  assert.equal(store.run(coordinator.id)?.released, false);
+  assert.equal(audit().length, 0);
+
+  store.update(current().id, {
+    resolution: { ...current().resolution, stop: null },
+  });
+  const available = await offer();
+  assert.ok(available);
+  assert.deepEqual(available.warnings, ["live_turn", "unreported_result"]);
+  const args = { action: available.action, run: available.args.run };
+  const probe = await command(args);
+  assert.deepEqual(
+    probe.explicitResolution?.warnings.map((warning) => warning.id),
+    available.warnings,
+  );
+  const applied = await command({ ...args, accept: available.warnings });
+  assert.equal(applied.explicitResolution?.status, "applied");
+});
+
+test("next offers release of an unbound initial worker once creation settles", async (t) => {
+  const { store, current, runtime, command } = await fixture(t);
+  const runId = "initial-worker";
+  const worker = store.update(
+    current().id,
+    { phase: "dispatching", agentIntent: true, runId, workspaceId: "workspace" },
+    "agent_intent",
+  );
+  store.setCredential(runId, "initial-worker-secret");
+  const attempt = readCreationAttempt(store, {
+    id: runId,
+    taskId: worker.id,
+    hostId: worker.hostId,
+    workspaceId: worker.workspaceId,
+    role: "worker",
+  });
+  assert.ok(attempt && !attempt.settlement);
+  const offers = async () =>
+    (await runtime.taskNext({ taskId: worker.id })).explicitCommands ?? [];
+  assert.equal(
+    (await offers()).some((item) => item.args.run === runId || item.args.replacing === runId),
+    false,
+  );
+  await assert.rejects(
+    command({
+      action: "run.release",
+      run: runId,
+      accept: ["live_turn", "unreported_result"],
+    }),
+    /may still be answered by the host/,
+  );
+  assert.doesNotThrow(() => store.authenticate(runId, "initial-worker-secret"));
+
+  settleCreationAttempt(store, attempt, "threw");
+  const offer = (await offers()).find(
+    (item) => item.action === "run.release" && item.args.run === runId,
+  );
+  assert.ok(offer);
+  assert.deepEqual(offer.warnings, ["live_turn", "unreported_result"]);
+  const result = taskControlTaskSchema.parse(
+    await callCatalogueMethod(runtime, "queue.task", {
+      ...offer.args,
+      caller: OPERATOR_BOARD_CALLER,
+      reason: "Release the settled creation",
+      accept: offer.warnings,
+    }),
+  );
+  assert.equal(result.explicitResolution?.status, "applied");
+  assert.equal(result.runId, null);
+  assert.throws(
+    () => store.authenticate(runId, "initial-worker-secret"),
+    /unauthorized callback/i,
+  );
+});
+
+for (const mode of [
+  "newer turn",
+  "thread-wide host",
+  "missing turn ID",
+] as const) {
+  test(`run.release leaves the native turn alone with a ${mode}`, async (t) => {
+    const exactStops: Array<{ id: string; turnId: string }> = [];
+    const f = await fixture(t, {
+      stopExactAgentTurn:
+        mode === "thread-wide host"
+          ? undefined
+          : async (id: string, turnId: string) => {
+              exactStops.push({ id, turnId });
+              throw Error("The requested turn ended. The newer turn is active");
+            },
+    });
+    const run = f.run("old-coordinator", "recovery", "coordinator");
+    f.store.putRun(
+      mode === "missing turn ID" ? run : withRecordedTurn(run, "old-turn"),
+    );
+    f.store.setCredential(run.id, "old-run-secret");
+    const response = await f.command({
+      action: "run.release",
+      run: run.id,
+      archive: true,
+      accept: ["live_turn", "unreported_result"],
+    });
+    assert.equal(response.explicitResolution?.status, "applied");
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.throws(
+      () => f.store.authenticate(run.id, "old-run-secret"),
+      /unauthorized callback/i,
+    );
+    assert.deepEqual(
+      f.calls,
+      [],
+      "the thread-wide stop and archive are both untouched",
+    );
+    assert.deepEqual(
+      exactStops,
+      mode === "newer turn" ? [{ id: "coordinator", turnId: "old-turn" }] : [],
+    );
+    assert.match(
+      response.explicitResolution?.next ?? "",
+      /Turn cancellation could not be confirmed/,
+    );
+  });
+}
 
 test("run.release leaves another live revision using the same thread alone", async (t) => {
   const { store, current, run, command, calls } = await fixture(t);
@@ -515,7 +696,10 @@ test("run.release leaves another live revision using the same thread alone", asy
 test("the coordinator can release or clear its task records within its authority", async (t) => {
   const { store, current, run, command, audit, calls } = await fixture(t);
   const coordinator = run("recovery-run", "recovery", "coordinator");
-  const reviewer = run("review-run", "reviewer", "reviewer");
+  const reviewer = withRecordedTurn(
+    run("review-run", "reviewer", "reviewer"),
+    "reviewer-turn",
+  );
   store.putRun(coordinator);
   store.putRun(reviewer);
   store.update(current().id, {
@@ -597,7 +781,10 @@ test("the coordinator can release or clear its task records within its authority
     executionParticipants(current(), store.runs(current().id)).has("reviewer"),
     false,
   );
-  assert.deepEqual(calls, ["stop reviewer", "archive reviewer"]);
+  assert.deepEqual(calls, [
+    "stop reviewer turn reviewer-turn",
+    "archive reviewer",
+  ]);
 });
 
 test("record.clear retires an owned-tool hold and a stale escalation without using its snapshot", async (t) => {
@@ -670,11 +857,15 @@ test("a new task reason keeps its own fact when a resolution update carries an o
 });
 
 test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolves uncertain reviewer in one step", async (t) => {
-  const { root, store, current, run, command, audit, calls, runtime } =
+  const { root, store, current, run, command, audit, calls, runtime, adapter } =
     await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
-  const stuck = run("stuck-reviewer", "reviewer", null);
-  store.putRun({ ...stuck, head: initialSha });
+  const stuck: Run = {
+    ...run("stuck-reviewer", "reviewer", null),
+    status: "intent",
+    head: initialSha,
+  };
+  store.putRun(stuck);
   store.setCredential(stuck.id, "old-secret");
   store.update(current().id, {
     phase: "awaiting_review",
@@ -700,6 +891,45 @@ test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolv
     agent: "fresh",
     replacing: stuck.id,
   };
+  const createRun = adapter.createRun;
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let finishCreate!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finishCreate = resolve;
+  });
+  adapter.createRun = async () => {
+    markStarted();
+    await pending;
+    throw Error("Creation ended without binding an agent");
+  };
+  const nativeCreate = runtime.engine.withHost(host, () =>
+    runtime.engine.adapter.createRun!(current(), stuck, "old-secret"),
+  );
+  const settled = assert.rejects(nativeCreate, /Creation ended without binding/);
+  try {
+    await started;
+    assert.equal(current().resolution.stop, null);
+    assert.equal(readCreationAttempt(store, stuck)?.settlement, null);
+    const offers = (await runtime.taskNext({ taskId: current().id })).explicitCommands ?? [];
+    assert.equal(
+      offers.some((item) => item.args.run === stuck.id || item.args.replacing === stuck.id),
+      false,
+    );
+    await assert.rejects(
+      command({ ...args, accept: ["duplicate_thread", "creation_in_flight"] }),
+      /may still be answered by the host/,
+    );
+    assert.equal(store.run(stuck.id)?.released, false);
+    assert.doesNotThrow(() => store.authenticate(stuck.id, "old-secret"));
+    assert.equal(audit().length, 0);
+  } finally {
+    finishCreate();
+    await settled;
+    adapter.createRun = createRun;
+  }
   const probe = await command(args);
   assert.equal(probe.explicitResolution?.status, "warnings");
   assert.deepEqual(
@@ -1267,8 +1497,8 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
   assert.doesNotThrow(() => store.authenticate(revId, deliveredToken));
 });
 
-test("review fixes: late createRun acknowledgement does not overwrite replaced reviewer binding", async (t) => {
-  const { root, adapter, store, current, command, runtime } = await fixture(t);
+test("late createRun acknowledgement does not overwrite a newer reviewer binding", async (t) => {
+  const { root, adapter, store, current, run, command, runtime } = await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
   store.update(current().id, {
     phase: "awaiting_review",
@@ -1292,16 +1522,11 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
   const firstEntered = new Promise<void>((resolve) => {
     notifyFirstEntered = resolve;
   });
-  let createCalls = 0;
-  adapter.createRun = async (_task, r) => {
-    createCalls++;
-    if (createCalls === 1) {
-      notifyFirstEntered();
-      return new Promise((resolve) => {
-        resolveFirst = resolve;
-      });
-    }
-    return { id: `replacement-${r.id.slice(0, 6)}`, workspaceId: "workspace" };
+  adapter.createRun = async () => {
+    notifyFirstEntered();
+    return new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
   };
 
   const firstPromise = command({
@@ -1313,23 +1538,40 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
   const firstRun = store.runs(current().id)[0]!;
   assert.equal(firstRun.status, "intent");
 
-  await command({ action: "phase.set", to: "needs_attention", accept: ["live_runs"] });
-  const second = await command({
-    action: "run.start",
-    role: "reviewer",
-    agent: "fresh",
-    replacing: firstRun.id,
-    accept: ["duplicate_thread"],
+  // The task can advance independently of the outstanding native reply.
+  const newer = {
+    ...run("newer-reviewer", "reviewer", "newer-agent"),
+    head: initialSha,
+  };
+  try {
+    store.transaction(() => {
+      store.putRun(newer);
+      store.update(current().id, {
+        resolution: {
+          ...current().resolution,
+          currentRunId: newer.id,
+          reviewerAgentId: newer.agentId,
+        },
+      });
+    });
+  } finally {
+    resolveFirst({ id: "late-first-agent", workspaceId: "workspace" });
+  }
+
+  const first = await firstPromise;
+  assert.match(first.explicitResolution?.next ?? "", /on historical run only/);
+  assert.equal(store.run(firstRun.id)?.agentId, "late-first-agent");
+  assert.equal(store.run(firstRun.id)?.released, false);
+
+  const released = await command({
+    action: "run.release",
+    run: firstRun.id,
+    accept: ["live_turn", "unreported_result"],
   });
-  const secondRunId = second.explicitResolution!.runId!;
-  const replacementAgent = current().resolution.reviewerAgentId;
-  assert.ok(replacementAgent?.startsWith("replacement-"));
+  assert.equal(released.explicitResolution?.status, "applied");
 
-  resolveFirst({ id: "late-first-agent", workspaceId: "workspace" });
-  await firstPromise;
-
-  assert.equal(current().resolution.currentRunId, secondRunId);
-  assert.equal(current().resolution.reviewerAgentId, replacementAgent);
+  assert.equal(current().resolution.currentRunId, newer.id);
+  assert.equal(current().resolution.reviewerAgentId, newer.agentId);
   assert.equal(store.run(firstRun.id)?.released, true);
   assert.equal(store.run(firstRun.id)?.status, "superseded");
   assert.equal(store.run(firstRun.id)?.agentId, "late-first-agent");
@@ -1421,7 +1663,7 @@ test("review fixes: phase.set preserves stop, message.send warns on queue-only r
   assert.equal(current().resolution.stop?.since, stopSince);
 
   // task.next exposes machine-readable explicitCommands.
-  const next = runtime.taskNext({ taskId: current().id });
+  const next = await runtime.taskNext({ taskId: current().id });
   assert.ok(
     next.explicitCommands?.some(
       (c) => c.action === "run.start" && c.args.replacing === stuck.id,
@@ -1636,7 +1878,7 @@ test("review round 2: reviewer source custody refuses dirty checkout, warns two_
 });
 
 test("review round 2: replacing checks role and preserves live_turn/unreported_result; reviewer enforces model independence", async (t) => {
-  const { root, store, current, run, command, runtime } = await fixture(t);
+  const { root, store, current, run, command, runtime, calls } = await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
   const liveWorker = run("live-worker-run", "revision", "worker-1");
   store.putRun({
@@ -1707,7 +1949,10 @@ test("review round 2: replacing checks role and preserves live_turn/unreported_r
       roles: ["reviewer"],
     },
   ]);
-  const liveRev = run("live-rev-run", "reviewer", "rev-agent-1");
+  const liveRev = withRecordedTurn(
+    run("live-rev-run", "reviewer", "rev-agent-1"),
+    "review-turn",
+  );
   store.putRun({ ...liveRev, active: true, status: "running" });
   const probe = await command({
     action: "run.start",
@@ -1720,6 +1965,17 @@ test("review round 2: replacing checks role and preserves live_turn/unreported_r
   assert.ok(ids.includes("live_turn"));
   assert.ok(ids.includes("unreported_result"));
   assert.ok(ids.includes("duplicate_thread"));
+  const replaced = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    replacing: liveRev.id,
+    accept: ids,
+  });
+  assert.equal(replaced.explicitResolution?.status, "applied");
+  assert.deepEqual(calls.filter((call) => call.startsWith("stop ")), [
+    "stop rev-agent-1 turn review-turn",
+  ]);
 });
 
 test("review round 2: delayed retained sendRunVia does not rotate binding back to replaced run", async (t) => {
@@ -1914,7 +2170,7 @@ test("review round 2: message.send reports host steer disposition and blocks que
     released: false,
   });
   store.putRun(execRun);
-  const next = runtime.taskNext({ taskId: current().id });
+  const next = await runtime.taskNext({ taskId: current().id });
   assert.ok(
     next.explicitCommands?.some(
       (c) => c.action === "run.release" && c.args.run === execRun.id,

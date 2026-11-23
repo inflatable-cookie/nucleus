@@ -19,6 +19,8 @@ import type {
   TaskControlInput,
 } from "../../shared/contracts";
 import {
+  externalMergeSourceAcceptance,
+  mergeReviewEvidenceAt,
   OPERATOR_BOARD_CALLER,
   holdsOf,
   syncHoldProjection,
@@ -485,6 +487,16 @@ export class ForceVerbs {
       )
         throw new DurableFenceRefusal(
           "The task PR is not confirmed merged on its base; read next and choose another target",
+        );
+      const externalAcceptance = externalMergeSourceAcceptance(task);
+      if (
+        (task.resolution.unreviewedMerge || source !== "operator_board") &&
+        this.resolution.reviewRequired(task) &&
+        !mergeReviewEvidenceAt(task, merged.head) &&
+        !(externalAcceptance?.head === merged.head && externalAcceptance.mergedCommit === merged.commit)
+      )
+        throw new DurableFenceRefusal(
+          "No review evidence binds the merged head; a responsible planner or the operator board can use closeout.now with accept [\"unreviewed_merge\"]",
         );
       observedHead = merged.head;
       mergedCommit = merged.commit;
