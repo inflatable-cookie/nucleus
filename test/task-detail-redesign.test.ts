@@ -162,23 +162,20 @@ async function renderDialog(opts: {
     if (opts.invoke) return opts.invoke(method, input);
     return opts.task;
   };
-  const runs = opts.runs ?? [];
-  const events = opts.events ?? [];
-  const messages = opts.messages ?? [];
-  const detailData = {
-    task: opts.task,
-    events,
-    runs,
-    notices: [],
-    dependencies: [],
-    hooks: [],
-    operations: [],
-    messages,
-    telemetry: null,
-    missingResult: null,
-  };
-  const tree = mount(
-    h(
+  const element = (task: TaskDetail, next: TaskNext) => {
+    const detailData = {
+      task,
+      events: opts.events ?? [],
+      runs: opts.runs ?? [],
+      notices: [],
+      dependencies: [],
+      hooks: [],
+      operations: [],
+      messages: opts.messages ?? [],
+      telemetry: null,
+      missingResult: null,
+    };
+    return h(
       QueryClientProvider,
       { client: queryClient },
       h(PluginRpcProvider, {
@@ -187,9 +184,9 @@ async function renderDialog(opts: {
           PopoverHost,
           null,
           h(TaskDialog, {
-            task: opts.task,
+            task,
             detailQuery: makeQueryResult(detailData),
-            nextQuery: makeQueryResult(opts.next),
+            nextQuery: makeQueryResult(next),
             state: opts.state,
             decisions: [],
             spansRepositories: false,
@@ -199,7 +196,7 @@ async function renderDialog(opts: {
             act: async (fn: () => Promise<unknown>) => {
               await fn();
             },
-            drafts: opts.drafts ?? ({} as TaskDrafts),
+            drafts,
             navigation: {
               openAgent: () => {},
               openWorkspace: () => {},
@@ -210,9 +207,14 @@ async function renderDialog(opts: {
           }),
         ),
       }),
-    ),
-  );
-  return { tree, calls };
+    );
+  };
+  const drafts = opts.drafts ?? ({} as TaskDrafts);
+  const tree = mount(element(opts.task, opts.next));
+  /** A board poll: the same open dialog re-rendered with newer reads. */
+  const rerender = (task: TaskDetail, next: TaskNext) =>
+    tree.update(element(task, next));
+  return { tree, calls, rerender };
 }
 
 test("every stop reason in the vocabulary renders a plain headline and next line with no raw IDs", async () => {
@@ -1152,7 +1154,7 @@ test("Activity summarizes structured payloads and leaves raw identifiers to the 
         messages: [],
         taskId: task.id,
       }).items.find((item) => item.kind === "owner_control")?.detail,
-      "restart by operator (board) · needs attention → working · Worker stalled after the push",
+      "restart by the operator at the board · needs attention → working · Worker stalled after the push",
     );
     const { tree } = await renderDialog({ task, next: makeNext(task), events });
     tree.press("Activity");
@@ -1670,6 +1672,179 @@ test("Activity shows no host thread identity in any default line", async () => {
       tree.text().includes("ns-run-7f3e2a"),
       "the raw list keeps the originals",
     );
+    tree.update(h("View", null));
+  } finally {
+    store.close();
+  }
+});
+
+test("an open dependency form follows a refresh until edited, then is fenced to its starting list", async () => {
+  const store = new Store(":memory:");
+  try {
+    const field =
+      "Prerequisites (comma-separated task IDs or references; leave empty to clear)";
+    const verb = (task: TaskDetail) =>
+      taskNextVerbSchema.parse({
+        verb: "set_dependencies",
+        action: "set_dependencies",
+        available: true,
+        args: { taskId: task.id, version: task.version },
+        fill: ["dependsOn"],
+      });
+    const v1 = createTaskDetail(store, { phase: "queued", dependsOn: [] });
+    // A poll picks up a prerequisite added elsewhere, at a newer version.
+    const v2 = { ...v1, version: v1.version + 1, dependsOn: ["app#7"] };
+
+    // Untouched: the form follows the refresh and stays unsavable.
+    const untouched = await renderDialog({
+      task: v1,
+      next: makeNext(v1, { verbs: [verb(v1)] }),
+    });
+    untouched.tree.press("Task actions menu");
+    untouched.tree.press("Set dependencies");
+    untouched.rerender(v2, makeNext(v2, { verbs: [verb(v2)] }));
+    assert.equal(
+      untouched.tree.get(field).props.value,
+      "app#7",
+      "the form shows the refreshed list",
+    );
+    assert.equal(
+      untouched.tree.get("Save dependencies").props.accessibilityState
+        ?.disabled,
+      true,
+      "a refresh never turns an untouched form into a clearing save",
+    );
+    untouched.tree.update(h("View", null));
+
+    // Edited before the refresh: fenced to its starting list until the operator restarts.
+    const edited = await renderDialog({
+      task: v1,
+      next: makeNext(v1, { verbs: [verb(v1)] }),
+    });
+    edited.tree.press("Task actions menu");
+    edited.tree.press("Set dependencies");
+    edited.tree.type(field, "app#5");
+    edited.rerender(v2, makeNext(v2, { verbs: [verb(v2)] }));
+    assert.ok(
+      edited.tree
+        .text()
+        .includes(
+          "These prerequisites changed while you were editing: now app#7.",
+        ),
+    );
+    assert.equal(
+      edited.tree.get("Save dependencies").props.accessibilityState?.disabled,
+      true,
+    );
+    edited.tree.press("Start from the current list");
+    assert.equal(edited.tree.get(field).props.value, "app#7");
+    edited.tree.type(field, "app#7, app#5");
+    edited.tree.press("Save dependencies");
+    await new Promise((r) => setTimeout(r, 10));
+    const call = edited.calls.find(
+      (item) =>
+        (item.input as { action?: string }).action === "set_dependencies",
+    );
+    assert.deepEqual(
+      [
+        (call?.input as { version: number }).version,
+        [...(call?.input as { dependsOn: string[] }).dependsOn].sort(),
+      ],
+      [v2.version, ["app#5", "app#7"]],
+    );
+    edited.tree.update(h("View", null));
+  } finally {
+    store.close();
+  }
+});
+
+test("a newer next read sets the PR head the Review card compares against", async () => {
+  const store = new Store(":memory:");
+  try {
+    // `queue.detail` still holds version 1 at head A; `task.next` is at version 2 with
+    // PR head B and an approval at B.
+    const detail = createTaskDetail(store, {
+      phase: "verifying",
+      prHead: HEAD,
+    });
+    const newer = { ...detail, version: detail.version + 1, prHead: HEAD_2 };
+    const next = makeNext(newer, {
+      outcome: acceptedOutcome({
+        head: HEAD_2,
+        eventId: "ev-b",
+        runId: "rev-b",
+        summary: "Approved at B.",
+      }),
+    });
+    const { tree } = await renderDialog({ task: detail, next });
+    const text = tree.text();
+    assert.ok(text.includes("Approved at B."));
+    assert.ok(
+      text.includes(`At ${HEAD_2.slice(0, 7)}`),
+      "the approval is at the current head",
+    );
+    assert.ok(
+      !text.includes("Not the current head"),
+      "a lagging detail read never makes it stale",
+    );
+    tree.update(h("View", null));
+  } finally {
+    store.close();
+  }
+});
+
+test("Activity names owner-control callers in words and explains a late delivery", async () => {
+  const store = new Store(":memory:");
+  try {
+    const task = createTaskDetail(store, { phase: "working" });
+    const thread =
+      "thread:delegated-task:ns-agent-0b2a69ba-1111-4222-8333-444455556666";
+    const runId = "8b63c554-459d-4c4d-a92f-704ffc548014";
+    // The payloads `owner_control` and run delivery write (synthetic identities).
+    const ownerControl = JSON.stringify({
+      verb: "restart",
+      caller: thread,
+      phaseBefore: "needs_attention",
+      phaseAfter: "working",
+      identities: { taskId: task.id, runId },
+      reason: "Worker stalled",
+    });
+    const events = [
+      {
+        id: 1,
+        taskId: task.id,
+        at: "2026-11-22T10:00:00.000Z",
+        kind: "owner_control",
+        detail: ownerControl,
+      },
+      {
+        id: 2,
+        taskId: task.id,
+        at: "2026-11-22T10:05:00.000Z",
+        kind: "released_run_delivery_observed",
+        detail: `${runId}: ${thread}`,
+      },
+    ];
+    const { tree } = await renderDialog({ task, next: makeNext(task), events });
+    tree.press("Activity");
+    const text = tree.text();
+    assert.ok(
+      text.includes(
+        "restart by an agent · needs attention → working · Worker stalled",
+      ),
+    );
+    assert.ok(
+      text.includes(
+        "A run Nucleus had already released was delivered late; Nucleus left it out of the task.",
+      ),
+    );
+    assert.ok(
+      !text.includes("thread:") &&
+        !text.includes("ns-agent-") &&
+        !text.includes(runId),
+    );
+    tree.press(/Show raw events \(2\)/);
+    assert.ok(tree.text().includes(thread), "the raw list keeps the originals");
     tree.update(h("View", null));
   } finally {
     store.close();

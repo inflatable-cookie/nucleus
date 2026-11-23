@@ -1348,7 +1348,12 @@ export function taskReviewFindings(
   );
   const completion = run?.completion ?? (sameReport(stored) ? stored : null);
 
-  const currentHead = task.prHead ?? next?.prHead ?? null;
+  // The PR head comes from the newer of the two reads: `queue.detail` and
+  // `task.next` poll separately, and either can lag behind the other.
+  const currentHead =
+    next && next.version > task.version
+      ? next.prHead
+      : (task.prHead ?? next?.prHead ?? null);
   const short = (head: string | null) => (head ? head.slice(0, 7) : "");
   // "Current head" is decided only by comparing this report's own head with the
   // PR head: never by poll order, verdict kind or supersession.
@@ -1735,7 +1740,21 @@ const IDENTITY_EVENT_SUMMARY: Record<string, string> = {
   agent_created: "A new agent thread started for this task.",
   review_result_applied: "Nucleus applied the reviewer’s verdict.",
   review_reapplied: "Nucleus reapplied the reviewer’s verdict.",
+  released_run_delivery_observed:
+    "A run Nucleus had already released was delivered late; Nucleus left it out of the task.",
 };
+
+/**
+ * Who issued an owner control, in words. The board caller reads as the
+ * operator; a caller stamped with a host thread or agent identity reads as
+ * "an agent" rather than the identity itself.
+ */
+function readableActor(caller: unknown): string {
+  if (typeof caller !== "string" || !caller.trim()) return "";
+  if (caller === "operator (board)") return " by the operator at the board";
+  const words = stripIdentifiers(caller);
+  return words ? ` by ${words}` : " by an agent";
+}
 
 /** Host thread and agent identities: `thread:delegated-task:…`, `mcp:…`, `t3code:…`, `ns-agent-…`, `ns-run-…`. */
 const HOST_IDENTITY_PATTERN =
@@ -1755,6 +1774,8 @@ const phaseWords = (phase: unknown) =>
  */
 export function readableEventDetail(detail: string, kind = ""): string {
   const text = detail.trim();
+  // Kinds whose payload is only identities read as their plain line.
+  if (kind in IDENTITY_EVENT_SUMMARY) return IDENTITY_EVENT_SUMMARY[kind]!;
   // A detail that is only an identifier (an agent or thread ID, a run ID, a host
   // thread path) says nothing to a reader: summarize the event by its kind.
   const identityOnly =
@@ -1779,7 +1800,7 @@ export function readableEventDetail(detail: string, kind = ""): string {
     const record = parsed as Record<string, unknown>;
     if (typeof record.verb === "string") {
       const parts = [
-        `${record.verb.replaceAll("_", " ")}${typeof record.caller === "string" && record.caller ? ` by ${record.caller}` : ""}`,
+        `${record.verb.replaceAll("_", " ")}${readableActor(record.caller)}`,
       ];
       const before = phaseWords(record.phaseBefore);
       const after = phaseWords(record.phaseAfter);

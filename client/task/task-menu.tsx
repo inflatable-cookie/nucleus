@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRpc } from "../shell";
 import {
@@ -785,12 +785,46 @@ function DependenciesPanel({
 }) {
   const setTask = useRpc(api.taskControl);
   const stored = (task.dependsOn ?? []).join(", ");
+  // The list the edit started from. An untouched form follows refreshes; an
+  // edited one is fenced to its starting list, so a prerequisite added elsewhere
+  // while it is open is never cleared by a save the operator did not intend.
+  const [base, setBase] = useState(stored);
   const [depsText, setDepsText] = useState(stored);
   const [depsReason, setDepsReason] = useState("");
-  const changed =
-    normalizeDependencies(depsText) !== normalizeDependencies(stored);
+  const edited =
+    normalizeDependencies(depsText) !== normalizeDependencies(base);
+  const moved = normalizeDependencies(stored) !== normalizeDependencies(base);
+  useEffect(() => {
+    if (moved && !edited) {
+      setBase(stored);
+      setDepsText(stored);
+    }
+  }, [stored, moved, edited]);
+  const changed = edited && !moved;
   return (
     <DetailSection title="Set dependencies" c={c}>
+      {moved && edited && (
+        <View accessibilityRole="alert" style={{ gap: space.xs }}>
+          <Text
+            style={{
+              color: c.statusWarning,
+              fontSize: typeScale.metadata.fontSize,
+            }}
+          >
+            These prerequisites changed while you were editing: now{" "}
+            {stored || "none"}.
+          </Text>
+          <Button
+            small
+            c={c}
+            text="Start from the current list"
+            onPress={() => {
+              setBase(stored);
+              setDepsText(stored);
+            }}
+          />
+        </View>
+      )}
       <Field
         c={c}
         label="Prerequisites (comma-separated task IDs or references; leave empty to clear)"
