@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ownerRevisionFixture, runGit } from "./support/review-entry-fixture";
+import { HostPassAgentStates } from "./support/host-pass-agent-states";
 import {
   OPERATOR_BOARD_CALLER,
   runSchema,
@@ -25,7 +26,7 @@ import { queueOperationSchema } from "../shared/operations";
 import { supersedeIdleRunInTx } from "../core/recovery/fence-settlement";
 import { reviewPublicationBody } from "../core/forge/index";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
-import type { ResolutionAdapter } from "../core/resolution";
+import { TOOL_TIMELINE_LIMIT } from "../core/recovery/stall";
 import { HostReadRefusalError } from "../core/host/errors";
 import type { HostProcessFact } from "../core/host";
 import {
@@ -49,7 +50,8 @@ import {
 import type { HostAgentSpec } from "../shared/host";
 
 function fixture() {
-  const f = ownerRevisionFixture();
+  const states = new HostPassAgentStates();
+  const f = ownerRevisionFixture(states);
   let store = f.store;
   const worker: Profile = {
     ...f.reviewer,
@@ -125,9 +127,8 @@ function fixture() {
   });
   const sends: Run[] = [];
   let reviewPublications = 0;
-  const make = (
-    f.buildAdapter() as ReturnType<typeof f.buildAdapter> & ResolutionAdapter
-  ).createRun;
+  const host = f.buildAdapter();
+  const make = host.createRun;
 
   const faults = {
     staleCovering: false,
@@ -140,6 +141,7 @@ function fixture() {
     createTrace: [] as string[],
   };
   const overrides: Parameters<typeof f.buildEngine>[0] = {
+    observe: async (id) => states.withActivityStamp(await host.observe(id)),
     verifyPr: async () => ({
       url: store.task(task.id).prUrl!,
       head: f.state.prSha,
@@ -187,6 +189,9 @@ function fixture() {
       assert.equal(stillAllowed(), true);
       await ordinaryReviewSource(t, run.head);
       sends.push(run);
+      const state = states.get(run.agentId!);
+      assert.ok(state);
+      states.set(state.id, { ...state, status: "running", active: true });
       return { sent: true };
     },
     createRun: async (t, run, token, _context, _owner, guard) => {
@@ -2681,42 +2686,107 @@ test("a genuine rebase author report receives base movement and covering evidenc
   }
 });
 
-test("a closed reviewer after a retained round permits a fresh reviewer", async () => {
-  const f = fixture();
-  try {
-    await f.engine.wake();
-    const first = f.current();
-    await f.report(first, "changes_required");
-    const second = await authorRevision(f, 1);
-    await f.report(second, "blocked", { reviewResponsibility: "environment" });
-    f.states.set(second.agentId!, {
-      ...f.states.get(second.agentId!)!,
-      status: "closed",
-      active: false,
-    });
-    await f.engine.performTaskControl({
-      taskId: f.task.id,
-      version: f.store.task(f.task.id).version,
-      action: "restart",
-      role: "reviewer",
-      fresh: true,
-      reason: "Owner requests a fresh reviewer",
-    });
-    await f.engine.wake();
-    await f.engine.wake();
-    const review = f.current();
-    assert.ok(review, f.store.task(f.task.id).reason);
-    assert.notEqual(review.agentId, second.agentId);
-    assert.equal(review.head, second.head);
-    assert.equal(f.store.run(second.id)!.completion!.status, "blocked");
-    assert.equal(
-      runGit(f.workspace, "branch", "--show-current"),
-      "feature/external",
-    );
-  } finally {
-    await f.close();
-  }
-});
+test(
+  "a closed reviewer after a retained round permits a fresh reviewer",
+  async () => {
+    const f = fixture();
+    try {
+      await f.engine.wake();
+      const first = f.current();
+      await f.report(first, "changes_required");
+      const second = await authorRevision(f, 1);
+      assert.equal(second.agentId, first.agentId);
+      // Record the callback without sending a separate task wake. The host
+      // pass supplies both checkout participants' pages before application.
+      f.idle(second);
+      const receipt = f.engine.resolution.complete(
+        {
+          taskId: f.task.id,
+          runId: second.id,
+          eventId: randomUUID(),
+          status: "blocked",
+          reviewResponsibility: "environment",
+          head: second.head,
+          summary: "Environment unavailable",
+        },
+        f.tokens.get(second.id)!,
+      );
+      assert.equal(receipt.accepted, true);
+      const reporting = f.store.task(f.task.id);
+      const { hostId, agentId } = reporting;
+      const reviewerId = second.agentId;
+      assert.ok(hostId && agentId && reviewerId);
+      const resolution = f.engine.resolution;
+      const pass = resolution.beginPassSnapshot();
+      try {
+        await f.engine.onTaskHost(reporting, async () => {
+          for (const id of [agentId, reviewerId]) {
+            const observation = await f.adapter.observe(id);
+            resolution.recordPassHostObservation(hostId, id, observation);
+            const page = await resolution.primePassTimelinePage(
+              id,
+              TOOL_TIMELINE_LIMIT,
+              hostId,
+              { coveredObservation: observation },
+            );
+            assert.equal(page.state, "ok", `host-pass page for ${id}`);
+          }
+        });
+        resolution.sealPassHost(hostId);
+        await f.engine.scheduleTaskQuantum(reporting.id, pass);
+      } finally {
+        resolution.endPassSnapshot(pass);
+      }
+      const blocked = f.store.task(f.task.id);
+      assert.equal(
+        resultApplied(f.store, blocked.id, second.id),
+        true,
+        blocked.reason,
+      );
+      assert.equal(blocked.phase, "blocked", blocked.reason);
+      assert.equal(blocked.resolution.currentRunId, null);
+      assert.equal(blocked.resolution.review?.runId, second.id);
+      assert.equal(blocked.resolution.review?.status, "blocked");
+      f.states.set(reviewerId, {
+        ...f.states.get(reviewerId)!,
+        status: "closed",
+        active: false,
+      });
+      const closed = await f.adapter.observe(reviewerId);
+      assert.equal(closed.status, "closed");
+      assert.equal(closed.workspaceId, second.workspaceId);
+      assert.ok(Date.parse(closed.updatedAt ?? "") > 0);
+      assert.equal(f.store.run(second.id)?.released, true);
+      const restarted = await f.engine.performTaskControl({
+        taskId: f.task.id,
+        version: f.store.task(f.task.id).version,
+        action: "restart",
+        role: "reviewer",
+        fresh: true,
+        reason: "Owner requests a fresh reviewer",
+      });
+      await f.engine.wake();
+      await f.engine.wake();
+      const review = f.current();
+      assert.ok(review, f.store.task(f.task.id).reason);
+      const task = f.store.task(f.task.id);
+      assert.notEqual(
+        review.agentId,
+        reviewerId,
+        `restart returned "${restarted.phase}: ${restarted.reason}"; after two passes "${task.phase}: ${task.reason}"`,
+      );
+      assert.equal(task.resolution.reviewerAgentId, review.agentId);
+      assert.equal(review.head, second.head);
+      assert.equal(f.store.run(second.id)!.completion!.status, "blocked");
+      assert.equal(
+        runGit(f.workspace, "branch", "--show-current"),
+        "feature/external",
+      );
+    } finally {
+      await f.close();
+    }
+  },
+);
 
 test("a launch owns its reservation across concurrent observation and released-run telemetry refresh", async () => {
   const f = fixture();

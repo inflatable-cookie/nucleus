@@ -195,8 +195,8 @@ test("ordinary tasks keep ordinary routing and critical selection respects avail
         new Set(),
         "high",
       )?.profile.id,
-      "cheap",
-      "at High the noncritical reviewer runs one bracket below the Worker author (Tom, 2026-11-22)",
+      "peer",
+      "at High the noncritical reviewer of a Worker author runs on the worker's bracket (Tom, 2026-11-23)",
     );
     assert.equal(
       f.engine.resolution.select(

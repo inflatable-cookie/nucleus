@@ -6,6 +6,7 @@ import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
 import { planningFixture } from "./support/planning-fixture";
 import { planningEntry } from "./support/inbox";
+import type { BoardTheme } from "../client/shell/types";
 
 /**
  * nucleus#1531: the Planning read view, rendered through the real board from a real stored
@@ -24,6 +25,7 @@ const textOf = (node: HostNode | string): string =>
 async function mountBoard(
   compact: boolean,
   setup?: (fixture: Awaited<ReturnType<typeof planningFixture>>) => void,
+  colors: BoardTheme["colors"] = c,
 ) {
   const fixture = await planningFixture();
   setup?.(fixture);
@@ -36,7 +38,7 @@ async function mountBoard(
       client,
       children: h(PluginRpcProvider, {
         invoke: fixture.invoke,
-        children: h(MainSurface, { theme: { colors: c }, layout: { compact } }),
+        children: h(MainSurface, { theme: { colors }, layout: { compact } }),
       }),
     }),
   );
@@ -353,7 +355,23 @@ test("1531 wide: a lane page shows its finish line, why it is open, status, work
 });
 
 test("1531 medium: the roadmap opens in place of the list, and the lane page opens in the modal with the same breadcrumb", async () => {
-  const board = await mountBoard(true);
+  const colors = {
+    surface0: "#fcfcfc",
+    surface1: "#fcfcfc",
+    surface2: "#ffffff",
+    surfaceHeader: "#fcfcfc",
+    surfaceNavigation: "#f2f2f3",
+    surfaceList: "#e9e9e9",
+    foreground: "#27272a",
+    foregroundMuted: "#71717b",
+    accent: "#1b4ed8",
+    accentForeground: "#ffffff",
+    border: "#e4e4e7",
+    statusSuccess: "#2aa56d",
+    statusWarning: "#fe9a00",
+    statusDanger: "#fb2c36",
+  };
+  const board = await mountBoard(true, undefined, colors);
   const { ui, waitFor } = board;
   try {
     await waitFor(planningEntry);
@@ -387,6 +405,19 @@ test("1531 medium: the roadmap opens in place of the list, and the lane page ope
     assert.ok(
       ui.get("Project row idle"),
       "Planning returns to the project list",
+    );
+    const panel = ui.ofType("View").find(
+      (node) =>
+        typeof node.props.onLayout === "function" &&
+        node.props.style?.backgroundColor === colors.surface0,
+    );
+    assert.ok(panel, "the board measures its panel");
+    panel.props.onLayout({ nativeEvent: { layout: { width: 400, height: 800 } } });
+    ui.press("Project row roadmap");
+    assert.equal(
+      ui.get("Open lane Queue reliability").props.style.backgroundColor,
+      colors.surface2,
+      "the narrow light board keeps the raised lane card when the former list fill equaled the section shade",
     );
   } finally {
     await board.close();

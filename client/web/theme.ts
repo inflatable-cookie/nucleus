@@ -92,16 +92,12 @@ export function useWebTheme(): {
   }, [snapshot, system]);
 }
 
-function resolvePalette(
+export function resolvePalette(
   appearance: BoardAppearance,
   palette?: BoardPalette,
+  color = palette && createColorResolver(),
 ): BoardTheme | null {
-  if (!palette) return null;
-  const sample = document.createElement("canvas");
-  sample.width = sample.height = 1;
-  const context = sample.getContext("2d", { willReadFrequently: true });
-  if (!context) return null;
-  const color = (value: string) => srgbColor(context, value);
+  if (!palette || !color) return null;
   const overrides = Object.fromEntries(
     Object.entries(palette.colors).flatMap(([role, value]) => {
       const resolved = value && color(value);
@@ -111,24 +107,43 @@ function resolvePalette(
   if (!palette.seeds && Object.keys(overrides).length === 0) return null;
 
   const colors = { ...defaults[appearance].colors };
+  const surface = (base: string, tint: string, alpha: number) =>
+    color(`color-mix(in srgb, ${base}, ${tint} ${alpha * 100}%)`) ?? base;
   if (palette.seeds) {
     const { canvas, accent } = palette.seeds;
     const foreground = overrides.foreground ?? contrastingText(canvas);
-    const surface = (alpha: number) =>
-      color(`color-mix(in srgb, ${canvas}, ${foreground} ${alpha * 100}%)`) ??
-      canvas;
     Object.assign(colors, {
       surface0: canvas,
-      surface1: surface(wash.hover),
-      surface2: surface(wash.selected),
+      surface1: surface(canvas, foreground, wash.hover),
+      surface2: surface(canvas, foreground, wash.selected),
       foreground,
-      foregroundMuted: surface(0.72),
-      border: surface(0.4),
+      foregroundMuted: surface(canvas, foreground, 0.72),
+      border: surface(canvas, foreground, 0.4),
       accent,
       accentForeground: contrastingText(accent),
     });
   }
-  return { colors: { ...colors, ...overrides } };
+  const resolved = { ...colors, ...overrides };
+  const { surface1: header, foreground } = resolved;
+  // Use a shadow of the light foreground to darken the dark palette.
+  const shade =
+    appearance === "dark" ? surface("black", foreground, 0.02) : foreground;
+  const step = appearance === "dark" ? 0.2 : 0.045;
+  return {
+    colors: {
+      ...resolved,
+      surfaceHeader: header,
+      surfaceNavigation: surface(header, shade, step),
+      surfaceList: surface(header, shade, step * 2),
+    },
+  };
+}
+
+function createColorResolver() {
+  const sample = document.createElement("canvas");
+  sample.width = sample.height = 1;
+  const context = sample.getContext("2d", { willReadFrequently: true });
+  return context ? (value: string) => srgbColor(context, value) : undefined;
 }
 
 /** The board's shared primitives and tint helper consume hex or legacy rgb/rgba. */

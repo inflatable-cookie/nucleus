@@ -959,12 +959,12 @@ test("Low and Normal show no end time; the slider is the section body on its own
   }
 });
 
-test("the Dispatch-limits level description says the High reviewer runs one bracket below the worker", async () => {
+test("the Dispatch-limits level description says the High reviewer steps down only below a Heavyweight or Frontier worker", async () => {
   const { ui, done } = await mountUsage("high");
   try {
     assert.match(
       ui.get("Usage level help").props.accessibilityHint,
-      /High and very-high complexity start on Heavyweight.*The reviewer runs one bracket below the worker/,
+      /High and very-high complexity start on Heavyweight.*The reviewer runs one bracket below a Heavyweight or Frontier worker, and on the worker's bracket otherwise/,
       "the (?) carries the new High text",
     );
   } finally {

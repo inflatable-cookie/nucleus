@@ -172,18 +172,47 @@ takes effect on that role's next run, and routing details show the reason.
 | --- | --- | --- | --- |
 | **Low** | One bracket below the one it may climb to. | One bracket below the worker. | The operator approves admission of high and very-high work. Frontier is request-only, as is Heavyweight unless the task starts or climbs there. |
 | **Normal** (default) | On its own bracket: Mechanical, Worker or Heavyweight. | One bracket below the worker. | Frontier is request-only, as is Heavyweight unless the task starts or climbs there. |
-| **High** | At the bracket it may climb to, up to Heavyweight. | One bracket below the worker. | Frontier is request-only. |
+| **High** | At the bracket it may climb to, up to Heavyweight. | One bracket below a Heavyweight or Frontier worker; on a Worker worker's bracket. | Frontier is request-only. |
 | **Extra high** | As at High. | On the worker's bracket. | None. |
-| **Maximum** | Workers and reviewers run on Heavyweight or Frontier regardless of complexity. | On the worker's bracket. | None. |
+| **Maximum** | One bracket above its own: Worker, Heavyweight or Frontier. | On the worker's bracket. | None. |
+
+A Mechanical worker gets a Mechanical reviewer at every level, and no reviewer
+runs above its worker. In full (Tom, 2026-11-23):
+
+| Complexity | Low | Normal | High | Extra high | Maximum |
+| --- | --- | --- | --- | --- | --- |
+| very low, low | Mechanical | Mechanical | Mechanical | Mechanical | Worker |
+| medium | Mechanical | Worker | Worker | Worker | Heavyweight |
+| high | Worker | Worker | Heavyweight | Heavyweight | Heavyweight |
+| very high | Heavyweight | Heavyweight | Heavyweight | Heavyweight | Frontier |
+
+| Worker on | Low, Normal | High | Extra high, Maximum |
+| --- | --- | --- | --- |
+| Frontier | Heavyweight | Heavyweight | Frontier |
+| Heavyweight | Worker | Worker | Heavyweight |
+| Worker | Mechanical | Worker | Worker |
+| Mechanical | Mechanical | Mechanical | Mechanical |
+
+**Maximum is smoothed (Tom, 2026-11-23).** "Can we smooth the matrices out
+around maximum? It doesn't need to go straight to full blast for everything?"
+and, on the proposed matrix, "I think a medium complexity task on maximum should
+start on heavy, otherwise looks good, go with the gentler approach." Maximum
+starts each task one bracket above its own and no longer reserves Heavyweight
+and Frontier for workers and reviewers; it replaces the earlier Maximum, which
+ran every worker and reviewer on Heavyweight or Frontier.
 
 - **Above the climb bracket.** A worker run above the bracket the task may
-  climb to is an explicit planner or operator route, never automatic.
+  climb to is an explicit planner or operator route, never automatic. Maximum
+  is the exception: its start brackets sit above the climb bracket for very-low,
+  low and medium work, and its ceiling is Frontier.
 - **Step-up.** When an applied review requests changes on a task that started
   below the bracket it may climb to, the next worker run climbs one bracket,
   never past it: a medium task stays on Worker, a high task climbs once to
   Heavyweight, and very-low and low tasks stay on Mechanical. A very-high task
   steps up to at most Heavyweight at Low, Normal and High, and can step up to
-  Frontier at Extra high and Maximum. The applied review outcome
+  Frontier at Extra high. At Maximum a high task starts on Heavyweight and may
+  climb once to Frontier, a very-high task already starts on Frontier, and other
+  tasks stay on their start bracket. The applied review outcome
   (`resolution.review.status === "changes_required"`) authorizes it, never the
   `changes_requested` phase alone (an owner move or recovery also takes that
   phase), and one climb is recorded per review run
@@ -207,26 +236,34 @@ takes effect on that role's next run, and routing details show the reason.
   capable profile at or below the climb bracket on a shortfall. A profile above
   it is never automatic for a worker, and neither a worker preference nor a
   `preferredProfileId` reaches it; only an explicit request or owner route
-  does. Maximum's own rule is Heavyweight and Frontier for workers and
-  reviewers, an explicit worker request included, and an unrated retained
-  reviewer is below it too.
+  does. At Maximum the ceiling is Frontier, so the nearest bracket above serves
+  when the start bracket is empty.
 - **The usage level sets the reviewer's bracket** (Tom, 2026-11-19: "the
   reviewer should be 1 bracket down from the worker on minimal, low and
-  normal. Above that, it should be same bracket"). At Low, Normal and High
-  the reviewer runs one bracket below the worker's actual profile (its start
-  bracket before a worker ran): Heavyweight → Worker, Worker → Mechanical,
-  Frontier → Heavyweight, and a Mechanical worker gets a Mechanical reviewer.
-  At Extra high and Maximum it runs on the worker's bracket. Tom,
-  2026-11-22: High moved to the one-bracket-below rule ("I want to use high to
-  make use of Sol as worker, but still have lower bracket profiles do the
-  review"), so the reviewer is on the worker's bracket only at Extra high and
-  Maximum. No reviewer
+  normal. Above that, it should be same bracket"). The reviewer reads the
+  worker's actual profile (its start bracket before a worker ran) and never
+  runs above it. At Low and Normal it runs one bracket below: Frontier →
+  Heavyweight, Heavyweight → Worker, Worker → Mechanical. At High it runs one
+  bracket below a Heavyweight or Frontier worker and on a Worker worker's
+  bracket. At Extra high and Maximum it runs on the worker's bracket. A
+  Mechanical worker gets a Mechanical reviewer at every level. Tom, 2026-11-23:
+  "we recently allowed a -1 bracket step for reviewers in "high" mode, but I
+  think that should only apply to heavyweight and frontier profiles.. for work
+  done by worker profile tier, the review should also be in that tier.. right
+  now they're being delegated to mechanical profiles for review which is too
+  long for a "high" limit level. We could look at it as a floor - once the
+  slider is >= high then the floor gets raised to worker profile." and
+  "Reviewers never need to raise higher than their worker, mechanical worker =
+  mechanical reviewer, regardless of level". *Superseded:* the 2026-11-22 rule
+  put every reviewer at High one bracket below the worker, a Worker worker's
+  included (Tom, 2026-11-22: "I want to use high to make use of Sol as worker,
+  but still have lower bracket profiles do the review"); since 2026-11-23 that
+  step applies at High only to Heavyweight and Frontier workers. No reviewer
   floor parks review: when no independent profile carries the reviewer's
   bracket, the nearest permitted bracket above serves, and otherwise the most
   capable permitted profile. A critical task prefers a reviewer at least as
   capable as the worker when one is permitted, and falls back the same way
-  (kept by Tom, 2026-11-19). At Maximum reviewers still use Heavyweight and
-  Frontier.
+  (kept by Tom, 2026-11-19).
 - **Nothing waits for profile approval.** An explicit request applies on the
   role's next run. The Low submission gate still holds work that needs
   admission approval.

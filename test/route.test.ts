@@ -89,9 +89,9 @@ function fixture() {
     "pool",
     all.map((item) => item.entry),
   );
-  // The reviewer runs one bracket below the worker at High (Tom, 2026-11-22),
-  // so the independent Mechanical coordinator profile, not the Worker-rated
-  // luna, is the natural reviewer these routes are measured against.
+  // At High a Worker author keeps a Worker reviewer (Tom, 2026-11-23), so the
+  // independent Worker-rated luna, not the Mechanical coordinator profile, is
+  // the natural reviewer these routes are measured against.
   store.setMeta("usageLevel", {
     level: "high",
     until: null,
@@ -715,7 +715,7 @@ test("an optional reviewer request on the author model is not selected", async (
     assert.ok(selection, "an independent reviewer is still selected");
     assert.equal(
       selection.profile.id,
-      "coord",
+      "luna",
       "the optional same-model request stays excluded; only a required owner route waives independence",
     );
   } finally {
@@ -761,7 +761,7 @@ test("a workerless review entry honours the owner-routed reviewer on a declared 
         { ...workerless, profileRequests: {} } as never,
         "reviewer",
       )?.profile.id,
-      "coord",
+      "luna",
       "with no request, an independent reviewer is selected",
     );
     assert.equal(
@@ -813,7 +813,7 @@ test("a workerless review entry honours the owner-routed reviewer on a declared 
         } as never,
         "reviewer",
       )?.profile.id,
-      "coord",
+      "luna",
       "an optional request never waives the current author model",
     );
     // A real Queue author whose current model was never recorded is unknown, so no
@@ -1621,7 +1621,7 @@ for (const supplied of [false, true])
       const review = f.creates.find((run) => run.role === "reviewer");
       assert.ok(review);
       assert.equal(review.head, publishedHead);
-      assert.equal(review.profile?.id, "coord");
+      assert.equal(review.profile?.id, "luna");
       assert.notEqual(review.profile?.model, replacement.profile?.model);
       assert.ok(verified.every((number) => number === 1));
       assert.equal(f.events("pr_identity_repaired").length, 0);
