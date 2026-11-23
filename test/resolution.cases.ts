@@ -145,11 +145,10 @@ function fixture(
     coordinator = profile("coordinator");
   store.setMeta("paused", false);
   store.setMeta("hostId", "host"); // Queue #912: the one registered host
-  // Spec 052 (Tom, 2026-11-19; Tom, 2026-11-22: High joins the one-below
-  // levels): the reviewer runs one bracket below the worker, where the
-  // coordinator's Mechanical profile sits. The fixture runs at High, so a
-  // fresh reviewer also lands on a Mechanical profile; retained Worker
-  // reviewers above the asked bracket keep their threads.
+  // Spec 052 (Tom, 2026-11-23): at High the reviewer steps one bracket below
+  // only a Heavyweight or Frontier worker, so a Worker author keeps a Worker
+  // reviewer. The fixture runs at High, so each role keeps its own profile:
+  // worker the author, reviewer the reviewer, coordinator the Mechanical one.
   store.setMeta("usageLevel", {
     level: "high",
     until: null,
@@ -1672,8 +1671,8 @@ test("applied ordinary review retains its reader across the next exact-head roun
     assert.equal(f.current().resolution.reviewerAgentId, first.agentId);
     assert.equal(
       f.current().resolution.reviewerProfile?.id,
-      "coordinator",
-      "at High the first reviewer runs one bracket below the worker",
+      "reviewer",
+      "at High a Worker author's first reviewer runs on the Worker bracket",
     );
     assert.equal(f.current().agentId, "worker");
     await f.engine.wake();
@@ -2220,7 +2219,8 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
       highReviewer.id,
       "the retained Worker reviewer is replaced on the climbed worker's bracket",
     );
-    // Maximum raises the retained reviewer floor to Heavyweight and Frontier.
+    // Maximum reviews on the worker's bracket (Tom, 2026-11-23); it no longer
+    // reserves Heavyweight and Frontier, so the issue names the bracket.
     f.store.setMeta("usageLevel", {
       level: "maximum",
       until: null,
@@ -2233,8 +2233,8 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
           profile("reviewer"),
         ),
       ),
-      /below Heavyweight and Frontier, which Maximum reserves/,
-      "a retained reviewer below Maximum's tiers is replaced",
+      /reviewer profile reviewer is rated worker, below the heavyweight bracket/,
+      "a retained reviewer below the Heavyweight worker's bracket is replaced at Maximum",
     );
     const unrated = profile("reviewer-unrated", "test/reviewer-unrated");
     f.engine.profiles = [...f.engine.profiles, unrated];
@@ -2251,8 +2251,8 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
     ]);
     assert.match(
       String(f.engine.resolution.reviewerCapabilityIssue(f.current(), unrated)),
-      /unrated.*Heavyweight and Frontier, which Maximum reserves/,
-      "an unrated retained reviewer is below Maximum's floor",
+      /rated unrated, below the heavyweight bracket/,
+      "an unrated retained reviewer counts as Worker, below the worker's bracket",
     );
     const topReviewer = profile("reviewer-top", "test/reviewer-top");
     f.engine.profiles = [...f.engine.profiles, topReviewer];
@@ -2274,7 +2274,7 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         "reviewer",
       )?.profile.id,
       topReviewer.id,
-      "Maximum selects a top-tier reviewer",
+      "Maximum selects a reviewer at or above the Heavyweight worker's bracket",
     );
     f.store.setMeta("usageLevel", {
       level: "normal",
@@ -2361,8 +2361,7 @@ test("re-review replaces a retained reviewer whose profile or subscription becam
           scopes: ["general"],
         },
       ]);
-      // At High the retained reviewer runs on the Mechanical bracket, so the
-      // outage covers its own profile, not the Worker reviewer profile.
+      // The outage covers the retained reviewer's own profile.
       const retainedId = old.profile?.id ?? "reviewer";
       if (unavailable === "disabled")
         f.store.setMeta(
@@ -2465,12 +2464,12 @@ test("a stopped callback-free reviewer is replaced when its stored subscription 
         scopes: ["general"],
       },
     ]);
-    // At High the retained reviewer runs on the Mechanical bracket, so the pause
-    // covers the coordinator group its run charged, not the Worker reviewer group.
+    // At High a Worker author's reviewer runs on the Worker bracket (Tom,
+    // 2026-11-23), so the pause covers the reviewer group its run charged.
     f.store.db.prepare("INSERT INTO availability VALUES(?,?)").run(
-      "coordinate",
+      "review",
       JSON.stringify({
-        group: "coordinate",
+        group: "review",
         unavailable: true,
         reason: "disabled by operator",
         retryAt: null,
@@ -2487,7 +2486,7 @@ test("a stopped callback-free reviewer is replaced when its stored subscription 
     assert.equal(
       f.run().profile?.id,
       backup.id,
-      "with the Mechanical bracket paused, the nearest permitted bracket above serves",
+      "with the reviewer's group paused, the backup on the same bracket serves",
     );
     assert.equal(f.run().workspaceId, old.workspaceId);
     assert.equal(f.run().head, old.head);
@@ -3131,9 +3130,8 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         capability: "worker",
       },
     ]);
-    // Spec 052 (Tom, 2026-11-17): Maximum reserves workers for the top two tiers;
-    // this non-delivery behaviour is about provider spreading, so High keeps the
-    // medium capability ladder in play.
+    // This non-delivery behaviour is about provider spreading, so High keeps
+    // the Worker capability ladder in play.
     f.store.setMeta("usageLevel", {
       level: "high",
       until: null,
@@ -17257,7 +17255,7 @@ test("Spec 052: a fresh reviewer on a retained Frontier profile without a reques
     await f.engine.resolution.launch(t, "reviewer");
     assert.equal(
       f.creates.at(-1)?.profile?.id,
-      "cheap-coordinator",
+      "cheap-reviewer",
       `${f.current().phase}: ${f.current().reason}`,
     );
     const requested = f.store.update(f.task.id, {

@@ -35,7 +35,7 @@ import { chooseProfile } from '../core/dispatch/routing';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { USAGE_GATE_APPROVE, USAGE_GATE_WAIT, reconcileUsageGate, usageGateBlocked } from '../core/dispatch/usage-gate';
-import { automaticReachable, automaticSelection, automaticSelectionTag, demandRank, describeAutomaticSelection, requestOnly, topTier } from '../shared/pool';
+import { automaticReachable, automaticSelection, automaticSelectionTag, demandRank, describeAutomaticSelection, requestOnly } from '../shared/pool';
 import { requestedTier, workerStartTier } from '../shared/demand';
 import { configurePool, poolSchema, submissionSchema, usageLevels, type Profile, type Task, type UsageLevel, type UsageView } from '../shared/contracts';
 
@@ -59,9 +59,9 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
         const picked = chooseProfile(adopt, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id ?? null;
         assert.equal(picked === 'p', automaticRole === 'allowed', `${label} ${role}: automatic selection agrees with the explanation`);
         const requestedProfile = { ...adopt, profileRequests: { [role]: { profileId: 'p', reason: 'Owner request', required: false } } };
-        const roleTopTier = !(level === 'maximum' && role !== 'coordinator' && !topTier(capability));
+        // Maximum no longer reserves Heavyweight and Frontier (Tom, 2026-11-23), so a request applies at every level.
         assert.equal(chooseProfile(requestedProfile, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id,
-          roleTopTier ? 'p' : undefined, `${label} ${role}: the explicit request applies directly`);
+          'p', `${label} ${role}: the explicit request applies directly`);
       }
       // Cost is never the permission rule (Tom, 2026-11-17), and a tier at or
       // below the task's requested tier is automatic whenever the level's
@@ -73,7 +73,7 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
       assert.equal(automatic === 'request_tier', !automaticReachable(entry, level, requested), label);
       const usage: UsageView = { level, setLevel: level, until: null, expired: false };
       const text = describeAutomaticSelection(entry, usage, iso => iso, requested);
-      assert.equal(/permission|request-only|explicit route|below Heavyweight and Frontier/.test(text), automatic === 'request_tier', `${label}: "${text}"`);
+      assert.equal(/permission|request-only|explicit route/.test(text), automatic === 'request_tier', `${label}: "${text}"`);
       assert.equal(automaticSelectionTag(entry, level, requested) !== '', automatic === 'request_tier', label);
       assert.ok(automaticSelectionTag(entry, level, requested).length <= 16, `${label}: the button tag stays short enough not to overflow a compact chooser`);
     }

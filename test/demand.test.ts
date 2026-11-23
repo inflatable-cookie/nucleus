@@ -95,7 +95,11 @@ const COMPLEXITIES = [
   "high",
   "very_high",
 ] as const;
-/** The start bracket of every level for every complexity (Tom, 2026-11-19). */
+/**
+ * The start bracket of every level for every complexity (Tom, 2026-11-19;
+ * Maximum smoothed by Tom, 2026-11-23: "a medium complexity task on maximum
+ * should start on heavy").
+ */
 const START: Record<
   UsageLevel,
   Record<CapabilityLevel | "unset", DemandLevel>
@@ -133,12 +137,50 @@ const START: Record<
     unset: "worker",
   },
   maximum: {
-    very_low: "heavyweight",
-    low: "heavyweight",
+    very_low: "worker",
+    low: "worker",
     medium: "heavyweight",
     high: "heavyweight",
-    very_high: "heavyweight",
+    very_high: "frontier",
     unset: "heavyweight",
+  },
+};
+/**
+ * The reviewer's bracket by the worker's bracket at every level, never above
+ * the worker (Tom, 2026-11-23): one below at Low and Normal; at High one below
+ * only a Heavyweight or Frontier worker; the worker's own at Extra high and
+ * Maximum; Mechanical for a Mechanical worker everywhere.
+ */
+const REVIEWER: Record<UsageLevel, Record<DemandLevel, DemandLevel>> = {
+  low: {
+    frontier: "heavyweight",
+    heavyweight: "worker",
+    worker: "mechanical",
+    mechanical: "mechanical",
+  },
+  normal: {
+    frontier: "heavyweight",
+    heavyweight: "worker",
+    worker: "mechanical",
+    mechanical: "mechanical",
+  },
+  high: {
+    frontier: "heavyweight",
+    heavyweight: "worker",
+    worker: "worker",
+    mechanical: "mechanical",
+  },
+  extra_high: {
+    frontier: "frontier",
+    heavyweight: "heavyweight",
+    worker: "worker",
+    mechanical: "mechanical",
+  },
+  maximum: {
+    frontier: "frontier",
+    heavyweight: "heavyweight",
+    worker: "worker",
+    mechanical: "mechanical",
   },
 };
 
@@ -204,7 +246,7 @@ test("052: a task's own bracket and the bracket it may climb to; medium and high
   assert.equal(requestedTier(null), "worker");
 });
 
-test("052 table: every level starts a task at its bracket, with maximum on Heavyweight whatever the complexity", () => {
+test("052 table: every level starts a task at its bracket; Maximum starts one bracket above the task's own", () => {
   for (const level of usageLevels)
     for (const complexity of COMPLEXITIES)
       assert.equal(
@@ -220,20 +262,53 @@ test("052 table: every level starts a task at its bracket, with maximum on Heavy
     );
 });
 
-test("052: the reviewer runs one bracket below the worker at Low, Normal and High and on it above; the coordinator always asks for Mechanical", () => {
+test("052 table: the reviewer's bracket for every level and worker bracket, never above the worker; a critical task matches the worker", () => {
+  const rated = [
+    entry("m", "mechanical"),
+    entry("w", "worker"),
+    entry("h", "heavyweight"),
+    entry("f", "frontier"),
+  ];
+  const id = { mechanical: "m", worker: "w", heavyweight: "h", frontier: "f" };
+  for (const level of usageLevels)
+    for (const worker of profileCapabilityLevels) {
+      const on = (critical: boolean) => ({
+        complexity: "medium" as const,
+        critical,
+        profile: { id: id[worker] },
+      });
+      const reviewer = reviewerDemand(on(false), rated, level);
+      assert.equal(reviewer, REVIEWER[level][worker], `${level}/${worker}`);
+      assert.ok(
+        profileCapabilityLevels.indexOf(reviewer) <=
+          profileCapabilityLevels.indexOf(worker),
+        `${level}/${worker}: never above the worker`,
+      );
+      assert.equal(
+        reviewerDemand(on(true), rated, level),
+        worker,
+        `${level}/${worker}: critical`,
+      );
+    }
+});
+
+test("052: before a worker ran, the reviewer reads the start bracket; the coordinator always asks for Mechanical", () => {
   for (const level of usageLevels)
     for (const complexity of COMPLEXITIES) {
-      const worker = profileCapabilityLevels.indexOf(
-        runDemand(complexity, "worker", level),
-      );
-      const reviewer = profileCapabilityLevels.indexOf(
-        runDemand(complexity, "reviewer", level),
-      );
-      const below = level === "low" || level === "normal" || level === "high";
       assert.equal(
-        reviewer,
-        below ? Math.max(0, worker - 1) : worker,
+        runDemand(complexity, "worker", level),
+        START[level][complexity],
+        `${level}/${complexity}: worker`,
+      );
+      assert.equal(
+        runDemand(complexity, "reviewer", level),
+        REVIEWER[level][START[level][complexity]],
         `${level}/${complexity}: reviewer`,
+      );
+      assert.equal(
+        reviewerDemand({ complexity, profile: null }, [], level),
+        REVIEWER[level][START[level][complexity]],
+        `${level}/${complexity}: reviewer demand from the start bracket`,
       );
       assert.equal(
         runDemand(complexity, "coordinator", level),
@@ -277,8 +352,8 @@ test("052: the reviewer reads the worker's actual profile; a critical task floor
   );
   assert.equal(
     reviewerDemand(on("w"), rated, "high"),
-    "mechanical",
-    "at High the reviewer is one bracket below the author",
+    "worker",
+    "at High a Worker author keeps a Worker reviewer (Tom, 2026-11-23)",
   );
   assert.equal(
     reviewerDemand(on("h"), rated, "high"),
@@ -358,6 +433,21 @@ test("052: the climb is one bracket from the worker's actual profile, capped at 
     { from: "mechanical", to: "worker", reviewRunId: "review-1" },
     "Low starts medium on Mechanical and climbs back to Worker",
   );
+  // Maximum (Tom, 2026-11-23): a high task starts on Heavyweight and may climb
+  // once to Frontier; a very-high task already starts there; lower complexities
+  // stay on their start bracket.
+  assert.deepEqual(
+    climb("high", "h", "maximum"),
+    { from: "heavyweight", to: "frontier", reviewRunId: "review-1" },
+    "at Maximum a high task climbs from Heavyweight to Frontier",
+  );
+  assert.equal(
+    climb("very_high", "h", "maximum"),
+    null,
+    "at Maximum a very-high task starts on Frontier, so it has no climb",
+  );
+  assert.equal(climb("medium", "h", "maximum"), null, "medium stays");
+  assert.equal(climb("low", "w", "maximum"), null, "low stays");
   assert.equal(workerStepUp("worker", "heavyweight"), "heavyweight");
   assert.equal(
     workerStepUp("heavyweight", "heavyweight"),
@@ -443,8 +533,13 @@ test("053 rows: only profiles the level covers form the automatic set; gated one
   );
   assert.deepEqual(
     pick("heavyweight", "maximum", [], "worker"),
-    { profileIds: ["opus", "sol"], shortfall: false },
-    "at Maximum workers use Heavyweight and Frontier",
+    { profileIds: ["sol"], shortfall: false },
+    "at Maximum a Heavyweight demand selects its own bracket; Frontier is no longer pooled with it",
+  );
+  assert.deepEqual(
+    pick("worker", "maximum", [], "mechanical").profileIds,
+    ["deepseek", "haiku", "grok"],
+    "a low task at Maximum selects the Worker pool",
   );
   assert.deepEqual(
     pick("mechanical", "extra_high", [], "mechanical").profileIds,
@@ -908,12 +1003,12 @@ test("1385 real pool: usage levels shift the worker by whole brackets", () => {
     select(realTask("very_low"), "worker", "extra_high"),
     "mechanical",
   );
+  // Maximum follows the matrix (Tom, 2026-11-23), and the reviewer matches the worker.
   for (const complexity of COMPLEXITIES)
     for (const role of ["worker", "reviewer"] as const)
-      assert.ok(
-        ["heavyweight", "frontier"].includes(
-          select(realTask(complexity), role, "maximum")!,
-        ),
+      assert.equal(
+        select(realTask(complexity), role, "maximum"),
+        START.maximum[complexity],
         `maximum ${complexity} ${role}`,
       );
 });
@@ -943,8 +1038,8 @@ test("1385 real pool: the reviewer is one bracket below the author at Low, Norma
   );
   assert.equal(
     select(on("medium", "worker"), "reviewer", "high"),
-    "mechanical",
-    "a Worker author gets a Mechanical reviewer at High",
+    "worker",
+    "a Worker author keeps a Worker reviewer at High (Tom, 2026-11-23)",
   );
   assert.equal(
     select(on("high", "heavyweight", true), "reviewer", "high"),

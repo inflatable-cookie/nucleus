@@ -1123,7 +1123,7 @@ test("Spec 052: the usage slider lives under Dispatch limits, and saves a level 
   );
   ui.press("Usage Maximum");
   await settle(() =>
-    /Workers and reviewers run on Heavyweight or Frontier/.test(
+    /medium and high on Heavyweight, very high on Frontier/.test(
       ui.get("Usage level help").props.accessibilityHint,
     ),
   );
