@@ -48,6 +48,11 @@ tool left behind by T3. For both backends, inspect cleanliness just before
 retirement and keep dirty or unpublished local work in place. Index flags that
 can hide edits also keep the checkout in place.
 
+Git receives a pathname after the no-follow directory check. A root or bucket
+replaced during that interval can redirect allocation. The work root belongs
+to the operator on the single-user host. A follow-up will anchor the destination
+to a verified directory handle through the Git write.
+
 The engine opens its own explicit Longhorn portable profile. Its machine-state
 settings are versioned in `state/engine.json`, with the engine disabled by
 default. The database, work and scratch roots must stay on the configured

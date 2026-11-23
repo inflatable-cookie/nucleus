@@ -249,3 +249,37 @@ fn repositories_with_identical_redacted_output_still_have_distinct_identity() {
     ));
     assert!(checkout.path().join("README.md").is_file());
 }
+
+#[test]
+fn a_repository_name_ending_in_space_does_not_adopt_its_siblings_checkout() {
+    let root = tempfile::tempdir().expect("scratch");
+    let selected = root.path().join("repository ");
+    let sibling = root.path().join("repository");
+    let selected_head = repository(&selected);
+    let sibling_head = repository(&sibling);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&selected, "example/fixture", "task-1")
+        .expect("checkout");
+    fs::create_dir(checkout.path().parent().expect("bucket")).expect("fixture bucket");
+    git(
+        &sibling,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            checkout.branch(),
+            checkout.path().to_str().expect("path"),
+            sibling_head.as_str(),
+        ],
+    );
+    assert!(matches!(
+        checkout.allocate(&selected_head),
+        Err(WorkError::WrongCheckout)
+    ));
+    assert!(matches!(
+        checkout.retire(&sibling_head),
+        Err(WorkError::WrongCheckout)
+    ));
+    assert!(checkout.path().join("README.md").is_file());
+}

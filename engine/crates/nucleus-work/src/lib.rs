@@ -205,6 +205,7 @@ impl Checkout<'_> {
         let checkout = self.worktrees.git.worktree_identity(&self.path)?;
         let repository = self.worktrees.git.worktree_identity(&self.repository)?;
         if checkout.root() != self.path
+            || repository.root() != self.repository
             || !checkout.same_repository(&repository)
             || checkout.branch() != Some(self.branch.as_str())
         {
