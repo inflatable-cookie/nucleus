@@ -72,6 +72,11 @@ impl Task {
         let action = decide(self, observation);
         match &action {
             Action::Advance(phase) => self.advance(*phase, observation),
+            Action::Revoke => {
+                if let Some(run) = &mut self.run {
+                    run.revoked = true;
+                }
+            }
             Action::Relaunch(_) => {
                 self.run = None;
                 self.attempts += 1;
@@ -168,13 +173,9 @@ impl Task {
         if !valid_thread || self.threads.get(role.other()) == Some(inputs.thread.as_str()) {
             return Err(CommandError::LaunchNoLongerApplies);
         }
-        let sequence = self
-            .threads
-            .launch_sequence
-            .checked_add(1)
-            .ok_or(CommandError::LaunchSequenceExhausted)?;
+        let sequence = self.next_launch_sequence()?;
         let id = &self.identity.id;
-        let instance = format!("task-{id}-run-{sequence}");
+        let instance = self.launch_instance(sequence);
         let (phase, review_head) = match role {
             Role::Worker => ("working", None),
             Role::Reviewer => ("reviewing", observation.pr().map(|pr| pr.head.clone())),
@@ -203,8 +204,46 @@ impl Task {
             },
             report: None,
             revoked: false,
+            last_send_at_ms: None,
         });
         Ok(bearer)
+    }
+
+    /// Obtain the ID the next reservation will use so the caller can freeze its wire.
+    ///
+    /// # Errors
+    /// Returns an error when the launch sequence is exhausted.
+    pub fn next_launch_instance(&self) -> Result<String, CommandError> {
+        Ok(self.launch_instance(self.next_launch_sequence()?))
+    }
+
+    fn launch_instance(&self, sequence: u64) -> String {
+        format!("task-{}-run-{sequence}", self.identity.id)
+    }
+
+    fn next_launch_sequence(&self) -> Result<u64, CommandError> {
+        self.threads
+            .launch_sequence
+            .checked_add(1)
+            .ok_or(CommandError::LaunchSequenceExhausted)
+    }
+
+    /// Record a possible native write. Persist this update before the write, even
+    /// on a replay used to settle a revoked run. Times are Unix milliseconds.
+    ///
+    /// # Errors
+    /// Returns an error if the run was replaced or the timestamp went backwards.
+    pub fn record_send(&mut self, instance: &str, now_ms: u64) -> Result<(), CommandError> {
+        let run = self
+            .run
+            .as_mut()
+            .filter(|run| run.launch.instance == instance)
+            .ok_or(CommandError::LaunchNoLongerApplies)?;
+        if run.last_send_at_ms.is_some_and(|prior| prior >= now_ms) {
+            return Err(CommandError::LaunchNoLongerApplies);
+        }
+        run.last_send_at_ms = Some(now_ms);
+        Ok(())
     }
 
     /// Keep one authenticated report until the service observes the turn settle.

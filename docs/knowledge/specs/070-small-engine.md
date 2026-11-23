@@ -67,7 +67,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. |
 | `threads` | Retained worker and reviewer thread IDs and a monotonic launch sequence. Reuse each role's thread when it is idle. Replace its ID only after the host confirms the thread is gone. |
-| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds immutable launch inputs and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
+| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds the immutable launch request, the last possible send time and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
 | `pr` | URL and head SHA. |
 | `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. |
 | `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
@@ -82,8 +82,9 @@ reads its own events to decide anything.
 
 Each pass reads, for active tasks only:
 
-- **Host:** for the run's thread, whether it exists, its turn state (running, idle or
-  ended), the report if one was sent, and pending permission or user input.
+- **Host:** for the exact run's thread, whether it exists, its turn state (running,
+  idle or ended), the report if one was sent, and pending permission or user input.
+  On local T3, settlement also checks for processes using that checkout.
 - **Forge:** the PR's state, head, mergeability and checks, and whether it was merged
   and at which commit.
 - **Workspace:** whether it exists, its head, and whether it is clean.
@@ -110,9 +111,12 @@ Every action is idempotent:
 - Launches and sends use a deterministic label, `task-{id}-{phase}-{head}-{attempt}`.
   The task assigns each reservation a distinct launch instance and bearer. Revisiting
   the same phase and head after `move` uses new native command and message IDs.
-  Only the current, unrevoked reservation can be replayed.
-- Before any create, the engine looks up the label. An unknown outcome is simply
-  looked up on the next pass. Nothing is ever resent blindly.
+  Only the current reservation can be replayed. An unrevoked replay can start
+  work. A revoked replay only reconciles uncertain delivery and stops the turn.
+- Before any send, the engine reads the exact native thread and message identity.
+  It records the possible send before writing. If a reply remains unknown, it
+  waits out the host's late-reply window and replays the identical request under
+  the same command ID. An unsent revoked reservation clears directly.
 - A merge is the guarded GitHub merge at the exact head.
 
 ### Faults
@@ -127,6 +131,9 @@ Every action is idempotent:
   exact head. A reservation that no longer fits proceeds to reconciliation
   without charging a failed attempt. A failed attempt counts only when the
   required head observation is known.
+- If the head moved while delivery was uncertain, reconciliation can replay the
+  old request after revoking its credential. It stops the exact turn and archives
+  the thread before clearing the run. The old review cannot report a verdict.
 - **A task needs a person only when the question is about the work itself.**
 
 ### Commands

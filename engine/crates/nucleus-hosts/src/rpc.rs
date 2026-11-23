@@ -1,11 +1,14 @@
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Client, Url, header::HeaderValue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{net::TcpStream, sync::Mutex, time};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_config, tungstenite::{Message, protocol::WebSocketConfig}};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
+    tungstenite::{Message, protocol::WebSocketConfig},
+};
 
 use crate::HostError;
 
@@ -37,48 +40,109 @@ pub(crate) struct Rpc {
 impl Rpc {
     pub(crate) fn new(endpoint: &str, bearer: &str) -> Result<Self, HostError> {
         let base = Url::parse(endpoint).map_err(|_| HostError::Configuration)?;
-        if !matches!(base.scheme(), "http" | "https") || base.host_str().is_none()
-            || !base.username().is_empty() || base.password().is_some() || base.path() != "/"
-            || base.query().is_some() || base.fragment().is_some() || bearer.is_empty() {
+        let loopback = base.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+        if !matches!(base.scheme(), "http" | "https")
+            || !loopback
+            || !base.username().is_empty()
+            || base.password().is_some()
+            || base.path() != "/"
+            || base.query().is_some()
+            || base.fragment().is_some()
+            || bearer.is_empty()
+        {
             return Err(HostError::Configuration);
         }
-        let mut bearer = HeaderValue::from_str(&format!("Bearer {bearer}")).map_err(|_| HostError::Configuration)?;
+        let mut bearer = HeaderValue::from_str(&format!("Bearer {bearer}"))
+            .map_err(|_| HostError::Configuration)?;
         bearer.set_sensitive(true);
-        let http = Client::builder().redirect(reqwest::redirect::Policy::none()).retry(reqwest::retry::never()).timeout(DEADLINE).build().map_err(|_| HostError::Configuration)?;
-        Ok(Self { base, bearer, http, socket: Mutex::new(None) })
+        let http = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .timeout(DEADLINE)
+            .build()
+            .map_err(|_| HostError::Configuration)?;
+        Ok(Self {
+            base,
+            bearer,
+            http,
+            socket: Mutex::new(None),
+        })
     }
 
-    pub(crate) async fn call(&self, method: &str, payload: Value, read: Read) -> Result<Reply, HostError> {
+    pub(crate) async fn call(
+        &self,
+        method: &str,
+        payload: impl Serialize + Send,
+        read: Read,
+    ) -> Result<Reply, HostError> {
         let mut slot = self.socket.lock().await;
-        if slot.is_none() {
-            let socket = time::timeout(DEADLINE, self.connect()).await.map_err(|_| HostError::Timeout)??;
-            *slot = Some(Connection { socket, next_id: 0 });
+        let mut connection = match slot.take() {
+            Some(connection) => connection,
+            None => Connection {
+                socket: time::timeout(DEADLINE, self.connect())
+                    .await
+                    .map_err(|_| HostError::Timeout)??,
+                next_id: 0,
+            },
+        };
+        let reply = time::timeout(DEADLINE, connection.call(method, payload, read))
+            .await
+            .map_err(|_| HostError::Timeout)
+            .and_then(std::convert::identity);
+        if reply.is_ok() {
+            *slot = Some(connection);
         }
-        let connection = slot.as_mut().ok_or(HostError::Unavailable)?;
-        let reply = time::timeout(DEADLINE, connection.call(method, payload, read)).await.map_err(|_| HostError::Timeout).and_then(std::convert::identity);
-        if reply.is_err() { *slot = None; }
         reply
     }
 
     async fn connect(&self) -> Result<Socket, HostError> {
         #[derive(Deserialize)]
-        struct Ticket { ticket: String }
-        let url = self.base.join("api/auth/websocket-ticket/rpc").map_err(|_| HostError::Configuration)?;
-        let mut response = self.http.post(url).header(reqwest::header::AUTHORIZATION, self.bearer.clone()).send().await
-            .and_then(reqwest::Response::error_for_status).map_err(|_| HostError::Unavailable)?;
+        struct Ticket {
+            ticket: String,
+        }
+        let url = self
+            .base
+            .join("api/auth/websocket-ticket/rpc")
+            .map_err(|_| HostError::Configuration)?;
+        let mut response = self
+            .http
+            .post(url)
+            .header(reqwest::header::AUTHORIZATION, self.bearer.clone())
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|_| HostError::Unavailable)?;
         let mut data = Vec::new();
         while let Some(bytes) = response.chunk().await.map_err(|_| HostError::Unavailable)? {
-            if data.len() + bytes.len() > MAX_TICKET { return Err(HostError::Protocol); }
+            if data.len() + bytes.len() > MAX_TICKET {
+                return Err(HostError::Protocol);
+            }
             data.extend_from_slice(&bytes);
         }
         let ticket: Ticket = serde_json::from_slice(&data).map_err(|_| HostError::Protocol)?;
-        if ticket.ticket.is_empty() { return Err(HostError::Protocol); }
+        if ticket.ticket.is_empty() {
+            return Err(HostError::Protocol);
+        }
         let mut url = self.base.join("ws").map_err(|_| HostError::Configuration)?;
         let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
-        url.set_scheme(scheme).map_err(|()| HostError::Configuration)?;
-        url.query_pairs_mut().append_pair("wsTicket", &ticket.ticket).append_pair("orchestrationProtocol", "2");
-        let config = WebSocketConfig::default().max_message_size(Some(MAX_FRAME)).max_frame_size(Some(MAX_FRAME));
-        let (socket, _) = connect_async_with_config(url.as_str(), Some(config), false).await.map_err(|_| HostError::Unavailable)?;
+        url.set_scheme(scheme)
+            .map_err(|()| HostError::Configuration)?;
+        url.query_pairs_mut()
+            .append_pair("wsTicket", &ticket.ticket)
+            .append_pair("orchestrationProtocol", "2");
+        let config = WebSocketConfig::default()
+            .max_message_size(Some(MAX_FRAME))
+            .max_frame_size(Some(MAX_FRAME));
+        let (socket, _) = connect_async_with_config(url.as_str(), Some(config), false)
+            .await
+            .map_err(|_| HostError::Unavailable)?;
         Ok(socket)
     }
 }
@@ -89,13 +153,39 @@ struct Connection {
 }
 
 impl Connection {
-    async fn call(&mut self, method: &str, payload: Value, read: Read) -> Result<Reply, HostError> {
+    async fn call(
+        &mut self,
+        method: &str,
+        payload: impl Serialize + Send,
+        read: Read,
+    ) -> Result<Reply, HostError> {
+        #[derive(Serialize)]
+        struct Request<'a, P> {
+            #[serde(rename = "_tag")]
+            kind: &'static str,
+            id: &'a str,
+            tag: &'a str,
+            payload: P,
+            headers: [(); 0],
+        }
         self.next_id = self.next_id.checked_add(1).ok_or(HostError::Protocol)?;
         let id = self.next_id.to_string();
-        self.send(json!({"_tag":"Request","id":id,"tag":method,"payload":payload,"headers":[]})).await?;
+        self.send(Request {
+            kind: "Request",
+            id: &id,
+            tag: method,
+            payload,
+            headers: [],
+        })
+        .await?;
         let mut snapshot = None;
         for _ in 0..MAX_MESSAGES {
-            let message = self.socket.next().await.ok_or(HostError::Unavailable)?.map_err(|_| HostError::Unavailable)?;
+            let message = self
+                .socket
+                .next()
+                .await
+                .ok_or(HostError::Unavailable)?
+                .map_err(|_| HostError::Unavailable)?;
             let Message::Text(text) = message else {
                 match message {
                     Message::Ping(_) | Message::Pong(_) => continue,
@@ -103,29 +193,45 @@ impl Connection {
                 }
             };
             let raw: Value = serde_json::from_str(&text).map_err(|_| HostError::Protocol)?;
-            let frames = match raw { Value::Array(frames) => frames, frame => vec![frame] };
+            let frames = match raw {
+                Value::Array(frames) => frames,
+                frame => vec![frame],
+            };
             for frame in frames {
                 let tag = frame["_tag"].as_str().ok_or(HostError::Protocol)?;
                 if tag == "Ping" {
                     self.send(json!({"_tag":"Pong"})).await?;
                     continue;
                 }
-                if tag == "Pong" { continue; }
-                if frame["requestId"].as_str() != Some(&id) {
-                    if frame["requestId"].is_null() { return Err(HostError::Protocol); }
+                if tag == "Pong" {
+                    continue;
+                }
+                if frame["requestId"].as_str() != Some(&id)
+                    && frame["requestId"].as_u64() != Some(self.next_id)
+                {
+                    if frame["requestId"].is_null() {
+                        return Err(HostError::Protocol);
+                    }
                     continue;
                 }
                 match tag {
-                    "Exit" if frame["exit"]["_tag"] == "Failure" => return Ok(Reply::Failure(frame["exit"]["cause"].clone())),
-                    "Exit" if frame["exit"]["_tag"] == "Success" && matches!(read, Read::One) => return Ok(Reply::Value(frame["exit"]["value"].clone())),
+                    "Exit" if frame["exit"]["_tag"] == "Failure" => {
+                        return Ok(Reply::Failure(frame["exit"]["cause"].clone()));
+                    }
+                    "Exit" if frame["exit"]["_tag"] == "Success" && matches!(read, Read::One) => {
+                        return Ok(Reply::Value(frame["exit"]["value"].clone()));
+                    }
                     "Chunk" if matches!(read, Read::Snapshot) => {
                         self.send(json!({"_tag":"Ack","requestId":id})).await?;
                         let items = frame["values"].as_array().ok_or(HostError::Protocol)?;
                         for item in items {
                             match item["kind"].as_str() {
-                                Some("snapshot") if snapshot.is_none() => snapshot = Some(item.clone()),
+                                Some("snapshot") if snapshot.is_none() => {
+                                    snapshot = Some(item.clone());
+                                }
                                 Some("synchronized") => {
-                                    self.send(json!({"_tag":"Interrupt","requestId":id})).await?;
+                                    self.send(json!({"_tag":"Interrupt","requestId":id}))
+                                        .await?;
                                     return snapshot.map(Reply::Value).ok_or(HostError::Protocol);
                                 }
                                 _ => return Err(HostError::Protocol),
@@ -139,9 +245,14 @@ impl Connection {
         Err(HostError::Protocol)
     }
 
-    async fn send(&mut self, frame: Value) -> Result<(), HostError> {
-        let text = frame.to_string();
-        if text.len() > MAX_FRAME { return Err(HostError::Protocol); }
-        self.socket.send(Message::Text(text.into())).await.map_err(|_| HostError::Unavailable)
+    async fn send(&mut self, frame: impl Serialize + Send) -> Result<(), HostError> {
+        let text = serde_json::to_string(&frame).map_err(|_| HostError::Protocol)?;
+        if text.len() > MAX_FRAME {
+            return Err(HostError::Protocol);
+        }
+        self.socket
+            .send(Message::Text(text.into()))
+            .await
+            .map_err(|_| HostError::Unavailable)
     }
 }
