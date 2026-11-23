@@ -1375,7 +1375,10 @@ for (const kind of ["time", "decision"] as const) {
           ? `Escalation ${escalationId}: waiting until ${target}`
           : `Escalation ${escalationId}: waiting for operator decision ${target}`,
       );
-      assert.deepEqual(f.current().resolution.stop?.fact?.escalationWait, { kind, target });
+      assert.deepEqual(f.current().resolution.stop?.fact?.escalationWait, {
+        kind,
+        target,
+      });
       assert.equal(f.events("planner_escalation_wait_superseded").length, 0);
 
       const recovered = await f.engine.resolution.answerDelegatedQuestion(
@@ -1542,8 +1545,14 @@ test("a duplicate bare answer repairs return state without duplicating return or
 });
 
 for (const [repair, name] of [
-  ["handoff", "a duplicate structured operator handoff repairs an operator wait without duplicating the decision"],
-  ["roll", "a service roll restores the operator wait for an already linked decision"],
+  [
+    "handoff",
+    "a duplicate structured operator handoff repairs an operator wait without duplicating the decision",
+  ],
+  [
+    "roll",
+    "a service roll restores the operator wait for an already linked decision",
+  ],
 ] as const) {
   test(name, async () => {
     const f = fixture({ responsible: true });
@@ -1567,26 +1576,28 @@ for (const [repair, name] of [
         .detail.split(":", 1)[0]!;
       const plannerStop = task.resolution.stop;
       assert.equal(plannerStop?.fact?.escalationWait?.kind, "planner");
-      const handoff = () => f.engine.resolution.classifyEscalationToOperator(
-        f.current(),
-        escalationId,
-        "Scope boundary requires an explicit operator choice",
-        "planner origin",
-        {
-          authority: "operator_choices",
-          choices: [
-            {
-              label: "Widen product scope",
-              consequence: "Allows implementation outside the original boundary.",
-            },
-            {
-              label: "Keep strict boundary",
-              consequence: "Rejects changes that cross the isolation gate.",
-            },
-          ],
-          recommended: "Keep strict boundary",
-        },
-      );
+      const handoff = () =>
+        f.engine.resolution.classifyEscalationToOperator(
+          f.current(),
+          escalationId,
+          "Scope boundary requires an explicit operator choice",
+          "planner origin",
+          {
+            authority: "operator_choices",
+            choices: [
+              {
+                label: "Widen product scope",
+                consequence:
+                  "Allows implementation outside the original boundary.",
+              },
+              {
+                label: "Keep strict boundary",
+                consequence: "Rejects changes that cross the isolation gate.",
+              },
+            ],
+            recommended: "Keep strict boundary",
+          },
+        );
       handoff();
       const decisions = new Decisions(f.store);
       const [decision] = decisions.list({ task: task.id });
@@ -1595,13 +1606,23 @@ for (const [repair, name] of [
 
       // Recreate the state left by the old writer: the decision and wait
       // journal survived, but the task still shows its earlier planner stop.
-      f.engine.resolution.update(f.current(), { stop: plannerStop }, {
-        reason: task.reason,
-        reasonFact: task.reasonFact,
-      });
-      assert.match(f.current().resolution.stop?.detail ?? "", /Waiting with the planner/);
+      f.engine.resolution.update(
+        f.current(),
+        { stop: plannerStop },
+        {
+          reason: task.reason,
+          reasonFact: task.reasonFact,
+        },
+      );
+      assert.match(
+        f.current().resolution.stop?.detail ?? "",
+        /Waiting with the planner/,
+      );
       assert.equal(
-        f.engine.resolution.ladder.operatorDecisionApplied(task.id, escalationId),
+        f.engine.resolution.ladder.operatorDecisionApplied(
+          task.id,
+          escalationId,
+        ),
         false,
         "the planner stop cannot prove the linked decision is holding the task",
       );
@@ -1621,10 +1642,16 @@ for (const [repair, name] of [
         target: decision.id,
       });
       assert.equal(
-        (replacement ?? f.engine).resolution.ladder.operatorDecisionApplied(task.id, escalationId),
+        (replacement ?? f.engine).resolution.ladder.operatorDecisionApplied(
+          task.id,
+          escalationId,
+        ),
         true,
       );
-      assert.deepEqual(decisions.list({ task: task.id }).map(item => item.id), [decision.id]);
+      assert.deepEqual(
+        decisions.list({ task: task.id }).map((item) => item.id),
+        [decision.id],
+      );
       assert.equal(f.events("planner_escalation_wait").length, 1);
     } finally {
       await replacement?.stop();
@@ -3888,7 +3915,10 @@ test("a decider archive failure remains visible after an escalation answer", asy
     f.idle("decider-1");
     const task = f.store.update(f.current().id, { phase: "blocked" });
     const question = "Who can act on the admission gate?";
-    const cause = blockerCauseId(task.id, blocked("The admission gate is held"));
+    const cause = blockerCauseId(
+      task.id,
+      blocked("The admission gate is held"),
+    );
     resolution.openPlannerEscalation(task, {
       cause,
       runId: null,
@@ -3909,9 +3939,13 @@ test("a decider archive failure remains visible after an escalation answer", asy
       "decider",
       task.hostId ?? undefined,
     );
-    await until(() => f.events("planner_escalation_delegated").some(event =>
-      event.detail === `${escalation.id}: decider requested`,
-    ));
+    await until(() =>
+      f
+        .events("planner_escalation_delegated")
+        .some(
+          (event) => event.detail === `${escalation.id}: decider requested`,
+        ),
+    );
     const delivery = resolution.delegatedDelivery(questionId);
     assert.ok(delivery);
     assert.equal(delivery.role, "decider");
@@ -3920,18 +3954,29 @@ test("a decider archive failure remains visible after an escalation answer", asy
       if (id === delivery.recipient) throw Error("archive unavailable");
       return archive(id);
     };
-    const receipt = await resolution.answerDelegatedQuestion({
-      questionId,
-      decision: "operator",
-      reason: "The admission gate needs a planner ruling",
-    }, delivery.recipient);
+    const receipt = await resolution.answerDelegatedQuestion(
+      {
+        questionId,
+        decision: "operator",
+        reason: "The admission gate needs a planner ruling",
+      },
+      delivery.recipient,
+    );
     assert.equal(receipt.questionId, questionId);
-    await until(() => f.events("planner_escalation_archive_failed").some(event =>
-      event.detail === `${escalation.id}: decider ${delivery.recipient}: archive unavailable`,
-    ));
-    assert.ok(f.store.eventsAll(`delegation:${questionId}`).some(event =>
-      event.kind === "delegated_command_applied",
-    ));
+    await until(() =>
+      f
+        .events("planner_escalation_archive_failed")
+        .some(
+          (event) =>
+            event.detail ===
+            `${escalation.id}: decider ${delivery.recipient}: archive unavailable`,
+        ),
+    );
+    assert.ok(
+      f.store
+        .eventsAll(`delegation:${questionId}`)
+        .some((event) => event.kind === "delegated_command_applied"),
+    );
   } finally {
     await f.close();
   }

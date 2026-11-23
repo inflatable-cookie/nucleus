@@ -62,7 +62,10 @@ import {
   runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
 import { knownExecutionParticipantIds } from "../machine/execution-participants";
-import { custodyProofDeferral, requireCustodyEvidence } from "../machine/custody-proof";
+import {
+  custodyProofDeferral,
+  requireCustodyEvidence,
+} from "../machine/custody-proof";
 import {
   TOOL_TIMELINE_LIMIT,
   TOOL_TIMELINE_READ_BUDGET,
@@ -804,17 +807,23 @@ export class TaskWakes {
     }
     const retryOnPass =
       operation &&
-      (error instanceof PassProofPendingError || activeOld?.retryOnPass === true);
+      (error instanceof PassProofPendingError ||
+        activeOld?.retryOnPass === true);
     const scopeParts = [
       next.hostId ? `host ${next.hostId}` : null,
       next.target || null,
     ].filter(Boolean);
     const scopeText = scopeParts.length ? ` (${scopeParts.join(", ")})` : "";
-    const retry = retryOnPass ? "retrying after the next host pass" : "retrying automatically";
+    const retry = retryOnPass
+      ? "retrying after the next host pass"
+      : "retrying automatically";
     const visible = `${next.step ?? step} read incomplete${scopeText}; ${retry} (attempt ${next.attempts}): ${detail}`;
     if (operation) {
       this.store.transaction(() => {
-        this.store.setMeta(key, retryOnPass ? { ...next, retryOnPass: true } : next);
+        this.store.setMeta(
+          key,
+          retryOnPass ? { ...next, retryOnPass: true } : next,
+        );
         const current = this.store.operation(id);
         if (current)
           this.store.putOperation({
