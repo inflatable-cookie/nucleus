@@ -248,7 +248,10 @@ and served demand expires unless renewed.
 An exact observation that proves the bound participant closed, archived or
 gone can satisfy the thread part of an owned-tool proof. The proof still checks
 current custody and requires a later, complete workspace and run-process scan.
-When a page read is attempted and fails, the lane sees the read failure.
+If a tool page is deferred, a complete exact thread read can also satisfy the
+thread part by proving the participant is inactive in the bound workspace, has
+no pending runtime request and reports an empty background roster. The same
+workspace and run-process proof must cover that observation.
 An unknown observation or a scan that predates confirmed inactivity cannot
 clear a lease.
 

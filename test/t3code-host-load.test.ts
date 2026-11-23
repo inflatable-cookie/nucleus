@@ -14,9 +14,12 @@ import { T3ShellBackoffError } from "../hosts/t3code/live-shell";
 import { HostReadRefusalError } from "../core/host";
 import { HostPolicies } from "../core/host/host-policies";
 import type { HostPolicyConstructor } from "../core/host";
+import type { HostProcessFact } from "../core/host/types";
+import { Engine } from "../core/engine";
+import { runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { Store } from "../core/store/store";
 import { SweepMaintenance } from "../core/scheduling/sweep-maintenance";
-import { submissionSchema, type Task } from "../shared/contracts";
+import { runSchema, submissionSchema, type Task } from "../shared/contracts";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
 import {
   STAMP,
@@ -112,8 +115,169 @@ async function fixture(
     taskFact(thread.taskId, index < live ? "working" : "done"),
   ) as Task[];
   const liveIds = threads.slice(0, live).map((thread) => thread.id);
-  return { server, host, tasks, liveIds, directory };
+  return { server, host, tasks, liveIds, directory, workspaceId };
 }
+
+test("a missing pass timeline uses the exact T3 thread and the owned-process scan", async (t) => {
+  const { host, server, directory, liveIds, workspaceId } = await fixture(t, {
+    live: 1,
+  });
+  const agentId = liveIds[0]!;
+  const thread = server.threads.get(agentId)!;
+  const hostId = host.hostId;
+  const runId = "run-load-0";
+  const temporaryDirectory = join(directory, "run-scratch");
+  server.controls.shellStatuses[agentId] = "completed";
+  thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
+  thread.pendingBackgroundTasks = [];
+  host.state.update((state) => {
+    delete state.workspaces[workspaceId]!.archivedAt;
+  });
+
+  const store = new Store(":memory:");
+  const adapter = createAdapter(
+    HostPolicies as unknown as HostPolicyConstructor,
+    host,
+  );
+  let processes: HostProcessFact[] = [];
+  adapter.hostProcessListing = async () => processes;
+  const engine = new Engine(store, adapter, 60_000);
+  t.after(async () => {
+    await engine.stop();
+    store.close();
+  });
+  const head = "a".repeat(40);
+  const inserted = store.insert(
+    submissionSchema.parse({
+      submissionId: "completed-without-timeline",
+      title: "Merge lease for a completed worker",
+      repoPath: directory,
+      planningCommit: head,
+      handoffPath: "handoff.md",
+      originAgentId: "synthetic-planner",
+    }),
+    hostId,
+    "handoff.md",
+    head,
+  );
+  const task = store.update(inserted.id, {
+    phase: "merging",
+    agentId,
+    workspaceId,
+    directory,
+    runId,
+    temporaryDirectory,
+  });
+  store.putRun(
+    runSchema.parse({
+      id: runId,
+      taskId: task.id,
+      hostId,
+      agentId,
+      workspaceId,
+      temporaryDirectory,
+      role: "revision",
+      generation: 1,
+      head,
+      base: head,
+      profile: null,
+      status: "finished",
+      released: true,
+      createdAt: STAMP,
+      lastObservedAt: STAMP,
+      idleSince: STAMP,
+      active: false,
+      completion: null,
+    }),
+  );
+  const resolution = engine.resolution;
+  const beforeScan = await host.observe(agentId);
+  const inPassWithoutTimeline = async <T>(work: () => Promise<T>) => {
+    const snapshot = resolution.beginPassSnapshot();
+    try {
+      resolution.recordPassHostObservation(hostId, agentId, beforeScan);
+      await resolution.primePassProcesses(hostId);
+      resolution.sealPassHost(hostId);
+      const requestsBefore = server.requests.length;
+      const result = await runInTaskQuantumScope(5_000, work, snapshot);
+      assert.equal(
+        served(server, "orchestration.getThreadFamily", requestsBefore),
+        1,
+        "one exact read replaces the missing timeline page",
+      );
+      return result;
+    } finally {
+      resolution.endPassSnapshot(snapshot);
+    }
+  };
+  const hold = () =>
+    inPassWithoutTimeline(() =>
+      resolution.ownedToolHold(agentId, {
+        taskId: task.id,
+        runId,
+        workspaceId,
+        requireCompleteEvidence: true,
+      }),
+    );
+
+  store.event(
+    task.id,
+    "owned_tool_hold",
+    JSON.stringify({ runId, reason: "earlier live tool" }),
+  );
+  assert.deepEqual(await hold(), { kind: "clear" });
+  const settled = store.eventsAll(task.id).find(
+    (event) => event.kind === "owned_tool_settled",
+  );
+  assert.match(settled?.detail ?? "", /exact participant inactivity/);
+  assert.equal(
+    await inPassWithoutTimeline(() =>
+      resolution.executionLease(store.task(task.id)),
+    ),
+    true,
+    "the real merge gate acquires execution custody without a timeline page",
+  );
+
+  const process = {
+    pid: 42,
+    ppid: 1,
+    pgid: 42,
+    uid: 501,
+    startIdentity: "synthetic-start",
+    command: "synthetic-detached-command",
+  };
+  for (const cwd of [directory, temporaryDirectory]) {
+    processes = [{ ...process, cwd }];
+    const busy = await hold();
+    assert.equal(busy.kind, "hold");
+    assert.match(busy.reason, /process 42 remains/);
+  }
+  processes = [];
+  thread.runtimeRequests = [syntheticRuntimeRequest({ kind: "approval" })];
+  assert.equal((await hold()).kind, "hold");
+  thread.runtimeRequests = [];
+  delete server.controls.shellStatuses[agentId];
+  thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "running" })];
+  assert.equal((await hold()).kind, "hold");
+  server.controls.shellStatuses[agentId] = "completed";
+  thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
+  thread.pendingBackgroundTasks = [
+    { kind: "command", taskId: "running-command" },
+  ];
+  assert.equal((await hold()).kind, "hold");
+  thread.pendingBackgroundTasks = [];
+
+  thread.thread.updatedAt = new Date(Date.parse(STAMP) + 1_000).toISOString();
+  const staleScan = await hold();
+  assert.equal(staleScan.kind, "deferred");
+  assert.match(staleScan.reason, /active after the pass process snapshot/);
+
+  server.threads.delete(agentId);
+  assert.deepEqual(await hold(), {
+    kind: "deferred",
+    reason: "agent timeline page was not captured in this host pass; waiting for the next pass",
+  });
+});
 
 /** Requests of one method the fake has served, from `from`. */
 const served = (server: Fake, method: string, from = 0) =>

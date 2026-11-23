@@ -28,6 +28,7 @@ export interface AgentObservation {
 }
 
 import type { ParticipantRuntime } from "../../machine/participant-runtime";
+import type { HostParticipantObservation } from "../../../shared/host";
 import type {
   HostProcessFact,
   TimelineEntry,
@@ -38,6 +39,7 @@ import type {
 /** What the host reports about its threads and the processes behind them: one thread observation, an inventory of them, live agents, timeline pages, the host process table and a worktree validation scan. */
 export interface HostObservation {
   observe(agentId: string): Promise<AgentObservation>;
+  observeParticipant?(agentId: string): Promise<HostParticipantObservation | null>;
   /**
    * Audit A6: one complete labelled inventory of Queue-created threads, answering
    * the named identities wherever a list entry carries every field `observe`

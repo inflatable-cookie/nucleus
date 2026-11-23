@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { Task } from "../../shared/contracts";
-import type { HostThread, HostTimelinePage } from "../../shared/host";
+import type {
+  HostParticipantObservation,
+  HostThread,
+  HostTimelinePage,
+} from "../../shared/host";
 import {
   hostFailureRefusalDetail,
   HostReadRefusalError,
@@ -528,6 +532,25 @@ export class T3Reads {
       "getThreadFamily",
     );
     return family.threads.find((row) => row.id === threadId);
+  }
+  async observeParticipant(
+    id: string,
+  ): Promise<HostParticipantObservation | null> {
+    this.core.requireConnection();
+    const row = await this.readThreadFamilyRow(id);
+    if (!row || row.deletedAt || !row.pendingBackgroundTasks) return null;
+    return {
+      id: row.id,
+      workspaceId: this.threadWorkspace(row),
+      status: shellThreadStatus(row),
+      active: rowActive(row),
+      permissions: row.pendingRuntimeRequest !== null,
+      activeTurnId: row.activeRunId,
+      updatedAt: row.updatedAt,
+      pendingBackgroundTasks: row.pendingBackgroundTasks.map(
+        (task) => `${task.kind} ${task.taskId}`,
+      ),
+    };
   }
   /** `readListRow` for a caller outside this module. */
   async readListRowById(threadId: string): Promise<ShellRow | undefined> {

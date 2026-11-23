@@ -244,12 +244,9 @@ export class OwnedTools {
   }
 
   /**
-   * The existing owned-tool proof, for a delivered turn that is claimed stopped
-   * and for every participant of an author capability upgrade: no live tool by
-   * timeline evidence. A stop-backed resume and a retirement need *positive*
-   * proof, so an adapter with no timeline is unavailable evidence and refuses
-   * rather than reading as clear; inconclusive evidence always holds (review
-   * 5672703363, finding 2).
+   * Prove that no tool holds the participant's custody. A deferred timeline
+   * page can be replaced by an exact, idle participant observation with an
+   * empty background roster and a covering process scan.
    *
    * Liveness, not history: a running entry is settled once the same agent's own
    * fresh observation proves no turn is live and the call's kind cannot outlive
@@ -294,6 +291,21 @@ export class OwnedTools {
       boundRun?.workspaceId ??
       (task?.agentId === agentId ? task.workspaceId : undefined) ??
       undefined;
+    const verifyProcesses = (
+      turn?: ObservedTurnState | null,
+      entries?: TimelineEntry[],
+    ) =>
+      this.verifyOwnedWorkspaceAndScratchProcesses(
+        agentId,
+        task,
+        taskRuns,
+        runIds,
+        workspaceId,
+        options.runId,
+        turn,
+        entries,
+        remainingMs(),
+      );
     const prior = this.resolution.passObservedBeforeProcesses?.(hostId, agentId);
     const terminalBinding =
       workspaceId &&
@@ -317,18 +329,7 @@ export class OwnedTools {
           this.adapter.noLiveWorkspaceProcesses &&
           this.adapter.hostProcessListing
         ) {
-          const processResult =
-            await this.verifyOwnedWorkspaceAndScratchProcesses(
-              agentId,
-              task,
-              taskRuns,
-              runIds,
-              workspaceId,
-              options.runId,
-              custody.observation,
-              undefined,
-              remainingMs(),
-            );
+          const processResult = await verifyProcesses(custody.observation);
           if (processResult.kind === "deferred") return processResult;
           if (
             processResult.kind === "hold" &&
@@ -382,23 +383,51 @@ export class OwnedTools {
       );
     } catch (error) {
       const deferred = this.proofReadError(error, hostId, agentId);
-      if (deferred) return deferred;
-      if (
+      if (deferred) read = deferred;
+      else if (
         error instanceof HostReadRefusalError ||
         isTransportFailure(error) ||
         isHostOperationTimeout(error) ||
         error instanceof HostTransportFault
       )
         throw error;
-      return { kind: "hold", reason: "owned tool evidence is unreadable" };
-    }
-    if (read.kind === "deferred") {
-      return { kind: "deferred", reason: read.reason };
+      else return { kind: "hold", reason: "owned tool evidence is unreadable" };
     }
     if (read.kind === "hold" && read.transientError) {
       const deferred = this.proofReadError(read.transientError, hostId, agentId);
-      if (deferred) return deferred;
-      throw read.transientError;
+      if (!deferred) throw read.transientError;
+      read = deferred;
+    }
+    if (read.kind === "deferred") {
+      if (!workspaceId || !this.adapter.observeParticipant) return read;
+      const exact = await boundedRead(
+        "exact participant observation",
+        () => this.resolution.host.observeParticipant(agentId),
+        remainingMs(),
+      ).catch(() => null);
+      const state = exact?.state === "ok" ? exact.value : null;
+      if (!state || state.id !== agentId || state.workspaceId !== workspaceId)
+        return read;
+      if (state.active || state.activeTurnId || state.permissions)
+        return {
+          kind: "hold",
+          reason: "an owned tool is still live: participant has an active run or pending runtime request",
+        };
+      if (state.pendingBackgroundTasks.length)
+        return {
+          kind: "hold",
+          reason: `an owned tool is still live: provider reports outstanding background work: ${state.pendingBackgroundTasks.join(", ")}`,
+        };
+      if (!noTurnLive(state)) return read;
+      const proof = await verifyProcesses(state);
+      if (proof.kind === "clear" && task)
+        for (const runId of runIds)
+          this.recordOwnedToolSettlement(
+            task.id,
+            runId,
+            "exact participant inactivity, empty background roster and owned-process observations are clear",
+          );
+      return proof;
     }
     const emptyPage =
       read.kind === "ok" && read.coverage !== "bounded" &&
@@ -445,18 +474,7 @@ export class OwnedTools {
         { observe: async () => turn },
         agentId,
         workspaceId,
-        (observed) =>
-          this.verifyOwnedWorkspaceAndScratchProcesses(
-            agentId,
-            task,
-            taskRuns,
-            runIds,
-            workspaceId,
-            options.runId,
-            observed,
-            read.entries,
-            remainingMs(),
-          ),
+        (observed) => verifyProcesses(observed, read.entries),
         remainingMs(),
       );
       if (hold.kind === "deferred") return hold;
