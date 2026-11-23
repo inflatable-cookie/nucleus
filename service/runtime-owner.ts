@@ -1687,6 +1687,10 @@ export class QueueRuntime {
   ): import("../shared/contracts").UiBoard {
     return this.board.uiSnapshot(input);
   }
+  async t3BoardTheme() {
+    return await this.t3Host?.boardTheme() ?? null;
+  }
+
   /**
    * Spec 062 decision 5b: the forked sidebar's one batched read. Live tasks joined
    * to their recorded BB workspace handles through the task's own workspace id, so

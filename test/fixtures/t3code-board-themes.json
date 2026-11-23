@@ -1,0 +1,53 @@
+{
+  "stock": {
+    "defaultTheme": "",
+    "defaultAppearance": "dark"
+  },
+  "ember": {
+    "id": "ember",
+    "name": "Ember fixture",
+    "appearance": "dark",
+    "css": ":root { --test-only: red; }",
+    "colors": {
+      "canvas": "#241c1a",
+      "surface": "#29231f",
+      "surfaceRaised": "#302520",
+      "surfaceOverlay": "#3c2e27",
+      "text": "#f9ebe0",
+      "textMuted": "#c4aa99",
+      "border": "#75594b",
+      "accent": "#ffae6f",
+      "accentForeground": "#351e12",
+      "error": "#fa9487",
+      "warning": "#f9c66d",
+      "success": "#a9ca8c",
+      "sidebarRowHover": "#4a372d",
+      "sidebarRowSelected": "#624333"
+    },
+    "variants": {
+      "light": {
+        "surface": "#fcf7f1",
+        "surfaceRaised": "#f5ebe0",
+        "surfaceOverlay": "#ecddcd",
+        "text": "#302119",
+        "textMuted": "#604a3d",
+        "border": "#987d6d",
+        "accent": "#843c13",
+        "accentForeground": "#ffffff",
+        "error": "#a33025",
+        "warning": "#815313",
+        "success": "#365c29",
+        "sidebarRowHover": "rgb(235 211 190 / 75%)",
+        "sidebarRowSelected": "oklch(0.83 0.08 61)"
+      }
+    }
+  },
+  "seeded": {
+    "id": "forest-fixture",
+    "name": "Forest fixture",
+    "appearance": "dark",
+    "canvas": "#162720",
+    "accent": "#94cba4",
+    "colors": { "text": "#effbf2" }
+  }
+}

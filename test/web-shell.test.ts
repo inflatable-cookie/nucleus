@@ -66,7 +66,10 @@ test("web bundle renders the board against the daemon protocol without Paseo", a
   });
   try {
     let cookie = "";
+    const colorScheme = Object.assign(new dom.window.EventTarget(), { matches: true });
     Object.assign(dom.window, {
+      matchMedia: (query: string) =>
+        query === "(prefers-color-scheme: dark)" ? colorScheme : { matches: false },
       fetch: async (path: string, options: RequestInit = {}) => {
         const headers = new Headers(options.headers);
         if (cookie) headers.set("cookie", cookie);
@@ -156,6 +159,19 @@ test("web bundle renders the board against the daemon protocol without Paseo", a
       dom.window.getComputedStyle(back).backgroundColor,
       "rgb(37, 41, 50)",
       "Back control uses the active dark surface2 theme colour",
+    );
+    colorScheme.matches = false;
+    colorScheme.dispatchEvent(new dom.window.Event("change"));
+    for (
+      let i = 0;
+      i < 200 && dom.window.getComputedStyle(back).backgroundColor !== "rgb(231, 235, 240)";
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(
+      dom.window.getComputedStyle(back).backgroundColor,
+      "rgb(231, 235, 240)",
+      "the open Settings screen switches to the light palette",
     );
     assert.equal(
       dom.window.getComputedStyle(standalone).paddingLeft,

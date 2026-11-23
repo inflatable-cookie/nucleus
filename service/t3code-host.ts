@@ -1,3 +1,4 @@
+import type { BoardThemeSnapshot } from "../shared/web-theme";
 import { join } from "node:path";
 import { ServiceClient } from "../shared/service/client";
 import { readServiceInfo } from "../shared/service/discovery";
@@ -41,6 +42,7 @@ interface NativeConnection {
   connect(probeThreadId?: string): Promise<void>;
   /** The projects the last shell read saw, for the board's generated badges (nucleus#1450). */
   projectObservation?(): readonly ObservedT3Project[] | null;
+  boardTheme?(): Promise<BoardThemeSnapshot | null>;
   openInboxUi?(): Promise<{
     status: "opened" | "reused" | "failed";
     detail?: string;
@@ -291,6 +293,11 @@ export class T3HostConnection {
     if (!this.session || !this.host?.connected) return [];
     const projects = this.host.projectObservation?.();
     return projects ? [{ hostId: this.host.hostId, projects }] : [];
+  }
+
+  async boardTheme(): Promise<BoardThemeSnapshot | null> {
+    if (!this.session || !this.host?.connected) return null;
+    return await this.host.boardTheme?.() ?? null;
   }
 
   async openInboxUi(
