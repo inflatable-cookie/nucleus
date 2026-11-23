@@ -93,6 +93,46 @@ export function revisionCapHoldDetail(task: Pick<Task, "resolution">): string {
     + "The revision launch holds until the planner decides: the explicit run.start for the worker with accept [\"budget\"] starts one more round (planner or operator board), as does the ladder's answer to the cap escalation.";
 }
 
+/**
+ * Spec 068 §3: the event a coordinator pass records when its coordinator's host
+ * read failed on a host fault or transport failure and the observation waits
+ * for the next pass, inside a bound, instead of escalating.
+ */
+export const COORDINATOR_OBSERVATION_DEFERRED_EVENT = "coordinator_observation_deferred";
+
+export type CoordinatorObservationDeferral = {
+  runId: string;
+  since: string;
+  until: string;
+  cause: string;
+};
+
+/**
+ * The deferral still in force for this coordinator run: one recorded since the
+ * run's last good observation. A later observation moves `lastObservedAt`, so an
+ * older deferral no longer reads as current.
+ */
+export function coordinatorObservationDeferral(
+  events: readonly BudgetEvent[],
+  run: Pick<Run, "id" | "lastObservedAt" | "createdAt">,
+): CoordinatorObservationDeferral | null {
+  const since = run.lastObservedAt ?? run.createdAt;
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]!;
+    if (event.kind !== COORDINATOR_OBSERVATION_DEFERRED_EVENT) continue;
+    try {
+      const detail = JSON.parse(event.detail) as Partial<CoordinatorObservationDeferral>;
+      if (detail.runId !== run.id) continue;
+      return detail.since === since && detail.until && detail.cause !== undefined
+        ? (detail as CoordinatorObservationDeferral)
+        : null;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 function boundActivity(runId: string | null, agentId: string | null, observation?: ParticipantActivity | null) {
   return observation?.runId === runId && observation.agentId === agentId ? observation : null;
 }
@@ -173,6 +213,12 @@ export function taskActivity({ task, runs, events, stop, wait, budget, read, now
     return answer("needs_person", permission.kind === "question" ? "Waiting for an answer" : "Waiting for permission",
       permission.since, { permission });
   }
+  // Nucleus waits, inside a bound, for the coordinator's host to answer a read.
+  const coordinatorRun = recovery?.runId && ["running", "nudged"].includes(recovery.status)
+    ? runs.find(run => run.id === recovery.runId && !run.released) : undefined;
+  const deferral = coordinatorRun ? coordinatorObservationDeferral(events, coordinatorRun) : null;
+  if (deferral)
+    return answer("nucleus", "Waiting for the coordinator's host to answer", deferral.since, { role: "coordinator" });
   if (recovery && ["pending", "running", "nudged", "uncertain"].includes(recovery.status))
     return answer("recovering", recovery.status === "uncertain" ? "Checking uncertain coordinator creation" : "Recovering the task",
       incident?.createdAt ?? stop?.since, { role: "coordinator", attempt: resolution.recoveryAttempts });

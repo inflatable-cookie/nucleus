@@ -5,6 +5,7 @@ import {
 } from "../shared/task-budget";
 import type { FormalReviewRuntime } from "./forge/reviews";
 import { portsContext } from "./port-context";
+import type { DeadParticipantProof } from "./recovery/dead-participant";
 import {
   ambientHostPorts,
   onOwnerHost,
@@ -851,6 +852,7 @@ export class Resolution {
   readonly recovery: Recovery = new Recovery(
     portsContext(this, [
       "adapter",
+      "participantGoneProof",
       "attention",
       "closeout",
       "automaticHookReplayPending",
@@ -3561,6 +3563,15 @@ export class Resolution {
    * positively reports gone, so the revision continues on a fresh worker.
    */
   retireGoneRetainedWorker?: (task: Task) => Promise<boolean>;
+  /**
+   * Engine-provided (Spec 068 §3): proof that one participant's agent is dead
+   * (its process gone, or its thread absent or removed on an exact host read),
+   * or null. The coordinator pass reads it for a coordinator it cannot observe.
+   */
+  participantGoneProof?: (
+    task: Task,
+    run: Run | null,
+  ) => Promise<DeadParticipantProof | null>;
   gitTransientFailure?: (task: Task, error: unknown) => boolean;
   hostReadTransientFailure?: (
     task: Task,

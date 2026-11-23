@@ -271,7 +271,19 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   complete host read (the T3 live shell inside its bound plus an exact read by
   id) release a reviewer or revision run through `releasePlan`; ordinary
   admission relaunches it. A live recorded process vetoes thread absence. A host
-  answer that a thread is gone is no longer swallowed as a host fault.
+  answer that a thread is gone is no longer swallowed as a host fault. A
+  coordinator run the pass cannot observe takes the same proof: on proof its run
+  is released, its episode closes (with any escalation it raised over the
+  underlying fault) and its binding clears, so the stop admits a fresh
+  coordinator under the coordinator cap. A failed or partial read and an
+  archived thread prove nothing, and the episode keeps its ordinary handling.
+  Another host fault or a transport failure is a recorded wait
+  (`coordinator_observation_deferred`, read as Nucleus's move) bounded at five
+  minutes unobserved while the host reads as up (outages and downtime excluded);
+  past that the episode escalates, and a host that is down keeps its own outage
+  wait. Three such releases
+  per head, as for every role; past that the task records a typed stop naming
+  `run.start coordinator fresh`.
 - **A dead retained worker means a fresh worker.** The revision launch retires a
   retained worker whose thread is gone and continues the same revision on a fresh
   one; a dead initial worker with a PR continues it the same way. `next` offers
@@ -279,7 +291,8 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
 - **Uncertain creation settles by lookup for every role.** A create that may
   still answer (a late reply on a live connection, for at most ten minutes)
   keeps the run waiting on its own cause, with no replacement offered and no
-  coordinator admitted; a
+  coordinator admitted. The initial worker's create records the same wait as a
+  run's, never a person's stop; a
   complete absent read after that relaunches the same run under the same host
   command id, which T3 resends only after reading the derived child absent, so a
   received create never becomes a second thread. Three relaunches per role and
@@ -292,9 +305,7 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   is unapplied, and a reviewer whose turn keeps running after its report has that
   turn stopped once so the verdict applies.
 
-Two gaps stay open: a dead coordinator run is still settled only by the
-coordinator episode's own observation (a task whose recovery episode was live at
-the reboot keeps it), and escalation menus are not yet derived from the decision
+One gap stays open: escalation menus are not yet derived from the decision
 `next` uses; the states above simply no longer escalate.
 
 **Done when:** over one week, no task spends more than 30 minutes outside the four
@@ -368,16 +379,17 @@ per run, one live run per role and head, exact-head verdicts and merges, no
 resend without a complete absent read, the orphan bound, and budgets that skip
 the downtime.
 
-Seventeen tasks end correctly. Two gaps stay open, each a `todo` subtest:
+All seventeen tasks recover, and the file has no `todo` left. The four gaps the
+first run found are closed:
 
-- A recovery episode whose coordinator thread is gone escalates to the planner
-  instead of releasing the run as gone (`core/recovery/coordinator-pass.ts`; the
-  batch A gap above).
-- An unknown first-dispatch create records an `operator_needed` stop until its
-  lookup settles it (`core/dispatch/worker-launcher.ts`).
-
-Two gaps the first run found are closed:
-
+- **A dead coordinator is a dead participant.** A recovery episode whose
+  coordinator thread is gone releases the run on batch A's proof and admits a
+  fresh coordinator, instead of escalating to the planner
+  (`core/recovery/coordinator-pass.ts`; see batch A above).
+- **An unknown first-dispatch create is Nucleus's wait.** The worker launcher
+  records the same creation wait a run launch records (`creation_in_flight`
+  while the host may still answer, else the creation lookup), never an
+  `operator_needed` stop (`core/dispatch/worker-launcher.ts`).
 - **One budget gate for every start.** Run launches and every worker creation (a
   first dispatch, a dead initial worker's redispatch, a resumed dispatch and a
   failover) pass the same gate: the first spend is extended once, and a later
