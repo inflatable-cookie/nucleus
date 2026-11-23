@@ -188,7 +188,7 @@ impl Store {
     ) -> Result<Vec<String>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "SELECT tasks.id FROM tasks WHERE tasks.id > ?1 AND phase = 'done'
-             AND COALESCE((SELECT kind FROM events WHERE task_id = tasks.id ORDER BY sequence DESC LIMIT 1), '') != 'role_threads_archived'
+             AND NOT EXISTS (SELECT 1 FROM events WHERE task_id = tasks.id AND kind = 'role_threads_archived')
              ORDER BY tasks.id LIMIT ?2",
         )?;
         let rows = query.query_map(params![after.unwrap_or_default(), limit], |row| row.get(0))?;
@@ -200,7 +200,7 @@ impl Store {
     /// Returns an error if audit history cannot be read.
     pub fn archive_confirmed(&self, id: &str) -> Result<bool, StoreError> {
         Ok(self.connection.query_row(
-            "SELECT COALESCE((SELECT kind = 'role_threads_archived' FROM events WHERE task_id = ?1 ORDER BY sequence DESC LIMIT 1), 0)",
+            "SELECT EXISTS (SELECT 1 FROM events WHERE task_id = ?1 AND kind = 'role_threads_archived')",
             [id], |row| row.get(0),
         )?)
     }
