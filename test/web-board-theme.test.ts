@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync, rmSync } from "node:fs";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { JSDOM } from "jsdom";
 import { z } from "zod";
 import { roles } from "../client/design";
+import { resolvePalette } from "../client/web/theme";
+import { findT3BuiltInTheme } from "../hosts/t3code/board-theme-builtins";
 import { QueueService } from "../service/transport/server";
 import { readServiceInfo } from "../service/transport/identity";
 import { uiBoardSchema } from "../shared/contracts";
@@ -244,6 +247,8 @@ test("board interaction roles accept T3 colours and keep the existing host defau
   };
   assert.equal(roles(colors).hover, "rgba(241, 243, 245, 0.06)");
   assert.equal(roles(colors).selected, "rgba(241, 243, 245, 0.1)");
+  assert.equal(roles(colors).header, colors.surface0);
+  assert.equal(roles(colors).navigation, colors.surface0);
   const themed = roles({
     ...colors,
     surfaceHover: "#4a372d",
@@ -251,4 +256,52 @@ test("board interaction roles accept T3 colours and keep the existing host defau
   });
   assert.equal(themed.hover, "#4a372d");
   assert.equal(themed.selected, "#624333");
+});
+
+test("T3 region fills step from the canvas toward the foreground in both appearances", (t) => {
+  const { window } = new JSDOM("<span></span>");
+  t.after(() => window.close());
+  const swatch = window.document.querySelector("span");
+  assert.ok(swatch);
+  const color = (value: string) => {
+    swatch.style.color = value;
+    return window.getComputedStyle(swatch).color;
+  };
+  const red = (value: string | undefined) => {
+    assert.ok(value);
+    const match = color(`color-mix(in srgb, ${value}, ${value})`).match(
+      /^color\(srgb ([\d.]+)/,
+    );
+    assert.ok(match, value);
+    return Math.round(Number(match[1]) * 255);
+  };
+
+  const stock = findT3BuiltInTheme("t3-code");
+  for (const [appearance, palette] of [
+    ["dark", stock?.variants?.dark],
+    ["light", stock?.colors],
+  ] as const) {
+    assert.ok(palette?.canvas && palette.text);
+    const theme = resolvePalette(
+      appearance,
+      { colors: { surface0: palette.canvas, foreground: palette.text } },
+      color,
+    );
+    assert.ok(theme);
+    const { surface0, surfaceList, surfaceNavigation, surfaceHeader } =
+      theme.colors;
+    const steps = [surface0, surfaceList, surfaceNavigation, surfaceHeader].map(
+      red,
+    );
+    if (appearance === "dark") {
+      assert.equal(steps[3], red(palette.surfaceRaised));
+    }
+    const direction = appearance === "dark" ? 1 : -1;
+    for (let i = 1; i < steps.length; i++) {
+      assert.ok(
+        direction * (steps[i] - steps[i - 1]) > 0,
+        `${appearance}: ${steps}`,
+      );
+    }
+  }
 });
