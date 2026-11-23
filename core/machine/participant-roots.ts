@@ -1,9 +1,9 @@
 import type { Run, Task } from '../../shared/contracts';
 import { recordedTicketMatchesLeaf, ticketTemporaryDirectoryBeside } from '../workspaces/run-scratch';
 
-export function runWorkspaceDirectory(task: Task, run: Run | null | undefined): string | null {
+export function runWorkspaceDirectory(task: Task | null, run: Run | null | undefined): string | null {
   return run?.reviewSourceView?.directory ??
-    (!run || run.workspaceId === task.workspaceId ? task.directory : null);
+    (task && (!run || run.workspaceId === task.workspaceId) ? task.directory : null);
 }
 
 /**

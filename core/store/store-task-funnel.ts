@@ -1250,7 +1250,7 @@ export class StoreTaskFunnel {
     if (run.released || run.completion)
       this.services.queueRunCleanup({
         ...run,
-        directory: runWorkspaceDirectory(this.services.task(run.taskId), run),
+        directory: runWorkspaceDirectory(this.services.tasksStore.taskOrNull(run.taskId), run),
       });
     if (this.services.tasksStore.taskProjection) {
       this.services.tasksStore.rememberProjectedRun(run.id, run.taskId);
