@@ -64,9 +64,11 @@ export function incompleteRunProcessScan(
     "processes" | "cwdComplete"
   >,
 ): boolean {
+  const uid = process.getuid?.();
   return (
     scan.cwdComplete === false ||
-    scan.processes.some((fact) => isLiveProcess(fact) &&
+    scan.processes.some((fact) => (uid === undefined || fact.uid === uid) &&
+      isLiveProcess(fact) &&
       (fact.cwd === null || fact.openFiles?.complete === false))
   );
 }

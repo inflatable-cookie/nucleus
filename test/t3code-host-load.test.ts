@@ -284,7 +284,7 @@ test("owner complete waits for a finished T3 participant's background work and p
   const { host, server, liveIds, workspaceId, directory } = await fixture(t, { live: 1 });
   const agentId = liveIds[0]!;
   const runId = "run-complete";
-  const temporaryDirectory = join(directory, "run-scratch");
+  const temporaryDirectory = await realpath(mkdtempSync(join(tmpdir(), "t3code-complete-scratch-")));
   const thread = server.threads.get(agentId)!;
   thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
   server.controls.shellStatuses[agentId] = "completed";
@@ -344,22 +344,28 @@ test("owner complete waits for a finished T3 participant's background work and p
   await refuses(/incomplete projection/);
   server.controls.threadCoverage = {};
 
-  const process = {
-    pid: 42, ppid: 1, pgid: 42, uid: 501,
+  const serviceUid = process.getuid?.() ?? 501;
+  const fact = {
+    pid: 42, ppid: 1, pgid: 42, uid: serviceUid,
     startIdentity: "synthetic-start",
     command: "synthetic-detached-command",
     cwd: "/",
   };
   for (const root of [directory, temporaryDirectory]) {
     processes = [{
-      ...process, openFiles: { paths: [join(root, "output.log")], complete: true },
+      ...fact, openFiles: { paths: [join(root, "output.log")], complete: true },
     }];
     await refuses(/process 42 still has an open file/);
   }
-  processes = [{ ...process, openFiles: { paths: [], complete: false } }];
+  processes = [{ ...fact, openFiles: { paths: [], complete: false } }];
+  await refuses(/incomplete working-directory or open-file coverage/);
+  processes = [{ ...fact, cwd: null }];
   await refuses(/incomplete working-directory or open-file coverage/);
 
-  processes = [];
+  processes = [{
+    ...fact, uid: serviceUid === 0 ? 501 : 0,
+    cwd: null, openFiles: { paths: [], complete: false },
+  }];
   assert.equal((await complete()).phase, "done");
   assert.equal(store.run(runId)?.released, true);
   assert.throws(() => store.authenticate(runId, "synthetic-complete-secret"), /unauthorized callback/i);
