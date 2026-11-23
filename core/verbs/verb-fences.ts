@@ -233,7 +233,10 @@ export class VerbFences {
     const settleable: Run[] = [];
     const fenced: { run: Run; why: string }[] = [];
     const live: Run[] = [];
-    const observations = new Map<string, Awaited<ReturnType<Adapter["observe"]>>>();
+    const observations = new Map<
+      string,
+      Awaited<ReturnType<Adapter["observe"]>>
+    >();
     const task = this.store.task(taskId);
     for (const run of this.store.runs(taskId)) {
       if (run.released || isSubject(run)) continue;
@@ -411,29 +414,44 @@ export class VerbFences {
    * closed agent settles; a matching live turn is cancelled first and then
    * settles. No writes happen here.
    */
-  async observeRunDisposition(
-    run: Run,
-  ): Promise<
-    | { outcome: "settle" | "cancel"; observation: Awaited<ReturnType<Adapter["observe"]>> }
+  async observeRunDisposition(run: Run): Promise<
+    | {
+        outcome: "settle" | "cancel";
+        observation: Awaited<ReturnType<Adapter["observe"]>>;
+      }
     | { outcome: "refusal"; refusal: string }
   > {
-    if (!run.agentId) return { outcome: "refusal", refusal: "it has no bound agent to observe" };
+    if (!run.agentId)
+      return {
+        outcome: "refusal",
+        refusal: "it has no bound agent to observe",
+      };
     let state: Awaited<ReturnType<Adapter["observe"]>>;
     try {
       state = await this.engine.host.observe(run.agentId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { outcome: "refusal", refusal: `its agent cannot be observed (${message})` };
+      return {
+        outcome: "refusal",
+        refusal: `its agent cannot be observed (${message})`,
+      };
     }
     if (!state || state.id !== run.agentId)
-      return { outcome: "refusal", refusal: "the observed agent identity does not match the run" };
+      return {
+        outcome: "refusal",
+        refusal: "the observed agent identity does not match the run",
+      };
     if (state.workspaceId !== run.workspaceId)
-      return { outcome: "refusal", refusal: "its agent was observed outside the run workspace" };
+      return {
+        outcome: "refusal",
+        refusal: "its agent was observed outside the run workspace",
+      };
     if (!matchingInactiveParticipant(run, state))
       return { outcome: "cancel", observation: state };
     if (
       state.status !== "closed" &&
-      Boolean(await this.engine.ownedToolHold(run.agentId, run.id, run.taskId))
+      (await this.engine.ownedToolHold(run.agentId, run.id, run.taskId))
+        .kind !== "clear"
     )
       return { outcome: "cancel", observation: state };
     return { outcome: "settle", observation: state };
@@ -443,19 +461,25 @@ export class VerbFences {
     run: Run,
   ): Promise<"settle" | "cancel" | { refusal: string }> {
     const disposition = await this.observeRunDisposition(run);
-    return disposition.outcome === "refusal" ? { refusal: disposition.refusal } : disposition.outcome;
+    return disposition.outcome === "refusal"
+      ? { refusal: disposition.refusal }
+      : disposition.outcome;
   }
 
   /** Displacement uses the same positive participant observation as episode settlement, keeping the observation. */
-  async displacedRunObservation(
-    run: Run,
-  ): Promise<{ busy: boolean; observation: Awaited<ReturnType<Adapter["observe"]>> }> {
+  async displacedRunObservation(run: Run): Promise<{
+    busy: boolean;
+    observation: Awaited<ReturnType<Adapter["observe"]>>;
+  }> {
     const disposition = await this.observeRunDisposition(run);
     if (disposition.outcome === "refusal")
       throw new DurableFenceRefusal(
         this.verbRunFenceRefusal({ run, why: disposition.refusal }),
       );
-    return { busy: disposition.outcome === "cancel", observation: disposition.observation };
+    return {
+      busy: disposition.outcome === "cancel",
+      observation: disposition.observation,
+    };
   }
 
   /** Displacement uses the same positive participant observation as episode settlement. */

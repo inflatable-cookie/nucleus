@@ -365,8 +365,12 @@ test("a reported participant stray tool is reaped after grace and the merge leas
     let checks = 0;
     f.engine.resolution.ownedToolHold = async () =>
       ++checks === 1
-        ? "an owned tool is still live: observed tool Bash (shell) is running; descendant pid 123 remains under provider pid 45"
-        : null;
+        ? {
+            kind: "hold",
+            reason:
+              "an owned tool is still live: observed tool Bash (shell) is running; descendant pid 123 remains under provider pid 45",
+          }
+        : { kind: "clear" };
     const current = f.current(task.id);
     f.store.event(
       task.id,
@@ -416,8 +420,12 @@ test("another approved task merges while the first waits on its participant tool
     );
     f.engine.resolution.ownedToolHold = async (_agentId, options) =>
       options?.taskId === waiting.id
-        ? "an owned tool is still live: observed tool Bash (shell) is running"
-        : null;
+        ? {
+            kind: "hold",
+            reason:
+              "an owned tool is still live: observed tool Bash (shell) is running",
+          }
+        : { kind: "clear" };
     await f.engine.wake();
     await f.report(waiting.id, "ready_to_merge");
     assert.equal(
@@ -464,8 +472,11 @@ test("a tool belonging to a live participant turn is never reaped", async () => 
       listings++;
       return [];
     };
-    f.engine.resolution.ownedToolHold = async () =>
-      "an owned tool is still live: observed tool Bash (shell) is running";
+    f.engine.resolution.ownedToolHold = async () => ({
+      kind: "hold",
+      reason:
+        "an owned tool is still live: observed tool Bash (shell) is running",
+    });
     const current = f.current(task.id);
     f.store.update(task.id, {
       phase: "verifying",

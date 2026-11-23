@@ -37,6 +37,7 @@ import {
   QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
   currentTaskQuantumScope,
+  isQuantumDeadlineExceeded,
   type BoundedReadResult,
   type CoveredObservationSnapshot,
   type PassProcessRead,
@@ -589,6 +590,7 @@ export class Resolution {
                 reason: "the host process listing is unreadable",
               };
         } catch (error) {
+          if (isQuantumDeadlineExceeded(error)) throw error;
           return {
             state: "unknown",
             reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -611,6 +613,7 @@ export class Resolution {
           "host process listing was not captured in a host pass; waiting for the next pass",
         capturedAt: Date.now(),
         fromPassSnapshot: true,
+        deferred: true,
       });
     }
     const capturedAt = Date.now();
@@ -623,12 +626,14 @@ export class Resolution {
               reason: result.reason,
               capturedAt,
               fromPassSnapshot: false,
+              deferred: true,
             },
       (error) => ({
         state: "unknown",
         reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
         capturedAt,
         fromPassSnapshot: false,
+        ...(isQuantumDeadlineExceeded(error) ? { deferred: true } : {}),
       }),
     );
   }
@@ -2842,7 +2847,7 @@ export class Resolution {
       workspaceId?: string;
       deadlineAt?: number;
     } = {},
-  ): Promise<string | null> {
+  ) {
     return this.ownedTools.ownedToolHold(agentId, options);
   }
   /** Positive evidence that the agent's own detached job is still running, or null. */

@@ -109,6 +109,20 @@ export function isQuantumDeadlineExceeded(
 }
 
 /**
+ * Typed sentinel thrown by pass-snapshot-backed timeline adapters when a
+ * timeline page was not captured in the host pass, exceeded its pass budget,
+ * or timed out inside `PassSnapshot`. Consumers carry this as a typed
+ * `deferred` result instead of re-deriving deferral from error text.
+ */
+export class DeferredPassReadError extends Error {
+  readonly unknown = true as const;
+  constructor(reason: string) {
+    super(reason);
+    this.name = "DeferredPassReadError";
+  }
+}
+
+/**
  * Check whether the active task quantum's deadline is already expired BEFORE
  * invoking a native host/forge call. Returns a pre-send
  * `QuantumDeadlineExceededError` when expired, or `null` when time remains or
@@ -223,6 +237,8 @@ export type PassProcessRead = HostProcessListRead & {
   capturedAt: number;
   /** True when served from a shared pass snapshot rather than an inline read. */
   fromPassSnapshot: boolean;
+  /** True when the listing was deferred (quantum deadline/timeout or uncaptured pass snapshot). */
+  deferred?: boolean;
 };
 
 /**
@@ -477,12 +493,14 @@ export class PassSnapshot {
                 reason: result.reason,
                 capturedAt,
                 fromPassSnapshot,
+                deferred: true,
               },
         (error) => ({
           state: "unknown",
           reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
           capturedAt,
           fromPassSnapshot,
+          ...(isQuantumDeadlineExceeded(error) ? { deferred: true } : {}),
         }),
       );
     };
@@ -500,6 +518,7 @@ export class PassSnapshot {
           "host process listing was not captured in this host pass; waiting for the next pass",
         capturedAt: Date.now(),
         fromPassSnapshot: true,
+        deferred: true,
       });
     }
     const promise = run(true);

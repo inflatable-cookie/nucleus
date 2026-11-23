@@ -1363,7 +1363,9 @@ test("retryEffect: an owned-tool hold settles only after its proof clears, and a
       JSON.stringify({ runId: run.id, reason: "Tool" }),
     );
     const log = retrySpies(f);
-    spy(log, f.internals, "ownedToolHold", () => hold);
+    spy(log, f.internals, "ownedToolHold", () =>
+      hold ? { kind: "hold", reason: hold } : { kind: "clear" },
+    );
     if (hold) {
       await assert.rejects(
         retry(f, task, `owned_tool.${run.id}`),

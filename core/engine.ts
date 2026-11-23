@@ -3205,7 +3205,7 @@ export class Engine {
       allowRetired?: boolean;
       deadlineAt?: number;
     },
-  ): Promise<string | null> {
+  ) {
     return this.runRelease.ownedToolHold(agentId, runId, taskId, options);
   }
   observedRunLiveness(run: Run): Promise<boolean | null> {

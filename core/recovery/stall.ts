@@ -49,8 +49,10 @@ import {
 } from "../machine/participant-runtime";
 import type { HostProcessFact } from "../host/types";
 import {
+  DeferredPassReadError,
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
+  isQuantumDeadlineExceeded,
 } from "../scheduling/pass-snapshot";
 import { HungTools, type ShellPeek } from "./hung-tools";
 import { denyPendingPermission } from "./permission-policy";
@@ -1175,26 +1177,61 @@ export function workspaceToolProcessIssue(
 }
 
 /**
+ * Typed outcome of an owned-tool or process-proof check (Spec 068 §6, Spec 066 R1):
+ * - `clear`: positive proof that no live owned tool or process holds the participant.
+ * - `deferred`: quantum timeout, uncaptured pass snapshot, or `QuantumDeadlineExceededError`;
+ *   callers defer the lease without recording an `operator_needed` stop or clearing durable intents.
+ * - `hold`: positive live-tool / unreadable / inconclusive refusal.
+ */
+export type OwnedToolHoldResult =
+  | { kind: "clear" }
+  | { kind: "hold"; reason: string }
+  | { kind: "deferred"; reason: string };
+
+/**
+ * Typed outcome of one fresh participant turn observation:
+ * - `observed`: fresh observation matching `agentId`.
+ * - `deferred`: quantum timeout, budget exhaustion, or `QuantumDeadlineExceededError`.
+ * - `unavailable`: unreadable observation or identity mismatch.
+ */
+export type ObservedTurnStateRead =
+  | { kind: "observed"; state: ObservedTurnState }
+  | { kind: "deferred"; reason: string }
+  | { kind: "unavailable"; reason: string };
+
+/**
  * The turn facts of one fresh observation, read after the tool evidence it
  * settles: an unreadable observation, or one about a different agent, is
- * unknown (null) and settles nothing.
+ * unavailable and settles nothing; a quantum timeout or deadline expiry is
+ * deferred.
  */
 export async function observedTurnState(
   host: { observe(id: string): Promise<AgentObservation> },
   agentId: string,
   deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
-): Promise<ObservedTurnState | null> {
+): Promise<ObservedTurnStateRead> {
   try {
     const read = await boundedRead(
       "participant observation",
       () => host.observe(agentId),
       deadlineMs,
     );
-    if (read.state === "unknown") return null;
+    if (read.state === "unknown")
+      return { kind: "deferred", reason: read.reason };
     const state = read.value;
-    return state && state.id === agentId ? state : null;
-  } catch {
-    return null;
+    if (!state || state.id !== agentId)
+      return {
+        kind: "unavailable",
+        reason: "participant observation or identity is unavailable",
+      };
+    return { kind: "observed", state };
+  } catch (error) {
+    if (isQuantumDeadlineExceeded(error))
+      return { kind: "deferred", reason: error.message };
+    return {
+      kind: "unavailable",
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -1208,12 +1245,14 @@ export async function observedTurnState(
  */
 export type ToolTimelineRead =
   | {
+      kind: "ok";
       entries: TimelineEntry[];
       coverage: "bounded";
       pendingBackgroundTasks: string[];
     }
-  | { entries: TimelineEntry[]; coverage?: "turn" }
-  | { issue: string; transientError?: unknown };
+  | { kind: "ok"; entries: TimelineEntry[]; coverage?: "turn" }
+  | { kind: "deferred"; reason: string }
+  | { kind: "hold"; reason: string; transientError?: unknown };
 
 export async function readToolTimeline(
   host: {
@@ -1226,7 +1265,10 @@ export async function readToolTimeline(
   deadlineMs: number = TOOL_TIMELINE_READ_TIMEOUT_MS,
 ): Promise<ToolTimelineRead> {
   if (!host.agentTimelinePage)
-    return { issue: "tool observations have no completeness evidence" };
+    return {
+      kind: "hold",
+      reason: "tool observations have no completeness evidence",
+    };
   let previous: TimelinePage | undefined;
   let limit = TOOL_TIMELINE_LIMIT;
   const deadlineAt = Date.now() + Math.max(0, deadlineMs);
@@ -1237,7 +1279,8 @@ export async function readToolTimeline(
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs <= 0)
       return {
-        issue: `tool observations read ${read + 1} failed: read timed out`,
+        kind: "deferred",
+        reason: `tool observations read ${read + 1} failed: read timed out`,
       };
     let page: TimelinePage | null;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1248,38 +1291,58 @@ export async function readToolTimeline(
         pending,
         new Promise<never>((_, reject) => {
           timer = setTimeout(
-            () => reject(Error("read timed out")),
+            () =>
+              reject(
+                new DeferredPassReadError(
+                  `tool observations read ${read + 1} failed: read timed out`,
+                ),
+              ),
             remainingMs,
           );
           timer.unref?.();
         }),
       ]);
     } catch (error) {
+      if (
+        error instanceof DeferredPassReadError ||
+        isQuantumDeadlineExceeded(error)
+      ) {
+        return {
+          kind: "deferred",
+          reason: error.message,
+        };
+      }
       const transient =
         error instanceof HostReadRefusalError ||
         isTransportFailure(error) ||
         isHostOperationTimeout(error) ||
         error instanceof HostTransportFault;
       return {
-        issue: `tool observations read ${read + 1} failed: ${error instanceof Error ? error.message : String(error)}`,
+        kind: "hold",
+        reason: `tool observations read ${read + 1} failed: ${error instanceof Error ? error.message : String(error)}`,
         ...(transient ? { transientError: error } : {}),
       };
     } finally {
       clearTimeout(timer);
     }
     if (!page)
-      return { issue: `tool observations read ${read + 1} is unavailable` };
+      return {
+        kind: "hold",
+        reason: `tool observations read ${read + 1} is unavailable`,
+      };
     if (page.gap === true)
       return {
-        issue:
+        kind: "hold",
+        reason:
           "tool observations report a gap, so a live tool in the missing segment cannot be ruled out",
       };
     if (page.staleCursor === true || page.reset === true)
       return {
-        issue: "tool observations report a stale cursor or history reset",
+        kind: "hold",
+        reason: "tool observations report a stale cursor or history reset",
       };
     if (page.hasNewer === true)
-      return { issue: "tool observations omit newer history" };
+      return { kind: "hold", reason: "tool observations omit newer history" };
     if (
       page.gap !== false ||
       page.staleCursor !== false ||
@@ -1290,12 +1353,13 @@ export async function readToolTimeline(
       !["projected", "canonical", "bounded"].includes(page.projection ?? "")
     )
       return {
-        issue: "tool observations are missing positive coverage metadata",
+        kind: "hold",
+        reason: "tool observations are missing positive coverage metadata",
       };
     // Paseo extends projected tails to include earlier anchors whose tool
     // updates overlap the window. The requested limit is not a response cap.
     if (!Array.isArray(page.entries))
-      return { issue: "tool observations have missing entries" };
+      return { kind: "hold", reason: "tool observations have missing entries" };
     if (page.projection === "bounded") {
       if (
         !Array.isArray(page.pendingBackgroundTasks) ||
@@ -1304,7 +1368,8 @@ export async function readToolTimeline(
         )
       )
         return {
-          issue:
+          kind: "hold",
+          reason:
             "bounded tool observations lack pending-background-task evidence",
         };
       if (
@@ -1314,8 +1379,12 @@ export async function readToolTimeline(
             page.startCursor.seq > page.endCursor.seq
           : page.startCursor !== null || page.endCursor !== null
       )
-        return { issue: "bounded tool observations have inconsistent cursors" };
+        return {
+          kind: "hold",
+          reason: "bounded tool observations have inconsistent cursors",
+        };
       return {
+        kind: "ok",
         entries: page.entries,
         coverage: "bounded",
         pendingBackgroundTasks: page.pendingBackgroundTasks,
@@ -1329,9 +1398,10 @@ export async function readToolTimeline(
         page.endCursor !== null
       )
         return {
-          issue: "empty tool observations have inconsistent cursor coverage",
+          kind: "hold",
+          reason: "empty tool observations have inconsistent cursor coverage",
         };
-      return { entries: [] };
+      return { kind: "ok", entries: [] };
     }
     if (
       !validCursor(page.startCursor, page.epoch) ||
@@ -1339,7 +1409,8 @@ export async function readToolTimeline(
       page.startCursor.seq > page.endCursor.seq
     )
       return {
-        issue: "tool observations have missing or inconsistent cursors",
+        kind: "hold",
+        reason: "tool observations have missing or inconsistent cursors",
       };
     if (previous) {
       if (
@@ -1348,14 +1419,18 @@ export async function readToolTimeline(
         !isDeepStrictEqual(page.endCursor, previous.endCursor)
       )
         return {
-          issue:
+          kind: "hold",
+          reason:
             "tool observations changed epoch, projection or newest cursor during retrieval",
         };
       if (
         page.startCursor.seq >= previous.startCursor!.seq ||
         page.entries.length <= previous.entries.length
       )
-        return { issue: "tool observations made no backwards cursor progress" };
+        return {
+          kind: "hold",
+          reason: "tool observations made no backwards cursor progress",
+        };
       if (
         !isDeepStrictEqual(
           page.entries.slice(-previous.entries.length),
@@ -1363,7 +1438,8 @@ export async function readToolTimeline(
         )
       )
         return {
-          issue:
+          kind: "hold",
+          reason:
             "tool observations changed or lost the previously read segment",
         };
     }
@@ -1380,11 +1456,13 @@ export async function readToolTimeline(
       ) &&
       oldest.turnId !== newest.turnId &&
       Date.parse(oldest.timestamp) < Date.parse(newest.timestamp);
-    if (!page.hasOlder || turnCovered) return { entries: page.entries };
+    if (!page.hasOlder || turnCovered)
+      return { kind: "ok", entries: page.entries };
     previous = structuredClone(page);
   }
   return {
-    issue: `tool observations remain partial after ${TOOL_TIMELINE_READ_BUDGET} reads (largest requested limit ${limit}); latest turn coverage is unproven`,
+    kind: "hold",
+    reason: `tool observations remain partial after ${TOOL_TIMELINE_READ_BUDGET} reads (largest requested limit ${limit}); latest turn coverage is unproven`,
   };
 }
 /**

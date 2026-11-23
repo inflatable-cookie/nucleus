@@ -30,26 +30,6 @@ import {
   currentTaskQuantumScope,
 } from "../scheduling/pass-snapshot";
 
-/**
- * Whether an `ownedToolHold` / lease issue reflects an unknown or deferred read
- * (quantum deadline expiry, uncaptured pass snapshot, or unreadable/timed-out
- * process/timeline/observation probe) rather than a positive live-tool or
- * retired-custody refusal. Deferred reads must hold the lease without recording
- * an `operator_needed` stop (Spec 068 §6, Spec 066 R1).
- */
-function isDeferredToolEvidence(issue: string): boolean {
-  return (
-    /task quantum (?:deadline exceeded|read budget exhausted)/i.test(issue) ||
-    /was not captured in a host pass/i.test(issue) ||
-    /owned tool custody observation is unknown/i.test(issue) ||
-    /owned tool evidence is unreadable/i.test(issue) ||
-    /process tree is unreadable:.*(?:timed out|deadline|budget|not captured|unavailable|unknown|unreadable|disallowed)/i.test(
-      issue,
-    ) ||
-    /timed out after \d+ ms/i.test(issue)
-  );
-}
-
 /** Proves a task's participants are settled before its work, merge or closeout goes on. */
 export class ParticipantLease {
   constructor(readonly resolution: Resolution) {}
@@ -77,9 +57,13 @@ export class ParticipantLease {
     workspaceId: string,
     runIds: string[],
     issue: string,
-  ): Promise<{ issue: string; needsOwner: boolean } | null> {
+  ): Promise<
+    | { kind: "deferred"; issue: string }
+    | { kind: "hold"; issue: string; needsOwner: boolean }
+    | null
+  > {
     const runId = runIds[0];
-    if (!runId) return { issue, needsOwner: true };
+    if (!runId) return { kind: "hold", issue, needsOwner: true };
     const hold = this.store.eventsAll(t.id).findLast(
       (event) =>
         event.kind === "owned_tool_hold" &&
@@ -91,10 +75,11 @@ export class ParticipantLease {
           }
         })(),
     );
-    if (!hold) return { issue, needsOwner: true };
+    if (!hold) return { kind: "hold", issue, needsOwner: true };
     const deadline = Date.parse(hold.at) + Math.max(0, this.resolution.graceMs);
     if (Date.now() < deadline)
       return {
+        kind: "hold",
         issue: `${issue}; stray-tool grace ends at ${new Date(deadline).toISOString()}`,
         needsOwner: false,
       };
@@ -117,12 +102,13 @@ export class ParticipantLease {
         );
         if (read.state === "unknown")
           return {
+            kind: "deferred",
             issue: `${issue}; participant ${id} identity could not be rechecked before reaping (${read.reason})`,
-            needsOwner: true,
           };
         state = read.value;
       } catch {
         return {
+          kind: "hold",
           issue: `${issue}; participant ${id} identity could not be rechecked before reaping`,
           needsOwner: true,
         };
@@ -133,6 +119,7 @@ export class ParticipantLease {
         !agentSettled(state)
       )
         return {
+          kind: "hold",
           issue: `${issue}; participant ${id} resumed or its identity changed before reaping`,
           needsOwner: false,
         };
@@ -146,9 +133,15 @@ export class ParticipantLease {
         const listing = this.resolution.readPassProcesses
           ? await this.resolution.readPassProcesses(t.hostId)
           : null;
-        if (listing)
+        if (listing) {
+          if (listing.state === "unknown" && listing.deferred) {
+            return {
+              kind: "deferred",
+              issue: `${issue}; ${listing.reason}`,
+            };
+          }
           processes = listing.state === "listed" ? listing.processes : null;
-        else processes = await this.adapter.hostProcessListing();
+        } else processes = await this.adapter.hostProcessListing();
       } catch {
         processes = null;
       }
@@ -162,17 +155,20 @@ export class ParticipantLease {
       });
     } catch (error) {
       return {
+        kind: "hold",
         issue: `${issue}; host-process reap failed: ${error instanceof Error ? error.message : String(error)}`,
         needsOwner: true,
       };
     }
     if (result.unavailable)
       return {
+        kind: "hold",
         issue: `${issue}; host-process reap could not read the host: ${result.unavailable.reason}`,
         needsOwner: true,
       };
     if (result.failed.length)
       return {
+        kind: "hold",
         issue: `${issue}; host-process reap could not prove or stop every target: ${result.failed.map((target) => target.reason).join("; ")}`,
         needsOwner: true,
       };
@@ -180,6 +176,7 @@ export class ParticipantLease {
       const skipped = `Skipped ${result.skippedProtected.length} protected host-runtime process${result.skippedProtected.length === 1 ? "" : "es"}: ${result.skippedProtected.map((target) => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || "-"} command=${target.command || "-"}`).join("; ")}`;
       this.store.event(t.id, "participant_tool_reap_skipped", skipped);
       return {
+        kind: "hold",
         issue: `${issue}; host-process reap ${skipped}`,
         needsOwner: true,
       };
@@ -196,6 +193,7 @@ export class ParticipantLease {
       // next host pass captures a fresh pre-process observation and table.
       if (currentTaskQuantumScope()?.inTaskQuantum) {
         return {
+          kind: "hold",
           issue:
             "reaped stray participant process; waiting for the next host pass to verify the process tree is clear",
           needsOwner: false,
@@ -214,7 +212,10 @@ export class ParticipantLease {
       taskId: t.id,
       workspaceId,
     });
-    return remaining ? { issue: remaining, needsOwner: true } : null;
+    if (remaining.kind === "clear") return null;
+    if (remaining.kind === "deferred")
+      return { kind: "deferred", issue: remaining.reason };
+    return { kind: "hold", issue: remaining.reason, needsOwner: true };
   }
 
   private yieldIntegrationTurn(t: Task): void {
@@ -499,7 +500,7 @@ export class ParticipantLease {
         state = read.value;
       } catch {
         const runIds = participantToolRunIds(t, runs, id, workspace);
-        const issue = await this.resolution.ownedToolHold(id, {
+        const holdResult = await this.resolution.ownedToolHold(id, {
           requireCompleteEvidence: true,
           allowRetired: true,
           runId: runIds[0],
@@ -507,16 +508,16 @@ export class ParticipantLease {
           taskId: t.id,
           workspaceId: workspace,
         });
-        if (!issue) continue;
+        if (holdResult.kind === "clear") continue;
         if (!probe) {
-          if (isDeferredToolEvidence(issue)) {
+          if (holdResult.kind === "deferred") {
             this.store.update(t.id, {
-              reason: `Merge waits for participant ${id}: ${issue}`,
+              reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
             });
           } else {
             this.resolution.waiting(
               t,
-              `Merge waits for participant ${id}: ${issue}`,
+              `Merge waits for participant ${id}: ${holdResult.reason}`,
               "operator_needed",
               { suggestedVerbs: ["retry_effect"] },
             );
@@ -553,7 +554,7 @@ export class ParticipantLease {
         state.archived === true
       ) {
         const runIds = participantToolRunIds(t, runs, id, workspace);
-        const issue = await this.resolution.ownedToolHold(id, {
+        const holdResult = await this.resolution.ownedToolHold(id, {
           requireCompleteEvidence: true,
           allowRetired: true,
           runId: runIds[0],
@@ -561,16 +562,16 @@ export class ParticipantLease {
           taskId: t.id,
           workspaceId: workspace,
         });
-        if (issue) {
+        if (holdResult.kind !== "clear") {
           if (!probe) {
-            if (isDeferredToolEvidence(issue)) {
+            if (holdResult.kind === "deferred") {
               this.store.update(t.id, {
-                reason: `Merge waits for participant ${id}: ${issue}`,
+                reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
               });
             } else {
               this.resolution.waiting(
                 t,
-                `Merge waits for participant ${id}: ${issue}`,
+                `Merge waits for participant ${id}: ${holdResult.reason}`,
                 "operator_needed",
                 { suggestedVerbs: ["retry_effect"] },
               );
@@ -582,22 +583,22 @@ export class ParticipantLease {
       }
       if (!syncing) {
         const participantRunIds = participantToolRunIds(t, runs, id, workspace);
-        const why = await this.resolution.ownedToolHold(id, {
+        const holdResult = await this.resolution.ownedToolHold(id, {
           requireCompleteEvidence: true,
           runId: participantRunIds[0],
           runIds: participantRunIds,
           taskId: t.id,
           workspaceId: workspace,
         });
-        if (why) {
-          if (isDeferredToolEvidence(why)) {
-            if (!probe) {
-              this.store.update(t.id, {
-                reason: `Merge waits for participant ${id}: ${why}`,
-              });
-            }
-            return false;
+        if (holdResult.kind === "deferred") {
+          if (!probe) {
+            this.store.update(t.id, {
+              reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
+            });
           }
+          return false;
+        }
+        if (holdResult.kind === "hold") {
           // While a merge intent is recorded the stray-tool settlement is not
           // attempted; a participant still holding it has already been through
           // its grace in an earlier pass, so the owner's exit is the one left.
@@ -608,11 +609,15 @@ export class ParticipantLease {
                   id,
                   workspace,
                   participantRunIds,
-                  why,
+                  holdResult.reason,
                 )
-              : { issue: why, needsOwner: !probe };
+              : {
+                  kind: "hold" as const,
+                  issue: holdResult.reason,
+                  needsOwner: !probe,
+                };
           if (!stray) continue;
-          if (isDeferredToolEvidence(stray.issue)) {
+          if (stray.kind === "deferred") {
             if (!probe) {
               this.store.update(t.id, {
                 reason: `Merge waits for participant ${id}: ${stray.issue}`,
@@ -647,12 +652,13 @@ export class ParticipantLease {
       agentId,
       workspaceId,
     );
-    return this.resolution.ownedToolHold(agentId, {
+    const result = await this.resolution.ownedToolHold(agentId, {
       requireCompleteEvidence: true,
       runId: runIds[0],
       runIds,
       taskId,
       workspaceId,
     });
+    return result.kind === "clear" ? null : result.reason;
   }
 }

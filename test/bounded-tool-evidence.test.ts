@@ -95,13 +95,15 @@ function fixture(t: TestContext, bb = false) {
     },
   } as unknown as Resolution;
   const tools = new OwnedTools(resolution);
-  const proof = (runId = task.runId) =>
-    tools.ownedToolHold(task.agentId, {
+  const proof = async (runId = task.runId): Promise<string | null> => {
+    const result = await tools.ownedToolHold(task.agentId, {
       taskId: task.id,
       runId,
       workspaceId: task.workspaceId,
       requireCompleteEvidence: true,
     });
+    return result.kind === "clear" ? null : result.reason;
+  };
   const processAt = (cwd: string): HostProcessFact => ({
     pid: 42,
     ppid: 1,

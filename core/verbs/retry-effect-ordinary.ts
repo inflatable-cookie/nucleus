@@ -434,5 +434,6 @@ export async function reconcileOwnedToolHold(
     requireCompleteEvidence: true,
     allowRetired: true,
   });
-  if (hold) throw Error(`Owned-tool hold ${runId} remains: ${hold}`);
+  if (hold.kind !== "clear")
+    throw Error(`Owned-tool hold ${runId} remains: ${hold.reason}`);
 }

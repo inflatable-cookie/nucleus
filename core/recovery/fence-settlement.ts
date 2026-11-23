@@ -17,7 +17,7 @@ import {
   reviewContinuationWait,
   reviewInProgress,
 } from "../review/review-continuation";
-import { readToolTimeline } from "./stall";
+import { readToolTimeline, type OwnedToolHoldResult } from "./stall";
 import { participantToolRunIds } from "./task-reasons";
 import {
   QUANTUM_READ_DEADLINE_MS,
@@ -644,9 +644,10 @@ export class RunRelease {
       const deadlineMs =
         this.engine.resolution?.quantumReadTimeoutMs ??
         QUANTUM_READ_DEADLINE_MS;
+      const pending = this.engine.host.observe(run.agentId!);
       const read = await boundedRead(
         "retained reviewer observation",
-        () => this.engine.host.observe(run.agentId!),
+        () => pending,
         deadlineMs,
       );
       if (read.state === "unknown") return;
@@ -1164,7 +1165,7 @@ export class RunRelease {
           run.taskId,
           { deadlineAt: effectiveDeadlineAt },
         );
-        if (tools) return tools;
+        if (tools.kind !== "clear") return tools.reason;
       }
     }
     // The archive proves the thread cannot take a turn; it never settles the
@@ -1223,14 +1224,18 @@ export class RunRelease {
       allowRetired?: boolean;
       deadlineAt?: number;
     } = {},
-  ): Promise<string | null> {
+  ): Promise<OwnedToolHoldResult> {
     if (!taskId || !runId)
       return this.resolution.ownedToolHold(agentId, options);
     const task = this.store.task(taskId),
       runs = this.store.runs(taskId);
     const boundRun = runs.find((run) => run.id === runId);
     const workspaceId = boundRun?.workspaceId ?? task.workspaceId;
-    if (!workspaceId) return "owned tool run workspace identity is unavailable";
+    if (!workspaceId)
+      return {
+        kind: "hold",
+        reason: "owned tool run workspace identity is unavailable",
+      };
     const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
     if (!runIds.includes(runId)) runIds.unshift(runId);
     return this.resolution.ownedToolHold(agentId, {

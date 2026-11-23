@@ -32,16 +32,21 @@ import {
   turnBoundTool,
   workspaceToolProcessIssue,
   type ObservedTurnState,
+  type OwnedToolHoldResult,
   type TimelineEntry,
 } from "../recovery/stall";
 import type { HostProcessFact } from "../host/types";
 import {
+  DeferredPassReadError,
   PASS_PROCESS_READ_DEADLINE_MS,
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
+  isQuantumDeadlineExceeded,
   type PassProcessRead,
   type PassTimelinePageRead,
 } from "../scheduling/pass-snapshot";
+
+export type { OwnedToolHoldResult } from "../recovery/stall";
 
 /** The owned-tool events this proof reads and writes. */
 const OWNED_TOOL_HOLD = "owned_tool_hold";
@@ -88,7 +93,8 @@ export class OwnedTools {
           { requireCoveredObservation: true },
         );
         onRead?.(read);
-        if (read.state === "unknown") throw new Error(read.reason);
+        if (read.state === "unknown")
+          throw new DeferredPassReadError(read.reason);
         return read.value;
       },
     };
@@ -105,23 +111,38 @@ export class OwnedTools {
         "host process listing",
         () => this.adapter.hostProcessListing!(),
         this.processDeadlineMs,
-      ).catch(() => ({ state: "unknown" as const, reason: "failed" }));
-      return read.state === "ok" && read.value
-        ? {
-            state: "listed",
-            processes: read.value,
-            capturedAt,
-            fromPassSnapshot: false,
-          }
-        : {
-            state: "unknown",
-            reason:
-              read.state === "unknown"
-                ? read.reason
-                : "the host process listing is unreadable",
-            capturedAt,
-            fromPassSnapshot: false,
-          };
+      ).catch((error) =>
+        isQuantumDeadlineExceeded(error)
+          ? { state: "unknown" as const, reason: error.message, deferred: true }
+          : {
+              state: "unknown" as const,
+              reason: "failed",
+              deferred: false,
+            },
+      );
+      if (read.state === "ok" && read.value) {
+        return {
+          state: "listed",
+          processes: read.value,
+          capturedAt,
+          fromPassSnapshot: false,
+        };
+      }
+      if (read.state === "unknown") {
+        return {
+          state: "unknown",
+          reason: read.reason,
+          capturedAt,
+          fromPassSnapshot: false,
+          deferred: "deferred" in read ? read.deferred : true,
+        };
+      }
+      return {
+        state: "unknown",
+        reason: "the host process listing is unreadable",
+        capturedAt,
+        fromPassSnapshot: false,
+      };
     }
     const listing = await readHostUidProcesses({
       deadlineMs: this.processDeadlineMs,
@@ -215,7 +236,7 @@ export class OwnedTools {
     } catch {
       return null;
     }
-    if ("issue" in read) return null;
+    if (read.kind !== "ok") return null;
     if (binding)
       recordActivityTool(
         this.store,
@@ -264,7 +285,7 @@ export class OwnedTools {
       workspaceId?: string;
       deadlineAt?: number;
     } = {},
-  ): Promise<string | null> {
+  ): Promise<OwnedToolHoldResult> {
     const remainingMs = (): number =>
       options.deadlineAt !== undefined
         ? Math.min(
@@ -291,13 +312,16 @@ export class OwnedTools {
         workspaceId,
         remainingMs(),
       );
-      if (custody.kind === "refuse") return custody.reason;
+      if (custody.kind === "deferred")
+        return { kind: "deferred", reason: custody.reason };
+      if (custody.kind === "refuse")
+        return { kind: "hold", reason: custody.reason };
       if (custody.kind === "retired" || custody.kind === "gone") {
         if (
           this.adapter.noLiveWorkspaceProcesses &&
           this.adapter.hostProcessListing
         ) {
-          const processIssue =
+          const processResult =
             await this.verifyOwnedWorkspaceAndScratchProcesses(
               agentId,
               task,
@@ -309,30 +333,42 @@ export class OwnedTools {
               undefined,
               remainingMs(),
             );
+          if (processResult.kind === "deferred") return processResult;
           if (
-            processIssue &&
+            processResult.kind === "hold" &&
             task &&
             options.runId &&
-            this.acceptOwnedToolHold(task.id, options.runId, processIssue)
+            this.acceptOwnedToolHold(
+              task.id,
+              options.runId,
+              processResult.reason,
+            )
           )
-            return null;
-          if (!processIssue && task)
+            return { kind: "clear" };
+          if (processResult.kind === "clear" && task)
             for (const runId of runIds)
               this.recordOwnedToolSettlement(
                 task.id,
                 runId,
                 `retired participant (${custody.kind}), workspace inactivity and owned-process observations are clear`,
               );
-          return processIssue;
+          return processResult;
         }
         if (custody.kind === "gone")
-          return "owned workspace or run process identity is unavailable";
+          return {
+            kind: "hold",
+            reason: "owned workspace or run process identity is unavailable",
+          };
       }
     }
     if (!this.adapter.agentTimelinePage)
       return options.requireCompleteEvidence
-        ? "owned tool evidence is unavailable: this adapter offers no tool timeline"
-        : null;
+        ? {
+            kind: "hold",
+            reason:
+              "owned tool evidence is unavailable: this adapter offers no tool timeline",
+          }
+        : { kind: "clear" };
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
     let lastPageRead: PassTimelinePageRead | null = null;
     try {
@@ -349,6 +385,8 @@ export class OwnedTools {
         timelineDeadlineMs,
       );
     } catch (error) {
+      if (isQuantumDeadlineExceeded(error))
+        return { kind: "deferred", reason: error.message };
       if (
         error instanceof HostReadRefusalError ||
         isTransportFailure(error) ||
@@ -356,11 +394,17 @@ export class OwnedTools {
         error instanceof HostTransportFault
       )
         throw error;
-      return "owned tool evidence is unreadable";
+      return { kind: "hold", reason: "owned tool evidence is unreadable" };
     }
-    if ("issue" in read) {
+    if (read.kind === "deferred") {
+      return { kind: "deferred", reason: read.reason };
+    }
+    if (read.kind === "hold") {
       if (read.transientError) throw read.transientError;
-      return `owned tool evidence is inconclusive: ${read.issue}`;
+      return {
+        kind: "hold",
+        reason: `owned tool evidence is inconclusive: ${read.reason}`,
+      };
     }
     if (read.coverage === "bounded") {
       const hold = await boundedToolHold(
@@ -382,14 +426,15 @@ export class OwnedTools {
           ),
         remainingMs(),
       );
+      if (hold.kind === "deferred") return hold;
       if (
-        hold &&
+        hold.kind === "hold" &&
         task &&
         options.runId &&
-        this.acceptOwnedToolHold(task.id, options.runId, hold)
+        this.acceptOwnedToolHold(task.id, options.runId, hold.reason)
       )
-        return null;
-      if (!hold && task)
+        return { kind: "clear" };
+      if (hold.kind === "clear" && task)
         for (const runId of runIds)
           this.recordOwnedToolSettlement(
             task.id,
@@ -405,11 +450,16 @@ export class OwnedTools {
       // A missing activity stamp never proves the turn did not change.
       const pageMeta = lastPageRead as PassTimelinePageRead | null;
       if (pageMeta?.fromPassSnapshot) {
-        const freshTurn = await observedTurnState(
+        const freshTurnRead = await observedTurnState(
           this.resolution.host,
           agentId,
           remainingMs(),
         );
+        if (freshTurnRead.kind === "deferred") {
+          return { kind: "deferred", reason: freshTurnRead.reason };
+        }
+        const freshTurn =
+          freshTurnRead.kind === "observed" ? freshTurnRead.state : null;
         const freshInactive = Boolean(
           freshTurn &&
             !freshTurn.active &&
@@ -420,7 +470,11 @@ export class OwnedTools {
             ),
         );
         if (!freshInactive) {
-          return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass";
+          return {
+            kind: "hold",
+            reason:
+              "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass",
+          };
         }
         const covered = pageMeta.coveredObservation;
         const coveredUpdatedAt = covered?.updatedAt ?? null;
@@ -431,7 +485,11 @@ export class OwnedTools {
             freshUpdatedAt === coveredUpdatedAt,
         );
         if (!positiveMatch) {
-          return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation or lacks a positive activity stamp; waiting for the next host pass";
+          return {
+            kind: "hold",
+            reason:
+              "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation or lacks a positive activity stamp; waiting for the next host pass",
+          };
         }
       }
       if (options.taskId)
@@ -441,15 +499,19 @@ export class OwnedTools {
             runId,
             "complete tool timeline has no live or unknown calls",
           );
-      return null;
+      return { kind: "clear" };
     }
     // The turn proof is read AFTER the evidence it settles: an agent that became
     // active, permissioned or turn-bound since then is caught here and holds.
-    const turn = await observedTurnState(
+    const turnRead = await observedTurnState(
       this.resolution.host,
       agentId,
       remainingMs(),
     );
+    if (turnRead.kind === "deferred") {
+      return { kind: "deferred", reason: turnRead.reason };
+    }
+    const turn = turnRead.kind === "observed" ? turnRead.state : null;
     const issue = liveToolIssueFact(read.entries, turn);
     let hold = issue ? formatLiveToolIssue(issue) : null;
     const processEntries = read.entries.filter(
@@ -481,6 +543,12 @@ export class OwnedTools {
       const task = this.store.task(options.taskId);
       const processHostId = boundRun?.hostId ?? task.hostId;
       const processRead = await this.readProcesses(processHostId);
+      if (processRead.state === "unknown" && processRead.deferred) {
+        return {
+          kind: "deferred",
+          reason: `${toolLabel}; ${processRead.reason}`,
+        };
+      }
       const processes =
         processRead.state === "listed" ? processRead.processes : null;
       const bbThread = bbThreadForAgent(agentId, processHostId);
@@ -535,10 +603,13 @@ export class OwnedTools {
               ),
             this.readDeadlineMs,
           );
-          const workspaceIssue =
-            workspaceRead.state === "ok"
-              ? workspaceRead.value
-              : workspaceRead.reason;
+          if (workspaceRead.state === "unknown") {
+            return {
+              kind: "deferred",
+              reason: `${toolLabel}; ${workspaceRead.reason}`,
+            };
+          }
+          const workspaceIssue = workspaceRead.value;
           if (!workspaceIssue) {
             this.recordOwnedToolSettlement(
               options.taskId,
@@ -558,7 +629,7 @@ export class OwnedTools {
       options.taskId &&
       this.acceptOwnedToolHold(options.taskId, options.runId, hold)
     )
-      return null;
+      return { kind: "clear" };
     if (!hold && options.taskId)
       for (const runId of runIds)
         this.recordOwnedToolSettlement(
@@ -566,7 +637,9 @@ export class OwnedTools {
           runId,
           "fresh tool and owner observations prove the recorded hold settled",
         );
-    return hold ? `an owned tool is still live: ${hold}` : null;
+    return hold
+      ? { kind: "hold", reason: `an owned tool is still live: ${hold}` }
+      : { kind: "clear" };
   }
 
   private async classifyRetiredCustody(
@@ -576,6 +649,7 @@ export class OwnedTools {
   ): Promise<
     | { kind: "live" }
     | { kind: "retired" | "gone"; observation?: ObservedTurnState | null }
+    | { kind: "deferred"; reason: string }
     | { kind: "refuse"; reason: string }
   > {
     const deadlineAt = Date.now() + Math.max(0, deadlineMs);
@@ -588,7 +662,7 @@ export class OwnedTools {
       );
       if (read.state === "unknown")
         return {
-          kind: "refuse",
+          kind: "deferred",
           reason: `owned tool custody observation is unknown: ${read.reason}`,
         };
       const state = read.value;
@@ -616,6 +690,8 @@ export class OwnedTools {
           "participant is not idle and permission-free in the recorded workspace",
       };
     } catch (error) {
+      if (isQuantumDeadlineExceeded(error))
+        return { kind: "deferred", reason: error.message };
       observeError = error;
     }
     if (
@@ -635,11 +711,13 @@ export class OwnedTools {
         );
         if (read.state === "unknown")
           return {
-            kind: "refuse",
+            kind: "deferred",
             reason: `owned tool custody observation is unknown: ${read.reason}`,
           };
         origin = read.value;
       } catch (originError) {
+        if (isQuantumDeadlineExceeded(originError))
+          return { kind: "deferred", reason: originError.message };
         if (
           originError instanceof HostReadRefusalError ||
           isTransportFailure(originError) ||
@@ -690,7 +768,7 @@ export class OwnedTools {
     turn?: ObservedTurnState | null,
     entries?: TimelineEntry[],
     deadlineMs: number = this.readDeadlineMs,
-  ): Promise<string | null> {
+  ): Promise<OwnedToolHoldResult> {
     if (
       !task ||
       !runIds.length ||
@@ -698,12 +776,18 @@ export class OwnedTools {
       !this.adapter.noLiveWorkspaceProcesses ||
       !this.adapter.hostProcessListing
     )
-      return "owned workspace or run process identity is unavailable";
+      return {
+        kind: "hold",
+        reason: "owned workspace or run process identity is unavailable",
+      };
     const temporaryDirectories = runIds.map((id) =>
       participantTemporaryDirectory(task, taskRuns, id),
     );
     if (temporaryDirectories.some((directory) => !directory))
-      return "a participant run temporary directory is unrecorded";
+      return {
+        kind: "hold",
+        reason: "a participant run temporary directory is unrecorded",
+      };
     const boundRun = boundRunId ? this.store.run(boundRunId) : null;
     const bbThreads = bbThreadForAgent(agentId, boundRun?.hostId ?? task.hostId)
       ? bbWorkspaceThreads(task, taskRuns, workspaceId)
@@ -716,9 +800,16 @@ export class OwnedTools {
     });
     const processHostId = boundRun?.hostId ?? task.hostId;
     const processRead = await this.readProcesses(processHostId);
-    const processes =
-      processRead.state === "listed" ? processRead.processes : null;
-    if (!processes) return "the host process listing is unreadable";
+    if (processRead.state !== "listed") {
+      if (processRead.deferred) {
+        return { kind: "deferred", reason: processRead.reason };
+      }
+      return {
+        kind: "hold",
+        reason: processRead.reason || "the host process listing is unreadable",
+      };
+    }
+    const processes = processRead.processes;
     const predates = this.processSnapshotPredatesEvidence(
       processRead,
       processHostId,
@@ -726,24 +817,37 @@ export class OwnedTools {
       turn,
       entries,
     );
-    if (predates) return predates;
-    const workspaceRead = await boundedRead(
-      "workspace process probe",
-      () =>
-        this.adapter.noLiveWorkspaceProcesses!(
-          workspaceId,
-          runIds,
-          runtime,
-          processes,
-        ),
-      deadlineMs,
-    );
-    if (workspaceRead.state === "unknown") return workspaceRead.reason;
+    if (predates) return { kind: "hold", reason: predates };
+    let workspaceRead: Awaited<ReturnType<typeof boundedRead<string | null>>>;
+    try {
+      workspaceRead = await boundedRead(
+        "workspace process probe",
+        () =>
+          this.adapter.noLiveWorkspaceProcesses!(
+            workspaceId,
+            runIds,
+            runtime,
+            processes,
+          ),
+        deadlineMs,
+      );
+    } catch (error) {
+      if (isQuantumDeadlineExceeded(error))
+        return { kind: "deferred", reason: error.message };
+      return {
+        kind: "hold",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (workspaceRead.state === "unknown")
+      return { kind: "deferred", reason: workspaceRead.reason };
     const workspaceIssue = workspaceRead.value;
     if (workspaceIssue !== null)
-      return (
-        workspaceIssue || "the workspace process probe returned no verdict"
-      );
+      return {
+        kind: "hold",
+        reason:
+          workspaceIssue || "the workspace process probe returned no verdict",
+      };
     for (const directory of new Set(temporaryDirectories)) {
       const issue = workspaceToolProcessIssue(
         processes,
@@ -751,9 +855,9 @@ export class OwnedTools {
         runIds,
         runtime,
       );
-      if (issue) return issue;
+      if (issue) return { kind: "hold", reason: issue };
     }
-    return null;
+    return { kind: "clear" };
   }
 
   private acceptOwnedToolHold(

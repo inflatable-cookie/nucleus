@@ -398,9 +398,15 @@ test("a process snapshot predating a new child or idle transition never clears a
   });
   f.engine.resolution.endPassSnapshot(snap);
 
+  assert.equal(
+    hold.kind,
+    "hold",
+    `pre-idle pass process snapshot must keep lease held, got: ${JSON.stringify(hold)}`,
+  );
   assert.ok(
-    hold && /predates|before the participant was proven inactive/i.test(hold),
-    `pre-idle pass process snapshot must keep lease held, got: ${hold}`,
+    hold.kind === "hold" &&
+      /predates|before the participant was proven inactive/i.test(hold.reason),
+    `pre-idle pass process snapshot must keep lease held, got: ${JSON.stringify(hold)}`,
   );
   assert.equal(
     f.store
@@ -565,9 +571,15 @@ test("a quantum with a 60 s process read returns with unknown without clearing t
   });
 
   assert.equal(attempts, 1, "slow process listing was attempted");
+  assert.equal(
+    hold.kind,
+    "deferred",
+    `slow process read must return deferred rather than clearing, got: ${JSON.stringify(hold)}`,
+  );
   assert.ok(
-    hold && /unreadable|unknown|timed out/i.test(hold),
-    `slow process read must return unknown/unreadable hold rather than clearing, got: ${hold}`,
+    hold.kind === "deferred" &&
+      /unreadable|unknown|timed out/i.test(hold.reason),
+    `slow process read must return deferred reason, got: ${JSON.stringify(hold)}`,
   );
   assert.equal(
     f.store
@@ -882,9 +894,15 @@ test("a warmed empty tool page never clears a lease after a newer turn changes u
   });
   f.engine.resolution.endPassSnapshot(snap);
 
+  assert.equal(
+    hold.kind,
+    "hold",
+    `warmed empty page must not clear after a newer turn, got: ${JSON.stringify(hold)}`,
+  );
   assert.ok(
-    hold && /predates the participant's latest observation/i.test(hold),
-    `warmed empty page must not clear after a newer turn, got: ${hold}`,
+    hold.kind === "hold" &&
+      /predates the participant's latest observation/i.test(hold.reason),
+    `warmed empty page must not clear after a newer turn, got: ${JSON.stringify(hold)}`,
   );
   assert.equal(
     f.store
@@ -976,7 +994,9 @@ test("an archived participant omitted from live inventory clears scratch process
     }),
   );
 
-  let holdDuringPass: string | null = "not-checked";
+  let holdDuringPass: Awaited<
+    ReturnType<typeof f.engine.resolution.ownedToolHold>
+  > | null = null;
   const originalQuantum = f.engine.taskQuantum.bind(f.engine);
   f.engine.taskQuantum = async (taskId: string) => {
     if (taskId === task.id) {
@@ -993,9 +1013,9 @@ test("an archived participant omitted from live inventory clears scratch process
   };
 
   await f.engine.auditPass(true);
-  assert.equal(
+  assert.deepEqual(
     holdDuringPass,
-    null,
+    { kind: "clear" },
     "archived participant omitted from live inventory clears via pre-process exact terminal lookup",
   );
   assert.equal(
@@ -1641,11 +1661,16 @@ test("bounded tool projection holds when a newer turn advances updatedAt after t
       taskId: seeded.task.id,
       workspaceId: "ws-bounded-fresh",
     });
-    assert.ok(
-      hold,
+    assert.equal(
+      hold.kind,
+      "hold",
       "bounded tool proof must hold when fresh observation has a newer updatedAt than the pass snapshot",
     );
-    assert.match(hold, /predates|active after the pass process snapshot/i);
+    if (hold.kind === "hold")
+      assert.match(
+        hold.reason,
+        /predates|active after the pass process snapshot/i,
+      );
   } finally {
     snapshot.expire();
   }
@@ -1730,11 +1755,12 @@ test("unstamped bounded tool window and unstamped complete tool page both hold w
       taskId: seeded.task.id,
       workspaceId: "ws-unstamped-tool",
     });
-    assert.ok(hold, "unstamped bounded tool window must hold");
-    assert.match(
-      hold,
-      /positive activity stamp|active after the pass process/i,
-    );
+    assert.equal(hold.kind, "hold", "unstamped bounded tool window must hold");
+    if (hold.kind === "hold")
+      assert.match(
+        hold.reason,
+        /positive activity stamp|active after the pass process/i,
+      );
     assert.equal(
       timelineCalls,
       callsAfterWarm,
@@ -1762,8 +1788,9 @@ test("unstamped bounded tool window and unstamped complete tool page both hold w
       taskId: seeded.task.id,
       workspaceId: "ws-unstamped-tool",
     });
-    assert.ok(hold, "unstamped complete tool page must hold");
-    assert.match(hold, /positive activity stamp|predates/i);
+    assert.equal(hold.kind, "hold", "unstamped complete tool page must hold");
+    if (hold.kind === "hold")
+      assert.match(hold.reason, /positive activity stamp|predates/i);
     assert.equal(
       timelineCalls,
       callsAfterWarm,
@@ -4667,4 +4694,421 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
   assert.equal(workerAfter.runId, null);
   assert.equal(workerAfter.resolution.incident, null);
   assert.equal(workerAfter.resolution.stop, null);
+});
+
+test("ownedToolHold and executionLease return typed deferred on all four paths under timeout and uncaptured snapshot, while a real live tool still holds", async (t) => {
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  const baseObs = (
+    id: string,
+    workspaceId: string,
+    extra: Partial<AgentObservation> = {},
+  ): AgentObservation => ({
+    id,
+    workspaceId,
+    status: "idle",
+    active: false,
+    activeTurnId: null,
+    permissions: false,
+    error: "",
+    updatedAt: idleAt,
+    ...extra,
+  });
+
+  // Helper to seed a task ready for executionLease checks.
+  const seedLeaseTask = (
+    f: ReturnType<typeof engineFixture>,
+    slug: string,
+    agentId: string,
+    workspaceId: string,
+    runId: string,
+  ) => {
+    const inserted = f.store.insert(
+      submission({ submissionId: `sub-${slug}`, title: `Lease ${slug}` }),
+      HOST,
+      "handoff",
+      HEAD,
+    );
+    const task = f.store.update(inserted.id, {
+      phase: "verifying",
+      workspaceId,
+      directory: `/tmp/synthetic-${slug}`,
+      temporaryDirectory: `/tmp/synthetic-${slug}-scratch`,
+      agentId,
+      runId,
+      reason: "Waiting for execution lease",
+    });
+    f.store.putRun(
+      runSchema.parse({
+        id: runId,
+        taskId: task.id,
+        role: "revision",
+        generation: 1,
+        head: HEAD,
+        base: HEAD,
+        agentId,
+        workspaceId,
+        hostId: HOST,
+        temporaryDirectory: `/tmp/synthetic-${slug}-scratch`,
+        profile: null,
+        status: "finished",
+        createdAt: idleAt,
+        lastObservedAt: idleAt,
+        active: false,
+        idleSince: idleAt,
+        completion: null,
+        released: true,
+      }),
+    );
+    return f.store.task(task.id);
+  };
+
+  // --- Path 1: verifyOwnedWorkspaceAndScratchProcesses (retired participant) ---
+  {
+    let slowProcess = false;
+    let slowWorkspaceProbe = false;
+    const f = engineFixture(t, {
+      observe: async (id: string) =>
+        baseObs(id, "ws-p1", { status: "closed", archived: true }),
+      originAgent: async (id: string) => ({
+        id,
+        workspaceId: "ws-p1",
+        archived: true,
+        deleted: false,
+      }),
+      hostProcessListing: async () => {
+        if (slowProcess) await new Promise(() => {});
+        return [];
+      },
+      noLiveWorkspaceProcesses: async () => {
+        if (slowWorkspaceProbe) await new Promise(() => {});
+        return null;
+      },
+    });
+    f.engine.resolution.quantumReadTimeoutMs = 40;
+    f.engine.resolution.passProcessReadTimeoutMs = 40;
+    const runId = "11111111-1111-4111-8111-111111111001";
+    const task = seedLeaseTask(f, "p1", "agent-p1", "ws-p1", runId);
+
+    // 1a. Uncaptured pass snapshot inside task quantum
+    const uncaptured = await runInTaskQuantumScope(500, () =>
+      f.engine.resolution.ownedToolHold("agent-p1", {
+        requireCompleteEvidence: true,
+        allowRetired: true,
+        runId,
+        runIds: [runId],
+        taskId: task.id,
+        workspaceId: "ws-p1",
+      }),
+    );
+    assert.equal(uncaptured.kind, "deferred");
+    const leaseUncaptured = await runInTaskQuantumScope(500, () =>
+      f.engine.resolution.executionLease(f.store.task(task.id)),
+    );
+    assert.equal(leaseUncaptured, false);
+    assert.equal(f.store.task(task.id).resolution.stop, null);
+
+    // 1b. Quantum timeout on process listing & workspace probe
+    slowProcess = true;
+    const timedOutProc = await f.engine.resolution.ownedToolHold("agent-p1", {
+      requireCompleteEvidence: true,
+      allowRetired: true,
+      runId,
+      runIds: [runId],
+      taskId: task.id,
+      workspaceId: "ws-p1",
+    });
+    assert.equal(timedOutProc.kind, "deferred");
+    const leaseTimedOutProc = await f.engine.resolution.executionLease(
+      f.store.task(task.id),
+    );
+    assert.equal(leaseTimedOutProc, false);
+    assert.equal(f.store.task(task.id).resolution.stop, null);
+
+    slowProcess = false;
+    slowWorkspaceProbe = true;
+    const timedOutProbe = await f.engine.resolution.ownedToolHold("agent-p1", {
+      requireCompleteEvidence: true,
+      allowRetired: true,
+      runId,
+      runIds: [runId],
+      taskId: task.id,
+      workspaceId: "ws-p1",
+    });
+    assert.equal(timedOutProbe.kind, "deferred");
+    const leaseTimedOutProbe = await f.engine.resolution.executionLease(
+      f.store.task(task.id),
+    );
+    assert.equal(leaseTimedOutProbe, false);
+    assert.equal(f.store.task(task.id).resolution.stop, null);
+  }
+
+  // --- Path 2: boundedToolHold ---
+  {
+    let observeCall = 0;
+    let slowSecondObserve = false;
+    const boundedPage: TimelinePage = {
+      entries: [],
+      hasOlder: true,
+      gap: false,
+      staleCursor: false,
+      reset: false,
+      hasNewer: false,
+      epoch: "agent-p2",
+      startCursor: null,
+      endCursor: null,
+      projection: "bounded",
+      pendingBackgroundTasks: [],
+    };
+    const f = engineFixture(t, {
+      observe: async (id: string) => {
+        observeCall++;
+        if (slowSecondObserve && observeCall >= 2) await new Promise(() => {});
+        return baseObs(id, "ws-p2");
+      },
+      agentTimelinePage: async () => boundedPage,
+      hostProcessListing: async () => [],
+      noLiveWorkspaceProcesses: async () => null,
+    });
+    f.engine.resolution.quantumReadTimeoutMs = 40;
+    f.engine.resolution.passProcessReadTimeoutMs = 40;
+    const runId = "11111111-1111-4111-8111-111111111002";
+    const task = seedLeaseTask(f, "p2", "agent-p2", "ws-p2", runId);
+
+    // 2a. Quantum timeout on observe inside boundedToolHold
+    slowSecondObserve = true;
+    observeCall = 1; // next call (inside boundedToolHold) hangs
+    const timedOutBounded = await f.engine.resolution.ownedToolHold(
+      "agent-p2",
+      {
+        requireCompleteEvidence: true,
+        runId,
+        runIds: [runId],
+        taskId: task.id,
+        workspaceId: "ws-p2",
+      },
+    );
+    assert.equal(timedOutBounded.kind, "deferred");
+
+    observeCall = 0; // 1st observe in executionLease succeeds; 2nd in boundedToolHold hangs
+    const leaseTimedOutBounded = await f.engine.resolution.executionLease(
+      f.store.task(task.id),
+    );
+    assert.equal(leaseTimedOutBounded, false);
+    assert.equal(f.store.task(task.id).resolution.stop, null);
+
+    // 2b. Uncaptured pass process snapshot inside boundedToolHold's processProof
+    slowSecondObserve = false;
+    const snap = f.engine.resolution.beginPassSnapshot();
+    try {
+      snap.storeTimelinePage(HOST, "agent-p2", 200, {
+        state: "ok",
+        value: boundedPage,
+        capturedAt: Date.now(),
+        fromPassSnapshot: true,
+        coveredObservation: { updatedAt: idleAt, status: "idle" },
+      });
+      snap.sealHost(HOST); // process listing was never captured in this pass
+      const uncapturedBounded = await runInTaskQuantumScope(
+        500,
+        () =>
+          f.engine.resolution.ownedToolHold("agent-p2", {
+            requireCompleteEvidence: true,
+            runId,
+            runIds: [runId],
+            taskId: task.id,
+            workspaceId: "ws-p2",
+          }),
+        snap,
+      );
+      assert.equal(uncapturedBounded.kind, "deferred");
+      const leaseUncapturedBounded = await runInTaskQuantumScope(
+        500,
+        () => f.engine.resolution.executionLease(f.store.task(task.id)),
+        snap,
+      );
+      assert.equal(leaseUncapturedBounded, false);
+      assert.equal(f.store.task(task.id).resolution.stop, null);
+    } finally {
+      f.engine.resolution.endPassSnapshot(snap);
+    }
+  }
+
+  // --- Path 3: observedTurnState (warmed complete page + post-timeline) ---
+  {
+    let observeCall = 0;
+    let slowSecondObserve = false;
+    const f = engineFixture(t, {
+      observe: async (id: string) => {
+        observeCall++;
+        if (slowSecondObserve && observeCall >= 2) await new Promise(() => {});
+        return baseObs(id, "ws-p3");
+      },
+      agentTimelinePage: async () => toolTimelinePage([]),
+    });
+    f.engine.resolution.quantumReadTimeoutMs = 40;
+    const runId = "11111111-1111-4111-8111-111111111003";
+    const task = seedLeaseTask(f, "p3", "agent-p3", "ws-p3", runId);
+
+    const snap = f.engine.resolution.beginPassSnapshot();
+    try {
+      snap.storeTimelinePage(HOST, "agent-p3", 200, {
+        state: "ok",
+        value: toolTimelinePage([]),
+        capturedAt: Date.now(),
+        fromPassSnapshot: true,
+        coveredObservation: { updatedAt: idleAt, status: "idle" },
+      });
+      snap.sealHost(HOST);
+      slowSecondObserve = true;
+      observeCall = 1; // next call (warmed-page observedTurnState) hangs
+      const timedOutWarmed = await runInTaskQuantumScope(
+        500,
+        () =>
+          f.engine.resolution.ownedToolHold("agent-p3", {
+            requireCompleteEvidence: true,
+            runId,
+            runIds: [runId],
+            taskId: task.id,
+            workspaceId: "ws-p3",
+          }),
+        snap,
+      );
+      assert.equal(timedOutWarmed.kind, "deferred");
+
+      observeCall = 0; // 1st in executionLease succeeds; 2nd in warmed-page observedTurnState hangs
+      const leaseTimedOutWarmed = await runInTaskQuantumScope(
+        500,
+        () => f.engine.resolution.executionLease(f.store.task(task.id)),
+        snap,
+      );
+      assert.equal(leaseTimedOutWarmed, false);
+      assert.equal(f.store.task(task.id).resolution.stop, null);
+    } finally {
+      f.engine.resolution.endPassSnapshot(snap);
+    }
+  }
+
+  // --- Path 4: readToolTimeline (uncaptured snapshot & quantum timeout) ---
+  {
+    let slowTimeline = false;
+    const f = engineFixture(t, {
+      observe: async (id: string) => baseObs(id, "ws-p4"),
+      agentTimelinePage: async () => {
+        if (slowTimeline) await new Promise(() => {});
+        return toolTimelinePage([]);
+      },
+    });
+    f.engine.resolution.quantumReadTimeoutMs = 40;
+    const runId = "11111111-1111-4111-8111-111111111004";
+    const task = seedLeaseTask(f, "p4", "agent-p4", "ws-p4", runId);
+
+    // 4a. Uncaptured timeline snapshot in task quantum
+    const uncapturedTimeline = await runInTaskQuantumScope(500, () =>
+      f.engine.resolution.ownedToolHold("agent-p4", {
+        requireCompleteEvidence: true,
+        runId,
+        runIds: [runId],
+        taskId: task.id,
+        workspaceId: "ws-p4",
+      }),
+    );
+    assert.equal(uncapturedTimeline.kind, "deferred");
+    const leaseUncapturedTimeline = await runInTaskQuantumScope(500, () =>
+      f.engine.resolution.executionLease(f.store.task(task.id)),
+    );
+    assert.equal(leaseUncapturedTimeline, false);
+    assert.equal(f.store.task(task.id).resolution.stop, null);
+
+    // 4b. Quantum timeout inside readToolTimeline
+    slowTimeline = true;
+    const timedOutTimeline = await f.engine.resolution.ownedToolHold(
+      "agent-p4",
+      {
+        requireCompleteEvidence: true,
+        runId,
+        runIds: [runId],
+        taskId: task.id,
+        workspaceId: "ws-p4",
+      },
+    );
+    assert.equal(timedOutTimeline.kind, "deferred");
+    const leaseTimedOutTimeline = await f.engine.resolution.executionLease(
+      f.store.task(task.id),
+    );
+    assert.equal(leaseTimedOutTimeline, false);
+    assert.equal(f.store.task(task.id).resolution.stop, null);
+  }
+
+  // --- Control: a real live tool still returns kind "hold" and records operator_needed ---
+  {
+    const runId = "11111111-1111-4111-8111-111111111005";
+    const f = engineFixture(t, {
+      observe: async (id: string) => baseObs(id, "ws-p5"),
+      agentTimelinePage: async () =>
+        toolTimelinePage([
+          {
+            timestamp: idleAt,
+            turnId: "turn-live",
+            item: {
+              type: "tool_call",
+              callId: "live-shell",
+              name: "Bash",
+              status: "running",
+              detail: { type: "shell", command: "sleep 999" },
+            },
+          },
+        ]),
+      hostProcessListing: async () => [
+        {
+          pid: 700,
+          ppid: 1,
+          pgid: 700,
+          uid: 501,
+          startIdentity: "700@a",
+          command: "claude",
+          cwd: null,
+        },
+        {
+          pid: 701,
+          ppid: 700,
+          pgid: 700,
+          uid: 501,
+          startIdentity: "701@a",
+          command: `node /p/mcp-report.mjs /tickets/mcp-${runId}.json`,
+          cwd: null,
+        },
+        {
+          pid: 702,
+          ppid: 700,
+          pgid: 700,
+          uid: 501,
+          startIdentity: "702@a",
+          command: "sleep 999",
+          cwd: null,
+        },
+      ],
+    });
+    const task = seedLeaseTask(f, "p5", "agent-p5", "ws-p5", runId);
+    const liveHold = await f.engine.resolution.ownedToolHold("agent-p5", {
+      requireCompleteEvidence: true,
+      runId,
+      runIds: [runId],
+      taskId: task.id,
+      workspaceId: "ws-p5",
+    });
+    assert.equal(liveHold.kind, "hold");
+    if (liveHold.kind === "hold")
+      assert.match(liveHold.reason, /descendant pid 702 remains/);
+
+    (f.engine.resolution as unknown as { graceMs: number }).graceMs = 0;
+    const leaseLive = await f.engine.resolution.executionLease(
+      f.store.task(task.id),
+    );
+    assert.equal(leaseLive, false);
+    assert.equal(
+      f.store.task(task.id).resolution.stop?.reason,
+      "operator_needed",
+      "a real live tool still holds and records operator_needed",
+    );
+  }
 });

@@ -696,13 +696,13 @@ export class OwnerStop {
 
     const ownedHold =
       observed.status !== "closed" &&
-      Boolean(
+      (
         await this.engine.ownedToolHold(
           cancellation.agentId,
           cancellation.runId,
           taskId,
-        ),
-      );
+        )
+      ).kind !== "clear";
     const inactive =
       matchingInactiveParticipant(
         {

@@ -724,13 +724,14 @@ export class TaskQuantum {
         const task = this.context.store.task(taskId),
           runs = this.context.store.runs(taskId);
         const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
-        return this.context.resolution.ownedToolHold(agentId, {
+        const hold = await this.context.resolution.ownedToolHold(agentId, {
           requireCompleteEvidence: true,
           runId: runIds[0],
           runIds,
           taskId,
           workspaceId,
         });
+        return hold.kind === "clear" ? null : hold.reason;
       },
     ).catch((error) => {
       if (isQuantumDeadlineExceeded(error)) return;
