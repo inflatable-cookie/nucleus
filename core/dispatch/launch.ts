@@ -98,6 +98,7 @@ export type LaunchDeliverContext = Pick<
   | "adapter"
   | "assertReviewProfileIndependent"
   | "clearHostReadTransient"
+  | "currentPassSnapshot"
   | "ensureIncident"
   | "ordinaryReviewRuns"
   | "ordinaryRoundCustody"

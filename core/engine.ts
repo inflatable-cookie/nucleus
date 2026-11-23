@@ -583,6 +583,7 @@ export class Engine {
           "retiredObservationPlan",
           "scheduleLane",
           "scheduleLifecycleFollowUp",
+          "scheduleOperation",
           "scheduleTaskQuantum",
           "settleQuiesce",
           "startSweepChain",
@@ -1361,7 +1362,14 @@ export class Engine {
           "performTaskControl",
           "store",
         ],
-        ["attention", "openPlannerEscalation", "recovery", "update"],
+        [
+          "attention",
+          "currentPassSnapshot",
+          "escalateRefusedCoordinator",
+          "openPlannerEscalation",
+          "recovery",
+          "update",
+        ],
       ),
     );
     this.pausedStops = new PausedStops(this);
@@ -1851,8 +1859,11 @@ export class Engine {
   reconcileSourcePromotion(operation: QueueOperation): void {
     this.operations.reconcileSourcePromotion(operation);
   }
-  scheduleOperation(id: string): void {
-    this.operations.scheduleOperation(id);
+  scheduleOperation(
+    id: string,
+    passSnapshot?: import("./scheduling/pass-snapshot").PassSnapshot,
+  ): Promise<void> {
+    return this.operations.scheduleOperation(id, passSnapshot);
   }
   runOperation(id: string): Promise<void> {
     return this.operations.runOperation(id);

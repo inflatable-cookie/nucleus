@@ -3,13 +3,21 @@ import { digest } from "../store/store";
 import type { Task, Run, RecoveryActionBinding } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import type { Resolution } from "../resolution";
+import { PassProofPendingError } from "../host/errors";
+import {
+  custodyProofDeferral,
+  PASS_PROOF_WAIT_LIMIT_MINUTES,
+} from "../machine/custody-proof";
+import { waitAgeMs } from "../scheduling/host-outage";
 import {
   collectOwnerVerbFacts,
+  ownerEffectIdentity,
   ownerVerb,
   ownerVerbViews,
 } from "../verbs/owner-verbs";
 import {
   coordinatorActionPlan,
+  coordinatorActionAttempt,
   coordinatorReportMatches,
   recoverySettlementPatch,
 } from "./coordinator-report";
@@ -35,7 +43,12 @@ export type RecoverySettlementContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
-    "attention" | "openPlannerEscalation" | "recovery" | "update"
+    | "attention"
+    | "currentPassSnapshot"
+    | "escalateRefusedCoordinator"
+    | "openPlannerEscalation"
+    | "recovery"
+    | "update"
   >;
 };
 export class RecoverySettlement {
@@ -112,22 +125,30 @@ export class RecoverySettlement {
       this.resolution.recovery.settleObservedNoAction(task, run, binding);
       return;
     }
-    const finish = (status: "applied" | "refused", reason?: string) => {
-      try {
-        this.store.recordVerbOutcome(
-          task.id,
-          action.verb,
-          status,
-          "coordinator",
-          {
-            coordinatorRun: run.id,
-            ...(reason ? { reason: reason.slice(0, 600) } : {}),
-          },
-          `coordinator:${binding.eventId}`,
-        );
-      } catch {
-        /* the outcome stands even if its record could not be written */
-      }
+    const finish = (
+      status: "applied" | "refused",
+      reason?: string,
+      cause?: "proof_wait_exhausted",
+    ) => {
+      const recordOutcome = () => {
+        try {
+          this.store.recordVerbOutcome(
+            task.id,
+            action.verb,
+            status,
+            "coordinator",
+            {
+              coordinatorRun: run.id,
+              ...(reason ? { reason: reason.slice(0, 600) } : {}),
+            },
+            `coordinator:${binding.eventId}`,
+          );
+        } catch {
+          /* the outcome stands even if its record could not be written */
+        }
+      };
+      // Exhaustion applies no external effect. Commit its outcome with the escalation.
+      if (!cause) recordOutcome();
       this.store.transaction(() => {
         const current = this.store.task(task.id);
         if (resultApplied(this.store, task.id, run.id)) return;
@@ -158,7 +179,16 @@ export class RecoverySettlement {
             settlement.event,
             binding.eventId,
           );
-        if (action.verb === "cannot" && status === "refused")
+        if (cause === "proof_wait_exhausted" && reason) {
+          recordOutcome();
+          if (settlement.kind === "patch") {
+            this.resolution.recovery.escalate(this.store.task(task.id), reason);
+            this.resolution.escalateRefusedCoordinator(
+              this.store.task(task.id),
+              reason,
+            );
+          }
+        } else if (action.verb === "cannot" && status === "refused")
           this.resolution.recovery.escalate(
             this.store.task(task.id),
             `The coordinator cannot settle this stop: ${action.reason} — ${binding.summary}`.slice(
@@ -172,13 +202,8 @@ export class RecoverySettlement {
 
     const claimKey = JSON.stringify([task.id, run.id, binding.eventId]);
     if (recoveryApplicationsInFlight.has(claimKey)) return;
-    const previousClaim = this.store
-      .eventsAll(task.id)
-      .some(
-        (event) =>
-          event.kind === "run_result_applying" && event.detail === claimKey,
-      );
-    if (previousClaim) {
+    const previous = coordinatorActionAttempt(this.store, task.id, claimKey);
+    if (previous === "run_result_applying") {
       const outcome = this.store.db
         .prepare("SELECT outcome FROM verb_outcomes WHERE taskId=? AND key=?")
         .get(task.id, `coordinator:${binding.eventId}`) as
@@ -193,6 +218,11 @@ export class RecoverySettlement {
       }
       return;
     }
+    if (
+      previous === "run_result_deferred" &&
+      !this.resolution.currentPassSnapshot()?.hostPassCompleted(task.hostId)
+    )
+      return;
     const claimed = this.store.transaction(() => {
       const latest = this.store.task(task.id);
       if (
@@ -200,12 +230,7 @@ export class RecoverySettlement {
         latest.resolution.recovery?.runId !== run.id ||
         latest.resolution.recovery.action?.eventId !== binding.eventId ||
         latest.resolution.recovery.action.status !== "pending" ||
-        this.store
-          .eventsAll(task.id)
-          .some(
-            (event) =>
-              event.kind === "run_result_applying" && event.detail === claimKey,
-          )
+        coordinatorActionAttempt(this.store, task.id, claimKey) === "run_result_applying"
       )
         return false;
       this.store.event(task.id, "run_result_applying", claimKey);
@@ -314,6 +339,7 @@ export class RecoverySettlement {
       }
 
       for (let attempt = 0; attempt < 2; attempt++) {
+        let applyingOwnedToolProof = false;
         try {
           const current = this.store.task(task.id);
           if (
@@ -351,6 +377,10 @@ export class RecoverySettlement {
           });
           if (!plan.ok) throw new Error(plan.refusal);
           const args = plan.args;
+          applyingOwnedToolProof =
+            action.verb === "retry_effect" &&
+            typeof args.effect === "string" &&
+            ownerEffectIdentity(args.effect, "owned_tool") !== null;
           await this.engine.coordinatorActionRunId.run(run.id, () => {
             const apply = () =>
               verb!.apply((input) => this.engine.performTaskControl(input), {
@@ -364,6 +394,38 @@ export class RecoverySettlement {
           finish("applied");
           return;
         } catch (error) {
+          const deferred =
+            applyingOwnedToolProof || error instanceof PassProofPendingError
+              ? custodyProofDeferral({ kind: "error", error })
+              : null;
+          if (deferred) {
+            this.store.event(task.id, "run_result_deferred", claimKey);
+            if (
+              previous !== "run_result_deferred" ||
+              !this.resolution.currentPassSnapshot()?.hostPassCompleted(task.hostId)
+            )
+              return;
+            const firstWait = this.store.db
+              .prepare(
+                "SELECT at FROM events WHERE taskId=? AND kind='run_result_deferred' AND detail=? ORDER BY id LIMIT 1",
+              )
+              .get(task.id, claimKey) as { at: string } | undefined;
+            if (
+              !firstWait ||
+              waitAgeMs(this.store, task.hostId, firstWait.at) <
+                PASS_PROOF_WAIT_LIMIT_MINUTES * 60_000
+            )
+              return;
+            const subject =
+              error instanceof PassProofPendingError
+                ? error.subject
+                : action.verb === "retry_effect"
+                  ? action.effect
+                  : action.verb;
+            const reason = `Coordinator proof for ${subject} could not be read after ${PASS_PROOF_WAIT_LIMIT_MINUTES} minutes while the host was up. ${deferred.reason}`;
+            finish("refused", reason, "proof_wait_exhausted");
+            return;
+          }
           const message =
             error instanceof Error ? error.message : String(error);
           // Only the explicit version refusal is safe to retry. Rebuild the plan

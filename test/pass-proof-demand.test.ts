@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { Store } from "../core/store/store";
+import { Store, operationIdForKey, operationInputHash } from "../core/store/store";
 import { Engine } from "../core/engine";
 import type {
   Adapter,
@@ -8,9 +8,18 @@ import type {
   HostProcessFact,
   TimelinePage,
 } from "../core/host";
-import { HOST_PASS_WARM_CANDIDATE_CAP, runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
+import {
+  currentTaskQuantumScope,
+  HOST_PASS_WARM_CANDIDATE_CAP,
+  runInTaskQuantumScope,
+} from "../core/scheduling/pass-snapshot";
 import { fakeAdapter, submission } from "./support/fakes";
 import { runSchema, type Task } from "../shared/contracts";
+import { taskControlOperation } from "../core/verbs/task-control-key";
+import { readHostReadTransientEpisode } from "../core/recovery/host-read-transient";
+import { taskProgressDigest } from "../core/recovery/coordinator-report";
+import { boundDrainProjection } from "../core/closeout/queue-drain";
+import { HostReadRefusalError } from "../core/host/errors";
 
 const HOST = "host-1";
 const HEAD = "a".repeat(40);
@@ -128,6 +137,8 @@ function fixture(
   options: {
     processes?: () => HostProcessFact[];
     workspaces: Map<string, string>;
+    recovery?: boolean;
+    beforeObserve?: (agentId: string) => void;
   },
 ) {
   const store = new Store(":memory:");
@@ -136,6 +147,7 @@ function fixture(
   const merged: string[] = [];
   const adapter = fakeAdapter({
     hostId: HOST,
+    supportsCoordinatorRecovery: options.recovery ?? false,
     observationInventory: async (ids: readonly string[]) => {
       inventoryIds.push(...ids);
       return new Map(
@@ -149,8 +161,10 @@ function fixture(
       archived: false,
       deleted: false,
     }),
-    observe: async (id: string) =>
-      idle(id, options.workspaces.get(id) ?? ""),
+    observe: async (id: string) => {
+      options.beforeObserve?.(id);
+      return idle(id, options.workspaces.get(id) ?? "");
+    },
     agentTimelinePage: async (id: string) => {
       pageReads.push(id);
       return boundedPage(id);
@@ -283,4 +297,259 @@ test("any quantum read of a pass timeline page registers demand, not only the ow
     resolution.readPassTimelinePage("agent-continuation", 20, HOST));
   assert.equal(read.state, "unknown", "outside a pass the quantum gets no live read");
   assert.deepEqual(resolution.takePassProofs(HOST, new Set(["agent-continuation"])), ["agent-continuation"]);
+});
+
+function seedOwnedToolHold(store: Store, workspaces: Map<string, string>) {
+  const seeded = seedMergingTask(store, "owned-tool-retry");
+  for (const [id, ws] of participantWorkspaces(seeded)) workspaces.set(id, ws);
+  const task = store.update(seeded.task.id, {
+    phase: "needs_attention",
+    reason: "Owned-tool evidence was incomplete",
+  });
+  store.event(task.id, "owned_tool_hold", JSON.stringify({
+    runId: task.runId,
+    reason: task.reason,
+  }));
+  return { task, effect: `owned_tool.${task.runId}` };
+}
+
+function ownedToolRetry(task: Task, effect: string) {
+  return {
+    ...taskControlOperation({
+      taskId: task.id,
+      version: task.version,
+      action: "retry_effect",
+      effect,
+      reason: "Recheck the owned tool",
+    }),
+    kind: "task_control" as const,
+  };
+}
+
+test("a deferred durable owned-tool retry waits for the host pass and is audited as applied", async (t) => {
+  const workspaces = new Map<string, string>();
+  const { store, engine, pageReads } = fixture(t, { workspaces });
+  const { task, effect } = seedOwnedToolHold(store, workspaces);
+  store.setMeta("hostReadTransientMaxAttempts", 1);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const accepted = await engine.startOperation(ownedToolRetry(task, effect));
+  assert.ok("accepted" in accepted);
+  const id = accepted.operation.id;
+  await engine.quiesce();
+  assert.equal(store.operation(id)?.state, "pending");
+  assert.equal(readHostReadTransientEpisode(store, id, "op")?.retryOnPass, true);
+  assert.deepEqual(store.verbOutcomes(""), []);
+  assert.deepEqual(pageReads, [], "the task lane does not read a timeline");
+
+  t.mock.timers.tick(10_000);
+  await engine.scheduleOperation(id);
+  await engine.quiesce();
+  assert.equal(store.operation(id)?.state, "pending");
+  assert.equal(readHostReadTransientEpisode(store, id, "op")?.attempts, 1);
+  t.mock.timers.reset();
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.operation(id)?.state, "succeeded", store.operation(id)?.diagnostic);
+  assert.deepEqual(store.verbOutcomes("").map(({ action, outcome, source }) => ({ action, outcome, source })), [
+    { action: "retry_effect", outcome: "applied", source: "owner" },
+  ]);
+});
+
+test("a paused queue drains after it serves an accepted owned-tool proof retry", async (t) => {
+  const workspaces = new Map<string, string>();
+  let failRetryRead = false;
+  const { store, engine } = fixture(t, {
+    workspaces,
+    beforeObserve() {
+      if (!failRetryRead || !currentTaskQuantumScope()?.snapshot) return;
+      failRetryRead = false;
+      throw new HostReadRefusalError("The participant inventory changed during the retry");
+    },
+  });
+  const { task, effect } = seedOwnedToolHold(store, workspaces);
+  store.setMeta("paused", true);
+  const accepted = await engine.startOperation(ownedToolRetry(task, effect));
+  assert.ok("accepted" in accepted);
+  await engine.quiesce();
+  assert.equal(store.operation(accepted.operation.id)?.state, "pending");
+  assert.equal(boundDrainProjection(store).drained, false);
+  failRetryRead = true;
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.operation(accepted.operation.id)?.state, "pending");
+  assert.equal(readHostReadTransientEpisode(store, accepted.operation.id, "op")?.retryOnPass, true);
+  assert.equal((await engine.auditPass(true)).fault, null);
+  if (store.operation(accepted.operation.id)?.state === "pending")
+    assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.operation(accepted.operation.id)?.state, "succeeded");
+  assert.equal(store.getMeta("paused"), true);
+  assert.equal(boundDrainProjection(store).drained, true);
+});
+
+test("older pending operations do not crowd out a pass-proof retry", async (t) => {
+  const workspaces = new Map<string, string>();
+  const { store, engine } = fixture(t, { workspaces });
+  const { task, effect } = seedOwnedToolHold(store, workspaces);
+  store.setMeta("operationLimit", 256);
+  for (let i = 0; i < 205; i++) {
+    const key = `older-operation-${i}`;
+    store.putOperation({
+      id: operationIdForKey(key), key, kind: "submit", inputHash: operationInputHash({}),
+      state: "pending", taskId: null, expectedVersion: null, createdAt: IDLE_AT,
+      repoPath: null, submissionId: null,
+      startedAt: null, settledAt: null, attempts: 0, diagnostic: "", result: null,
+      effect: null,
+    }, {});
+  }
+  const accepted = await engine.startOperation(ownedToolRetry(task, effect));
+  assert.ok("accepted" in accepted);
+  const id = accepted.operation.id;
+  await engine.quiesce();
+  assert.equal(store.operation(id)?.state, "pending");
+  assert.ok(!store.operations({ states: ["pending"] }).some((operation) => operation.id === id));
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.operation(id)?.state, "succeeded");
+});
+
+test("a transient host read leaves the owner audit to the successful operation", async (t) => {
+  const workspaces = new Map<string, string>();
+  const { store, engine } = fixture(t, { workspaces });
+  const apply = engine.performTaskControlApplied.bind(engine);
+  engine.performTaskControlApplied = async () => {
+    engine.performTaskControlApplied = apply;
+    throw new HostReadRefusalError("The participant inventory changed during the read");
+  };
+  const { task, effect } = seedOwnedToolHold(store, workspaces);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const accepted = await engine.startOperation(ownedToolRetry(task, effect));
+  assert.ok("accepted" in accepted);
+  const id = accepted.operation.id;
+  await engine.quiesce();
+  assert.equal(store.operation(id)?.state, "pending");
+  assert.match(store.operation(id)?.diagnostic ?? "", /inventory changed/);
+  assert.deepEqual(store.verbOutcomes(""), []);
+  // Older builds could have recorded the transient error under this durable key.
+  store.recordVerbOutcome(task.id, "retry_effect", "refused", "owner", {}, `operation:${id}`);
+  await engine.scheduleOperation(id);
+  assert.equal(readHostReadTransientEpisode(store, id, "op")?.retryOnPass, true);
+  t.mock.timers.reset();
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.operation(id)?.state, "succeeded");
+  assert.deepEqual(store.verbOutcomes("").map(({ outcome }) => outcome), ["applied"]);
+});
+
+function seedCoordinatorProofRetry(t: TestContext) {
+  const workspaces = new Map<string, string>();
+  const { store, engine } = fixture(t, { workspaces, recovery: true });
+  const { task, effect } = seedOwnedToolHold(store, workspaces);
+  const runId = "coordinator-run";
+  const agentId = "coordinator-agent";
+  const binding = {
+    eventId: "coordinator-report",
+    runId,
+    reportStatus: "recovered",
+    coordinatorAction: { verb: "retry_effect", effect, reason: "Check the tool again" },
+    summary: "Check the tool again",
+    status: "pending",
+  } as const;
+  assert.ok(task.workspaceId);
+  workspaces.set(agentId, task.workspaceId);
+  const current = store.update(task.id, {
+    coordinatorAgentId: agentId,
+    coordinatorGeneration: 1,
+    resolution: {
+      ...task.resolution,
+      recoveryActive: true,
+      coordinatorWorkspaceId: task.workspaceId,
+      recovery: {
+        id: "episode",
+        key: "owned-tool-hold",
+        generation: 1,
+        runId,
+        agentId,
+        status: "running",
+        summary: "",
+        idleSince: null,
+        incidentId: null,
+        progress: taskProgressDigest(task),
+        action: binding,
+      },
+    },
+  });
+  const run = runSchema.parse({
+    id: runId, taskId: task.id, role: "recovery", generation: 1,
+    head: HEAD, base: HEAD, agentId, workspaceId: task.workspaceId,
+    hostId: HOST, profile: null, status: "running", createdAt: IDLE_AT,
+    lastObservedAt: IDLE_AT, idleSince: IDLE_AT, active: false, released: false,
+    completion: {
+      eventId: binding.eventId, taskId: task.id, runId, status: "recovered",
+      summary: binding.summary, coordinatorAction: binding.coordinatorAction,
+      coordinatorGeneration: 1,
+    },
+  });
+  store.putRun(run);
+  return { store, engine, task: current, run, binding };
+}
+
+test("a coordinator's accepted owned-tool retry stays pending through a second transient host read", async (t) => {
+  const { store, engine, task, run, binding } = seedCoordinatorProofRetry(t);
+  const runId = run.id;
+  await runInTaskQuantumScope(30_000, () => engine.applyCoordinatorAction(task, run, binding));
+  assert.equal(store.task(task.id).resolution.recovery?.action?.status, "pending");
+  assert.equal(store.run(runId)?.released, false);
+  assert.deepEqual(store.verbOutcomes(""), []);
+  assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "run_result_deferred").length, 1);
+
+  const apply = engine.performTaskControl.bind(engine);
+  engine.performTaskControl = async () => {
+    engine.performTaskControl = apply;
+    throw new HostReadRefusalError("The participant inventory changed during the read");
+  };
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.task(task.id).resolution.recovery?.action?.status, "pending");
+  assert.equal(store.run(runId)?.released, false);
+  assert.deepEqual(store.verbOutcomes(""), []);
+  assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "run_result_deferred").length, 2);
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  if (store.task(task.id).resolution.recovery?.action?.status === "pending")
+    assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.task(task.id).resolution.recovery?.action?.status, "applied", store.task(task.id).reason);
+  assert.deepEqual(store.verbOutcomes("").map(({ outcome, source }) => ({ outcome, source })), [
+    { outcome: "applied", source: "coordinator" },
+  ]);
+});
+
+test("a coordinator's owned-tool proof wait escalates after five minutes of uptime", async (t) => {
+  const { store, engine, task, run, binding } = seedCoordinatorProofRetry(t);
+  await runInTaskQuantumScope(30_000, () => engine.applyCoordinatorAction(task, run, binding));
+  const firstWait = store.eventsAll(task.id).find((event) => event.kind === "run_result_deferred");
+  assert.ok(firstWait);
+
+  let reads = 0;
+  engine.performTaskControl = async () => {
+    reads++;
+    throw new HostReadRefusalError("The participant inventory changed during the read");
+  };
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.task(task.id).resolution.recovery?.action?.status, "pending");
+  assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "run_result_deferred").length, 2);
+  store.db.prepare("UPDATE events SET at=? WHERE id=?").run(
+    new Date(Date.now() - 6 * 60_000).toISOString(), firstWait.id,
+  );
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  const recovery = store.task(task.id).resolution.recovery;
+  assert.equal(recovery?.status, "escalated");
+  assert.equal(recovery?.action?.status, "refused");
+  assert.match(recovery?.action?.reason ?? "", /owned_tool.*after 5 minutes.*inventory changed/);
+  assert.equal(store.run(run.id)?.released, true);
+  assert.deepEqual(store.verbOutcomes("").map(({ outcome, source }) => ({ outcome, source })), [
+    { outcome: "refused", source: "coordinator" },
+  ]);
+  assert.ok(store.eventsAll(task.id).some((event) =>
+    event.kind === "planner_escalation_question" && event.detail.includes(recovery!.action!.reason!),
+  ));
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(reads, 2, "the settled report cannot retry again");
 });

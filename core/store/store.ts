@@ -2598,6 +2598,9 @@ export class Store {
   ): QueueOperation[] {
     return this.operationsStore.operations(filter);
   }
+  passProofOperations(): QueueOperation[] {
+    return this.operationsStore.passProofOperations();
+  }
   unfinishedTaskOperations(taskId: string): QueueOperation[] {
     return this.operationsStore.unfinishedTaskOperations(taskId);
   }

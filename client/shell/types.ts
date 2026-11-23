@@ -15,6 +15,7 @@ export interface BoardTheme {
     readonly surface0: string;
     readonly surface1: string;
     readonly surface2: string;
+    readonly surfaceNavigation?: string;
     readonly surfaceHover?: string;
     readonly surfaceSelected?: string;
     readonly border: string;

@@ -217,6 +217,10 @@ export const taskDecisionFactSchema = z
       "external_merge_recovered",
       "check_deadline",
       "review_effect_wait",
+      // Spec 068 §6: a send's custody proof read a participant the pass had not
+      // captured; the next host pass serves it first, and the send waits for it.
+      "pass_proof",
+      "pass_proof_exhausted",
       "hook_hold",
       "pr_head_changed",
       "pr_identity",
@@ -248,6 +252,10 @@ export const taskDecisionFactSchema = z
       "workspace_lookup",
     ]),
     subject: z.string().min(1).max(240).optional(),
+    escalationWait: z.object({
+      kind: z.enum(["planner", "decision", "time"]),
+      target: z.string().min(1).max(240),
+    }).strict().optional(),
   })
   .strict();
 export type TaskDecisionFact = z.infer<typeof taskDecisionFactSchema>;
@@ -570,6 +578,10 @@ export function taskStopRecord(
   fact = taskDecisionFact(detail),
 ): TaskStopRecord {
   const normalized = detail.trim().slice(0, 4000) || reason;
+  // Escalated stops default to the planner seat. Only a writer with the
+  // recorded decision or time target can name a different wait.
+  if (reason === "escalated" && fact?.code === "escalation" && fact.subject && !fact.escalationWait)
+    fact = { ...fact, escalationWait: { kind: "planner", target: holderAgentId || fact.subject } };
   return taskStopRecordSchema.parse({
     reason,
     detail: normalized,

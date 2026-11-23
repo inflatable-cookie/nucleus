@@ -123,6 +123,8 @@ export const runSchema = z.object({
   priorRunId: z.string().optional(),
   /** A retained reviewer's earlier same-head run whose report did not arrive. */
   reviewReportRecovery: z.string().optional(),
+  /** The reservation was released with proof that its prompt was never sent. */
+  releasedBeforeSend: z.literal(true).optional(),
   priorHead: z
     .string()
     .regex(/^[a-f0-9]{40}$/)

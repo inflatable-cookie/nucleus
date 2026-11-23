@@ -1,6 +1,9 @@
 import type { DecisionView } from '../../../shared/contracts';
+import type { TaskDecisionFact, TaskStopRecord } from '../../../shared/task-stop';
 import { Decisions } from '../../planning/decisions';
 import type { Ladder } from './ladder';
+import { plannerEscalations, type LadderEvent } from './records';
+import { escalationWaitDetail } from './waits';
 
 /**
  * The task-side wait an escalation establishes: the durable wait event and the
@@ -16,6 +19,46 @@ export type EscalationWait = {
   stopReason?: 'lifecycle' | 'escalated';
 };
 
+export function escalationWaitFact(id: string, { kind, target }: EscalationWait): TaskDecisionFact {
+  return { code: 'escalation', subject: id, escalationWait: { kind, target } };
+}
+
+export function matchesEscalationWait(stop: TaskStopRecord | null, id: string, wait: EscalationWait): boolean {
+  const fact = stop?.fact;
+  return stop?.reason === escalationWaitState(id, wait).stopReason
+    && fact?.code === 'escalation' && fact.subject === id
+    && fact.escalationWait?.kind === wait.kind && fact.escalationWait.target === wait.target;
+}
+
+export function operatorEscalationWait(id: string, decisionId: string): EscalationWait {
+  return { kind: 'decision', target: decisionId, stopDetail: escalationWaitDetail.operator(id, decisionId) };
+}
+
+/** Whether the task still records this wait, or its planner stop if no target is named. */
+export function escalationWaitIsCurrent(stop: TaskStopRecord | null, id: string, wait?: EscalationWait): boolean {
+  const fact = stop?.fact;
+  if (!stop || fact?.code !== 'escalation' || fact.subject !== id) return false;
+  if (!wait) {
+    return stop.reason === 'escalated' && (fact.escalationWait?.kind === 'planner' || (
+      !fact.escalationWait && /^(?:Waiting with (?:the planner|a decider)|Blocker escalation )/.test(stop.detail)
+    ));
+  }
+  if (fact.escalationWait) return matchesEscalationWait(stop, id, wait);
+  // Older stops stored the escalation ID and rendered target without the typed wait.
+  const { stopReason, stopDetail } = escalationWaitState(id, wait);
+  return stop.reason === stopReason && stop.detail === stopDetail;
+}
+
+export function canInstallEscalationWait(stop: TaskStopRecord | null, id: string, wait: EscalationWait): boolean {
+  return escalationWaitIsCurrent(stop, id, wait) || escalationWaitIsCurrent(stop, id);
+}
+
+/** A linked decision can hold the task only while its wait or planner predecessor is current. */
+export function plannerEscalationsHoldingTask(events: LadderEvent[], stop: TaskStopRecord | null) {
+  return plannerEscalations(events).filter(({ id, answered, decisionId }) =>
+    !answered && (!decisionId || canInstallEscalationWait(stop, id, operatorEscalationWait(id, decisionId))));
+}
+
 /** The stop the wait writes, with the recorded detail and reason winning. */
 export function escalationWaitState(id: string, wait: EscalationWait) {
   const stopDetail = wait.stopDetail ?? (wait.kind === 'time'
@@ -27,33 +70,31 @@ export function escalationWaitState(id: string, wait: EscalationWait) {
 
 /** The wait event and the actual task stop are one durable state transition. */
 export function establishEscalationWait(ladder: Ladder, taskId: string, id: string, wait: EscalationWait, afterEventId = 0): boolean {
-  return ladder.store.transaction(() => {
+  const write = () => {
     const current = ladder.store.task(taskId);
-    if (['done', 'cancelled'].includes(current.phase)) return false;
+    if (['done', 'cancelled'].includes(current.phase) || !canInstallEscalationWait(current.resolution.stop, id, wait)) return false;
     const events = ladder.store.eventsAll(taskId);
-    if (afterEventId > 0 && events.some(event => event.id > afterEventId && event.kind === 'operator_control' && event.detail !== 'note')) return false;
     if (wait.kind === 'decision') {
       let decision: DecisionView;
       try { decision = new Decisions(ladder.store).get({ id: wait.target }); } catch { return false; }
       if (!['open', 'answered'].includes(decision.status)) return false;
     }
     const { stopDetail, stopReason } = escalationWaitState(id, wait);
-    const expected = escalationWaitState(id, wait);
-    const recordedWait = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`)
-      && !events.some(superseded => superseded.kind === 'planner_escalation_wait_superseded' && superseded.id > event.id && superseded.detail.startsWith(`${id}:`))
+    const recordedWait = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`));
+    const matchesRecordedWait = recordedWait && recordedWait.id > afterEventId
+      && !events.some(event => event.kind === 'planner_escalation_wait_superseded' && event.id > recordedWait.id && event.detail.startsWith(`${id}:`))
       && (() => {
         try {
-          const value = JSON.parse(event.detail.slice(id.length + 2)) as { kind?: string; target?: string; stopDetail?: string; stopReason?: string };
-          const prior = escalationWaitState(id, { ...wait, stopDetail: value.stopDetail, stopReason: value.stopReason as 'lifecycle' | 'escalated' | undefined });
-          return value.kind === wait.kind && value.target === wait.target
-            && prior.stopDetail === expected.stopDetail && prior.stopReason === expected.stopReason;
+          const prior: EscalationWait = JSON.parse(recordedWait.detail.slice(id.length + 2));
+          const state = escalationWaitState(id, prior);
+          return prior.kind === wait.kind && prior.target === wait.target
+            && state.stopDetail === stopDetail && state.stopReason === stopReason;
         } catch { return false; }
-      })());
-    if (!recordedWait) ladder.store.event(taskId, 'planner_escalation_wait', `${id}: ${JSON.stringify({ ...wait, stopDetail, stopReason })}`);
-    const stop = ladder.store.task(taskId).resolution.stop;
-    if (stop?.reason !== stopReason || stop.fact?.subject !== id)
-      ladder.resolution.waiting(ladder.store.task(taskId), stopDetail, stopReason, { fact: { code: "escalation", subject: id } });
-    const established = ladder.store.task(taskId).resolution.stop;
-    return established?.reason === stopReason && established.fact?.subject === id;
-  });
+      })();
+    if (!matchesRecordedWait) ladder.store.event(taskId, 'planner_escalation_wait', `${id}: ${JSON.stringify({ ...wait, stopDetail, stopReason })}`);
+    if (!matchesEscalationWait(current.resolution.stop, id, wait) || current.resolution.stop?.detail !== stopDetail)
+      ladder.resolution.waiting(current, stopDetail, stopReason, { fact: escalationWaitFact(id, wait) });
+    return matchesEscalationWait(ladder.store.task(taskId).resolution.stop, id, wait);
+  };
+  return ladder.store.db.isTransaction ? write() : ladder.store.transaction(write);
 }

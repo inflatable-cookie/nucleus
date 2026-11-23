@@ -24,6 +24,7 @@ import {
   preSendSettlementIdentity,
   provedPreSendHistory,
 } from "./store-pre-send";
+import { hostReadTransientKey } from "../recovery/host-read-transient";
 
 interface OperationTaskAccess {
   taskChanged(taskId: string): void;
@@ -98,6 +99,21 @@ export class StoreOperations {
     return this.core.db
       .prepare(`SELECT data FROM operations${where} ORDER BY rowid LIMIT ?`)
       .all(...params, limit)
+      .map((row) => this.numberedOperation(String(row.data)));
+  }
+
+  /** Filter the durable pass demand before applying the retry batch limit. */
+  passProofOperations(): QueueOperation[] {
+    const prefix = hostReadTransientKey("op", "");
+    return this.core.db
+      .prepare(
+        `SELECT operations.data FROM meta
+         JOIN operations ON operations.id = substr(meta.key, ?)
+         WHERE meta.key GLOB ? AND json_extract(meta.value, '$.retryOnPass') = 1
+           AND operations.state IN ('pending','running')
+         ORDER BY operations.rowid LIMIT 200`,
+      )
+      .all(prefix.length + 1, `${prefix}*`)
       .map((row) => this.numberedOperation(String(row.data)));
   }
 

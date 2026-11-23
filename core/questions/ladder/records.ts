@@ -19,6 +19,8 @@ export type LadderEvent = {
   detail: string;
 };
 
+type LadderHistoryEvent = Omit<LadderEvent, "taskId">;
+
 export interface ReviewerConsult {
   /** The consult id, stable per cause occurrence. */
   id: string;
@@ -65,13 +67,13 @@ export interface PlannerEscalation {
 }
 
 const eventsOf = (
-  events: readonly LadderEvent[],
+  events: readonly LadderHistoryEvent[],
   kind: string,
-): LadderEvent[] => events.filter((event) => event.kind === kind);
+): LadderHistoryEvent[] => events.filter((event) => event.kind === kind);
 
 /** The typed payload recorded beside one intent, or null when it is absent or unreadable. */
 const payloadOf = (
-  events: readonly LadderEvent[],
+  events: readonly LadderHistoryEvent[],
   kind: string,
   id: string,
 ): Record<string, unknown> | null => {
@@ -182,7 +184,7 @@ function readRoutingWait(text: string): PlannerEscalation["routingWait"] {
 }
 
 /** The planner escalations recorded on a task, in order. */
-export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
+export function plannerEscalations(events: readonly LadderHistoryEvent[]): PlannerEscalation[] {
   return eventsOf(events, "planner_escalation").map((intent) => {
     const id = intent.detail.split(":", 1)[0]!;
     const payload = payloadOf(events, "planner_escalation_payload", id);

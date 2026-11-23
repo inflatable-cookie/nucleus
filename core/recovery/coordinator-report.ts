@@ -1,4 +1,4 @@
-import { digest } from "../store/store";
+import { digest, type Store } from "../store/store";
 import type {
   CapabilityLevel,
   CoordinatorAction,
@@ -57,6 +57,14 @@ export function taskProgressDigest(t: Task): string {
 export function coordinatorReportMatches(t: Task): boolean {
   const progress = t.resolution.recovery?.progress;
   return Boolean(progress && progress === taskProgressDigest(t));
+}
+
+/** A proved pre-send deferral closes the claim without settling the report. */
+export function coordinatorActionAttempt(store: Store, taskId: string, key: string) {
+  return store.eventsAll(taskId).findLast((event) =>
+    event.detail === key &&
+    (event.kind === "run_result_applying" || event.kind === "run_result_deferred"),
+  )?.kind;
 }
 
 /** A retired narrow action a stored report names, and the owner verb that replaced it. */

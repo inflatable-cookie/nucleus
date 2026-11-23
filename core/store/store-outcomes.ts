@@ -528,7 +528,8 @@ export class StoreOutcomes {
    * Round 4: one applied or refused task control, for telemetry only. Owner
    * controls are recorded by the control path, coordinator actions once when
    * their report settles. A `key` (the durable operation, or the coordinator
-   * report) records an outcome at most once, so a replay never counts twice.
+   * report) has one outcome row. A successful owner operation can correct
+   * a refusal an older build recorded for an incomplete read.
    * Outcomes never touch the task's history, so they live outside `events`;
    * rows older than 30 days are pruned on write.
    */
@@ -543,7 +544,13 @@ export class StoreOutcomes {
     const at = now();
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO verb_outcomes(taskId,at,action,outcome,source,key,detail) VALUES(?,?,?,?,?,?,?)",
+        `INSERT INTO verb_outcomes(taskId,at,action,outcome,source,key,detail) VALUES(?,?,?,?,?,?,?)
+         ON CONFLICT(key) WHERE key IS NOT NULL DO UPDATE
+         SET at=excluded.at, outcome=excluded.outcome, detail=excluded.detail
+         WHERE excluded.key GLOB 'operation:*' AND excluded.source='owner'
+           AND verb_outcomes.source=excluded.source AND verb_outcomes.taskId=excluded.taskId
+           AND verb_outcomes.action=excluded.action
+           AND verb_outcomes.outcome='refused' AND excluded.outcome='applied'`,
       )
       .run(taskId, at, action, outcome, source, key, JSON.stringify(detail));
     this.db
