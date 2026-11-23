@@ -1115,7 +1115,7 @@ export class HostPass {
           taskId?: string;
           agentId: string;
           coveredObservation?: CoveredObservationSnapshot;
-          /** A quantum asked for this page last pass: warmed first, outside the cap. */
+          /** A quantum asked for this page on an earlier pass. */
           demanded?: boolean;
         }
       | { kind: "shell"; agentId: string };
@@ -1287,47 +1287,28 @@ export class HostPass {
       }
     }
 
-    const rotatedGroups = rotate(
-      [
-        rotate(deliveryItems, passOffset),
-        toolItems,
-        rotate(shellItems, passOffset),
-      ].filter((group) => group.length > 0),
+    const deliveryQueue = rotate(deliveryItems, passOffset);
+    const shellQueue = rotate(shellItems, passOffset);
+    const demandQueue = demanded.map((item) => ({
+      ...item,
+      kind: "tool" as const,
+      demanded: true,
+    }));
+    const demandedIds = new Set(demanded.map((item) => item.agentId));
+    const routineTools = toolItems.filter(
+      (item) => !demandedIds.has(item.agentId),
+    );
+    const protectedGroups = rotate(
+      [deliveryQueue, shellQueue].filter((group) => group.length > 0),
       passOffset,
     );
-    // Demanded pages go ahead of the rotation so a page a quantum asked for is
-    // never starved two passes running; the rotation keeps the rest fair.
-    const warmsPages = Boolean(
-      this.adapter.agentTimelinePage &&
-        this.context.resolution.primePassTimelinePage,
-    );
-    const demandedIds = new Set(
-      warmsPages ? demanded.map((item) => item.agentId) : [],
-    );
-    const interleaved: WarmItem[] = warmsPages
-      ? demanded.map((item) => ({
-          kind: "tool" as const,
-          ...item,
-          demanded: true,
-        }))
-      : [];
-    const maxLen = rotatedGroups.reduce(
-      (max, group) => Math.max(max, group.length),
-      0,
-    );
-    for (let i = 0; i < maxLen; i++) {
-      for (const group of rotatedGroups) {
-        const item = group[i];
-        if (!item) continue;
-        if (item.kind === "tool" && demandedIds.has(item.agentId)) continue;
-        interleaved.push(item);
-      }
-    }
+    const contested = demandQueue.length > 0 && protectedGroups.length > 0;
 
     // Start the timeline warming budget AFTER `processSnapshot` completes so a
     // slow process table scan (up to 15 s) never starves healthy timeline reads
     // on the same host (Spec 068 §6).
-    const warmDeadlineAt = Date.now() + Math.max(0, warmBudgetMs);
+    const warmStartedAt = Date.now();
+    const warmDeadlineAt = warmStartedAt + Math.max(0, warmBudgetMs);
     const budgetRemaining = (): number => {
       const remaining = warmDeadlineAt - Date.now();
       if (remaining <= 0) {
@@ -1339,33 +1320,87 @@ export class HostPass {
       }
       return remaining;
     };
-    const perCandidateCap = (count: number): number => {
-      const remaining = budgetRemaining();
-      if (remaining <= 0) return 0;
-      return count > 1
-        ? Math.min(remaining, Math.max(1, Math.ceil(warmBudgetMs / 2)))
-        : remaining;
-    };
+    const candidateCount =
+      demandQueue.length +
+      deliveryQueue.length +
+      shellQueue.length +
+      routineTools.length;
+    function* warmCandidates(): Generator<{
+      candidate: WarmItem;
+      deadlineAt: number;
+    }> {
+      // Give demand the first half of the slots and time when another group
+      // needs service. Then give each waiting group an attempt before sharing
+      // the remaining budget through the ordinary rotation.
+      const demandEnd = contested
+        ? Math.min(
+            demandQueue.length,
+            Math.floor(HOST_PASS_WARM_CANDIDATE_CAP / 2),
+          )
+        : demandQueue.length;
+      const demandDeadlineAt = contested
+        ? warmStartedAt + Math.floor(warmBudgetMs / 2)
+        : warmDeadlineAt;
+      let nextDemand = 0;
+      while (nextDemand < demandEnd && Date.now() < demandDeadlineAt) {
+        const candidate = demandQueue[nextDemand++];
+        if (candidate) yield { candidate, deadlineAt: demandDeadlineAt };
+      }
+      if (contested) {
+        for (const [index, group] of protectedGroups.entries()) {
+          const candidate = group.shift();
+          if (!candidate) continue;
+          const nowMs = Date.now();
+          const share =
+            (warmDeadlineAt - nowMs) / (protectedGroups.length - index);
+          yield { candidate, deadlineAt: nowMs + Math.ceil(share) };
+        }
+      }
+      const groups = rotate(
+        [
+          deliveryQueue,
+          [...demandQueue.slice(nextDemand), ...routineTools],
+          shellQueue,
+        ].filter((group) => group.length > 0),
+        passOffset,
+      );
+      const maxLen = Math.max(0, ...groups.map((group) => group.length));
+      for (let i = 0; i < maxLen; i++)
+        for (const group of groups) {
+          const candidate = group[i];
+          if (candidate) yield { candidate, deadlineAt: warmDeadlineAt };
+        }
+    }
     const canWarmMore = (candidate?: WarmItem): boolean =>
       !this.context.stopped &&
       budgetRemaining() > 0 &&
       (warmed < HOST_PASS_WARM_CANDIDATE_CAP ||
-        (candidate?.kind === "tool" &&
+        (!contested &&
+          candidate?.kind === "tool" &&
           (candidate.demanded === true ||
             (primaryToolTaskId !== null &&
               candidate.taskId === primaryToolTaskId))));
 
-    if (interleaved.length && canWarmMore()) {
+    if (candidateCount && canWarmMore()) {
       await this.step(host, "timelineWarmSnapshot", async () => {
-        for (const candidate of interleaved) {
+        for (const { candidate, deadlineAt } of warmCandidates()) {
           await yieldToLoop();
           if (this.context.stopped || budgetRemaining() <= 0) return;
           if (candidate.kind === "tool" && !candidate.demanded) {
             primaryToolTaskId ??= candidate.taskId ?? null;
           }
           if (!canWarmMore(candidate)) continue;
-          const cap = perCandidateCap(interleaved.length);
-          if (cap <= 0) return;
+          const perReadCap = (): number => {
+            const remaining = Math.min(
+              budgetRemaining(),
+              deadlineAt - Date.now(),
+            );
+            return candidateCount > 1
+              ? Math.min(remaining, Math.max(1, Math.ceil(warmBudgetMs / 2)))
+              : remaining;
+          };
+          const cap = perReadCap();
+          if (cap <= 0) continue;
           if (candidate.kind === "delivery") {
             let archived = false;
             if (this.adapter.originAgent) {
@@ -1388,8 +1423,8 @@ export class HostPass {
             }
             let closedUpdatedAt: string | null | undefined;
             if (!archived) {
-              const obsCap = perCandidateCap(interleaved.length);
-              if (obsCap <= 0) return;
+              const obsCap = perReadCap();
+              if (obsCap <= 0) continue;
               const obsRead = await boundedRead(
                 "participant observation",
                 () => this.context.host.observe(candidate.agentId),
@@ -1417,8 +1452,8 @@ export class HostPass {
                 ? undefined
                 : (state.updatedAt ?? null);
             }
-            const pageCap = perCandidateCap(interleaved.length);
-            if (pageCap <= 0) return;
+            const pageCap = perReadCap();
+            if (pageCap <= 0) continue;
             warmed++;
             const pageRead = await this.context.resolution
               .primePassTimelinePage!(candidate.agentId, 100, host, {
@@ -1465,8 +1500,8 @@ export class HostPass {
                 archived: s.archived,
               };
             }
-            const pageCap = perCandidateCap(interleaved.length);
-            if (pageCap <= 0) return;
+            const pageCap = perReadCap();
+            if (pageCap <= 0) continue;
             warmed++;
             const firstRead = await this.context.resolution
               .primePassTimelinePage!(
@@ -1513,7 +1548,7 @@ export class HostPass {
               step++
             ) {
               limit = Math.max(limit, page.entries.length) * 2;
-              const expandCap = perCandidateCap(interleaved.length);
+              const expandCap = perReadCap();
               if (expandCap <= 0) break;
               const expanded = await boundedRead(
                 "agent timeline page",

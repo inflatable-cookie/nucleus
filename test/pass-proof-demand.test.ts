@@ -139,8 +139,11 @@ function fixture(
     processes?: () => HostProcessFact[];
     workspaces: Map<string, string>;
     archived?: ReadonlySet<string>;
+    closed?: ReadonlySet<string>;
     recovery?: boolean;
     beforeObserve?: (agentId: string) => void;
+    beforePage?: (agentId: string) => void;
+    shellReads?: string[];
   },
 ) {
   const store = new Store(":memory:");
@@ -168,13 +171,20 @@ function fixture(
       const observation = idle(id, options.workspaces.get(id) ?? "");
       return options.archived?.has(id)
         ? { ...observation, status: "closed", archived: true }
-        : observation;
+        : options.closed?.has(id)
+          ? { ...observation, status: "closed" }
+          : observation;
     },
     agentTimelinePage: async (id: string) => {
       pageReads.push(id);
+      options.beforePage?.(id);
       if (options.archived?.has(id)) throw Error("thread is no longer observed");
       return boundedPage(id);
     },
+    agentTimeline: options.shellReads && (async (id: string) => {
+      options.shellReads?.push(id);
+      return [];
+    }),
     hostProcessListing: async () => options.processes?.() ?? [],
     noLiveWorkspaceProcesses: async () => null,
     mergeGate: async () => ({ head: HEAD, base: "main", wait: "" }),
@@ -674,3 +684,63 @@ test("continuously renewed pass demand advances even when each pass can serve on
   for (const { agentId } of remaining) demand.served(HOST, agentId);
   assert.deepEqual(demand.take(HOST), []);
 });
+
+test("a served demand disappears from the sweep when no task renews it", async (t) => {
+  const f = fixture(t, { workspaces: new Map() });
+  seedMergingTask(f.store, "one-shot-demand");
+  f.engine.taskQuantum = async () => {};
+  const agentId = "requested-once";
+  f.engine.resolution.requestPassProof(HOST, agentId, "timeline");
+
+  assert.equal((await f.engine.auditPass(true)).fault, null);
+  assert.ok(f.pageReads.includes(agentId));
+  assert.equal((await f.engine.auditPass(true)).fault, null);
+  assert.equal(f.pageReads.filter((id) => id === agentId).length, 1);
+  assert.deepEqual(f.engine.resolution.takePassProofs(HOST), []);
+});
+
+for (const duration of ["fast", "slow"]) {
+  test(`a sustained backlog of ${duration} demands leaves room for delivery and shell reads`, async (t) => {
+    const workspaces = new Map<string, string>();
+    const closed = new Set<string>();
+    const shellReads: string[] = [];
+    const warmBudgetMs = 10_000;
+    let nowMs = Date.now();
+    t.mock.method(Date, "now", () => nowMs);
+    const agents = new Set(
+      Array.from({ length: HOST_PASS_WARM_CANDIDATE_CAP + 4 }, (_, i) =>
+        `requested-${i}`,
+      ),
+    );
+    const f = fixture(t, {
+      workspaces,
+      closed,
+      shellReads,
+      beforePage(id) {
+        if (duration === "slow" && agents.has(id)) nowMs += warmBudgetMs / 2;
+      },
+    });
+    f.engine.resolution.hostPassWarmBudgetMs = warmBudgetMs;
+    f.engine.taskQuantum = async () => {};
+    const delivery = seedMergingTask(f.store, "protected-delivery");
+    const shell = seedMergingTask(f.store, "protected-shell");
+    for (const [id, workspace] of participantWorkspaces(delivery, shell))
+      workspaces.set(id, workspace);
+    closed.add(delivery.reviewerId);
+    const run = f.store.runs(delivery.task.id)[0];
+    assert.ok(run);
+    f.store.putRun({ ...run, status: "uncertain" });
+    f.store.update(shell.task.id, { phase: "working", completion: null });
+
+    for (let pass = 0; pass < 3; pass++) {
+      f.pageReads.length = 0;
+      shellReads.length = 0;
+      for (const agentId of agents)
+        f.engine.resolution.requestPassProof(HOST, agentId, "timeline");
+      assert.equal((await f.engine.auditPass(true)).fault, null);
+      assert.ok(agents.has(f.pageReads[0] ?? ""), "demand gets first use of its reservation");
+      assert.ok(f.pageReads.includes(delivery.reviewerId), "delivery had a warmed page");
+      assert.ok(shellReads.includes(shell.workerId), "shell had a warmed timeline");
+    }
+  });
+}

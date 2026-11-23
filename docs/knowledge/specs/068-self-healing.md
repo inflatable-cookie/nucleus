@@ -238,10 +238,12 @@ observation, and the warm cap could skip its tool page, so merges alternated
 between those two waits forever. A quantum that reads a participant's page or
 process snapshot registers a demand keyed by host and participant, including
 threads a cleanup or recovery proof names outside the execution roster. The host
-pass serves direct demands before sibling proofs and ordinary warming. Demand
-can pass the ordinary candidate cap within the host budget. The first demand
-rotates each pass so a busy or slow prefix cannot hold the same place
-indefinitely. Budget skips stay queued, and served demand expires unless renewed.
+pass serves direct demands before sibling proofs and ordinary warming. When
+delivery or shell reads are waiting, demands get up to half the warming slots
+and time first. Each waiting group gets an attempt, then the rotation shares the
+remaining capacity. Demand can pass the ordinary candidate cap when neither
+group is waiting. The first demand rotates each pass, budget skips stay queued,
+and served demand expires unless renewed.
 
 An exact observation that proves the bound participant closed, archived or
 gone can satisfy the thread part of an owned-tool proof. The proof still checks
