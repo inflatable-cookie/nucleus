@@ -5,7 +5,7 @@ use nucleus_core::{
     Observation, Observed, Phase, PullRequest, Role, RunState, Task, Workspace,
     profiles::{
         Candidate, Capability, LaunchPolicy, Profile, Provider, RotationCounts, UsageLevel, Weight,
-        decide_profile_launch,
+        decide_profile_launch, decide_weighted_launch,
     },
 };
 use nucleus_store::{
@@ -288,23 +288,24 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
     let counts = store
         .rotation_counts(role, &profile.id, "shared-subscription")
         .unwrap_or_default();
-    let intent = decide_profile_launch(
-        &task,
-        &observation,
-        &LaunchPolicy {
-            usage: UsageLevel::Normal,
-            candidates: &[Candidate {
-                profile: &profile,
-                enabled: true,
-                available: true,
-                group_available: true,
-                supported_efforts: &[],
-                counts,
-            }],
-            planner_brief: true,
-            author_models: &["fixture-author-model"],
-        },
-    )
+    let policy = LaunchPolicy {
+        usage: UsageLevel::Normal,
+        candidates: &[Candidate {
+            profile: &profile,
+            enabled: true,
+            available: true,
+            group_available: true,
+            supported_efforts: &[],
+            counts,
+        }],
+        planner_brief: true,
+        author_models: &["fixture-author-model"],
+    };
+    let intent = if counts == RotationCounts::default() {
+        decide_weighted_launch(&task, &observation, &policy, 42)
+    } else {
+        decide_profile_launch(&task, &observation, &policy)
+    }
     .expect("eligible choice")
     .expect("launch decision");
     task.reserve_profile_launch(
@@ -408,6 +409,17 @@ fn history_failure_does_not_lose_the_launch_or_leave_a_partial_charge() {
         store.rotation_counts(Role::Worker, "greeting", "shared-subscription"),
         Some(RotationCounts::default())
     );
+    db.execute("DROP TABLE profile_assignment_totals", [])
+        .expect("make the rotation read unavailable");
+    assert_eq!(
+        store.rotation_counts(Role::Worker, "greeting", "shared-subscription"),
+        None
+    );
+    let (prior, task) = profile_reservation(&mut store, "unreadable", Role::Worker);
+    store
+        .save_profile_launch(&prior, &task, &event("run_reserved"), "shared-subscription")
+        .expect("unreadable rotation falls back to weights");
+    assert_eq!(row(&store, "unreadable").task, task);
 }
 
 #[test]

@@ -3,7 +3,8 @@ use std::collections::VecDeque;
 use nucleus_core::profiles::{
     BriefPolicy, Candidate, Capability, Complexity, Effort, LaunchPolicy, Profile, ProfileLaunch,
     ProfileLaunchError, Provider, RotationCounts, UsageLevel, Weight, decide_profile_launch,
-    own_bracket, request_only, requested_bracket, reviewer_bracket, worker_climb, worker_start,
+    decide_weighted_launch, own_bracket, request_only, requested_bracket, reviewer_bracket,
+    worker_climb, worker_start,
 };
 use nucleus_core::{
     Action, Authority, CallbackCredential, CheckState, Command, CommandError, Entry, Forge, Host,
@@ -270,6 +271,36 @@ fn working(brief: &str) -> Task {
     let mut task = task(brief, Entry::Brief);
     assert_eq!(task.reconcile(&unbound()), Action::Advance(Phase::Working));
     task
+}
+
+#[test]
+fn history_free_selection_uses_weights_inside_the_eligible_bracket() {
+    let mut small = profile("small", Worker);
+    small.weight = Weight::Fewest;
+    let mut large = profile("large", Worker);
+    large.weight = Weight::Most;
+    let outside = profile("outside", Heavyweight);
+    let candidates = [candidate(&small), candidate(&large), candidate(&outside)];
+    let policy = LaunchPolicy {
+        usage: Normal,
+        candidates: &candidates,
+        planner_brief: true,
+        author_models: &[],
+    };
+    let task = working("Add a greeting.");
+    let observation = unbound();
+    for (sample, expected) in [
+        (0, "small"),
+        (49, "small"),
+        (50, "large"),
+        (249, "large"),
+        (250, "small"),
+    ] {
+        let launch = decide_weighted_launch(&task, &observation, &policy, sample)
+            .expect("select from the working bracket")
+            .expect("launch");
+        assert_eq!(launch.profile().id, expected);
+    }
 }
 
 fn pick(

@@ -131,6 +131,29 @@ pub fn decide_profile_launch(
     observation: &Observation,
     policy: &LaunchPolicy<'_>,
 ) -> Result<Option<ProfileLaunch>, ProfileLaunchError> {
+    select_launch(task, observation, policy, None)
+}
+
+/// Select a launch without historical counts. Once eligibility and demand
+/// are decided, a uniform sample picks among the best bracket by weight.
+///
+/// # Errors
+/// Returns the same eligibility and brief errors as [`decide_profile_launch`].
+pub fn decide_weighted_launch(
+    task: &Task,
+    observation: &Observation,
+    policy: &LaunchPolicy<'_>,
+    sample: u64,
+) -> Result<Option<ProfileLaunch>, ProfileLaunchError> {
+    select_launch(task, observation, policy, Some(sample))
+}
+
+fn select_launch(
+    task: &Task,
+    observation: &Observation,
+    policy: &LaunchPolicy<'_>,
+    sample: Option<u64>,
+) -> Result<Option<ProfileLaunch>, ProfileLaunchError> {
     let Action::Launch {
         role,
         via: previous,
@@ -183,7 +206,7 @@ pub fn decide_profile_launch(
                     demand.climb.or(demand.earned),
                 )
         });
-        let best = retain_or_rotate(automatic, &previous, retained, &demand).ok_or(
+        let best = retain_or_rotate(automatic, &previous, retained, &demand, sample).ok_or(
             ProfileLaunchError::NoEligibleProfile {
                 role,
                 demand: demand.target,
@@ -315,25 +338,34 @@ fn retain_or_rotate<'a>(
     launch: &Launch,
     retained: Option<&Profile>,
     demand: &Demand,
+    sample: Option<u64>,
 ) -> Option<Candidate<'a>> {
-    let best = candidates.clone().min_by(|a, b| {
-        tier_order(a.profile.capability, demand.target)
-            .cmp(&tier_order(b.profile.capability, demand.target))
-            .then_with(|| rotation_order(*a, *b))
-    })?;
-    if !matches!(launch, Launch::Continue { .. }) {
-        return Some(best);
-    }
-    let retained_candidate = candidates
-        .into_iter()
-        .find(|candidate| retained.is_some_and(|profile| profile.same_binding(candidate.profile)));
-    retained_candidate
-        .filter(|candidate| {
-            candidate.profile.capability >= demand.retained_floor
-                || tier_order(candidate.profile.capability, demand.target)
-                    <= tier_order(best.profile.capability, demand.target)
+    let tier = |candidate: &Candidate<'_>| tier_order(candidate.profile.capability, demand.target);
+    let best = candidates
+        .clone()
+        .min_by(|a, b| tier(a).cmp(&tier(b)).then_with(|| rotation_order(*a, *b)))?;
+    if matches!(launch, Launch::Continue { .. })
+        && let Some(retained) = candidates.clone().find(|candidate| {
+            retained.is_some_and(|profile| profile.same_binding(candidate.profile))
+                && (candidate.profile.capability >= demand.retained_floor
+                    || tier(candidate) <= tier(&best))
         })
-        .or(Some(best))
+    {
+        return Some(retained);
+    }
+    let Some(sample) = sample else {
+        return Some(best);
+    };
+    let mut peers = candidates.filter(|candidate| tier(candidate) == tier(&best));
+    let share = |candidate: Candidate<'_>| u64::from(candidate.profile.weight.share());
+    let total: u64 = peers.clone().map(share).sum();
+    let mut ticket = sample % total;
+    peers.find(|candidate| {
+        let weight = share(*candidate);
+        let chosen = ticket < weight;
+        ticket = ticket.saturating_sub(weight);
+        chosen
+    })
 }
 
 fn excluded_models(

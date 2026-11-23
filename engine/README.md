@@ -500,6 +500,13 @@ to pick within a bracket. Keep the selectors pure and reproduce every worker
 and reviewer case from `test/demand.test.ts` as a table-driven Rust test. The
 retired coordinator has no row.
 
+Profile rotation uses the engine's `SQLite` database. Freezing a profiled launch
+records one assignment for its role, profile and subscription group in the same
+transaction. The store keeps the last 50 assignments per role and lifetime
+counts. The group tie-break uses the most recent 50 assignments across roles.
+An empty or unreadable history leaves selection to the configured weights. A
+failed usage write rolls back the charge while leaving the launch available.
+
 ## Milestone 1 proof
 
 Create the authorized private synthetic repository and its own T3 project when
