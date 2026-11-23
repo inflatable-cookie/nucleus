@@ -38,6 +38,7 @@ import {
 } from "./recovery-context";
 import { groupIsUnavailable, supersedingRouteProfile } from "../../shared/pool";
 import { requiredCheckPollMetaKey } from "../forge/checks";
+import { waitAgeMs } from "../scheduling/host-outage";
 import {
   HostSnapshotPendingError,
   ProvenPreSendRefusalError,
@@ -281,7 +282,9 @@ export class CoordinatorRoute {
       const stallWindowMs =
         (this.store.getMeta<number>("stallThresholdMinutes") ??
           DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
-      const stopAgeMs = Math.max(0, Date.now() - Date.parse(stop.since));
+      // Spec 068 Decision 1: a wait's age is measured as budgets are, so the time
+      // the service or the task's host was down never makes it look stalled.
+      const stopAgeMs = waitAgeMs(this.store, t.hostId, stop.since);
       const hasUncertainCreation =
         isUncertainCreationStop(stop) ||
         (stop.reason === "lifecycle" &&
@@ -469,7 +472,9 @@ export class CoordinatorRoute {
     // against a released run was superseded by the run that replaced it.
     if (
       incidentBindsCurrentWork(t, this.store.runs(t.id)) &&
-      automaticIncidentPending(t.resolution.incident, this.resolution.graceMs)
+      automaticIncidentPending(t.resolution.incident, this.resolution.graceMs, (since) =>
+        waitAgeMs(this.store, t.hostId, since),
+      )
     )
       return null;
     // A live worktree QA, or an incomplete scan of it, is not proven absence. The
@@ -587,7 +592,7 @@ export class CoordinatorRoute {
           return null;
         }
         if (
-          Date.now() - Date.parse(incident.idleSince) >=
+          waitAgeMs(this.store, t.hostId, incident.idleSince) >=
           this.resolution.graceMs
         )
           return this.episode.escalate(

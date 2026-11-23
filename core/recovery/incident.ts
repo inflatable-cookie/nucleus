@@ -52,10 +52,13 @@ export function supersededWorkerResult(task: Task, runs: Run[]): boolean {
 /**
  * True while an automatic reconciliation step is inside its bounded window and
  * coordinator attention must wait. Expired or handoff incidents never block.
+ * `age` measures the window; the coordinator route passes the outage-discounted
+ * wait age, so downtime never ends it early.
  */
-export function automaticIncidentPending(incident: Incident | null, graceMs: number, at = Date.now()): boolean {
+export function automaticIncidentPending(incident: Incident | null, graceMs: number,
+  age: (since: string) => number = (since) => Date.now() - Date.parse(since)): boolean {
   if (!incident || incident.status !== "reconciling") return false;
-  if (incident.action === "exact_lookup") return at - Date.parse(incident.createdAt) < graceMs;
-  if (incident.action === "callback_reminder") return at - Date.parse(incident.updatedAt) < graceMs;
+  if (incident.action === "exact_lookup") return age(incident.createdAt) < graceMs;
+  if (incident.action === "callback_reminder") return age(incident.updatedAt) < graceMs;
   return false;
 }

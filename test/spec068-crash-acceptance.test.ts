@@ -778,8 +778,7 @@ test("Spec 068 acceptance: after a crash every task recovers with no owner or pl
   await t.test("a task near its budget keeps working: the downtime spent none of it", () => {
     progressedToLiveRun("budget-near", "worker");
   });
-  await t.test("a second budget spend stops for a person with its command, and starts no run",
-    { todo: "a dead initial worker's redispatch starts a fresh worker past a spent budget (core/recovery/dead-participant.ts:375 returns it to first dispatch, which has no budget gate; the gate is core/dispatch/launch.ts:223, run launches only)" }, () => {
+  await t.test("a second budget spend stops for a person with its command, and starts no run", () => {
       const reading = typedPersonStop("budget-second-spend");
       assert.equal(reading.stop?.reason, "budget");
       assert.ok(reading.explicitCommands?.some((command) => command.action === "run.start" &&
@@ -797,8 +796,7 @@ test("Spec 068 acceptance: after a crash every task recovers with no owner or pl
     assert.ok(["syncing", "closing", "done"].includes(current.phase), `${current.phase}: ${current.reason}`);
     assert.equal(current.resolution.mergedCommit, at("merging").prHead);
   });
-  await t.test("no coordinator is admitted for a wait that only the downtime aged",
-    { todo: "the mechanical stall window measures stop age in wall time, downtime included (core/recovery/coordinator-route.ts:284 stopAgeMs)" }, () => {
+  await t.test("no coordinator is admitted for a wait that only the downtime aged", () => {
       const launched = events("merging", "telemetry_recovery").filter((event) => Date.parse(event.at) >= restartedAt);
       assert.deepEqual(launched.map((event) => event.detail.slice(0, 160)), [], "a checks-pending wait an hour old by the wall clock");
     });

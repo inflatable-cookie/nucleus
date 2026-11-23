@@ -368,18 +368,31 @@ per run, one live run per role and head, exact-head verdicts and merges, no
 resend without a complete absent read, the orphan bound, and budgets that skip
 the downtime.
 
-Fifteen tasks end correctly. Four gaps stay open, each a `todo` subtest:
+Seventeen tasks end correctly. Two gaps stay open, each a `todo` subtest:
 
 - A recovery episode whose coordinator thread is gone escalates to the planner
   instead of releasing the run as gone (`core/recovery/coordinator-pass.ts`; the
   batch A gap above).
-- A dead initial worker's redispatch starts a fresh worker past a spent budget,
-  because first dispatch has no budget gate (`core/recovery/dead-participant.ts`).
 - An unknown first-dispatch create records an `operator_needed` stop until its
   lookup settles it (`core/dispatch/worker-launcher.ts`).
-- The mechanical stall window counts service downtime, so after a restart an
-  ordinary checks-pending wait admits a coordinator
-  (`core/recovery/coordinator-route.ts`).
+
+Two gaps the first run found are closed:
+
+- **One budget gate for every start.** Run launches and every worker creation (a
+  first dispatch, a dead initial worker's redispatch, a resumed dispatch and a
+  failover) pass the same gate: the first spend is extended once, and a later
+  spend records the typed `budget` stop and starts nothing. The worker launcher
+  reads it after its own drain, hold and catalog refusals, so a held or draining
+  task keeps its own reason and is neither extended nor asked about. A task that
+  never ran reads nothing used, so the gate holds only a task with a recorded run.
+- **Stall windows skip downtime.** A wait's age is measured as budgets measure
+  time: the wall span less the task host's outages and the service's own downtime
+  (`waitAgeMs`). The coordinator route reads every stall window through it: the
+  mechanical stall window, the idle grace after a coordinator's reporting
+  reminder, the automatic reconciliation window and the repository contention
+  grace, and the callback reminder's own grace reads it too. After a restart an
+  ordinary wait (checks pending, say) admits no coordinator, and a reminder sent
+  just before a roll does not escalate.
 
 ## Decisions
 

@@ -1,10 +1,8 @@
-import { budgetOutageIntervals } from "../scheduling/host-outage";
 import type { Profile, Run, Task } from "../../shared/contracts";
 import {
   isDispositionActive,
   workerExclusionRefusal,
 } from "../../shared/contracts";
-import { budgetPauseDetail, taskBudget } from "../../shared/task-budget";
 import {
   revisionAllowanceExhausted,
   revisionCapHoldDetail,
@@ -111,7 +109,7 @@ export type DispatchLaunchContext = Pick<
   Resolution,
   | "catalogKnown"
   | "claimIntegrationTurn"
-  | "extendTaskBudgetAutomatically"
+  | "holdForSpentBudget"
   | "launch"
   | "lease"
   | "leaseDeclineText"
@@ -193,38 +191,11 @@ export class DispatchLaunch {
       );
       return;
     }
-    // Spec 058 budgets: a task over either limit starts no new run. The pause is
-    // a stop the operator answers; the run in flight, if any, already finished.
-    // Spec 068 Decision 1: the first spend is extended once by Nucleus itself, so
-    // only a second spend stops here and asks.
-    {
-      const measure = () => {
-        const current = this.context.store.task(t.id);
-        return taskBudget(
-          current,
-          this.context.store.runs(t.id),
-          Date.now(),
-          this.context.store.eventsAll(t.id),
-          this.context.store.canonicalRepository(
-            current.repoPath,
-            current.repository,
-          ),
-          budgetOutageIntervals(this.context.store, current.hostId),
-        );
-      };
-      let budget = measure();
-      if (
-        budget.exhausted &&
-        this.context.extendTaskBudgetAutomatically(t.id)
-      ) {
-        t = this.context.store.task(t.id);
-        budget = measure();
-      }
-      if (budget.exhausted) {
-        this.context.waiting(t, budgetPauseDetail(budget), "budget");
-        return;
-      }
-    }
+    // Spec 058 budgets and Spec 068 Decision 1: the one gate every run start
+    // passes (`holdForSpentBudget`). The first spend is extended once by Nucleus
+    // itself; a second spend records the typed budget stop and starts nothing.
+    if (this.context.holdForSpentBudget(t)) return;
+    t = this.context.store.task(t.id);
     // Spec 058 revision cap: the one enforcement point. A revision launch past the
     // cap holds, however the task reached changes_requested (phase.set, an orphan
     // readmission or a verb), until an author round starts or a planner, the

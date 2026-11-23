@@ -299,13 +299,13 @@ export class TaskStops {
    * budget question it raised. Otherwise the dispatcher would refuse a task the
    * views read as progressing, and the board would ask about a pause that is gone.
    */
-  clearPassedBudgetStop(task: Task): Task {
-    if (
-      task.resolution.stop?.reason !== "budget" ||
-      ["done", "cancelled"].includes(task.phase)
-    )
-      return task;
-    const budget = taskBudget(
+  /**
+   * The task's budget now, measured as every gate and view measures it: its runs,
+   * its events, canonical repository settings, and the host outages and service
+   * downtime that never count (Spec 068 Decision 1).
+   */
+  measureBudget(task: Task) {
+    return taskBudget(
       task,
       this.store.runs(task.id),
       Date.now(),
@@ -313,6 +313,36 @@ export class TaskStops {
       this.store.canonicalRepository(task.repoPath, task.repository),
       budgetOutageIntervals(this.store, task.hostId),
     );
+  }
+  /**
+   * Spec 058 budgets and Spec 068 Decision 1: the one budget gate every run start
+   * passes, whichever path starts it (a run launch, a first dispatch, a dead
+   * worker's redispatch, a failover or a resumed dispatch). A spent budget is
+   * extended once by Nucleus itself; a spent budget that was extended before
+   * records the typed `budget` stop and the start holds. A task that never ran
+   * reads nothing used, so only a task with a recorded run can be held here.
+   * Returns true when the start must not happen.
+   */
+  holdForSpentBudget(task: Task): boolean {
+    let current = this.store.task(task.id);
+    let budget = this.measureBudget(current);
+    if (!budget.exhausted) return false;
+    const extended = this.resolution.extendTaskBudgetAutomatically(current.id);
+    if (extended) {
+      current = extended;
+      budget = this.measureBudget(current);
+      if (!budget.exhausted) return false;
+    }
+    this.resolution.waiting(current, budgetPauseDetail(budget), "budget");
+    return true;
+  }
+  clearPassedBudgetStop(task: Task): Task {
+    if (
+      task.resolution.stop?.reason !== "budget" ||
+      ["done", "cancelled"].includes(task.phase)
+    )
+      return task;
+    const budget = this.measureBudget(task);
     if (budget.exhausted) return task;
     // A queued task's own wait is dispatch; every other phase is progressing under
     // whatever it was doing, so the pause's text never survives as the reason.
@@ -354,14 +384,7 @@ export class TaskStops {
   settleSpentBudget(task: Task): Task {
     if (task.removedAt || ["done", "cancelled", "queued"].includes(task.phase))
       return task;
-    const budget = taskBudget(
-      task,
-      this.store.runs(task.id),
-      Date.now(),
-      this.store.eventsAll(task.id),
-      this.store.canonicalRepository(task.repoPath, task.repository),
-      budgetOutageIntervals(this.store, task.hostId),
-    );
+    const budget = this.measureBudget(task);
     if (!budget.exhausted || !budgetGatesPhase(task.phase)) return task;
     if (automaticBudgetExtensionDue(task))
       return (

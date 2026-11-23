@@ -1300,7 +1300,7 @@ export class Resolution {
       "continuedProgressWait",
       "deliverLaunchRun",
       "ensureIncident",
-      "extendTaskBudgetAutomatically",
+      "holdForSpentBudget",
       "host",
       "launch",
       "launchingRuns",
@@ -1724,6 +1724,10 @@ export class Resolution {
   /** Spec 058 budgets (nucleus#1153): open or close the wall-clock pause interval for one task. */
   settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task {
     return this.taskStops.settleBudgetClock(task, options);
+  }
+  /** The one budget gate every run start passes (Spec 068 Decision 1). */
+  holdForSpentBudget(task: Task): boolean {
+    return this.taskStops.holdForSpentBudget(task);
   }
   /** nucleus#1437: settle a stored settled-wait prose stop once nothing owns it. */
   settleSettledWaitStop(task: Task): Task {
