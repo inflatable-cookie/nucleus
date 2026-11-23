@@ -15,7 +15,7 @@ use crate::{Binding, HostError};
 #[serde(rename_all = "camelCase")]
 struct Snapshot {
     #[serde(rename = "snapshotSequence")]
-    _snapshot_sequence: u64,
+    sequence: u64,
     projection: Projection,
     has_more_history: Option<bool>,
     history_cursor: Option<String>,
@@ -32,8 +32,11 @@ pub(crate) struct Projection {
     runtime_requests: Vec<Request>,
     provider_threads: Option<Vec<ProviderThread>>,
     turn_items: Option<Vec<TurnItem>>,
+    subagents: Option<Vec<Subagent>>,
     #[serde(skip)]
     windowed: bool,
+    #[serde(skip)]
+    sequence: u64,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +48,9 @@ struct Thread {
     branch: Option<String>,
     archived_at: Option<String>,
     deleted_at: Option<String>,
+    parent_thread_id: Option<String>,
+    provider_instance_id: Option<String>,
+    model_selection: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +59,7 @@ struct Run {
     id: String,
     status: Status,
     user_message_id: Option<String>,
+    root_node_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -73,6 +80,20 @@ struct Request {
 struct ProviderThread {
     #[serde(default)]
     pending_background_tasks: Vec<BackgroundTask>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Subagent {
+    pub id: String,
+    pub child_thread_id: Option<String>,
+    pub origin: String,
+    pub completion_delivery: Option<CompletionDelivery>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CompletionDelivery {
+    pub state: String,
 }
 
 #[derive(Deserialize)]
@@ -143,6 +164,7 @@ impl Projection {
     pub(crate) fn parse(value: Value, binding: &Binding, id: &str) -> Result<Self, HostError> {
         let Snapshot {
             mut projection,
+            sequence,
             has_more_history,
             history_cursor,
             id_table,
@@ -164,7 +186,57 @@ impl Projection {
         }
         projection.windowed =
             has_more_history == Some(true) || turn_items_omit_local_visible == Some(true);
+        projection.sequence = sequence;
         Ok(projection)
+    }
+
+    pub(crate) fn require_parent_provider(&self, instance: &str) -> Result<(), HostError> {
+        if self.thread.parent_thread_id.is_some()
+            || self.thread.provider_instance_id.as_deref() != Some(instance)
+            || !self
+                .thread
+                .model_selection
+                .as_ref()
+                .is_some_and(|model| model["instanceId"] == instance && model["model"] == "nucleus")
+        {
+            return Err(HostError::Binding);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn belongs_to_parent(&self, parent: &str) -> bool {
+        self.thread.deleted_at.is_some() || self.thread.parent_thread_id.as_deref() == Some(parent)
+    }
+
+    pub(crate) fn live_parent_run(&self) -> Option<(&str, &str)> {
+        if self.archived() || self.thread.deleted_at.is_some() {
+            return None;
+        }
+        let mut live = self
+            .runs
+            .iter()
+            .filter(|run| matches!(run.status, Status::Running | Status::Waiting));
+        let run = live.next()?;
+        if live.next().is_some() {
+            return None;
+        }
+        Some((
+            &run.id,
+            run.root_node_id
+                .as_deref()
+                .filter(|node| !node.is_empty())?,
+        ))
+    }
+
+    pub(crate) const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub(crate) fn subagents(&self) -> Result<&[Subagent], HostError> {
+        if self.windowed {
+            return Err(HostError::Uncertain);
+        }
+        self.subagents.as_deref().ok_or(HostError::Uncertain)
     }
 
     pub(crate) fn retained(&self) -> Result<RetainedThread, HostError> {

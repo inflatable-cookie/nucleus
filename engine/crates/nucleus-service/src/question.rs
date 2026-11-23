@@ -1,7 +1,9 @@
 use std::{cmp::Reverse, collections::BTreeSet, path::Path, time::Duration};
 
 use nucleus_core::{Action, Question, Task, WaitReason};
-use nucleus_hosts::{HostError, NoticeSend, NoticeState, PlannerThread, T3, T3_RETRY_DELAY};
+use nucleus_hosts::{
+    HostError, NoticeHost, NoticeSend, NoticeState, NoticeWrite, PlannerThread, T3, T3_RETRY_DELAY,
+};
 use nucleus_store::{TaskRow, ThreadProvenance};
 use tokio::time::Instant;
 
@@ -93,7 +95,9 @@ impl Service {
             return Ok(wait);
         }
         if authorization.needs_unsettle() {
-            self.host.unsettle_notice(&authorization).await?;
+            self.host
+                .deliver_notice(NoticeWrite::Prepare(&authorization))
+                .await?;
             self.recheck_effect(row, WaitReason::Question).await;
             return Ok(wait);
         }
@@ -104,7 +108,12 @@ impl Service {
             return Err(ServiceError::Input);
         }
         let sent = self.save(row, updated, &event("question_delivery")).await?;
-        if self.host.send_notice(dispatch).await? == NoticeSend::Rejected {
+        if self
+            .host
+            .deliver_notice(NoticeWrite::Queue(dispatch))
+            .await?
+            == NoticeSend::Rejected
+        {
             let mut pending = sent.task.clone();
             if !pending.clear_question_delivery(&command) {
                 return Err(ServiceError::Input);
@@ -184,6 +193,12 @@ impl Service {
         for thread in threads {
             if thread.archived_at.is_some()
                 || thread.deleted_at.is_some()
+                || thread.parent_thread_id.is_some()
+                || self
+                    .project
+                    .acp_provider
+                    .as_ref()
+                    .is_some_and(|instance| thread.provider_instance_id.as_ref() == Some(instance))
                 || provenance.get(&thread.id) == Some(&ThreadProvenance::TaskRole)
             {
                 continue;
@@ -328,10 +343,13 @@ mod tests {
             let (host, server) =
                 native_fixture(move |request| snapshot_reply(request, strongest, &checkout)).await;
             service.host = host;
+            service.project.acp_provider = Some("fixture-acp".into());
             service.project.agents = [
                 (strongest, RegisteredRole::Planner),
                 ("planner-other", RegisteredRole::Planner),
                 ("registered-agent", RegisteredRole::Agent),
+                ("task-session", RegisteredRole::Planner),
+                ("role-child", RegisteredRole::Planner),
             ]
             .into_iter()
             .map(|(thread, role)| crate::RegisteredAgent {
@@ -474,7 +492,9 @@ mod tests {
                 "projects": [{"id":"local-fixture", "workspaceRoot": checkout}],
                 "threads": [
                 shell(strongest, "2026-11-02T00:00:00.000Z"),
-                shell("planner-other", "2026-11-01T00:00:00.000Z")
+                shell("planner-other", "2026-11-01T00:00:00.000Z"),
+                {"id":"task-session","projectId":"local-fixture","updatedAt":"2026-11-03T00:00:00.000Z","providerInstanceId":"fixture-acp"},
+                {"id":"role-child","projectId":"local-fixture","updatedAt":"2026-11-03T00:00:00.000Z","parentThreadId":"task-session"}
             ]}}),
             Some("orchestration.subscribeThread") => {
                 let id = req["payload"]["threadId"].as_str().expect("exact thread");

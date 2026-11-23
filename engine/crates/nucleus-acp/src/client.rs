@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::Read,
     net::SocketAddr,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -16,7 +16,10 @@ use reqwest::{
     Client, Method, Response, StatusCode,
     header::{AUTHORIZATION, HeaderValue},
 };
-use rustix::fs::{Mode, OFlags, open};
+use rustix::{
+    fs::{Mode, OFlags, open},
+    process::{fchdir, geteuid},
+};
 use serde::{Deserialize, de::DeserializeOwned};
 
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -86,6 +89,30 @@ pub(crate) fn binding(cwd: &Path) -> Result<Binding, Failure> {
         return Err(Failure::Binding);
     }
     Ok(binding)
+}
+
+pub(crate) fn enter_scratch(workspace: &Path, scratch: &Path) -> Result<(), Failure> {
+    if !scratch.is_absolute()
+        || scratch.starts_with(workspace)
+        || !scratch
+            .canonicalize()
+            .is_ok_and(|canonical| canonical == scratch)
+    {
+        return Err(Failure::Binding);
+    }
+    let directory = File::from(
+        open(
+            scratch,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| Failure::Binding)?,
+    );
+    let metadata = directory.metadata().map_err(|_| Failure::Binding)?;
+    if metadata.uid() != geteuid().as_raw() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(Failure::Binding);
+    }
+    fchdir(directory).map_err(|_| Failure::Binding)
 }
 
 #[derive(Clone)]

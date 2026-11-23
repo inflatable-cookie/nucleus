@@ -1,5 +1,6 @@
 use std::{
     fs::{File, symlink_metadata},
+    io::Read,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
@@ -10,11 +11,13 @@ use nucleus_core::{
     acp::{Binding, session_id},
 };
 use nucleus_store::AcpSession;
+use rustix::fs::{Mode, OFlags, open};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 const BINDINGS: &str = "acp-bindings";
+const SESSION_SCRATCH: &str = "acp-scratch";
 const GROUP_OR_OTHER_PERMISSIONS: u32 = 0o077;
 
 #[derive(Serialize)]
@@ -42,21 +45,78 @@ impl Service {
         let worktrees = self.worktrees()?;
         let checkout =
             worktrees.checkout(&self.project.checkout, &self.project.repository, task)?;
-        let session_id = session_id(checkout.path());
-        let credential = random_key()?;
         let command_credential = if read_only || row.task.phase() == Phase::Done {
             None
         } else {
             Some(random_key()?)
         };
+        let (session_id, binding_path, scratch_dir) = self.acp_paths(checkout.path())?;
         let binding = Binding {
             session_id: session_id.clone(),
             task_id: task.into(),
             endpoint: self.callback,
-            credential,
+            credential: random_key()?,
             command_credential,
+            scratch_dir: Some(scratch_dir),
         };
+        write_binding(&state, &binding_path, &binding, Some(controller))?;
+        self.publish(task, row.version);
+        Ok(MintedSession {
+            session_id,
+            binding_path,
+        })
+    }
+
+    pub(super) async fn ensure_parent_reader(
+        &self,
+        task: &str,
+        checkout: &Path,
+    ) -> Result<(), ServiceError> {
+        let state = self.state.lock().await;
+        let _ = self.lookup(&state, task)?;
+        let (session_id, binding_path, scratch_dir) = self.acp_paths(checkout)?;
+        if let Some(verifier) = state.store.acp_session(task)?
+            && let Some(mut binding) = existing_binding(&binding_path)?
+        {
+            if binding.task_id != task
+                || binding.session_id != session_id
+                || !bool::from(verifier.reader.ct_eq(&digest(&binding.credential)))
+            {
+                return Err(ServiceError::AcpBinding);
+            }
+            if binding.scratch_dir.as_ref() != Some(&scratch_dir)
+                || binding.endpoint != self.callback
+            {
+                binding.scratch_dir = Some(scratch_dir);
+                binding.endpoint = self.callback;
+                write_binding(&state, &binding_path, &binding, None)?;
+            }
+            return Ok(());
+        }
+        write_binding(
+            &state,
+            &binding_path,
+            &Binding {
+                session_id,
+                task_id: task.into(),
+                endpoint: self.callback,
+                credential: random_key()?,
+                command_credential: None,
+                scratch_dir: Some(scratch_dir),
+            },
+            Some([0; 32]),
+        )
+    }
+
+    fn acp_paths(&self, checkout: &Path) -> Result<(String, PathBuf, PathBuf), ServiceError> {
+        let session_id = session_id(checkout);
         let root = self.storage.database();
+        let relative_scratch = Path::new(SESSION_SCRATCH).join(&session_id);
+        let scratch = root.path().join(&relative_scratch);
+        if scratch.starts_with(checkout) || scratch.starts_with(self.storage.scratch().path()) {
+            return Err(ServiceError::AcpBinding);
+        }
+        root.ensure_child(&relative_scratch)?;
         root.ensure_child(Path::new(BINDINGS))?;
         let directory = root.path().join(BINDINGS);
         if !symlink_metadata(&directory).is_ok_and(|metadata| {
@@ -64,30 +124,8 @@ impl Service {
         }) {
             return Err(ServiceError::AcpBinding);
         }
-        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
-        serde_json::to_writer(temporary.as_file_mut(), &binding)
-            .map_err(|_| ServiceError::AcpBinding)?;
-        temporary.as_file().sync_all()?;
-        // Publish the verifiers first so rebinding revokes old credentials even
-        // if writing the replacement pointer is interrupted.
-        state.store.bind_acp(
-            task,
-            &AcpSession {
-                reader: digest(&credential),
-                writer: command_credential.as_ref().map(digest),
-                controller,
-            },
-        )?;
         let binding_path = directory.join(format!("{session_id}.json"));
-        temporary
-            .persist(&binding_path)
-            .map_err(|_| ServiceError::AcpBinding)?;
-        File::open(directory)?.sync_all()?;
-        self.publish(task, row.version);
-        Ok(MintedSession {
-            session_id,
-            binding_path,
-        })
+        Ok((session_id, binding_path, scratch))
     }
 
     pub(super) async fn acp_reader(&self, task: &str, key: &[u8; 32]) -> bool {
@@ -108,6 +146,57 @@ impl Service {
         let state = self.state.lock().await;
         writer_controller(&state, task, key)
     }
+}
+
+fn existing_binding(path: &Path) -> Result<Option<Binding>, ServiceError> {
+    let file = match open(
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) {
+        Ok(file) => File::from(file),
+        Err(rustix::io::Errno::NOENT) => return Ok(None),
+        Err(_) => return Err(ServiceError::AcpBinding),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
+        || metadata.permissions().mode() & GROUP_OR_OTHER_PERMISSIONS != 0
+        || metadata.len() > 4096
+    {
+        return Err(ServiceError::AcpBinding);
+    }
+    serde_json::from_reader(file.take(4096))
+        .map(Some)
+        .map_err(|_| ServiceError::AcpBinding)
+}
+
+fn write_binding(
+    state: &State,
+    path: &Path,
+    binding: &Binding,
+    controller: Option<[u8; 32]>,
+) -> Result<(), ServiceError> {
+    let directory = path.parent().ok_or(ServiceError::AcpBinding)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    serde_json::to_writer(temporary.as_file_mut(), binding)
+        .map_err(|_| ServiceError::AcpBinding)?;
+    temporary.as_file().sync_all()?;
+    if let Some(controller) = controller {
+        // Rebinding revokes old credentials even if writing the pointer is interrupted.
+        state.store.bind_acp(
+            &binding.task_id,
+            &AcpSession {
+                reader: digest(&binding.credential),
+                writer: binding.command_credential.as_ref().map(digest),
+                controller,
+            },
+        )?;
+    }
+    temporary
+        .persist(path)
+        .map_err(|_| ServiceError::AcpBinding)?;
+    File::open(directory)?.sync_all()?;
+    Ok(())
 }
 
 pub(super) fn writer_controller(state: &State, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
