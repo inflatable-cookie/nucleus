@@ -2275,15 +2275,8 @@ weighted(10)(
       await stepEngine(f.engine);
       const deferred = f.current();
       assert.notEqual(deferred.resolution.attention, true, deferred.reason);
-      assert.doesNotMatch(
-        deferred.reason ?? "",
-        /could not prove the reviewed head/,
-      );
-      assert.equal(
-        f.store.hookEvents(f.taskId).length,
-        0,
-        "no gate runs on a deferred read",
-      );
+      assert.doesNotMatch(deferred.reason ?? "", /could not prove the reviewed head/);
+      assert.equal(f.store.hookEvents(f.taskId).length, 0, "no gate runs on a deferred read");
       await stepEngine(f.engine);
       const passed = f.current();
       assert.equal(passed.phase, "merging", passed.reason);

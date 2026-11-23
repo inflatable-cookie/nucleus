@@ -1787,19 +1787,13 @@ request identities and stored committed-handoff rows are not rewritten.
   process still has its cwd or an open file in the workspace or scratch, or
   remains in the run's process tree. Incomplete cwd or open-file coverage for
   live processes owned by the service UID also leaves the intent pending.
-  A plain macOS host listing reads working directories only (one small cwd
-  pass), so its coverage no longer depends on the host-wide open-file read.
-  Open files come from a separate read, and each decision asks only for the
-  directories it guards: a participant lease reads its scratch roots, the
-  workspace archive and release custody read the workspace and run scratch, one
-  `lsof +D` pass per existing directory. The run-process sweep reads a run's own
-  directories the same way, so no decision reads every open file of the uid
-  (about 18 MB on a busy workstation). A working directory that already shows a
-  holder needs no open-file read, so an
-  open-file deadline never hides a live process the cwd listing has observed. A
-  read whose `ps`, cwd or open-file pass overruns its deadline is unknown and
-  names that deadline; it is never reported as incomplete coverage, so a busy
-  host reads as "still unknown", not as a missing working directory.
+  A macOS host listing is one host-wide read of the uid's processes (`ps`, then
+  `lsof` with the 12 s `LSOF_TIMEOUT_MS`). A pass that overruns its deadline
+  makes the listing unknown and names the deadline ("the process listing timed
+  out", "the open-file listing timed out"). It is never reported as incomplete
+  working-directory coverage. A live process the listing shows in the workspace
+  or run tree holds custody whatever its open files say. A release whose custody
+  is unknown names the live turn instead of releasing as not live.
   On macOS, the inventory rechecks the state of processes that a successful
   file scan omitted and the kernel still sees. A confirmed zombie holds no
   custody. The hourly host sweep applies the same ownership proof to settled
