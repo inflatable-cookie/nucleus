@@ -151,7 +151,8 @@ ran about 6 times a minute, and Settings stayed on "loading".
   until T3 lists it: it costs no read, and it is dropped, not retired, when its
   task ends unseen. A bound thread that left the shell (archived or removed) is
   read once by its exact id, and that answer is kept until T3 names the thread
-  again or a command goes to it.
+  again or a command goes to it. Owned-tool checks use that terminal fact and
+  the [shared process proof](068-self-healing.md#6-reads-leave-the-lane).
 - **Pending questions** are read only for threads the shell marks as awaiting
   input.
 - **At most four thread snapshots at once** to one host

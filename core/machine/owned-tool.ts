@@ -42,6 +42,7 @@ import {
   PASS_PROCESS_READ_DEADLINE_MS,
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
+  isTerminalParticipant,
   type PassProcessRead,
   type PassTimelinePageRead,
 } from "../scheduling/pass-snapshot";
@@ -99,7 +100,7 @@ export class OwnedTools {
         onRead?.(read);
         // This proof reads the pass's page: the next host pass warms it first,
         // so a page the rotation skips is never missed two passes running.
-        this.resolution.requestPassProof?.(hostId, id);
+        this.resolution.requestPassProof?.(hostId, id, "owned-tools");
         if (read.state === "unknown")
           throw new DeferredPassReadError(read.reason);
         return requireCustodyEvidence(read.value, "the agent timeline page");
@@ -293,7 +294,13 @@ export class OwnedTools {
       boundRun?.workspaceId ??
       (task?.agentId === agentId ? task.workspaceId : undefined) ??
       undefined;
-    if (options.allowRetired) {
+    const prior = this.resolution.passObservedBeforeProcesses?.(hostId, agentId);
+    const terminalBinding =
+      workspaceId &&
+      prior?.id === agentId &&
+      prior.workspaceId === workspaceId &&
+      isTerminalParticipant(prior);
+    if (options.allowRetired || terminalBinding) {
       const custody = await this.classifyRetiredCustody(
         agentId,
         workspaceId,
@@ -683,6 +690,7 @@ export class OwnedTools {
             "participant is not idle and permission-free in the recorded workspace",
         };
       if (origin.deleted === true) return { kind: "gone" };
+      if (origin.archived === true) return { kind: "retired" };
     } else if (isAgentGoneRefusal(observeError)) {
       return { kind: "gone" };
     }
