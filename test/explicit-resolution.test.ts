@@ -685,7 +685,7 @@ test("run.release cancels a current revision on the retained worker thread", asy
 async function releaseWithScratchChild(
   t: TestContext,
   cwd: "scratch" | "root",
-  shimOpenFiles: string | null,
+  shimLsof: string | null,
 ) {
   let pid: number | undefined;
   const scan = async () => {
@@ -766,19 +766,12 @@ async function releaseWithScratchChild(
   closeSync(fd);
   const exited = once(child, "exit");
   const path = process.env.PATH ?? "";
-  if (shimOpenFiles !== null) {
+  if (shimLsof !== null) {
     const shimDir = join(f.root, "lsof-shim");
     mkdirSync(shimDir);
-    writeFileSync(
-      join(shimDir, "lsof"),
-      `#!/bin/sh
-case "$*" in
-  *"-F0pfn"*) exec sleep ${shimOpenFiles} ;;
-  *) exec /usr/sbin/lsof "$@" ;;
-esac
-`,
-      { mode: 0o755 },
-    );
+    writeFileSync(join(shimDir, "lsof"), `#!/bin/sh\n${shimLsof}\n`, {
+      mode: 0o755,
+    });
     process.env.PATH = `${shimDir}${delimiter}${path}`;
   }
   try {
@@ -819,7 +812,29 @@ test("a live process whose working directory is the run scratch holds custody wi
 test("unknown custody warns live_turn instead of releasing the worker", async (t) => {
   // The child's cwd is outside the run scratch and only its open file is in
   // scratch. The open-file read outlives its 12 s deadline, so custody is unknown.
-  const { f, runId, refused } = await releaseWithScratchChild(t, "root", "13");
+  const { f, runId, refused } = await releaseWithScratchChild(
+    t,
+    "root",
+    'case "$*" in\n  *"-F0pfn"*) exec sleep 13 ;;\n  *) exec /usr/sbin/lsof "$@" ;;\nesac',
+  );
+  assert.equal(refused.explicitResolution?.status, "warnings");
+  assert.ok(
+    refused.explicitResolution?.warnings.some(
+      (warning) => warning.id === "live_turn",
+    ),
+  );
+  assert.equal(f.current().runId, runId);
+});
+
+test("a live process in the run scratch holds custody when the open-file listing is truncated", async (t) => {
+  // The open-file pass returns its rows but exits nonzero with a warning, so the
+  // listing is truncated. The working-directory rows are still read, and a
+  // live cwd holder is final evidence.
+  const { f, runId, refused } = await releaseWithScratchChild(
+    t,
+    "scratch",
+    '/usr/sbin/lsof "$@"\necho "lsof: WARNING: truncated output" >&2\nexit 1',
+  );
   assert.equal(refused.explicitResolution?.status, "warnings");
   assert.ok(
     refused.explicitResolution?.warnings.some(

@@ -10,6 +10,7 @@ import {
   inspectedProcessGone,
   readHostUidProcesses,
 } from "../core/machine/host-process-listing";
+import { readHostProcessTable } from "../core/host/process-table";
 
 test("only a read that proves the process exited drops it from the table", () => {
   assert.equal(
@@ -231,6 +232,67 @@ ROWS
       assert.deepEqual(await readHostUidProcesses(), {
         state: "unknown",
         reason: "the open-file listing timed out after 12000 ms",
+      });
+    } finally {
+      process.env.PATH = path;
+    }
+  },
+);
+
+test(
+  "a truncated darwin open-file pass stays listed with its working directories, and its open files are incomplete",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    assert.ok(process.getuid);
+    const uid = process.getuid();
+    const root = await mkdtemp(join(tmpdir(), "host-process-truncated-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const start = "Mon Nov 23 18:30:00 2026";
+    await writeFile(
+      join(root, "ps"),
+      `#!/bin/sh
+cat <<'ROWS'
+${uid} ${process.pid} 1 1 S ${start} live-command
+ROWS
+`,
+      { mode: 0o755 },
+    );
+    // The real rows, then a warning and a nonzero exit: a truncated listing.
+    await writeFile(
+      join(root, "lsof"),
+      '#!/bin/sh\n/usr/sbin/lsof "$@"\necho "lsof: WARNING: truncated output" >&2\nexit 1\n',
+      { mode: 0o755 },
+    );
+    const path = process.env.PATH ?? "";
+    process.env.PATH = `${root}${delimiter}${path}`;
+    try {
+      const read = await readHostUidProcesses();
+      assert.equal(read.state, "listed");
+      if (read.state !== "listed") return;
+      const fact = read.processes.find((entry) => entry.pid === process.pid);
+      assert.ok(fact);
+      assert.ok(fact.cwd);
+      assert.equal(fact.openFiles?.complete, false);
+    } finally {
+      process.env.PATH = path;
+    }
+  },
+);
+
+test(
+  "the host process-table adapter rejects an unknown listing with its named reason",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "host-process-table-timeout-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await writeFile(join(root, "ps"), "#!/bin/sh\nexec sleep 6\n", {
+      mode: 0o755,
+    });
+    const path = process.env.PATH ?? "";
+    process.env.PATH = `${root}${delimiter}${path}`;
+    try {
+      await assert.rejects(readHostProcessTable(), {
+        message: "the process listing timed out after 5000 ms",
       });
     } finally {
       process.env.PATH = path;

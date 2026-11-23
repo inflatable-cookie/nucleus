@@ -32,16 +32,27 @@ export function runWorkProcesses(input: {
   const roots = input.directories.flatMap((root) =>
     root ? [resolve(root)] : [],
   );
-  const providerPids = new Set(input.providers?.flatMap((recorded) => {
-    const provider = input.byPid.get(recorded.pid);
-    return provider && isLiveProcess(provider) &&
-      startIdentityMatches(recorded.startIdentity, provider.startIdentity)
-      ? [provider.pid] : [];
-  }));
+  const providerPids = new Set(
+    input.providers?.flatMap((recorded) => {
+      const provider = input.byPid.get(recorded.pid);
+      return provider &&
+        isLiveProcess(provider) &&
+        startIdentityMatches(recorded.startIdentity, provider.startIdentity)
+        ? [provider.pid]
+        : [];
+    }),
+  );
   if (!roots.length && !providerPids.size) return [];
-  const prefixes = roots.map((root) => root.endsWith(sep) ? root : root + sep);
-  const inRoots = (path: string) => roots.includes(path) || prefixes.some((prefix) => path.startsWith(prefix));
-  const rooted = new Set(input.live.flatMap((fact) => fact.cwd && inRoots(fact.cwd) ? [fact.pid] : []));
+  const prefixes = roots.map((root) =>
+    root.endsWith(sep) ? root : root + sep,
+  );
+  const inRoots = (path: string) =>
+    roots.includes(path) || prefixes.some((prefix) => path.startsWith(prefix));
+  const rooted = new Set(
+    input.live.flatMap((fact) =>
+      fact.cwd && inRoots(fact.cwd) ? [fact.pid] : [],
+    ),
+  );
   return input.live.filter((fact) => {
     // An open file is direct custody even when the holder is standing runtime.
     if (fact.openFiles?.paths.some(inRoots)) return true;
@@ -58,6 +69,25 @@ export function runWorkProcesses(input: {
   });
 }
 
+/**
+ * The named reason an incomplete listing is short: its working directories or its
+ * open files were truncated, not timed out (a timeout is unknown before this point).
+ */
+export function truncatedListingReason(
+  scan: Pick<
+    Extract<PassProcessRead, { state: "listed" }>,
+    "processes" | "cwdComplete"
+  >,
+): string {
+  const uid = process.getuid?.();
+  const owned = scan.processes.filter(
+    (fact) => (uid === undefined || fact.uid === uid) && isLiveProcess(fact),
+  );
+  return scan.cwdComplete === false || owned.some((fact) => fact.cwd === null)
+    ? "the working-directory listing is truncated"
+    : "the open-file listing is truncated";
+}
+
 export function incompleteRunProcessScan(
   scan: Pick<
     Extract<PassProcessRead, { state: "listed" }>,
@@ -67,9 +97,12 @@ export function incompleteRunProcessScan(
   const uid = process.getuid?.();
   return (
     scan.cwdComplete === false ||
-    scan.processes.some((fact) => (uid === undefined || fact.uid === uid) &&
-      isLiveProcess(fact) &&
-      (fact.cwd === null || fact.openFiles?.complete === false))
+    scan.processes.some(
+      (fact) =>
+        (uid === undefined || fact.uid === uid) &&
+        isLiveProcess(fact) &&
+        (fact.cwd === null || fact.openFiles?.complete === false),
+    )
   );
 }
 
@@ -118,7 +151,8 @@ export async function readRunProcessCustody(input: {
       )?.temporaryDirectory,
     ],
     infrastructure: table.infrastructurePids(runtime),
-    providers: provider && !table.providerHostPids().has(provider.pid) ? [provider] : [],
+    providers:
+      provider && !table.providerHostPids().has(provider.pid) ? [provider] : [],
   });
   const process = work.find(
     (fact) =>
@@ -129,8 +163,9 @@ export async function readRunProcessCustody(input: {
   if (work.length || incompleteRunProcessScan(scan))
     return {
       state: "unknown",
-      reason:
-        "run process identity, working-directory or open-file coverage is incomplete",
+      reason: work.length
+        ? "the run process identity is not proven"
+        : truncatedListingReason(scan),
     };
   if (input.activityAt && Date.parse(input.activityAt) > scan.capturedAt)
     return {

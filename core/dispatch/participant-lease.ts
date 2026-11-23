@@ -10,6 +10,7 @@ import {
 } from "../machine/participant-runtime";
 import {
   incompleteRunProcessScan,
+  truncatedListingReason,
   readRunProcessCustody,
 } from "../machine/run-process-custody";
 import {
@@ -280,10 +281,9 @@ export class ParticipantLease {
     if (scan.state === "unknown") return scan.reason;
     const complete =
       scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
-    if (complete !== true)
-      return "the host process listing has incomplete working-directory coverage";
-    if (incompleteRunProcessScan(scan))
-      return "the host process listing has incomplete working-directory or open-file coverage";
+    // A timed-out listing is unknown above; what reaches here is a truncated one.
+    if (complete !== true) return "the working-directory listing is truncated";
+    if (incompleteRunProcessScan(scan)) return truncatedListingReason(scan);
     if (scan.fromPassSnapshot) {
       const beforeScan =
         scan.directBeforeScan === undefined

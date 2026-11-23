@@ -1793,7 +1793,11 @@ request identities and stored committed-handoff rows are not rewritten.
   out", "the open-file listing timed out"). It is never reported as incomplete
   working-directory coverage. A live process the listing shows in the workspace
   or run tree holds custody whatever its open files say. A release whose custody
-  is unknown names the live turn instead of releasing as not live.
+  is unknown names the live turn instead of releasing as not live. A truncated
+  listing (an open-file pass that exits nonzero or warns) keeps the rows it read;
+  a refusal names it as "the working-directory listing is truncated" or "the
+  open-file listing is truncated". The host process-table adapter rejects an
+  unknown read with the same named reason rather than a bare null.
   On macOS, the inventory rechecks the state of processes that a successful
   file scan omitted and the kernel still sees. A confirmed zombie holds no
   custody. The hourly host sweep applies the same ownership proof to settled
