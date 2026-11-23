@@ -8,7 +8,7 @@ import type {
   HostProcessFact,
   TimelinePage,
 } from "../core/host";
-import { HOST_PASS_WARM_CANDIDATE_CAP } from "../core/scheduling/pass-snapshot";
+import { HOST_PASS_WARM_CANDIDATE_CAP, runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { fakeAdapter, submission } from "./support/fakes";
 import { runSchema, type Task } from "../shared/contracts";
 
@@ -272,4 +272,15 @@ test("pages a quantum could not read are warmed first on the next pass, past the
     count,
     `every merging task merges within two passes (merged ${f.merged.length} of ${count})`,
   );
+});
+
+test("any quantum read of a pass timeline page registers demand, not only the owned-tool proof", async (t: TestContext) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  const engine = new Engine(store, fakeAdapter({}) as unknown as Adapter, 60_000);
+  const resolution = engine.resolution;
+  const read = await runInTaskQuantumScope(30_000, () =>
+    resolution.readPassTimelinePage("agent-continuation", 20, HOST));
+  assert.equal(read.state, "unknown", "outside a pass the quantum gets no live read");
+  assert.deepEqual(resolution.takePassProofs(HOST, new Set(["agent-continuation"])), ["agent-continuation"]);
 });
