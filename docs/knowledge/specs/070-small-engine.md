@@ -258,7 +258,7 @@ Cargo builds" rule for the `engine/` workspace only:
    For this proof only, the engine uses standalone top-level role threads and its default
    worktree allocator. Milestone 2 parents them under the task's ACP session (ruling 6).
 2. **Milestone 2:** the board reads the new engine's API, and its settings (profiles, limits, projects, storage) work against the new engine (ruling 8). New tasks for one project go
-   to the new engine. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
+   to the new engine. The first project is Barge (Tom, 2026-11-23), starting with one small docs or test task once the repository binding, real profile launches, the installed ACP provider and per-project routing are in place. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
 3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
    takes no new work. Planning records move into the new service (ruling 12).
 4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the
