@@ -17,7 +17,10 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { mergeGate } from "../core/forge/merge";
 import { publishFormalReview, publishReviewOnce } from "../core/forge/reviews";
-import { ReviewPolicy, type ReviewPolicyHost } from "../core/review/review-policy";
+import {
+  ReviewPolicy,
+  type ReviewPolicyHost,
+} from "../core/review/review-policy";
 import { publishedReviewDecision } from "../core/intake/result-application";
 import type { ResolutionAdapter } from "../core/resolution";
 import { ordinaryReviewSource } from "../core/review/ordinary-review";
@@ -41,7 +44,10 @@ import { taskStopRecord } from "../shared/task-stop";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
-import { hostRunProcessStartIdentity, startIdentityProves } from "../core/machine/start-identity";
+import {
+  hostRunProcessStartIdentity,
+  startIdentityProves,
+} from "../core/machine/start-identity";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { operationInputHash } from "../core/store/store";
@@ -62,8 +68,25 @@ import {
 import { spawnGate, SPAWN_CONCURRENCY } from "../core/dispatch/spawn-gate";
 import { recoveryDispatchSnapshot } from "../core/recovery/recovery-context";
 import { ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
-import { checkoutRunScratchPlacement, removeRecordedRunScratchDirectory, runTemporaryEnvironment } from "../core/workspaces/run-scratch";
-import { readProcessSubset } from "../core/machine/host-process-listing";
+import {
+  checkoutRunScratchPlacement,
+  removeRecordedRunScratchDirectory,
+  runTemporaryEnvironment,
+} from "../core/workspaces/run-scratch";
+import {
+  readOpenFileFacts,
+  readProcessSubset,
+  type HostOpenFileRead,
+  type HostProcessListRead,
+} from "../core/machine/host-process-listing";
+/** The custody read fills open files for a subset listing; this fixture reads them the same way. */
+async function withOpenFiles(
+  read: HostProcessListRead,
+): Promise<HostOpenFileRead> {
+  if (read.state !== "listed") return read;
+  return readOpenFileFacts(read.processes);
+}
+
 import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
@@ -439,7 +462,8 @@ test("run.release stops the recorded process group after accepting its warnings"
   });
   const exited = once(child, "exit");
   t.after(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill("SIGKILL");
   });
   await once(child, "spawn");
   const pid = child.pid;
@@ -447,36 +471,38 @@ test("run.release stops the recorded process group after accepting its warnings"
   const startIdentity = hostRunProcessStartIdentity(pid);
   assert.ok(startIdentityProves(startIdentity));
   const at = new Date().toISOString();
-  store.putHostRun(hostRunRecordSchema.parse({
-    id: participant.id,
-    epoch: 1,
-    caller: "fixture",
-    repository: { path: repo, origin: null },
-    selector: "test",
-    runClass: "heavy",
-    classSource: "default",
-    priority: "milestone",
-    state: "running",
-    submittedAt: at,
-    capacityDeadlineAt: at,
-    runTimeoutMs: 60000,
-    budgetFallback: { cpu: 1, memoryBytes: 1000 },
-    budget: { cpu: 1, memoryBytes: 1000, wallMs: 60000, source: "history" },
-    position: null,
-    admittedAt: at,
-    launchedAt: at,
-    settledAt: null,
-    capacitySample: null,
-    pid,
-    processGroupId: pid,
-    startIdentity,
-    settlement: null,
-    wallMs: null,
-    cpuMs: null,
-    containers: [],
-    capacityReleasedAt: null,
-    capacityReleaseReason: null,
-  }));
+  store.putHostRun(
+    hostRunRecordSchema.parse({
+      id: participant.id,
+      epoch: 1,
+      caller: "fixture",
+      repository: { path: repo, origin: null },
+      selector: "test",
+      runClass: "heavy",
+      classSource: "default",
+      priority: "milestone",
+      state: "running",
+      submittedAt: at,
+      capacityDeadlineAt: at,
+      runTimeoutMs: 60000,
+      budgetFallback: { cpu: 1, memoryBytes: 1000 },
+      budget: { cpu: 1, memoryBytes: 1000, wallMs: 60000, source: "history" },
+      position: null,
+      admittedAt: at,
+      launchedAt: at,
+      settledAt: null,
+      capacitySample: null,
+      pid,
+      processGroupId: pid,
+      startIdentity,
+      settlement: null,
+      wallMs: null,
+      cpuMs: null,
+      containers: [],
+      capacityReleasedAt: null,
+      capacityReleaseReason: null,
+    }),
+  );
 
   const release = { action: "run.release", run: participant.id };
   const version = current().version;
@@ -489,7 +515,10 @@ test("run.release stops the recorded process group after accepting its warnings"
   assert.equal(current().version, version);
   assert.equal(child.signalCode, null);
   assert.equal(audit().length, 0);
-  const released = await command({ ...release, accept: ["live_turn", "unreported_result"] });
+  const released = await command({
+    ...release,
+    accept: ["live_turn", "unreported_result"],
+  });
   assert.equal(released.explicitResolution?.status, "applied");
   assert.deepEqual(await exited, [null, "SIGKILL"]);
   assert.equal(store.run(participant.id)?.released, true);
@@ -665,18 +694,34 @@ test("a coordinator must accept live_turn before releasing an inactive worker wi
   let pid: number | undefined;
   const scan = async () => {
     if (!pid) return [];
-    const result = await readProcessSubset([pid]);
+    const result = await withOpenFiles(await readProcessSubset([pid]));
     return result.state === "listed" ? result.processes : null;
   };
   const f = await fixture(t, { hostProcessListing: scan });
   const directory = join(f.root, "worktree");
   mkdirSync(directory);
   const runId = "initial-worker";
-  const observe = () => ({ MountPoint: f.root, VolumeUUID: "fixture", Internal: false, Writable: true, WritableVolume: true });
-  const placement = checkoutRunScratchPlacement({ mount: f.root, uuid: "fixture", observe });
+  const observe = () => ({
+    MountPoint: f.root,
+    VolumeUUID: "fixture",
+    Internal: false,
+    Writable: true,
+    WritableVolume: true,
+  });
+  const placement = checkoutRunScratchPlacement({
+    mount: f.root,
+    uuid: "fixture",
+    observe,
+  });
   const scratch = runTemporaryEnvironment(runId, placement).TMPDIR;
-  (f.store as unknown as { runScratchRemover: (path: string) => boolean }).runScratchRemover =
-    (path) => removeRecordedRunScratchDirectory(path, { mount: f.root, uuid: "fixture", observe });
+  (
+    f.store as unknown as { runScratchRemover: (path: string) => boolean }
+  ).runScratchRemover = (path) =>
+    removeRecordedRunScratchDirectory(path, {
+      mount: f.root,
+      uuid: "fixture",
+      observe,
+    });
   const coordinator = f.run("recovery-run", "recovery", "coordinator");
   f.store.putRun(coordinator);
   const task = f.current();
@@ -690,21 +735,37 @@ test("a coordinator must accept live_turn before releasing an inactive worker wi
     agentActive: true,
     resolution: {
       ...task.resolution,
-      stop: taskStopRecord("run_stalled", "Stalled worker", null, new Date().toISOString(), ["restart"]),
+      stop: taskStopRecord(
+        "run_stalled",
+        "Stalled worker",
+        null,
+        new Date().toISOString(),
+        ["restart"],
+      ),
       recoveryActive: true,
       recovery: {
-        id: "episode", key: "key", generation: 1, runId: coordinator.id,
-        agentId: coordinator.agentId, status: "running", summary: "Mechanical stop",
-        idleSince: null, incidentId: null,
+        id: "episode",
+        key: "key",
+        generation: 1,
+        runId: coordinator.id,
+        agentId: coordinator.agentId,
+        status: "running",
+        summary: "Mechanical stop",
+        idleSince: null,
+        incidentId: null,
       },
     },
   });
   const file = join(scratch, "held output");
   const fd = openSync(file, "w");
-  const child = spawn(process.execPath, ["-e", "console.log('ready'); setInterval(() => {}, 1000)"], {
-    cwd: f.root,
-    stdio: ["ignore", "pipe", "inherit", fd],
-  });
+  const child = spawn(
+    process.execPath,
+    ["-e", "console.log('ready'); setInterval(() => {}, 1000)"],
+    {
+      cwd: f.root,
+      stdio: ["ignore", "pipe", "inherit", fd],
+    },
+  );
   closeSync(fd);
   const exited = once(child, "exit");
   try {
@@ -716,34 +777,69 @@ test("a coordinator must accept live_turn before releasing an inactive worker wi
     assert.ok(fact);
     assert.equal(fact.cwd, f.root);
     assert.ok(fact.openFiles?.paths.includes(file));
-    const offer = (await f.runtime.taskNext({ taskId: task.id })).explicitCommands?.find(
+    const offer = (
+      await f.runtime.taskNext({ taskId: task.id })
+    ).explicitCommands?.find(
       (item) => item.action === "run.release" && item.args.run === runId,
     );
     assert.ok(offer?.warnings?.includes("live_turn"));
 
     f.store.update(task.id, { agentActive: false });
-    const release = { action: "run.release", run: runId, caller: formatAgentId(host, "coordinator") };
-    const refused = await f.command({ ...release, accept: ["unreported_result"] });
+    const release = {
+      action: "run.release",
+      run: runId,
+      caller: formatAgentId(host, "coordinator"),
+    };
+    const refused = await f.command({
+      ...release,
+      accept: ["unreported_result"],
+    });
     assert.equal(refused.explicitResolution?.status, "warnings");
-    assert.ok(refused.explicitResolution?.warnings.some((warning) => warning.id === "live_turn"));
+    assert.ok(
+      refused.explicitResolution?.warnings.some(
+        (warning) => warning.id === "live_turn",
+      ),
+    );
     assert.equal(f.current().runId, runId);
 
-    const result = await f.command({ ...release, accept: ["live_turn", "unreported_result"] });
+    const result = await f.command({
+      ...release,
+      accept: ["live_turn", "unreported_result"],
+    });
     assert.equal(result.explicitResolution?.status, "applied");
     assert.equal(f.current().runId, null);
     const intentKey = `runProcessCleanup:${runId}`;
-    await sweepSettledRunProcesses(f.store, host, { taskId: task.id, readProcesses: scan });
+    await sweepSettledRunProcesses(f.store, host, {
+      taskId: task.id,
+      readProcesses: scan,
+    });
     assert.ok(existsSync(scratch));
-    assert.equal(f.store.getMeta<{ pending: boolean }>(intentKey)?.pending, true);
-    assert.ok(f.store.eventsAll(task.id).some((event) =>
-      event.kind === "run_process_cleanup_deferred" && event.detail.includes("live processes")));
+    assert.equal(
+      f.store.getMeta<{ pending: boolean }>(intentKey)?.pending,
+      true,
+    );
+    assert.ok(
+      f.store
+        .eventsAll(task.id)
+        .some(
+          (event) =>
+            event.kind === "run_process_cleanup_deferred" &&
+            event.detail.includes("live processes"),
+        ),
+    );
 
     child.kill();
     await exited;
     pid = undefined;
-    await sweepSettledRunProcesses(f.store, host, { taskId: task.id, readProcesses: scan });
+    await sweepSettledRunProcesses(f.store, host, {
+      taskId: task.id,
+      readProcesses: scan,
+    });
     assert.equal(existsSync(scratch), false);
-    assert.equal(f.store.getMeta<{ pending: boolean }>(intentKey)?.pending, false);
+    assert.equal(
+      f.store.getMeta<{ pending: boolean }>(intentKey)?.pending,
+      false,
+    );
   } finally {
     child.kill();
     await exited;
@@ -767,11 +863,10 @@ test("next and run.release refuse a creation the host may still answer", async (
     resolution: { ...current().resolution, currentRunId: coordinator.id, stop },
   });
   const offer = async () =>
-    (await runtime.taskNext({ taskId: current().id }))
-      .explicitCommands?.find(
-        (item) =>
-          item.action === "run.release" && item.args.run === coordinator.id,
-      );
+    (await runtime.taskNext({ taskId: current().id })).explicitCommands?.find(
+      (item) =>
+        item.action === "run.release" && item.args.run === coordinator.id,
+    );
   assert.equal(await offer(), undefined);
   await assert.rejects(
     command({
@@ -805,7 +900,12 @@ test("next offers release of an unbound initial worker once creation settles", a
   const runId = "initial-worker";
   const worker = store.update(
     current().id,
-    { phase: "dispatching", agentIntent: true, runId, workspaceId: "workspace" },
+    {
+      phase: "dispatching",
+      agentIntent: true,
+      runId,
+      workspaceId: "workspace",
+    },
     "agent_intent",
   );
   store.setCredential(runId, "initial-worker-secret");
@@ -820,7 +920,9 @@ test("next offers release of an unbound initial worker once creation settles", a
   const offers = async () =>
     (await runtime.taskNext({ taskId: worker.id })).explicitCommands ?? [];
   assert.equal(
-    (await offers()).some((item) => item.args.run === runId || item.args.replacing === runId),
+    (await offers()).some(
+      (item) => item.args.run === runId || item.args.replacing === runId,
+    ),
     false,
   );
   await assert.rejects(
@@ -917,7 +1019,10 @@ test("run.release skips exact cancellation when the host confirms an ended turn"
       pendingBackgroundTasks: [],
     }),
   });
-  const ended = withRecordedTurn(run("ended-reviewer", "reviewer", "reviewer"), "ended-turn");
+  const ended = withRecordedTurn(
+    run("ended-reviewer", "reviewer", "reviewer"),
+    "ended-turn",
+  );
   store.putRun(ended);
   const result = await command({
     action: "run.release",
@@ -925,7 +1030,10 @@ test("run.release skips exact cancellation when the host confirms an ended turn"
     accept: ["live_turn", "unreported_result"],
   });
   assert.equal(result.explicitResolution?.status, "applied");
-  assert.doesNotMatch(result.explicitResolution?.next ?? "", /Turn cancellation/);
+  assert.doesNotMatch(
+    result.explicitResolution?.next ?? "",
+    /Turn cancellation/,
+  );
   assert.equal(store.run(ended.id)?.released, true);
   assert.deepEqual(calls, []);
 });
@@ -1170,14 +1278,21 @@ test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolv
   const nativeCreate = runtime.engine.withHost(host, () =>
     runtime.engine.adapter.createRun!(current(), stuck, "old-secret"),
   );
-  const settled = assert.rejects(nativeCreate, /Creation ended without binding/);
+  const settled = assert.rejects(
+    nativeCreate,
+    /Creation ended without binding/,
+  );
   try {
     await started;
     assert.equal(current().resolution.stop, null);
     assert.equal(readCreationAttempt(store, stuck)?.settlement, null);
-    const offers = (await runtime.taskNext({ taskId: current().id })).explicitCommands ?? [];
+    const offers =
+      (await runtime.taskNext({ taskId: current().id })).explicitCommands ?? [];
     assert.equal(
-      offers.some((item) => item.args.run === stuck.id || item.args.replacing === stuck.id),
+      offers.some(
+        (item) =>
+          item.args.run === stuck.id || item.args.replacing === stuck.id,
+      ),
       false,
     );
     await assert.rejects(
@@ -1416,7 +1531,12 @@ test("run.start enforces two_writers and budget warnings and coordinator authori
   // The revision cap (and a second budget spend) is the planner's disposition,
   // as the author-round rule holds: a coordinator cannot start a run past it.
   await assert.rejects(
-    command({ ...args, caller: coordCaller, agent: "retained", accept: ["budget"] }),
+    command({
+      ...args,
+      caller: coordCaller,
+      agent: "retained",
+      accept: ["budget"],
+    }),
     /only the live responsible planner or operator board can accept .*budget/i,
   );
   const applied = await command({
@@ -1452,7 +1572,8 @@ test("an unaccepted explicit command leads with its warnings and exits non-zero,
   // `next` names each command's warnings before it is sent.
   const next = ownerTaskNext(collectOwnerVerbFacts(store, current()));
   const start = next.explicitCommands?.find(
-    (item) => item.action === "run.start" && item.args.replacing === uncertain.id,
+    (item) =>
+      item.action === "run.start" && item.args.replacing === uncertain.id,
   );
   assert.ok(start, JSON.stringify(next.explicitCommands));
   assert.deepEqual(start!.warnings, ["duplicate_thread", "two_writers"]);
@@ -1462,7 +1583,12 @@ test("an unaccepted explicit command leads with its warnings and exits non-zero,
   assert.deepEqual(release?.warnings, ["live_turn", "unreported_result"]);
 
   // Sent without them, the command applies nothing and says so first.
-  const { action: _action, taskId: _taskId, version: _version, ...args } = start!.args;
+  const {
+    action: _action,
+    taskId: _taskId,
+    version: _version,
+    ...args
+  } = start!.args;
   const probe = await command({ action: "run.start", ...args });
   assert.equal(probe.explicitResolution?.status, "warnings");
   assert.deepEqual(
@@ -1480,13 +1606,21 @@ test("an unaccepted explicit command leads with its warnings and exits non-zero,
   assert.equal(store.run(uncertain.id)?.released, false, "nothing was applied");
 
   // A stale version is not applied either.
-  const stale = await command({ action: "run.start", ...args, version: current().version + 1 });
+  const stale = await command({
+    action: "run.start",
+    ...args,
+    version: current().version + 1,
+  });
   assert.equal(stale.explicitResolution?.status, "stale");
   assert.match(explicitOutcome(stale)!.line, /^stale: not applied/);
   assert.equal(explicitOutcome(stale)!.exitCode, 2);
 
   // Resent with next's list, it applies and exits zero.
-  const applied = await command({ action: "run.start", ...args, accept: start!.warnings });
+  const applied = await command({
+    action: "run.start",
+    ...args,
+    accept: start!.warnings,
+  });
   assert.equal(applied.explicitResolution?.status, "applied");
   const outcome = explicitOutcome(applied)!;
   assert.match(outcome.line, /^applied/);
@@ -1642,7 +1776,11 @@ test("an uncertain-creation stall launches a coordinator that can replace its re
     "coordinator launched for uncertain-creation stall",
   );
 
-  await command({ action: "phase.set", to: "needs_attention", accept: ["live_runs"] });
+  await command({
+    action: "phase.set",
+    to: "needs_attention",
+    accept: ["live_runs"],
+  });
   if (withCoord.resolution.incident) {
     await command({
       action: "record.clear",
@@ -1760,7 +1898,8 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
 });
 
 test("late createRun acknowledgement does not overwrite a newer reviewer binding", async (t) => {
-  const { root, adapter, store, current, run, command, runtime } = await fixture(t);
+  const { root, adapter, store, current, run, command, runtime } =
+    await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
   store.update(current().id, {
     phase: "awaiting_review",
@@ -2140,7 +2279,8 @@ test("review round 2: reviewer source custody refuses dirty checkout, warns two_
 });
 
 test("review round 2: replacing checks role and preserves live_turn/unreported_result; reviewer enforces model independence", async (t) => {
-  const { root, store, current, run, command, runtime, calls } = await fixture(t);
+  const { root, store, current, run, command, runtime, calls } =
+    await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
   const liveWorker = run("live-worker-run", "revision", "worker-1");
   store.putRun({
@@ -2235,9 +2375,10 @@ test("review round 2: replacing checks role and preserves live_turn/unreported_r
     accept: ids,
   });
   assert.equal(replaced.explicitResolution?.status, "applied");
-  assert.deepEqual(calls.filter((call) => call.startsWith("stop ")), [
-    "stop rev-agent-1 turn review-turn",
-  ]);
+  assert.deepEqual(
+    calls.filter((call) => call.startsWith("stop ")),
+    ["stop rev-agent-1 turn review-turn"],
+  );
 });
 
 test("review round 2: delayed retained sendRunVia does not rotate binding back to replaced run", async (t) => {
@@ -2596,7 +2737,11 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
   assert.equal(workerAfter.branch, branch);
   assert.equal(readGitRef(workerAfter, `refs/heads/${branch}`), unpushedSha);
 
-  await command({ action: "phase.set", to: "awaiting_review", accept: ["live_runs"] });
+  await command({
+    action: "phase.set",
+    to: "awaiting_review",
+    accept: ["live_runs"],
+  });
 
   // 2. Caller-supplied head differing from forge also warns head_mismatch and never writes it to prHead.
   const mismatchProbe = await command({
@@ -2624,7 +2769,11 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
   assert.equal(mismatchRun.head, unpushedSha);
   assert.equal(readGitCheckout(worktree).head, unpushedSha);
 
-  await command({ action: "phase.set", to: "awaiting_review", accept: ["live_runs"] });
+  await command({
+    action: "phase.set",
+    to: "awaiting_review",
+    accept: ["live_runs"],
+  });
 
   // 3. Unreadable forge head returns head_mismatch; accepting starts on the checkout as it is and never records an unconfirmed prHead.
   forgeHead = "";
@@ -2654,7 +2803,11 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
   );
   forgeHead = publishedSha;
 
-  await command({ action: "phase.set", to: "awaiting_review", accept: ["live_runs"] });
+  await command({
+    action: "phase.set",
+    to: "awaiting_review",
+    accept: ["live_runs"],
+  });
 
   // 4. Missing, unbound (null) and repo-aliasing checkouts all refuse as unavailable.
   store.update(current().id, { directory: join(root, "missing-worktree") });
@@ -3251,7 +3404,11 @@ process.stdout.write(JSON.stringify(entry.body));
   assert.equal(readGitCheckout(worktree).head, unpushedSha);
   assert.equal(current().prHead, pushedSha);
 
-  await command({ action: "phase.set", to: "awaiting_review", accept: ["live_runs"] });
+  await command({
+    action: "phase.set",
+    to: "awaiting_review",
+    accept: ["live_runs"],
+  });
 
   // 4. Unreadable forge head: returns head_mismatch, accepting starts on checkout as it is without updating task.prHead.
   failForgeRead = true;
@@ -3282,7 +3439,11 @@ process.stdout.write(JSON.stringify(entry.body));
 
   // 5. Missing PR number/URL counts as unreadable forge head -> head_mismatch.
   failForgeRead = false;
-  store.update(current().id, { phase: "awaiting_review", prUrl: null, resumePrNumber: null });
+  store.update(current().id, {
+    phase: "awaiting_review",
+    prUrl: null,
+    resumePrNumber: null,
+  });
   const missingPrProbe = await command({
     action: "run.start",
     role: "reviewer",
@@ -3438,7 +3599,11 @@ async function ordinaryReviewerFixture(
     { reviewer: { login: "review-bot" } },
   );
   const engine = f.runtime.engine;
-  const report = async (run: Run, token: string, status: "ready_to_merge" | "changes_required" = "ready_to_merge") => {
+  const report = async (
+    run: Run,
+    token: string,
+    status: "ready_to_merge" | "changes_required" = "ready_to_merge",
+  ) => {
     const receipt = await engine.resolution.complete(
       {
         taskId: task.id,
@@ -3454,7 +3619,12 @@ async function ordinaryReviewerFixture(
     assert.equal(receipt.accepted, true);
     const reported = f.store.run(run.id);
     assert.ok(reported?.completion);
-    f.store.putRun({ ...reported, active: false, released: true, status: "finished" });
+    f.store.putRun({
+      ...reported,
+      active: false,
+      released: true,
+      status: "finished",
+    });
   };
   const seedReport = async (authored = false, status?: "changes_required") => {
     const run = {
@@ -3521,7 +3691,10 @@ test("run.start reviewer refuses phases owned by integration and tasks with a re
   const task = f.current();
   for (const phase of ["verifying", "merging", "syncing", "closing"] as const) {
     f.store.update(task.id, { phase });
-    await assert.rejects(f.command(freshReviewer), new RegExp(`task is ${phase}`));
+    await assert.rejects(
+      f.command(freshReviewer),
+      new RegExp(`task is ${phase}`),
+    );
   }
   f.store.update(task.id, {
     phase: "blocked",
@@ -3570,14 +3743,20 @@ test("run.start reviewer respects a dispatch hold placed by the board", async (t
     reason: "Keep scheduled dispatch paused",
   });
   assert.equal(f.current().holds.dispatch?.owner, "operator");
-  await assert.rejects(f.command(freshReviewer), /Dispatch is held by operator/);
+  await assert.rejects(
+    f.command(freshReviewer),
+    /Dispatch is held by operator/,
+  );
   assert.deepEqual(f.store.runs(f.current().id), []);
 });
 
 test("next and run.start use the same phase and incident gate", async (t) => {
   const f = await reviewStartFixture(t);
   const task = f.current();
-  const reader = { ...f.run("retained-reader", "reviewer", "reader"), head: f.initialSha };
+  const reader = {
+    ...f.run("retained-reader", "reviewer", "reader"),
+    head: f.initialSha,
+  };
   f.store.putRun(reader);
   const reviewing = {
     ...task.resolution,
@@ -3585,8 +3764,11 @@ test("next and run.start use the same phase and incident gate", async (t) => {
     reviewerAgentId: reader.agentId,
   };
   const offers = () =>
-    ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).explicitCommands?.filter(
-      (command) => command.action === "run.start" && command.args.role === "reviewer",
+    ownerTaskNext(
+      collectOwnerVerbFacts(f.store, f.current()),
+    ).explicitCommands?.filter(
+      (command) =>
+        command.action === "run.start" && command.args.role === "reviewer",
     ) ?? [];
 
   f.store.update(task.id, { resolution: reviewing });
@@ -3618,8 +3800,14 @@ test("next and run.start use the same phase and incident gate", async (t) => {
     },
   });
   assert.deepEqual(offers(), []);
-  await assert.rejects(f.command(freshReviewer), /reconciling incident review-fault/);
-  assert.deepEqual(f.store.runs(task.id).map(({ id }) => id), [reader.id]);
+  await assert.rejects(
+    f.command(freshReviewer),
+    /reconciling incident review-fault/,
+  );
+  assert.deepEqual(
+    f.store.runs(task.id).map(({ id }) => id),
+    [reader.id],
+  );
   assert.deepEqual(f.calls, []);
 });
 
@@ -3627,7 +3815,10 @@ test("run.start reviewer refuses another owner's dispatch hold and an escalated 
   const f = await reviewStartFixture(t);
   const task = f.current();
   holdDispatch(f);
-  await assert.rejects(f.command(freshReviewer), /Dispatch is held by .*scope question/);
+  await assert.rejects(
+    f.command(freshReviewer),
+    /Dispatch is held by .*scope question/,
+  );
   await f.command({
     action: "record.clear",
     kind: "hold",
@@ -3653,7 +3844,10 @@ test("run.start reviewer refuses another owner's dispatch hold and an escalated 
       },
     },
   });
-  await assert.rejects(f.command(freshReviewer), /escalated incident review-fault/);
+  await assert.rejects(
+    f.command(freshReviewer),
+    /escalated incident review-fault/,
+  );
   assert.deepEqual(f.store.runs(task.id), []);
   assert.deepEqual(f.calls, []);
 });
@@ -3662,9 +3856,21 @@ test("an open escalation still blocks a reviewer start and an ordinary verdict a
   const f = await ordinaryReviewerFixture(t);
   const task = f.current();
   f.store.update(task.id, { phase: "blocked" });
-  f.store.event(task.id, "planner_escalation", "scope: cause owner-decision; run worker");
-  f.store.event(task.id, "planner_escalation_wait", 'scope: {"kind":"decision","target":"scope"}');
-  f.store.event(task.id, "planner_escalation_wait_superseded", "scope: wait retired");
+  f.store.event(
+    task.id,
+    "planner_escalation",
+    "scope: cause owner-decision; run worker",
+  );
+  f.store.event(
+    task.id,
+    "planner_escalation_wait",
+    'scope: {"kind":"decision","target":"scope"}',
+  );
+  f.store.event(
+    task.id,
+    "planner_escalation_wait_superseded",
+    "scope: wait retired",
+  );
   await assert.rejects(f.command(freshReviewer), /planner ladder.*scope/);
   assert.equal(f.current().phase, "blocked");
   assert.deepEqual(f.store.runs(task.id), []);
@@ -3681,43 +3887,90 @@ test("an open escalation still blocks a reviewer start and an ordinary verdict a
 test("an answered escalation with a live wait still blocks the reviewer start and offer", async (t) => {
   const f = await reviewStartFixture(t);
   const task = f.current();
-  const reader = { ...f.run("uncertain-reviewer", "reviewer", null), head: f.initialSha };
+  const reader = {
+    ...f.run("uncertain-reviewer", "reviewer", null),
+    head: f.initialSha,
+  };
   f.store.putRun(reader);
   const offersStart = () =>
-    ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).explicitCommands?.some(
-      (command) => command.action === "run.start" && command.args.role === "reviewer",
+    ownerTaskNext(
+      collectOwnerVerbFacts(f.store, f.current()),
+    ).explicitCommands?.some(
+      (command) =>
+        command.action === "run.start" && command.args.role === "reviewer",
     ) ?? false;
   assert.equal(offersStart(), true);
 
   for (const kind of ["time", "decision"] as const) {
     const id = `scope-${kind}`;
-    const target = kind === "time" ? new Date(Date.now() + 60_000).toISOString() : "decision-id";
-    f.store.event(task.id, "planner_escalation", `${id}: cause owner-decision; run worker`);
+    const target =
+      kind === "time"
+        ? new Date(Date.now() + 60_000).toISOString()
+        : "decision-id";
+    f.store.event(
+      task.id,
+      "planner_escalation",
+      `${id}: cause owner-decision; run worker`,
+    );
     f.store.event(
       task.id,
       "planner_escalation_answer_pending",
       `${id}: ${JSON.stringify({ who: planner, answer: "wait", control: { kind, target } })}`,
     );
-    f.store.event(task.id, "planner_escalation_wait", `${id}: ${JSON.stringify({ kind, target })}`);
-    f.store.event(task.id, "planner_escalation_answered", `${id}: answered by planner: wait`);
-    f.store.event(task.id, "planner_escalation_applied", `${id}: waiting on ${target}`);
-    assert.equal(plannerEscalations(f.store.eventsAll(task.id)).find((item) => item.id === id)?.answered, true);
+    f.store.event(
+      task.id,
+      "planner_escalation_wait",
+      `${id}: ${JSON.stringify({ kind, target })}`,
+    );
+    f.store.event(
+      task.id,
+      "planner_escalation_answered",
+      `${id}: answered by planner: wait`,
+    );
+    f.store.event(
+      task.id,
+      "planner_escalation_applied",
+      `${id}: waiting on ${target}`,
+    );
+    assert.equal(
+      plannerEscalations(f.store.eventsAll(task.id)).find(
+        (item) => item.id === id,
+      )?.answered,
+      true,
+    );
 
     assert.equal(offersStart(), false);
-    await assert.rejects(f.command(freshReviewer), /planner ladder still owns escalation .*wait/);
+    await assert.rejects(
+      f.command(freshReviewer),
+      /planner ladder still owns escalation .*wait/,
+    );
 
     f.store.event(task.id, "planner_escalation_woke", `${id}: wait settled`);
     assert.equal(offersStart(), true);
   }
-  assert.deepEqual(f.store.runs(task.id).map(({ id }) => id), [reader.id]);
+  assert.deepEqual(
+    f.store.runs(task.id).map(({ id }) => id),
+    [reader.id],
+  );
 });
 
 test("comment publication rechecks verdict ownership after waiting for a gh process slot", async (t) => {
-  const f = await ordinaryReviewerFixture(t, undefined, { publishReview: publishReviewOnce });
+  const f = await ordinaryReviewerFixture(t, undefined, {
+    publishReview: publishReviewOnce,
+  });
   const task = f.current();
   const run = await f.seedReport();
-  f.store.patchRepository({ path: task.repoPath, origin: null }, { reviewer: null });
-  await git(task.repoPath, "remote", "set-url", "origin", "git@github.com:example/repo.git");
+  f.store.patchRepository(
+    { path: task.repoPath, origin: null },
+    { reviewer: null },
+  );
+  await git(
+    task.repoPath,
+    "remote",
+    "set-url",
+    "origin",
+    "git@github.com:example/repo.git",
+  );
 
   const bin = join(f.root, "fake-bin");
   mkdirSync(bin);
@@ -3725,18 +3978,22 @@ test("comment publication rechecks verdict ownership after waiting for a gh proc
   const releaseUser = join(f.root, "release-user");
   const posted = join(f.root, "posted");
   const gh = join(bin, "gh");
-  writeFileSync(gh, `#!/usr/bin/env node
+  writeFileSync(
+    gh,
+    `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args[0] === "pr" && args[1] === "view") {
-  console.log(${JSON.stringify(JSON.stringify({
-    state: "OPEN",
-    isDraft: false,
-    headRefName: task.branch,
-    baseRefName: task.baseBranch,
-    headRefOid: run.head,
-    url: task.prUrl,
-  }))});
+  console.log(${JSON.stringify(
+    JSON.stringify({
+      state: "OPEN",
+      isDraft: false,
+      headRefName: task.branch,
+      baseRefName: task.baseBranch,
+      headRefOid: run.head,
+      url: task.prUrl,
+    }),
+  )});
 } else if (args[0] === "api" && args[1] === "user") {
   fs.writeFileSync(${JSON.stringify(userStarted)}, "");
   const wait = setInterval(() => {
@@ -3751,27 +4008,39 @@ if (args[0] === "pr" && args[1] === "view") {
 } else {
   process.exitCode = 1;
 }
-`);
+`,
+  );
   chmodSync(gh, 0o755);
   const path = process.env.PATH ?? "";
   process.env.PATH = `${bin}:${path}`;
 
   let releaseSlots!: () => void;
-  const slotsHeld = new Promise<void>((resolve) => { releaseSlots = resolve; });
+  const slotsHeld = new Promise<void>((resolve) => {
+    releaseSlots = resolve;
+  });
   const blockers = Array.from({ length: SPAWN_CONCURRENCY - 1 }, () =>
     spawnGate.run(() => slotsHeld),
   );
-  const application = f.applyReport(run).then(() => null, (error: unknown) => error);
+  const application = f.applyReport(run).then(
+    () => null,
+    (error: unknown) => error,
+  );
   let integrationTurn: Task["resolution"]["integrationTurn"] = null;
   try {
     await waitFor(() => existsSync(userStarted), 10_000, "the gh user lookup");
     let allSlotsHeld = false;
-    blockers.push(spawnGate.run(() => {
-      allSlotsHeld = true;
-      return slotsHeld;
-    }));
+    blockers.push(
+      spawnGate.run(() => {
+        allSlotsHeld = true;
+        return slotsHeld;
+      }),
+    );
     writeFileSync(releaseUser, "");
-    await waitFor(() => allSlotsHeld && spawnGate.queued > 0, 10_000, "the queued gh POST");
+    await waitFor(
+      () => allSlotsHeld && spawnGate.queued > 0,
+      10_000,
+      "the queued gh POST",
+    );
     await f.command({ action: "turn.take" });
     integrationTurn = f.current().resolution.integrationTurn;
     assert.ok(integrationTurn);
@@ -3808,12 +4077,19 @@ test("an ordinary verdict for a stale head is refused before publication", async
   assert.equal(f.current().resolution.review, null);
 });
 
-for (const change of ["discard the verdict", "switch to the author's model"] as const) {
+for (const change of [
+  "discard the verdict",
+  "switch to the author's model",
+] as const) {
   test(`formal publication sends no POST if the reviewer can ${change} during credential lookup`, async (t) => {
     let lookupStarted!: () => void;
     let resolveCredential!: (token: string) => void;
-    const lookup = new Promise<void>((resolve) => { lookupStarted = resolve; });
-    const credential = new Promise<string>((resolve) => { resolveCredential = resolve; });
+    const lookup = new Promise<void>((resolve) => {
+      lookupStarted = resolve;
+    });
+    const credential = new Promise<string>((resolve) => {
+      resolveCredential = resolve;
+    });
     let reviewerModel = "reviewer-model";
     const posts: string[] = [];
     const policy = new ReviewPolicy({
@@ -3853,15 +4129,29 @@ for (const change of ["discard the verdict", "switch to the author's model"] as 
       agentId: "worker-1",
       profile: profile("worker-author", "author-model"),
     });
-    await git(task.repoPath, "remote", "set-url", "origin", "git@github.com:example/repo.git");
+    await git(
+      task.repoPath,
+      "remote",
+      "set-url",
+      "origin",
+      "git@github.com:example/repo.git",
+    );
     const run = await f.seedReport();
-    f.store.putRun({ ...f.store.run(run.id)!, profile: profile("rev-1", "reviewer-model") });
+    f.store.putRun({
+      ...f.store.run(run.id)!,
+      profile: profile("rev-1", "reviewer-model"),
+    });
     const publishing = f.applyReport(run);
-    const outcome = publishing.then(() => null, (error: unknown) => error);
+    const outcome = publishing.then(
+      () => null,
+      (error: unknown) => error,
+    );
     try {
       await Promise.race([
         lookup,
-        outcome.then((error) => { throw error ?? Error("No credential lookup"); }),
+        outcome.then((error) => {
+          throw error ?? Error("No credential lookup");
+        }),
       ]);
       if (change === "discard the verdict") {
         await f.command({ action: "phase.set", to: "needs_attention" });
@@ -3881,52 +4171,64 @@ for (const change of ["discard the verdict", "switch to the author's model"] as 
     const error = await outcome;
     if (change === "switch to the author's model")
       assert.match(String(error), /model is not independent/);
-    else
-      assert.equal(error, null);
+    else assert.equal(error, null);
     assert.deepEqual(posts, []);
     assert.equal(f.store.getMeta(`reviewPublication:${run.id}`), undefined);
     assert.equal(f.current().resolution.review, null);
   });
 }
 
-for (const change of ["replace reviewer", "place dispatch hold", "change publication policy", "take the integration turn"] as const) {
+for (const change of [
+  "replace reviewer",
+  "place dispatch hold",
+  "change publication policy",
+  "take the integration turn",
+] as const) {
   test(`ordinary verdict cannot commit if the caller acts to ${change} during verification`, async (t) => {
     let replacementId: string | undefined;
     let verified = false;
     let takenTurn: Task["resolution"]["integrationTurn"] = null;
-    const f = await ordinaryReviewerFixture(t, async (task, run, _completion, reviewer) => {
-      assert.equal(reviewer?.login, "review-bot");
-      verified = true;
-      switch (change) {
-        case "replace reviewer": {
-          await f.command({ action: "phase.set", to: "needs_attention" });
-          const replacement = await f.command({
-            ...freshReviewer,
-            replacing: run.id,
-            accept: ["discard_reported_verdict"],
-          });
-          assert.equal(replacement.explicitResolution?.status, "applied");
-          assert.ok(replacement.explicitResolution.warnings.some(
-            (warning) => warning.id === "discard_reported_verdict",
-          ));
-          replacementId = replacement.explicitResolution.runId!;
-          assert.ok(replacementId);
-          break;
+    const f = await ordinaryReviewerFixture(
+      t,
+      async (task, run, _completion, reviewer) => {
+        assert.equal(reviewer?.login, "review-bot");
+        verified = true;
+        switch (change) {
+          case "replace reviewer": {
+            await f.command({ action: "phase.set", to: "needs_attention" });
+            const replacement = await f.command({
+              ...freshReviewer,
+              replacing: run.id,
+              accept: ["discard_reported_verdict"],
+            });
+            assert.equal(replacement.explicitResolution?.status, "applied");
+            assert.ok(
+              replacement.explicitResolution.warnings.some(
+                (warning) => warning.id === "discard_reported_verdict",
+              ),
+            );
+            replacementId = replacement.explicitResolution.runId!;
+            assert.ok(replacementId);
+            break;
+          }
+          case "place dispatch hold":
+            holdDispatch(f);
+            break;
+          case "change publication policy":
+            f.store.patchRepository(
+              { path: task.repoPath, origin: null },
+              { reviewer: null },
+            );
+            break;
+          case "take the integration turn":
+            await f.command({ action: "turn.take" });
+            takenTurn = f.current().resolution.integrationTurn;
+            assert.ok(takenTurn);
+            break;
         }
-        case "place dispatch hold":
-          holdDispatch(f);
-          break;
-        case "change publication policy":
-          f.store.patchRepository({ path: task.repoPath, origin: null }, { reviewer: null });
-          break;
-        case "take the integration turn":
-          await f.command({ action: "turn.take" });
-          takenTurn = f.current().resolution.integrationTurn;
-          assert.ok(takenTurn);
-          break;
-      }
-      return 102;
-    });
+        return 102;
+      },
+    );
 
     const run = await f.seedReport(
       false,
@@ -3940,9 +4242,17 @@ for (const change of ["replace reviewer", "place dispatch hold", "change publica
     assert.deepEqual(f.current().resolution.integrationTurn, takenTurn);
     if (replacementId) assert.ok(f.store.run(run.id)?.replacedAt);
     assert.equal(f.store.run(run.id)?.completion?.reviewId, 101);
-    assert.ok(!f.store.eventsAll(f.current().id).some(
-      ({ kind }) => ["review_result_applied", "run_result_applied", "review_reconciled"].includes(kind),
-    ));
+    assert.ok(
+      !f.store
+        .eventsAll(f.current().id)
+        .some(({ kind }) =>
+          [
+            "review_result_applied",
+            "run_result_applied",
+            "review_reconciled",
+          ].includes(kind),
+        ),
+    );
   });
 }
 
@@ -3965,11 +4275,13 @@ test("068: run.start reviewer fresh returns a clean checkout detached at the bra
   assert.equal(await git(worktree, "rev-parse", "HEAD"), initialSha);
   assert.equal((await git(worktree, "status", "--porcelain")) ?? "", "");
   assert.ok(
-    store.eventsAll(f.current().id).some(
-      (event) =>
-        event.kind === "task_checkout_reattached" &&
-        event.detail.includes(initialSha),
-    ),
+    store
+      .eventsAll(f.current().id)
+      .some(
+        (event) =>
+          event.kind === "task_checkout_reattached" &&
+          event.detail.includes(initialSha),
+      ),
   );
 });
 
@@ -4107,8 +4419,8 @@ test("068: run.release returns the checkout its settled round left detached to t
   );
   assert.equal(await git(worktree, "rev-parse", "HEAD"), initialSha);
   assert.ok(
-    store.eventsAll(f.current().id).some(
-      (event) => event.kind === "task_checkout_reattached",
-    ),
+    store
+      .eventsAll(f.current().id)
+      .some((event) => event.kind === "task_checkout_reattached"),
   );
 });

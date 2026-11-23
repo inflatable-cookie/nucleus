@@ -12,13 +12,33 @@ import {
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm, realpath, open } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  rm,
+  realpath,
+  open,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readProcessSubset } from "../core/machine/host-process-listing";
+import {
+  readOpenFileFacts,
+  readProcessSubset,
+  type HostOpenFileRead,
+  type HostProcessListRead,
+} from "../core/machine/host-process-listing";
+/** The custody read fills open files for a subset listing; this fixture reads them the same way. */
+async function withOpenFiles(
+  read: HostProcessListRead,
+): Promise<HostOpenFileRead> {
+  if (read.state !== "listed") return read;
+  return readOpenFileFacts(read.processes);
+}
+
 import { command, git } from "../core/git/index";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
@@ -535,7 +555,7 @@ test("an opaque tool holding scratch open outside the workspace prevents a stall
   await handle.close();
   await once(child.stdout, "data");
   assert.ok(child.pid);
-  const listing = await readProcessSubset([child.pid]);
+  const listing = await withOpenFiles(await readProcessSubset([child.pid]));
   assert.equal(listing.state, "listed");
   const fact = listing.processes.find((process) => process.pid === child.pid);
   assert.ok(fact);
@@ -544,7 +564,8 @@ test("an opaque tool holding scratch open outside the workspace prevents a stall
   let incomplete = false;
   let exited = false;
   f.adapter.hostProcessListing = async () => {
-    if (incomplete) return [{ ...fact, openFiles: { paths: [], complete: false } }];
+    if (incomplete)
+      return [{ ...fact, openFiles: { paths: [], complete: false } }];
     return exited ? [] : listing.processes;
   };
   f.setObservation(
