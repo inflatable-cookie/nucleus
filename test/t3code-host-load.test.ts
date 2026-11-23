@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,10 @@ import { Engine } from "../core/engine";
 import { runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { Store } from "../core/store/store";
 import { SweepMaintenance } from "../core/scheduling/sweep-maintenance";
+import {
+  collectOwnerVerbFacts,
+  ownerTaskNext,
+} from "../core/verbs/owner-verbs";
 import { OPERATOR_BOARD_CALLER, runSchema, submissionSchema, type Task } from "../shared/contracts";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
 import {
@@ -850,3 +854,102 @@ test("a settled delete receipt confirms the removal before T3's shell streams it
   await host.deleteAgent(target);
   assert.equal(await host.reads.threadArchiveState(target), null);
 });
+
+for (const variant of ["idle", "archived", "quantum-scoped"] as const) {
+  test(`finished report_ready task completes via exact per-task read during an active pass snapshot (${variant})`, async (t) => {
+    const { host, server, liveIds, workspaceId, directory } = await fixture(t, { live: 1 });
+    const agentId = liveIds[0]!;
+    const runId = `run-report-complete-${variant}`;
+    const temporaryDirectory = await realpath(mkdtempSync(join(tmpdir(), "t3code-report-complete-")));
+    const thread = server.threads.get(agentId)!;
+    thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
+    server.controls.shellStatuses[agentId] = "completed";
+    if (variant === "archived") {
+      const archivedAt = new Date(Date.parse(STAMP) + 2_000).toISOString();
+      thread.thread.archivedAt = archivedAt;
+      thread.thread.updatedAt = archivedAt;
+      thread.updatedAt = archivedAt;
+    }
+    host.state.update((state) => {
+      delete state.workspaces[workspaceId]!.archivedAt;
+    });
+
+    const store = new Store(":memory:");
+    const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
+    adapter.findAnyOpenBranchPr = async () => [];
+    let passListingCalls = 0;
+    adapter.hostProcessListing = async () => {
+      passListingCalls++;
+      // First call simulates a primed pass snapshot with incomplete cwd coverage;
+      // the direct per-task read must bypass it and observe a clean table.
+      return passListingCalls === 1
+        ? Object.assign([], { cwdComplete: false })
+        : Object.assign([], { cwdComplete: true });
+    };
+    const engine = new Engine(store, adapter, 60_000);
+    t.after(async () => {
+      await engine.stop();
+      store.close();
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    });
+
+    const head = "b".repeat(40);
+    const inserted = store.insert(submissionSchema.parse({
+      submissionId: `report-complete-${variant}`,
+      title: "Complete a finished report_ready task during a host pass",
+      repoPath: directory,
+      planningCommit: head,
+      handoffPath: "handoff.md",
+      originAgentId: "synthetic-planner",
+    }), host.hostId, "handoff.md", head);
+    const task = store.update(inserted.id, {
+      phase: "report_ready",
+      agentId,
+      workspaceId,
+      directory,
+      runId,
+      temporaryDirectory,
+      reason: "Report delivered",
+    });
+    store.putRun(runSchema.parse({
+      id: runId, taskId: task.id, hostId: host.hostId, agentId, workspaceId,
+      temporaryDirectory, role: "revision", generation: 1, head, base: head,
+      status: "finished", released: true, createdAt: STAMP, profile: null,
+      lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null,
+    }));
+
+    const completeVerb = ownerTaskNext(
+      collectOwnerVerbFacts(store, store.task(task.id)),
+    ).verbs.find((verb) => verb.verb === "complete");
+    assert.equal(completeVerb?.available, true, completeVerb?.refusal);
+
+    // Simulate an active sweep PassSnapshot with a primed process listing and
+    // no pre-scan observation of this finished report_ready participant.
+    const snapshot = engine.resolution.beginPassSnapshot();
+    try {
+      await engine.resolution.primePassProcesses(host.hostId);
+      engine.resolution.sealPassHost(host.hostId);
+      assert.equal(passListingCalls, 1);
+
+      const runComplete = () => engine.performTaskControl({
+        taskId: task.id,
+        version: store.task(task.id).version,
+        action: "complete",
+        reason: "Accept the finished report",
+        caller: OPERATOR_BOARD_CALLER,
+      });
+      const completed = variant === "quantum-scoped"
+        ? await runInTaskQuantumScope(5_000, runComplete, snapshot)
+        : await runComplete();
+      assert.equal(completed.phase, "done");
+      assert.equal(passListingCalls, 2, "complete takes a fresh exact per-task process listing");
+      assert.deepEqual(
+        engine.resolution.takePassProofs(host.hostId),
+        [],
+        "complete does not enqueue a pass proof demand",
+      );
+    } finally {
+      engine.resolution.endPassSnapshot(snapshot);
+    }
+  });
+}

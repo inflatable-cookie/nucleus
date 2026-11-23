@@ -137,7 +137,7 @@ export class TaskCompletion {
         throw new Error("Cannot complete while the worker workspace is unknown");
       for (const [agentId, workspaceId] of participants) {
         const issue = await this.engine.resolution.participantLease.exactCustodyIssue(
-          task, agentId, workspaceId,
+          task, agentId, workspaceId, { direct: true },
         );
         ensureCurrent("participant custody check");
         if (issue !== null)

@@ -610,6 +610,7 @@ export class Resolution {
     hostId?: string | null,
     options: {
       allowMissFetch?: boolean;
+      direct?: boolean;
       participant?: { agentId: string; observation: ObservedTurnState };
     } = {},
   ): Promise<PassProcessRead> {
@@ -647,7 +648,7 @@ export class Resolution {
       const capturedAt = Date.now();
       return boundedRead(
         "host process listing",
-        () => options.participant ? runOutsideTaskQuantumScope(read) : read(),
+        () => (options.direct || options.participant ? runOutsideTaskQuantumScope(read) : read()),
         deadlineMs,
       ).then(
         (result) =>
@@ -669,7 +670,7 @@ export class Resolution {
         }),
       );
     };
-    if (snapshot) {
+    if (snapshot && !options.direct && (inQuantum || options.allowMissFetch)) {
       const scan = snapshot.processes(key, read, deadlineMs, {
         allowMissFetch: options.allowMissFetch,
         cacheOnly:
@@ -685,7 +686,7 @@ export class Resolution {
           : result,
       );
     }
-    if (inQuantum && !options.participant && !options.allowMissFetch) {
+    if (!options.direct && inQuantum && !options.participant && !options.allowMissFetch) {
       return Promise.resolve({
         state: "unknown",
         reason:

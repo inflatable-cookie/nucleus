@@ -240,6 +240,7 @@ export class ParticipantLease {
     task: Task,
     agentId: string,
     workspaceId: string,
+    options: { direct?: boolean } = {},
   ): Promise<string | null> {
     const deadline =
       this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
@@ -271,6 +272,7 @@ export class ParticipantLease {
 
     const scan = await this.resolution.readPassProcesses(task.hostId, {
       participant: { agentId, observation: state },
+      direct: options.direct,
     });
     if (scan.state === "unknown") return scan.reason;
     const complete = scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
@@ -278,19 +280,21 @@ export class ParticipantLease {
       return "the host process listing has incomplete working-directory coverage";
     if (incompleteRunProcessScan(scan))
       return "the host process listing has incomplete working-directory or open-file coverage";
-    const beforeScan =
-      scan.directBeforeScan === undefined
-        ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
-        : scan.directBeforeScan;
-    const observedAt = Date.parse(state.updatedAt ?? "");
-    if (
-      !Number.isFinite(observedAt) ||
-      observedAt > scan.capturedAt ||
-      (scan.fromPassSnapshot &&
-        (!noTurnLive(beforeScan) || beforeScan?.updatedAt !== state.updatedAt))
-    ) {
-      this.resolution.requestPassProof(task.hostId, agentId);
-      return "the process listing does not cover the participant's latest inactivity";
+    if (scan.fromPassSnapshot) {
+      const beforeScan =
+        scan.directBeforeScan === undefined
+          ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
+          : scan.directBeforeScan;
+      const observedAt = Date.parse(state.updatedAt ?? "");
+      if (
+        !Number.isFinite(observedAt) ||
+        observedAt > scan.capturedAt ||
+        !noTurnLive(beforeScan) ||
+        beforeScan?.updatedAt !== state.updatedAt
+      ) {
+        this.resolution.requestPassProof(task.hostId, agentId);
+        return "the process listing does not cover the participant's latest inactivity";
+      }
     }
 
     const runtime = participantRuntime({
