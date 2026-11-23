@@ -135,6 +135,29 @@ export const planningRead = {
   bannerBorderAlpha: 0.2,
 } as const;
 
+/**
+ * The redesigned task detail surface (nucleus#1537): step bar, budget bar,
+ * status and timeline dots, eyebrow tracking, attention tint alphas, and
+ * responsive breakpoints for the Overview's people and stats grids.
+ */
+export const taskDetail = {
+  maxWidth: 980,
+  statusDot: 8,
+  timelineDot: 9,
+  timelineLine: 1,
+  stepBarHeight: 4,
+  stepBarRadius: 2,
+  budgetBarHeight: 5,
+  tabIndicator: 2,
+  severityWidth: 34,
+  severityHeight: 18,
+  eyebrowTracking: 0.6,
+  attnAlpha: 0.08,
+  attnBorderAlpha: 0.25,
+  severityAlpha: 0.14,
+  kvLabelWidth: 160,
+} as const;
+
 /** Overlay colours that are structure, not theme roles: the modal scrim and popover shadow. */
 /**
  * Sidebar-style hover for inbox rows and menu entries (nucleus#1528): the selected

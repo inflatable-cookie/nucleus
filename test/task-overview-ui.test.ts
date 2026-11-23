@@ -14,8 +14,8 @@ import {
 } from "../shared/contracts";
 import { createTaskDetailCache } from "../core/telemetry/task-detail";
 
-// Task Overview (UI lane step 3): the wait, its owner, the next action and the owner
-// verbs that apply, with the refusal for each suggested verb that does not. The
+// Task Overview (UI lane step 3, redesigned in nucleus#1537): what is happening, who acts
+// next and the owner verbs that apply; refusals sit with the full verb list in Details. The
 // rendered tree is read through the render helper at a narrow and a wide layout.
 useNativeStubs();
 type QueueModule = typeof import("../client/queue");
@@ -283,78 +283,66 @@ function setup(readNext: (taskId: string) => Promise<unknown>) {
 async function openOverview(tree: ReturnType<typeof mountBoard>) {
   await settle(() => tree.text().includes(TITLE));
   tree.press(new RegExp(TITLE));
-  await settle(() => Boolean(tree.query(/^Wait: /)));
+  await settle(() => Boolean(tree.query(/^What is happening: /)));
 }
 
 for (const compact of [false, true]) {
   const layout = compact ? "narrow" : "wide";
-  test(`the Overview leads with the wait, its owner, the next action and the owner verbs that apply at a ${layout} layout`, async () => {
+  test(`the Overview leads with what is happening, who acts next and the owner verbs that apply at a ${layout} layout`, async () => {
     await load();
     let mounted: ReturnType<typeof mountBoard> | undefined;
     const { store, invoke } = setup(async (taskId) => waitingNext(taskId));
     try {
       mounted = mountBoard(invoke, compact);
       await openOverview(mounted);
-      // The wait line says the state, its owner and next action in one accessible label.
-      const wait = mounted.query(/^Wait: /);
-      assert.match(
-        String(wait?.props.accessibilityLabel),
-        /^Wait: .+; owner .+; next .+$/,
-        "the wait names state, owner and next action",
-      );
-      assert.match(mounted.text(), /Owner · operator/);
-      assert.match(mounted.text(), /Next · /);
-      // The stop's line keeps its category, reason and detail, and the age of the stop.
-      assert.ok(
-        mounted.query(`Stop: attention; operator_needed; ${LONG_DETAIL}`),
-        "the stop line names its category, reason and full detail",
-      );
-      // Owner verbs that apply are actions; a suggested verb that does not apply says why.
-      assert.ok(mounted.query("restart"), "the available restart is an action");
-      assert.ok(
-        mounted.text().includes("Suggested, not available now"),
-        "the refusals have a heading",
-      );
-      assert.ok(
-        mounted.query(
-          "move not available: Moving to work requires the task author",
+      // nucleus#1537: the card names the state in words and its headline; the copy comes from the stop reason.
+      await settle(() =>
+        /^What is happening: Needs you\. /.test(
+          String(
+            mounted!.query(/^What is happening: /)?.props.accessibilityLabel,
+          ),
         ),
-        "the refused move names its refusal",
       );
-      assert.ok(
-        mounted.query(
-          "route not available: No eligible worker profile is enabled",
-        ),
-        "the refused route names its refusal",
-      );
+      assert.match(mounted.text(), /Next: /);
+      // The raw stop detail moves to Details; the Overview carries the plain copy only.
       assert.equal(
-        mounted.all(/unavailable/).length,
-        0,
-        "no refused verb is offered as an action",
-      );
-      // The Overview does not repeat the full verb reference; it stays on Technical.
-      assert.equal(
-        mounted.text().includes("Owner verbs"),
+        mounted.text().includes(LONG_DETAIL),
         false,
-        "the verb reference is not on the Overview",
+        "the raw stop detail is not on the Overview",
       );
-      // The wait is not repeated on the Technical tab.
-      mounted.press("Technical");
+      // Owner verbs that apply are actions; refused ones are never offered as actions.
+      assert.ok(mounted.query("restart"), "the available restart is an action");
+      assert.equal(
+        mounted.all("move").length,
+        0,
+        "the refused move is not an action",
+      );
+      assert.equal(
+        mounted.all("route").length,
+        0,
+        "the refused route is not an action",
+      );
+      // Details keeps every owner verb with its refusal, and the raw stop detail.
+      mounted.press("Details");
       await settle(
         () =>
-          mounted!.query("Technical")?.props.accessibilityState.selected ===
-          true,
+          mounted!.query("Details")?.props.accessibilityState.selected === true,
       );
       assert.ok(
         mounted.query(
           /^move: unavailable, Moving to work requires the task author/,
         ),
-        "the full verb reference stays on Technical",
+        "the full verb reference with refusals is on Details",
       );
-      assert.equal(
-        mounted.all(/^Wait state: /).length,
-        0,
-        "the wait state is not repeated on Technical",
+      assert.ok(
+        mounted.query(
+          /^route: unavailable, No eligible worker profile is enabled/,
+        ),
+        "the refused route names its refusal on Details",
+      );
+      assert.ok(
+        mounted.text().includes(LONG_DETAIL),
+        "the raw stop detail is on Details",
       );
     } finally {
       mounted?.update(h("View", null));
@@ -370,11 +358,11 @@ test("while the owner verbs are being read, the Overview keeps the wait it alrea
   try {
     mounted = mountBoard(invoke, false);
     await openOverview(mounted);
-    // The task's stored reason stands in for the stop until the read arrives.
+    // The task's stored state stands in for the stop until the read arrives.
     assert.match(
-      String(mounted.query(/^Wait: /)?.props.accessibilityLabel),
-      /^Wait: .+; owner .+; next .+$/,
-      "the wait is still named while the verbs load",
+      String(mounted.query(/^What is happening: /)?.props.accessibilityLabel),
+      /^What is happening: .+\. .+$/,
+      "what is happening is still named while the verbs load",
     );
     assert.ok(
       mounted.query("Reading owner verbs"),
@@ -407,12 +395,14 @@ test("a failed read names the failure and retries from the same control", async 
     await openOverview(mounted);
     await settle(() => Boolean(mounted!.query("Retry reading owner verbs")));
     assert.ok(
-      mounted
-        .text()
-        .includes(
-          "Owner verbs could not be read: Queue did not answer the owner-verb read",
-        ),
+      mounted.query(
+        "Owner verbs could not be read: Queue did not answer the owner-verb read",
+      ),
       "the failed operation is named",
+    );
+    assert.ok(
+      mounted.text().includes("Queue did not answer the owner-verb read"),
+      "the failure is visible",
     );
     assert.equal(
       mounted.all("restart").length,

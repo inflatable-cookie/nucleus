@@ -1,37 +1,41 @@
-import { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { ActionButton, muted, row, type Colors } from "../controls";
+import type { Colors } from "../controls";
 import * as api from "../../shared/contracts";
-import {
-  isParkedTask,
-  taskNumberLabel,
-  type DecisionView,
-  type Task,
-  type TaskNext,
-  type UiQueueState,
+import type {
+  DecisionView,
+  TaskNext,
+  UiQueueState,
 } from "../../shared/contracts";
-import { formatSpan, taskElapsed } from "../../shared/task-detail-summary";
-import { projectName, phaseLabel, attention } from "../board/text";
-import { HoldChips, PullRequestBadge, Badge, StopBadge } from "../board/badges";
+import {
+  buildActivityTimeline,
+  taskHappeningView,
+} from "../../shared/task-detail-view";
 import { PendingQuestions } from "./summary";
+import { PopoverHost } from "../popover";
 import { TaskDetailTabs, type BoardAct, type TaskDetailTab } from "./parts";
 import type { output as ZodOutput } from "zod";
-import { OverviewNext, OverviewSummary } from "./overview";
-import { TechnicalTab } from "./technical";
-import { RunsTab } from "./runs";
-import { ActivityTab, MessagesTab } from "./activity";
+import { TaskDetailHeader } from "./task-header";
+import {
+  TaskActionsPopover,
+  TaskMenuActionPanel,
+  type TaskMenuAction,
+} from "./task-menu";
+import { OverviewTab } from "./overview";
+import { ActivityTab } from "./activity";
+import { DetailsTab } from "./details";
 import type { BoardNavigation } from "../shell/types";
 import type { TaskDrafts } from "./drafts";
-import { space, radius, type as typeScale, overlay } from "../design";
+import { overlay, radius, space, taskDetail } from "../design";
 
 /** What `queue.detail` returns for the open task. */
 export type TaskDetailRead = ZodOutput<typeof api.detail.output>;
 
 /**
- * The task detail dialog: its frame, header and tabs. Each tab owns its own form state,
- * so typing in one re-renders that tab, not the board. The board keeps the detail and
- * next reads, keyed on the selected task.
+ * The task detail dialog (nucleus#1537): header with Open thread and ⋯ menu,
+ * three tabs (Overview, Activity, Details), and responsive layout for wide
+ * detail pane, medium modal and narrow viewports.
  */
 export function TaskDialog({
   task,
@@ -71,23 +75,34 @@ export function TaskDialog({
   // Keep the selected task-detail tab local to the open dialog. Board refreshes
   // update its contents without resetting the operator's place.
   const [detailTab, setDetailTab] = useState<TaskDetailTab>("overview");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPanel, setMenuPanel] = useState<TaskMenuAction | null>(null);
+  const menuAnchor = useRef<View | null>(null);
+
   useEffect(() => {
     setDetailTab("overview");
+    setMenuOpen(false);
+    setMenuPanel(null);
   }, [task.id]);
-  const boardSummary = state?.tasks.find((item) => item.id === task.id);
-  const linkedDecisions = (decisions ?? []).filter((decision) =>
-    decision.links.tasks.includes(task.id),
-  ).length;
-  const taskParked = isParkedTask(
-    task,
-    detailQuery.data?.runs.some((run) => !run.released) ?? false,
-  );
-  // Task 538: the summary's elapsed clock runs from the first dispatch.
-  const taskElapsedMs = taskElapsed(detailQuery.data?.runs ?? []);
+
+  const runs = detailQuery.data?.runs ?? [];
   const pendingOperation = (detailQuery.data?.operations ?? []).some(
     (operation) =>
       operation.state === "pending" || operation.state === "running",
   );
+  const happening = taskHappeningView({
+    task,
+    next: nextQuery.data ?? null,
+    runs,
+    state,
+    decisions,
+  });
+  const activityTimeline = buildActivityTimeline({
+    events: detailQuery.data?.events ?? [],
+    messages: detailQuery.data?.messages ?? [],
+    taskId: task.id,
+  });
+
   const card = (
     <View
       accessibilityViewIsModal={!inline}
@@ -97,7 +112,7 @@ export function TaskDialog({
           ? { flex: 1, minHeight: 0, backgroundColor: c.surface0 }
           : {
               width: "100%",
-              maxWidth: 980,
+              maxWidth: taskDetail.maxWidth,
               maxHeight: "92%",
               alignSelf: "center",
               backgroundColor: c.surface0,
@@ -113,152 +128,65 @@ export function TaskDialog({
             }
       }
     >
-      <View
-        style={{
-          ...row,
-          flexWrap: "nowrap",
-          justifyContent: "space-between",
-          paddingHorizontal: compact ? space.md : space.lg,
-          paddingVertical: space.md,
-          borderBottomWidth: 1,
-          borderBottomColor: c.border,
-        }}
-      >
-        <View style={{ gap: space.xxs, flex: 1, minWidth: 0 }}>
-          <Text
-            accessibilityRole="header"
-            style={{
-              color: c.foreground,
-              fontSize: typeScale.page.fontSize,
-              fontWeight: "600",
-            }}
-          >
-            {task.number
-              ? `${taskNumberLabel(task, taskSpansRepositories)} · `
-              : ""}
-            {task.title}
-          </Text>
-          <View style={row}>
-            <View
-              style={{
-                paddingHorizontal: space.xs,
-                paddingVertical: space.xxs,
-                borderRadius: radius.panel,
-                backgroundColor: attention(task) ? c.surface2 : c.accent,
-              }}
-            >
-              <Text
-                style={{
-                  color: attention(task) ? c.statusWarning : c.accentForeground,
-                  fontSize: typeScale.metadata.fontSize,
-                  fontWeight: "600",
-                }}
-              >
-                {phaseLabel(task)}
-              </Text>
-            </View>
-            <HoldChips
-              task={task}
-              c={c}
-              decisionTitle={
-                task.waitState?.decisionId
-                  ? ((decisions ?? []).find(
-                      (decision) => decision.id === task.waitState?.decisionId,
-                    )?.headline ??
-                    (decisions ?? []).find(
-                      (decision) => decision.id === task.waitState?.decisionId,
-                    )?.question)
-                  : null
-              }
-            />
-            <Text
-              style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-            >
-              {projectName(task)}
-            </Text>
-            {/* Indicators the board row leaves to the detail (nucleus#1515). */}
-            {boardSummary?.holdEscalated && (
-              <Badge
-                label="Nucleus-raised"
-                tone="warning"
-                c={c}
-                a11y="Nucleus-raised: the hold is escalated to you"
-              />
-            )}
-            {boardSummary && <StopBadge task={boardSummary} c={c} />}
-            {boardSummary?.pausedStop && (
-              <Badge
-                label="Stopped while paused"
-                tone="warning"
-                c={c}
-                a11y="Stopped while Nucleus was paused; Nucleus resumes it when the queue starts"
-              />
-            )}
-            {linkedDecisions > 0 && (
-              <Badge
-                label={
-                  linkedDecisions === 1
-                    ? "Decision"
-                    : `${linkedDecisions} decisions`
-                }
-                tone="accent"
-                c={c}
-                a11y={`${linkedDecisions} open decision${linkedDecisions === 1 ? "" : "s"} linked`}
-              />
-            )}
-            {taskParked && (
-              <Badge
-                label="Parked (no slot held)"
-                tone="warning"
-                c={c}
-                a11y="Parked (no slot held)"
-              />
-            )}
-            {task.prUrl && (
-              <PullRequestBadge
-                task={task}
-                state={state?.prStates[task.id]}
-                c={c}
-              />
-            )}
-            {taskElapsedMs !== null && (
-              <Text
-                accessibilityLabel={`Elapsed ${formatSpan(taskElapsedMs)}`}
-                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-              >
-                Elapsed {formatSpan(taskElapsedMs)}
-              </Text>
-            )}
-          </View>
-        </View>
-        {!inline && (
-          <ActionButton
-            c={c}
-            action="close"
-            label="Close detail"
-            onPress={() => onClose()}
-          />
-        )}
-      </View>
+      <TaskDetailHeader
+        task={task}
+        next={nextQuery.data ?? null}
+        runs={runs}
+        state={state}
+        decisions={decisions}
+        happening={happening}
+        spansRepositories={taskSpansRepositories}
+        compact={compact}
+        inline={inline}
+        navigation={navigation}
+        onClose={onClose}
+        menuAnchor={menuAnchor}
+        menuOpen={menuOpen}
+        onToggleMenu={() => setMenuOpen((open) => !open)}
+        c={c}
+      />
+      <TaskActionsPopover
+        open={menuOpen}
+        anchor={menuAnchor}
+        onClose={() => setMenuOpen(false)}
+        onOpenPanel={(panel) => setMenuPanel(panel)}
+        task={task}
+        busy={busy}
+        pendingOperation={pendingOperation}
+        act={act}
+        navigation={navigation}
+        onCloseDialog={onClose}
+        next={nextQuery.data ?? null}
+        c={c}
+      />
       <TaskDetailTabs
         tab={detailTab}
         onSelect={setDetailTab}
-        needsAttention={attention(task)}
+        activityCount={activityTimeline.items.length}
         compact={compact}
         c={c}
       />
       <ScrollView
         style={inline ? { flex: 1, minHeight: 0 } : { flexGrow: 0 }}
         contentContainerStyle={{
-          gap: space.sm,
-          padding: compact ? space.sm : space.md,
+          gap: space.md,
+          paddingHorizontal: compact ? space.md : space.lg,
+          paddingVertical: space.md,
+          maxWidth: taskDetail.maxWidth,
+          width: "100%",
         }}
       >
-        <OverviewSummary
+        <TaskMenuActionPanel
+          key={task.id}
+          panel={menuPanel}
+          onClose={() => setMenuPanel(null)}
           task={task}
-          detailTab={detailTab}
-          nextQuery={nextQuery}
-          detailQuery={detailQuery}
+          state={state}
+          drafts={drafts}
+          busy={busy}
+          pendingOperation={pendingOperation}
+          act={act}
+          next={nextQuery.data ?? null}
           c={c}
         />
         {task && (
@@ -266,7 +194,7 @@ export function TaskDialog({
             key={`questions-${task.id}`}
             agentId={task.agentId}
             hostId={task.hostId}
-            runs={detailQuery.data?.runs ?? []}
+            runs={runs}
             c={c}
             onAnswered={async () => {
               await queryClient.refetchQueries({
@@ -284,49 +212,19 @@ export function TaskDialog({
             }}
           />
         )}
-        <OverviewNext
-          task={task}
-          detailTab={detailTab}
-          nextQuery={nextQuery}
-          state={state}
-          busy={busy}
-          pendingOperation={pendingOperation}
-          c={c}
-        />
-        {detailTab === "technical" && (
-          <TechnicalTab
-            key={task.id}
+        <View style={{ display: detailTab === "overview" ? "flex" : "none" }}>
+          <OverviewTab
             task={task}
+            happening={happening}
             detailQuery={detailQuery}
             nextQuery={nextQuery}
             state={state}
-            pendingOperation={pendingOperation}
             compact={compact}
             busy={busy}
-            act={act}
-            drafts={drafts}
-            navigation={navigation}
-            onClose={onClose}
-            c={c}
-          />
-        )}
-        {detailTab === "runs" && (
-          <RunsTab
-            key={task.id}
-            task={task}
-            detailQuery={detailQuery}
             pendingOperation={pendingOperation}
-            busy={busy}
-            act={act}
-            drafts={drafts}
-            navigation={navigation}
-            onSelectTask={onSelectTask}
             c={c}
           />
-        )}
-        {detailTab === "messages" && (
-          <MessagesTab task={task} detailQuery={detailQuery} c={c} />
-        )}
+        </View>
         {detailTab === "activity" && (
           <ActivityTab
             key={task.id}
@@ -335,6 +233,19 @@ export function TaskDialog({
             busy={busy}
             act={act}
             drafts={drafts}
+            c={c}
+          />
+        )}
+        {detailTab === "details" && (
+          <DetailsTab
+            key={task.id}
+            task={task}
+            detailQuery={detailQuery}
+            nextQuery={nextQuery}
+            state={state}
+            compact={compact}
+            navigation={navigation}
+            onSelectTask={onSelectTask}
             c={c}
           />
         )}
@@ -349,28 +260,31 @@ export function TaskDialog({
       animationType="fade"
       onRequestClose={() => onClose()}
     >
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          padding: compact ? space.sm : space.xl,
-          backgroundColor: overlay.scrim,
-        }}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close task detail"
-          onPress={() => onClose()}
+      {/* The ⋯ menu's popover layer lives inside the modal, above its backdrop. */}
+      <PopoverHost>
+        <View
           style={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            bottom: 0,
-            left: 0,
+            flex: 1,
+            justifyContent: "center",
+            padding: compact ? space.sm : space.xl,
+            backgroundColor: overlay.scrim,
           }}
-        />
-        {card}
-      </View>
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close task detail"
+            onPress={() => onClose()}
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+            }}
+          />
+          {card}
+        </View>
+      </PopoverHost>
     </Modal>
   );
 }

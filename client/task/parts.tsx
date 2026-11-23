@@ -8,7 +8,14 @@ import {
   eventDetailSummary,
   eventKindLabel,
 } from "../../shared/task-events";
-import { radius, space, type as typeScale } from "../design";
+import {
+  radius,
+  roles,
+  space,
+  taskDetail,
+  touchTarget,
+  type as typeScale,
+} from "../design";
 import { launchThinkingLevel } from "../../shared/profile-vocabulary";
 import { hostKindOf } from "../../shared/host-kind";
 import { HOST_VOCABULARIES } from "../../hosts/vocabularies";
@@ -295,33 +302,27 @@ export function EventRow({
   );
 }
 
-export type TaskDetailTab =
-  | "overview"
-  | "technical"
-  | "runs"
-  | "messages"
-  | "activity";
+export type TaskDetailTab = "overview" | "activity" | "details";
 const taskDetailTabLabels: ReadonlyArray<readonly [TaskDetailTab, string]> = [
   ["overview", "Overview"],
-  ["technical", "Technical"],
-  ["runs", "Runs & agents"],
-  ["messages", "Messages"],
   ["activity", "Activity"],
+  ["details", "Details"],
 ];
 
 export function TaskDetailTabs({
   tab,
   onSelect,
-  needsAttention,
+  activityCount = 0,
   compact,
   c,
 }: {
   tab: TaskDetailTab;
   onSelect: (tab: TaskDetailTab) => void;
-  needsAttention: boolean;
+  activityCount?: number;
   compact: boolean;
   c: Colors;
 }) {
+  const r = roles(c);
   return (
     <View
       accessibilityRole="tablist"
@@ -331,53 +332,54 @@ export function TaskDetailTabs({
         flexWrap: "wrap",
         gap: space.xs,
         borderBottomWidth: 1,
-        borderBottomColor: c.border,
-        paddingHorizontal: compact ? space.sm : space.md,
-        paddingVertical: space.xs,
+        borderBottomColor: r.border,
+        paddingHorizontal: compact ? space.md : space.lg,
       }}
     >
-      {taskDetailTabLabels.map(([value, label]) => (
-        <Pressable
-          key={value}
-          accessibilityRole="tab"
-          accessibilityLabel={label}
-          accessibilityState={{ selected: tab === value }}
-          onPress={() => onSelect(value)}
-          style={{
-            minHeight: 44,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: space.xs,
-            paddingHorizontal: space.sm,
-            paddingVertical: space.xs,
-            borderRadius: radius.control,
-            borderWidth: 1,
-            borderColor: tab === value ? c.accent : c.border,
-            backgroundColor: tab === value ? c.surface2 : c.surface1,
-          }}
-        >
-          <Text
+      {taskDetailTabLabels.map(([value, label]) => {
+        const selected = tab === value;
+        const count =
+          value === "activity" && activityCount > 0 ? activityCount : null;
+        return (
+          <Pressable
+            key={value}
+            accessibilityRole="tab"
+            accessibilityLabel={label}
+            accessibilityState={{ selected }}
+            onPress={() => onSelect(value)}
             style={{
-              color: tab === value ? c.foreground : c.foregroundMuted,
-              fontSize: typeScale.metadata.fontSize,
-              fontWeight: tab === value ? "600" : "400",
+              minHeight: touchTarget,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: space.xxs,
+              paddingHorizontal: space.sm,
+              borderBottomWidth: taskDetail.tabIndicator,
+              borderBottomColor: selected ? r.accent : "transparent",
+              marginBottom: -1,
             }}
           >
-            {label}
-          </Text>
-          {value === "overview" && needsAttention && (
             <Text
               style={{
-                color: c.statusWarning,
-                fontSize: typeScale.metadata.fontSize,
-                fontWeight: "600",
+                color: selected ? r.foreground : r.muted,
+                fontSize: typeScale.body.fontSize,
+                fontWeight: selected ? "600" : "400",
               }}
             >
-              Needs attention
+              {label}
             </Text>
-          )}
-        </Pressable>
-      ))}
+            {count !== null && (
+              <Text
+                style={{
+                  color: r.muted,
+                  fontSize: typeScale.metadata.fontSize,
+                }}
+              >
+                {count}
+              </Text>
+            )}
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
