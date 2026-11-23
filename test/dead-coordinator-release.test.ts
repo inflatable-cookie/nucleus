@@ -11,6 +11,8 @@ import { AGENT_NOT_FOUND, HostReadRefusalError } from '../core/host/errors';
 import { HostTransportFault } from '../core/host/adapter-routing';
 import { DEAD_PARTICIPANT_ATTEMPTS } from '../core/recovery/dead-participant';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
+import { COORDINATOR_UNOBSERVED_BOUND_MS } from '../core/recovery/coordinator-pass';
+import { COORDINATOR_OBSERVATION_DEFERRED_EVENT } from '../shared/task-activity';
 import { runSchema, submissionSchema, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import { taskStopVerbsFor } from '../shared/task-stop';
@@ -28,7 +30,7 @@ const worker = profile('worker', 'test/worker');
 const coordinator = profile('coordinator', 'test/coordinator');
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
-type Origin = 'absent' | 'deleted' | 'archived' | 'unreadable' | 'transport';
+type Origin = 'absent' | 'deleted' | 'archived' | 'unreadable' | 'transport' | 'decode';
 
 function fixture(initial: Origin) {
   let origin: Origin = initial;
@@ -53,7 +55,7 @@ function fixture(initial: Origin) {
   const coordinatorRun: Run = runSchema.parse({
     id: 'coord-run', taskId: submitted.id, role: 'recovery', generation: current.coordinatorGeneration, head: base, base,
     agentId: 'coord-agent', workspaceId: 'workspace', profile: coordinator, status: 'running', createdAt: minutesAgo(70),
-    lastObservedAt: minutesAgo(65), active: true, idleSince: null, completion: null, released: false,
+    lastObservedAt: minutesAgo(1), active: true, idleSince: null, completion: null, released: false,
   });
   store.putRun(coordinatorRun);
   store.setCredential(coordinatorRun.id, 'coordinator-token');
@@ -89,6 +91,7 @@ function fixture(initial: Origin) {
     observe: async (id: string) => {
       if (id === 'coord-agent') {
         if (origin === 'transport') throw new HostTransportFault('host', new Error('connection reset'));
+        if (origin === 'decode') throw new Error('Could not decode the thread projection: unexpected token');
         if (origin === 'unreadable') throw new HostReadRefusalError('host read refused: shell snapshot is stale');
         throw new Error(AGENT_NOT_FOUND);
       }
@@ -168,15 +171,43 @@ for (const origin of ['unreadable', 'archived'] as const) {
   });
 }
 
-test('a host transport fault defers the coordinator observation: no proof is read, nothing escalates', async () => {
-  const f = fixture('transport');
+for (const origin of ['transport', 'decode'] as const) {
+  test(`a ${origin} failure waits visibly for the host, then escalates at its bound while the host reads up`, async () => {
+    const f = fixture(origin);
+    try {
+      for (let pass = 0; pass < 3; pass++) await f.engine.resolution.recovery.pass(f.taskId);
+      assert.equal(f.store.run('coord-run')!.released, false);
+      assert.equal(f.current().resolution.recovery?.status, 'running');
+      assert.equal(f.events('participant_gone').length, 0);
+      assert.equal(f.events('recovery_escalated').length, 0, 'inside the bound the observation waits');
+      assert.equal(f.originReads(), 0, 'no proof is read on a host fault');
+      const deferred = f.events(COORDINATOR_OBSERVATION_DEFERRED_EVENT);
+      assert.equal(deferred.length, 1, 'the wait is recorded once, not per pass');
+      assert.equal(JSON.parse(deferred[0]!.detail).runId, 'coord-run');
+      const waiting = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).activity;
+      assert.equal(waiting?.state, 'nucleus', `${waiting?.state}: ${waiting?.detail}`);
+      assert.equal(waiting?.role, 'coordinator');
+      // The coordinator stays unobserved past the bound with its host up: it escalates.
+      const run = f.store.run('coord-run')!;
+      f.store.putRun({ ...run, lastObservedAt: new Date(Date.now() - COORDINATOR_UNOBSERVED_BOUND_MS - 60_000).toISOString() });
+      await f.engine.resolution.recovery.pass(f.taskId);
+      assert.equal(f.events('recovery_escalated').length, 1, 'the bounded wait escalates');
+      assert.equal(f.store.run('coord-run')!.released, false, 'an unproved coordinator is never released');
+      const escalated = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).activity;
+      assert.equal(escalated?.state, 'needs_person');
+    } finally { await f.close(); }
+  });
+}
+
+test('an archived coordinator thread proves nothing and escalates as before, over several passes', async () => {
+  const f = fixture('archived');
   try {
-    await f.engine.resolution.recovery.pass(f.taskId);
+    for (let pass = 0; pass < 3; pass++) await f.engine.resolution.recovery.pass(f.taskId);
     assert.equal(f.store.run('coord-run')!.released, false);
-    assert.equal(f.current().resolution.recovery?.status, 'running');
     assert.equal(f.events('participant_gone').length, 0);
-    assert.equal(f.events('recovery_escalated').length, 0, 'the next pass observes it again');
-    assert.equal(f.originReads(), 0, 'no proof is read on a host fault');
+    assert.equal(f.events(COORDINATOR_OBSERVATION_DEFERRED_EVENT).length, 0, 'a thread-gone answer is not a host fault to wait out');
+    assert.equal(f.events('recovery_escalated').length, 1);
+    assert.equal(f.current().resolution.recovery?.status, 'escalated');
   } finally { await f.close(); }
 });
 
@@ -221,5 +252,18 @@ test(`past ${DEAD_PARTICIPANT_ATTEMPTS} gone coordinators at one head the task s
     assert.match(f.current().reason, /run\.start coordinator fresh replacing=coord-run/);
     await f.engine.resolution.recovery.route(f.current());
     assert.equal(f.createdRuns.length, 0, 'no fresh coordinator past the bound');
+  } finally { await f.close(); }
+});
+
+test('while the coordinator host itself reads as down, its outage owns the wait and nothing escalates past the bound', async () => {
+  const f = fixture('transport');
+  try {
+    const run = f.store.run('coord-run')!;
+    f.store.putRun({ ...run, lastObservedAt: new Date(Date.now() - COORDINATOR_UNOBSERVED_BOUND_MS - 60_000).toISOString() });
+    f.engine.hostAvailable = () => false;
+    for (let pass = 0; pass < 3; pass++) await f.engine.resolution.recovery.pass(f.taskId);
+    assert.equal(f.events('recovery_escalated').length, 0);
+    assert.equal(f.store.run('coord-run')!.released, false);
+    assert.equal(f.current().resolution.recovery?.status, 'running');
   } finally { await f.close(); }
 });

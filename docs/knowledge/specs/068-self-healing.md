@@ -276,8 +276,12 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   is released, its episode closes (with any escalation it raised over the
   underlying fault) and its binding clears, so the stop admits a fresh
   coordinator under the coordinator cap. A failed or partial read and an
-  archived thread prove nothing, and the episode keeps its ordinary handling; a
-  host fault or transport failure defers to the next pass. Three such releases
+  archived thread prove nothing, and the episode keeps its ordinary handling.
+  Another host fault or a transport failure is a recorded wait
+  (`coordinator_observation_deferred`, read as Nucleus's move) bounded at five
+  minutes unobserved while the host reads as up (outages and downtime excluded);
+  past that the episode escalates, and a host that is down keeps its own outage
+  wait. Three such releases
   per head, as for every role; past that the task records a typed stop naming
   `run.start coordinator fresh`.
 - **A dead retained worker means a fresh worker.** The revision launch retires a

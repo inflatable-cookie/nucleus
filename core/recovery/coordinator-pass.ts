@@ -45,6 +45,12 @@ import {
 } from "./dead-participant";
 import { hostFaultHost, reportHostCallFailure } from "../host/adapter-routing";
 import { isTransportFailure } from "../../shared/transport";
+import { waitAgeMs } from "../scheduling/host-outage";
+import {
+  COORDINATOR_OBSERVATION_DEFERRED_EVENT,
+  coordinatorObservationDeferral,
+  type CoordinatorObservationDeferral,
+} from "../../shared/task-activity";
 
 /**
  * How long a recovery episode may sit pending with no run before it escalates.
@@ -64,6 +70,12 @@ export const recoveryPendingEscalation = (t: Task): string => {
   const detail = (stop?.detail ?? t.reason).slice(0, 1200);
   return `Recovery was requested for this task but started no run within ${Math.round(RECOVERY_PENDING_BOUND_MS / 60_000)} minutes: ${stop ? `stop ${stop.reason} — ${detail}` : detail}. Nothing else followed, so Nucleus asks the planner ladder which owner action continues it. The exit is ${verbs}; next lists every verb with its refusal.`;
 };
+/**
+ * How long a coordinator may go unobserved on host faults or transport failures,
+ * while its host reads as up, before the observation escalates. Outages and the
+ * service's own downtime are not counted.
+ */
+export const COORDINATOR_UNOBSERVED_BOUND_MS = 5 * 60_000;
 /** The recovery coordinator stopped without a result: its thread holds the answer, and nothing repeats its prompt. */
 export const RECOVERY_STOPPED_WITHOUT_RESULT =
   "The recovery coordinator stopped without a result. Inspect its thread; the plugin has not repeated its prompt.";
@@ -129,6 +141,34 @@ export class CoordinatorPass {
       return "bounded";
     }
     return this.episode.releaseGone(t, run, proof) ? "released" : "none";
+  }
+  /**
+   * Wait for the coordinator's host to answer, inside a bound. The wait is
+   * recorded (`coordinator_observation_deferred`), and the activity reading
+   * shows it as Nucleus's move. While the host itself reads as down its outage
+   * owns the wait; once the host is up and the coordinator has gone unobserved
+   * for `COORDINATOR_UNOBSERVED_BOUND_MS` (outages and downtime excluded), the
+   * observation stops waiting and escalates. Returns whether it waits.
+   */
+  private deferCoordinatorObservation(t: Task, run: Run, error: unknown): boolean {
+    const since = run.lastObservedAt ?? run.createdAt;
+    if (
+      this.resolution.hostAvailable(t, run) &&
+      waitAgeMs(this.store, t.hostId, since) >= COORDINATOR_UNOBSERVED_BOUND_MS
+    )
+      return false;
+    if (
+      !coordinatorObservationDeferral(this.store.eventsAll(t.id), run)
+    ) {
+      const detail: CoordinatorObservationDeferral = {
+        runId: run.id,
+        since,
+        until: new Date(Date.parse(since) + COORDINATOR_UNOBSERVED_BOUND_MS).toISOString(),
+        cause: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+      };
+      this.store.event(t.id, COORDINATOR_OBSERVATION_DEFERRED_EVENT, JSON.stringify(detail));
+    }
+    return true;
   }
   async pass(taskId?: string) {
     if (
@@ -655,20 +695,23 @@ export class CoordinatorPass {
               // participant observation pass. A host answer that the thread is
               // gone is only a reason to look; the proof (its process gone, or
               // its thread absent or removed on an exact read) is the authority.
-              if (
-                threadGoneError(error) &&
-                (await this.releaseGoneCoordinator(t, run)) !== "none"
-              )
-                continue;
-              // Any other failed host call or a transport failure fails only
-              // this observation: its host's health takes the sample and the
-              // next pass observes the coordinator again.
-              const failedHost = hostFaultHost(error);
-              if (failedHost) {
-                reportHostCallFailure(this.resolution.adapter, failedHost, error);
-                continue;
+              // Without that proof it keeps the escalation below: an archived
+              // thread proves nothing and is not a host fault to wait out.
+              if (threadGoneError(error)) {
+                if ((await this.releaseGoneCoordinator(t, run)) !== "none")
+                  continue;
+                throw error;
               }
-              if (isTransportFailure(error)) continue;
+              // Any other failed host call or a transport failure: its host's
+              // health takes the sample, and the observation waits for the next
+              // pass inside a bound, as a recorded wait.
+              const failedHost = hostFaultHost(error);
+              if (failedHost || isTransportFailure(error)) {
+                if (failedHost)
+                  reportHostCallFailure(this.resolution.adapter, failedHost, error);
+                if (this.deferCoordinatorObservation(t, run, error)) continue;
+                throw error;
+              }
               // A read the host could not answer still gets the proof; anything
               // short of it keeps the ordinary handling below.
               if (
