@@ -15,11 +15,16 @@ use wire::{GraphReply, Pull, PullState};
 
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
 const API_VERSION: &str = "2026-03-10";
-const CHECKS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
-  repository(owner:$owner,name:$repo){pullRequest(number:$number){\
-  headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision\
-  statusCheckRollup{state}\
-  }}}";
+const CHECKS_QUERY: &str = "
+  query($owner:String!,$repo:String!,$number:Int!){
+    repository(owner:$owner,name:$repo){
+      pullRequest(number:$number){
+        headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision
+        statusCheckRollup{state}
+      }
+    }
+  }
+";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ForgeError {
