@@ -192,6 +192,17 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
     };
     assert!(read.method_and_path.starts_with(&format!("GET {PR_PATH} ")));
     assert!(graph.method_and_path.starts_with("POST /graphql "));
+    let query = graph.body.as_ref().expect("GraphQL body")["query"]
+        .as_str()
+        .expect("GraphQL query");
+    let tokens =
+        query.split(|character: char| !character.is_ascii_alphanumeric() && character != '_');
+    for field in ["reviewDecision", "statusCheckRollup"] {
+        assert!(
+            tokens.clone().any(|token| token == field),
+            "separate GraphQL field {field}"
+        );
+    }
     assert!(
         merge
             .method_and_path
@@ -399,6 +410,19 @@ async fn a_graphql_rate_error_uses_the_reset_before_interpreting_partial_data() 
             Err(ForgeError::Deferred { until }) if until == UNIX_EPOCH + Duration::from_secs(2_000_000_000)));
         assert_eq!(calls.join().expect("no further calls").len(), 2);
     }
+}
+
+#[tokio::test]
+async fn a_graphql_problem_names_the_failed_read_without_copying_the_body() {
+    let target = branches().target(PR_URL).expect("target");
+    let (forge, calls) = server(vec![
+        Some(pull('a', false)),
+        Some(json!({"errors":[{"message":"synthetic-value", "type":"INVALID_QUERY"}]})),
+    ]);
+    let error = forge.observe(&target).await.expect_err("query rejected");
+    assert!(matches!(error, ForgeError::GraphQlRejected));
+    assert!(!format!("{error:?} {error}").contains("synthetic-value"));
+    assert_eq!(calls.join().expect("exact requests").len(), 2);
 }
 
 #[tokio::test]

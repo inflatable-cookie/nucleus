@@ -15,11 +15,16 @@ use wire::{GraphReply, Pull, PullState};
 
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
 const API_VERSION: &str = "2026-03-10";
-const CHECKS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
-  repository(owner:$owner,name:$repo){pullRequest(number:$number){\
-  headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision\
-  statusCheckRollup{state}\
-  }}}";
+const CHECKS_QUERY: &str = "
+  query($owner:String!,$repo:String!,$number:Int!){
+    repository(owner:$owner,name:$repo){
+      pullRequest(number:$number){
+        headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision
+        statusCheckRollup{state}
+      }
+    }
+  }
+";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ForgeError {
@@ -35,11 +40,13 @@ pub enum ForgeError {
     Credential,
     #[error("GitHub returned an incomplete or inconsistent response")]
     Incomplete,
+    #[error("GitHub rejected the GraphQL checks query")]
+    GraphQlRejected,
     #[error("GitHub response exceeded the read limit")]
     Oversize,
     #[error("GitHub deferred requests until {until:?}")]
     Deferred { until: SystemTime },
-    #[error("GitHub request failed")]
+    #[error("GitHub request failed ({kind})", kind = http_failure(.0))]
     Http(#[from] reqwest::Error),
     #[error("GitHub returned HTTP {0}")]
     Status(StatusCode),
@@ -49,6 +56,16 @@ pub enum ForgeError {
         line: usize,
         column: usize,
     },
+}
+
+fn http_failure(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connection"
+    } else {
+        "transport"
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

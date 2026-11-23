@@ -103,7 +103,7 @@ impl GraphReply {
 
     pub(crate) fn checks(self, head: &Head, base: &str) -> Result<CheckState, ForgeError> {
         if !self.errors.is_empty() {
-            return Err(ForgeError::Incomplete);
+            return Err(ForgeError::GraphQlRejected);
         }
         let data = self.data.ok_or(ForgeError::Incomplete)?;
         let data: Data = serde_json::from_value(data).map_err(|_| ForgeError::Incomplete)?;
