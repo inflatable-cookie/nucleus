@@ -26,9 +26,11 @@ import { Admission, admitAdapter } from "../core/host/admission";
 import { briefDigest } from "../core/planning/brief";
 import { parseAgentId } from "../shared/agent-identity";
 import { Engine, controlHasExternalEffect } from "../core/engine";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   completionSchema,
   holdOwnerOf,
+  OPERATOR_BOARD_CALLER,
   taskOwner,
   QUEUE_REPOSITORY_ORIGIN,
   RETAINED_WORKER_PROFILE_REASON,
@@ -8836,26 +8838,26 @@ test("an operator source acceptance at the merged head closes the stopped task o
       true,
     );
     assert.equal(f.current().phase, "blocked");
-    // The park's escalation routing settles its own writes before the owner move.
+    // The park's escalation routing settles its own writes before closeout.
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const before = f.current().version;
-    const moved = await f.engine.performTaskControl({
-      taskId: f.task.id,
-      version: before,
-      action: "move",
-      to: "closeout",
-      reason:
-        "The PR merged outside Queue; the operator accepts the merged source head as is",
-    });
+    f.adapter.merged = async () => ({ merged: true, head, commit: merged, base: "main" });
+    const moved = await resolveExplicitly(
+      f.engine,
+      {
+        taskId: f.task.id,
+        version: f.current().version,
+        action: "closeout.now",
+        caller: OPERATOR_BOARD_CALLER,
+        accept: ["unreviewed_merge"],
+        reason: "Accept the externally merged source",
+      },
+      () => "",
+    );
     assert.equal(moved.phase, "syncing");
     assert.equal(moved.resolution.mergedCommit, merged);
     assert.equal(moved.resolution.externalMerge, true);
-    enableRecovery(f);
-    await f.engine.wake();
-    await f.engine.wake();
-    assert.equal(f.run().role, "closeout");
-    await f.report("closed");
-    assert.equal(f.current().phase, "done");
+    assert.equal(moved.resolution.ownerAcceptances[0]?.authority.kind, "operator");
+    assert.equal(moved.resolution.review, null);
   } finally {
     await f.close();
   }
@@ -8928,6 +8930,7 @@ test("the automatic external-merge probe reads the forge once per window, and an
       probes++;
       return accept ? { head: "d".repeat(40), commit: merged } : null;
     };
+    f.store.update(f.task.id, { skipPRReview: true });
     const before = f.current().version;
     await f.engine.performTaskControl({
       taskId: f.task.id,
@@ -9188,8 +9191,6 @@ test("an external merge at a descendant head needs an explicit source dispositio
       return { head: planner, commit: merged };
     };
     f.idle("worker");
-    await f.engine.wake();
-    assert.equal(f.current().resolution.attention, true);
     assert.equal(f.current().resolution.mergedCommit, null);
     assert.throws(
       () =>
@@ -9226,10 +9227,8 @@ test("explicit external acceptance settles only stopped leases without inventing
     await f.engine.wake();
     const old = f.run();
     f.idle(old.agentId!);
-    f.adapter.externalMerge = async () => ({
-      head: "d".repeat(40),
-      commit: merged,
-    });
+    recordAcceptedReview(f, "reviewing");
+    f.adapter.externalMerge = async () => ({ head, commit: merged });
     const creates = f.creates.length,
       sends = f.sends.length;
     await f.engine.performTaskControl({

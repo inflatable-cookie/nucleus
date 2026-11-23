@@ -229,15 +229,6 @@ export class ExternalMerge {
       : null;
     const result = await this.adapter.externalMerge(t, true, Boolean(retained));
     if (!result) throw new Error("The task PR is not merged");
-    if (
-      !reviewEntry &&
-      !retained &&
-      this.resolution.reviewRequired(t) &&
-      !mergeReviewEvidenceAt(t, result.head)
-    )
-      throw new DurableFenceRefusal(
-        "No review evidence binds the merged head; a responsible planner or the operator board can use closeout.now with accept [\"unreviewed_merge\"]",
-      );
     const job: AcceptedExternalMergeJob = {
       reason,
       settleFences,
@@ -531,6 +522,13 @@ export class ExternalMerge {
       );
       return derived;
     }
+    if (
+      this.resolution.reviewRequired(current) &&
+      !mergeReviewEvidenceAt(current, result.head)
+    )
+      throw new DurableFenceRefusal(
+        "No review evidence binds the merged head; a responsible planner or the operator board can use closeout.now with accept [\"unreviewed_merge\"]",
+      );
     return null;
   }
 
