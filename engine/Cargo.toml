@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/nucleus-core", "crates/nucleus-store", "crates/nucleus-work"]
+members = [
+    "crates/nucleus-core",
+    "crates/nucleus-forge",
+    "crates/nucleus-store",
+    "crates/nucleus-work",
+]
 resolver = "3"
 
 [workspace.package]
