@@ -169,6 +169,12 @@ type ReviewDecision<PublicationId extends number | null = number> =
 type PublishedReviewApplication =
   | { kind: "applied" }
   | { kind: "blocked"; refusal: string };
+type ReviewVerification =
+  | {
+      kind: "published";
+      admit: () => PublishedReview | { kind: "blocked"; refusal: string };
+    }
+  | { kind: "ordinary"; reviewer: ReviewerSetting | null; id: number | void };
 type ReviewInvocation = () => VerifiedEnclosingOperation | undefined;
 
 function hasPublicationEvidence(store: Store, run: Run): boolean {
@@ -306,6 +312,7 @@ function readReviewAdmission(
     run.role !== "reviewer" ||
     !run.released ||
     run.status !== "finished" ||
+    run.replacedAt ||
     !run.completion ||
     !["ready_to_merge", "changes_required"].includes(run.completion.status) ||
     (!currentRunId &&
@@ -862,29 +869,32 @@ export class ResultApplication {
         return this.applyPublishedReview(latest, recorded, enclosing);
       return blocked(recorded.kind === "blocked" ? recorded.refusal : changed);
     }
-    return this.commitReviewerVerdict(t, run, completion, true, () => {
-      const boundary = recheck();
-      if ("refusal" in boundary) return blocked(boundary.refusal);
-      const settledId = retainReviewPublication(
-        this.store,
-        boundary.task,
-        run,
-        completion,
-        reviewer,
-        publicationId,
-      );
-      if (settledId !== publicationId)
-        throw Error("Retained review publication changed during application");
-      if (completion !== run.completion)
-        this.store.putRun({ ...this.store.run(run.id)!, completion });
-      for (const { id, resolved } of boundary.decision.settledWaits) {
-        const detail = `${id}: completed wait retired with application of the published review`;
-        this.store.event(t.id, "planner_escalation_wait_superseded", detail);
-        if (!resolved)
-          this.store.event(t.id, "planner_escalation_resolved", detail);
-        closeEscalationFollowups(this.store, t.id, id);
-      }
-      return { ...boundary.decision, publicationId };
+    return this.commitReviewerVerdict(t, run, completion, true, {
+      kind: "published",
+      admit: () => {
+        const boundary = recheck();
+        if ("refusal" in boundary) return blocked(boundary.refusal);
+        const settledId = retainReviewPublication(
+          this.store,
+          boundary.task,
+          run,
+          completion,
+          reviewer,
+          publicationId,
+        );
+        if (settledId !== publicationId)
+          throw Error("Retained review publication changed during application");
+        if (completion !== run.completion)
+          this.store.putRun({ ...this.store.run(run.id)!, completion });
+        for (const { id, resolved } of boundary.decision.settledWaits) {
+          const detail = `${id}: completed wait retired with application of the published review`;
+          this.store.event(t.id, "planner_escalation_wait_superseded", detail);
+          if (!resolved)
+            this.store.event(t.id, "planner_escalation_resolved", detail);
+          closeEscalationFollowups(this.store, t.id, id);
+        }
+        return { ...boundary.decision, publicationId };
+      },
     });
   }
 
@@ -920,11 +930,16 @@ export class ResultApplication {
     }
     const runs = this.store.runs(t.id),
       events = this.store.eventsAll(t.id);
+    const reviewerRunId =
+      t.resolution.currentRunId ??
+      runs.findLast((run) => run.role === "reviewer")?.id;
     const unappliedReview = runs.find((run) => {
       if (
+        run.id !== reviewerRunId ||
         run.role !== "reviewer" ||
         !run.released ||
         run.status !== "finished" ||
+        run.replacedAt ||
         !run.completion ||
         !["ready_to_merge", "changes_required"].includes(
           run.completion.status,
@@ -946,8 +961,6 @@ export class ResultApplication {
               later.agentId === run.agentId &&
               later.head === t.prHead,
           ) ||
-        (t.resolution.currentRunId !== null &&
-          t.resolution.currentRunId !== run.id) ||
         t.resolution.review?.runId === run.id ||
         events.some(
           (event) =>
@@ -1782,11 +1795,9 @@ export class ResultApplication {
     // checkout detached (Spec 068 §4).
     await reattachStoredTaskCheckout(this.store, t.id, run.id);
     const reviewer = this.resolution.reviewerSetting(t);
-    // Spec 033: a formal review id is its own evidence, never a comment id.
-    const publicationId = (completion: Completion) =>
-      reviewer ? completion.reviewId : completion.reviewCommentId;
+    const publicationId = reviewer ? c.reviewId : c.reviewCommentId;
     const publicationRecord = this.store.getMeta(`reviewPublication:${run.id}`);
-    if (!publicationId(c) && (reapplied ? !publicationRecord : true)) {
+    if (!publicationId && (reapplied ? !publicationRecord : true)) {
       const published = await this.publishReviewerResult(t, run, c, reviewer);
       if (!published) return false;
       c = published;
@@ -1797,39 +1808,12 @@ export class ResultApplication {
       c,
       reviewer ?? undefined,
     );
-    if (this.verdictApplied(t.id, run.id)) return false;
-    if (verifiedId && verifiedId !== publicationId(c)) {
-      c = reviewer
-        ? { ...c, reviewId: verifiedId }
-        : { ...c, reviewCommentId: verifiedId };
-      this.store.putRun({ ...this.store.run(run.id)!, completion: c });
-      this.store.event(
-        t.id,
-        "review_reconciled",
-        `${reviewer ? "PR review" : "PR comment"} ${verifiedId}`,
-      );
-    }
-    const retainedId = publicationId(c) ?? verifiedId;
-    if (retainedId) {
-      // Task 704: two reviews with this run's marker settle on the earliest; the
-      // completion carries the retained ID so the record and the run agree.
-      const settledId = retainReviewPublication(
-        this.store,
-        t,
-        run,
-        c,
-        reviewer,
-        retainedId,
-      );
-      if (settledId !== publicationId(c)) {
-        c = reviewer
-          ? { ...c, reviewId: settledId }
-          : { ...c, reviewCommentId: settledId };
-        this.store.putRun({ ...this.store.run(run.id)!, completion: c });
-      }
-    }
     if (settlementHeld(this.store, this.resolution.stopped())) return false;
-    return this.commitReviewerVerdict(t, run, c, reapplied).kind === "applied";
+    return this.commitReviewerVerdict(t, run, c, reapplied, {
+      kind: "ordinary",
+      reviewer,
+      id: verifiedId,
+    }).kind === "applied";
   }
 
   private async publishReviewerResult(
@@ -1867,7 +1851,12 @@ export class ResultApplication {
     }
     if (this.verdictApplied(t.id, run.id)) return null;
     const currentRun = this.store.run(run.id);
-    if (currentRun?.completion?.eventId !== completion.eventId) return null;
+    if (
+      currentRun?.completion?.eventId !== completion.eventId ||
+      currentRun.status === "superseded" ||
+      currentRun.replacedAt
+    )
+      return null;
     const id = typeof outcome === "number" ? outcome : outcome.id;
     const result = reviewer
       ? { ...completion, reviewId: id }
@@ -1882,15 +1871,13 @@ export class ResultApplication {
     return result;
   }
 
-  /** Commit the verdict and, for a published result, its verified evidence together. */
+  /** Commit the verdict and its verified evidence together. */
   private commitReviewerVerdict(
     t: Task,
     run: Run,
-    c: Completion,
+    completion: Completion,
     reapplied: boolean,
-    admitPublished?: () =>
-      | PublishedReview
-      | { kind: "blocked"; refusal: string },
+    verification: ReviewVerification,
   ): PublishedReviewApplication {
     return this.store.transaction(() => {
       const changed = {
@@ -1898,13 +1885,80 @@ export class ResultApplication {
         refusal: "Task changed during review verification. Read next again",
       };
       if (this.verdictApplied(t.id, run.id)) return changed;
-      const published = admitPublished?.();
-      if (published?.kind === "blocked") return published;
       const current = this.store.task(t.id);
-      if (!published && current.prHead !== t.prHead) return changed;
+      const latestRun = this.store.run(run.id);
+      const currentRunId = current.resolution.currentRunId;
+      // Replay can use the latest retained reviewer when the task was
+      // already unbound. A bound verdict keeps its original run identity.
+      if (
+        currentRunId !== t.resolution.currentRunId ||
+        (currentRunId !== run.id && !(reapplied && currentRunId === null)) ||
+        current.prHead !== t.prHead ||
+        !latestRun?.released ||
+        latestRun.status !== "finished" ||
+        latestRun.replacedAt ||
+        latestRun.taskId !== t.id ||
+        latestRun.role !== "reviewer" ||
+        latestRun.agentId !== run.agentId ||
+        latestRun.head !== run.head ||
+        latestRun.completion?.eventId !== completion.eventId ||
+        latestRun.completion.head !== completion.head ||
+        latestRun.completion.status !== completion.status
+      )
+        return changed;
+      const runs = this.store.runs(t.id);
+      if (
+        currentRunId === null &&
+        runs.findLast((candidate) => candidate.role === "reviewer")?.id !== run.id
+      )
+        return changed;
+      if (
+        reapplied &&
+        verification.kind === "ordinary" &&
+        (current.resolution.review?.runId === run.id ||
+          current.prHead !== run.head ||
+          current.phase !== t.phase ||
+          current.resolution.reviewerAgentId !== run.agentId ||
+          completion.head !== current.prHead)
+      )
+        return changed;
+      const published =
+        verification.kind === "published" ? verification.admit() : null;
+      if (published?.kind === "blocked") return published;
+
+      let c = completion;
+      if (verification.kind === "ordinary") {
+        const { reviewer, id } = verification;
+        // Spec 033: formal review and comment IDs prove different publication forms.
+        const reportedId = reviewer ? c.reviewId : c.reviewCommentId;
+        const verifiedId = id || reportedId;
+        if (verifiedId) {
+          // Task 704: keep the earliest publication carrying this run's marker.
+          const settledId = retainReviewPublication(
+            this.store,
+            current,
+            run,
+            c,
+            reviewer,
+            verifiedId,
+          );
+          if (settledId !== reportedId) {
+            c = reviewer
+              ? { ...c, reviewId: settledId }
+              : { ...c, reviewCommentId: settledId };
+            this.store.putRun({ ...latestRun, completion: c });
+          }
+          if (verifiedId !== reportedId)
+            this.store.event(
+              t.id,
+              "review_reconciled",
+              `${reviewer ? "PR review" : "PR comment"} ${verifiedId}`,
+            );
+        }
+      }
       // This verdict settles the review. Displaced runs can release, and their
       // verdict-only credentials can no longer win at this head.
-      for (const replaced of this.store.runs(t.id)) {
+      for (const replaced of runs) {
         if (
           replaced.id !== run.id &&
           replaced.replacedAt &&
@@ -1912,25 +1966,6 @@ export class ResultApplication {
           !replaced.completion
         )
           this.store.putRun({ ...replaced, released: true });
-      }
-      if (reapplied && !published) {
-        const latestRun = this.store.run(run.id);
-        if (
-          current.resolution.review?.runId === run.id ||
-          current.prHead !== run.head ||
-          current.phase !== t.phase ||
-          current.resolution.reviewerAgentId !== run.agentId ||
-          (current.resolution.currentRunId !== null &&
-            current.resolution.currentRunId !== run.id) ||
-          !latestRun?.released ||
-          latestRun.status !== "finished" ||
-          latestRun.role !== "reviewer" ||
-          latestRun.agentId !== run.agentId ||
-          latestRun.head !== run.head ||
-          latestRun.completion?.eventId !== c.eventId ||
-          latestRun.completion?.head !== current.prHead
-        )
-          return changed;
       }
       const recovery = current.resolution.recovery;
       const incident = current.resolution.incident;

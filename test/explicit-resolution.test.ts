@@ -15,6 +15,7 @@ import { mergeGate } from "../core/forge/merge";
 import { publishFormalReview } from "../core/forge/reviews";
 import { reviewPublicationBody } from "../core/forge/index";
 import { publishedReviewDecision } from "../core/intake/result-application";
+import type { ResolutionAdapter } from "../core/resolution";
 import { ordinaryReviewSource } from "../core/review/ordinary-review";
 import { git } from "../core/git/index";
 import { readGitCheckout, readGitRef } from "../core/git/git-identity";
@@ -2846,7 +2847,10 @@ async function reviewStartFixture(
   return { ...f, worktree, initialSha };
 }
 
-async function parkedReviewFixture(t: TestContext) {
+async function parkedReviewFixture(
+  t: TestContext,
+  verifyReview: ResolutionAdapter["verifyReview"] = async () => 101,
+) {
   const publications: string[] = [];
   const verifyPr = async (task: Task) => ({
     head: task.prHead,
@@ -2882,7 +2886,7 @@ async function parkedReviewFixture(t: TestContext) {
       store.setMeta(reviewPublicationKey(run.id), { hash, reviewId: 101 });
       return 101;
     },
-    verifyReview: async () => 101,
+    verifyReview,
     mergeGate: async (task: Task) => ({
       head: task.prHead,
       base: task.planningCommit,
@@ -3064,6 +3068,70 @@ test("phase.set reviewing refuses a released verdict after the PR head changed",
   assert.equal(current.resolution.integrationTurn, null);
   assert.deepEqual(f.publications, []);
   assert.match(current.resolution.stop?.detail ?? "", /exact verdict head/);
+});
+
+test("replacing a reviewer while its verdict is being verified discards that verdict", async (t) => {
+  let started!: (runId: string) => void;
+  let resume!: () => void;
+  const verifying = new Promise<string>((resolve) => {
+    started = resolve;
+  });
+  const paused = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const f = await parkedReviewFixture(t, async (_task, run) => {
+    started(run.id);
+    await paused;
+    return 102;
+  });
+  const run = await reportOnParkedTask(f);
+  await f.command({ action: "phase.set", to: "reviewing" });
+  const engine = f.runtime.engine;
+  const verification = engine.withHost(host, () =>
+    engine.resolution.advanceCompletedRun(f.current(), f.store.run(run.id)!),
+  );
+  let replacementId: string | undefined;
+  try {
+    const verifyingRun = await Promise.race([
+      verifying,
+      verification.then(() =>
+        assert.fail(`Verdict verification did not start: ${f.current().reason}`),
+      ),
+    ]);
+    assert.equal(verifyingRun, run.id);
+    const replacement = await f.command({
+      action: "run.start",
+      role: "reviewer",
+      agent: "fresh",
+      replacing: run.id,
+      accept: ["discard_reported_verdict"],
+    });
+    assert.equal(replacement.explicitResolution?.status, "applied");
+    assert.deepEqual(
+      replacement.explicitResolution?.warnings.map((warning) => warning.id),
+      ["discard_reported_verdict"],
+    );
+    replacementId = replacement.explicitResolution?.runId;
+    assert.ok(replacementId);
+  } finally {
+    resume();
+    await verification;
+  }
+
+  const current = f.current();
+  assert.equal(current.resolution.currentRunId, replacementId);
+  assert.equal(current.resolution.review, null);
+  assert.equal(current.resolution.integrationTurn, null);
+  assert.equal(current.phase, "reviewing");
+  assert.ok(f.store.run(run.id)?.replacedAt);
+  assert.equal(f.store.run(run.id)?.completion?.reviewId, 101);
+  assert.ok(
+    !f.store
+      .eventsAll(current.id)
+      .some((event) =>
+        ["review_result_applied", "run_result_applied", "review_reconciled"].includes(event.kind),
+      ),
+  );
 });
 
 test("068: run.start reviewer fresh returns a clean checkout detached at the branch tip to its branch", async (t) => {

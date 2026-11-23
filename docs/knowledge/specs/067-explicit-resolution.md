@@ -110,6 +110,11 @@ an unpublished verdict after `phase.set to=reviewing`. The verdict must match
 the canonical PR's current head, and independent stops, holds and recovery
 ownership still apply.
 
+Accepting `discard_reported_verdict` records the displaced reviewer's replacement
+when the new run is reserved. Verdict application rechecks that binding and
+replacement in its own transaction, so an in-flight verification cannot apply
+the discarded verdict.
+
 **Hard gates** (never accepted as warnings):
 
 - `merge.now` and `closeout.now` need an applied review verdict at that head or
