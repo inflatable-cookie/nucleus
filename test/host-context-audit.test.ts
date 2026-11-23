@@ -10,7 +10,14 @@
  */
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { QueueRuntime } from "../service/runtime-owner";
@@ -26,15 +33,21 @@ const WORKSPACE = "t3-ws-1";
 type Calls = {
   stopped: string[];
   sent: { agentId: string; messageId: string }[];
-  purged: { taskId: string; runIds: string[] }[];
   branchPrReads: string[];
+  /** The worker thread's observed status; a closed thread is due its branch-PR lookup. */
+  status: "running" | "closed";
 };
 
 async function fixture(t: TestContext) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "host-context-audit-")));
   const repoPath = join(root, "repo");
   mkdirSync(repoPath, { recursive: true });
-  const calls: Calls = { stopped: [], sent: [], purged: [], branchPrReads: [] };
+  const calls: Calls = {
+    stopped: [],
+    sent: [],
+    branchPrReads: [],
+    status: "running",
+  };
   const t3 = {
     hostId: T3,
     isConnected: () => true,
@@ -57,8 +70,8 @@ async function fixture(t: TestContext) {
     observe: async (id: string) => ({
       id,
       workspaceId: WORKSPACE,
-      status: "running",
-      active: true,
+      status: calls.status,
+      active: calls.status === "running",
       permissions: false,
       error: "",
     }),
@@ -83,9 +96,6 @@ async function fixture(t: TestContext) {
       calls.branchPrReads.push(task.id);
       return [];
     },
-    purgeReportingFiles: (taskId: string, runIds: string[]) => {
-      calls.purged.push({ taskId, runIds });
-    },
   } as unknown as Adapter;
   const runtime = new QueueRuntime({
     dataDir: join(root, "data"),
@@ -107,7 +117,7 @@ async function fixture(t: TestContext) {
   const unboundReads: string[] = [];
   runtime.engine.unboundPortRead = (port) => unboundReads.push(port);
   let seq = 0;
-  const insertTask = (changes: Partial<Task>): Task => {
+  const insertTask = (changes: Partial<Task>, hostId = T3): Task => {
     const task = runtime.store.insert(
       submissionSchema.parse({
         submissionId: `audit-${++seq}`,
@@ -117,13 +127,19 @@ async function fixture(t: TestContext) {
         handoffPath: "brief.md",
         originAgentId: formatAgentId(T3, "planner"),
       }),
-      T3,
+      hostId,
       "Brief",
       HEAD,
     );
     return runtime.store.update(task.id, changes);
   };
-  return { runtime, calls, insertTask, unboundReads };
+  return {
+    runtime,
+    calls,
+    insertTask,
+    unboundReads,
+    dataDir: join(root, "data"),
+  };
 }
 
 const liveWorker: Partial<Task> = {
@@ -154,35 +170,70 @@ test("stop active threads cancels a live T3 turn on its own host", async (t) => 
   assert.deepEqual(f.unboundReads, []);
 });
 
-test("bulk disposition is accepted on a service with only a T3 host", async (t) => {
+test("stop active threads names a task whose host cannot be reached and marks nothing", async (t) => {
+  const f = await fixture(t);
+  f.runtime.store.setMeta("paused", true);
+  const away = f.insertTask({ ...liveWorker, agentId: "bb-worker" }, "bb:away");
+  const live = f.insertTask(liveWorker);
+
+  await assert.rejects(
+    () => f.runtime.stopThreads({ caller: "operator (test)" }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("bb:away") &&
+      error.message.includes(away.id),
+  );
+  assert.equal(f.runtime.store.task(away.id).pausedStop ?? null, null);
+  assert.deepEqual(f.calls.stopped, [AGENT], "the reachable host's turn stops");
+  assert.ok(f.runtime.store.task(live.id).pausedStop, "and is marked");
+});
+
+test("bulk disposition cancels a T3 task in line on a service with only a T3 host", async (t) => {
   const f = await fixture(t);
   f.runtime.store.setMeta("paused", true);
   const task = f.insertTask({});
 
-  const result = await f.runtime.bulkDisposition({
+  await f.runtime.bulkDisposition({
     operationId: "bulk-audit-1",
     tasks: [{ taskId: task.id, version: task.version }],
     action: "cancel",
     reason: "host context audit",
   });
+  // The batch runs on its own lane; no sweep is needed to finish it.
+  const deadline = Date.now() + 10_000;
+  let batch = f.runtime.engine.bulkDispositionDetail("bulk-audit-1");
+  while (
+    ["pending", "running"].includes(batch.status) &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    batch = f.runtime.engine.bulkDispositionDetail("bulk-audit-1");
+  }
 
-  assert.ok(result, "the control is not refused for a missing Paseo daemon");
+  assert.equal(batch.status, "complete", JSON.stringify(batch.items));
+  assert.deepEqual(
+    batch.items.map((item) => [item.status, item.error]),
+    [["complete", ""]],
+  );
+  assert.equal(f.runtime.store.task(task.id).phase, "cancelled");
 });
 
 test("the audit pass reconciles a callback-free T3 worker's branch PR", async (t) => {
   const f = await fixture(t);
   f.runtime.store.setMeta("paused", false);
   const task = f.insertTask(liveWorker);
-  const reconciled: string[] = [];
+  // The worker's thread closed without the callback that would record its PR.
+  f.calls.status = "closed";
   // Only the branch-PR step reconciles here: the task window's quanta are held.
   f.runtime.engine.scheduleTaskQuantum = async () => {};
-  f.runtime.engine.reconcile = async (current: Task) => {
-    reconciled.push(current.id);
-  };
 
   await f.runtime.engine.auditPass(false);
 
-  assert.deepEqual(reconciled, [task.id], "the step reached the T3 task");
+  assert.deepEqual(
+    f.calls.branchPrReads,
+    [task.id],
+    "the step reached the T3 task and looked up its branch PR on the T3 adapter",
+  );
   // The whole pass reads no host port outside a host context.
   assert.deepEqual(f.unboundReads, []);
 });
@@ -224,25 +275,45 @@ test("a pending brief amendment is delivered to a T3 worker by the ordinary pass
   assert.deepEqual(f.unboundReads, []);
 });
 
-test("retention purges a T3 task's reporting files through its own host", async (t) => {
+test("retention removes the run tickets of finished tasks on T3 and on a host that is gone", async (t) => {
   const f = await fixture(t);
   f.runtime.store.setMeta("paused", false);
-  const task = f.insertTask({ phase: "done", workspaceId: null });
-  // An ordinary done task past retention, with its row still present.
   const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
-  f.runtime.store.db
-    .prepare("UPDATE tasks SET data=json_set(data,'$.finishedAt',?) WHERE id=?")
-    .run(old, task.id);
+  const finished = (hostId: string, runId: string) => {
+    const task = f.insertTask(
+      { phase: "done", workspaceId: null, runId },
+      hostId,
+    );
+    // An ordinary done task past retention, with its row still present.
+    f.runtime.store.db
+      .prepare(
+        "UPDATE tasks SET data=json_set(data,'$.finishedAt',?) WHERE id=?",
+      )
+      .run(old, task.id);
+    return task;
+  };
+  const onT3 = finished(T3, "run-t3");
+  const gone = finished("bb:retired", "run-gone");
+  // Every host's run tickets live in the service's own data directory.
+  const tickets = join(f.dataDir, "tickets");
+  mkdirSync(tickets, { recursive: true });
+  const ticket = (name: string, taskId: string) => {
+    writeFileSync(join(tickets, name), JSON.stringify({ taskId }));
+    return join(tickets, name);
+  };
+  const t3Ticket = ticket("run-t3.json", onT3.id);
+  const goneTicket = ticket("run-gone.json", gone.id);
+  // A ticket under one of these run ids that another task now holds is kept.
+  const reassigned = ticket("other-run.json", "another-task");
   f.runtime.store.setMeta("lastRetentionAt", 0);
   f.runtime.engine.scheduleTaskQuantum = async () => {};
 
   await f.runtime.engine.auditPass(false);
 
-  assert.throws(() => f.runtime.store.task(task.id), /purged/);
-  assert.deepEqual(
-    f.calls.purged.map((entry) => entry.taskId),
-    [task.id],
-    "the T3 adapter purged the task's reporting files",
-  );
+  assert.throws(() => f.runtime.store.task(onT3.id), /purged/);
+  assert.throws(() => f.runtime.store.task(gone.id), /purged/);
+  assert.equal(existsSync(t3Ticket), false, "the T3 task's ticket is removed");
+  assert.equal(existsSync(goneTicket), false, "and so is the gone host's");
+  assert.equal(existsSync(reassigned), true);
   assert.deepEqual(f.unboundReads, []);
 });

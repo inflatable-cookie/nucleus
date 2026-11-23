@@ -266,8 +266,12 @@ and retention. Outside a context the routed adapter is the unbound fallback,
 which has no forge or agent ports, and host availability answers only for the
 legacy Paseo primary, so a port or availability read made there skips every task
 on T3 or BB without a word. Such a step reads both inside the task's own host
-context (`withHost(task.hostId, …)` or `onTaskHost`), and an operator control is
-gated on any connected host, not the Paseo connection (2026-11-23 audit). In
+context (`withHost(task.hostId, …)` or `onTaskHost`): a bulk disposition runs
+each item on its task's host, and stop active threads names any task whose host
+it cannot reach as a failure, marking nothing for it. An operator control is
+gated on any connected host, not the Paseo connection. Run tickets live in the
+service's data directory for every host, so retention removes them without a
+host connection (2026-11-23 audit). In
 tests, `Engine.unboundPortRead` reports each port a registered host serves that
 was read with no host context; production leaves it unset.
 

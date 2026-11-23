@@ -427,10 +427,11 @@ export class Dispositions {
         let task: Task;
         try {
           const current = this.store.task(item.taskId);
-          task = await requestDisposition(
-            this.store,
-            this.engine.dispositionDeps(),
-            {
+          // The bulk lane has no host context: each item runs on its task's own
+          // host, as a single disposition does on its `task:` lane, or the host
+          // reads its drain makes answer only for the legacy primary.
+          const request = () =>
+            requestDisposition(this.store, this.engine.dispositionDeps(), {
               taskId: current.id,
               version: current.version,
               action: batch.action,
@@ -438,8 +439,11 @@ export class Dispositions {
               replacementTaskId: batch.replacementTaskId ?? undefined,
               workDisposition: batch.workDisposition,
               requestedBy: `bulk ${operationId}: ${batch.requestedBy}`,
-            },
-          );
+            });
+          task =
+            typeof this.engine.onTaskHost === "function"
+              ? await this.engine.onTaskHost(current, request)
+              : await request();
         } catch (error) {
           const current = this.store.task(item.taskId);
           const message =
