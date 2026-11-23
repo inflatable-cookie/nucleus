@@ -217,6 +217,9 @@ export const taskDecisionFactSchema = z
       "external_merge_recovered",
       "check_deadline",
       "review_effect_wait",
+      // Spec 068 §6: a send's custody proof read a participant the pass had not
+      // captured; the next host pass serves it first, and the send waits for it.
+      "pass_proof",
       "hook_hold",
       "pr_head_changed",
       "pr_identity",

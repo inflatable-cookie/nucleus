@@ -53,6 +53,7 @@ import { isTransportFailure } from "../../../shared/transport";
 import { HostTransportFault } from "../../host/adapter-routing";
 import {
   HostReadRefusalError,
+  PassProofPendingError,
   isHostOperationTimeout,
 } from "../../host/errors";
 import { threadRunningReason } from "../../intake/thread-waits";
@@ -632,10 +633,17 @@ export class RunLaunchDeliver {
         );
         return;
       }
-      // A host that has not settled its model options has not refused this run:
-      // nothing crossed the send boundary, so the run is released and the task
-      // waits for the next pass to read a settled snapshot (nucleus#1375).
-      if (error instanceof HostSnapshotPendingError) {
+      // A host that has not settled its model options, or a custody proof the
+      // pass has not read yet, has not refused this run: nothing crossed the send
+      // boundary, so the run is released and the task waits for the next pass
+      // (nucleus#1375). The unread proof already asked that pass to serve its
+      // participants first (Spec 068 §6), so the send converges there. The
+      // proof runs only before a send, in the guard or ahead of it.
+      if (
+        error instanceof HostSnapshotPendingError ||
+        error instanceof PassProofPendingError
+      ) {
+        const pendingProof = error instanceof PassProofPendingError;
         this.store.transaction(() => {
           const latestRun = this.store.run(run.id);
           if (latestRun && !latestRun.released)
@@ -652,14 +660,19 @@ export class RunLaunchDeliver {
               latest,
               { currentRunId: null, attention: false },
               { phase: role === "reviewer" ? "reviewing" : latest.phase },
-              "review_waiting_on_host_snapshot",
-              error.detail,
+              pendingProof
+                ? "review_waiting_on_pass_proof"
+                : "review_waiting_on_host_snapshot",
+              pendingProof ? error.message : error.detail,
             );
         });
         this.resolution.waiting(
           this.store.task(t.id),
-          `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
+          pendingProof
+            ? error.message
+            : `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
           "lifecycle",
+          pendingProof ? { fact: { code: "pass_proof" } } : undefined,
         );
         return;
       }

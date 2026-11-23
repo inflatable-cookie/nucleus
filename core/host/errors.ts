@@ -33,6 +33,18 @@ export class HostReadRefusalError extends Error {
   }
 }
 /**
+ * Spec 068 §6: an owned-tool proof that read a participant's page or process
+ * snapshot the current pass has not captured. The read already asked the next
+ * host pass to serve that participant first, so the caller waits and retries
+ * through the bounded host-read wait; unknown is never a refusal or a stop.
+ */
+export class PassProofPendingError extends HostReadRefusalError {
+  constructor(readonly subject: string, readonly reason: string) {
+    super(`${subject} waits for the next host pass: ${reason}`);
+    this.name = "PassProofPendingError";
+  }
+}
+/**
  * Spec 068 §3: a creation lookup the host refuses because one of the run's own
  * create commands may still return a late reply. It is not an unreadable host:
  * the create's own answer decides, so nothing may start another thread for the

@@ -3270,3 +3270,76 @@ test("a reviewer that reported while its turn still runs is stopped once and its
     await f.close();
   }
 });
+
+test("an ordinary reviewer whose participant page the wake did not capture waits for the next pass instead of stopping, then sends", async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    await f.report(f.current(), "changes_required");
+    await f.engine.wake();
+    const revision = f.current();
+    assert.equal(revision.role, "revision");
+    const head = f.pushRevision("revision 1");
+    f.idle(revision);
+    // T3 stamps every observation; the freshness rule needs it.
+    const stamp = new Date(Date.now() - 60_000).toISOString();
+    for (const [id, state] of f.states)
+      f.states.set(id, { ...state, updatedAt: stamp });
+    // The callback's own wake admits the reviewer outside any sweep pass. Its
+    // host-side prefetch runs out of budget before it reaches the retained
+    // participants (a slow host), so the custody proof inside the quantum reads
+    // a page that was never captured: unknown, never a refusal.
+    const resolution = f.engine.resolution as { hostPassWarmBudgetMs: number };
+    const warmBudget = resolution.hostPassWarmBudgetMs;
+    resolution.hostPassWarmBudgetMs = 0;
+    const result = await new Reports(f.engine).report(
+      {
+        taskId: f.task.id,
+        runId: revision.id,
+        eventId: randomUUID(),
+        status: "ready_for_review",
+        summary: "Fixed revision 1",
+        prNumber: 41,
+        head,
+      },
+      f.tokens.get(revision.id)!,
+    );
+    assert.equal((result as { accepted: boolean }).accepted, true);
+    await f.engine.quiesce();
+    resolution.hostPassWarmBudgetMs = warmBudget;
+    const waiting = f.store.task(f.task.id);
+    assert.equal(f.sends.length, 0, "nothing is sent on an unread proof");
+    assert.notEqual(
+      waiting.phase,
+      "needs_attention",
+      `an unread proof waits for the next pass (reason: ${waiting.reason})`,
+    );
+    assert.equal(waiting.resolution.stop?.reason ?? null, "lifecycle");
+    assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
+    assert.match(waiting.reason, /waits for the next host pass: agent timeline page was not captured/);
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .filter((event) => event.kind === "review_waiting_on_pass_proof").length,
+      1,
+      "the wait is retried by the next pass, not by an immediate follow-up reading the same miss",
+    );
+    assert.ok(
+      !f.store
+        .eventsAll(f.task.id)
+        .some((event) => event.kind === "ordinary_review_refused_before_send"),
+      "no pre-send refusal is recorded",
+    );
+    assert.equal(waiting.resolution.recovery ?? null, null, "no coordinator is summoned");
+
+    // The next host pass serves the demanded participants and the reviewer is sent.
+    await f.engine.wake();
+    await f.engine.wake();
+    const sent = f.store.task(f.task.id);
+    assert.equal(f.sends.length, 1, `the reviewer is sent (reason: ${sent.reason})`);
+    assert.equal(f.sends[0]!.ordinaryDetached, true);
+    assert.equal(f.sends[0]!.head, head);
+  } finally {
+    await f.close();
+  }
+});

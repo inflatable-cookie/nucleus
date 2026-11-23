@@ -243,6 +243,13 @@ the warm cap but inside the pass budget. A demand that no quantum renews expires
 after one pass. The proof converges in two passes, and a snapshot taken before
 any inactivity proof still never clears a lease.
 
+A caller treats that unknown proof as a wait, never as a refusal. An ordinary
+review send that hits it releases its unsent run and waits with a `pass_proof`
+fact; the next host pass retries it, not an immediate follow-up that would read
+the same miss. A planner's owned-tool `retry_effect` or `move to=review` waits
+through the bounded host-read retry. Stopping the task there would summon a
+coordinator whose own action hits the same miss.
+
 Reusing a previous pass's snapshot was rejected: it would carry reads across
 passes, and that snapshot predates the participant's observation too.
 
