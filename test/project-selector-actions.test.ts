@@ -449,8 +449,8 @@ test("1432 rendered: a rename that re-sorts the row keeps its key, the selection
     .all(/^Project (zz board|project-a-accelerator),/)
     .map((node) => node.props.accessibilityLabel);
   assert.deepEqual(order, [
-    "Project project-a-accelerator, 0 tasks",
-    "Project zz board, 0 tasks",
+    "Project project-a-accelerator, 0 active, 0 in total",
+    "Project zz board, 0 active, 0 in total",
   ]);
   assert.equal(
     ui.get(/^Project zz board/).props.accessibilityState.checked,

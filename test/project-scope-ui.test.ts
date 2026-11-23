@@ -928,7 +928,7 @@ test("1544 rendered: the picker shows active / total counts, sorts by total and 
     assert.match(ui.text(), /0 \/ 1/);
     if (!compact) {
       ui.press("Project actions for other");
-      ui.press("Rename");
+      ui.press("Rename other");
       assert.ok(ui.get("Name for other"));
       assert.match(ui.text(), /2 \/ 4/, "Rename keeps the active / total count");
     }

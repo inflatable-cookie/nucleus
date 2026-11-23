@@ -184,8 +184,8 @@ test("026-14b the selector lists every project with filter, primary repository, 
     ]),
     [
       ["consumer-b-v2", "owner/consumer", 1, 0, 1, false],
-      ["other", "owner/other", 0, 0, 0, false],
       ["project-a-accelerator", "owner/project-a", 0, 1, 1, true],
+      ["other", "owner/other", 0, 0, 0, false],
     ],
   );
   assert.deepEqual(
@@ -267,10 +267,11 @@ test("1426 selector totals include every live phase and hidden queued tasks acro
     ],
   );
   assert.deepEqual(
-    rows.map(({ key, tasks: count, leads: leadCount }) => [
+    rows.map(({ key, tasks: count, leads: leadCount, total }) => [
       key,
       count,
       leadCount,
+      total,
     ]),
     [
       ["multi", 8, 2, 10],
