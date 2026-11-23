@@ -66,6 +66,7 @@ export interface HostInitLockRule {
 
 export type WorkspaceCreationState =
   | { kind: "found_done"; directory: string }
+  | { kind: "registered_incomplete"; directory: string; workspaceId: string }
   | { kind: "proof_head_mismatch"; directory: string; head: string }
   | { kind: "absent" }
   | { kind: "still_running"; evidence: string }

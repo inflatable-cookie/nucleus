@@ -864,6 +864,14 @@ named and nothing sent, and the task's own recorded registration at the folder i
 reused instead of a duplicate. An unreadable inventory is not proof of a
 duplicate, so ordinary creation is unchanged rather than blocked on a guess.
 
+For T3 task checkout creation, a single registration at the task's deterministic
+path under the configured local workspace root can be adopted if no other task
+or retained run binds the registration. The registry and task store must both
+be readable. Nucleus verifies the repository and branch, fills an empty or
+partially populated checkout without overwriting existing work, and records
+`workspace_registration_adopted` with the binding. This also applies when
+recovering an interrupted creation or applying `retry_effect workspace_creation`.
+
 Nothing here merges, reparents, hides or deletes another owner's registration:
 without a registration-only display route in Paseo that stays a product boundary
 to report, never a deletion to perform. The remaining consumer-side cleanup (the

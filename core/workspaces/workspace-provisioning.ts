@@ -23,9 +23,12 @@ import {
   canonicalLinkRoot,
   provisionWorktreeLinks,
   worktreeLinksDue,
-  worktreeLinksForBinding,
   worktreeLinksSummary,
 } from "./worktree-links";
+import {
+  bindWorkspaceRegistration,
+  type WorkspaceRegistration,
+} from "./workspace-registration";
 import {
   retainNodeModules,
   workspaceCreationRefusal,
@@ -483,56 +486,39 @@ export class WorkspaceProvisioning {
       );
       return true;
     }
-    if (found.length === 1) {
-      this.store.update(
-        task.id,
-        {
-          workspaceId: found[0]!.id,
-          directory: found[0]!.directory,
-          phase: "dispatching",
-          ...worktreeLinksForBinding(this.store.task(task.id), {
-            workspaceId: found[0]!.id,
-            directory: found[0]!.directory,
-          }),
-        },
-        "workspace_recovered",
-        found[0]!.id,
-      );
-      if (!startsNoRuns(this.store, this.engine.stopped)) {
-        await this.engine.launchAgent(this.store.task(task.id));
-      }
-      return true;
-    }
-    const classified = this.adapter.inspectWorkspaceCreation
-      ? await this.adapter.inspectWorkspaceCreation(task)
-      : null;
-    if (classified?.kind === "found_done") {
+    let workspace: WorkspaceRegistration | undefined = found[0];
+    if (!workspace) {
+      const classified = await this.adapter.inspectWorkspaceCreation?.(task);
+      if (
+        classified?.kind !== "found_done" &&
+        classified?.kind !== "registered_incomplete"
+      )
+        return false;
       if (startsNoRuns(this.store, this.engine.stopped)) return true;
-      const workspace = await this.adapter.createWorkspace(task);
-      this.store.update(
-        task.id,
-        {
-          workspaceId: workspace.id,
-          directory: workspace.directory,
-          phase: "dispatching",
-          ...worktreeLinksForBinding(this.store.task(task.id), {
-            workspaceId: workspace.id,
-            directory: workspace.directory,
-          }),
-        },
-        "workspace_recovered",
-        workspace.id,
-      );
-      if (!startsNoRuns(this.store, this.engine.stopped)) {
-        await this.engine.launchAgent(this.store.task(task.id));
-      }
-      return true;
+      const populated =
+        classified.kind === "registered_incomplete"
+          ? await this.adapter.populateTaskWorktree?.(task)
+          : undefined;
+      if (startsNoRuns(this.store, this.engine.stopped)) return true;
+      workspace = await this.adapter.createWorkspace(task, {
+        freshlyPopulated: populated?.populated,
+      });
     }
-    return false;
+    const bound = bindWorkspaceRegistration(
+      this.store,
+      task.id,
+      workspace,
+      "workspace_recovered",
+      { phase: "dispatching" },
+    );
+    if (!startsNoRuns(this.store, this.engine.stopped)) {
+      await this.engine.launchAgent(bound);
+    }
+    return true;
   }
 
   private async recoverProofOnlyWorkspace(task: Task): Promise<void> {
-    let workspace =
+    let workspace: WorkspaceRegistration | null =
       task.workspaceId && task.directory
         ? { id: task.workspaceId, directory: task.directory }
         : null;
@@ -584,20 +570,12 @@ export class WorkspaceProvisioning {
           this.store.task(task.id),
         );
       }
-      const current = this.store.task(task.id);
-      this.store.update(
+      bindWorkspaceRegistration(
+        this.store,
         task.id,
-        {
-          workspaceId: workspace.id,
-          directory: workspace.directory,
-          phase: "dispatching",
-          ...worktreeLinksForBinding(current, {
-            workspaceId: workspace.id,
-            directory: workspace.directory,
-          }),
-        },
+        workspace,
         "workspace_recovered",
-        workspace.id,
+        { phase: "dispatching" },
       );
     }
     if (task.proofOnly && workspace) {

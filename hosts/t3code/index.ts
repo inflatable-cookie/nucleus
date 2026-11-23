@@ -227,7 +227,15 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       const native = this.native;
       return { retainedAgentRef: (id: string) => native.retainedAgentRef(id) };
     }
-    findWorkspaces = (task: Task) => this.native.findWorkspaces(task);
+    async findWorkspaces(task: Task) {
+      try {
+        // An unbound handle goes through the lifecycle's ownership and Git checks.
+        const found = await this.native.findWorkspaces(task);
+        return task.workspaceId ? found : [];
+      } catch (cause) {
+        throw new HostReadRefusalError("Workspace registration inventory could not be read", { cause });
+      }
+    }
     findAgents(task: Task) {
       return this.native.findAgents({ [WIRE_LABEL_KEYS.task]: task.id });
     }

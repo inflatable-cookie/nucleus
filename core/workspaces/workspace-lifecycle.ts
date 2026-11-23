@@ -17,6 +17,7 @@ import {
   ownedWorkspacePath,
   ownedBbWorkspacePath,
   populateOwnedWorktree,
+  registeredCheckoutOnlyMissingFiles,
   removeOrphanCheckout,
   repoCommonDir,
   sameWorkspacePath,
@@ -29,7 +30,7 @@ import {
   type WorkspaceCreationState,
 } from "./workspace-allocation";
 import { taskWorkspaceTitle } from "./workspace-title";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
   Task,
@@ -67,6 +68,11 @@ import type {
   HostWorkspacePlacement,
   HostWorkspaceSpec,
 } from "../../shared/host";
+import { HostReadRefusalError } from "../host/errors";
+import {
+  workspaceRegistrationRefusal,
+  type WorkspaceRegistration,
+} from "./workspace-registration";
 
 /**
  * The workspace lifecycle of one task — storage preflight, populate, creation,
@@ -199,6 +205,20 @@ export class WorkspaceLifecycle {
     return (task.resolution?.displacedHostWorkspaces ?? []).some((entry) =>
       Boolean(entry.directory && sameWorkspacePath(entry.directory, directory)),
     );
+  }
+  private canAdoptRegistration(task: Task): boolean {
+    return Boolean(
+      task.hostId?.startsWith("t3code:") &&
+        !task.workspaceId &&
+        !task.directory,
+    );
+  }
+  private orphanRegistrationPath(task: Task, common: string): string | null {
+    if (!this.canAdoptRegistration(task)) return null;
+    const root = this.activeWorkspaceEntry(
+      this.host.placement(),
+    ).workspacesRoot;
+    return workspacePathInRoot(root, common, task.id);
   }
   private latestTask(task: Task): Task {
     return this.host.workspaceAllocationBridge?.task?.(task.id) ?? task;
@@ -643,9 +663,19 @@ export class WorkspaceLifecycle {
         };
       }
     }
-    return classifyWorkspaceCreation({
+    const registrationPath = this.orphanRegistrationPath(fresh, common);
+    const registration =
+      registrationPath === ownedPath
+        ? await this.samePathRegistration(fresh, ownedPath, registrationPath)
+        : null;
+    const adopted =
+      registration?.kind === "reuse" && registration.reuse.adopted
+        ? registration.reuse
+        : null;
+    const state = await classifyWorkspaceCreation({
       task,
       ownedPath,
+      allowEmptyOwnedDirectory: Boolean(adopted),
       legacyPaths: this.legacyPaths(task, common).filter(
         (path) => path !== ownedPath,
       ),
@@ -653,7 +683,7 @@ export class WorkspaceLifecycle {
         this.admitObservedWorkspace(task, common, directory),
       skipProcessScan: options.skipProcessScan,
       skipRemoteCheck: options.skipRemoteCheck,
-      remoteWhenAbsent: options.remoteWhenAbsent,
+      remoteWhenAbsent: options.remoteWhenAbsent || Boolean(adopted),
       scan: this.host.scanForWorktreeAdd,
       initLock: this.host.initLock,
       step: options.progress
@@ -661,6 +691,20 @@ export class WorkspaceLifecycle {
             this.creationStep(task, `worktree_inspection_${step}`, work)
         : undefined,
     });
+    if (
+      adopted &&
+      (state.kind === "absent" ||
+        (state.kind === "partial" &&
+          (!state.orphan.directory ||
+            (state.orphan.directory === ownedPath &&
+              (await registeredCheckoutOnlyMissingFiles(ownedPath))))))
+    )
+      return {
+        kind: "registered_incomplete",
+        directory: ownedPath,
+        workspaceId: adopted.id,
+      };
+    return state;
   }
   async populateTaskWorktree(task: Task) {
     const fresh = this.latestTask(task);
@@ -719,7 +763,7 @@ export class WorkspaceLifecycle {
         budgetMs: 0,
         elapsedMs: 0,
       };
-    if (state.kind !== "absent")
+    if (state.kind !== "absent" && state.kind !== "registered_incomplete")
       throw new Error(workspaceCreationRefusal(state));
     const placement = this.host.placement();
     const common = await repoCommonDir(task.repoPath);
@@ -733,6 +777,24 @@ export class WorkspaceLifecycle {
         ? () => this.admitWorkspace(placement, task, ownedPath)
         : undefined,
       scan: this.host.scanForWorktreeAdd,
+      confirmRegistration:
+        state.kind === "registered_incomplete"
+          ? async () => {
+              const registration = await this.samePathRegistration(
+                fresh,
+                ownedPath,
+                ownedPath,
+              );
+              if (
+                registration.kind !== "reuse" ||
+                !registration.reuse.adopted ||
+                registration.reuse.id !== state.workspaceId
+              )
+                throw new HostReadRefusalError(
+                  `Workspace registration changed at ${ownedPath}; retry population`,
+                );
+            }
+          : undefined,
     });
   }
   /**
@@ -745,24 +807,26 @@ export class WorkspaceLifecycle {
    * to the pile, or silently take over somebody else's entry, when it registers
    * the checkout it is itself about to bind.
    *
-   * The complete inventory at this exact folder decides. A positively listed
-   * registration that is not this task's refuses the create with every alias
-   * named, and nothing is sent. The task's own recorded registration at the
-   * folder is returned for reuse instead of a second entry. An inventory that
-   * cannot be read is not a duplicate: creation proceeds exactly as before, so a
-   * daemon read failure never blocks dispatch on a guess.
+   * A single T3 registration on the task's own deterministic path can be
+   * adopted after checking all retained workspace owners. Every other alias
+   * refuses creation. Adoption requires a complete inventory read.
    */
   private async samePathRegistration(
     task: Task,
     directory: string,
+    orphanPath?: string | null,
   ): Promise<RegistrationDecision> {
-    if (!this.host.externalWorkspaceCatalog) return { kind: "create" };
+    if (!this.host.externalWorkspaceCatalog) {
+      if (orphanPath === directory)
+        throw new HostReadRefusalError(
+          "Workspace registration inventory could not be read",
+        );
+      return { kind: "create" };
+    }
     const catalog = await this.host.externalWorkspaceCatalog(directory);
     if (!catalog.ok) {
-      // An inventory that cannot be read is not a duplicate: creation proceeds
-      // exactly as before, so a daemon read failure never blocks dispatch on a
-      // guess. The skipped check is on the step trail rather than reported as a
-      // check that found nothing.
+      if (task.hostId?.startsWith("t3code:"))
+        throw new HostReadRefusalError(catalog.reason);
       this.host.workspaceCreationProgress?.(
         task.id,
         "path_registration_check",
@@ -781,9 +845,43 @@ export class WorkspaceLifecycle {
     const aliases = catalog.entries.filter(
       (entry) => entry.workspaceId !== task.workspaceId,
     );
+    const candidate = aliases.length === 1 ? aliases[0] : undefined;
+    if (
+      candidate &&
+      orphanPath === directory &&
+      candidate.directory === directory &&
+      !task.workspaceId &&
+      !task.directory
+    ) {
+      const bridge = this.host.workspaceAllocationBridge;
+      if (!bridge?.workspaceBoundByOtherTask)
+        throw new HostReadRefusalError(
+          `Workspace ownership could not be read for ${candidate.workspaceId}`,
+        );
+      if (!bridge.workspaceBoundByOtherTask(task.id, candidate.workspaceId)) {
+        if (
+          [directory, dirname(directory)].some((path) =>
+            lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink(),
+          )
+        )
+          throw new CheckoutRefusalError(
+            `Workspace registration points at a redirected path: ${directory}`,
+          );
+        const { hostId, repoPath, branch } = task;
+        return {
+          kind: "reuse",
+          reuse: {
+            id: candidate.workspaceId,
+            directory,
+            adopted: { hostId, repoPath, branch },
+          },
+        };
+      }
+    }
     if (aliases.length)
-      throw Error(
-        `Workspace registration for ${directory} was not sent: the folder already has workspace registration${aliases.length === 1 ? "" : "s"} ${aliases.map((entry) => entry.workspaceId).join(", ")}, which ${aliases.length === 1 ? "is" : "are"} not this task's. Nucleus never adds a second registration for one folder and never reparents another owner's workspace; inspect the existing registration instead.`,
+      throw workspaceRegistrationRefusal(
+        directory,
+        aliases.map((entry) => entry.workspaceId),
       );
     return own
       ? {
@@ -804,7 +902,7 @@ export class WorkspaceLifecycle {
   async createWorkspace(
     task: Task,
     options: { freshlyPopulated?: boolean } = {},
-  ) {
+  ): Promise<WorkspaceRegistration> {
     const fresh = this.latestTask(task);
     // A stable request ID does not prove the daemon will deduplicate a later
     // create. Recover a visible identity before asking Paseo for any resource.
@@ -851,10 +949,18 @@ export class WorkspaceLifecycle {
         if (common) this.admitObservedWorkspace(fresh, common, state.directory);
       }
     }
+    const common = this.canAdoptRegistration(fresh)
+      ? await repoCommonDir(fresh.repoPath)
+      : null;
     const registered = await this.creationStep(
       fresh,
       "path_registration_check",
-      () => this.samePathRegistration(fresh, state.directory),
+      () =>
+        this.samePathRegistration(
+          fresh,
+          state.directory,
+          common && this.orphanRegistrationPath(fresh, common),
+        ),
     );
     if (registered.kind === "reuse") return registered.reuse;
     const project = await this.creationStep(
@@ -1029,7 +1135,7 @@ export class WorkspaceLifecycle {
   async recoverTaskWorkspace(
     task: Task,
     options: { target?: "pr_head" | "branch" } = {},
-  ) {
+  ): Promise<WorkspaceRegistration> {
     let fresh = this.latestTask(task);
     const source =
       options.target === "branch"
@@ -1122,6 +1228,8 @@ export class WorkspaceLifecycle {
       // worktree list and the directory); only the raw registration inventory can
       // name a folder that is gone.
       if (state.kind === "found_done") directory = state.directory;
+      else if (state.kind === "registered_incomplete")
+        directory = (await this.populateTaskWorktree(task)).directory;
       else if (state.kind === "absent") {
         const ownedPath = await this.host.ownedPathFor(task);
         const admission = this.host.placement();
@@ -1134,7 +1242,14 @@ export class WorkspaceLifecycle {
       const placement = this.host.placement();
       if (placement && directory === (await this.host.ownedPathFor(task)))
         this.admitWorkspace(placement, task, directory);
-      const registered = await this.samePathRegistration(task, directory);
+      const common = this.canAdoptRegistration(task)
+        ? await repoCommonDir(task.repoPath)
+        : null;
+      const registered = await this.samePathRegistration(
+        task,
+        directory,
+        common && this.orphanRegistrationPath(task, common),
+      );
       const workspace =
         (registered.kind === "reuse" ? registered.reuse : null) ??
         (await this.host.workspaceHost.createWorkspace({
@@ -1146,7 +1261,7 @@ export class WorkspaceLifecycle {
       if (!workspace.directory)
         throw new Error("Recovered task workspace returned no directory");
       return {
-        id: workspace.id,
+        ...workspace,
         directory: await this.verifiedRecoveredCheckout(
           task,
           workspace.directory,
@@ -1230,7 +1345,7 @@ export class WorkspaceLifecycle {
  * Queue could not read. An unreadable inventory is never proof of a duplicate.
  */
 type RegistrationDecision =
-  | { kind: "reuse"; reuse: { id: string; directory: string } }
+  | { kind: "reuse"; reuse: WorkspaceRegistration }
   | { kind: "create" }
   | { kind: "unreadable"; reason: string };
 

@@ -5,6 +5,7 @@ import type {
 } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import type { BargeClientOptions } from "./barge-cli";
+import { workspaceBoundByOtherTask } from "./workspace-registration";
 
 export interface SaveWorkspaceAllocationOptions {
   displaceCurrent?: boolean;
@@ -16,6 +17,7 @@ export interface WorkspaceAllocationBridge {
     task: Pick<Task, "repoPath" | "repository">,
   ): WorkspaceProvider;
   task?(taskId: string): Task | undefined;
+  workspaceBoundByOtherTask?(taskId: string, workspaceId: string): boolean;
   saveWorkspaceAllocation(
     taskId: string,
     allocation: WorkspaceAllocation,
@@ -34,6 +36,8 @@ export function createStoreWorkspaceAllocationBridge(
 ): WorkspaceAllocationBridge {
   return {
     workspaceProviderFor: (task) => store.workspaceProviderFor(task),
+    workspaceBoundByOtherTask: (taskId, workspaceId) =>
+      workspaceBoundByOtherTask(store, taskId, workspaceId),
     task: (taskId) => {
       try {
         return store.task(taskId);

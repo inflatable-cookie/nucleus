@@ -7,7 +7,10 @@ import type {
 import type { Adapter } from "../host/adapter";
 import { git, queueCheckoutStatus } from "../git/index";
 import type { Store } from "../store/store";
-import { worktreeLinksForBinding } from "../workspaces/worktree-links";
+import {
+  bindWorkspaceRegistration,
+  type WorkspaceRegistration,
+} from "../workspaces/workspace-registration";
 
 /**
  * Inspect the old host checkout before a cross-host worker move removes or
@@ -275,7 +278,7 @@ export async function provisionHostMovedWorkspace(
   const found = context.adapter.findWorkspaces
     ? await context.adapter.findWorkspaces(task).catch(() => [])
     : [];
-  let workspace: { id: string; directory: string } | null = null;
+  let workspace: WorkspaceRegistration | null = null;
   if (found.length === 1) workspace = found[0]!;
   else {
     const localBranch = await git(
@@ -323,18 +326,11 @@ export async function provisionHostMovedWorkspace(
     current.hostId !== task.hostId
   )
     return false;
-  context.store.update(
+  bindWorkspaceRegistration(
+    context.store,
     current.id,
-    {
-      workspaceId: workspace.id,
-      directory: workspace.directory,
-      ...worktreeLinksForBinding(current, {
-        workspaceId: workspace.id,
-        directory: workspace.directory,
-      }),
-    },
+    workspace,
     "workspace_created",
-    workspace.id,
   );
   return true;
 }

@@ -18,10 +18,8 @@ import {
 } from "../git/index";
 import type { GitTransientEpisode } from "../git/git-transient-backoff";
 import { WORKSPACE_POPULATE_BUDGET_MS } from "../workspaces/workspace-allocation";
-import {
-  worktreeLinksForBinding,
-  worktreeLinksForIntent,
-} from "../workspaces/worktree-links";
+import { worktreeLinksForIntent } from "../workspaces/worktree-links";
+import { bindWorkspaceRegistration } from "../workspaces/workspace-registration";
 import { startsNoRuns } from "../closeout/queue-drain";
 import type { Resolution } from "../resolution";
 import { chooseProfile, eligibilityReasons } from "./routing";
@@ -583,18 +581,11 @@ export class FirstDispatch {
         const workspace = await this.adapter.createWorkspace(populatedTask, {
           freshlyPopulated,
         });
-        this.store.update(
+        bindWorkspaceRegistration(
+          this.store,
           task.id,
-          {
-            workspaceId: workspace.id,
-            directory: workspace.directory,
-            ...worktreeLinksForBinding(this.store.task(task.id), {
-              workspaceId: workspace.id,
-              directory: workspace.directory,
-            }),
-          },
+          workspace,
           "workspace_created",
-          workspace.id,
         );
       }
       if (!this.context.stopped) {
