@@ -335,7 +335,7 @@ Built as a direct PR (Tom, 2026-11-23: "fill the gaps using subagents"):
   as `budget_extended` with the detail `automatic: <policy>; <figures>`. The sweep
   extends only in a phase whose next step is a run, so a task verifying or merging
   keeps its extension for the launch gate. A task extended before (by any source)
-  asks on its next spend. Until then, a first spend is no stop: `next`, the
+  asks its planner on its next spend (delegated; no Inbox, see Decision 1). Until then, a first spend is no stop: `next`, the
   activity reading and the `run.start` warning ignore it.
 - **Typed stops.** The settle pass records the `budget` stop for a spent task
   with no live run and no other stop whose next step is a run, and its question
@@ -420,7 +420,11 @@ do it"):
 
 1. **Budgets.** Time while a host or the service is down never counts; today
    only host outages pause the clock. When a budget is spent, Nucleus extends it
-   automatically once, with an event. The second time, it asks through the Inbox.
+   automatically once, with an event. The second time, it asks the task's
+   planner, which decides; it never needs the operator. Tom, 2026-11-23: "I always
+   end up granting more budget - I don't need it coming to me, it can be
+   automated. Just having the check is enough for the planner to consider
+   whether a task is overdue." The budget stop stays as that check.
 2. **Round-3 question.** Nucleus continues automatically up to the revision cap
    and tells the task's planner. The cap itself stays a question.
 3. **Hung tools.** A command with no output for 30 minutes is terminated. The
