@@ -316,10 +316,12 @@ The rules:
   outcome is looked up under its original command ID and is never resent
   blindly.
 
-Batch 7c covers T3 only. BB and Paseo keep their existing delivery behaviour
+Batch 7c covers host-qualified T3 planner IDs and the task's recorded origin or
+owner on T3. Other legacy native IDs use the existing delivery path. BB and
+Paseo keep their existing delivery behaviour
 under Tom's 2026-11-23 host ruling ([Spec 070, ruling 5](070-small-engine.md#rulings)).
 
-Each T3 ladder question keeps its original recipient, host, prompt and command ID
+Each tracked ladder question keeps its original recipient, host, prompt and command ID
 under one escalation occurrence. T3 queues it immediately and task activity
 shows the queue or host wait. The answer window opens when T3 links the original
 message to a turn. A proven pre-send refusal gets up to three attempts, 750 ms

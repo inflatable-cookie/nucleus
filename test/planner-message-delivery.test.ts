@@ -156,6 +156,30 @@ test("an idle planner gets one queue-only send from an expired task quantum, and
   );
 });
 
+test("a legacy native planner ID distinct from the task origin uses ordinary delivery", async (t) => {
+  const f = await fixture(t);
+  f.store.update(f.id, { plannerAgentId: projectPlannerId });
+  f.openEscalation();
+
+  await waitFor(
+    () =>
+      f
+        .commands()
+        .some((command) =>
+          f.store
+            .eventsAll(`delegation:${command.commandId}`)
+            .some((event) => event.kind === "delegated_sent"),
+        ),
+    checkMs,
+    "the ordinary planner send",
+  );
+  const [command] = f.commands();
+  assert.ok(command);
+  assert.equal(command.threadId, projectPlannerId);
+  assert.deepEqual(command.dispatchMode, { type: "queue_after_active" });
+  assert.deepEqual(f.updates(), []);
+});
+
 test("a busy planner keeps its running turn and the queued message keeps its full answer window", async (t) => {
   const f = await fixture(t);
   const busy = syntheticRun(plannerId, 1, {

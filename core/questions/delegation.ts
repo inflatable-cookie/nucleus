@@ -1564,7 +1564,7 @@ export class Delegation {
         );
       if (
         hostId &&
-        hostKindOf(hostId) === "t3code" &&
+        this.t3PlannerHost(task, recipient) === hostId &&
         this.resolution.withHost(hostId, () => this.plannerPort())
       )
         return this.trackPlannerQuestion(
