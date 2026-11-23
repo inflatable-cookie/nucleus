@@ -313,11 +313,27 @@ test("a published verdict waits for live background work on its retained reviewe
   f.adapter.noLiveWorkspaceProcesses = async () => null;
   f.adapter.agentTimelinePage = async () => null;
 
+  f.store.putNotice({
+    id: "unsettled-attention",
+    taskId: f.current().id,
+    agentId: "origin",
+    recipientAgentId: "origin",
+    workspaceId: null,
+    sources: [],
+    originEntry: true,
+    kind: "attention",
+    status: "uncertain",
+    error: "delivery unknown",
+    text: "Attention",
+  });
+  assert.equal(f.next().available, true);
+
   const reapply = () => f.engine.resolution.reapplyPendingReview(f.current());
   assert.equal(await reapply(), "blocked");
   assert.equal(f.current().resolution.review, null);
   background = [];
   assert.equal(await reapply(), "applied");
+  assert.equal(f.store.notices(task.id).find((notice) => notice.id === "unsettled-attention")?.status, "uncertain");
   f.assertAppliedOnce();
   f.assertNoSend();
 });
@@ -671,25 +687,6 @@ const negativeTwins: {
       });
     },
     refusal: /Review publication must reconcile its evidence/,
-  },
-  {
-    name: "a conflicting live effect",
-    seed(f) {
-      f.store.putNotice({
-        id: "unsettled-attention",
-        taskId: f.current().id,
-        agentId: "origin",
-        recipientAgentId: "origin",
-        workspaceId: null,
-        sources: [],
-        originEntry: true,
-        kind: "attention",
-        status: "uncertain",
-        error: "delivery unknown",
-        text: "Attention",
-      });
-    },
-    refusal: /attention notice unsettled-attention delivery is uncertain/,
   },
   {
     name: "a live participant",

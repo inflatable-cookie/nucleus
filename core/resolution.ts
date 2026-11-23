@@ -668,6 +668,7 @@ export class Resolution {
     };
     if (snapshot) {
       const scan = snapshot.processes(key, read, deadlineMs, {
+        allowMissFetch: options.allowMissFetch,
         cacheOnly:
           Boolean(options.participant) || (inQuantum && !options.allowMissFetch),
       });
