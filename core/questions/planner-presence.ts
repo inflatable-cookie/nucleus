@@ -1,7 +1,7 @@
 import { type Project, type Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { hostKindOf } from "../../shared/host-kind";
-import { callerNativeId } from "../../shared/agent-identity";
+import { callerNativeId, parseAgentId } from "../../shared/agent-identity";
 import type { Resolution } from "../resolution";
 
 export type PlannerPresenceContext = Pick<
@@ -49,6 +49,55 @@ export function projectPlannerRoutingIssue(
   return project.planner && latest?.kind === "project_planner_unroutable"
     ? latest.detail
     : undefined;
+}
+
+/** Who answers a thread-route question: the live owner, or one pass's shared reads. */
+export type PlannerRoutes = Pick<PlannerPresence, "threadRoute">;
+
+/**
+ * One planner-presence read per thread for one sweep pass. The pass's shortlist
+ * probes and its gone-planner checks ask about the same few threads across every
+ * project; each thread's route is read once and every later question in the pass
+ * shares that read. A question with no recorded host shares the pass's read of
+ * the same thread when the pass has seen it on exactly one host.
+ */
+export class PlannerPresencePass implements PlannerRoutes {
+  private readonly routes = new Map<string, Promise<PlannerThreadRoute>>();
+  private readonly hostsSeen = new Map<string, Set<string>>();
+  constructor(private readonly presence: PlannerRoutes) {}
+
+  threadRoute(
+    agentId: string,
+    recordedHostId?: string | null,
+  ): Promise<PlannerThreadRoute> {
+    let qualified: ReturnType<typeof parseAgentId>;
+    try {
+      qualified = parseAgentId(agentId);
+    } catch {
+      return this.presence.threadRoute(agentId, recordedHostId);
+    }
+    // A recorded host that disagrees with the identity's own host is its own
+    // question (the read refuses it); it never borrows another answer.
+    if (qualified && recordedHostId && recordedHostId !== qualified.hostId)
+      return this.presence.threadRoute(agentId, recordedHostId);
+    const nativeId = qualified?.nativeAgentId ?? agentId;
+    let hostId = qualified?.hostId ?? recordedHostId ?? undefined;
+    if (!hostId) {
+      const seen = this.hostsSeen.get(nativeId);
+      if (seen?.size === 1) hostId = [...seen][0]!;
+    }
+    const key = JSON.stringify([hostId ?? null, nativeId]);
+    const held = this.routes.get(key);
+    if (held) return held;
+    const read = this.presence.threadRoute(agentId, recordedHostId);
+    this.routes.set(key, read);
+    if (hostId) {
+      const seen = this.hostsSeen.get(nativeId) ?? new Set<string>();
+      seen.add(hostId);
+      this.hostsSeen.set(nativeId, seen);
+    }
+    return read;
+  }
 }
 
 export class PlannerPresence {

@@ -13,7 +13,7 @@
  * `docs/knowledge/contracts/service-boundary.md`.
  */
 import { createHash } from "node:crypto";
-import type { Adapter } from "./adapter";
+import type { Adapter, OriginAgent } from "./adapter";
 import { isTransportFailure } from "../../shared/transport";
 import { HostCallAbandonedError } from "./errors";
 import {
@@ -32,7 +32,10 @@ export interface AdmissionOptions {
   limits?: Partial<Record<AdmissionClass, number>>;
   /** Total in-flight bound across every class. A function is read live, so an operator change applies without a restart. */
   totalLimit?: number | (() => number);
-  /** Minimum delay between starts across one host's calls. */
+  /**
+   * Minimum delay between starts across one host's calls. Wins over the host's
+   * own declaration (`admissionStartIntervalMs`); without either it is 125 ms.
+   */
   startIntervalMs?: number;
   /** Stable-idle observation cache window; defaults to two seconds. */
   observationCacheMs?: number;
@@ -69,6 +72,8 @@ export interface AdmissionOptions {
 }
 
 export const CLEANUP_CONCURRENCY = 4;
+/** Start spacing for a host that declares none (Paseo, BB). */
+export const DEFAULT_START_INTERVAL_MS = 125;
 const DEFAULT_LIMITS: Record<AdmissionClass, number> = {
   callback: 4,
   control: 2,
@@ -388,7 +393,27 @@ export class Admission {
         : this.totalLimitSource;
     return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : 1;
   }
-  private readonly startIntervalMs: number;
+  private readonly startIntervalOption: number | undefined;
+  private hostStartIntervalMs: number | undefined;
+  /**
+   * The gap kept between this host's call starts: the explicit option, else what
+   * the host's adapter declares, else the default. T3 multiplexes every call over
+   * one connection and declares 0; Paseo keeps 125 ms.
+   */
+  get startIntervalMs(): number {
+    return (
+      this.startIntervalOption ??
+      this.hostStartIntervalMs ??
+      DEFAULT_START_INTERVAL_MS
+    );
+  }
+  /** Record the host's own start spacing (`admitAdapter` reads it from the adapter). */
+  useHostStartInterval(ms: number | undefined) {
+    this.hostStartIntervalMs =
+      ms !== undefined && Number.isFinite(ms) && ms >= 0 ? ms : undefined;
+  }
+  /** `originAgent` answers served from the host's held state, which took no slot. */
+  heldOriginAnswers = 0;
   private readonly observationCacheMs: number;
   private readonly latencyWindow: number;
   private readonly degradedLatencyMs: number;
@@ -409,7 +434,7 @@ export class Admission {
   constructor(options: AdmissionOptions = {}) {
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
     this.totalLimitSource = options.totalLimit ?? 6;
-    this.startIntervalMs = options.startIntervalMs ?? 125;
+    this.startIntervalOption = options.startIntervalMs;
     this.observationCacheMs = options.observationCacheMs ?? 2_000;
     this.latencyWindow = options.latencyWindow ?? 64;
     this.degradedLatencyMs = options.degradedLatencyMs ?? 10_000;
@@ -1219,6 +1244,7 @@ const ORDINARY_INNER_DEADLINES: ReadonlySet<string> = new Set([
 ]);
 
 export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
+  admission.useHostStartInterval(raw.admissionStartIntervalMs);
   const held = raw as unknown as Record<string, unknown>;
   const call = <T>(
     cls: AdmissionClass,
@@ -1318,18 +1344,33 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
       },
     ),
   );
+  const originSettled = (agent: OriginAgent | null | undefined) => {
+    if (agent?.workspaceId) admission.invalidateWorkspace(agent.workspaceId);
+  };
+  const admittedOrigin = call<OriginAgent | null>(
+    "inventory",
+    "originAgent",
+    (args) => requestIdentity("originAgent", args),
+    (_args, result) => originSettled(result),
+  );
+  // A host that already holds the answer (T3's live shell, inside its freshness
+  // bounds) gives it without a slot; anything else, a stale or missing shell
+  // included, takes the admitted exact read. The held read never answers absent.
+  const heldOrigin = raw.originAgentHeld;
   set(
     "originAgent",
-    call(
-      "inventory",
-      "originAgent",
-      (args) => requestIdentity("originAgent", args),
-      (_args, result) => {
-        const agent = result as { workspaceId?: string | null } | null;
-        if (agent?.workspaceId)
-          admission.invalidateWorkspace(agent.workspaceId);
-      },
-    ),
+    admittedOrigin &&
+      (typeof heldOrigin === "function"
+        ? async (id: string) => {
+            const held = await heldOrigin.call(raw, id).catch(() => undefined);
+            if (held) {
+              admission.heldOriginAnswers++;
+              originSettled(held);
+              return held;
+            }
+            return await admittedOrigin(id);
+          }
+        : admittedOrigin),
   );
   set(
     "listLiveAgents",

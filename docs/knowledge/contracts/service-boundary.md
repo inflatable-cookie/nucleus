@@ -1377,7 +1377,14 @@ host and never assert the host's health; a workspace-creation wait reports the s
 snapshot also reports `slotWait`, how long each class's recent calls waited for their
 class and total slots (start spacing included), apart from `latency`, and `total`, the
 host's in-flight bound, depth and start spacing: a call that answers in a millisecond
-can still wait seconds for its turn. The freed bound keeps bounding instead of shrinking to nothing
+can still wait seconds for its turn. Each host's adapter declares its own start spacing
+(`admissionStartIntervalMs`): T3 multiplexes every call over one connection and keeps
+none, while Paseo and BB keep 125 ms. An `originAgent` answer the host already holds
+(`originAgentHeld`: a row of T3's live shell inside its freshness bounds) takes no slot;
+a stale or missing shell, or a thread it does not list, takes the admitted exact read,
+so the held answer is never "absent". The sweep's responsible-thread refresh reads each
+thread's planner presence once per pass, shared by every project's shortlist probes and
+gone-planner check. The freed bound keeps bounding instead of shrinking to nothing
 because one host call never returned. An abandoned call is reconciled from
 recorded state, exactly like any other unknown delivery (nucleus#1179).
 
