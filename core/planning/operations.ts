@@ -15,11 +15,13 @@ import {
 } from "../scheduling/pass-snapshot";
 import { assertSupportedSubmission, PlanningSubmission } from "./submission";
 import { PlanningRepairs } from "./planning-repairs";
-import { operationFailureSettlement } from "./operation-failure";
-import { preSendReceiptProof } from "./operation-receipts";
+import {
+  operationFailureSettlement,
+  typedPreSendRefusal,
+} from "./operation-failure";
+import { isHostConnectionRefusal } from "../host/errors";
 export { operationFailureSettlement } from "./operation-failure";
 export type { OperationFailureSettlement } from "./operation-failure";
-import { currentServiceBuildId } from "../../shared/service/build";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { Task } from "../../shared/contracts";
@@ -576,7 +578,6 @@ export class Operations {
           ((pending.effect.target === "restart" &&
             pending.effect.result === `parent-unarchive:${pending.id}`) ||
             pending.effect.target === "stop"))) &&
-      !pending.preSendReceipt &&
       pending.result &&
       pending.effect?.status === "reconciled"
     ) {
@@ -588,47 +589,36 @@ export class Operations {
       });
       return;
     }
-    if (pending.preSendReceipt) {
-      // A crash after the receipt must never execute the control again.
-      const proof = pending.preSendReceipt;
-      const matches =
-        proof.operationId === pending.id &&
-        proof.inputHash === pending.inputHash &&
-        proof.attempt === pending.attempts &&
-        isDeepStrictEqual(proof.effect, pending.effect);
-      this.store.putOperation({
-        ...pending,
-        state: "needs_attention",
-        settledAt: now(),
-        diagnostic: matches
-          ? proof.diagnostic
-          : pending.diagnostic ||
-            "Interrupted pre-send receipt conflicts with the operation; inspect its evidence",
-        effect: matches
-          ? {
-              ...proof.effect,
-              status: "uncertain",
-              result: proof.diagnostic.slice(0, 2000),
-              resultAt: now(),
-            }
-          : pending.effect,
-      });
-      return;
-    }
     if (
       pending.preSendBoundaryStartedAt &&
       (await this.resumeParentRestore(pending))
     )
       return;
     if (await this.resumeOwnerStop(pending)) return;
-    if (pending.preSendBoundaryStartedAt) {
+    // An interrupted effect intent may have been sent. Keep the occurrence
+    // visible for explicit resolution and resume controls without an intent.
+    if (
+      pending.preSendBoundaryStartedAt ||
+      (pending.state === "running" &&
+        pending.kind === "task_control" &&
+        pending.effect)
+    ) {
+      const at = now();
+      const diagnostic =
+        pending.diagnostic || "The operation was interrupted; delivery remains uncertain";
       this.store.putOperation({
         ...pending,
         state: "needs_attention",
-        settledAt: now(),
-        diagnostic:
-          pending.diagnostic ||
-          "The task-control boundary was interrupted without a pre-send receipt; delivery remains uncertain",
+        settledAt: at,
+        diagnostic,
+        effect: pending.effect
+          ? {
+              ...pending.effect,
+              status: "uncertain",
+              result: diagnostic.slice(0, 2000),
+              resultAt: at,
+            }
+          : null,
       });
       return;
     }
@@ -669,7 +659,7 @@ export class Operations {
       // #927: a control that is already invalid refuses on the store facts now,
       // not when the recorded host returns. The wait holds only a control that
       // would otherwise be accepted. Nothing was written for the refusal, so it
-      // settles definite with no effect and needs no pre-send receipt.
+      // settles as a definite failure with no effect.
       const refusal = await this.hostIndependentRefusal(pending);
       if (refusal) {
         this.store.putOperation({
@@ -828,19 +818,6 @@ export class Operations {
         controlPayload?.control,
       );
       const settledBefore = currentOperation ?? running;
-      // One proof decides whether this refusal may record a pre-send receipt:
-      // the parked restart's own rollback evidence, or Queue's own gate answering
-      // before anything was bound or sent (papercut 4b285a6e).
-      const receiptProof = preSendReceiptProof({
-        store: this.store,
-        buildId: () => this.engine.currentServiceBuildId(),
-        running,
-        current: currentOperation,
-        payload,
-        effect,
-        error,
-        message,
-      });
       const refusedOwnedToolRetry =
         running.kind === "task_control" &&
         parsedControl.success &&
@@ -860,17 +837,19 @@ export class Operations {
                   ((committed.effect.target === "restart" &&
                     committed.effect.result ===
                       `parent-unarchive:${committed.id}`) ||
-                    committed.effect.target === "stop"))) &&
-              !committed.preSendReceipt,
+                    committed.effect.target === "stop"))),
           ),
           submissionDeferrable:
             pending.kind === "submit" || pending.kind === "review_entry",
           validationUnavailable:
             isTransportFailure(error) ||
             error instanceof SubmissionUnavailableError,
-          parkedRestartProven: receiptProof.kind === "parked_restart",
-          typedRefusalProven: receiptProof.kind === "typed_refusal",
-          typedPreSendRefusal: receiptProof.typedRefusal,
+          typedPreSendRefusal:
+            typedPreSendRefusal(error) &&
+            !(
+              isHostConnectionRefusal(error) &&
+              currentOperation?.preSendBoundaryStartedAt
+            ),
           preSendBoundaryStarted: Boolean(
             currentOperation?.preSendBoundaryStartedAt,
           ),
@@ -915,21 +894,6 @@ export class Operations {
             ),
         });
         return;
-      }
-      // The two receipts are mutually exclusive: the parked restart's proof needs
-      // a crossed send boundary (`currentOperation.preSendBoundaryStartedAt`) and
-      // every other typed refusal's proof needs none, so the proof names at most
-      // one of them. A receipt that could not be written still settles definite;
-      // there is no second receipt to fall back to.
-      if (settlement.receipt && receiptProof.receipt && currentOperation) {
-        try {
-          this.store.putOperation({
-            ...currentOperation,
-            preSendReceipt: receiptProof.receipt,
-          });
-        } catch {
-          /* Without the durable receipt the refusal remains definite and unfenced. */
-        }
       }
       const settled = this.store.operation(id) ?? running;
       const effectStatus = settlement.effect;
@@ -1140,8 +1104,7 @@ export class Operations {
     if (!operation.preSendBoundaryStartedAt && !matchingStop) return false;
     if (
       operation.result?.taskId &&
-      operation.effect?.status === "reconciled" &&
-      !operation.preSendReceipt
+      operation.effect?.status === "reconciled"
     ) {
       this.store.putOperation({
         ...operation,

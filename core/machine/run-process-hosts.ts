@@ -1,7 +1,7 @@
 import type { ParticipantProcess } from "../../shared/schema/task-activity";
 import type { Store } from "../store/store";
 import type { HostProcessFact } from "../host/types";
-import { bbThreadForAgent, RunProcessTable } from "./owned-tool-process-proof";
+import { bbThreadForAgent, RunProcessTable } from "./run-process-tree";
 import {
   participantRuntime,
   storeDataHome,

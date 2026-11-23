@@ -330,133 +330,6 @@ function fixture(realSource = false, graceMs = 0) {
   };
 }
 
-test("a reported participant stray tool is reaped after grace and the merge lease proceeds", async () => {
-  const f = fixture(false, 100);
-  let childPid: number | null = null;
-  try {
-    const task = f.add();
-    const workspace = join(f.dir, "reported-worktree");
-    mkdirSync(workspace);
-    f.store.update(task.id, {
-      directory: workspace,
-      phase: "verifying",
-      reason: "Mechanical verification satisfied the merge gates",
-    });
-    const orphanScript = join(f.dir, "launch-orphan.mjs"),
-      pidFile = join(f.dir, "orphan.pid");
-    writeFileSync(
-      orphanScript,
-      "import {spawn} from 'node:child_process';import {writeFileSync} from 'node:fs';const child=spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{cwd:process.argv[2],stdio:'ignore',detached:true});child.unref();writeFileSync(process.argv[3],String(child.pid));",
-    );
-    const launcher = spawn(
-      process.execPath,
-      [orphanScript, workspace, pidFile],
-      { cwd: f.dir, stdio: "ignore" },
-    );
-    await once(launcher, "exit");
-    childPid = Number(readFileSync(pidFile, "utf8"));
-    const listing = await readProcessSubset([childPid]);
-    const facts = listing.state === "listed" ? listing.processes : null;
-    const childFact = facts?.find((fact) => fact.pid === childPid);
-    assert.ok(childFact, "the host listing sees the started worktree process");
-    assert.equal(childFact.cwd, workspace);
-    assert.equal(f.current(task.id).directory, workspace);
-    f.adapter.hostProcessListing = async () => facts;
-    let checks = 0;
-    f.engine.resolution.ownedToolHold = async () =>
-      ++checks === 1
-        ? {
-            kind: "hold",
-            reason:
-              "an owned tool is still live: observed tool Bash (shell) is running; descendant pid 123 remains under provider pid 45",
-          }
-        : { kind: "clear" };
-    const current = f.current(task.id);
-    f.store.event(
-      task.id,
-      "owned_tool_hold",
-      JSON.stringify({ runId: current.runId, reason: "stray shell" }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    f.engine.resolution.assignIntegrationTurn(f.current(task.id));
-    assert.equal(
-      await f.engine.resolution.executionLease(f.current(task.id)),
-      true,
-    );
-    assert.ok(
-      f.store
-        .eventsAll(task.id)
-        .some((event) => event.kind === "participant_tool_reaped"),
-      JSON.stringify(
-        f.store
-          .eventsAll(task.id)
-          .filter((event) => event.kind.startsWith("participant_tool_")),
-      ),
-    );
-    assert.throws(() => process.kill(childPid!, 0), { code: "ESRCH" });
-    assert.equal(f.store.task(task.id).resolution.integrationTurn?.sequence, 1);
-  } finally {
-    if (childPid) {
-      try {
-        process.kill(childPid, "SIGKILL");
-      } catch {}
-    }
-    await f.close();
-  }
-});
-
-test("another approved task merges while the first waits on its participant tool", async () => {
-  const f = fixture(false, 60_000);
-  try {
-    const waiting = f.add(),
-      later = f.add();
-    f.store.event(
-      waiting.id,
-      "owned_tool_hold",
-      JSON.stringify({
-        runId: f.current(waiting.id).runId,
-        reason: "stray shell",
-      }),
-    );
-    f.engine.resolution.ownedToolHold = async (_agentId, options) =>
-      options?.taskId === waiting.id
-        ? {
-            kind: "hold",
-            reason:
-              "an owned tool is still live: observed tool Bash (shell) is running",
-          }
-        : { kind: "clear" };
-    await f.engine.wake();
-    await f.report(waiting.id, "ready_to_merge");
-    assert.equal(
-      f.current(waiting.id).resolution.integrationTurn,
-      null,
-      "the blocked task yields its FIFO place",
-    );
-    assert.match(f.current(waiting.id).reason, /stray-tool grace ends at/);
-    await f.engine.wake();
-    await f.report(later.id, "ready_to_merge");
-    await f.engine.wake();
-    await f.engine.wake();
-    assert.equal(
-      f.counts().merges,
-      1,
-      "the later reviewed task merges while the first participant wait is open",
-    );
-    assert.ok(
-      f.current(later.id).resolution.mergedCommit,
-      "the later task records its landed merge",
-    );
-    assert.equal(
-      f.current(waiting.id).resolution.mergedCommit,
-      null,
-      "the task waiting on its participant has not merged",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
 test("a tool belonging to a live participant turn is never reaped", async () => {
   const f = fixture();
   try {
@@ -472,11 +345,6 @@ test("a tool belonging to a live participant turn is never reaped", async () => 
       listings++;
       return [];
     };
-    f.engine.resolution.ownedToolHold = async () => ({
-      kind: "hold",
-      reason:
-        "an owned tool is still live: observed tool Bash (shell) is running",
-    });
     const current = f.current(task.id);
     f.store.update(task.id, {
       phase: "verifying",
@@ -1282,58 +1150,6 @@ test("an enforced update-branch rule uses the revision path instead of merging a
   }
 });
 
-test("a publication-blocked holder yields without renumbering or spinning, then rejoins in order", async () => {
-  const f = fixture();
-  try {
-    const first = f.add(),
-      second = f.add();
-    await f.engine.wake();
-    const key = `reviewPublication:${first.runId}`;
-    f.store.setMeta(key, { status: "uncertain" });
-    await f.report(first.id, "ready_to_merge");
-    const sequence = f.current(first.id).resolution.integrationTurn!.sequence;
-    assert.equal(
-      f.engine.resolution.integrationActive(f.current(first.id)),
-      false,
-    );
-    await f.report(second.id, "ready_to_merge");
-    await f.engine.wake();
-    assert.equal(
-      f.counts().merges,
-      1,
-      "the able successor merges while publication is unresolved",
-    );
-    const before = f.store.eventsAll(first.id).length;
-    for (let i = 0; i < 3; i++) await f.engine.wakeTask(first.id);
-    assert.equal(
-      f.store.eventsAll(first.id).length,
-      before,
-      "repeated yields do not schedule a polling loop or rewrite waits",
-    );
-    assert.equal(
-      f.current(first.id).resolution.integrationTurn!.sequence,
-      sequence,
-    );
-    f.bases.set(first.id, "d".repeat(40));
-    f.store.deleteMeta(key);
-    assert.equal(
-      f.engine.resolution.holdsIntegrationTurn(f.current(first.id)),
-      true,
-      "the original sequence rejoins ahead of later idle work",
-    );
-    await f.engine.wakeTask(first.id);
-    await f.engine.quiesce();
-    assert.equal(f.counts().merges, 2);
-    assert.equal(
-      f.current(first.id).resolution.mechanicalVerification?.base,
-      "d".repeat(40),
-      "the returning task verifies the advanced base",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
 test("an uncertain merge holds the turn through attention, escalation, holds and pause", async () => {
   const f = fixture();
   try {
@@ -1376,14 +1192,13 @@ test("a rejoining earlier task cannot preempt a successor awaiting integration w
       f.store.update(task.id, { phase: "verifying" });
       f.engine.resolution.assignIntegrationTurn(f.current(task.id));
     }
-    const key = `reviewPublication:${first.runId}`;
-    f.store.setMeta(key, { status: "uncertain" });
+    f.store.update(first.id, { phase: "needs_attention", reason: "Waiting for the owner" });
     await f.engine.resolution.integrationQuantum(second.id, async () => {
       assert.equal(
         f.engine.resolution.claimIntegrationTurn(f.current(second.id)),
         true,
       );
-      f.store.deleteMeta(key);
+      f.store.update(first.id, { phase: "verifying" });
       await Promise.resolve();
       assert.equal(
         f.engine.resolution.holdsIntegrationTurn(f.current(second.id)),
@@ -1410,8 +1225,7 @@ test("a recovered earlier task cannot race a successor whose merge request is aw
     const first = f.add(),
       second = f.add();
     await f.engine.wake();
-    const key = `reviewPublication:${first.runId}`;
-    f.store.setMeta(key, { status: "uncertain" });
+    f.store.update(first.id, { held: true, mergeHold: true });
     await f.report(first.id, "ready_to_merge");
     const entered = new Promise<void>((resolve) => {
       const merge = f.adapter.merge!;
@@ -1428,7 +1242,7 @@ test("a recovered earlier task cannot race a successor whose merge request is aw
     });
     const reporting = f.report(second.id, "ready_to_merge");
     await entered;
-    f.store.deleteMeta(key);
+    f.store.update(first.id, { held: false, mergeHold: false });
     assert.equal(
       f.engine.resolution.holdsIntegrationTurn(f.current(first.id)),
       false,
@@ -1456,7 +1270,7 @@ test("a recovered earlier task cannot race a successor whose merge request is aw
   }
 });
 
-test("a landed holder with an unresolved operation yields until the operation settles", async () => {
+test("a historical unresolved operation leaves its landed holder in the integration turn", async () => {
   const f = fixture();
   try {
     const first = f.add(),
@@ -1493,12 +1307,13 @@ test("a landed holder with an unresolved operation yields until the operation se
     f.store.putOperation(operation);
     assert.equal(
       f.engine.resolution.holdsIntegrationTurn(f.current(first.id)),
-      false,
+      true,
     );
     assert.equal(
       f.engine.resolution.holdsIntegrationTurn(f.current(second.id)),
-      true,
+      false,
     );
+    assert.equal(f.store.operation(operation.id)?.state, "needs_attention");
     f.store.putOperation({
       ...operation,
       state: "failed",

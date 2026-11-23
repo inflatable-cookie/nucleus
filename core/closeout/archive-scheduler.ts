@@ -3,10 +3,6 @@ import type { Resolution } from "../resolution";
 import type { Task } from "../../shared/contracts";
 import { isDispositionActive } from "../../shared/contracts";
 import { hostProcessSweepIntent } from "../machine/host-process-reap";
-import {
-  archiveIntentOutstanding,
-  archiveIntentUnreadable,
-} from "../workspaces/archive-intent";
 import { isTransportFailure } from "../../shared/transport";
 import {
   isLoginSessionFault,
@@ -140,25 +136,7 @@ export class ArchiveScheduler {
           );
       if (task.phase === "done") this.context.enqueueCleanup(task.id);
       else {
-        // A recorded intent keeps the ordinary lane schedule until it is observed.
-        // Its own retry interval decides whether this pass is due, so an unchanged
-        // refusal is not re-proved on every sweep.
         const runs = this.store.runs(task.id);
-        const unreadable = archiveIntentUnreadable(task, runs);
-        const unreadableRetry = unreadable
-          ? task.resolution.workspaceArchiveRetries.find(
-              (record) => record.workspaceId === unreadable,
-            )
-          : undefined;
-        const outstanding = archiveIntentOutstanding(task)
-          ? task.resolution.workspaceArchiveRetries.find(
-              (record) =>
-                record.workspaceId === task.resolution.archiveIntentWorkspaceId,
-            )
-          : undefined;
-        const observationDue =
-          archiveIntentOutstanding(task) &&
-          !(outstanding && Date.parse(outstanding.nextAttemptAt) > Date.now());
         // A cancelled task's stale episode is settled on the ordinary cleanup lane, so
         // the settlement needs no run and the pass that closes it ends the schedule.
         const staleEpisode =
@@ -169,18 +147,7 @@ export class ArchiveScheduler {
           task.resolution.displacedHostWorkspaces?.some(
             (entry) => entry.state !== "archived",
           ) ?? false;
-        if (
-          staleEpisode ||
-          observationDue ||
-          hasDisplaced ||
-          Boolean(
-            unreadable &&
-              !(
-                unreadableRetry &&
-                Date.parse(unreadableRetry.nextAttemptAt) > Date.now()
-              ),
-          )
-        )
+        if (staleEpisode || hasDisplaced)
           this.context.enqueueCleanup(task.id);
         try {
           await this.context.closeout.renewStaleCloseoutBase(task);

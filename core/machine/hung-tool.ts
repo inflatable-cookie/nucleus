@@ -6,10 +6,10 @@ import {
 } from "./process-identity-search";
 import { startIdentityProves } from "./start-identity";
 import {
-  ownedToolProcessTreeVerdict,
+  runProcessActivity,
   participantRuntimePids,
   providerRuntimePids,
-} from "./owned-tool-process-proof";
+} from "./run-process-tree";
 import type { ParticipantRuntime } from "./participant-runtime";
 
 /**
@@ -104,7 +104,7 @@ export function selectHungTool(
   if (!needle) return { refusal: "the tool's command line is too short to identify its process" };
   if (!processes) return { refusal: "the host process listing is unreadable" };
   const live = processes.filter((process) => !zombie(process));
-  const verdict = ownedToolProcessTreeVerdict(runId, live);
+  const verdict = runProcessActivity(runId, live);
   if (verdict.state === "unknown") return { refusal: verdict.reason };
   const byPid = new Map(live.map((process) => [process.pid, process]));
   const provider = byPid.get(verdict.providerPid);

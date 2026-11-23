@@ -27,8 +27,6 @@ import { supersedeIdleRunInTx } from "../core/recovery/fence-settlement";
 import { reviewPublicationBody } from "../core/forge/index";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { TOOL_TIMELINE_LIMIT } from "../core/recovery/stall";
-import { HostReadRefusalError } from "../core/host/errors";
-import type { HostProcessFact } from "../core/host";
 import {
   ordinaryReviewSource,
   ordinaryReviewDelta,
@@ -438,170 +436,6 @@ async function pendingVerdict(
   return { f, run, incident };
 }
 
-test("an ordinarily applied earlier review does not hold a displaced restart", async () => {
-  const f = fixture();
-  try {
-    await f.engine.wake();
-    const prior = f.current();
-    await f.report(prior, "changes_required");
-    const history = f.store.run(prior.id)!;
-    assert.equal(history.status, "finished");
-    assert.equal(history.released, true);
-    const events = f.store.eventsAll(f.task.id);
-    assert.ok(
-      events.some(
-        (event) =>
-          event.kind === "review_result_applied" && event.detail === prior.id,
-      ),
-    );
-    assert.equal(
-      events.some(
-        (event) =>
-          [
-            "run_released_from_recorded_completion",
-            "run_released_from_observed_liveness",
-          ].includes(event.kind) && event.detail.includes(prior.id),
-      ),
-      false,
-    );
-    // Make the historical application unambiguously earlier than the new attempt.
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const target = runSchema.parse({
-      id: "restart-target",
-      taskId: f.task.id,
-      role: "reviewer",
-      generation: 1,
-      head: prior.head,
-      base: prior.base,
-      agentId: "target-reader",
-      workspaceId: prior.workspaceId,
-      profile: prior.profile,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: false,
-    });
-    f.store.putRun(target);
-    const input = taskControlInputSchema.parse({
-      taskId: f.task.id,
-      version: f.store.task(f.task.id).version,
-      action: "restart",
-      role: "reviewer",
-      reason: "Continue",
-      caller: "owner",
-    });
-    const { key, payload } = taskControlOperation(input),
-      id = operationIdForKey(key),
-      at = new Date().toISOString();
-    f.store.putOperation(
-      queueOperationSchema.parse({
-        id,
-        key,
-        kind: "task_control",
-        inputHash: operationInputHash(payload),
-        state: "needs_attention",
-        taskId: f.task.id,
-        expectedVersion: input.version,
-        createdAt: at,
-        startedAt: at,
-        settledAt: at,
-        attempts: 1,
-        diagnostic: "Transport",
-        result: null,
-        effect: {
-          kind: "task_control",
-          target: "restart",
-          intentAt: at,
-          status: "uncertain",
-          result: null,
-          resultAt: null,
-        },
-      }),
-      payload,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const replacement = runSchema.parse({
-      ...target,
-      id: "replacement-reader",
-      agentId: "replacement-reader-agent",
-      createdAt: new Date().toISOString(),
-    });
-    f.store.putRun(replacement);
-    const current = f.store.task(f.task.id);
-    f.store.update(current.id, {
-      resolution: { ...current.resolution, currentRunId: replacement.id },
-      reason: "New review binding",
-    });
-    const offered = () =>
-      ownerTaskNext(
-        collectOwnerVerbFacts(f.store, f.store.task(f.task.id)),
-      ).verbs.some(
-        (view) =>
-          view.verb === "retry_effect" &&
-          JSON.stringify(view.args ?? {}).includes(`operation.${id}`),
-      );
-    assert.equal(offered(), true, "the target still owns its run");
-    assert.equal(
-      supersedeIdleRunInTx(f.store, f.task.id, target, "Observed reader idle"),
-      true,
-    );
-    const receipt = f.store.db
-      .prepare("SELECT hash FROM receipts WHERE id=? AND task=? AND run=?")
-      .get(history.completion!.eventId, f.task.id, prior.id) as {
-      hash: string;
-    };
-    f.store.db
-      .prepare("UPDATE receipts SET hash=? WHERE id=?")
-      .run("0".repeat(64), history.completion!.eventId);
-    assert.equal(
-      offered(),
-      true,
-      "a mismatched historical receipt is not terminal evidence",
-    );
-    f.store.db
-      .prepare("UPDATE receipts SET hash=? WHERE id=?")
-      .run(receipt.hash, history.completion!.eventId);
-    const applied = f.store
-      .eventsAll(f.task.id)
-      .find(
-        (event) =>
-          event.kind === "review_result_applied" && event.detail === prior.id,
-      )!;
-    f.store.db
-      .prepare("UPDATE events SET at=? WHERE id=?")
-      .run(new Date(Date.parse(at) + 1000).toISOString(), applied.id);
-    assert.equal(
-      offered(),
-      true,
-      "an application after the attempt is not earlier release evidence",
-    );
-    f.store.db
-      .prepare("UPDATE events SET at=? WHERE id=?")
-      .run(applied.at, applied.id);
-    assert.equal(offered(), false);
-    f.engine.reconcileBlockedEffects(f.task.id);
-    assert.equal(
-      f.store
-        .eventsAll(f.task.id)
-        .filter((event) => event.kind === "operation_superseded").length,
-      1,
-    );
-    f.engine.reconcileBlockedEffects(f.task.id);
-    assert.equal(
-      f.store
-        .eventsAll(f.task.id)
-        .filter((event) => event.kind === "operation_superseded").length,
-      1,
-    );
-    assert.equal(f.store.operation(id)?.effect?.status, "uncertain");
-  } finally {
-    await f.engine.stop();
-    await f.close();
-  }
-});
 
 test("ordinary public changes-required lifecycle retains the reader with a new exact-head credential, delta and clean author return", async () => {
   const f = fixture();
@@ -1646,51 +1480,6 @@ test("ordinary review custody still refuses a concurrent PR head change", async 
   }
 });
 
-test("an ordinary review blocked by a late durable effect waits with its identity and does not start recovery", async () => {
-  const f = fixture();
-  try {
-    await f.engine.wake();
-    const first = f.current();
-    await f.report(first, "changes_required");
-    await f.engine.wake();
-    const revision = f.current();
-    const head = f.pushRevision();
-    f.idle(revision);
-    f.faults.blockOrdinarySend = true;
-    const response = await new Reports(f.engine).report(
-      {
-        taskId: f.task.id,
-        runId: revision.id,
-        eventId: randomUUID(),
-        status: "ready_for_review",
-        summary: "Fixed feature",
-        prNumber: 41,
-        head,
-      },
-      f.tokens.get(revision.id)!,
-    );
-    assert.equal((response as { accepted: boolean }).accepted, true);
-    await f.engine.wake();
-    await f.engine.wake();
-    const task = f.store.task(f.task.id);
-    assert.match(task.reason, /attention-notice attention-race is uncertain/);
-    assert.equal(task.resolution.recoveryActive, false);
-    assert.equal(task.resolution.currentRunId, null);
-    assert.equal(
-      f.store.runs(task.id).filter((run) => !run.released).length,
-      0,
-    );
-    const runCount = f.store.runs(task.id).length;
-    for (let i = 0; i < 3; i++) await f.engine.wake();
-    assert.equal(
-      f.store.runs(task.id).length,
-      runCount,
-      "unchanged effect does not create more reviewer runs",
-    );
-  } finally {
-    await f.close();
-  }
-});
 
 test("ordinary source approval parks once without a coordinator and duplicate reports preserve the receipt", async () => {
   const f = fixture();
@@ -2639,6 +2428,27 @@ test("a retained new-head round checkpoints and automatically continues the same
   }
 });
 
+test("an unreadable tool timeline does not block the exact-head new review round", async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    const first = f.current();
+    await f.report(first, "changes_required");
+    f.adapter.agentTimelinePage = async () => null;
+    const next = await authorRevision(f, 1);
+    assert.equal(f.sends.length, 1);
+    assert.equal(next.head, f.workspaceHead());
+    assert.notEqual(next.head, first.head);
+    assert.equal(f.store.run(first.id)!.completion!.status, "changes_required");
+    assert.equal(
+      runGit(f.workspace, "branch", "--show-current"),
+      "feature/external",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test("a genuine rebase author report receives base movement and covering evidence, then a genuine verdict at the new head", async () => {
   const f = fixture();
   try {
@@ -3128,13 +2938,11 @@ test("an ordinary fresh reviewer is re-proved at its native creation and launche
 const freshReviewerRefusals: Array<{
   name: string;
   plant: (f: ReturnType<typeof fixture>, run: Run) => void;
-  settles: "attention" | "waiting";
   reason: RegExp;
 }> = [
   {
     name: "pause",
     plant: (f) => f.store.setMeta("paused", true),
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Ordinary review task reservation changed during custody proof/,
   },
@@ -3154,35 +2962,8 @@ const freshReviewerRefusals: Array<{
           },
         },
       }),
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
-  },
-  {
-    name: "pending effect",
-    plant: (f) =>
-      f.store.putOperation(
-        queueOperationSchema.parse({
-          id: "d".repeat(64),
-          key: "pending-effect-at-launch",
-          kind: "task_control",
-          inputHash: "a".repeat(64),
-          state: "pending",
-          taskId: f.task.id,
-          expectedVersion: null,
-          repoPath: f.repo,
-          submissionId: null,
-          createdAt: new Date().toISOString(),
-          startedAt: null,
-          settledAt: null,
-          attempts: 0,
-          diagnostic: "",
-          result: null,
-          effect: null,
-        }),
-      ),
-    settles: "waiting",
-    reason: /settle it with retry_effect/,
   },
   {
     name: "task version change",
@@ -3190,7 +2971,6 @@ const freshReviewerRefusals: Array<{
       f.store.update(f.task.id, {
         reason: "Concurrent canonical admission changed the source reservation",
       }),
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
@@ -3199,7 +2979,6 @@ const freshReviewerRefusals: Array<{
     plant: (f) => {
       f.state.prSha = f.oldHead;
     },
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Reviewer source or writer state changed before creation$/,
   },
@@ -3220,7 +2999,6 @@ const freshReviewerRefusals: Array<{
         active: true,
       });
     },
-    settles: "attention",
     reason:
       /^Ordinary review reviewer refused before send: Reviewer creation refused before send: Another run owns the ordinary review checkout$/,
   },
@@ -3249,21 +3027,8 @@ for (const refusal of freshReviewerRefusals) {
       assert.equal(f.store.run(run.id)?.status, "superseded");
       assert.equal(f.store.run(run.id)?.released, true);
       assert.equal(task.resolution.currentRunId, null);
-      if (refusal.settles === "attention") {
-        assert.equal(task.phase, "needs_attention");
-        assert.equal(task.resolution.attention, true);
-      } else {
-        assert.equal(
-          task.resolution.attention,
-          false,
-          "an effect fence waits; it is not a refusal",
-        );
-        assert.ok(
-          f.store
-            .eventsAll(f.task.id)
-            .some((event) => event.kind === "review_waiting_on_effects"),
-        );
-      }
+      assert.equal(task.phase, "needs_attention");
+      assert.equal(task.resolution.attention, true);
       assert.match(task.reason, refusal.reason);
     } finally {
       await f.close();
@@ -3324,277 +3089,6 @@ test("a reviewer that reported while its turn still runs is stopped once and its
       `the reported verdict is applied: ${f.store.task(f.task.id).reason}`,
     );
     assert.equal(f.store.task(f.task.id).resolution.attention, false);
-  } finally {
-    await f.close();
-  }
-});
-
-async function waitForOrdinaryPassProof(f: ReturnType<typeof fixture>) {
-  await f.engine.wake();
-  const earlierReview = f.current();
-  await f.report(earlierReview, "changes_required");
-  await f.engine.wake();
-  const revision = f.current();
-  assert.equal(revision.role, "revision");
-  const head = f.pushRevision("revision 1");
-  f.idle(revision);
-  assert.ok(revision.profile);
-  const retired = { ...revision, id: "retired-revision", agentId: "retired-worker" };
-  const releasedAt = new Date().toISOString();
-  f.store.putRun({
-    ...retired,
-    active: false,
-    released: true,
-    explicitlyReleasedAt: releasedAt,
-    status: "superseded",
-    temporaryDirectory: join(f.root, "retired-scratch"),
-  });
-  f.idle(retired);
-  const task = f.store.task(f.task.id);
-  const namedCheck = "effigy test unit -- test/named-environment-check.test.ts";
-  f.store.update(task.id, {
-    retiredWorkers: [...task.retiredWorkers, {
-      runId: retired.id,
-      agentId: retired.agentId,
-      profile: revision.profile,
-      reason: "Retired and explicitly released",
-    }],
-    resolution: {
-      ...task.resolution,
-      proofRetry: { runId: earlierReview.id, head, proofs: [namedCheck], at: releasedAt },
-    },
-  });
-  // T3 stamps every observation; the freshness rule needs it.
-  const stamp = new Date(Date.now() - 60_000).toISOString();
-  for (const [id, state] of f.states)
-    f.states.set(id, { ...state, activeTurnId: null, updatedAt: stamp });
-  // The callback's own wake admits the reviewer outside any sweep pass. Its
-  // host-side prefetch runs out of budget before it reaches the retained
-  // participants (a slow host), so the custody proof inside the quantum reads
-  // a page that was never captured: unknown, never a refusal.
-  const resolution = f.engine.resolution as { hostPassWarmBudgetMs: number };
-  const warmBudget = resolution.hostPassWarmBudgetMs;
-  resolution.hostPassWarmBudgetMs = 0;
-  const result = await new Reports(f.engine).report(
-    {
-      taskId: f.task.id,
-      runId: revision.id,
-      eventId: randomUUID(),
-      status: "ready_for_review",
-      summary: "Fixed revision 1",
-      prNumber: 41,
-      head,
-    },
-    f.tokens.get(revision.id)!,
-  );
-  assert.equal((result as { accepted: boolean }).accepted, true);
-  await f.engine.quiesce();
-  resolution.hostPassWarmBudgetMs = warmBudget;
-  return { head, namedCheck, retiredAgentId: retired.agentId, earlierReview };
-}
-
-for (const evidence of ["timeline page", "process listing"] as const) {
-  test(`ordinary review retries a null ${evidence} without refusing the send`, async () => {
-    const f = fixture();
-    try {
-      const { retiredAgentId, earlierReview } = await waitForOrdinaryPassProof(f);
-      let unavailable = true;
-      if (evidence === "timeline page") {
-        const readPage = f.adapter.agentTimelinePage!;
-        f.adapter.agentTimelinePage = async (id, limit) =>
-          unavailable && id === retiredAgentId ? null : readPage(id, limit);
-      } else {
-        const retired = f.states.get(retiredAgentId);
-        assert.ok(retired);
-        f.states.set(retiredAgentId, { ...retired, status: "closed" });
-        f.adapter.noLiveWorkspaceProcesses = async () => null;
-        f.adapter.hostProcessListing = async () => unavailable ? null : [];
-      }
-      await f.engine.auditPass(true);
-      const waiting = f.store.task(f.task.id);
-      assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
-      assert.match(waiting.reason, new RegExp(`${evidence} is unreadable`));
-      assert.equal(f.sends.length, 0);
-      assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
-      assert.equal(f.store.run(earlierReview.id)?.completion?.status, "changes_required");
-      assert.equal(runGit(f.workspace, "branch", "--show-current"), "feature/external");
-
-      unavailable = false;
-      await f.engine.auditPass(true);
-      assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
-    } finally {
-      await f.close();
-    }
-  });
-}
-
-test("ordinary review waits for a pass proof and sends the full review with its named check", async () => {
-  const f = fixture();
-  try {
-    const { head, namedCheck, retiredAgentId } = await waitForOrdinaryPassProof(f);
-    const waiting = f.store.task(f.task.id);
-    assert.equal(f.sends.length, 0, "nothing is sent on an unread proof");
-    assert.notEqual(
-      waiting.phase,
-      "needs_attention",
-      `an unread proof waits for the next pass (reason: ${waiting.reason})`,
-    );
-    assert.equal(waiting.resolution.stop?.reason ?? null, "lifecycle");
-    assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
-    assert.match(waiting.reason, /waits for the next host pass: agent timeline page was not captured/);
-    assert.equal(
-      f.store
-        .eventsAll(f.task.id)
-        .filter((event) => event.kind === "review_waiting_on_pass_proof").length,
-      1,
-      "the wait is retried by the next pass, not by an immediate follow-up reading the same miss",
-    );
-    assert.ok(
-      !f.store
-        .eventsAll(f.task.id)
-        .some((event) => event.kind === "ordinary_review_refused_before_send"),
-      "no pre-send refusal is recorded",
-    );
-    assert.equal(waiting.resolution.recovery ?? null, null, "no coordinator is summoned");
-    const beforeSend = f.store.runs(f.task.id).at(-1)!;
-    assert.equal(beforeSend.releasedBeforeSend, true);
-
-    const pages: string[] = [];
-    const readPage = f.adapter.agentTimelinePage!;
-    f.adapter.agentTimelinePage = async (id, request) => {
-      pages.push(id);
-      return readPage(id, request);
-    };
-    // The next host pass serves even the explicitly released retired worker.
-    await f.engine.auditPass(true);
-    if (!f.sends.length) await f.engine.auditPass(true);
-    const sent = f.store.task(f.task.id);
-    assert.equal(f.sends.length, 1, `the reviewer is sent (reason: ${sent.reason}, pages: ${pages.join(", ")})`);
-    assert.ok(pages.includes(retiredAgentId));
-    const run = f.sends[0]!;
-    assert.equal(run.ordinaryDetached, true);
-    assert.equal(run.head, head);
-    const prompt = runPrompt(sent, run, "/helper", "ticket", false);
-    assert.match(prompt, /You are the independent reviewer/);
-    assert.ok(prompt.includes(namedCheck), "the sent review keeps the named check");
-    assert.doesNotMatch(prompt, /Recover your own finished findings/);
-    assert.equal(sent.resolution.reviewPassProofWait, null);
-  } finally {
-    await f.close();
-  }
-});
-
-test("an intervening host-read wait preserves the ordinary pass proof deadline", async () => {
-  const f = fixture();
-  try {
-    await waitForOrdinaryPassProof(f);
-    const waiting = f.store.task(f.task.id);
-    const stop = waiting.resolution.stop;
-    assert.equal(stop?.fact?.code, "pass_proof");
-    assert.ok(stop);
-    (f.engine.resolution as { hostPassWarmBudgetMs: number }).hostPassWarmBudgetMs = 0;
-    await f.engine.auditPass(true);
-    const missed = f.store.task(f.task.id);
-    assert.equal(missed.resolution.stop?.since, stop.since, "a missed pass preserves the wait's start");
-    const proofWait = missed.resolution.reviewPassProofWait;
-    assert.ok(proofWait);
-    const since = new Date(Date.now() - 6 * 60_000).toISOString();
-    f.store.update(f.task.id, {
-      resolution: {
-        ...missed.resolution,
-        reviewPassProofWait: { ...proofWait, since },
-      },
-    });
-    const custody = f.engine.resolution.ordinaryRoundCustody.bind(f.engine.resolution);
-    f.engine.resolution.ordinaryRoundCustody = async (...args) => {
-      f.engine.resolution.ordinaryRoundCustody = custody;
-      throw new HostReadRefusalError("The participant inventory changed during the read");
-    };
-    await f.engine.auditPass(true);
-    const transient = f.store.task(f.task.id);
-    assert.equal(transient.resolution.stop?.reason, "external_unavailable");
-    assert.equal(transient.resolution.reviewPassProofWait?.since, since);
-    await f.engine.auditPass(true);
-    const exhausted = f.store.task(f.task.id);
-    assert.equal(f.sends.length, 0);
-    assert.equal(exhausted.phase, "needs_attention");
-    assert.equal(exhausted.resolution.stop?.reason, "operator_needed");
-    assert.equal(exhausted.resolution.stop?.fact?.code, "pass_proof_exhausted");
-    assert.match(exhausted.reason, /Ordinary review participant .*host pass timeline warming budget .* exhausted/);
-  } finally {
-    await f.close();
-  }
-});
-
-for (const location of ["empty", "workspace", "scratch"] as const) {
-  test(`ordinary review defers when a retired worker changes after the ${location} process scan`, async () => {
-    const f = fixture();
-    try {
-      const { retiredAgentId } = await waitForOrdinaryPassProof(f);
-      const retired = f.states.get(retiredAgentId);
-      assert.ok(retired);
-      f.states.set(retiredAgentId, { ...retired, status: "closed" });
-      let scans = 0;
-      const exited: HostProcessFact = {
-        pid: 4242, ppid: 1, pgid: 4242, uid: 501, startIdentity: "retired-process",
-        command: "node retired-tool.js",
-        cwd: location === "workspace" ? f.workspace : join(f.root, "retired-scratch"),
-      };
-      f.adapter.noLiveWorkspaceProcesses = async (_workspace, _runs, _runtime, processes) =>
-        location === "workspace" && processes?.some((process) => process.pid === exited.pid)
-          ? "a cached workspace process is still listed"
-          : null;
-      f.adapter.hostProcessListing = async () => {
-        if (++scans === 1) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 10));
-          f.states.set(retiredAgentId, {
-            ...retired,
-            status: "closed",
-            updatedAt: new Date().toISOString(),
-          });
-          if (location !== "empty") return [exited];
-        }
-        return [];
-      };
-      await f.engine.auditPass(true);
-      const waiting = f.store.task(f.task.id);
-      assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
-      assert.match(waiting.reason, /predates the participant's latest activity/);
-      assert.equal(f.sends.length, 0);
-      assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
-      await f.engine.auditPass(true);
-      assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
-    } finally {
-      await f.close();
-    }
-  });
-}
-
-test("ordinary review defers on an empty tool page that predates later participant activity", async () => {
-  const f = fixture();
-  try {
-    const { retiredAgentId } = await waitForOrdinaryPassProof(f);
-    const retired = f.states.get(retiredAgentId);
-    assert.ok(retired);
-    const readPage = f.adapter.agentTimelinePage!;
-    let advanced = false;
-    f.adapter.agentTimelinePage = async (id, limit) => {
-      const page = await readPage(id, limit);
-      if (!advanced && id === retiredAgentId) {
-        advanced = true;
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
-        f.states.set(retiredAgentId, { ...retired, updatedAt: new Date().toISOString() });
-      }
-      return page;
-    };
-    await f.engine.auditPass(true);
-    const waiting = f.store.task(f.task.id);
-    assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
-    assert.match(waiting.reason, /cached tool timeline predates/);
-    assert.equal(f.sends.length, 0);
-    assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
-    await f.engine.auditPass(true);
-    assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
   } finally {
     await f.close();
   }

@@ -1,9 +1,5 @@
-import {
-  blockingRecoveryEffectsRefusal,
-  unsettledControlRefusal,
-} from "../recovery/recovery-effects";
+import { ownerStopPendingRefusal } from "./owner-stop";
 import { refusedRunIds } from "../recovery/refused-launch";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import {
   RETAINED_PREREQUISITE_REFUSAL,
   NO_RESOLUTION_RUN_REFUSAL,
@@ -198,7 +194,6 @@ export function parkedRestart(facts: OwnerVerbFacts): ParkedRestart {
 /** An escalated worker park has no resolution step to retry. Re-admit only a proved unsent creation. */
 export function escalatedWorkerRestart(
   facts: OwnerVerbFacts,
-  enclosing?: VerifiedEnclosingOperation,
 ): { kind: "dispatch" } | { refusal: string } | null {
   const { task, runs, events, store } = facts;
   const recovery = task.resolution.recovery;
@@ -230,8 +225,6 @@ export function escalatedWorkerRestart(
     return refuse(
       "A creation, run or recorded direction still owns the parked worker",
     );
-  const effect = blockingRecoveryEffectsRefusal(store, task, { enclosing });
-  if (effect) return refuse(effect);
   const refused = refusedRunIds(events);
   if (
     !runs.some((run) => run.id === recovery.runId) ||
@@ -566,7 +559,6 @@ export function workerRestartRefusal(
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
     return RETAINED_PREREQUISITE_REFUSAL;
   const delivery =
-    unsettledControlRefusal(facts.store, task) ??
     retainedWorkerDeliveryRefusal(facts);
   if (delivery) return delivery;
 
@@ -798,8 +790,8 @@ export const restart: OwnerVerb = {
             fill: ["reason"],
             note: "Return the worker to ordinary dispatch after its refused creation.",
           };
-    const controlRefusal = unsettledControlRefusal(facts.store, task);
-    if (controlRefusal) return { available: false, refusal: controlRefusal };
+    if (task.resolution.ownerStop)
+      return { available: false, refusal: ownerStopPendingRefusal(task.resolution.ownerStop) };
     const exhausted = exhaustedReviewer(task, runs);
     if (exhausted) {
       const refusal = exhaustedReviewerRefusal(facts.store, task, exhausted);

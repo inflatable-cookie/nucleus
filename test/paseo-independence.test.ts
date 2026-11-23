@@ -425,10 +425,7 @@ test("workspace archive and review continuation refusals use the host-kind label
       onTaskHost: (_owner, work) => work(),
       host: { observe: async () => ({ status: "idle" }) as never },
       paused: () => false,
-      ownedToolHold: async () => ({ kind: "clear" }),
       settleVerbFences: () => {},
-      settleReviewDelivery: () => {},
-      reconcileReviewDelivery: async () => ({ status: "none" }) as never,
       assertReviewProfileIndependent: () => {},
       stopResumeState: () => ({ kind: "none" }),
       reviewContinuationGate: () =>

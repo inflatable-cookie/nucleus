@@ -3,7 +3,6 @@ import { realpath } from "node:fs/promises";
 import type { HostProcessFact } from "../host/types";
 import { parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
-import type { Run, Task } from "../../shared/contracts";
 import {
   acpTaskRuntimePids,
   possibleAcpRuntimePids,
@@ -17,17 +16,6 @@ import {
   SHELL_PROGRAMS,
 } from "./process-shapes";
 import type { ParticipantRuntime } from "./participant-runtime";
-/**
- * The owned-tool process proof: does the provider process rooted by this run's
- * own Queue MCP report helper still carry a descendant that could be work?
- *
- * Identity is the process table plus each provider runtime's own shape. Nothing
- * here reads a provider name list, a label or a message: the questions it
- * answers are "is this program the provider's own", "is this an interpreter
- * bound to one provider session" and "is any descendant left once no turn is
- * live". The caller decides what an `unknown` answer means.
- */
-
 /** A recorded BB participant identifies its own native thread, never a Paseo agent. */
 export function bbThreadForAgent(
   agentId: string | null | undefined,
@@ -44,44 +32,6 @@ export function bbThreadForAgent(
   return qualified?.nativeAgentId ?? agentId;
 }
 
-/** All recorded participants of this workspace, not merely the one being observed. */
-export function bbWorkspaceThreads(
-  task: Task,
-  runs: readonly Run[],
-  workspaceId?: string | null,
-  options: { includeAllRuns?: boolean } = {},
-): string[] {
-  if (!workspaceId) return [];
-  const threads = new Set<string>();
-  const add = (agentId: string | null | undefined, hostId?: string | null) => {
-    const thread = bbThreadForAgent(agentId, hostId);
-    if (thread) threads.add(thread);
-  };
-  if (task.workspaceId === workspaceId) add(task.agentId, task.hostId);
-  for (const retired of task.retiredWorkers ?? []) {
-    const run = runs.find((item) => item.id === retired.runId);
-    if (
-      run &&
-      (run.taskId !== task.id ||
-        run.role !== "revision" ||
-        run.agentId !== retired.agentId)
-    )
-      throw Error("Retired worker run identity conflicts");
-    if ((run?.workspaceId ?? task.workspaceId) === workspaceId)
-      add(retired.agentId, run?.hostId ?? task.hostId);
-  }
-  for (const run of runs)
-    if (
-      run.taskId === task.id &&
-      run.workspaceId === workspaceId &&
-      (options.includeAllRuns ||
-        ["revision", "reviewer", "executor"].includes(run.role))
-    )
-      add(run.agentId, run.hostId ?? task.hostId);
-  return [...threads];
-}
-
-/** Only a bridge under the BB daemon and its positively bound session are runtime. */
 export function bbRuntimePids(
   processes: readonly Pick<
     HostProcessFact,
@@ -559,7 +509,7 @@ export class RunProcessTable {
   }
 }
 
-export interface OwnedToolProcessProofOptions {
+export interface RunProcessActivityOptions {
   /**
    * The same agent's own fresh observation already proves no provider turn is
    * live, so the provider's standing tool runtimes and its host's own task
@@ -576,28 +526,16 @@ export interface OwnedToolProcessProofOptions {
  * caller acts on: a missing helper may be looked for on another run, while an
  * unreadable table or an ambiguous helper never is.
  */
-export type OwnedToolProcessUnknownCode =
+export type RunProcessUnknownCode =
   | "listing-unreadable"
-  | "no-run-identity"
   | "helper-missing"
   | "helper-ambiguous"
   | "helper-parent-unreadable";
 
-export type OwnedToolProcessTreeVerdict =
+export type RunProcessActivity =
   | { state: "empty"; providerPid: number; helperPid: number }
   | { state: "live"; providerPid: number; helperPid: number; pid: number }
-  | { state: "unknown"; code: OwnedToolProcessUnknownCode; reason: string };
-
-export type OwnedToolAgentProcessTreeVerdict =
-  | { state: "empty"; runId: string; providerPid: number; helperPid: number }
-  | {
-      state: "live";
-      runId: string;
-      providerPid: number;
-      helperPid: number;
-      pid: number;
-    }
-  | { state: "unknown"; code: OwnedToolProcessUnknownCode; reason: string };
+  | { state: "unknown"; code: RunProcessUnknownCode; reason: string };
 
 /**
  * Inspect the provider process rooted by this run's unique Queue MCP report
@@ -606,11 +544,11 @@ export type OwnedToolAgentProcessTreeVerdict =
  * Once no turn is live, a descendant that is only the provider's own standing
  * tool runtime is not work either, while its own children still are.
  */
-export function ownedToolProcessTreeVerdict(
+export function runProcessActivity(
   runId: string,
   processes: readonly HostProcessFact[] | null,
-  options: OwnedToolProcessProofOptions = {},
-): OwnedToolProcessTreeVerdict {
+  options: RunProcessActivityOptions = {},
+): RunProcessActivity {
   if (!processes)
     return {
       state: "unknown",
@@ -690,39 +628,4 @@ export function ownedToolProcessTreeVerdict(
   return other === undefined
     ? { state: "empty", providerPid, helperPid: helper.pid }
     : { state: "live", providerPid, helperPid: helper.pid, pid: other };
-}
-
-/**
- * A provider process is agent-owned, while its report helper ticket is run-owned.
- * Search the agent's run tickets newest first so a superseded run can use the
- * helper retained by the agent's current run.
- */
-export function ownedToolAgentProcessTreeVerdict(
-  runIdsNewestFirst: readonly string[],
-  processes: readonly HostProcessFact[] | null,
-  options: OwnedToolProcessProofOptions = {},
-): OwnedToolAgentProcessTreeVerdict {
-  if (!processes)
-    return {
-      state: "unknown",
-      code: "listing-unreadable",
-      reason: "host process listing is unreadable",
-    };
-  if (!runIdsNewestFirst.length)
-    return {
-      state: "unknown",
-      code: "no-run-identity",
-      reason: "no run process identity is available",
-    };
-  for (const runId of runIdsNewestFirst) {
-    const verdict = ownedToolProcessTreeVerdict(runId, processes, options);
-    if (verdict.state === "unknown" && verdict.code === "helper-missing")
-      continue;
-    return verdict.state === "unknown" ? verdict : { ...verdict, runId };
-  }
-  return {
-    state: "unknown",
-    code: "helper-missing",
-    reason: "MCP report helper is missing",
-  };
 }

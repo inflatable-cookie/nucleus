@@ -809,7 +809,6 @@ export class QueueRuntime {
       this.settings.uncertainMergeRetryMs,
       this.hostRunStateDir,
     );
-    this.engine.currentServiceBuildId = currentServiceBuildId;
     // A service start never parks tasks: hosts read `unknown` until they connect.
     this.engine.hostHealth.startupGraceMs =
       options.hostStartupGraceMs ?? HOST_HEALTH_STARTUP_GRACE_MS;
@@ -2132,17 +2131,8 @@ export class QueueRuntime {
     });
   }
 
-  /** Inspect one operation, reconciling a proven historical pre-send refusal without executing it. */
-  operationStatus(input: {
-    operationId: string;
-    reconcilePreSendInputHash?: string;
-  }) {
-    return input.reconcilePreSendInputHash === undefined
-      ? this.engine.operationStatus(input.operationId)
-      : this.store.reconcileTaskControlPreSend(
-          input.operationId,
-          input.reconcilePreSendInputHash,
-        );
+  operationStatus(input: { operationId: string }) {
+    return this.engine.operationStatus(input.operationId);
   }
 
   async reviewEntryWorkspace(

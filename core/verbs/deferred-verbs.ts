@@ -4,8 +4,6 @@ import {
   isDispositionComplete,
   taskControlInputSchema,
 } from "../../shared/contracts";
-import { timelineMessage } from "../recovery/effect-reconcile";
-import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { ProvenPreSendRefusalError } from "../host/errors";
 import { dispatchBlocked, slotRequestFenced } from "../dispatch/capacity";
 import type { Engine } from "../engine";

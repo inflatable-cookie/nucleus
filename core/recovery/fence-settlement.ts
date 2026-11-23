@@ -12,13 +12,11 @@ import type { Engine } from "../engine";
 import type { Adapter } from "../host/adapter";
 import { recordProofExecution } from "../qa/proof-records";
 import { timelineSelectorEvidence } from "../qa/proof-selector-evidence";
-import { blockingRecoveryEffectsRefusal } from "./recovery-effects";
 import {
   reviewContinuationWait,
   reviewInProgress,
 } from "../review/review-continuation";
-import { readToolTimeline, type OwnedToolHoldResult } from "./stall";
-import { participantToolRunIds } from "./task-reasons";
+import { readToolTimeline } from "./stall";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
@@ -187,40 +185,6 @@ export function settleSupersededFencesInTx(
         status: incident.status,
       }),
     );
-  }
-  // A later owner control explicitly replaces an uncertain task-control
-  // attempt. Retain its diagnostic and record why it no longer owns the task.
-  for (const operation of store.operations({
-    taskId,
-    states: ["needs_attention"],
-    limit: 1000,
-  })) {
-    if (operation.kind !== "task_control") continue;
-    const payload = store.operationPayload(operation.id) as {
-      control?: { action?: string };
-    } | null;
-    if (payload?.control?.action !== "retry_effect") continue;
-    store.putOperation({
-      ...operation,
-      state: "succeeded",
-      settledAt: at,
-      diagnostic: "",
-      result: {
-        taskId,
-        taskVersion: store.task(taskId).version,
-        phase: store.task(taskId).phase,
-        number: store.task(taskId).number ?? null,
-        reference: store.task(taskId).reference ?? null,
-      },
-      effect: operation.effect
-        ? {
-            ...operation.effect,
-            status: "reconciled",
-            result: note,
-            resultAt: at,
-          }
-        : null,
-    });
   }
   let attentionNotices = 0;
   for (const notice of store.notices(task.id)) {
@@ -1115,10 +1079,7 @@ export class RunRelease {
    * Why one binding-superseded run must stay held, or null when it is
    * observably idle with its safeguards passing. Observation is fresh, never
    * from stored flags: the same agent in the run's workspace, idle with no
-   * active turn and no pending permission, no live owned tool by the existing
-   * timeline proof unless native closure already ended the managed session,
-   * and no ambiguous or uncertain effect on the run. A hold
-   * writes nothing.
+   * active turn and no pending permission. A hold writes nothing.
    */
   async supersededIdleFence(
     run: Run,
@@ -1156,26 +1117,7 @@ export class RunRelease {
         return "its agent is awaiting a permission request";
       if (!["idle", "error", "closed"].includes(state.status))
         return `its agent is ${state.status}`;
-      if (state.status !== "closed") {
-        if (Date.now() >= effectiveDeadlineAt)
-          return "its owned-tool observation budget expired";
-        const tools = await this.engine.ownedToolHold(
-          run.agentId!,
-          run.id,
-          run.taskId,
-          { deadlineAt: effectiveDeadlineAt },
-        );
-        if (tools.kind !== "clear") return tools.reason;
-      }
     }
-    // The archive proves the thread cannot take a turn; it never settles the
-    // run's durable effects, which keep their own fence.
-    const refusal = blockingRecoveryEffectsRefusal(
-      this.store,
-      this.store.task(run.taskId),
-      { runId: run.id },
-    );
-    if (refusal) return refusal;
     return null;
   }
 
@@ -1204,47 +1146,6 @@ export class RunRelease {
     } catch {
       return false;
     }
-  }
-
-  /**
-   * The existing owned-tool proof (Spec 016 stopped-run coverage): no live
-   * tool by timeline evidence. An adapter without a timeline offers no owned
-   * tool to hold on; where the timeline exists, inconclusive evidence holds.
-   * A running entry is settled once the same agent's own fresh observation
-   * proves no turn is live and the call's kind cannot outlive its turn. A shell
-   * call additionally needs a complete provider process-tree proof rooted at
-   * this run's MCP report helper; every unreadable or live descendant holds.
-   */
-  async ownedToolHold(
-    agentId: string,
-    runId?: string,
-    taskId?: string,
-    options: {
-      requireCompleteEvidence?: boolean;
-      allowRetired?: boolean;
-      deadlineAt?: number;
-    } = {},
-  ): Promise<OwnedToolHoldResult> {
-    if (!taskId || !runId)
-      return this.resolution.ownedToolHold(agentId, options);
-    const task = this.store.task(taskId),
-      runs = this.store.runs(taskId);
-    const boundRun = runs.find((run) => run.id === runId);
-    const workspaceId = boundRun?.workspaceId ?? task.workspaceId;
-    if (!workspaceId)
-      return {
-        kind: "hold",
-        reason: "owned tool run workspace identity is unavailable",
-      };
-    const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
-    if (!runIds.includes(runId)) runIds.unshift(runId);
-    return this.resolution.ownedToolHold(agentId, {
-      ...options,
-      runId,
-      runIds,
-      taskId,
-      workspaceId,
-    });
   }
 
   /**

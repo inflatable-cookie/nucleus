@@ -12,7 +12,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHost } from "../hosts/t3code";
 import { liveToolIssueFact, readToolTimeline } from "../core/recovery/stall";
-import { boundedToolHold } from "../core/machine/bounded-tool";
 import {
   STAMP,
   syntheticRun,
@@ -140,60 +139,4 @@ test("an interrupted T3 command is read as interrupted; once the turn is over it
     liveToolIssueFact(edit, idleObservation(agent.id, "unused")),
     null,
   );
-});
-
-test("the bounded owned-tool proof settles an interrupted command once the turn and processes are clear", async (t) => {
-  const { host, agent, workspace, read } = await interruptedThread(t);
-  assert.equal(read.coverage, "bounded");
-  if (read.coverage !== "bounded") return;
-  const observe = {
-    observe: async () => idleObservation(agent.id, workspace.id),
-  };
-  assert.deepEqual(
-    await boundedToolHold(read, observe, agent.id, workspace.id, async () => ({
-      kind: "clear",
-    })),
-    { kind: "clear" },
-    "an interrupted call in an interrupted run holds nothing once no owned process remains",
-  );
-  const childHold = await boundedToolHold(
-    read,
-    observe,
-    agent.id,
-    workspace.id,
-    async () => ({
-      kind: "hold",
-      reason: "pid 4242 remains in the task workspace process tree",
-    }),
-  );
-  assert.equal(childHold.kind, "hold");
-  if (childHold.kind === "hold")
-    assert.match(
-      childHold.reason,
-      /process proof did not clear: pid 4242/,
-      "a background child that survived the interrupt still holds",
-    );
-  const busy = {
-    observe: async () => ({
-      ...idleObservation(agent.id, workspace.id),
-      status: "running" as const,
-      active: true,
-      activeTurnId: "synthetic-run-2",
-    }),
-  };
-  const busyHold = await boundedToolHold(
-    read,
-    busy,
-    agent.id,
-    workspace.id,
-    async () => ({ kind: "clear" }),
-  );
-  assert.equal(busyHold.kind, "hold");
-  if (busyHold.kind === "hold")
-    assert.match(
-      busyHold.reason,
-      /still live/,
-      "a turn that is not over never settles it",
-    );
-  void host;
 });

@@ -37,7 +37,6 @@ import {
   workerRestartRefusal,
 } from "./owner-verbs";
 import type { RestartRequest } from "./owner-shared";
-import { verifyEnclosingOperation } from "../planning/enclosing-operation";
 
 /**
  * The worker half of `restart`: the shapes that continue or replace a worker run
@@ -93,9 +92,7 @@ export class WorkerRestarts {
           !current.removedAt &&
           !["done", "cancelled"].includes(current.phase) &&
           !current.resolution.mergedCommit &&
-          runsUnchangedSince(runs, this.store.runs(current.id)) &&
-          (!c.operationId ||
-            verifyEnclosingOperation(this.store, c.input, c.operationId)),
+          runsUnchangedSince(runs, this.store.runs(current.id)),
       );
     };
     if (
@@ -663,7 +660,6 @@ export class WorkerRestarts {
               return apply();
             };
           },
-          finished.settleable.map((run) => run.id),
         ),
       `task:${task.id}`,
     );
@@ -1065,7 +1061,6 @@ export class WorkerRestarts {
               });
             };
           },
-          finished.settleable.map((run) => run.id),
         ),
       `task:${task.id}`,
     );

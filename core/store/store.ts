@@ -44,7 +44,6 @@ import { StoreNotices } from "./store-notices";
 import { StoreMessages } from "./store-messages";
 import { StoreHookEvents } from "./store-hook-events";
 import { StorePendingSubmissions } from "./store-pending-submissions";
-import { StorePreSend } from "./store-pre-send";
 import {
   buildOutcomeRecord,
   StoreOutcomes,
@@ -94,7 +93,6 @@ export {
   VERB_OUTCOME_RETENTION_MS,
 } from "./store-retention";
 export { operationIdForKey, operationInputHash } from "./store-core";
-export { provedPreSendHistory } from "./store-pre-send";
 export {
   buildOutcomeRecord,
   type TelemetryFactChunk,
@@ -192,7 +190,6 @@ import {
   type RepositoryRekeyReceiptQuery,
   type RepositoryRekeyResult,
 } from "../../shared/repository-rekey";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 
 import {
   HOST_RUN_OUTPUT_FAILURE_DUE_PAGE,
@@ -648,7 +645,6 @@ export class Store {
   private readonly operationsStore = new StoreOperations(this.core, {
     taskChanged: (taskId) => this.taskChanged(taskId),
     numberForCached: (taskId) => this.tasksStore.numberForCached(taskId),
-    runs: (taskId) => this.runs(taskId),
   });
   /** Operator notices, agent messages and hook events: one owner per table, sharing the store's change notifications. */
   private readonly noticesStore = new StoreNotices(this.core, {
@@ -671,18 +667,6 @@ export class Store {
       operationPayload: (id) => this.operationsStore.operationPayload(id),
     },
   );
-  /** The pre-send receipt settlement: an execution-authored no-send refusal, relabelled and never re-run. */
-  private readonly preSendStore = new StorePreSend(this.core, {
-    operation: (id) => this.operationsStore.operation(id),
-    operationPayload: (id) => this.operationsStore.operationPayload(id),
-    putOperation: (operation) => this.operationsStore.putOperation(operation),
-    runs: (taskId) => this.runs(taskId),
-    task: (id) => this.task(id),
-    eventsAll: (taskId) => this.eventsAll(taskId),
-    event: (taskId, kind, detail) => {
-      this.event(taskId, kind, detail);
-    },
-  });
   get db(): DatabaseSync {
     return this.core.db;
   }
@@ -2554,41 +2538,6 @@ export class Store {
   operationPayload(id: string): unknown {
     return this.operationsStore.operationPayload(id);
   }
-  reconcileTaskControlPreSend(id: string, inputHash: string): QueueOperation {
-    return this.preSendStore.reconcileTaskControlPreSend(id, inputHash);
-  }
-
-  /** The no-write evidence for an uncertain move to merge, or null (nucleus#1428). */
-  unwrittenMergeMoveProof(id: string): string | null {
-    return this.preSendStore.unwrittenMergeMoveProof(id);
-  }
-
-  /** Settle a proven no-write move to merge as failed; never re-runs the control (nucleus#1428). */
-  reconcileUnwrittenMergeMove(id: string, inputHash: string): QueueOperation {
-    return this.preSendStore.reconcileUnwrittenMergeMove(id, inputHash);
-  }
-  settleTaskPreSendReceipts(taskId: string): void {
-    this.transaction(() => {
-      const rows = this.db
-        .prepare(
-          `SELECT id FROM operations WHERE taskId=? AND kind='task_control'
-        AND state='needs_attention' AND json_type(data,'$.preSendReceipt')='object'`,
-        )
-        .all(taskId);
-      for (const row of rows)
-        this.preSendStore.settleTaskControlPreSend(String(row.id), taskId);
-    });
-  }
-  taskIdsWithPreSendReceipts(after: string, limit: number): string[] {
-    const rows = this.db
-      .prepare(
-        `SELECT DISTINCT taskId FROM operations
-      WHERE kind='task_control' AND state='needs_attention' AND taskId>?
-        AND json_type(data,'$.preSendReceipt')='object' ORDER BY taskId LIMIT ?`,
-      )
-      .all(after, limit);
-    return rows.map((row) => String(row.taskId));
-  }
   operations(
     filter: {
       states?: QueueOperation["state"][];
@@ -2738,9 +2687,9 @@ export class Store {
    */
   reviewEntryUnrunBeforeFirstRun(
     task: Task,
-    enclosing?: VerifiedEnclosingOperation,
+    operationId?: string,
   ): boolean {
-    return reviewEntryUnrun(this.reviewEntryFacts, task, enclosing);
+    return reviewEntryUnrun(this.reviewEntryFacts, task, operationId);
   }
   /** The dependency boundary; `store-prerequisites.ts` owns its admission rules. */
   updateDependencies(

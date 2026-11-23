@@ -1,11 +1,16 @@
 import type { Task } from '../../shared/contracts';
 import type { Engine } from '../engine';
-import type { LifecycleAdapter } from './archive-proof';
 import type { Resolution } from '../resolution';
 import { missingOriginHasPlanner } from '../questions/origin';
 import { recordIntegrationFastForward } from '../git/index';
 import { consumerBlockAdvance, isConsumerDeclaredBlock } from './closeout-renewal';
 import { CLOSEOUT_BASE_RENEWED_KIND, CLOSEOUT_BASE_RENEWAL_TRANSITION, closeoutBaseRenewalAllowed } from './closeout-base-refresh';
+
+interface CloseoutWorkspaceAccess {
+  createCloseoutWorkspace(task: Task): Promise<{ id: string; directory: string }>;
+  findCloseoutWorkspaces(task: Task): Promise<{ id: string; directory: string }[]>;
+  verifyCloseoutWorkspace(task: Task, id: string, directory: string): Promise<void>;
+}
 
 export type CloseoutRecoveryContext = Pick<Engine, 'adapter' | 'host' | 'onTaskHost' | 'stopped' | 'store'> & {
   readonly resolution: Pick<Resolution, 'adapter' | 'closeoutAuthority' | 'hasEarlierIntegrationTurn' | 'lease' | 'update'>;
@@ -16,7 +21,7 @@ export const CONSUMER_BLOCK_RENEWAL_LIMIT=5;
 export class CloseoutRecovery {
   constructor(readonly engine: CloseoutRecoveryContext) {}
   get store() { return this.engine.store; }
-  get adapter(){return this.engine.adapter as typeof this.engine.adapter & Partial<LifecycleAdapter>;}
+  get adapter(){return this.engine.adapter as Engine["adapter"] & Partial<CloseoutWorkspaceAccess>;}
   paused(){return this.engine.stopped || this.store.getMeta('paused')===true;}
   async recover(task:Task) {
     if(task.originError&&!missingOriginHasPlanner(this.store,task) || task.resolution.recoveryActive || this.paused() || !this.adapter.workspaceAvailable || !task.resolution.mergedCommit || !['syncing','closing'].includes(task.phase))return;

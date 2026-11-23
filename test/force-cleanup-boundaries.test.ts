@@ -88,15 +88,14 @@ test("forced merged closeout supersedes only the recorded participant identities
     const lease = f.engine.resolution as unknown as {
       executionLease(
         task: typeof result,
-        enclosing: undefined,
         syncing: boolean,
       ): Promise<boolean>;
     };
-    assert.equal(await lease.executionLease(result, undefined, true), true);
+    assert.equal(await lease.executionLease(result, true), true);
     assert.equal(f.observations(), 1);
     const changed = { ...result, agentId: "new-worker" };
     await assert.rejects(
-      lease.executionLease(changed, undefined, true),
+      lease.executionLease(changed, true),
       /unobservable/,
     );
     assert.equal(f.observations(), 2);

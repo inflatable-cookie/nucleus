@@ -18,7 +18,7 @@ import {
 import {
   RunProcessTable,
   possibleParticipantRuntimePids,
-} from "./owned-tool-process-proof";
+} from "./run-process-tree";
 import { protectedHostPids } from "./host-process-select";
 import { terminateHostProcessTargets } from "./host-process-reap";
 

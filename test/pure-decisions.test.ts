@@ -60,8 +60,6 @@ const operationFacts = (
   committed: false,
   submissionDeferrable: false,
   validationUnavailable: false,
-  parkedRestartProven: false,
-  typedRefusalProven: false,
   typedPreSendRefusal: false,
   preSendBoundaryStarted: false,
   ownedToolRetryRefused: false,
@@ -105,7 +103,6 @@ test("operationFailureSettlement: a committed result keeps its own settlement", 
       },
       expect: {
         kind: "settle",
-        receipt: null,
         state: "failed",
         effect: "reconciled",
       },
@@ -122,41 +119,20 @@ test("operationFailureSettlement: a committed result keeps its own settlement", 
   }
 });
 
-test("operationFailureSettlement: Queue proves its own pre-send refusal, and only prose decides an unknown send", () => {
+test("operationFailureSettlement: typed refusals and interrupted delivery", () => {
   const rows: Array<{
     name: string;
     facts: Partial<OperationFacts>;
     expect: OperationFailureSettlement;
   }> = [
     {
-      name: "a typed refusal with no receipt leaves a definite failure",
+      name: "a typed refusal leaves a definite failure",
       facts: {
         typedPreSendRefusal: true,
         message: "Cannot move the task: its PR is unmerged",
       },
       expect: {
         kind: "settle",
-        receipt: null,
-        state: "failed",
-        effect: "reconciled",
-      },
-    },
-    {
-      name: "a parked restart records its rollback receipt",
-      facts: { typedPreSendRefusal: true, parkedRestartProven: true },
-      expect: {
-        kind: "settle",
-        receipt: "parked_restart",
-        state: "failed",
-        effect: "reconciled",
-      },
-    },
-    {
-      name: "any other typed pre-send refusal records the refusal receipt",
-      facts: { typedPreSendRefusal: true, typedRefusalProven: true },
-      expect: {
-        kind: "settle",
-        receipt: "typed_refusal",
         state: "failed",
         effect: "reconciled",
       },
@@ -166,7 +142,6 @@ test("operationFailureSettlement: Queue proves its own pre-send refusal, and onl
       facts: { preSendBoundaryStarted: true, message: "Cannot move the task" },
       expect: {
         kind: "settle",
-        receipt: null,
         state: "needs_attention",
         effect: "uncertain",
       },
@@ -180,7 +155,6 @@ test("operationFailureSettlement: Queue proves its own pre-send refusal, and onl
       },
       expect: {
         kind: "settle",
-        receipt: null,
         state: "failed",
         effect: "reconciled",
       },
@@ -190,7 +164,6 @@ test("operationFailureSettlement: Queue proves its own pre-send refusal, and onl
       facts: { message: "transport socket closed" },
       expect: {
         kind: "settle",
-        receipt: null,
         state: "needs_attention",
         effect: "uncertain",
       },
@@ -203,7 +176,6 @@ test("operationFailureSettlement: Queue proves its own pre-send refusal, and onl
       },
       expect: {
         kind: "settle",
-        receipt: null,
         state: "failed",
         effect: "reconciled",
       },
@@ -216,7 +188,6 @@ test("operationFailureSettlement: Queue proves its own pre-send refusal, and onl
       },
       expect: {
         kind: "settle",
-        receipt: null,
         state: "failed",
         effect: "reconciled",
       },
@@ -226,7 +197,6 @@ test("operationFailureSettlement: Queue proves its own pre-send refusal, and onl
       facts: { preSendBoundaryStarted: true, effectChangedSinceIntent: true },
       expect: {
         kind: "settle",
-        receipt: null,
         state: "needs_attention",
         effect: "keep",
       },
@@ -234,7 +204,7 @@ test("operationFailureSettlement: Queue proves its own pre-send refusal, and onl
     {
       name: "an operation with no effect settles without one",
       facts: { hasEffect: false, message: "no effect to reconcile" },
-      expect: { kind: "settle", receipt: null, state: "failed", effect: null },
+      expect: { kind: "settle", state: "failed", effect: null },
     },
   ];
   for (const row of rows)

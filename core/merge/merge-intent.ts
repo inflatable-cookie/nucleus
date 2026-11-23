@@ -625,13 +625,4 @@ export class MergeIntent {
       "lifecycle",
     );
   }
-
-  /** Owner retry entry to re-observe one recorded merge response intent. */
-  async reconcileMergeResponseEffect(taskId: string): Promise<Task> {
-    const task = this.store.task(taskId);
-    if (!task.resolution.mergeIntent || task.resolution.mergedCommit)
-      return task;
-    await this.reconcileMergeIntent(task);
-    return this.store.task(taskId);
-  }
 }

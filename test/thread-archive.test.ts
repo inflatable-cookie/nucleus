@@ -429,10 +429,10 @@ test('a lost thread.delete reply is read back from the host before anything else
       second.store.update(second.task.id, { phase: 'done', resolution: { ...second.store.task(second.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
       let calls = 0;
       second.t3Adapter.deleteAgent = async (id) => { calls += 1; throw Error('T3Code transport: connection lost'); };
-      await archiveFinishedThreads(second.store, second.t3Adapter, second.task.id, async () => null);
+      await archiveFinishedThreads(second.store, second.t3Adapter, second.task.id);
       assert.equal(second.deleted.has('coordinator'), false, 'the failed removal changed nothing on the host');
       assert.equal(second.store.getMeta<{ status: string }>(qualifiedThreadArchiveEffectKey('host', 'coordinator'))?.status, 'uncertain');
-      for (let pass = 0; pass < 3; pass++) await archiveFinishedThreads(second.store, second.t3Adapter, second.task.id, async () => null);
+      for (let pass = 0; pass < 3; pass++) await archiveFinishedThreads(second.store, second.t3Adapter, second.task.id);
       assert.equal(calls, 1, 'a removal whose outcome is unknown is never sent again');
       assert.equal(second.store.getMeta<{ status: string }>(qualifiedThreadArchiveEffectKey('host', 'coordinator'))?.status, 'uncertain');
     } finally { second.close(); }

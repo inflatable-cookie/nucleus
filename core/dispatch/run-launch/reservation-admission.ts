@@ -143,8 +143,7 @@ export class RunReservationAdmission {
           if (
             latest.version !== t.version ||
             !retainedPrerequisiteRevision(latest) ||
-            slotRequestFenced(latest) ||
-            blockingRecoveryEffectsRefusal(this.store, latest)
+            slotRequestFenced(latest)
           )
             return false;
         }
@@ -223,9 +222,6 @@ export class RunReservationAdmission {
           JSON.stringify({ waitId: latest.prerequisiteWait.id, runId: run.id }),
         );
       }
-      const retryingPassProof =
-        role === "reviewer" && latest.phase === "reviewing" &&
-        latest.resolution.stop?.fact?.code === "pass_proof";
       this.resolution.update(
         t,
         {
@@ -271,20 +267,15 @@ export class RunReservationAdmission {
             : {}),
         },
         {
-          // Keep the stop's clock while a new reservation re-proves custody.
-          ...(retryingPassProof
-            ? {}
-            : {
-                phase:
-                  role === "reviewer"
-                    ? "reviewing"
-                    : role === "revision"
-                      ? "changes_requested"
-                      : proofExecutor(role)
-                        ? t.phase
-                        : "closing",
-                reason: dispatchReason,
-              }),
+          phase:
+            role === "reviewer"
+              ? "reviewing"
+              : role === "revision"
+                ? "changes_requested"
+                : proofExecutor(role)
+                  ? t.phase
+                  : "closing",
+          reason: dispatchReason,
           ...(role === "revision"
             ? {
                 stashBaseline: s.stash

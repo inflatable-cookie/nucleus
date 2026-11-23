@@ -1,14 +1,20 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { isTransportFailure } from "../../shared/transport";
 import type { Resolution } from "../resolution";
 import {
   holdsOf,
   runtimeRetirementFailure,
+  type Run,
   type Task,
 } from "../../shared/contracts";
 import { OWNER_STOP_HOLD_PREFIX, releasePatch } from "../merge/merge-hold";
 import type { Engine } from "../engine";
-import { now } from "../store/store";
+import { hostRunHoldReason, now } from "../store/store";
+import { externalWorkspace } from "../../shared/workspace-ownership";
+import { hookHoldReason } from "../hooks/hooks";
+import { reportOnlySourceHead } from "../git/index";
+import { archiveFailureKeepsScope } from "../workspaces/archive-failure";
+import { workspaceDiscardKey, type WorkspaceDiscard } from "../workspaces/orphan-worktree";
 import {
   settleArchive,
   type ArchiveEffect,
@@ -23,7 +29,6 @@ import {
 } from "../workspaces/external-workspace-archive";
 import {
   archiveIntentOutstanding,
-  archiveIntentUnreadable,
   archiveSettledByOwner,
 } from "../workspaces/archive-intent";
 import {
@@ -39,16 +44,22 @@ import {
   type TerminalWorkspace,
   type WorkspaceArchiveRetry,
 } from "./terminal-archive";
-import {
-  ArchiveProof,
-  canRecordWorkspaceArchive,
-  type LifecycleAdapter,
-} from "./archive-proof";
 import { ArchiveScheduler } from "./archive-scheduler";
 import { runTerminalHooks } from "./terminal-hooks";
 import { missingOriginHasPlanner } from "../questions/origin";
 import { admissionOf } from "../host/admission";
 import { cleanupTerminalBranches } from "./branch-cleanup";
+
+function canRecordWorkspaceArchive(task: Task, id: string): boolean {
+  const prior = task.resolution.archiveIntentWorkspaceId;
+  return (
+    !archiveIntentOutstanding(task) ||
+    prior === id ||
+    task.resolution.workspaceArchiveRetries.some(
+      (record) => record.workspaceId === prior,
+    )
+  );
+}
 
 export type LifecycleContext = Pick<
   Engine,
@@ -85,15 +96,8 @@ export type LifecycleContext = Pick<
   >;
 };
 
-/**
- * The lifecycle owner for a task's terminal workspace: which workspaces are due,
- * what this pass owes before proving them, and the bounded archive pass itself.
- * The per-workspace archive proof lives in `ArchiveProof` and the sweep that
- * finds the work lives in `ArchiveScheduler`; this class only sequences them.
- */
 export class Lifecycle {
   private readonly closeoutRecovery: CloseoutRecovery;
-  private readonly proof: ArchiveProof;
   private readonly scheduler: ArchiveScheduler;
   constructor(readonly engine: LifecycleContext) {
     this.closeoutRecovery = new CloseoutRecovery({
@@ -121,16 +125,6 @@ export class Lifecycle {
       get store() {
         return engine.store;
       },
-    });
-    this.proof = new ArchiveProof({
-      adapter: engine.adapter,
-      hooks: engine.hooks,
-      retirement: engine.retirement,
-      get stopped() {
-        return engine.stopped;
-      },
-      store: engine.store,
-      resolution: { update: engine.resolution.update.bind(engine.resolution) },
     });
     this.scheduler = new ArchiveScheduler({
       adapter: engine.adapter,
@@ -169,7 +163,7 @@ export class Lifecycle {
     return this.engine.store;
   }
   get adapter() {
-    return this.engine.adapter as Engine["adapter"] & Partial<LifecycleAdapter>;
+    return this.engine.adapter;
   }
   paused() {
     return this.engine.stopped || this.store.getMeta("paused") === true;
@@ -328,64 +322,6 @@ export class Lifecycle {
       `Dispatch hold released: the task finished, so its owner stop (${hold.reason.slice(0, 300)}) has no work left to stop`,
     );
   }
-  /**
-   * A nonterminal task owes no archive of its own. One durable
-   * `archiveIntentWorkspaceId` can still outlive a task removal whose native reply
-   * was lost, so an intent naming no reviewer run is reported with whatever the
-   * catalog still answers. An unknown outcome is observed, never re-sent.
-   */
-  private async observeUnreadableArchiveIntent(
-    task: Task,
-    retryWorkspaceId?: string,
-  ) {
-    const archiveTaskWorkspace = this.adapter.archiveTaskWorkspace;
-    if (!archiveTaskWorkspace) return;
-    const runs = this.store.runs(task.id);
-    const unreadable = archiveIntentUnreadable(task, runs, retryWorkspaceId);
-    if (unreadable) {
-      // The same interval governs an unreadable intent's catalog observation, so a
-      // recorded backoff is not re-read on every sweep; an owner retry still runs.
-      const unreadableRetry = this.store
-        .task(task.id)
-        .resolution.workspaceArchiveRetries.find(
-          (record) => record.workspaceId === unreadable,
-        );
-      if (
-        retryWorkspaceId !== unreadable &&
-        unreadableRetry &&
-        Date.parse(unreadableRetry.nextAttemptAt) > Date.now()
-      )
-        return;
-      if (!this.paused()) {
-        let observation = "";
-        if (this.adapter.taskWorkspaceArchived) {
-          // `taskWorkspaceArchived` answers true when the entry is gone from the
-          // catalog: read it that way round, never backwards.
-          try {
-            observation = (await this.adapter.taskWorkspaceArchived(unreadable))
-              ? "; the catalog no longer lists that workspace entry"
-              : "; the catalog still lists that workspace entry";
-          } catch {
-            observation = "; the catalog observation was unavailable";
-          }
-        }
-        // Every due observation is one bounded occurrence: recording it advances the
-        // deadline even when the answer is unchanged, so the next sweep inside the
-        // new interval reads nothing.
-        recordArchiveRetry(
-          {
-            store: this.store,
-            update: this.engine.resolution.update.bind(this.engine.resolution),
-          },
-          task.id,
-          unreadable,
-          `The recorded review view archive intent no longer matches a reviewer run, so its checkout and publication cannot be re-proved${observation}. Inspect that workspace entry before retrying`,
-          false,
-        );
-      }
-      return;
-    }
-  }
   /** A prior archive may have settled while its build-output result was still missing. */
   private async settleArchivedBuildOutput(
     task: Task,
@@ -513,7 +449,6 @@ export class Lifecycle {
                 requirePublished: true,
                 requireDirectory: false,
                 attachedAgentIds: new Set(currentEntry.agentIds),
-                participantRuns: () => this.store.runs(taskId),
                 displacedBranch: currentEntry.branch,
               },
             );
@@ -609,16 +544,6 @@ export class Lifecycle {
     }
     await this.archiveDisplacedHostWorkspaces(task.id);
     task = this.store.task(task.id);
-    if (
-      task.phase !== "done" &&
-      ((task.originError && !missingOriginHasPlanner(this.store, task)) ||
-        task.originLookupError ||
-        this.paused() ||
-        !this.adapter.archiveTaskWorkspace)
-    )
-      return;
-    if (task.phase !== "done")
-      return this.observeUnreadableArchiveIntent(task, retryWorkspaceId);
     const { reportOnly, proofOnlyDone } = terminalArchiveSource(task);
     if (
       (task.originError && !missingOriginHasPlanner(this.store, task)) ||
@@ -701,17 +626,6 @@ export class Lifecycle {
         }),
     );
     const workspaces = terminalArchiveWorkspaces(task, runs);
-    const intended = archiveIntentOutstanding(task)
-      ? task.resolution.archiveIntentWorkspaceId
-      : null;
-    if (
-      intended &&
-      !workspaces.some(
-        (workspace) =>
-          workspace.id === intended && workspace.directory && workspace.head,
-      )
-    )
-      await this.observeUnreadableArchiveIntent(task, retryWorkspaceId);
     for (const workspace of workspaces) {
       if (retryWorkspaceId && retryWorkspaceId !== workspace.id) continue;
       if (
@@ -735,13 +649,9 @@ export class Lifecycle {
         .resolution.workspaceArchiveRetries.find(
           (record) => record.workspaceId === id,
         );
-      // An owner retries this workspace now without erasing its failed attempts
-      // or uncertain intent. All ordinary archive proofs apply.
+      // An owner may retry now, outside the ordinary backoff interval.
       if (!retryWorkspaceId && archiveRetryWaiting(retry)) continue;
-      await this.proof.archiveWorkspace(task, workspace, {
-        runs,
-        attachedAgentIds,
-      });
+      await this.archiveWorkspace(task, workspace, runs, attachedAgentIds);
       task = this.store.task(task.id);
       await this.settleArchivedBuildOutput(task, workspace);
       task = this.store.task(task.id);
@@ -754,6 +664,254 @@ export class Lifecycle {
       task.id,
       { retry: Boolean(retryWorkspaceId) },
     );
+  }
+  /** Archive one owned workspace, or record the bounded retry that holds it. */
+  private async archiveWorkspace(
+    task: Task,
+    workspace: TerminalWorkspace,
+    runs: Run[],
+    attachedAgentIds: ReadonlySet<string>,
+  ): Promise<void> {
+    const id = workspace.id!;
+    try {
+      await this.attemptWorkspaceArchive(
+        task,
+        { ...workspace, id, directory: workspace.directory! },
+        runs,
+        attachedAgentIds,
+      );
+    } catch (error) {
+      if (this.engine.stopped) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      recordArchiveRetry(
+        {
+          store: this.store,
+          update: this.engine.resolution.update.bind(this.engine.resolution),
+        },
+        task.id,
+        id,
+        reason,
+        false,
+      );
+      // A teardown Paseo reported as failed is not a clean archive either:
+      // preserve the failure evidence and any captured token for retry.
+      if (archiveFailureKeepsScope(this.engine.retirement, task.id, id, error))
+        this.engine.retirement.flagArchiveFailure(task.id, id, reason);
+    }
+  }
+  private async attemptWorkspaceArchive(
+    task: Task,
+    workspace: TerminalWorkspace & { id: string; directory: string },
+    runs: Run[],
+    attachedAgentIds: ReadonlySet<string>,
+  ): Promise<void> {
+    const id = workspace.id,
+      directory = workspace.directory;
+    if (runs.some((run) => !run.released))
+      throw Error("Waiting for all task runs to release");
+    const hostRun = this.store.hostRunHoldingWorkspace(directory);
+    if (hostRun) throw Error(`Waiting: ${hostRunHoldReason(hostRun)}`);
+    const discardRecord = this.store.getMeta<WorkspaceDiscard>(
+      workspaceDiscardKey(task.id, id),
+    );
+    const discard =
+      discardRecord && discardRecord.directory === directory
+        ? discardRecord
+        : null;
+    const intent = this.store.task(task.id).resolution;
+    const head =
+      !workspace.reportSource || discard
+        ? workspace.head!
+        : intent.archiveIntentWorkspaceId === id
+          ? (intent.archiveIntentHead ?? workspace.head!)
+          : existsSync(directory)
+            ? await reportOnlySourceHead(task, runs)
+            : workspace.head!;
+    const reviewRun = runs.find(
+      (run) => run.reviewSourceView?.workspaceId === id,
+    );
+    const sharedWorkspace = () =>
+      this.store.workspaceUsedByOtherTaskRun(task.id, id) ||
+      this.store.tasks().some((other) =>
+        other.id !== task.id &&
+        ([
+          other.workspaceId,
+          other.resolution.coordinatorWorkspaceId,
+          other.resolution.closeoutWorkspaceId,
+        ].includes(id) || other.directory === directory),
+      );
+    if (sharedWorkspace()) throw Error("Workspace is referenced by another task");
+    const allowed = () => {
+      const current = this.store.task(task.id);
+      return (
+        !this.paused() &&
+        !current.removedAt &&
+        current.phase === "done" &&
+        !holdsOf(current).dispatch &&
+        canRecordWorkspaceArchive(current, id) &&
+        current.workspaceId === task.workspaceId &&
+        current.directory === task.directory &&
+        current.branch === task.branch &&
+        (!reviewRun ||
+          JSON.stringify(this.store.run(reviewRun.id)?.reviewSourceView) ===
+            JSON.stringify(reviewRun.reviewSourceView)) &&
+        !(id === current.workspaceId && externalWorkspace(current)) &&
+        !this.store.runs(task.id).some((run) => !run.released) &&
+        !this.store.hostRunHoldingWorkspace(directory) &&
+        !sharedWorkspace()
+      );
+    };
+    if (!allowed())
+      throw Error(
+        "Workspace archive held by task identity, ownership or a hold",
+      );
+    let sourcePresent = true;
+    try {
+      lstatSync(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      sourcePresent = false;
+    }
+    if (!sourcePresent && await this.adapter.taskWorkspaceArchived?.(id)) {
+      if (allowed())
+        await this.recordWorkspaceArchived(task.id, id, "Workspace already absent");
+      return;
+    }
+    const buildOutputCleanup = buildOutputCleanupHooks(
+      this.store,
+      task.id,
+      id,
+      directory,
+      allowed,
+    );
+    if (sourcePresent) {
+      await this.engine.retirement.capture(task.id, id, directory);
+      const retention = await this.engine.hooks.retentionGate(task, {
+        directory,
+        head,
+        reason: `Closeout archive of task workspace ${id}`,
+      });
+      if (retention.hold) throw Error(hookHoldReason(retention));
+    }
+    if (!allowed())
+      throw Error("Workspace archive held by task identity, ownership or a hold");
+    // Persist intent when the adapter is ready to mutate the workspace.
+    const archived = await this.adapter.archiveTaskWorkspace!(
+      task,
+      id,
+      directory,
+      head,
+      () => {
+        if (!allowed()) return false;
+        const current = this.store.task(task.id);
+        if (
+          current.resolution.archiveIntentWorkspaceId === id &&
+          archiveIntentOutstanding(current)
+        )
+          return (current.resolution.archiveIntentHead ?? head) === head;
+        this.engine.resolution.update(
+          current,
+          { archiveIntentWorkspaceId: id, archiveIntentHead: head },
+          {},
+          "workspace_archive_intent",
+          head,
+        );
+        return true;
+      },
+      false,
+      {
+        requirePublished: true,
+        attachedAgentIds,
+        requireDirectory: true,
+        allowIdleForeignThreads: !reviewRun,
+        buildOutputCleanup,
+        reviewRun: reviewRun ?? undefined,
+        discard,
+        primaryArchived: () =>
+          Boolean(
+            task.workspaceId &&
+            this.store.task(task.id).resolution.archivedWorkspaceIds.includes(task.workspaceId),
+          ),
+      },
+    );
+    if (this.engine.stopped) return;
+    if (!archived) {
+      const retained = this.store
+        .task(task.id)
+        .resolution.buildOutputCleanups.find(
+          (item) =>
+            item.workspaceId === id &&
+            !item.runId &&
+            (item.state === "skipped" || item.state === "uncertain"),
+        );
+      if (retained)
+        recordArchiveRetry(
+          {
+          store: this.store,
+          update: this.engine.resolution.update.bind(this.engine.resolution),
+        },
+          task.id,
+          id,
+          retained.detail,
+          true,
+        );
+      return;
+    }
+    const foreign = Array.isArray(archived) ? archived : [];
+    if (discard)
+      this.store.event(
+        task.id,
+        "workspace_contents_discarded",
+        JSON.stringify({
+          ...discard,
+          detail:
+            "Unproven contents discarded: no clean or published source is claimed",
+        }),
+      );
+    const detail = [
+      foreign.length
+        ? `foreign threads ${foreign.join(",")}`
+        : "workspace_archived",
+      ...(discard
+        ? [
+            `unproven contents discarded by ${discard.caller} (${discard.authority})`,
+          ]
+        : []),
+      ...(head !== workspace.head
+        ? [`report-only source ${head} preserved on ${task.branch}`]
+        : []),
+    ].join("; ");
+    await this.recordWorkspaceArchived(task.id, id, detail);
+  }
+
+  private async recordWorkspaceArchived(taskId: string, id: string, detail: string) {
+    const latest = this.store.task(taskId);
+    const runtimeRetirements = this.engine.retirement.markArchived(latest, id);
+    const workspaceArchiveRetries =
+      latest.resolution.workspaceArchiveRetries.filter(
+        (record) => record.workspaceId !== id,
+      );
+    this.engine.resolution.update(
+      latest,
+      {
+        archivedWorkspaceIds: [
+          ...new Set([...latest.resolution.archivedWorkspaceIds, id]),
+        ],
+        ...(latest.resolution.archiveIntentWorkspaceId === id
+          ? { archiveIntentWorkspaceId: null, archiveIntentHead: null }
+          : {}),
+        workspaceArchiveRetries,
+        cleanupReason:
+          runtimeRetirementFailure({
+            resolution: { ...latest.resolution, runtimeRetirements },
+          }) || workspaceArchiveFailureReason(workspaceArchiveRetries),
+        runtimeRetirements,
+      },
+      {},
+      "workspace_archived",
+      `${detail}; workspace ${id}`,
+    );
+    await this.engine.retirement.archived(taskId, id);
   }
   async enqueuePass(scopedHost?: string): Promise<void> {
     return this.scheduler.enqueuePass(scopedHost);

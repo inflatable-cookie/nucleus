@@ -1,13 +1,10 @@
 import {
   assignedThreadWaitReason,
   coordinative,
-  participantToolRunIds,
 } from "../recovery/task-reasons";
-import {
-  blockingRecoveryEffects,
-  recoveryEffectsRefusal,
-} from "../recovery/recovery-effects";
 import { executionParticipants } from "../machine/execution-participants";
+import { participantTemporaryDirectory } from "../machine/participant-roots";
+import { participantRuntime, storeDataHome } from "../machine/participant-runtime";
 import {
   runBindsCurrentWork,
   type Run,
@@ -16,18 +13,14 @@ import {
 import { isStaleIntegrationBaseRefusal } from "../hooks/hooks";
 import { agentSettled } from "../machine/agent-settled";
 import { isAgentGoneRefusal } from "../host/errors";
-import {
-  formatHostProcessSweepEvent,
-  reapHostProcesses,
-} from "../machine/host-process-reap";
-import { recordedProcessGroupsForTask } from "../machine/host-process-select";
 import type { Adapter } from "../host/adapter";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
+import type { HostProcessTable } from "../host/types";
 import type { Resolution } from "../resolution";
+import { noTurnLive, workspaceToolProcessIssue } from "../recovery/stall";
+import { participantToolRunIds } from "../recovery/task-reasons/participants";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
-  currentTaskQuantumScope,
 } from "../scheduling/pass-snapshot";
 
 /** Proves a task's participants are settled before its work, merge or closeout goes on. */
@@ -38,201 +31,6 @@ export class ParticipantLease {
   }
   get adapter() {
     return this.resolution.adapter;
-  }
-
-  /**
-   * One participant's owned-tool refusal, and whether the merge can clear it
-   * without its owner.
-   *
-   * The grace window is a timed retry: it ends by itself and a conclusive read is
-   * taken then. The host-process reap is the automatic settlement. What survives
-   * both is a fact no pass in this lane can change — an unreadable listing, an
-   * unrecorded root, a live protected host-runtime process, or a proof that still refuses
-   * after its tree was proved empty — so it is the owner's, not a quiet wait. A
-   * participant that resumed during the grace is live again, which is transient.
-   */
-  private async settleStrayTool(
-    t: Task,
-    agentId: string,
-    workspaceId: string,
-    runIds: string[],
-    issue: string,
-  ): Promise<
-    | { kind: "deferred"; issue: string }
-    | { kind: "hold"; issue: string; needsOwner: boolean }
-    | null
-  > {
-    const runId = runIds[0];
-    if (!runId) return { kind: "hold", issue, needsOwner: true };
-    const hold = this.store.eventsAll(t.id).findLast(
-      (event) =>
-        event.kind === "owned_tool_hold" &&
-        (() => {
-          try {
-            return JSON.parse(event.detail).runId === runId;
-          } catch {
-            return false;
-          }
-        })(),
-    );
-    if (!hold) return { kind: "hold", issue, needsOwner: true };
-    const deadline = Date.parse(hold.at) + Math.max(0, this.resolution.graceMs);
-    if (Date.now() < deadline)
-      return {
-        kind: "hold",
-        issue: `${issue}; stray-tool grace ends at ${new Date(deadline).toISOString()}`,
-        needsOwner: false,
-      };
-
-    // A live turn owns its tools. Recheck immediately before the host sweep so
-    // a turn that resumed during the grace is never stopped.
-    // The task process sweep can cover the shared task worktree and recorded
-    // run groups, so all bound participants must still be settled before it is
-    // allowed to stop anything.
-    for (const [id, workspace] of executionParticipants(
-      t,
-      this.store.runs(t.id),
-    )) {
-      let state: Awaited<ReturnType<Adapter["observe"]>>;
-      try {
-        const read = await boundedRead(
-          "participant observation",
-          () => this.resolution.host.observe(id),
-          this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
-        );
-        if (read.state === "unknown")
-          return {
-            kind: "deferred",
-            issue: `${issue}; participant ${id} identity could not be rechecked before reaping (${read.reason})`,
-          };
-        state = read.value;
-      } catch {
-        return {
-          kind: "hold",
-          issue: `${issue}; participant ${id} identity could not be rechecked before reaping`,
-          needsOwner: true,
-        };
-      }
-      if (
-        state.id !== id ||
-        state.workspaceId !== workspace ||
-        !agentSettled(state)
-      )
-        return {
-          kind: "hold",
-          issue: `${issue}; participant ${id} resumed or its identity changed before reaping`,
-          needsOwner: false,
-        };
-    }
-
-    let processes:
-      | Awaited<ReturnType<NonNullable<Adapter["hostProcessListing"]>>>
-      | undefined;
-    if (this.adapter.hostProcessListing) {
-      try {
-        const listing = this.resolution.readPassProcesses
-          ? await this.resolution.readPassProcesses(t.hostId)
-          : null;
-        if (listing) {
-          if (listing.state === "unknown" && listing.deferred) {
-            return {
-              kind: "deferred",
-              issue: `${issue}; ${listing.reason}`,
-            };
-          }
-          processes = listing.state === "listed" ? listing.processes : null;
-        } else processes = await this.adapter.hostProcessListing();
-      } catch {
-        processes = null;
-      }
-    }
-    let result: Awaited<ReturnType<typeof reapHostProcesses>>;
-    try {
-      result = await reapHostProcesses({
-        directory: t.directory,
-        recordedGroups: recordedProcessGroupsForTask(this.store, t),
-        processes,
-      });
-    } catch (error) {
-      return {
-        kind: "hold",
-        issue: `${issue}; host-process reap failed: ${error instanceof Error ? error.message : String(error)}`,
-        needsOwner: true,
-      };
-    }
-    if (result.unavailable)
-      return {
-        kind: "hold",
-        issue: `${issue}; host-process reap could not read the host: ${result.unavailable.reason}`,
-        needsOwner: true,
-      };
-    if (result.failed.length)
-      return {
-        kind: "hold",
-        issue: `${issue}; host-process reap could not prove or stop every target: ${result.failed.map((target) => target.reason).join("; ")}`,
-        needsOwner: true,
-      };
-    if (result.skippedProtected.length) {
-      const skipped = `Skipped ${result.skippedProtected.length} protected host-runtime process${result.skippedProtected.length === 1 ? "" : "es"}: ${result.skippedProtected.map((target) => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || "-"} command=${target.command || "-"}`).join("; ")}`;
-      this.store.event(t.id, "participant_tool_reap_skipped", skipped);
-      return {
-        kind: "hold",
-        issue: `${issue}; host-process reap ${skipped}`,
-        needsOwner: true,
-      };
-    }
-    if (result.terminated.length) {
-      this.resolution.invalidatePassProcesses?.(t.hostId);
-      this.store.event(
-        t.id,
-        "participant_tool_reaped",
-        `Stopped participant ${agentId} after its reported turn ended and stray-tool grace elapsed: ${formatHostProcessSweepEvent(result)}`,
-      );
-      // Spec 068 §6: inside a task quantum, never re-scan the full host process
-      // table inline after reaping; hold the lease on a lifecycle wait so the
-      // next host pass captures a fresh pre-process observation and table.
-      if (currentTaskQuantumScope()?.inTaskQuantum) {
-        return {
-          kind: "hold",
-          issue:
-            "reaped stray participant process; waiting for the next host pass to verify the process tree is clear",
-          needsOwner: false,
-        };
-      }
-    } else
-      this.store.event(
-        t.id,
-        "participant_tool_reap_empty",
-        `Participant ${agentId} still reported ${issue}, but the host-process reap found no live task process after the grace`,
-      );
-    const remaining = await this.resolution.ownedToolHold(agentId, {
-      requireCompleteEvidence: true,
-      runId,
-      runIds,
-      taskId: t.id,
-      workspaceId,
-    });
-    if (remaining.kind === "clear") return null;
-    if (remaining.kind === "deferred")
-      return { kind: "deferred", issue: remaining.reason };
-    return { kind: "hold", issue: remaining.reason, needsOwner: true };
-  }
-
-  private yieldIntegrationTurn(t: Task): void {
-    // A merge request with unknown delivery must retain its turn. Before merge
-    // intent, a participant wait yields its FIFO place so another task can land.
-    if (
-      !t.resolution.integrationTurn ||
-      t.resolution.mergeIntent ||
-      t.resolution.mergedCommit
-    )
-      return;
-    this.resolution.update(
-      t,
-      { integrationTurn: null },
-      { reason: t.reason },
-      "integration_turn_yielded_for_participant",
-    );
   }
 
   async idle(
@@ -430,44 +228,91 @@ export class ParticipantLease {
           )
       : undefined;
   }
+  /**
+   * Check the exact participant roster and process custody on hosts that support it.
+   * Review launch does not use this check.
+   */
+  async exactCustodyIssue(
+    task: Task,
+    agentId: string,
+    workspaceId: string,
+  ): Promise<string | null> {
+    const deadline =
+      this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const observe = await boundedRead(
+      "exact participant observation",
+      () => this.resolution.host.observeParticipant(agentId),
+      deadline,
+    );
+    if (observe.state === "unknown") return observe.reason;
+    const state = observe.value;
+    if (!state || state.id !== agentId || state.workspaceId !== workspaceId)
+      return "the exact participant or its workspace could not be read";
+    if (!noTurnLive(state))
+      return "the participant has an active turn, pending permission or unsettled state";
+    if (state.pendingBackgroundTasks.length)
+      return `the provider reports outstanding background work: ${state.pendingBackgroundTasks.join(", ")}`;
+    const { hostProcessListing, noLiveWorkspaceProcesses } = this.adapter;
+    if (!hostProcessListing || !noLiveWorkspaceProcesses)
+      return "the host cannot check workspace and run processes";
+
+    const runs = this.store.runs(task.id);
+    const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
+    if (!runIds.length) return "the participant has no recorded run";
+    const roots = new Set(
+      runIds.map((id) => participantTemporaryDirectory(task, runs, id)),
+    );
+    if (roots.has(undefined))
+      return "a participant run temporary directory is unrecorded";
+
+    const scan = await this.resolution.readPassProcesses(task.hostId, {
+      participant: { agentId, observation: state },
+    });
+    if (scan.state === "unknown") return scan.reason;
+    const complete = scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
+    if (complete !== true)
+      return "the host process listing has incomplete working-directory coverage";
+    const beforeScan =
+      scan.directBeforeScan === undefined
+        ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
+        : scan.directBeforeScan;
+    const observedAt = Date.parse(state.updatedAt ?? "");
+    if (
+      !Number.isFinite(observedAt) ||
+      observedAt > scan.capturedAt ||
+      (scan.fromPassSnapshot &&
+        (!noTurnLive(beforeScan) || beforeScan?.updatedAt !== state.updatedAt))
+    ) {
+      this.resolution.requestPassProof(task.hostId, agentId);
+      return "the process listing does not cover the participant's latest inactivity";
+    }
+
+    const runtime = participantRuntime({
+      dataHome: storeDataHome(this.store),
+      tasks: [task],
+      runs,
+    });
+    const workspace = await boundedRead(
+      "workspace process probe",
+      () => noLiveWorkspaceProcesses.call(this.adapter, workspaceId, runIds, runtime, scan.processes),
+      deadline,
+    );
+    if (workspace.state === "unknown") return workspace.reason;
+    if (workspace.value !== null)
+      return workspace.value || "the workspace process probe returned no result";
+    for (const root of roots) {
+      const issue = workspaceToolProcessIssue(scan.processes, root!, runIds, runtime);
+      if (issue) return issue;
+    }
+    return null;
+  }
+
   /** Merge and closeout observe execution bindings, including retained runs. */
   async executionLease(
     t: Task,
-    enclosing?: VerifiedEnclosingOperation,
     syncing = false,
     probe = false,
   ): Promise<boolean> {
-    const refreshing = this.resolution.refreshingCloseoutHook(t, syncing);
-    const blocking = blockingRecoveryEffects(this.store, t, {
-      enclosing,
-      kinds: [
-        "operation",
-        "hook",
-        "run-delivery",
-        "review-delivery",
-        "publication",
-        "attention-notice",
-      ],
-    }).filter(
-      (item) =>
-        !(
-          refreshing &&
-          item.kind === "hook" &&
-          item.identity === refreshing.id
-        ),
-    );
-    if (blocking.length) {
-      // A speculative probe (an external-merge read on a task that is nowhere near
-      // a merge) records no wait: its fence is a silent no, and the owning phase
-      // keeps its own reason. Real merge gates name what they wait for.
-      if (!probe)
-        this.resolution.waiting(
-          t,
-          `Merge waits for ${recoveryEffectsRefusal(blocking)}; settle each with retry_effect or an owner control that supersedes it`,
-          "lifecycle",
-        );
-      return false;
-    }
     const runs = this.store.runs(t.id);
     for (const [id, workspace] of executionParticipants(t, runs)) {
       // The owner explicitly superseded these exact identities to close an already merged PR.
@@ -480,11 +325,19 @@ export class ParticipantLease {
         )
       )
         continue;
-      // Archived and removed participants may no longer have a readable live
-      // timeline. Their existing custody proof checks the exact binding and both
-      // workspace and run-rooted processes before releasing this lease.
       let state: Awaited<ReturnType<Adapter["observe"]>> | undefined;
       try {
+        if (this.adapter.observeParticipant) {
+          const issue = await this.exactCustodyIssue(t, id, workspace);
+          if (!issue) continue;
+          if (!probe)
+            this.resolution.waiting(
+              t,
+              `Merge waits for participant ${id} in workspace ${workspace}: ${issue}`,
+              "lifecycle",
+            );
+          return false;
+        }
         const read = await boundedRead(
           "participant observation",
           () => this.resolution.host.observe(id),
@@ -498,31 +351,14 @@ export class ParticipantLease {
           return false;
         }
         state = read.value;
-      } catch {
-        const runIds = participantToolRunIds(t, runs, id, workspace);
-        const holdResult = await this.resolution.ownedToolHold(id, {
-          requireCompleteEvidence: true,
-          allowRetired: true,
-          runId: runIds[0],
-          runIds,
-          taskId: t.id,
-          workspaceId: workspace,
-        });
-        if (holdResult.kind === "clear") continue;
-        if (!probe) {
-          if (holdResult.kind === "deferred") {
-            this.store.update(t.id, {
-              reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
-            });
-          } else {
-            this.resolution.waiting(
-              t,
-              `Merge waits for participant ${id}: ${holdResult.reason}`,
-              "operator_needed",
-              { suggestedVerbs: ["retry_effect"] },
-            );
-          }
-        }
+      } catch (error) {
+        if (!this.adapter.observeParticipant && isAgentGoneRefusal(error)) continue;
+        if (!probe)
+          this.resolution.waiting(
+            t,
+            `Merge waits for participant ${id}: ${error instanceof Error ? error.message : String(error)}`,
+            "lifecycle",
+          );
         return false;
       }
       if (state.id !== id || state.workspaceId !== workspace) {
@@ -548,117 +384,7 @@ export class ParticipantLease {
           );
         return false;
       }
-      if (
-        state.status === "closed" ||
-        state.status === "gone" ||
-        state.archived === true
-      ) {
-        const runIds = participantToolRunIds(t, runs, id, workspace);
-        const holdResult = await this.resolution.ownedToolHold(id, {
-          requireCompleteEvidence: true,
-          allowRetired: true,
-          runId: runIds[0],
-          runIds,
-          taskId: t.id,
-          workspaceId: workspace,
-        });
-        if (holdResult.kind !== "clear") {
-          if (!probe) {
-            if (holdResult.kind === "deferred") {
-              this.store.update(t.id, {
-                reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
-              });
-            } else {
-              this.resolution.waiting(
-                t,
-                `Merge waits for participant ${id}: ${holdResult.reason}`,
-                "operator_needed",
-                { suggestedVerbs: ["retry_effect"] },
-              );
-            }
-          }
-          return false;
-        }
-        continue;
-      }
-      if (!syncing) {
-        const participantRunIds = participantToolRunIds(t, runs, id, workspace);
-        const holdResult = await this.resolution.ownedToolHold(id, {
-          requireCompleteEvidence: true,
-          runId: participantRunIds[0],
-          runIds: participantRunIds,
-          taskId: t.id,
-          workspaceId: workspace,
-        });
-        if (holdResult.kind === "deferred") {
-          if (!probe) {
-            this.store.update(t.id, {
-              reason: `Merge waits for participant ${id}: ${holdResult.reason}`,
-            });
-          }
-          return false;
-        }
-        if (holdResult.kind === "hold") {
-          // While a merge intent is recorded the stray-tool settlement is not
-          // attempted; a participant still holding it has already been through
-          // its grace in an earlier pass, so the owner's exit is the one left.
-          const stray =
-            !probe && !t.resolution.mergeIntent && !t.resolution.mergedCommit
-              ? await this.settleStrayTool(
-                  t,
-                  id,
-                  workspace,
-                  participantRunIds,
-                  holdResult.reason,
-                )
-              : {
-                  kind: "hold" as const,
-                  issue: holdResult.reason,
-                  needsOwner: !probe,
-                };
-          if (!stray) continue;
-          if (stray.kind === "deferred") {
-            if (!probe) {
-              this.store.update(t.id, {
-                reason: `Merge waits for participant ${id}: ${stray.issue}`,
-              });
-            }
-            return false;
-          }
-          if (!probe) this.yieldIntegrationTurn(t);
-          if (!probe)
-            this.resolution.waiting(
-              t,
-              `Merge waits for participant ${id}: ${stray.issue}`,
-              stray.needsOwner ? "operator_needed" : "lifecycle",
-              stray.needsOwner ? { suggestedVerbs: ["retry_effect"] } : {},
-            );
-          return false;
-        }
-      }
     }
     return true;
-  }
-  /** Settle a finished-turn shell only when the live host process scan also proves its run and workspace are quiet. */
-  async participantToolIssue(
-    taskId: string,
-    agentId: string,
-    workspaceId: string,
-  ): Promise<string | null> {
-    const task = this.store.task(taskId);
-    const runIds = participantToolRunIds(
-      task,
-      this.store.runs(taskId),
-      agentId,
-      workspaceId,
-    );
-    const result = await this.resolution.ownedToolHold(agentId, {
-      requireCompleteEvidence: true,
-      runId: runIds[0],
-      runIds,
-      taskId,
-      workspaceId,
-    });
-    return result.kind === "clear" ? null : result.reason;
   }
 }

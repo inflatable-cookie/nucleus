@@ -1,7 +1,6 @@
 import {
   DEFAULT_HOST_CALL_LIMIT,
   MAX_HOST_CALL_LIMIT,
-  type Run,
 } from "../../shared/contracts";
 import {
   queueOperationSchema,
@@ -15,27 +14,18 @@ import {
   StoreCore,
   now,
   operationIdForKey,
-  operationInputHash,
 } from "./store-core";
-import {
-  hasReviewerDelivery,
-  operationIdMatchesKey,
-  payloadMatchesInputHash,
-  preSendSettlementIdentity,
-  provedPreSendHistory,
-} from "./store-pre-send";
 import { hostReadTransientKey } from "../recovery/host-read-transient";
 
 interface OperationTaskAccess {
   taskChanged(taskId: string): void;
   numberForCached(taskId: string): { number: number; reference: string } | null;
-  runs(taskId?: string): Run[];
 }
 
 /**
  * Durable operations: the journal of accepted caller keys, their reads, their
- * writes and the bounded limits that admit new work. The pre-send receipt
- * settlement lives in `StorePreSend`; the board's pending submissions in
+ * writes and the bounded limits that admit new work. The board's pending
+ * submissions live in
  * `StorePendingSubmissions`.
  */
 export class StoreOperations {
@@ -298,52 +288,13 @@ export class StoreOperations {
         const existing = this.numberedOperation(String(row.data));
         if (existing.inputHash !== input.inputHash)
           throw new Error("Operation key already used with different input");
-        if (existing.state !== "failed")
-          return { accepted: true as const, operation: existing };
         if (
-          existing.preSendReceipt &&
-          existing.preSendReconciledAt &&
-          this.core.db
-            .prepare(
-              "SELECT 1 FROM events WHERE taskId=? AND kind='operation_pre_send_refused' AND detail=? LIMIT 1",
-            )
-            .get(existing.taskId, preSendSettlementIdentity(existing))
+          existing.state !== "failed" ||
+          existing.settlement?.kind === "superseded"
         )
           return { accepted: true as const, operation: existing };
         const saturated = this.backpressure();
         if (saturated) return saturated;
-        const history = existing.preSendReceipt
-          ? [
-              ...(existing.preSendHistory ?? []),
-              {
-                receipt: existing.preSendReceipt,
-                effect: existing.effect,
-                diagnostic: existing.diagnostic,
-                settledAt: existing.settledAt,
-                reconciledAt: existing.preSendReconciledAt ?? null,
-              },
-            ]
-          : existing.preSendHistory;
-        if (
-          existing.preSendReceipt &&
-          (!provedPreSendHistory(
-            { ...existing, preSendHistory: history },
-            existing.attempts,
-          ) ||
-            !operationIdMatchesKey(existing) ||
-            operationInputHash(input.payload) !== existing.inputHash ||
-            !payloadMatchesInputHash(
-              this.operationPayload(existing.id),
-              existing.inputHash,
-            ) ||
-            hasReviewerDelivery(
-              this.access.runs(existing.taskId!),
-              existing.id,
-            ))
-        )
-          throw new Error(
-            "The previous pre-send receipt or delivery evidence conflicts; no retry was admitted",
-          );
         const reopened = this.putOperation({
           ...existing,
           state: "pending",
@@ -353,9 +304,6 @@ export class StoreOperations {
           result: null,
           effect: null,
           preSendBoundaryStartedAt: null,
-          preSendReceipt: null,
-          preSendReconciledAt: null,
-          ...(history ? { preSendHistory: history } : {}),
         });
         return { accepted: true as const, operation: reopened };
       }

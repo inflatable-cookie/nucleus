@@ -176,7 +176,7 @@ test("Queue planner closes a merged task blocked by an uncertain operation in on
     assert.equal(
       result.resolution.ownerSettlements.some(
         (item) =>
-          item.effect === `task_control_operation.${id}` &&
+          item.effect === `operation.${id}` &&
           item.source === "queue_planner",
       ),
       true,

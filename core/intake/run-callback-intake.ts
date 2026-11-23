@@ -64,7 +64,6 @@ export type RunCallbackIntakeContext = Pick<
   | "completeReceipt"
   | "completeValidate"
   | "readoptReplacedReviewer"
-  | "reconcileReviewDelivery"
   | "recordFinishedTaskCompletion"
   | "recordSupersededProofEvidence"
   | "resolveIncident"
@@ -626,7 +625,7 @@ export class RunCallbackIntake {
       );
     }
   }
-  /** Write the completion event and receipt, then schedule unknown-delivery reconciliation after this commit. */
+  /** Write the completion event and receipt. */
   completeReceipt(
     run: Run,
     task: Task,
@@ -646,16 +645,6 @@ export class RunCallbackIntake {
       digest(JSON.stringify(input)),
       JSON.stringify(response),
     );
-    // Every unknown occurrence gets its own exact-evidence test after this
-    // commit: the reviewer's timeline message, or a later authenticated
-    // checkpoint. A callback can never bind one by itself.
-    for (const item of run.reviewDeliveries ?? [])
-      if (item.status === "reserved" || item.status === "uncertain")
-        queueMicrotask(() => {
-          void this.resolution
-            .reconcileReviewDelivery(this.store.run(run.id) ?? run, item)
-            .catch(() => undefined);
-        });
   }
   /**
    * Queue #691: a completion on a done or cancelled task is evidence, never

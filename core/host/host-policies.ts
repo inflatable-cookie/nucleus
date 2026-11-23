@@ -39,6 +39,7 @@ import type {
   HostWorkspaceRef,
   NativeDecisionInput,
 } from "../../shared/host";
+import type { HostObservation } from "./contract/observation";
 import type { HostInitLockRule } from "./types";
 import type { NucleusProfile } from "../../shared/profiles";
 import { git } from "../git/index";
@@ -105,7 +106,7 @@ export abstract class HostPolicies extends MachinePorts {
   abstract originAgent: ReviewPolicyHost["originAgent"];
   abstract unsupportedMcp: AgentPolicyHost["unsupportedMcp"];
   abstract nativeAgentCreate: AgentPolicyHost["nativeAgentCreate"];
-  abstract agentTimelinePage: OwnedWorkspaceArchiveHost["agentTimelinePage"];
+  abstract agentTimelinePage: HostObservation["agentTimelinePage"];
   scanForWorktreeAdd?: (targetPath: string) => ProcessSearch;
   initLock?: HostInitLockRule | null = null;
   workspaceCreationProgress?: WorkspaceLifecycleHost["workspaceCreationProgress"];
