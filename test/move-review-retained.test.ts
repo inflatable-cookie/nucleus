@@ -123,6 +123,7 @@ function fixture() {
       error: string;
       provider?: string;
       model?: string;
+      updatedAt?: string;
     }
   >();
   observations.set("worker-agent", {
