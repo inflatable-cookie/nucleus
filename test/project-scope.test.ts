@@ -179,12 +179,13 @@ test("026-14b the selector lists every project with filter, primary repository, 
       row.primary,
       row.tasks,
       row.leads,
+      row.total,
       row.checked,
     ]),
     [
-      ["consumer-b-v2", "owner/consumer", 1, 0, false],
-      ["other", "owner/other", 0, 0, false],
-      ["project-a-accelerator", "owner/project-a", 0, 1, true],
+      ["consumer-b-v2", "owner/consumer", 1, 0, 1, false],
+      ["project-a-accelerator", "owner/project-a", 0, 1, 1, true],
+      ["other", "owner/other", 0, 0, 0, false],
     ],
   );
   assert.deepEqual(
@@ -266,14 +267,15 @@ test("1426 selector totals include every live phase and hidden queued tasks acro
     ],
   );
   assert.deepEqual(
-    rows.map(({ key, tasks: count, leads: leadCount }) => [
+    rows.map(({ key, tasks: count, leads: leadCount, total }) => [
       key,
       count,
       leadCount,
+      total,
     ]),
     [
-      ["multi", 8, 2],
-      ["empty", 0, 0],
+      ["multi", 8, 2, 10],
+      ["empty", 0, 0, 0],
     ],
     "four rendered live tasks plus four hidden queued tasks; terminal tasks and non-task cards do not affect the task total",
   );
@@ -571,7 +573,7 @@ test("repository matching prefers origin and falls back to path only when needed
   assert.equal(projectHasRepository(consumer, "", null), false);
 });
 
-test("1529 the selector keeps active projects first, then Dormant, then Parked, ordering each group by task count, last activity and name", () => {
+test("1544 the selector counts active work plus open leads and papercuts, then sorts each group by total, activity and name", () => {
   const NOW = Date.parse("2026-11-22T12:00:00.000Z");
   const iso = (ms: number) => new Date(ms).toISOString();
   const live = (id: string, path: string) => ({
@@ -604,6 +606,31 @@ test("1529 the selector keeps active projects first, then Dormant, then Parked, 
     live("m3", "/mid"),
     ...["p1", "p2", "p3", "p4", "p5"].map((id) => live(id, "/busy")),
   ] as Parameters<typeof projectSelectorRows>[3];
+  const leads = [
+    ...["l1", "l2", "l3"].map((id) => ({
+      id,
+      title: id,
+      state: "open",
+      lanes: [],
+      repositories: [repo("alpha")],
+    })),
+    {
+      id: "papercut",
+      title: "Recurring friction",
+      state: "open",
+      lanes: [],
+      repositories: [repo("alpha")],
+      tags: ["papercut"],
+    },
+    {
+      id: "parked",
+      title: "Parked lead",
+      state: "open",
+      parked: { reason: "Later", revisitAt: "2026-12-01T00:00:00.000Z" },
+      lanes: [],
+      repositories: [repo("alpha")],
+    },
+  ] as Parameters<typeof projectSelectorRows>[4];
   const activity = [
     seen("alpha", NOW - HOUR),
     seen("zeta", NOW - DAY),
@@ -614,24 +641,23 @@ test("1529 the selector keeps active projects first, then Dormant, then Parked, 
     [],
     "",
     tasks,
-    [],
+    leads,
     [],
     activity,
     NOW,
   );
   assert.deepEqual(
-    rows.map((row) => [row.key, row.tasks, row.dormant]),
+    rows.map((row) => [row.key, row.tasks, row.leads, row.total, row.dormant]),
     [
-      ["busy", 5, false],
-      ["alpha", 1, false],
-      ["zeta", 1, false],
-      ["mid", 3, true],
-      ["beta", 0, true],
-      ["gamma", 0, true],
-      ["quiet", 0, true],
+      ["alpha", 1, 4, 5, false],
+      ["busy", 5, 0, 5, false],
+      ["zeta", 1, 0, 1, false],
+      ["mid", 3, 0, 3, true],
+      ["beta", 0, 0, 0, true],
+      ["gamma", 0, 0, 0, true],
+      ["quiet", 0, 0, 0, true],
     ],
-    "count decides inside a group, then newest activity, then name; " +
-      "a dormant project with more tasks still sorts below every active one",
+    "open leads and papercuts add to total; parked leads are excluded; ties use activity then name, and Dormant stays below Active",
   );
 });
 
