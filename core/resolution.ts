@@ -649,6 +649,7 @@ export class Resolution {
         capturedAt: Date.now(),
         fromPassSnapshot: true,
         deferred: true,
+        missingFromPass: true,
       });
     }
     const capturedAt = Date.now();

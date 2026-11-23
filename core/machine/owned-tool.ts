@@ -43,6 +43,7 @@ import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
   isTerminalParticipant,
+  runOutsideTaskQuantumScope,
   type PassProcessRead,
   type PassTimelinePageRead,
 } from "../scheduling/pass-snapshot";
@@ -108,28 +109,40 @@ export class OwnedTools {
     };
   }
   private async readProcesses(
-    hostId?: string | null,
+    hostId: string | null | undefined,
+    deadlineMs: number,
   ): Promise<PassProcessRead> {
-    if (this.resolution.readPassProcesses) {
-      return this.resolution.readPassProcesses(hostId);
-    }
+    const pass = await this.resolution.readPassProcesses?.(hostId);
+    if (pass && !pass.missingFromPass) return pass;
+    const adapter = this.adapter;
+    const listProcesses = adapter.hostProcessListing?.bind(adapter);
+    if (pass && !listProcesses) return pass;
     const capturedAt = Date.now();
-    if (this.adapter.hostProcessListing) {
+    if (listProcesses) {
+      // The outer deadline still shares the quantum budget. Only the
+      // adapter call bypasses the normal task-lane process-table restriction.
+      const list = pass
+        ? () => runOutsideTaskQuantumScope(listProcesses)
+        : listProcesses;
       const read = await boundedRead(
         "host process listing",
         async () => requireCustodyEvidence(
-          await this.adapter.hostProcessListing!(),
+          await list(),
           "the host process listing",
         ),
-        this.processDeadlineMs,
+        pass
+          ? Math.min(deadlineMs, this.processDeadlineMs)
+          : this.processDeadlineMs,
       ).catch((error) => {
         const deferred = custodyProofDeferral({ kind: "error", error });
         return deferred
           ? { state: "unknown" as const, reason: deferred.reason, deferred: true }
           : {
               state: "unknown" as const,
-              reason: "failed",
-              deferred: false,
+              reason: pass
+                ? `host process listing failed: ${String(error)}`
+                : "failed",
+              deferred: Boolean(pass),
             };
       });
       if (read.state === "ok") {
@@ -534,7 +547,7 @@ export class OwnedTools {
       const boundRun = options.runId ? this.store.run(options.runId) : null;
       const task = this.store.task(options.taskId);
       const processHostId = boundRun?.hostId ?? task.hostId;
-      const processRead = await this.readProcesses(processHostId);
+      const processRead = await this.readProcesses(processHostId, remainingMs());
       const deferred = this.processProofDeferral(
         processRead, processHostId, agentId, turn, read.entries,
       );
@@ -763,7 +776,7 @@ export class OwnedTools {
       bbThreads,
     });
     const processHostId = boundRun?.hostId ?? task.hostId;
-    const processRead = await this.readProcesses(processHostId);
+    const processRead = await this.readProcesses(processHostId, deadlineMs);
     const deferred = this.processProofDeferral(
       processRead, processHostId, agentId, turn, entries,
     );

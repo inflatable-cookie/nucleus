@@ -30,7 +30,8 @@ export const QUANTUM_TOTAL_READ_BUDGET_MS = 30_000;
 /**
  * Shared read-phase scope carried across one exclusive task quantum (`task:<id>`).
  * Every `boundedRead` inside the quantum shares `deadlineAt`, and expensive
- * reads (process tables and timelines) never start directly on the task lane.
+ * reads use pass snapshots. A custody check may use a bounded direct process
+ * listing when the pass did not capture one.
  */
 export interface TaskQuantumReadScope {
   readonly deadlineAt: number;
@@ -239,6 +240,8 @@ export type PassProcessRead = HostProcessListRead & {
   fromPassSnapshot: boolean;
   /** True when the listing was deferred (quantum deadline/timeout or uncaptured pass snapshot). */
   deferred?: boolean;
+  /** No listing was attempted for this host in the pass. */
+  missingFromPass?: true;
 };
 
 /**
@@ -550,6 +553,7 @@ export class PassSnapshot {
         capturedAt: Date.now(),
         fromPassSnapshot: true,
         deferred: true,
+        missingFromPass: true,
       });
     }
     const promise = run(true);

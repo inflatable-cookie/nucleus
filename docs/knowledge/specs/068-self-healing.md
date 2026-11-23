@@ -251,7 +251,9 @@ current custody and requires a later, complete workspace and run-process scan.
 If a tool page is deferred, a complete exact thread read can also satisfy the
 thread part by proving the participant is inactive in the bound workspace, has
 no pending runtime request and reports an empty background roster. The same
-workspace and run-process proof must cover that observation.
+workspace and run-process proof must cover that observation. If the pass has no
+process listing, custody takes a bounded direct listing after the participant
+observation. An unreadable direct listing leaves the proof pending.
 An unknown observation or a scan that predates confirmed inactivity cannot
 clear a lease.
 
@@ -261,8 +263,8 @@ including retired workers with explicitly released runs, under the same
 freshness rule. The send keeps its normal review instructions and any named
 checks. Custody checks freshness before using a cached process or tool
 observation to clear or hold custody. Evidence from before the participant's
-latest activity and transient custody read failures, including null timeline
-pages and process listings, leave the proof pending and renew the demand.
+latest activity and transient custody read failures leave the proof pending
+when the remaining evidence cannot establish custody.
 If a completed host pass still cannot
 serve the proof after five minutes of host and service uptime, the task stops with
 `pass_proof_exhausted` and names the unread proof.
