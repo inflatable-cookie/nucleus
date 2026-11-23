@@ -41,6 +41,8 @@ pub enum ForgeError {
     Deferred { until: SystemTime },
     #[error("GitHub request failed")]
     Http(#[from] reqwest::Error),
+    #[error("GitHub returned HTTP {0}")]
+    Status(StatusCode),
     #[error("GitHub response could not be decoded ({category:?} at {line}:{column})")]
     Decode {
         category: serde_json::error::Category,
@@ -260,7 +262,13 @@ impl GitHub {
                 "query": CHECKS_QUERY,
                 "variables": { "owner": target.branches.owner, "repo": target.branches.repository, "number": target.number },
             })).send().await?;
+            let now = SystemTime::now();
+            let deadline =
+                deadline_hint(response.headers(), now).unwrap_or(now + Duration::from_mins(1));
             let graph: GraphReply = decode(response).await?;
+            if graph.rate_limited() {
+                return Err(ForgeError::Deferred { until: deadline });
+            }
             graph.checks(&pull.head.sha, &target.branches.base)?
         } else {
             CheckState::Unknown
@@ -355,11 +363,13 @@ async fn classify_write(response: Response) -> MergeWrite {
         sha: Option<Head>,
     }
 
-    if let Some(until) = deferred(&response) {
-        return MergeWrite::Deferred { until };
-    }
-    match response.status() {
-        StatusCode::OK => match decode::<Receipt>(response).await {
+    let (status, bytes) = match payload(response).await {
+        Ok(payload) => payload,
+        Err(ForgeError::Deferred { until }) => return MergeWrite::Deferred { until },
+        Err(_) => return MergeWrite::Unknown,
+    };
+    match status {
+        StatusCode::OK => match decode_json::<Receipt>(&bytes) {
             Ok(Receipt {
                 merged: true,
                 sha: Some(commit),
@@ -374,19 +384,9 @@ async fn classify_write(response: Response) -> MergeWrite {
     }
 }
 
-fn deferred(response: &Response) -> Option<SystemTime> {
-    let headers = response.headers();
-    let retry = headers.get(RETRY_AFTER);
-    let exhausted = headers
-        .get("x-ratelimit-remaining")
-        .is_some_and(|value| value == "0");
-    if response.status() != StatusCode::TOO_MANY_REQUESTS
-        && !(response.status() == StatusCode::FORBIDDEN && (exhausted || retry.is_some()))
-    {
-        return None;
-    }
-    let now = SystemTime::now();
-    let after = retry
+fn deadline_hint(headers: &HeaderMap, now: SystemTime) -> Option<SystemTime> {
+    let after = headers
+        .get(RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| {
             value
@@ -395,30 +395,52 @@ fn deferred(response: &Response) -> Option<SystemTime> {
                 .and_then(|seconds| now.checked_add(Duration::from_secs(seconds)))
                 .or_else(|| httpdate::parse_http_date(value).ok())
         });
-    let reset = (exhausted || response.status() == StatusCode::TOO_MANY_REQUESTS)
-        .then(|| {
-            headers
-                .get("x-ratelimit-reset")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok())
-                .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
-        })
-        .flatten();
-    Some(
-        after
-            .into_iter()
-            .chain(reset)
-            .max()
-            .filter(|time| *time >= now)
-            .unwrap_or(now + Duration::from_mins(1)),
-    )
+    let reset = headers
+        .get("x-ratelimit-reset")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)));
+    after
+        .into_iter()
+        .chain(reset)
+        .max()
+        .filter(|time| *time >= now)
 }
 
 async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ForgeError> {
-    if let Some(until) = deferred(&response) {
-        return Err(ForgeError::Deferred { until });
+    let (status, bytes) = payload(response).await?;
+    if !status.is_success() {
+        return Err(ForgeError::Status(status));
     }
-    let mut response = response.error_for_status()?;
+    decode_json(&bytes)
+}
+
+async fn payload(mut response: Response) -> Result<(StatusCode, Vec<u8>), ForgeError> {
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        message: String,
+    }
+
+    let status = response.status();
+    let headers = response.headers();
+    let now = SystemTime::now();
+    let fallback = now + Duration::from_mins(1);
+    let hint = deadline_hint(headers, now);
+    let exhausted = headers
+        .get("x-ratelimit-remaining")
+        .is_some_and(|value| value == "0");
+    let forbidden = status == StatusCode::FORBIDDEN;
+    if exhausted
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || (forbidden && headers.contains_key(RETRY_AFTER))
+    {
+        return Err(ForgeError::Deferred {
+            until: hint.unwrap_or(fallback),
+        });
+    }
+    if !status.is_success() && !forbidden {
+        return Ok((status, Vec::new()));
+    }
     let mut data = Vec::new();
     while let Some(bytes) = response.chunk().await? {
         if data.len() + bytes.len() > BODY_LIMIT {
@@ -426,7 +448,22 @@ async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ForgeError
         }
         data.extend_from_slice(&bytes);
     }
-    serde_json::from_slice(&data).map_err(|error| ForgeError::Decode {
+    if forbidden
+        && serde_json::from_slice::<ErrorBody>(&data).is_ok_and(|body| {
+            body.message
+                .to_ascii_lowercase()
+                .contains("secondary rate limit")
+        })
+    {
+        return Err(ForgeError::Deferred {
+            until: hint.unwrap_or(fallback).max(fallback),
+        });
+    }
+    Ok((status, data))
+}
+
+fn decode_json<T: DeserializeOwned>(data: &[u8]) -> Result<T, ForgeError> {
+    serde_json::from_slice(data).map_err(|error| ForgeError::Decode {
         category: error.classify(),
         line: error.line(),
         column: error.column(),

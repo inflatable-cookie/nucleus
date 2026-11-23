@@ -54,9 +54,15 @@ pub(crate) struct RepoName {
 
 #[derive(Deserialize)]
 pub(crate) struct GraphReply {
-    data: Option<Data>,
+    data: Option<serde_json::Value>,
     #[serde(default)]
-    errors: Vec<serde::de::IgnoredAny>,
+    errors: Vec<GraphError>,
+}
+
+#[derive(Deserialize)]
+struct GraphError {
+    #[serde(rename = "type")]
+    kind: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -89,13 +95,20 @@ struct Rollup {
 }
 
 impl GraphReply {
+    pub(crate) fn rate_limited(&self) -> bool {
+        self.errors
+            .iter()
+            .any(|error| error.kind.as_deref() == Some("RATE_LIMITED"))
+    }
+
     pub(crate) fn checks(self, head: &Head, base: &str) -> Result<CheckState, ForgeError> {
         if !self.errors.is_empty() {
             return Err(ForgeError::Incomplete);
         }
-        let checks = self
-            .data
-            .and_then(|data| data.repository)
+        let data = self.data.ok_or(ForgeError::Incomplete)?;
+        let data: Data = serde_json::from_value(data).map_err(|_| ForgeError::Incomplete)?;
+        let checks = data
+            .repository
             .and_then(|repository| repository.pull_request)
             .ok_or(ForgeError::Incomplete)?;
         if checks.base_ref_name != base {

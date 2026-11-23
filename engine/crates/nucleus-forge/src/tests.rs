@@ -346,6 +346,61 @@ async fn a_rate_limited_put_returns_the_deadline_without_readback() {
 }
 
 #[tokio::test]
+async fn a_secondary_limit_body_defers_even_when_primary_requests_remain() {
+    let target = branches().target(PR_URL).expect("target");
+    let reset = UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+    for (headers, expected) in [
+        ("X-RateLimit-Remaining: 100\r\n", None),
+        (
+            "X-RateLimit-Remaining: 100\r\nX-RateLimit-Reset: 2000000000\r\n",
+            Some(reset),
+        ),
+    ] {
+        let before = SystemTime::now();
+        let mut responses = ready_preflight();
+        responses.push(Some(FixtureReply {
+            status: 403,
+            headers,
+            body: json!({"message": "You have exceeded a secondary rate limit."}),
+        }));
+        let (forge, calls) = scripted(responses);
+        let attempt = forge
+            .merge(&task_with_approval(), &target)
+            .await
+            .expect("secondary deferral");
+        let MergeWrite::Deferred { until } = attempt.write else {
+            panic!("expected retry deadline")
+        };
+        assert!(until >= before + Duration::from_mins(1));
+        if let Some(expected) = expected {
+            assert_eq!(until, expected);
+        }
+        assert_eq!(calls.join().expect("no readback").len(), 4);
+    }
+}
+
+#[tokio::test]
+async fn a_graphql_rate_error_uses_the_reset_before_interpreting_partial_data() {
+    let target = branches().target(PR_URL).expect("target");
+    for headers in [
+        "X-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 2000000000\r\n",
+        "X-RateLimit-Reset: 2000000000\r\n",
+    ] {
+        let (forge, calls) = scripted(vec![
+            Some(FixtureReply::ok(pull('a', false))),
+            Some(FixtureReply {
+                status: 200,
+                headers,
+                body: json!({"data": {"repository": false}, "errors": [{"type": "RATE_LIMITED"}]}),
+            }),
+        ]);
+        assert!(matches!(forge.merge(&task_with_approval(), &target).await,
+            Err(ForgeError::Deferred { until }) if until == UNIX_EPOCH + Duration::from_secs(2_000_000_000)));
+        assert_eq!(calls.join().expect("no further calls").len(), 2);
+    }
+}
+
+#[tokio::test]
 async fn decoder_errors_do_not_reveal_diagnostic_values() {
     const TOKEN: &str = "synthetic-token-in-response";
     let target = branches().target(PR_URL).expect("target");
