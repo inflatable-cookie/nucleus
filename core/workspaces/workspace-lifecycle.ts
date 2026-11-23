@@ -542,6 +542,7 @@ export class WorkspaceLifecycle {
     options: {
       skipProcessScan?: boolean;
       skipRemoteCheck?: boolean;
+      remoteWhenAbsent?: boolean;
       progress?: boolean;
     } = {},
   ): Promise<WorkspaceCreationState> {
@@ -652,6 +653,7 @@ export class WorkspaceLifecycle {
         this.admitObservedWorkspace(task, common, directory),
       skipProcessScan: options.skipProcessScan,
       skipRemoteCheck: options.skipRemoteCheck,
+      remoteWhenAbsent: options.remoteWhenAbsent,
       scan: this.host.scanForWorktreeAdd,
       initLock: this.host.initLock,
       step: options.progress
@@ -1277,6 +1279,7 @@ export interface WorkspaceLifecycleHost {
     options?: {
       skipProcessScan?: boolean;
       skipRemoteCheck?: boolean;
+      remoteWhenAbsent?: boolean;
       progress?: boolean;
     },
   ): Promise<WorkspaceCreationState>;

@@ -192,6 +192,7 @@ export abstract class HostPolicies extends MachinePorts {
     options: {
       skipProcessScan?: boolean;
       skipRemoteCheck?: boolean;
+      remoteWhenAbsent?: boolean;
       progress?: boolean;
     } = {},
   ): Promise<WorkspaceCreationState> {

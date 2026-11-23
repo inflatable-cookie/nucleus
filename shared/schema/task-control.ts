@@ -133,6 +133,7 @@ export const explicitResolutionSchema = z.preprocess(
           "host_wait",
           "owner_stop",
           "deferred_verb",
+          "workspace_intent",
         ]),
         id: resolutionId,
       })

@@ -408,6 +408,15 @@ export function taskActivity({
       },
     );
   }
+  // Spec 068 batch A: Nucleus is looking up an uncertain first workspace
+  // creation; it binds, releases for dispatch or waits on a named read.
+  if (stop?.fact?.code === "workspace_lookup" && stop.reason === "lifecycle")
+    return answer(
+      "recovering",
+      "Checking uncertain workspace creation",
+      stop.since,
+      { occurrence: `workspace:${stop.fact.subject ?? ""}:${stop.since}` },
+    );
   if (live?.status === "uncertain" || isUncertainCreationStop(stop))
     return answer(
       "recovering",

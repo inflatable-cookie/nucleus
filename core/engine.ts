@@ -1,6 +1,10 @@
 import { stopClearedPatch } from "../shared/task-stop";
 import { recordedLegacyPaseoHost } from "./host/host-registry";
 import { enginePorts, portsContext } from "./port-context";
+import {
+  settleWorkspaceCreation,
+  type WorkspaceSettlement,
+} from "./recovery/workspace-lookup";
 import { onOwnerHost } from "./host/host-ports";
 import { TaskControlLifecycle } from "./verbs/task-control-lifecycle";
 import { recordAcceptedRevisionRound } from "./verbs/author-revision-cap";
@@ -314,6 +318,7 @@ export class Engine {
         "reconcileBlockedEffects",
         "reconcileClosedRetainedReviewer",
         "recoverExistingWorkspace",
+        "settleWorkspaceCreation",
         "scheduleLane",
         "settleFinishedRuns",
         "settleHistoricalProofExecutions",
@@ -3368,6 +3373,10 @@ export class Engine {
   }
   recoverExistingWorkspace(task: Task): Promise<boolean> {
     return this.workspaceProvisioning.recoverExistingWorkspace(task);
+  }
+  /** Spec 068 batch A: settle an uncertain first workspace creation by lookup. */
+  settleWorkspaceCreation(task: Task): Promise<WorkspaceSettlement> {
+    return settleWorkspaceCreation(this, task);
   }
   ensureSiblings(task: Task): Promise<Task> {
     return this.workspaceProvisioning.ensureSiblings(task);

@@ -87,6 +87,8 @@ export interface OwnerVerbFacts {
   planning?: boolean;
   operatorBoard?: boolean;
   creationGraceMs?: number;
+  /** This service has the task's dispatch in flight (`HostHealth.launchInFlight`). */
+  launchInFlight?: boolean;
 }
 
 export function collectOwnerVerbFacts(

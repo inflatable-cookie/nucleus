@@ -67,7 +67,13 @@ export interface BoardContext {
     "profiles" | "retiredObservationKey" | "currentExternalWait"
   > &
     Partial<
-      Pick<Engine, "profilesFor" | "workerRoutingProfiles" | "routingHostViews">
+      Pick<
+        Engine,
+        | "profilesFor"
+        | "workerRoutingProfiles"
+        | "routingHostViews"
+        | "hostHealth"
+      >
     > & {
       resolution: Pick<
         Engine["resolution"],
@@ -699,6 +705,8 @@ export class RuntimeBoard {
       const facts = {
         ...this.ownerVerbFacts(task),
         creationGraceMs: this.context.engine.resolution?.graceMs,
+        launchInFlight:
+          this.context.engine.hostHealth?.launchInFlight(task.id) ?? false,
         operatorBoard: input.caller === "operator (board)",
         ...(hostProfiles ? { hostProfiles } : {}),
       };

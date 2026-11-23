@@ -296,6 +296,47 @@ async function unpublishedBaseIdentical(
   return null;
 }
 
+/** A task branch absent locally that a remote still holds: never absence. */
+async function remoteOnlyBranch(
+  task: Pick<Task, "repoPath" | "branch">,
+  input: { skipRemoteCheck?: boolean; step?: InspectionStep },
+): Promise<WorkspaceCreationState | null> {
+  try {
+    if (
+      await inspectionStep(input.step, "git_remote_ref_scan", () =>
+        git(
+          task.repoPath,
+          "for-each-ref",
+          "--format=%(refname)",
+          `refs/remotes/*/${task.branch}`,
+        ),
+      )
+    )
+      return {
+        kind: "conflicting",
+        evidence: "the branch exists on a remote",
+      };
+    if (input.skipRemoteCheck) return null;
+    const remote = await pushRemote(task, input.step);
+    if (
+      remote &&
+      (await inspectionStep(input.step, "git_ls_remote", () =>
+        git(task.repoPath, "ls-remote", "--heads", remote, task.branch),
+      ))
+    )
+      return {
+        kind: "conflicting",
+        evidence: `the branch is published to ${remote}`,
+      };
+    return null;
+  } catch (error) {
+    return {
+      kind: "unknown",
+      evidence: `the remote for ${task.branch} could not be read (${(error instanceof Error ? error.message : String(error)).slice(0, 200)})`,
+    };
+  }
+}
+
 export function workspaceCreationRefusal(
   state: WorkspaceCreationState,
 ): string {
@@ -342,6 +383,12 @@ export async function classifyWorkspaceCreation(input: {
   skipProcessScan?: boolean;
   /** The just-populated branch cannot yet have been published by this task. */
   skipRemoteCheck?: boolean;
+  /**
+   * A branch absent locally is also looked up on remotes (tracking refs, then
+   * the push remote); a failed remote read is unknown, never absence. The
+   * uncertain-workspace lookup asks for it before it releases an intent.
+   */
+  remoteWhenAbsent?: boolean;
   /** Optional durable timing wrapper for Git inspection substeps. */
   step?: InspectionStep;
   scan?: (targetPath: string) => ProcessSearch;
@@ -390,11 +437,30 @@ export async function classifyWorkspaceCreation(input: {
 
   const tree = matched[0];
   if (tree) input.admitObserved?.(tree.path);
+  // A missing branch reads as an empty listing; a failed read is unknown, not
+  // absence, so it never authorizes a replay.
   const branchHead = ref
     ? await inspectionStep(input.step, "git_rev_parse", () =>
-        git(task.repoPath, "rev-parse", "--verify", ref),
-      ).catch(() => "")
+        git(
+          task.repoPath,
+          "for-each-ref",
+          "--format=%(refname) %(objectname)",
+          ref,
+        ),
+      ).then(
+        (out) =>
+          out
+            .split("\n")
+            .map((line) => line.split(" "))
+            .find(([name]) => name === ref)?.[1] ?? "",
+        () => null,
+      )
     : "";
+  if (branchHead === null)
+    return {
+      kind: "unknown",
+      evidence: `the task branch ${task.branch} could not be read`,
+    };
   const existingPaths = paths.filter((path) => existsSync(path));
   if (existingPaths.length > 1)
     return {
@@ -403,7 +469,11 @@ export async function classifyWorkspaceCreation(input: {
     };
   const pathExists =
     existingPaths.length > 0 || Boolean(tree && existsSync(tree.path));
-  if (!tree && !pathExists && !branchHead) return { kind: "absent" };
+  if (!tree && !pathExists && !branchHead) {
+    if (!ref || !input.remoteWhenAbsent) return { kind: "absent" };
+    const remote = await remoteOnlyBranch(task, input);
+    return remote ?? { kind: "absent" };
+  }
 
   const matchesHostInit = (reason: string) =>
     Boolean(input.initLock?.matches(reason));
@@ -644,6 +714,18 @@ export async function removeOrphanCheckout(
         await removeTree(orphan.directory);
       }
     } else await git(task.repoPath, "worktree", "prune");
+  }
+  // A branch-only orphan is deleted only while no worktree has it checked out:
+  // `update-ref -d` does not refuse a checked-out branch the way `branch -D` does.
+  if (!orphan.directory && orphan.head && task.branch) {
+    const ref = `refs/heads/${orphan.branch}`;
+    const holder = parseWorktreeList(
+      await git(task.repoPath, "worktree", "list", "--porcelain"),
+    ).find((tree) => tree.branch === ref);
+    if (holder)
+      throw new Error(
+        `${orphan.branch} is checked out at ${holder.path}; not removing it`,
+      );
   }
   if (orphan.head && task.branch)
     await git(

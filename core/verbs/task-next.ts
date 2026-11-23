@@ -38,6 +38,10 @@ import type { OwnerVerbFacts } from "./owner-facts";
 import { DEFAULT_STALL_THRESHOLD_MINUTES } from "../../shared/schema/settings";
 import { taskStopVerbs } from "../../shared/task-stop";
 import { reviewResultFencesRun } from "../review/review-continuation";
+import {
+  unboundDispatchWorkspace,
+  workspaceLookupStop,
+} from "../recovery/workspace-lookup";
 
 /** One reviewer run's own recorded verdict with the publication evidence it carries. */
 type RecordedVerdict = {
@@ -864,6 +868,28 @@ function explicitCommandsFor(
     });
   }
 
+  // Spec 068 batch A: an uncertain workspace creation the lookup holds (its
+  // wait, its typed stop or the legacy generic wait) can be released
+  // explicitly. An ordinary populate in progress offers nothing: no dispatch
+  // may be in flight, as for any create that may still answer.
+  if (
+    unboundDispatchWorkspace(task) &&
+    workspaceLookupStop(task.resolution.stop) &&
+    !facts.launchInFlight
+  ) {
+    push({
+      action: "record.clear",
+      args: {
+        action: "record.clear",
+        ...base,
+        kind: "workspace_intent",
+        id: task.branch,
+      },
+      fill: ["reason"],
+      note: `Release the uncertain workspace creation for ${task.branch} and requeue the task; the workspace may exist on the host.`,
+    });
+  }
+
   if (task.resolution.stop) {
     push({
       action: "record.clear",
@@ -908,6 +934,10 @@ function expectedWarnings(
         (warning) => warning.id,
       );
     if (command.action === "record.clear" && args.kind === "stop") return [];
+    if (command.action === "record.clear" && args.kind === "workspace_intent")
+      return facts.launchInFlight
+        ? ["workspace_may_exist", "effect_may_land"]
+        : ["workspace_may_exist"];
   } catch {
     return null;
   }

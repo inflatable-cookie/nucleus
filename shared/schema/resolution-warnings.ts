@@ -27,6 +27,9 @@ export const resolutionWarningId = z.enum([
   // The host may still answer the create command of this role's uncertain run;
   // a new run could stand beside the thread that late answer brings (Spec 068).
   "creation_in_flight",
+  // record.clear kind=workspace_intent: the uncertain workspace may exist on
+  // the host; the next dispatch binds or recreates the same branch and worktree.
+  "workspace_may_exist",
 ]);
 
 /**
