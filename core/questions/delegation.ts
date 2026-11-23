@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import type { BbThreadState } from "../../hosts/bb";
 import type { Profile, Task } from "../../shared/contracts";
 import {
   awaitingProofTexts,
@@ -48,10 +47,7 @@ import {
 } from "../../shared/agent-identity";
 import { hostKindOf, type IdentitySource } from "../../shared/host-kind";
 import { onOwnerHost } from "../host/host-ports";
-import {
-  boundedRead,
-  runOutsideTaskQuantumScope,
-} from "../scheduling/pass-snapshot";
+import { runOutsideTaskQuantumScope } from "../scheduling/pass-snapshot";
 
 /** The selection failed before an intent or host call was made. */
 export class DelegatedHostUnavailable extends Error {}
@@ -229,7 +225,10 @@ export class Delegation {
         provenHost,
       );
       if (participant) return { kind: "participant", ticketPath: participant };
-      if (this.adapter.reportingViaMcp === false && !provenHost)
+      if (
+        this.adapter.reportingViaMcp === false &&
+        (!provenHost || hostKindOf(provenHost) !== "t3code")
+      )
         throw Error("Consult requires the recipient run ticket");
       return { kind: "clear" };
     }
@@ -249,38 +248,42 @@ export class Delegation {
   private quote(value: string) {
     return `'${value.replaceAll("'", "'\\''")}'`;
   }
+  private plannerOriginHost(task: Task, recipient: string) {
+    return recipient === task.originAgentId ||
+      recipient === task.notificationAgentId
+      ? task.originHostId
+      : undefined;
+  }
+  private t3PlannerHost(task: Task, recipient: string) {
+    const host =
+      this.plannerOriginHost(task, recipient) ??
+      parseAgentId(recipient)?.hostId;
+    return hostKindOf(host) === "t3code" ? host : undefined;
+  }
   requireHost(
     task: Task,
     recipient: string,
     role: "planner" | "reviewer",
   ): Promise<string> {
-    return role === "planner"
-      ? runOutsideTaskQuantumScope(() =>
-          this.resolveQuestionHost(task, recipient, role),
-        )
-      : this.resolveQuestionHost(task, recipient, role);
-  }
-  private async resolveQuestionHost(
-    task: Task,
-    recipient: string,
-    role: "planner" | "reviewer",
-  ): Promise<string> {
+    const t3Host =
+      role === "planner" ? this.t3PlannerHost(task, recipient) : undefined;
     const recorded =
       role === "reviewer"
         ? task.hostId
-        : recipient === task.originAgentId ||
-            recipient === task.notificationAgentId
-          ? task.originHostId
-          : undefined;
-    const qualifiedHost =
-      role === "planner" ? parseAgentId(recipient)?.hostId : undefined;
+        : this.plannerOriginHost(task, recipient);
+    const resolve = () =>
+      this.resolveQuestionHost(recipient, t3Host ?? recorded);
+    return t3Host ? runOutsideTaskQuantumScope(resolve) : resolve();
+  }
+  private async resolveQuestionHost(
+    recipient: string,
+    recorded: string | null | undefined,
+  ): Promise<string> {
     const host =
-      recorded ??
-      qualifiedHost ??
-      (await this.resolution.identifyOriginHost(recipient));
+      recorded ?? (await this.resolution.identifyOriginHost(recipient));
     const settled = await this.hostThroughBridge(
       host,
-      recorded || qualifiedHost
+      recorded
         ? undefined
         : () => this.resolution.identifyOriginHost(recipient),
     );
@@ -417,63 +420,6 @@ export class Delegation {
     return hasPlannerMessagePort(this.adapter)
       ? this.adapter.plannerMessage.bind(this.adapter)
       : undefined;
-  }
-  private plannerQueuePort(hostId: string) {
-    // BB's ordinary delivery can address registered planners outside Nucleus's
-    // task-thread inventory. Both ports enqueue and never steer an active turn.
-    if (hostKindOf(hostId) === "bb") return this.adapter.notify;
-    if (hostKindOf(hostId) === "paseo" && this.adapter.agentTimelinePage)
-      return this.adapter.enqueueMessage;
-    return undefined;
-  }
-
-  private async queuedPlannerReceipt(
-    hostId: string,
-    recipient: string,
-    messageId: string,
-  ): Promise<PlannerMessageObservation> {
-    if (hostKindOf(hostId) === "bb") {
-      // The BB write journal is keyed by the bound thread and original
-      // command, and retains a late acknowledgement.
-      const receipt =
-        this.store.getMeta<BbThreadState>("bbThreads")?.writes[
-          `send:${recipient}:${messageId}`
-        ];
-      return {
-        state:
-          receipt?.status === "settled"
-            ? "accepted"
-            : receipt?.status === "refused"
-              ? "refused"
-              : "unknown",
-        nativeMessageId: messageId,
-      };
-    }
-    const result = await boundedRead("Planner message timeline", () =>
-      this.resolution.host.agentTimelinePage(recipient),
-    ).catch(() => null);
-    const page = result?.state === "ok" ? result.value : null;
-    const entry =
-      page &&
-      !page.gap &&
-      !page.staleCursor &&
-      !page.reset &&
-      page.entries.find(
-        ({ item }) =>
-          item.type === "user_message" &&
-          (item.clientMessageId === messageId || item.messageId === messageId),
-      );
-    if (entry && entry.turnId && Number.isFinite(Date.parse(entry.timestamp)))
-      return {
-        state: "started",
-        nativeMessageId: messageId,
-        runId: entry.turnId,
-        startedAt: entry.timestamp,
-      };
-    return {
-      state: entry ? "accepted" : "unknown",
-      nativeMessageId: messageId,
-    };
   }
   /** A task target is safe only when it selects one live question for this recipient. */
   questionForTask(identity: string, caller: string): string {
@@ -1393,9 +1339,6 @@ export class Delegation {
     const { messageId, signal } = input;
     const key = `delegation:${messageId}`;
     const occurrence = escalationIdForQuestion(messageId);
-    const exactDelivery = this.resolution.withHost(hostId, () =>
-      Boolean(this.plannerPort()),
-    );
     const open = () => {
       if (this.stopped() || signal.aborted) return false;
       const current = this.store.task(task.id);
@@ -1411,41 +1354,15 @@ export class Delegation {
     const callHost = async (
       request: Parameters<PlannerMessageHost["plannerMessage"]>[1],
     ) =>
-      this.resolution.withHost(
-        hostId,
-        async (): Promise<PlannerMessageObservation> => {
-          const available = this.resolution.originHostAvailable(hostId);
-          const port = this.plannerPort();
-          if (available && port) return port(recipient, request);
-          const enqueue = exactDelivery
-            ? undefined
-            : this.plannerQueuePort(hostId);
-          if (!available || !enqueue)
-            throw new ProvenPreSendRefusalError(
-              "The planner host is unavailable",
-              "Planner message",
-            );
-          if (request.kind === "lookup")
-            return this.queuedPlannerReceipt(hostId, recipient, messageId);
-          if (!request.current())
-            throw new ProvenPreSendRefusalError(
-              "The planner question has closed",
-              "Planner message",
-            );
-          await enqueue.call(this.adapter, recipient, messageId, request.text);
-          return { state: "accepted", nativeMessageId: messageId };
-        },
-      );
-    const plannerThread = async () => {
-      const result = await boundedRead("Planner thread", () =>
-        this.resolution.withHost(hostId, () =>
-          this.resolution.host.observe(recipient),
-        ),
-      ).catch(() => null);
-      return result?.state === "ok" && result.value.id === recipient
-        ? result.value
-        : null;
-    };
+      this.resolution.withHost(hostId, () => {
+        const port = this.plannerPort();
+        if (!port || !this.resolution.originHostAvailable(hostId))
+          throw new ProvenPreSendRefusalError(
+            "The planner host is unavailable",
+            "Planner message",
+          );
+        return port(recipient, request);
+      });
     const existing = this.delegatedDelivery(messageId);
     if (
       existing &&
@@ -1462,19 +1379,8 @@ export class Delegation {
       this.store.event(task.id, PLANNER_DELIVERY_EVENT, JSON.stringify(next));
       status = next;
     };
-    const refuse = (attempt: number, detail: string, retry: boolean) =>
-      publish({
-        occurrence,
-        messageId,
-        state: "refused",
-        attempt,
-        detail,
-        ...(retry && attempt < PLANNER_SEND_ATTEMPTS
-          ? { retryAt: Date.now() + PLANNER_SEND_RETRY_MS }
-          : {}),
-      });
     if (!existing) {
-      // Supported hosts verify the answering thread. Issuing a ticket by message here
+      // T3 verifies the answering thread. Issuing a ticket by message here
       // would take the idle planner's turn before the question could start it.
       if (!open()) return null;
       message = {
@@ -1510,10 +1416,6 @@ export class Delegation {
     if (!status || !message)
       throw Error("Planner delivery has no recorded route");
     let lookupDelay = 250;
-    const waitForEvidence = async () => {
-      await delay(lookupDelay);
-      lookupDelay = Math.min(5_000, lookupDelay * 2);
-    };
     while (true) {
       if (this.stopped()) return null;
       const events = this.store.eventsAll(key);
@@ -1524,12 +1426,7 @@ export class Delegation {
       if (status.state === "started")
         return this.resolution.waitDelegatedAnswer(messageId, signal);
 
-      const locallyQueued = status.state === "queued" && !status.acceptedAt;
-      if (
-        status.state === "routed" ||
-        status.state === "refused" ||
-        locallyQueued
-      ) {
+      if (status.state === "routed" || status.state === "refused") {
         if (status.state === "refused" && status.retryAt === undefined) {
           this.store.event(
             key,
@@ -1541,41 +1438,6 @@ export class Delegation {
         if (status.retryAt !== undefined)
           await delay(Math.max(0, status.retryAt - Date.now()));
         if (!open()) return null;
-        if (!exactDelivery) {
-          // Wait durably for these hosts. An answer deadline must never discard
-          // a message before it gets its first idle turn. The eventual host
-          // write still queues safely if another turn starts during this read.
-          const thread = await plannerThread();
-          if (!open()) return null;
-          if (!thread) {
-            refuse(
-              status.attempt + 1,
-              "The host could not verify the planner thread before send",
-              true,
-            );
-            continue;
-          }
-          if (
-            thread.archived ||
-            thread.status === "closed" ||
-            thread.status === "gone"
-          ) {
-            refuse(status.attempt, "Planner thread is closed", false);
-            continue;
-          }
-          if (thread.status !== "idle" || thread.active || thread.permissions) {
-            if (thread.active || thread.permissions)
-              publish({
-                occurrence,
-                messageId,
-                state: "queued",
-                attempt: status.attempt,
-              });
-            await waitForEvidence();
-            continue;
-          }
-        }
-        lookupDelay = 250;
         const intent = {
           occurrence,
           messageId,
@@ -1599,11 +1461,17 @@ export class Delegation {
           const refused =
             error instanceof ProvenPreSendRefusalError ||
             isHostConnectionRefusal(error);
-          const detail = (
-            error instanceof Error ? error.message : String(error)
-          ).slice(0, 500);
-          if (refused) refuse(intent.attempt, detail, true);
-          else publish({ ...intent, state: "unknown", detail });
+          publish({
+            ...intent,
+            state: refused ? "refused" : "unknown",
+            ...(refused && intent.attempt < PLANNER_SEND_ATTEMPTS
+              ? { retryAt: Date.now() + PLANNER_SEND_RETRY_MS }
+              : {}),
+            detail: (error instanceof Error
+              ? error.message
+              : String(error)
+            ).slice(0, 500),
+          });
         }
         continue;
       }
@@ -1648,34 +1516,11 @@ export class Delegation {
             ...observed,
             acceptedAt,
           });
-        // BB's durable send receipt proves this message was accepted. Its
-        // observation has no message-to-turn link. Only a positively idle
-        // thread can end the unanswered window; any queued work counts as busy.
-        if (
-          hostKindOf(hostId) === "bb" &&
-          Date.now() >= Date.parse(acceptedAt) + message.answerMs
-        ) {
-          const thread = await plannerThread();
-          if (
-            thread?.status === "idle" &&
-            !thread.active &&
-            !thread.permissions &&
-            !this.store
-              .eventsAll(key)
-              .some((event) => event.kind === "delegated_answer")
-          ) {
-            this.store.event(
-              key,
-              "delegated_closed",
-              NO_COMMAND_ANSWER_IN_WINDOW,
-            );
-            return null;
-          }
-        }
       } else if (prior.state === "intent" || prior.state === "unknown") {
         publish({ ...prior, ...observed, state: "unknown" });
       }
-      await waitForEvidence();
+      await delay(lookupDelay);
+      lookupDelay = Math.min(5_000, lookupDelay * 2);
     }
   }
 
@@ -1706,7 +1551,11 @@ export class Delegation {
       ? undefined
       : await this.requireHost(task, recipient, role);
     if (role === "planner" && input.messageId.startsWith("ns-escalation-")) {
-      if (existing?.plannerMessage && existing.hostId)
+      if (
+        existing?.plannerMessage &&
+        existing.hostId &&
+        hostKindOf(existing.hostId) === "t3code"
+      )
         return this.trackPlannerQuestion(
           task,
           existing.recipient,
@@ -1715,10 +1564,8 @@ export class Delegation {
         );
       if (
         hostId &&
-        this.resolution.withHost(
-          hostId,
-          () => this.plannerPort() ?? this.plannerQueuePort(hostId),
-        )
+        hostKindOf(hostId) === "t3code" &&
+        this.resolution.withHost(hostId, () => this.plannerPort())
       )
         return this.trackPlannerQuestion(
           task,
@@ -1978,10 +1825,7 @@ export class Delegation {
   ): Promise<{ rung: PlannerRung | null; issue?: string }> {
     const planner = taskPlanner(task);
     if (!planner || isOperatorOrigin(planner)) return { rung: null };
-    const originHost =
-      planner === task.originAgentId || planner === task.notificationAgentId
-        ? task.originHostId
-        : undefined;
+    const originHost = this.plannerOriginHost(task, planner);
     const state = await this.resolution.plannerPresence.threadRoute(
       planner,
       originHost,
@@ -1998,18 +1842,24 @@ export class Delegation {
   async plannerRungsFor(
     task: Task,
   ): Promise<{ rungs: PlannerRung[]; projectFailed: boolean; issue?: string }> {
-    // Ladder routing is detached work. It must not inherit a task quantum's
-    // expiring read budget or the pass snapshot from the blocker that opened it.
-    return runOutsideTaskQuantumScope(() => this.resolvePlannerRungs(task));
+    const own = taskPlanner(task);
+    const planner = isOperatorOrigin(own)
+      ? this.store.projectFor(
+          task.repoPath,
+          normalizeRepositoryOrigin(task.repository ?? ""),
+        )?.planner?.agentId
+      : own;
+    const t3 = Boolean(planner && this.t3PlannerHost(task, planner));
+    // The T3 send must leave the blocker quantum and its held snapshot.
+    return t3
+      ? runOutsideTaskQuantumScope(() => this.resolvePlannerRungs(task, true))
+      : this.resolvePlannerRungs(task, false);
   }
 
-  private async resolvePlannerRungs(task: Task) {
-    const [own, project] = await Promise.all([
-      this.taskPlannerRoute(task),
-      this.projectPlannerFor(task),
-    ]);
+  private async resolvePlannerRungs(task: Task, t3: boolean) {
+    const own = await this.taskPlannerRoute(task);
     if (own.issue) return { rungs: [], projectFailed: false, issue: own.issue };
-    const { planner, failed, issue } = project;
+    const { planner, failed, issue } = await this.projectPlannerFor(task);
     const rungs = own.rung ? [own.rung] : [];
     if (
       planner &&
@@ -2017,11 +1867,8 @@ export class Delegation {
         sameCallerIdentity(
           rung.agentId,
           planner,
-          rung.agentId === task.originAgentId ||
-            rung.agentId === task.notificationAgentId
-            ? task.originHostId
-            : undefined,
-          task.hostId,
+          t3 ? this.plannerOriginHost(task, rung.agentId) : undefined,
+          t3 ? task.hostId : undefined,
         ),
       )
     )
@@ -2048,9 +1895,7 @@ export class Delegation {
     const assigned =
       await this.resolution.plannerPresence.observeProjectPlanner(project);
     if (assigned?.state.kind === "routable") {
-      const hostId =
-        parseAgentId(assigned.agentId)?.hostId ??
-        (await this.resolution.identifyOriginHost(assigned.agentId));
+      const hostId = this.t3PlannerHost(task, assigned.agentId);
       const current = this.store.projectByKey(project.key)?.planner;
       if (
         hostId &&

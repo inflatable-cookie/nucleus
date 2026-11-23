@@ -330,18 +330,16 @@ The rules:
   outcome is looked up under its original command ID and is never resent
   blindly.
 
-Each ladder question keeps its original recipient, host, prompt and command ID
-under one escalation occurrence. On T3 the host queues it immediately. On Paseo
-and BB the durable queue waits for a positively idle planner, then sends through
-the host's queue-only path. Task activity shows the queue or host wait.
+Batch 7c covers T3 only. BB and Paseo keep their existing delivery behaviour
+under Tom's 2026-11-23 host ruling ([Spec 070, ruling 5](070-small-engine.md#rulings)).
 
-T3 and Paseo open the answer window when the host links the original message to
-a turn. BB reports acceptance in its write journal and lacks a per-message turn
-link. Its unanswered window can close after the answer allowance and a positive
-idle read, which excludes queued work. A proven pre-send refusal gets up to
-three attempts, 750 ms apart, before the ladder tries the next eligible planner.
-After an unknown outcome, lookup uses the original command receipt or exact
-message evidence. An unread or incomplete host response leaves delivery pending.
+Each T3 ladder question keeps its original recipient, host, prompt and command ID
+under one escalation occurrence. T3 queues it immediately and task activity
+shows the queue or host wait. The answer window opens when T3 links the original
+message to a turn. A proven pre-send refusal gets up to three attempts, 750 ms
+apart, before the ladder tries the next eligible planner. After an unknown
+outcome, lookup uses the original command receipt or exact message evidence.
+An unread or incomplete host response leaves delivery pending.
 
 Targets on a healthy host with an idle planner: classified within one minute
 of a terminal fact (plus the callback grace), board update within 30 seconds
@@ -386,7 +384,7 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
 | 7a | lead | Wake on facts: confirmed turn end, process death, thread absence and callbacks wake the task; the stall threshold stays only for opaque tools ([§7](#7-attention-reaches-the-planner-quickly)). | — |
 | 7b | nucleus#1561 (delivered) | Publish and route on receipt: the blocker opens its ladder rung in the same step, no bare classification wait, recovery due times wake the task, transient deferrals stay Nucleus's move. | — |
-| 7c | nucleus#1562 (delivered) | One delivery record per planner message (routed, accepted, queued, turn started); an idle planner gets the send at once; no steering. | 7b |
+| 7c | nucleus#1562 (delivered) | One delivery record per T3 planner message (routed, accepted, queued, turn started); an idle planner gets the send at once; no steering. | 7b |
 
 ### Batch A: dead agents and uncertain launches
 

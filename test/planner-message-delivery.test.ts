@@ -2,16 +2,13 @@ import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { AgentTimelineEntryPayloadSchema } from "@getpaseo/protocol/messages";
 import { ParticipantTickets } from "../core/dispatch/participant-tickets";
 import { Engine } from "../core/engine";
-import type { Adapter, HostPolicyConstructor } from "../core/host";
+import type { HostPolicyConstructor } from "../core/host";
 import { HostPolicies } from "../core/host/host-policies";
 import { runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { Store, digest } from "../core/store/store";
 import { createAdapter, T3CodeHost } from "../hosts/t3code";
-import { createBbHostAdapter } from "../service/bb-host";
-import { PaseoAdapter } from "../service/paseo-composition";
 import { formatAgentId } from "../shared/agent-identity";
 import {
   PLANNER_DELIVERY_EVENT,
@@ -19,7 +16,6 @@ import {
   taskActivity,
 } from "../shared/task-activity";
 import { waitFor } from "./support/budgets";
-import { bbFake, bbWire } from "./support/bb-fake";
 import { submission, tempStore } from "./support/fakes";
 import { syntheticRun, t3Fake, threadProjection } from "./support/t3code-fake";
 
@@ -319,223 +315,4 @@ test("after restart an unknown delivery is looked up by its original command and
     await restarted.stop();
     reopened.close();
   }
-});
-
-function plannerLadder(
-  t: TestContext,
-  store: Store,
-  dir: string,
-  hostId: string,
-  recipient: string,
-) {
-  store.setMeta("hostId", hostId);
-  const planner = formatAgentId(hostId, recipient);
-  const task = store.insert(
-    submission({ repoPath: dir, originAgentId: planner }),
-    hostId,
-    "Handoff",
-    "a".repeat(40),
-  );
-  store.update(task.id, {
-    phase: "blocked",
-    plannerAgentId: planner,
-    originHostId: hostId,
-  });
-  const question = "How should the task proceed?";
-  return {
-    start(db: Store, adapter: Adapter, resume = false) {
-      const engine = new Engine(db, adapter, 0);
-      engine.resolution.delegatedAnswerWaitMs = 50;
-      t.after(() => engine.stop());
-      if (resume) engine.resolution.ladder.resumeDelegations(db.task(task.id));
-      else
-        engine.resolution.openPlannerEscalation(db.task(task.id), {
-          cause: digest("Synthetic dependency stopped"),
-          runId: null,
-          question,
-          payload: { question },
-        });
-      return engine;
-    },
-    delivery(db = store) {
-      const event = db
-        .eventsAll(task.id)
-        .findLast((row) => row.kind === PLANNER_DELIVERY_EVENT);
-      return event ? readPlannerDelivery(event.detail) : null;
-    },
-    activity() {
-      const row = store.task(task.id);
-      return taskActivity({
-        task: row,
-        stop: row.resolution.stop,
-        events: store.eventsAll(task.id),
-        runs: [],
-        now: Date.now(),
-      });
-    },
-  };
-}
-
-test("Paseo restores an unsent busy-planner question and looks up its exact turn after a lost send response", async (t) => {
-  const { store, dir } = tempStore(t);
-  const hostId = "synthetic-paseo";
-  let busy = true;
-  let readExact = false;
-  const sends: string[] = [];
-  const entries: Array<
-    ReturnType<typeof AgentTimelineEntryPayloadSchema.parse>
-  > = [];
-  const adapter = new PaseoAdapter(
-    "ws://127.0.0.1:1",
-    join(dir, "callback.sock"),
-    join(dir, "worker-report.mjs"),
-  );
-  t.after(() => adapter.close());
-  Object.assign(adapter, {
-    api: {
-      agents: {
-        ref: () => ({
-          refresh: async () => true,
-          current: () => ({ title: "Planner" }),
-          get status() {
-            return busy ? "running" : "idle";
-          },
-          get activeTurn() {
-            return busy ? { turnId: "earlier-turn" } : null;
-          },
-          timeline: {
-            refetch: async () => ({
-              entries: readExact ? entries : [],
-              error: null,
-              hasOlder: true,
-              gap: false,
-              reset: false,
-              staleCursor: false,
-            }),
-          },
-          async send(text: string, options: { messageId: string }) {
-            assert.deepEqual(
-              Object.keys(options),
-              ["messageId"],
-              "the native queue has no steer or interrupt flag",
-            );
-            sends.push(options.messageId);
-            entries.push(
-              AgentTimelineEntryPayloadSchema.parse({
-                provider: "codex",
-                item: {
-                  type: "user_message",
-                  clientMessageId: options.messageId,
-                  text,
-                },
-                turnId: "question-turn",
-                timestamp: new Date().toISOString(),
-                seqStart: 4,
-                seqEnd: 4,
-                sourceSeqRanges: [{ startSeq: 4, endSeq: 4 }],
-                collapsed: [],
-              }),
-            );
-            throw Error("Synthetic response lost after send");
-          },
-        }),
-      },
-    },
-  });
-  const ladder = plannerLadder(t, store, dir, hostId, plannerId);
-  const first = ladder.start(store, adapter);
-  await waitFor(
-    () => ladder.delivery()?.state === "queued",
-    checkMs,
-    "Paseo planner queue",
-  );
-  assert.match(ladder.activity().detail, /Queued behind the planner/);
-  await delay(150);
-  assert.deepEqual(sends, []);
-  await first.stop();
-  const reopened = new Store(store.path);
-  const resumed = ladder.start(reopened, adapter, true);
-  try {
-    busy = false;
-    await waitFor(
-      () => ladder.delivery(reopened)?.state === "unknown",
-      checkMs,
-      "lost Paseo receipt",
-    );
-    assert.deepEqual(sends, [ladder.delivery()?.messageId]);
-    readExact = true;
-    await waitFor(
-      () => ladder.delivery(reopened)?.state === "started",
-      checkMs,
-      "the original Paseo timeline entry",
-    );
-    assert.equal(ladder.delivery(reopened)?.runId, "question-turn");
-    assert.equal(sends.length, 1);
-  } finally {
-    await resumed.stop();
-    reopened.close();
-  }
-});
-
-test("BB delivers a busy external planner's question on idle and recovers the original late receipt", async (t) => {
-  const { store, dir } = tempStore(t);
-  const fake = bbFake();
-  const id = "thr_planner";
-  const row = bbWire("list", {
-    id,
-    status: "active",
-    runtime: { displayStatus: "active" },
-    hasPendingInteraction: false,
-  });
-  fake.rows.set(id, row);
-  const hostId = "bb:synthetic";
-  let acknowledge = () => {};
-  const late = new Promise<void>((resolve) => {
-    acknowledge = resolve;
-  });
-  const adapter = createBbHostAdapter(
-    hostId,
-    () => true,
-    dir,
-    store,
-    async (operation, args) => {
-      const response = await fake.operations.execute(operation, args);
-      if (operation === "thread.send")
-        throw Object.assign(Error("Synthetic acknowledgement delayed"), {
-          late: late.then(() => response),
-        });
-      return response;
-    },
-  );
-  const ladder = plannerLadder(t, store, dir, hostId, id);
-  ladder.start(store, adapter);
-  const sends = () =>
-    fake.calls.filter(({ method }) => method === "threads.send");
-  await waitFor(
-    () => ladder.delivery()?.state === "queued",
-    checkMs,
-    "BB planner queue",
-  );
-  assert.match(ladder.activity().detail, /Queued behind the planner/);
-  await delay(150);
-  assert.deepEqual(sends(), []);
-  row.status = "idle";
-  row.runtime.displayStatus = "idle";
-  await waitFor(
-    () => ladder.delivery()?.state === "unknown",
-    checkMs,
-    "the original BB send",
-  );
-  acknowledge();
-  await waitFor(
-    () => ladder.delivery()?.state === "accepted",
-    checkMs,
-    "BB send receipt",
-  );
-  assert.equal(sends().length, 1);
-  assert.equal(sends()[0]?.args.mode, "queue-if-active");
-  assert.equal(
-    sends()[0]?.args.pluginSubmission.data.messageId,
-    ladder.delivery()?.messageId,
-  );
 });
