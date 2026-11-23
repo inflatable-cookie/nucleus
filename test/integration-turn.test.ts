@@ -598,68 +598,82 @@ test("health excludes a held review release until the operator releases the merg
   }
 });
 
-test("health recognizes a sweep-released reviewer through an automatically lifted hold", async (t) => {
-  const f = fixture();
-  try {
-    const task = f.add();
-    await f.engine.wake();
-    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
-    await f.engine.performTaskControl({
-      taskId: task.id,
-      version: f.current(task.id).version,
-      action: "hold",
-      kind: "merge",
-      reason: "Wait for review",
-      until: new Date(Date.now() + 35_000).toISOString(),
-    });
-    markPhaseFact(
-      f.store,
-      task.id,
-      "callback:sweep-result",
-      "Accepted result awaiting task admission",
-    );
-    await f.report(task.id, "ready_to_merge");
-    assert.equal(f.current(task.id).phase, "verifying");
-    assert.ok(
-      f.store
-        .runs(task.id)
-        .some(
-          (run) =>
-            run.role === "reviewer" &&
-            run.released &&
-            run.completion?.status === "ready_to_merge",
+for (const releasePath of ["sweep", "callback"]) {
+  test(`health starts reviewer wait age at automatic hold release after a ${releasePath}`, async (t) => {
+    const f = fixture();
+    try {
+      const task = f.add();
+      await f.engine.wake();
+      t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+      const until = new Date(Date.now() + 35_000).toISOString();
+      await f.engine.performTaskControl({
+        taskId: task.id,
+        version: f.current(task.id).version,
+        action: "hold",
+        kind: "merge",
+        reason: "Wait for review",
+        until,
+      });
+      // Drain the control's wake before either path receives the result.
+      await f.engine.quiesce();
+      const reviewer = f.run(task.id);
+      f.idle(reviewer.agentId!, reviewer.workspaceId);
+      const result: Completion = {
+        eventId: "held-review-result",
+        taskId: task.id,
+        runId: reviewer.id,
+        status: "ready_to_merge",
+        summary: "Approved",
+        head: reviewer.head,
+        reviewCommentId: 1,
+      };
+      const token = f.tokens.get(reviewer.id)!;
+      if (releasePath === "sweep") {
+        f.engine.resolution.complete(result, token);
+        markPhaseFact(
+          f.store,
+          task.id,
+          `callback:${result.eventId}`,
+          "Accepted result awaiting task admission",
+        );
+        await f.engine.wake();
+      } else {
+        await f.engine.complete(result, token);
+        await f.engine.quiesce();
+      }
+      assert.equal(f.current(task.id).phase, "verifying");
+      assert.equal(f.store.run(reviewer.id)?.released, true);
+      assert.equal(
+        phaseLatency(f.store, task.id).pending.some((wait) =>
+          wait.key.startsWith("release:"),
         ),
-    );
-    assert.ok(
-      !phaseLatency(f.store, task.id).pending.some((wait) =>
-        wait.key.startsWith("release:"),
-      ),
-    );
-    t.mock.timers.tick(31_000);
-    assert.deepEqual(
-      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
-      [],
-    );
-    t.mock.timers.tick(4_000);
-    assert.equal(
-      f.engine.resolution.reconcileHoldUntil(task.id),
-      "auto_released",
-    );
-    assert.deepEqual(
-      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
-      [],
-    );
-    t.mock.timers.tick(30_001);
-    assert.ok(
-      slowPhaseWaits(f.store).some(
-        (wait) => wait.taskId === task.id && wait.elapsedMs === 30_001,
-      ),
-    );
-  } finally {
-    t.mock.timers.reset();
-    await f.close();
-  }
-});
+        releasePath === "callback",
+      );
+      const slow = () =>
+        slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id);
+      t.mock.timers.tick(31_000);
+      assert.deepEqual(slow(), []);
+      t.mock.timers.tick(4_000);
+      assert.equal(
+        f.engine.resolution.reconcileHoldUntil(task.id),
+        "auto_released",
+      );
+      assert.deepEqual(slow(), []);
+      t.mock.timers.tick(30_000);
+      assert.deepEqual(slow(), []);
+      t.mock.timers.tick(1);
+      const overdue = slow();
+      assert.ok(overdue.length > 0);
+      for (const wait of overdue) {
+        assert.equal(wait.since, until);
+        assert.equal(wait.elapsedMs, 30_001);
+      }
+    } finally {
+      t.mock.timers.reset();
+      await f.close();
+    }
+  });
+}
 
 test("health excludes a held skip-review integration wait until release", async (t) => {
   const f = fixture();

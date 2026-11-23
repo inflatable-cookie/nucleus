@@ -608,14 +608,18 @@ export function taskActivity({
       task.createdAt,
       { occurrence: `queued:${task.createdAt}` },
     );
-  // A reading with no live run or wait is owned by the last participant that concluded:
-  // a fresh gap after another run is a new occurrence, and a poll of the same gap is not.
+  // The last concluded run owns an unexplained gap. Task metadata writes
+  // do not restart its clock.
+  const concluded = runs.findLast((run) => run.released || run.completion);
   return answer(
     "unclassified",
     `${label} · ${role ? "no recent activity" : "no live run or wait"}`,
-    activityAt ?? task.updatedAt,
+    concluded?.explicitlyReleasedAt ??
+      concluded?.completionReceivedAt ??
+      concluded?.createdAt ??
+      task.createdAt,
     {
-      occurrence: `reading:${task.phase}:${runs.findLast((run) => run.released || run.completion)?.id ?? ""}`,
+      occurrence: `reading:${task.phase}:${concluded?.id ?? ""}`,
     },
   );
 }

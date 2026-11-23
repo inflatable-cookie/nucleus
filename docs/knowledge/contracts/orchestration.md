@@ -3875,9 +3875,12 @@ after the task finishes.
   stays and is reported retained, and only terminal cleanup removes it (Tom,
   2026-10-20). Approved, not yet built: Cargo build-output deletion leaves
   Nucleus (R8, [vision](../vision.md#simplification-rulings-2026-10-31)).
-- Settlement runs in the task's serial lane before the next run launches. A
-  held settlement retries; a skipped (unsafe) root does not. Runs before this
-  rule have no record. Adopted and preserved workspaces get none.
+- Settlement runs in the task's serial lane before the next run launches.
+  A callback wake with pending run-bound cleanup can prefetch participant
+  evidence before entering the lane, even while the task is still reviewing.
+  Missing evidence leaves the settlement pending for a later pass. A skip is
+  final for an unsafe root. Records cover runs in queue-owned workspaces since
+  this rule took effect.
 - Continuation prompts, `next` and task detail quote the recorded cleanup
   records with their workspace and run, stating removal, retention, skips and
   missing records as such. This is visibility only.

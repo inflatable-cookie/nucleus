@@ -105,6 +105,9 @@ display:
   - the turn's stop reason.
 - **Nucleus's own stops, waits and repair records.**
 
+An unexplained gap uses the last concluded run for both its occurrence and its
+age. With no concluded run, its age starts at task creation.
+
 The task's ACP thread shows that reading, using the native structures of ACP
 instead of a stream of text lines:
 

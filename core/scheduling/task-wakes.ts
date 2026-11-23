@@ -23,6 +23,7 @@ import {
   type HostReadTransientEpisode,
 } from "../recovery/host-read-transient";
 import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
+import { isDispositionActive } from "../../shared/disposition";
 import {
   CheckoutRefusalError,
   CheckoutUnavailableError,
@@ -800,13 +801,24 @@ export class TaskWakes {
     if (
       !task ||
       task.removedAt ||
-      ["queued", "working", "reviewing", "done", "cancelled"].includes(
-        task.phase,
-      ) ||
-      !task.hostId ||
-      !this.engine.taskHostAvailable(task)
+      ["done", "cancelled"].includes(task.phase) ||
+      !task.hostId
     )
       return false;
+    // A callback wake can release its reported run and settle its cleanup
+    // before the phase changes. Warm the evidence the settlement may need.
+    if (
+      ["queued", "working", "reviewing"].includes(task.phase) &&
+      (!task.resolution.buildOutputCleanups.some(
+          (record) =>
+            record.runId &&
+            (record.state === "intent" || record.state === "uncertain"),
+        ) ||
+        startsNoRuns(this.store) ||
+        isDispositionActive(task))
+    )
+      return false;
+    if (!this.engine.taskHostAvailable(task)) return false;
     const adapter = this.engine.adapter;
     if (!adapter.agentTimelinePage && !adapter.hostProcessListing) return false;
     const runs = this.store.runs(taskId);

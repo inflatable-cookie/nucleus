@@ -115,6 +115,31 @@ test("slot waits, uncertain creation, escalation and completion read from stored
   assert.equal(read().state, "finished");
 });
 
+test("an unexplained activity gap keeps the time of the concluded run across metadata writes", t => {
+  const { store, task, read } = fixture(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const completionReceivedAt = at();
+  store.update(task.id, { phase: "blocked" });
+  store.putRun(runSchema.parse({
+    id: "review-run", taskId: task.id, role: "reviewer", generation: 1, head, base: head,
+    agentId: "reviewer", workspaceId: "workspace", profile: null, status: "finished",
+    createdAt: at(1), lastObservedAt: null, idleSince: null, active: false, completion: null,
+    completionReceivedAt, released: true,
+  }));
+  const before = read();
+  assert.equal(before.state, "unclassified");
+  assert.equal(before.occurrence, "reading:blocked:review-run");
+  assert.equal(before.since, completionReceivedAt);
+
+  t.mock.timers.tick(60_000);
+  const current = store.task(task.id);
+  const after = store.update(task.id, {
+    resolution: { ...current.resolution, cleanupReason: "Awaiting cleanup" },
+  });
+  assert.notEqual(after.updatedAt, current.updatedAt);
+  assert.deepEqual(read(), before);
+});
+
 test("a spent budget or parked revision allowance with no run reads as a typed stop for a person, never progressing", t => {
   const { store, task, read, next } = fixture(t);
   store.update(task.id, { phase: "working", reason: TASK_PROGRESSING_REASON });

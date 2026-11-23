@@ -3598,10 +3598,12 @@ const withoutNotes = (
   })),
 });
 
-test("owner continuation gates disclose recorded run-bound cleanup without changing available verbs, args, stop or holds", async () => {
+test("owner continuation gates disclose recorded run-bound cleanup without changing available verbs, args, stop or holds", async (t) => {
   const f = fixture();
   try {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
     const before = cleanupNoteFixture(f);
+    t.mock.timers.tick(60_000);
     const at = "2026-10-24T00:00:00.000Z";
     f.store.update(f.taskId, {
       resolution: {
@@ -3630,6 +3632,7 @@ test("owner continuation gates disclose recorded run-bound cleanup without chang
       },
     });
     const after = f.next();
+    assert.equal(after.activity?.since, f.task().createdAt);
     // The note is additive: verb set, availability, args, fill, refusals, stop and holds are identical.
     assert.deepEqual(withoutNotes(after), withoutNotes(before));
     for (const verb of after.verbs)

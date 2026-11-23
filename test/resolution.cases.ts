@@ -74,6 +74,7 @@ import { runPrompt } from "../core/dispatch/prompts";
 import { dispatchBlocked } from "../core/dispatch/capacity";
 import { pipelineBoard, pipelineColumn } from "../shared/pipeline-board";
 import { REPOSITORY_CONTENTION_GRACE_MS } from "../core/scheduling/repository-contention";
+import { currentTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { Decisions } from "../core/planning/decisions";
 import { chooseProfile } from "../core/dispatch/routing";
 import { resolveNonDeliveryRoute } from "../core/dispatch/run-launch/non-delivery-route";
@@ -236,7 +237,7 @@ function fixture(
     },
   });
   const states = new Map<string, AgentObservation>();
-  const idle = (id: string, workspaceId = "workspace") =>
+  const idle = (id: string, workspaceId = "workspace", updatedAt?: string) =>
     states.set(id, {
       id,
       workspaceId,
@@ -244,6 +245,7 @@ function fixture(
       active: false,
       permissions: false,
       error: "",
+      updatedAt,
       provider: "test",
       model:
         states.get(id)?.model ??
@@ -17634,70 +17636,97 @@ test("an author return inside an owner-approved round past the count does not pa
 });
 
 test("reported busy reviewer settles and starts the author without a sweep", async (t) => {
-  const f = fixture(false, false, undefined, true);
-  try {
-    await f.engine.wake();
-    const run = f.run(),
-      token = f.tokens.get(run.id)!;
-    const result: Completion = {
-      eventId: "direct-review-result",
-      taskId: f.task.id,
-      runId: run.id,
-      status: "changes_required",
-      reviewResponsibility: "author",
-      summary: "Fix the defect",
-      head: run.head,
-      reviewCommentId: 1,
-    };
-    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
-    const started = Date.now();
-    const receipt = await f.engine.complete(result, token);
-    assert.equal(receipt.accepted, true);
-    assert.equal(
-      f.store.run(run.id)?.released,
-      false,
-      "an active turn keeps the lease",
-    );
-    f.idle(run.agentId!, run.workspaceId);
-    t.mock.timers.tick(1000);
-    for (
-      let i = 0;
-      i < 1200 && f.current().resolution.currentRunId === run.id;
-      i++
-    )
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.equal(f.store.run(run.id)?.released, true);
-    assert.equal(
-      f.store
-        .task(f.task.id)
-        .resolution.buildOutputCleanups.find((item) => item.runId === run.id)
-        ?.state,
-      "complete",
-    );
-    assert.equal(f.run().role, "revision");
-    const events = f.store.eventsAll(f.task.id);
-    const report = events.find(
-      (event) =>
-        event.kind === "run_completion" && event.detail.startsWith("reviewer:"),
-    )!;
-    const dispatch = events
-      .filter((event) => event.kind === "run_intent")
-      .at(-1)!;
-    const elapsed = Date.parse(dispatch.at) - Date.parse(report.at);
-    t.diagnostic(
-      `report-to-next-dispatch: ${elapsed} ms (task events, production backoff)`,
-    );
-    assert.ok(elapsed < 12000, `report-to-dispatch ${elapsed} ms`);
-    assert.ok(
-      events.some(
-        (event) =>
-          event.kind === "phase_latency" &&
-          event.detail.includes("Accepted result awaiting task admission"),
-      ),
-    );
-    assert.ok(Date.now() - started < 12000);
-  } finally {
-    await f.close();
+  for (const timeline of ["available", "unavailable"]) {
+    await t.test(`reviewer timeline ${timeline} on first idle wake`, async (t) => {
+      const f = fixture(false, false, undefined, true);
+      try {
+        f.idle("worker", "workspace", new Date().toISOString());
+        await f.engine.wake();
+        const run = f.run();
+        assert.ok(run.agentId);
+        const cleanup = () =>
+          f.current().resolution.buildOutputCleanups.find(
+            (item) => item.runId === run.id,
+          );
+        let timelineMissing = timeline === "unavailable";
+        const reviewerReadPhases: Task["phase"][] = [];
+        const readTimeline = f.adapter.agentTimelinePage!;
+        f.adapter.agentTimelinePage = async (id, limit) => {
+          assert.equal(currentTaskQuantumScope(), undefined);
+          if (id === run.agentId) {
+            reviewerReadPhases.push(f.current().phase);
+            if (timelineMissing) throw Error("Reviewer timeline is unavailable");
+          }
+          return readTimeline(id, limit);
+        };
+        const admission = f.engine.resolution.slotAdmissionReason.bind(
+          f.engine.resolution,
+        );
+        f.engine.resolution.slotAdmissionReason = (...args) =>
+          timelineMissing ? "Waiting for capacity" : admission(...args);
+        // End the synthetic turn explicitly after the busy callback wake.
+        f.adapter.stopAgentTurn = async () => {};
+        t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+        const receipt = await f.engine.complete(
+          {
+            eventId: "direct-review-result",
+            taskId: f.task.id,
+            runId: run.id,
+            status: "changes_required",
+            reviewResponsibility: "author",
+            summary: "Fix the defect",
+            head: run.head,
+            reviewCommentId: 1,
+          },
+          f.tokens.get(run.id)!,
+        );
+        assert.equal(receipt.accepted, true);
+        await f.engine.quiesce();
+        assert.equal(f.store.run(run.id)?.released, false);
+        assert.equal(cleanup()?.state, "intent");
+        assert.deepEqual(reviewerReadPhases, [], "the reviewer is still busy");
+
+        t.mock.timers.tick(1000);
+        f.idle(run.agentId, run.workspaceId, new Date().toISOString());
+        for (let i = 0; i < 1200 && !f.store.run(run.id)?.released; i++)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        await f.engine.quiesce();
+        assert.equal(f.store.run(run.id)?.released, true);
+        assert.equal(reviewerReadPhases[0], "reviewing");
+
+        if (timelineMissing) {
+          assert.equal(f.current().phase, "changes_requested");
+          assert.equal(cleanup()?.state, "intent");
+          assert.match(cleanup()?.detail ?? "", /timeline|tool/i);
+          timelineMissing = false;
+          await f.engine.wakeTask(f.task.id);
+          await f.engine.quiesce();
+        }
+
+        assert.equal(cleanup()?.state, "complete", cleanup()?.detail);
+        assert.equal(f.run().role, "revision");
+        const events = f.store.eventsAll(f.task.id);
+        const settled = events.findIndex(
+          (event) =>
+            event.kind === "run_build_output_complete" &&
+            event.detail.startsWith(`Run ${run.id}:`),
+        );
+        const dispatch = events.findLastIndex(
+          (event) => event.kind === "run_intent",
+        );
+        assert.ok(settled >= 0 && settled < dispatch);
+        assert.ok(
+          events.some(
+            (event) =>
+              event.kind === "phase_latency" &&
+              event.detail.includes("Accepted result awaiting task admission"),
+          ),
+        );
+      } finally {
+        t.mock.timers.reset();
+        await f.close();
+      }
+    });
   }
 });
 
