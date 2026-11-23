@@ -1,12 +1,12 @@
 use std::{
     path::Path,
     sync::atomic::Ordering,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use nucleus_core::{
     Action, CheckState, CloseWorkspace, Forge, Head, Host, Launch, Observation, Observed, Phase,
-    Report, RetainedThread, Role, RunState, Task, WaitReason, Workspace, decide,
+    Report, RetainedThread, Role, Run, RunState, Task, WaitReason, Workspace, decide,
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
@@ -17,6 +17,8 @@ use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
 
 use crate::{Service, ServiceError, active, event, now_ms, project::linked_checkout, ticket};
+
+const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
 
 pub(super) enum DispatchTarget<'a> {
     Run {
@@ -35,6 +37,29 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
         self.project.scope(task.identity())?;
+        let forge_requested = self
+            .state
+            .lock()
+            .await
+            .forge_requested
+            .contains(&task.identity().id);
+        if !active(task) && !forge_requested {
+            return Ok(Action::Nothing);
+        }
+        let run_host = if let Some(run) = task.run().filter(|run| !run.revoked()) {
+            let (state, error) = self.read_current_run(row, run, host).await?;
+            if !forge_requested
+                && run.last_send_at_ms().is_some()
+                && task.question().is_none()
+                && let Some(wait) = waiting_on_run(task, &state, error)
+            {
+                self.observe_commands(row, &Observed::Unknown).await?;
+                return wait.map_err(ServiceError::Host);
+            }
+            Some((state, error))
+        } else {
+            None
+        };
         let worktrees = self.worktrees()?;
         let checkout = worktrees.checkout(
             &self.project.checkout,
@@ -47,7 +72,7 @@ impl Service {
         };
         self.observe_commands(row, &forge).await?;
         if !active(task) {
-            return Ok(Action::Nothing);
+            return forge_error.map_or(Ok(Action::Nothing), |error| Err(error.into()));
         }
         let binding = self.binding(&checkout)?;
         let mut observation = Observation {
@@ -70,24 +95,14 @@ impl Service {
             self.project.verify()?;
             observation.workspace = seen(checkout.allocate(&pr.head));
         }
-        let (host_result, activity) = if let Some(run) = task.run() {
-            match host.observe_run(run, now_ms()).await {
-                Ok(seen) => (Ok(Observed::Known(seen.host)), seen.activity),
-                Err(error) => (Err(error), None),
-            }
-        } else {
-            (read_retained(host, task, &binding).await, None)
+        let (host_state, host_error) = match run_host {
+            Some(read) => read,
+            None => match read_retained(host, task, &binding).await {
+                Ok(state) => (state, None),
+                Err(error) => (Observed::Unknown, Some(error)),
+            },
         };
-        if task.run().is_some() {
-            self.observe_activity(row, activity).await?;
-        }
-        let host_error = match host_result {
-            Ok(state) => {
-                observation.host = state;
-                None
-            }
-            Err(error) => Some(error),
-        };
+        observation.host = host_state;
 
         match decide(task, &observation) {
             Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {
@@ -111,8 +126,25 @@ impl Service {
             Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => {
                 Err(error.into())
             }
+            Action::Wait(_) if forge_requested && let Some(error) = forge_error => {
+                Err(error.into())
+            }
             action => self.apply(row, &observation, action).await,
         }
+    }
+
+    async fn read_current_run(
+        &self,
+        row: &TaskRow,
+        run: &Run,
+        host: &impl TaskHost,
+    ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
+        let (state, activity, error) = match host.observe_run(run, now_ms()).await {
+            Ok(seen) => (Observed::Known(seen.host), seen.activity, None),
+            Err(error) => (Observed::Unknown, None, Some(error)),
+        };
+        self.observe_activity(row, activity).await?;
+        Ok((state, error))
     }
 
     async fn read_forge(
@@ -135,12 +167,12 @@ impl Service {
             Some(Report::Work(pr)) if !run.revoked() => Some(pr),
             _ => None,
         });
-        let result = match reported.or_else(|| task.pull_request()) {
-            Some(pr) => branches.target(&pr.url).map(Some),
-            None if task.phase() == Phase::Queued => Ok(None),
-            None => self.forge.find_open(&branches).await,
+        let target = match reported.or_else(|| task.pull_request()) {
+            Some(pr) => Some(branches.target(&pr.url)?),
+            None if task.phase() == Phase::Queued => None,
+            None => capture_forge(self, self.forge.find_open(&branches).await)?,
         };
-        match capture_forge(self, result)? {
+        match target {
             Some(target) => {
                 let forge = capture_forge(self, self.forge.observe(&target).await)?;
                 Ok((forge, Some(target)))
@@ -303,6 +335,7 @@ impl Service {
         };
         if let Some(unarchive) = authorization.unarchive() {
             host.write_control(unarchive).await?;
+            self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(None);
         }
         let mut sent = task.clone();
@@ -471,8 +504,11 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
         let task = &row.task;
-        let result = self.forge.merge(task, target).await;
-        let attempt = capture_forge(self, result)?;
+        let attempt = self
+            .forge
+            .merge(task, target)
+            .await
+            .inspect_err(|error| record_forge_failure(self, error))?;
         if let MergeWrite::Deferred { until } = attempt.write {
             defer(self, until);
             return Err(ForgeError::Deferred { until }.into());
@@ -569,6 +605,32 @@ impl Service {
     }
 }
 
+fn waiting_on_run(
+    task: &Task,
+    state: &Observed<Host>,
+    error: Option<HostError>,
+) -> Option<Result<Action, HostError>> {
+    match decide(
+        task,
+        &Observation {
+            host: state.clone(),
+            forge: Observed::Unknown,
+            workspace: Observed::Unknown,
+        },
+    ) {
+        Action::Wait(WaitReason::HostUnknown) => error.map(Err),
+        action @ Action::Wait(
+            WaitReason::Running
+            | WaitReason::Starting
+            | WaitReason::IdleWithoutTerminalRun
+            | WaitReason::Permission
+            | WaitReason::Input
+            | WaitReason::Hold,
+        ) => Some(Ok(action)),
+        _ => None,
+    }
+}
+
 async fn read_retained(
     host: &impl TaskHost,
     task: &Task,
@@ -597,11 +659,34 @@ fn current(task: &Task, state: RunState) -> Result<Host, ServiceError> {
 }
 
 fn capture_forge<T>(service: &Service, result: Result<T, ForgeError>) -> Result<T, ForgeError> {
-    result.inspect_err(|error| {
-        if let ForgeError::Deferred { until } = error {
-            defer(service, *until);
+    match &result {
+        Ok(_) => {
+            service.forge_retry_secs.store(0, Ordering::Relaxed);
+            service.forge_until.store(0, Ordering::Relaxed);
         }
-    })
+        Err(error) => record_forge_failure(service, error),
+    }
+    result
+}
+
+fn record_forge_failure(service: &Service, error: &ForgeError) {
+    if let ForgeError::Deferred { until } = error {
+        defer(service, *until);
+    } else if matches!(error, ForgeError::Http(_))
+        || matches!(error, ForgeError::Status(status)
+            if status.is_server_error() || *status == axum::http::StatusCode::REQUEST_TIMEOUT)
+    {
+        let seconds = service
+            .forge_retry_secs
+            .load(Ordering::Relaxed)
+            .saturating_mul(2)
+            .clamp(
+                crate::schedule::FORGE_RETRY.as_secs(),
+                MAX_FORGE_RETRY.as_secs(),
+            );
+        service.forge_retry_secs.store(seconds, Ordering::Relaxed);
+        defer(service, SystemTime::now() + Duration::from_secs(seconds));
+    }
 }
 
 fn defer(service: &Service, until: SystemTime) {
@@ -668,6 +753,84 @@ mod tests {
         Due, fixture, forge_checks, forge_fixture, forge_pull, native_fixture, reservation,
         serve_forge,
     };
+
+    #[tokio::test]
+    async fn a_running_review_waits_for_its_deadline_without_reading_the_forge() {
+        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+        let head = service.project.start.clone();
+        let (forge, forge_reads, forge_server) = forge_fixture(&head).await;
+        service.forge = forge;
+        let worktrees = service.worktrees().expect("worktrees");
+        let checkout = worktrees
+            .checkout(
+                &service.project.checkout,
+                &service.project.repository,
+                "reviewer",
+            )
+            .expect("checkout");
+        let (mut task, _) = frozen_review(&service, &checkout, &head);
+        let instance = task.run().expect("run").launch().instance.clone();
+        task.record_send(&instance, 1).expect("send recorded");
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .expect("seed");
+        let binding = service.binding(&checkout).expect("binding");
+        let (host, native_server) = native_fixture(move |req| {
+            assert_eq!(req["tag"], "orchestration.subscribeThread");
+            json!({"_tag":"Chunk","requestId":req["id"],"values":[
+                {"kind":"snapshot","snapshotSequence":1,"projection":{
+                    "thread":{"id":req["payload"]["threadId"],"projectId":binding.project_id,
+                        "worktreePath":binding.worktree_path,"branch":binding.branch},
+                    "runs":[{"id":"native","status":"running","userMessageId":format!("{instance}-message")}],
+                    "messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[]
+                }},
+                {"kind":"synchronized"}
+            ]})
+        }).await;
+        service.host = host;
+
+        let outcomes = service.pass().await.expect("exact run read");
+        assert!(matches!(
+            outcomes.as_slice(),
+            [crate::PassOutcome {
+                result: Ok(Action::Wait(WaitReason::Running)),
+                ..
+            }]
+        ));
+        assert_eq!(forge_reads.load(Ordering::Relaxed), 0);
+        let due = service
+            .state
+            .lock()
+            .await
+            .schedule
+            .due("reviewer")
+            .expect("backstop");
+        assert!(due > tokio::time::Instant::now() + Duration::from_secs(40));
+        let authority = Authority::Operator {
+            actor: "fixture".into(),
+        };
+        assert!(matches!(
+            service
+                .command("reviewer", &authority, Command::Amend("next".into()))
+                .await,
+            Ok(crate::CommandOutcome::Pending { .. })
+        ));
+        assert_eq!(forge_reads.load(Ordering::Relaxed), 0);
+        let _ = service.pass().await.expect("command evidence wake");
+        assert_eq!(forge_reads.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            service
+                .command("reviewer", &authority, Command::Amend("next".into()))
+                .await,
+            Ok(crate::CommandOutcome::Applied(_))
+        ));
+        forge_server.abort();
+        native_server.abort();
+    }
 
     #[tokio::test]
     async fn review_recovers_its_checkout_before_creating_a_reservation() {
@@ -979,51 +1142,78 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unavailable_forge_read_reports_the_status_and_schedules_a_recheck() {
+    async fn a_forge_outage_defers_other_tasks_without_sending_a_request() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&requests);
         let (forge, server) = serve_forge(Router::new().route(
             &format!("/repos/{}/pulls/1", crate::tests::REPOSITORY),
-            get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+            get(move || async move {
+                count.fetch_add(1, Ordering::Relaxed);
+                StatusCode::SERVICE_UNAVAILABLE
+            }),
         ))
         .await;
         let (_home, service) = fixture(forge);
-        let (reserved, _, _) = reservation("reviewer", Entry::ReviewEntry, &service.project.start);
-        let task = Task::new(
-            reserved.identity().clone(),
-            reserved.brief().text.clone(),
-            reserved.pull_request().cloned(),
-        );
-        let id = &task.identity().id;
-        service
-            .state
-            .lock()
-            .await
-            .store
-            .create(&task, &event("fixture"))
-            .expect("seed");
-        let outcomes = service.pass().await.expect("process the due task");
+        for id in ["first", "second"] {
+            let (reserved, _, _) = reservation(id, Entry::ReviewEntry, &service.project.start);
+            let task = Task::new(
+                reserved.identity().clone(),
+                reserved.brief().text.clone(),
+                reserved.pull_request().cloned(),
+            );
+            service
+                .state
+                .lock()
+                .await
+                .store
+                .create(&task, &event("fixture"))
+                .expect("seed");
+        }
+        let started = tokio::time::Instant::now();
+        let outcomes = service.pass().await.expect("process both due tasks");
         assert!(matches!(
             outcomes.as_slice(),
-            [crate::PassOutcome { task, result: Err(ServiceError::Forge(ForgeError::Status(StatusCode::SERVICE_UNAVAILABLE))) }]
-                if task == id
+            [
+                crate::PassOutcome { task: first, result: Err(ServiceError::Forge(ForgeError::Status(StatusCode::SERVICE_UNAVAILABLE))) },
+                crate::PassOutcome { task: second, result: Err(ServiceError::Forge(ForgeError::Deferred { .. })) }
+            ] if first == "first" && second == "second"
         ));
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        assert_eq!(service.forge_retry_secs.load(Ordering::Relaxed), 30);
         let state = service.state.lock().await;
-        assert_eq!(state.waits.get(id), Some(&WaitReason::ForgeUnknown));
-        assert!(
-            state
-                .schedule
-                .due(id)
-                .is_some_and(|due| due > tokio::time::Instant::now())
-        );
-        assert_eq!(
-            state
-                .store
-                .row(id)
-                .expect("read unchanged row")
-                .expect("task")
-                .version,
-            1
-        );
+        for id in ["first", "second"] {
+            assert_eq!(state.waits.get(id), Some(&WaitReason::ForgeUnknown));
+            assert!(
+                state
+                    .schedule
+                    .due(id)
+                    .is_some_and(|due| { due >= started + Duration::from_secs(30) })
+            );
+            assert_eq!(
+                state
+                    .store
+                    .row(id)
+                    .expect("read unchanged row")
+                    .expect("task")
+                    .version,
+                1
+            );
+        }
         server.abort();
+    }
+
+    #[test]
+    fn forge_transport_backoff_is_capped_and_a_success_resets_it() {
+        let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+        let failure = ForgeError::Status(StatusCode::BAD_GATEWAY);
+        for delay in [30, 60, 120, 240, 240] {
+            record_forge_failure(&service, &failure);
+            assert_eq!(service.forge_retry_secs.load(Ordering::Relaxed), delay);
+        }
+        capture_forge(&service, Ok(())).expect("successful response");
+        assert_eq!(service.forge_backoff(), Duration::ZERO);
+        record_forge_failure(&service, &failure);
+        assert_eq!(service.forge_retry_secs.load(Ordering::Relaxed), 30);
     }
 
     fn merge_fixture(
