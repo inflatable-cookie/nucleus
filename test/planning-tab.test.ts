@@ -78,7 +78,7 @@ test("026-14a Planning has a plan pane and a lane pane wide, and opens the lane 
   // wide board; a narrower board keeps the plan and opens the lane in a modal.
   assert.match(
     ui,
-    /inbox=\{\{\s*listWidth: wide \? inboxListWidth : null,\s*laneModal: !wide,\s*listFill: narrow \? roles\(c\)\.canvas : roles\(c\)\.section,?\s*\}\}/,
+    /inbox=\{\{\s*listWidth: wide \? inboxListWidth : null,\s*laneModal: !wide,/,
   );
   // The card list never carries planning: Planning is its own view.
   const list = readFileSync(

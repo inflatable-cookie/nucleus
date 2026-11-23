@@ -131,7 +131,7 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
           paddingHorizontal: inset,
           paddingVertical: space.sm,
           gap: space.xs,
-          backgroundColor: roles(c).canvas,
+          backgroundColor: roles(c).header,
           position: "relative",
           // Queue #665 / #706: no zIndex here, so this block is not a stacking
           // context. The open queue menu renders in the shell's popover layer,
