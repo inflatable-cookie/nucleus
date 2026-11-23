@@ -41,7 +41,10 @@ impl Service {
             &self.project.repository,
             &task.identity().id,
         )?;
-        let (forge, target) = self.read_forge(task, &checkout).await;
+        let (forge, target, forge_error) = match self.read_forge(task, &checkout).await {
+            Ok((forge, target)) => (Observed::Known(forge), target, None),
+            Err(error) => (Observed::Unknown, None, Some(error)),
+        };
         self.observe_commands(row, &forge).await?;
         if !active(task) {
             return Ok(Action::Nothing);
@@ -85,6 +88,9 @@ impl Service {
             Action::Close { workspace, .. } if let Some(target) = target.as_ref() => {
                 self.close(row, &checkout, target, workspace, host).await
             }
+            Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => {
+                Err(error.into())
+            }
             action => self.apply(row, &observation, action).await,
         }
     }
@@ -93,18 +99,18 @@ impl Service {
         &self,
         task: &Task,
         checkout: &Checkout<'_>,
-    ) -> (Observed<Forge>, Option<PullTarget>) {
-        if now_ms() < self.forge_until.load(Ordering::Relaxed) {
-            return (Observed::Unknown, None);
+    ) -> Result<(Forge, Option<PullTarget>), ForgeError> {
+        let deadline = self.forge_until.load(Ordering::Relaxed);
+        if now_ms() < deadline {
+            return Err(ForgeError::Deferred {
+                until: UNIX_EPOCH + std::time::Duration::from_millis(deadline),
+            });
         }
         let branches = Branches::new(
             &self.project.repository,
             &self.project.base,
             checkout.branch(),
-        );
-        let Ok(branches) = branches else {
-            return (Observed::Unknown, None);
-        };
+        )?;
         let reported = task.run().and_then(|run| match run.report() {
             Some(Report::Work(pr)) if !run.revoked() => Some(pr),
             _ => None,
@@ -114,13 +120,12 @@ impl Service {
             None if task.phase() == Phase::Queued => Ok(None),
             None => self.forge.find_open(&branches).await,
         };
-        match capture_forge(self, result) {
-            Some(Some(target)) => {
-                let forge = seen_from(capture_forge(self, self.forge.observe(&target).await));
-                (forge, Some(target))
+        match capture_forge(self, result)? {
+            Some(target) => {
+                let forge = capture_forge(self, self.forge.observe(&target).await)?;
+                Ok((forge, Some(target)))
             }
-            Some(None) => (Observed::Known(Forge::Absent), None),
-            None => (Observed::Unknown, None),
+            None => Ok((Forge::Absent, None)),
         }
     }
 
@@ -226,7 +231,7 @@ impl Service {
         let task = &row.task;
         let role = task.run().ok_or(ServiceError::Input)?.launch().role;
         if role == Role::Reviewer {
-            observation.forge = self.read_forge(task, checkout).await.0;
+            observation.forge = Observed::Known(self.read_forge(task, checkout).await?.0);
             observation.workspace = seen(checkout.observe());
         }
         let action = decide(task, &observation);
@@ -325,7 +330,7 @@ impl Service {
                 let Some(head) = run.launch().review_head.as_ref() else {
                     return Ok((checkout.observe()? != Workspace::Absent).then_some(false));
                 };
-                let forge = self.read_forge(task, checkout).await.0;
+                let forge = Observed::Known(self.read_forge(task, checkout).await?.0);
                 let workspace = checkout.observe()?;
                 if workspace == Workspace::Absent {
                     return Ok(None);
@@ -381,7 +386,7 @@ impl Service {
             }
             StopProgress::ReplayDue => {
                 if head.is_some() {
-                    observation.forge = self.read_forge(task, checkout).await.0;
+                    observation.forge = Observed::Known(self.read_forge(task, checkout).await?.0);
                     observation.workspace = seen(checkout.observe());
                 }
                 if replay_policy(head, &observation).is_none() {
@@ -443,18 +448,16 @@ impl Service {
         let _fence = self.effect(row).await?;
         let task = &row.task;
         let result = self.forge.merge(task, target).await;
-        let Some(attempt) = capture_forge(self, result) else {
-            return Ok(Action::Wait(WaitReason::ForgeUnknown));
-        };
+        let attempt = capture_forge(self, result)?;
         if let MergeWrite::Deferred { until } = attempt.write {
             defer(self, until);
-            return Ok(Action::Wait(WaitReason::ForgeUnknown));
+            return Err(ForgeError::Deferred { until }.into());
         }
-        let observed = seen_from(capture_forge(self, attempt.observed));
+        let observed = capture_forge(self, attempt.observed);
         if attempt.write == MergeWrite::HeadMismatch {
             let mut updated = task.clone();
             if updated.merge_head_mismatched(head) {
-                observation.forge = observed;
+                observation.forge = seen(observed);
                 let next = updated.reconcile(&observation);
                 let mut history = event("merge_head_changed");
                 history.detail = serde_json::json!({
@@ -466,6 +469,7 @@ impl Service {
             }
             return Ok(Action::Wait(WaitReason::ForgeUnknown));
         }
+        let observed = Observed::Known(observed?);
         if attempt.write == MergeWrite::Unknown
             && !matches!(observed, Observed::Known(Forge::Merged { .. }))
         {
@@ -495,7 +499,7 @@ impl Service {
         let task = &row.task;
         let mut observed = Observation {
             host: Observed::Unknown,
-            forge: seen_from(capture_forge(self, self.forge.observe(target).await)),
+            forge: Observed::Known(capture_forge(self, self.forge.observe(target).await)?),
             workspace: seen(checkout.observe()),
         };
         let action = decide(task, &observed);
@@ -566,15 +570,12 @@ fn current(task: &Task, state: RunState) -> Result<Host, ServiceError> {
     })
 }
 
-fn capture_forge<T>(service: &Service, result: Result<T, ForgeError>) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(ForgeError::Deferred { until }) => {
-            defer(service, until);
-            None
+fn capture_forge<T>(service: &Service, result: Result<T, ForgeError>) -> Result<T, ForgeError> {
+    result.inspect_err(|error| {
+        if let ForgeError::Deferred { until } = error {
+            defer(service, *until);
         }
-        Err(_) => None,
-    }
+    })
 }
 
 fn defer(service: &Service, until: SystemTime) {
@@ -914,23 +915,16 @@ mod tests {
                 .expect("seed merge");
             let host = service.host.pass(service.storage.scratch().path());
             let row = service.task("reviewer").await.expect("old approval");
-            assert_eq!(
-                Box::pin(service.advance(&row, &host))
-                    .await
-                    .expect("first pass"),
-                Action::Wait(WaitReason::ForgeUnknown)
-            );
+            let first = Box::pin(service.advance(&row, &host)).await;
             let row = service.task("reviewer").await.expect("waiting task");
             assert_eq!(row.task.phase(), Phase::Merging);
             assert!(row.task.question().is_none());
-            assert_eq!(
-                Box::pin(service.advance(&row, &host))
-                    .await
-                    .expect("one more stale pass"),
-                Action::Wait(WaitReason::ForgeUnknown)
-            );
+            let second = Box::pin(service.advance(&row, &host)).await;
             assert_eq!(puts.load(Ordering::Relaxed), 1);
             if status == StatusCode::CONFLICT {
+                for result in [first, second] {
+                    assert!(matches!(result, Ok(Action::Wait(WaitReason::ForgeUnknown))));
+                }
                 assert!(row.task.verdict().is_none());
                 assert_eq!(
                     row.task.pull_request().expect("keep the bound PR").head,
@@ -946,10 +940,64 @@ mod tests {
                 let updated = service.task("reviewer").await.expect("new head bound");
                 assert_eq!(updated.task.pull_request().expect("PR").head, new_head);
             } else {
+                for result in [first, second] {
+                    assert!(matches!(
+                        result,
+                        Err(ServiceError::Forge(ForgeError::Deferred { .. }))
+                    ));
+                }
                 assert!(service.forge_until.load(Ordering::Relaxed) > now_ms());
             }
             server.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_forge_read_reports_the_status_and_schedules_a_recheck() {
+        let (forge, server) = serve_forge(Router::new().route(
+            &format!("/repos/{}/pulls/1", crate::tests::REPOSITORY),
+            get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        ))
+        .await;
+        let (_home, service) = fixture(forge);
+        let (reserved, _, _) = reservation("reviewer", Entry::ReviewEntry, &service.project.start);
+        let task = Task::new(
+            reserved.identity().clone(),
+            reserved.brief().text.clone(),
+            reserved.pull_request().cloned(),
+        );
+        let id = &task.identity().id;
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .expect("seed");
+        let outcomes = service.pass().await.expect("process the due task");
+        assert!(matches!(
+            outcomes.as_slice(),
+            [crate::PassOutcome { task, result: Err(ServiceError::Forge(ForgeError::Status(StatusCode::SERVICE_UNAVAILABLE))) }]
+                if task == id
+        ));
+        let state = service.state.lock().await;
+        assert_eq!(state.waits.get(id), Some(&WaitReason::ForgeUnknown));
+        assert!(
+            state
+                .schedule
+                .due(id)
+                .is_some_and(|due| due > tokio::time::Instant::now())
+        );
+        assert_eq!(
+            state
+                .store
+                .row(id)
+                .expect("read unchanged row")
+                .expect("task")
+                .version,
+            1
+        );
+        server.abort();
     }
 
     fn merge_fixture(

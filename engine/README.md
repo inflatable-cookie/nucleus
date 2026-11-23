@@ -251,6 +251,8 @@ without spending an attempt. A fresh pass checks process custody after launch.
 A definite GitHub head mismatch retires approval and keeps the bound PR in
 Merging until a read shows a new head. A refusal followed by incomplete
 readback waits for fresh evidence and honours any forge retry deadline.
+A failed forge read keeps its retry and reports the safe failure category to
+the service log.
 A confirmed rejection of a superseded review stays in the revoked run slot
 until T3 confirms archival or absence. Later passes only reconcile that
 disposition. They never replay the rejected launch.
