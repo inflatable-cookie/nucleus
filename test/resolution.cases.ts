@@ -13591,45 +13591,48 @@ test("a synthetic origin is recorded but its task and origin notices route throu
   }
 });
 test("a finished task that owes its origin nothing drops a stale missing-origin error and its stop, so archive and retention can proceed (Consumer-B #680)", async () => {
-  const f = fixture();
-  try {
-    const agents = originFixture(f);
-    await f.engine.resolution.origins.pass();
-    agents.delete("origin");
-    await f.engine.resolution.origins.pass();
-    const missing = f.current().originError;
-    assert.match(missing, /Origin thread is missing; reparent the task/);
-    f.store.update(f.task.id, { notifyOriginOnCloseout: false });
-    f.store.update(f.task.id, {
-      phase: "done",
-      finishedAt: new Date().toISOString(),
-      reason: "Closed",
-    });
-    f.engine.resolution.recordStop(f.current(), "operator_needed", missing, [
-      "restart",
-      "route",
-      "move",
-    ]);
-    assert.equal(f.current().resolution.stop?.detail, missing);
-    await f.engine.resolution.origins.pass();
-    assert.equal(f.current().originError, "");
-    assert.equal(
-      f.current().resolution.stop,
-      null,
-      "the stop the origin error produced goes with it",
-    );
-    assert.ok(
-      f.store.events(f.task.id).some((e) => e.kind === "origin_not_owed"),
-    );
-    const version = f.current().version;
-    await f.engine.resolution.origins.pass();
-    assert.equal(
-      f.current().version,
-      version,
-      "a settled finished task is not rewritten",
-    );
-  } finally {
-    await f.close();
+  for (const keepUnrelatedStop of [false, true]) {
+    const f = fixture();
+    try {
+      const agents = originFixture(f);
+      await f.engine.resolution.origins.pass();
+      agents.delete("origin");
+      await f.engine.resolution.origins.pass();
+      const missing = f.current().originError;
+      assert.match(missing, /Origin thread is missing; reparent the task/);
+      await f.engine.wake();
+      const originStop = f.current().resolution.stop;
+      assert.ok(originStop);
+      assert.equal(originStop.detail, missing);
+      assert.equal(originStop.fact?.code, "origin_error");
+      f.store.update(f.task.id, {
+        notifyOriginOnCloseout: false,
+        phase: "done",
+        finishedAt: new Date().toISOString(),
+        reason: "Closed",
+      });
+      // Model a finished row that still carries a stop from its active phase.
+      const staleStop = keepUnrelatedStop
+        ? taskStopRecord("operator_needed", "The pull request must be open",
+            null, originStop.since, undefined, undefined, { code: "pr_identity" })
+        : originStop;
+      f.engine.resolution.update(f.current(), { stop: staleStop });
+      await f.engine.resolution.origins.pass();
+      assert.equal(f.current().originError, "");
+      assert.deepEqual(f.current().resolution.stop, keepUnrelatedStop ? staleStop : null);
+      assert.ok(
+        f.store.events(f.task.id).some((e) => e.kind === "origin_not_owed"),
+      );
+      const version = f.current().version;
+      await f.engine.resolution.origins.pass();
+      assert.equal(
+        f.current().version,
+        version,
+        "a settled finished task is not rewritten",
+      );
+    } finally {
+      await f.close();
+    }
   }
 });
 test("origin checks preserve live threads, defer during pause and record transport errors without writes", async () => {

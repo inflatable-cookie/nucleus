@@ -139,7 +139,7 @@ export class Decisions {
   constructor(private store: Store) {}
 
   add(input: { question: string; headline?: string; choices?: Decision["choices"]; recommended?: string; details?: string | null; context?: string | null; options?: string[]; recommendation?: string | null; askedBy: string;
-    project?: Decision["askedBy"]["project"]; tasks?: string[]; leads?: string[]; papercuts?: string[]; by?: string }): DecisionView {
+    project?: Decision["askedBy"]["project"]; tasks?: string[]; leads?: string[]; papercuts?: string[]; by?: string }, id: string = randomUUID()): DecisionView {
     const stamp = now();
     const by = input.by ?? input.askedBy;
     const preferred = input.recommended ?? input.options?.find(label => input.recommendation?.includes(label));
@@ -160,7 +160,7 @@ export class Decisions {
       ? [placing.callerTaskId, ...(input.tasks ?? [])] : (input.tasks ?? []);
     const taskReference = tasks[0] ? this.taskReference(tasks[0]) : null;
     const record = decisionSchema.parse({
-      id: randomUUID(), version: 1, question: input.question, headline: headlineFor(input.headline, input.question, taskReference),
+      id, version: 1, question: input.question, headline: headlineFor(input.headline, input.question, taskReference),
       ...(choices.length ? { choices: recommended ? recommendedFirst(choices, recommended) : choices } : {}), ...(recommended ? { recommended } : {}),
       details: detailsFor(input.details, input.context, input.question), context: input.context ?? null,
       options: input.options?.length ? input.options : (input.choices?.length ? input.choices.map(choice => choice.label) : []),
