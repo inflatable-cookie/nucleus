@@ -19,12 +19,8 @@ import {
   taskAuthorModelKeys,
 } from "../../shared/authors";
 import {
-  escalationWaitDetail,
-  plannerEscalations,
-  reviewerConsults,
   revisionCapCauseId,
   revisionCapEscalationQuestion,
-  type LadderEvent,
 } from "../questions/ladder";
 import {
   MERGE_CONFLICT_REASON,
@@ -87,10 +83,7 @@ import {
   reviewerIndependence,
 } from "../dispatch/routing";
 import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
-import {
-  escalationWaitState,
-  type EscalationWait,
-} from "../questions/ladder/hold";
+import { reviewLadderWait } from "../questions/ladder/hold";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { matchingInactiveParticipant } from "./run-settlement";
 import { settlementHeld } from "../closeout/queue-drain";
@@ -154,6 +147,7 @@ type ReviewAdmission<PublicationId extends number | null = number> = {
   publicationId: PublicationId;
   settledWaits: { id: string; resolved: boolean }[];
   settlesIncident: boolean;
+  settlesRecovery: boolean;
 };
 type PublishedReview = ReviewAdmission;
 type ReviewDecision<PublicationId extends number | null = number> =
@@ -184,76 +178,6 @@ function hasPublicationEvidence(store: Store, run: Run): boolean {
     recordedPublicationId(store, run.id, "review") !== null ||
     recordedPublicationId(store, run.id, "comment") !== null
   );
-}
-
-/** Read the ladder's durable wait records, including the format used before stop fields were recorded. */
-function reviewLadderWait(
-  store: Store,
-  task: Task,
-): {
-  refusal: string | null;
-  settledStop: boolean;
-  settledWaits: PublishedReview["settledWaits"];
-} {
-  const events = store.eventsAll(task.id);
-  const waits = new Map<string, (typeof events)[number]>();
-  const settled = new Set<string>();
-  const settledWaits: PublishedReview["settledWaits"] = [];
-  let settledStop = false;
-  for (const event of events) {
-    if (event.kind === "planner_escalation_wait")
-      waits.set(event.detail.split(":", 1)[0]!, event);
-  }
-  for (const [id, event] of waits) {
-    const afterWait = events.filter(
-      (later) => later.id > event.id && later.detail.startsWith(`${id}:`),
-    );
-    const retired = afterWait.some((later) =>
-      [
-        "planner_escalation_woke",
-        "planner_escalation_wait_superseded",
-      ].includes(later.kind),
-    );
-    const resolved = afterWait.some(
-      (later) => later.kind === "planner_escalation_resolved",
-    );
-    let wait: EscalationWait | null = null;
-    try {
-      wait = JSON.parse(event.detail.slice(id.length + 2));
-    } catch {
-      /* unreadable wait stays for its owner */
-    }
-    const due = wait?.kind === "time" && Date.parse(wait.target) <= Date.now();
-    if (!retired && !resolved && !due)
-      return {
-        refusal: `The planner ladder still owns escalation ${id}'s wait`,
-        settledStop,
-        settledWaits,
-      };
-    if (!retired) settledWaits.push({ id, resolved });
-    settled.add(id);
-    if (wait?.kind === "time" || wait?.kind === "decision") {
-      const { stopReason } = escalationWaitState(id, wait);
-      settledStop ||=
-        task.resolution.stop?.reason === stopReason &&
-        task.resolution.stop.fact?.subject === id;
-    }
-  }
-  const open = plannerEscalations(events).find(
-    (item) => !item.answered && !settled.has(item.id),
-  );
-  const consult = reviewerConsults(events).findLast(
-    (item) => !item.answered && !item.unknown,
-  );
-  return {
-    refusal: open
-      ? `The planner ladder still owns escalation ${open.id}`
-      : consult
-        ? escalationWaitDetail.reviewer(consult.id)
-        : null,
-    settledStop,
-    settledWaits,
-  };
 }
 
 /** Owner moves can adopt existing evidence without starting publication. */
@@ -329,7 +253,7 @@ function readReviewAdmission(
     !(
       resumeUnpublished &&
       task.phase === "reviewing" &&
-      task.resolution.attention &&
+      (task.resolution.attention || recovery?.status === "escalated") &&
       currentRunId === run.id &&
       !run.completion.sourceApproved
     )
@@ -495,6 +419,12 @@ function readReviewAdmission(
     );
   const ownIncident =
     incident?.runId === run.id && incident.role === "reviewer";
+  const initialWorkspaceReady = Boolean(
+    incident &&
+      incident.runId === task.runId &&
+      task.completion?.runId === incident.runId &&
+      task.completion.status === "ready_for_review",
+  );
   // A workspace or earlier-run incident is obsolete once the work it named
   // released or the initial worker's ready report bound the PR. A separate
   // planner wait, stop or pending recovery action still has its own gate.
@@ -502,16 +432,24 @@ function readReviewAdmission(
     incident &&
       (ownIncident ||
         !runBindsCurrentWork(runs, incident.runId) ||
-        (incident.runId === task.runId &&
-          task.completion?.runId === incident.runId &&
-          task.completion.status === "ready_for_review")),
+        initialWorkspaceReady),
+  );
+  // An escalated episode is the ladder's until both its wait and its
+  // incident have settled. An already released episode needs no new action.
+  const settlesRecovery = Boolean(
+    recovery &&
+      recovery.status !== "resolved" &&
+      (recovery.status === "escalated"
+        ? !incident ||
+          incident.status === "resolved" ||
+          initialWorkspaceReady ||
+          (recovery.incidentId && recovery.incidentId !== incident.id)
+        : settlesIncident && recovery.incidentId === incident?.id),
   );
   if (
     task.resolution.recoveryActive ||
     recovery?.action?.status === "pending" ||
-    (recovery &&
-      recovery.status !== "resolved" &&
-      (!settlesIncident || recovery.incidentId !== incident?.id))
+    (recovery && recovery.status !== "resolved" && !settlesRecovery)
   )
     return blocked(
       "The recovery owner must settle the current recovery episode",
@@ -577,6 +515,7 @@ function readReviewAdmission(
     publicationId,
     settledWaits: ladder.settledWaits,
     settlesIncident,
+    settlesRecovery,
   };
 }
 
@@ -1000,18 +939,6 @@ export class ResultApplication {
       const unresolvedPublication =
         !publicationEvent &&
         Boolean(this.store.getMeta(`reviewPublication:${unappliedReview.id}`));
-      const unresolvedEscalation =
-        !publicationEvent &&
-        plannerEscalations(events as LadderEvent[])
-          // An escalation raised for this same interrupted application is part
-          // of its recovery path. A different unanswered planner question still
-          // owns the task and must not be bypassed by replaying the verdict.
-          .some(
-            (escalation) =>
-              !escalation.answered &&
-              !escalation.unknown &&
-              escalation.cause !== incident?.fingerprint,
-          );
       const ownerStoppedRun = events.some(
         (event) =>
           event.kind === "owner_stopped" &&
@@ -1029,12 +956,11 @@ export class ResultApplication {
               Date.parse(incident.createdAt) >=
                 Date.parse(publicationEvent.at)) &&
             !unresolvedPublication &&
-            !unresolvedEscalation &&
             !ownerStoppedRun,
         );
       return reviewingSlot || interruptedApplication;
     })();
-    if (!eligible) return "blocked";
+    if (!eligible || reviewLadderWait(this.store, t).refusal) return "blocked";
     // This path can apply a finished callback before the ordinary run
     // reconciler. Keep the same participant lease in front of its transition.
     try {
@@ -1783,6 +1709,11 @@ export class ResultApplication {
       return this.verdictApplied(t.id, run.id);
     }
     if (
+      reviewLadderWait(this.store, t).refusal ||
+      t.resolution.recovery?.status === "escalated"
+    )
+      return false;
+    if (
       !t.resolution.unreviewedMerge &&
       t.prHead &&
       (t.prHead !== run.head || c.head !== run.head)
@@ -1929,6 +1860,12 @@ export class ResultApplication {
       let c = completion;
       if (verification.kind === "ordinary") {
         const { reviewer, id } = verification;
+        if (
+          reviewLadderWait(this.store, current).refusal ||
+          current.resolution.recovery?.status === "escalated" ||
+          !isDeepStrictEqual(reviewerSettingOf(this.store, current), reviewer)
+        )
+          return changed;
         // Spec 033: formal review and comment IDs prove different publication forms.
         const reportedId = reviewer ? c.reviewId : c.reviewCommentId;
         const verifiedId = id || reportedId;
@@ -1969,16 +1906,12 @@ export class ResultApplication {
       }
       const recovery = current.resolution.recovery;
       const incident = current.resolution.incident;
-      const ownRecovery =
-        recovery &&
-        published?.settlesIncident &&
-        recovery.incidentId === incident?.id;
       const settlesAttention = Boolean(
         reapplied &&
           (published
             ? current.resolution.attention ||
               (published.settlesIncident && incident?.status !== "resolved") ||
-              (ownRecovery && recovery.status !== "resolved")
+              published.settlesRecovery
             : current.resolution.attention && incident?.runId === run.id),
       );
       const recoveryRunId =
@@ -2014,7 +1947,7 @@ export class ResultApplication {
                   },
                 }
               : {}),
-            ...(recovery && (!published || ownRecovery)
+            ...(recovery && (!published || published.settlesRecovery)
               ? {
                   recovery: {
                     ...recovery,
@@ -2027,6 +1960,12 @@ export class ResultApplication {
               : {}),
           }
         : {};
+      if (published?.settlesRecovery && recovery)
+        this.store.event(
+          t.id,
+          "recovery_episode_settled",
+          `${recovery.id}: ${settledDetail}`,
+        );
       if (supersedeRecovery)
         this.store.putRun({
           ...recoveryRun!,

@@ -3134,6 +3134,227 @@ test("replacing a reviewer while its verdict is being verified discards that ver
   );
 });
 
+test("an open planner escalation fences reviewer start, phase changes and verdict application", async (t) => {
+  const f = await parkedReviewFixture(t);
+  const task = f.current();
+  f.store.putRun({ ...f.former, status: "superseded", released: true });
+  f.store.update(task.id, {
+    phase: "blocked",
+    resolution: {
+      ...task.resolution,
+      currentRunId: null,
+      attention: false,
+      incident: null,
+      stop: null,
+    },
+  });
+  const open = (id: string) =>
+    f.store.event(
+      task.id,
+      "planner_escalation",
+      `${id}: cause owner-decision; run worker`,
+    );
+  const clear = (id: string) =>
+    f.command({ action: "record.clear", kind: "escalation", id });
+  const start = () =>
+    f.command({ action: "run.start", role: "reviewer", agent: "fresh" });
+
+  open("before-review");
+  await assert.rejects(start(), /planner ladder.*before-review/);
+  await assert.rejects(
+    f.command({ action: "phase.set", to: "reviewing" }),
+    /planner ladder.*before-review/,
+  );
+  assert.equal(f.current().phase, "blocked");
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.store.runs(task.id).length, 1);
+
+  await clear("before-review");
+  const started = await start();
+  assert.equal(started.explicitResolution?.status, "applied");
+  const run = f.store.run(started.explicitResolution!.runId!);
+  assert.ok(run);
+  open("during-review");
+  await f.report(run, f.tokens.get(run.id)!);
+  await f.advance();
+  assert.equal(f.current().resolution.review, null);
+  assert.equal(f.current().resolution.integrationTurn, null);
+  assert.deepEqual(f.publications, []);
+
+  await clear("during-review");
+  await f.advance();
+  f.expectApplied(run);
+});
+
+test("run.start reviewer refuses a dispatch hold before reserving a run", async (t) => {
+  const f = await reviewStartFixture(t);
+  const task = f.current();
+  f.store.update(task.id, {
+    holds: {
+      dispatch: {
+        owner: planner,
+        reason: "The planner is resolving a scope question",
+        at: new Date().toISOString(),
+        generation: 1,
+        until: null,
+      },
+    },
+  });
+  const start = { action: "run.start", role: "reviewer", agent: "fresh" };
+  await assert.rejects(f.command(start), /Dispatch is held by .*scope question/);
+  assert.deepEqual(f.store.runs(task.id), []);
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.current().phase, task.phase);
+  await f.command({
+    action: "record.clear",
+    kind: "hold",
+    id: "dispatch",
+    accept: ["hold_owner"],
+  });
+  assert.equal((await f.command(start)).explicitResolution?.status, "applied");
+});
+
+test("an in-flight verification cannot apply a formal review after the publication policy changes", async (t) => {
+  let verified = false;
+  const f = await parkedReviewFixture(
+    t,
+    async (task, _run, _completion, reviewer): Promise<number> => {
+      assert.equal(reviewer?.login, "review-bot");
+      verified = true;
+      f.store.patchRepository(
+        { path: task.repoPath, origin: null },
+        { reviewer: null },
+      );
+      return 102;
+    },
+  );
+  const run = await reportOnParkedTask(f);
+  await f.command({ action: "phase.set", to: "reviewing" });
+  const engine = f.runtime.engine;
+  await engine.withHost(host, () =>
+    engine.resolution.advanceCompletedRun(f.current(), f.store.run(run.id)!),
+  );
+  assert.equal(verified, true);
+  const current = f.current();
+  assert.equal(current.resolution.currentRunId, run.id);
+  assert.equal(current.resolution.review, null);
+  assert.equal(current.resolution.integrationTurn, null);
+  assert.equal(f.store.run(run.id)?.completion?.reviewId, 101);
+  assert.ok(
+    !f.store
+      .eventsAll(current.id)
+      .some((event) => event.kind === "review_reconciled"),
+  );
+});
+
+test("a current unpublished verdict settles an escalated recovery after its escalation and incident clear", async (t) => {
+  const f = await parkedReviewFixture(t);
+  const reviewer = await reportOnParkedTask(f);
+  await f.command({ action: "phase.set", to: "reviewing" });
+  const task = f.current();
+  const incident = task.resolution.incident;
+  assert.ok(incident);
+  const coordinator = f.run(
+    "prior-coordinator",
+    "recovery",
+    "retained-coordinator",
+  );
+  const completion = {
+    taskId: task.id,
+    runId: coordinator.id,
+    eventId: "prior-recovery-report",
+    status: "recovered" as const,
+    summary: "Requested a move to merge",
+  };
+  f.store.putRun({
+    ...coordinator,
+    active: false,
+    released: true,
+    status: "finished",
+    completion,
+  });
+  const episodeId = "prior-recovery-episode";
+  const escalationId = "prior-escalation";
+  f.store.update(task.id, {
+    resolution: {
+      ...task.resolution,
+      attention: false,
+      recoveryActive: false,
+      recovery: {
+        id: episodeId,
+        key: incident.fingerprint,
+        generation: 1,
+        runId: coordinator.id,
+        agentId: coordinator.agentId,
+        status: "escalated",
+        summary: "Coordinator action was refused",
+        idleSince: null,
+        incidentId: incident.id,
+        action: {
+          eventId: completion.eventId,
+          runId: coordinator.id,
+          reportStatus: completion.status,
+          summary: completion.summary,
+          status: "refused",
+          reason: "No verdict was applied yet",
+        },
+      },
+    },
+  });
+  f.store.event(
+    task.id,
+    "planner_escalation",
+    `${escalationId}: cause ${incident.fingerprint}; run ${coordinator.id}`,
+  );
+
+  await f.advance();
+  assert.equal(f.current().resolution.review, null);
+  assert.deepEqual(f.publications, []);
+  assert.equal(
+    (
+      await f.command({
+        action: "record.clear",
+        kind: "escalation",
+        id: escalationId,
+      })
+    ).explicitResolution?.status,
+    "applied",
+  );
+  await f.advance();
+  assert.equal(f.current().resolution.review, null);
+  assert.equal(f.current().resolution.recovery?.status, "escalated");
+  assert.deepEqual(f.publications, []);
+
+  assert.equal(
+    (
+      await f.command({
+        action: "record.clear",
+        kind: "incident",
+        id: incident.id,
+      })
+    ).explicitResolution?.status,
+    "applied",
+  );
+  const stop = f.current().resolution.stop;
+  if (stop)
+    await f.command({ action: "record.clear", kind: "stop", id: stop.since });
+  assert.equal(f.current().resolution.incident, null);
+  assert.equal(f.current().resolution.attention, false);
+  assert.equal(f.current().resolution.currentRunId, reviewer.id);
+  assert.equal(f.current().resolution.recovery?.status, "escalated");
+  assert.equal(f.store.run(reviewer.id)?.completion?.reviewId, undefined);
+  await f.advance();
+  f.expectApplied(reviewer);
+  assert.equal(f.current().resolution.recovery?.status, "resolved");
+  assert.deepEqual(
+    f.store
+      .eventsAll(task.id)
+      .filter((event) => event.kind === "recovery_episode_settled")
+      .map((event) => event.detail),
+    [`${episodeId}: Accepted review verdict applied`],
+  );
+});
+
 test("068: run.start reviewer fresh returns a clean checkout detached at the branch tip to its branch", async (t) => {
   const f = await reviewStartFixture(t);
   const { store, worktree, initialSha } = f;

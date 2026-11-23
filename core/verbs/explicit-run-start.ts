@@ -10,6 +10,7 @@ import {
 import {
   REVISION_BUDGET,
   WORKER_REPLACEMENT_CEILING,
+  holdsOf,
   runSchema,
   type Profile,
   type Run,
@@ -48,6 +49,7 @@ import {
   readGitCheckout,
 } from "../git/git-identity";
 import type { Adapter } from "../host/adapter";
+import { reviewLadderWait } from "../questions/ladder/hold";
 import {
   assertOrdinaryReviewIdentity,
   ordinaryReviewSource,
@@ -155,6 +157,7 @@ export function phaseSetPlan(
   task: Task,
   input: Extract<ExplicitResolution, { action: "phase.set" }>,
 ): ExplicitPlan {
+  if (input.to === "reviewing") assertReviewPhaseAllowed(engine.store, task);
   const runs = engine.store.runs(task.id);
   const hasLiveInitial = Boolean(
     task.runId &&
@@ -181,6 +184,20 @@ export function phaseSetPlan(
       };
     },
   };
+}
+
+function assertReviewPhaseAllowed(store: Store, task: Task): void {
+  const { refusal } = reviewLadderWait(store, task);
+  if (refusal) throw Error(refusal);
+}
+
+function assertReviewerStartAllowed(store: Store, task: Task): void {
+  const { dispatch } = holdsOf(task);
+  if (dispatch)
+    throw Error(
+      `Dispatch is held by ${dispatch.owner}: ${dispatch.reason}. Release the hold before starting a reviewer.`,
+    );
+  assertReviewPhaseAllowed(store, task);
 }
 
 export function messageSendPlan(
@@ -496,6 +513,7 @@ export async function preflightExplicitRunStart(
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.start" }>,
 ): Promise<ExplicitRunStartPreflight> {
+  if (input.role === "reviewer") assertReviewerStartAllowed(engine.store, task);
   // Spec 068 §4: every run.start launches into the task checkout, so the one
   // reattach step runs first. It moves no commit and names its refusal instead
   // of leaving a detached checkout unexplained.
@@ -830,6 +848,7 @@ export function runStartPlan(
   preflight?: ExplicitRunStartPreflight,
 ): ExplicitPlan {
   const store = engine.store;
+  if (input.role === "reviewer") assertReviewerStartAllowed(store, task);
   const { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial } =
     runStartTarget(store, task, input);
   if (agentMode === "retained" && !retainedAgentId) {

@@ -110,6 +110,16 @@ an unpublished verdict after `phase.set to=reviewing`. The verdict must match
 the canonical PR's current head, and independent stops, holds and recovery
 ownership still apply.
 
+An open planner escalation keeps the task parked. Reviewer starts, explicit
+transitions to `reviewing`, and verdict application wait for the ladder to
+settle it. A dispatch hold must be released before an explicit reviewer start.
+
+When an escalated recovery has released its run and its incident and escalation
+are both settled or cleared, applying the current reviewer's verdict settles
+the episode in the same transaction. The initial worker's accepted ready
+report still settles an obsolete workspace fault. Verdict application checks
+the repository's current review publication policy before granting credit.
+
 Accepting `discard_reported_verdict` records the displaced reviewer's replacement
 when the new run is reserved. Verdict application rechecks that binding and
 replacement in its own transaction, so an in-flight verification cannot apply
