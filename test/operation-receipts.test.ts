@@ -5,6 +5,7 @@ import { preSendReceiptProof, type ReceiptProofStore } from "../core/planning/op
 import { DurableFenceRefusal } from "../core/intake/run-settlement";
 import { ParkedRestartPreSendRefusal } from "../core/verbs/restart";
 import type { OperationEffect, QueueOperation } from "../shared/operations";
+import { T3ConnectionRefusalError } from "../hosts/t3code/contracts";
 
 /**
  * Spec 050 pre-send receipts: the one proof a refused task control records. Each
@@ -75,4 +76,16 @@ test("only a parked restart that crossed the boundary records a receipt, and onl
   assert.equal(preSendReceiptProof({ ...base, error: stale }).kind, "none");
   // A different typed refusal across the boundary keeps the fence instead.
   assert.equal(preSendReceiptProof({ ...base, error: new DurableFenceRefusal("refused") }).kind, "none");
+});
+
+test("a host connection refusal is pre-send proof only before the attempt crossed its boundary", () => {
+  const refusal = new T3ConnectionRefusalError("authenticated host connection is unavailable");
+  const base = { store: store(), buildId: () => "synthetic", payload, effect, error: refusal, message: refusal.message };
+  const before = preSendReceiptProof({ ...base, running: operation(), current: operation() });
+  assert.equal(before.kind, "typed_refusal");
+  assert.equal(before.typedRefusal, true);
+  const crossed = operation({ preSendBoundaryStartedAt: "2026-01-01T00:00:01.000Z" });
+  const after = preSendReceiptProof({ ...base, running: crossed, current: crossed });
+  assert.equal(after.kind, "none");
+  assert.equal(after.typedRefusal, false, "an earlier send in this attempt may have landed");
 });

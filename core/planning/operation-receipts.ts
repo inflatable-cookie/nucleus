@@ -4,6 +4,7 @@ import type { OperationEffect, QueueOperation } from "../../shared/operations";
 import { digest, now, operationIdForKey, operationInputHash, provedPreSendHistory } from "../store/store";
 import { ParkedRestartPreSendRefusal } from "../verbs/restart";
 import { typedPreSendRefusal } from "./operation-failure";
+import { isHostConnectionRefusal } from "../host/errors";
 
 /** The receipt one refused operation records to prove it crossed no send boundary. */
 export type PreSendReceipt = NonNullable<QueueOperation["preSendReceipt"]>;
@@ -51,7 +52,11 @@ export interface ReceiptProof {
  * stays fenced as uncertain.
  */
 export function preSendReceiptProof(facts: ReceiptProofFacts): ReceiptProof {
-  const typedRefusal = typedPreSendRefusal(facts.error);
+  // A host connection refusal proves only that the refusing call sent nothing.
+  // Once this attempt crossed its pre-send boundary, an earlier send may have
+  // landed, so it is no pre-send proof and the attempt stays uncertain.
+  const typedRefusal = typedPreSendRefusal(facts.error)
+    && !(isHostConnectionRefusal(facts.error) && Boolean(facts.current?.preSendBoundaryStartedAt));
   const none: ReceiptProof = { kind: "none", typedRefusal, receipt: null };
   const effect = facts.effect;
   if (!effect) return none;
