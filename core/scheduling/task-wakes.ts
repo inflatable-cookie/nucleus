@@ -30,6 +30,7 @@ import {
 } from "../workspaces/checkout-volume";
 import { routeUnavailableStop } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
+import { active } from "../recovery/task-reasons";
 import { HostReadRefusalError } from "../host";
 import { WorkspaceObservationUnavailableError } from "../workspaces/workspace-allocation";
 import { isTransportFailure } from "../../shared/transport";
@@ -92,6 +93,13 @@ function recordWakeFailure(
   } catch {
     /* the store refused the record; the wake itself is still lost */
   }
+}
+
+function pendingRunBuildOutputs(task: Task) {
+  return task.resolution.buildOutputCleanups.filter(
+    (record) =>
+      record.runId && (record.state === "intent" || record.state === "uncertain"),
+  );
 }
 
 /**
@@ -809,20 +817,18 @@ export class TaskWakes {
     // before the phase changes. Warm the evidence the settlement may need.
     if (
       ["queued", "working", "reviewing"].includes(task.phase) &&
-      (!task.resolution.buildOutputCleanups.some(
-          (record) =>
-            record.runId &&
-            (record.state === "intent" || record.state === "uncertain"),
-        ) ||
+      (!pendingRunBuildOutputs(task).length ||
         startsNoRuns(this.store) ||
         isDispositionActive(task))
     )
       return false;
-    if (!this.engine.taskHostAvailable(task)) return false;
-    const adapter = this.engine.adapter;
-    if (!adapter.agentTimelinePage && !adapter.hostProcessListing) return false;
-    const runs = this.store.runs(taskId);
-    return knownExecutionParticipantIds(task, runs).length > 0;
+    return this.engine.withHost(task.hostId, () => {
+      if (!this.engine.taskHostAvailable(task)) return false;
+      const adapter = this.engine.adapter;
+      if (!adapter.agentTimelinePage && !adapter.hostProcessListing) return false;
+      const runs = this.store.runs(taskId);
+      return knownExecutionParticipantIds(task, runs).length > 0;
+    });
   }
 
   /**
@@ -845,18 +851,35 @@ export class TaskWakes {
       !task ||
       task.removedAt ||
       ["done", "cancelled"].includes(task.phase) ||
-      !task.hostId ||
-      !this.engine.taskHostAvailable(task)
+      !task.hostId
     )
       return undefined;
-    const adapter = this.engine.adapter;
-    if (!adapter.agentTimelinePage && !adapter.hostProcessListing)
-      return undefined;
+    const hostId = task.hostId;
     const runs = this.store.runs(taskId);
     const participants = knownExecutionParticipantIds(task, runs);
     if (!participants.length) return undefined;
 
-    const hostId = task.hostId;
+    const cleanup = pendingRunBuildOutputs(task);
+    const reportedRun = cleanup.length
+      ? runs.find(
+          (run) =>
+            run.id === task.resolution.currentRunId &&
+            run.hostId === hostId &&
+            run.agentId &&
+            !run.released &&
+            run.completion &&
+            cleanup.some((record) => record.workspaceId === run.workspaceId),
+        )
+      : undefined;
+    const reportedParticipant = participants.find(
+      ({ agentId }) => agentId === reportedRun?.agentId,
+    );
+    const ordered = reportedParticipant
+      ? [
+          reportedParticipant,
+          ...participants.filter((item) => item !== reportedParticipant),
+        ]
+      : participants;
     const snapshot = new PassSnapshot();
     const budgetMs =
       this.resolution.hostPassWarmBudgetMs ?? HOST_PASS_WARM_BUDGET_MS;
@@ -869,10 +892,14 @@ export class TaskWakes {
 
     try {
       await this.engine.withHost(hostId, async () => {
+        if (!this.engine.taskHostAvailable(task)) return;
+        const adapter = this.engine.adapter;
+        if (!adapter.agentTimelinePage && !adapter.hostProcessListing) return;
         let needsProcesses = false;
-        for (const { agentId, workspaceId } of participants) {
+        for (const { agentId, workspaceId } of ordered) {
           if (this.engine.stopped || remaining() <= 0) break;
           let obs: Awaited<ReturnType<Engine["host"]["observe"]>> | null = null;
+          const observedAt = now();
           try {
             const read = await boundedRead(
               "participant observation",
@@ -920,6 +947,21 @@ export class TaskWakes {
           }
           if (!obs) continue;
           snapshot.recordHostObservation(hostId, agentId, obs);
+          if (
+            reportedRun?.agentId === agentId &&
+            obs.id === agentId &&
+            obs.workspaceId === reportedRun.workspaceId &&
+            !obs.archived &&
+            (active(obs) || obs.activeTurnId)
+          ) {
+            snapshot.recordBusyWakeParticipant(reportedRun, obs, observedAt);
+            // A busy participant holds this workspace. The quantum shares
+            // its read, and no other participant needs warming for this root.
+            if (cleanup.every(
+              (record) => record.workspaceId === reportedRun.workspaceId,
+            ))
+              return;
+          }
           const inactive =
             Boolean(
               !obs.active &&

@@ -734,6 +734,15 @@ export class StoreTaskFunnel {
         : task.version + 1,
       updatedAt: now(),
     };
+    const activityChanged =
+      next.phase !== task.phase ||
+      next.hostId !== task.hostId ||
+      next.runId !== task.runId ||
+      next.agentId !== task.agentId ||
+      next.workspaceId !== task.workspaceId ||
+      next.resolution.currentRunId !== task.resolution.currentRunId;
+    if (activityChanged)
+      next.activityOccurrence = { at: next.updatedAt, version: next.version };
     // Audit B6: an observation that changes no board fact writes only `task_observations`.
     // The task row, its version, its substantive-version marker and the board revision all
     // stay where they were, and every reader still sees the values the parent write produced:
@@ -1113,6 +1122,9 @@ export class StoreTaskFunnel {
           taskId: string;
           hostId?: unknown;
           hostSelection?: Run["hostSelection"];
+          agentId?: Run["agentId"];
+          workspaceId?: Run["workspaceId"];
+          bindingOccurrence?: Run["bindingOccurrence"];
         })
       : undefined;
     if (prior && prior.taskId !== run.taskId)
@@ -1163,6 +1175,21 @@ export class StoreTaskFunnel {
       if (!row?.hostId || row.hostId !== run.hostId)
         throw new Error("Run host is not proved by its task");
     }
+    if (
+      prior &&
+      (prior.agentId !== run.agentId ||
+        prior.workspaceId !== run.workspaceId ||
+        prior.hostId !== run.hostId)
+    )
+      run = {
+        ...run,
+        bindingOccurrence: {
+          at: now(),
+          version: (prior.bindingOccurrence?.version ?? 0) + 1,
+        },
+      };
+    else if (prior?.bindingOccurrence || run.bindingOccurrence)
+      run = { ...run, bindingOccurrence: prior?.bindingOccurrence };
     // Each run records the brief version it was given; the stamp is taken once, at creation.
     // A usage-only write never stamps, so an older run keeps the pins it was dispatched with.
     if (run.briefVersion === undefined && !options.usageOnly) {

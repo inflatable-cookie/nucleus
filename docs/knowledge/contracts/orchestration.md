@@ -3877,7 +3877,9 @@ after the task finishes.
   Nucleus (R8, [vision](../vision.md#simplification-rulings-2026-10-31)).
 - Settlement runs in the task's serial lane before the next run launches.
   A callback wake with pending run-bound cleanup can prefetch participant
-  evidence before entering the lane, even while the task is still reviewing.
+  evidence on the task's host before entering the lane, even while the task is
+  still reviewing. A busy reported run's direct observation carries into its
+  own quantum while that run is unchanged.
   Missing evidence leaves the settlement pending for a later pass. A skip is
   final for an unsafe root. Records cover runs in queue-owned workspaces since
   this rule took effect.

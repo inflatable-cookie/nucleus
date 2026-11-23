@@ -47,6 +47,7 @@ import { threadGoneError } from "./dead-participant";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
+  currentTaskQuantumScope,
   isQuantumDeadlineExceeded,
 } from "../scheduling/pass-snapshot";
 
@@ -226,7 +227,10 @@ export class Observation {
       if (this.resolution.stopped()) return;
       let run = this.store.run(original.id)!;
       const task = this.store.task(run.taskId);
-      const observationStartedAt = now();
+      const wakeObservation = completedTaskId
+        ? currentTaskQuantumScope()?.snapshot?.observedBusyWakeParticipant(run)
+        : undefined;
+      const observationStartedAt = wakeObservation?.at ?? now();
       try {
         if (isDispositionActive(task) || isDispositionComplete(task)) continue;
         if (!this.resolution.hostAvailable(task, run)) {
@@ -292,9 +296,10 @@ export class Observation {
         let state: AgentObservation;
         try {
           const cached =
-            run.completion || reviewInProgress(run)
+            wakeObservation?.state ??
+            (run.completion || reviewInProgress(run)
               ? null
-              : (inventory?.get(run.agentId) ?? null);
+              : (inventory?.get(run.agentId) ?? null));
           if (cached) {
             state = cached;
           } else {

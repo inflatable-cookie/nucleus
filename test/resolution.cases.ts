@@ -17643,7 +17643,14 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
         f.idle("worker", "workspace", new Date().toISOString());
         await f.engine.wake();
         const run = f.run();
-        assert.ok(run.agentId);
+        assert.ok(run?.agentId && run.hostId, f.current().reason);
+        const observed: string[] = [];
+        const observe = f.adapter.observe.bind(f.adapter);
+        f.adapter.observe = async (id) => {
+          assert.equal(f.engine.activeHostId, run.hostId);
+          observed.push(id);
+          return observe(id);
+        };
         const cleanup = () =>
           f.current().resolution.buildOutputCleanups.find(
             (item) => item.runId === run.id,
@@ -17651,7 +17658,11 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
         let timelineMissing = timeline === "unavailable";
         const reviewerReadPhases: Task["phase"][] = [];
         const readTimeline = f.adapter.agentTimelinePage!;
-        f.adapter.agentTimelinePage = async (id, limit) => {
+        const readProcesses = f.adapter.hostProcessListing!;
+        const timelinePage: NonNullable<Adapter["agentTimelinePage"]> = async (
+          id,
+          limit,
+        ) => {
           assert.equal(currentTaskQuantumScope(), undefined);
           if (id === run.agentId) {
             reviewerReadPhases.push(f.current().phase);
@@ -17659,6 +17670,16 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
           }
           return readTimeline(id, limit);
         };
+        // As on a detached service wake, the unbound adapter exposes neither
+        // host-specific proof port. The task host supplies both.
+        Object.defineProperties(f.adapter, {
+          agentTimelinePage: {
+            get: () => f.engine.activeHostId === run.hostId ? timelinePage : undefined,
+          },
+          hostProcessListing: {
+            get: () => f.engine.activeHostId === run.hostId ? readProcesses : undefined,
+          },
+        });
         const admission = f.engine.resolution.slotAdmissionReason.bind(
           f.engine.resolution,
         );
@@ -17667,8 +17688,7 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
         // End the synthetic turn explicitly after the busy callback wake.
         f.adapter.stopAgentTurn = async () => {};
         t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
-        const receipt = await f.engine.complete(
-          {
+        const result: Completion = {
             eventId: "direct-review-result",
             taskId: f.task.id,
             runId: run.id,
@@ -17677,14 +17697,24 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
             summary: "Fix the defect",
             head: run.head,
             reviewCommentId: 1,
-          },
-          f.tokens.get(run.id)!,
-        );
+        };
+        const token = f.tokens.get(run.id)!;
+        // Exercise both the detached callback path and an already host-bound wake.
+        const receipt = timelineMissing
+          ? f.engine.resolution.complete(result, token)
+          : await f.engine.complete(result, token);
+        if (timelineMissing)
+          await f.engine.withHost(run.hostId, () => f.engine.wakeTask(f.task.id));
         assert.equal(receipt.accepted, true);
         await f.engine.quiesce();
         assert.equal(f.store.run(run.id)?.released, false);
         assert.equal(cleanup()?.state, "intent");
         assert.deepEqual(reviewerReadPhases, [], "the reviewer is still busy");
+        assert.deepEqual(
+          observed,
+          [run.agentId],
+          "a busy wake reads only its reported reviewer",
+        );
 
         t.mock.timers.tick(1000);
         f.idle(run.agentId, run.workspaceId, new Date().toISOString());

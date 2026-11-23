@@ -105,8 +105,11 @@ display:
   - the turn's stop reason.
 - **Nucleus's own stops, waits and repair records.**
 
-An unexplained gap uses the last concluded run for both its occurrence and its
-age. With no concluded run, its age starts at task creation.
+An unexplained gap takes its age and occurrence from the task's current phase
+entry and participant binding. A new phase entry, run or binding starts a new
+occurrence. Metadata writes preserve it. An unbound gap can use the last
+concluded run, and older rows without an occurrence record fall back to
+durable run and task creation times.
 
 The task's ACP thread shows that reading, using the native structures of ACP
 instead of a stream of text lines:

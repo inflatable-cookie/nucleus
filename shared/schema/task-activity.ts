@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+export const activityOccurrenceSchema = z
+  .object({
+    at: z.string().datetime({ offset: true }),
+    version: z.number().int().positive(),
+  })
+  .strict();
+
 const toolSchema = z
   .object({
     name: z.string(),

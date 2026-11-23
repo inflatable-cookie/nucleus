@@ -1,4 +1,4 @@
-import { participantActivitySchema } from "./task-activity";
+import { activityOccurrenceSchema, participantActivitySchema } from "./task-activity";
 import { z } from "zod";
 import { briefDigestSchema, laneDocumentRefSchema } from "./briefs";
 import { hostSelectionSchema } from "../host-selection";
@@ -288,6 +288,8 @@ export const runSchema = z.object({
     "uncertain",
   ]),
   createdAt: z.string(),
+  /** Rebinding the same run starts a new activity occurrence. */
+  bindingOccurrence: activityOccurrenceSchema.optional(),
   lastObservedAt: z.string().nullable(),
   lastActivityAt: z.string().nullable().optional(),
   participantActivity: participantActivitySchema.nullable().optional(),

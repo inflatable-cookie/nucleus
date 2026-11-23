@@ -608,18 +608,29 @@ export function taskActivity({
       task.createdAt,
       { occurrence: `queued:${task.createdAt}` },
     );
-  // The last concluded run owns an unexplained gap. Task metadata writes
-  // do not restart its clock.
-  const concluded = runs.findLast((run) => run.released || run.completion);
+  const bound = current ?? live;
+  const concluded = bound || workerBound
+    ? undefined
+    : runs.findLast((run) => run.released || run.completion);
+  const binding = bound ?? concluded;
+  const conclusion = concluded?.explicitlyReleasedAt ?? concluded?.completionReceivedAt;
+  const since = latest(
+    task.activityOccurrence?.at ?? task.createdAt,
+    binding?.bindingOccurrence?.at ?? binding?.createdAt,
+    conclusion,
+  ) ?? task.createdAt;
   return answer(
     "unclassified",
     `${label} · ${role ? "no recent activity" : "no live run or wait"}`,
-    concluded?.explicitlyReleasedAt ??
-      concluded?.completionReceivedAt ??
-      concluded?.createdAt ??
-      task.createdAt,
+    since,
     {
-      occurrence: `reading:${task.phase}:${concluded?.id ?? ""}`,
+      occurrence: `reading:${JSON.stringify([
+        task.phase,
+        task.activityOccurrence?.version ?? 0,
+        binding?.id ?? task.runId,
+        binding?.bindingOccurrence?.version ?? 0,
+        conclusion ?? null,
+      ])}`,
     },
   );
 }

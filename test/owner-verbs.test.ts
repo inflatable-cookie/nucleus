@@ -3603,6 +3603,7 @@ test("owner continuation gates disclose recorded run-bound cleanup without chang
   try {
     t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
     const before = cleanupNoteFixture(f);
+    const since = new Date().toISOString();
     t.mock.timers.tick(60_000);
     const at = "2026-10-24T00:00:00.000Z";
     f.store.update(f.taskId, {
@@ -3632,7 +3633,7 @@ test("owner continuation gates disclose recorded run-bound cleanup without chang
       },
     });
     const after = f.next();
-    assert.equal(after.activity?.since, f.task().createdAt);
+    assert.equal(after.activity?.since, since);
     // The note is additive: verb set, availability, args, fill, refusals, stop and holds are identical.
     assert.deepEqual(withoutNotes(after), withoutNotes(before));
     for (const verb of after.verbs)

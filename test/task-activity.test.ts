@@ -8,6 +8,7 @@ import {
   taskStopRecord, type Task,
 } from "../shared/contracts";
 import { TASK_PROGRESSING_REASON } from "../shared/task-stop";
+import { taskActivity } from "../shared/task-activity";
 import { inFlightSlotWaitReason } from "../shared/wait-state";
 import type { AgentObservation } from "../core/host/adapter";
 import { observedParticipantProcess, participantProcessLiveness, rememberParticipantProcessTable } from "../core/machine/participant-process-observation";
@@ -128,7 +129,6 @@ test("an unexplained activity gap keeps the time of the concluded run across met
   }));
   const before = read();
   assert.equal(before.state, "unclassified");
-  assert.equal(before.occurrence, "reading:blocked:review-run");
   assert.equal(before.since, completionReceivedAt);
 
   t.mock.timers.tick(60_000);
@@ -138,6 +138,60 @@ test("an unexplained activity gap keeps the time of the concluded run across met
   });
   assert.notEqual(after.updatedAt, current.updatedAt);
   assert.deepEqual(read(), before);
+});
+
+test("a phase entry, a new run and a later participant binding each start a new activity age", t => {
+  const { store, task } = fixture(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const activity = () => taskActivity({
+    task: store.task(task.id),
+    runs: store.runs(task.id),
+    events: [],
+    stop: null,
+    now: Date.now(),
+  });
+  const keyAfter = (previous: ReturnType<typeof activity>) => {
+    const current = activity();
+    assert.equal(current.state, "unclassified");
+    assert.equal(current.since, at());
+    assert.notEqual(current.occurrence, previous.occurrence);
+    return current;
+  };
+  store.putRun(runSchema.parse({
+    id: "previous-review", taskId: task.id, role: "reviewer", generation: 1, head, base: head,
+    agentId: "previous-reviewer", workspaceId: "workspace", profile: null, status: "finished",
+    createdAt: at(5), lastObservedAt: at(4), idleSince: null, active: false,
+    completion: null, completionReceivedAt: at(4), released: true,
+  }));
+  store.update(task.id, { phase: "blocked" });
+  const blocked = activity();
+  t.mock.timers.tick(60_000);
+  store.update(task.id, { phase: "verifying" });
+  const verifying = keyAfter(blocked);
+  // Two phase entries can be committed with the same clock reading.
+  store.update(task.id, { phase: "blocked" });
+  assert.notEqual(keyAfter(verifying).occurrence, blocked.occurrence);
+
+  store.update(task.id, { phase: "reviewing" });
+  const beforeRun = activity();
+  t.mock.timers.tick(60_000);
+  const run = runSchema.parse({
+    id: "new-review", taskId: task.id, role: "reviewer", generation: 2, head, base: head,
+    agentId: null, workspaceId: "workspace", profile: null, status: "running",
+    createdAt: at(), lastObservedAt: null, idleSince: null, active: false,
+    completion: null, released: false,
+  });
+  store.putRun(run);
+  const unbound = keyAfter(beforeRun);
+  t.mock.timers.tick(60_000);
+  store.putRun({ ...run, agentId: "reviewer" });
+  const bound = keyAfter(unbound);
+  t.mock.timers.tick(60_000);
+  const current = store.task(task.id);
+  store.update(task.id, {
+    resolution: { ...current.resolution, cleanupReason: "Awaiting cleanup" },
+  });
+  assert.deepEqual(activity(), bound);
 });
 
 test("a spent budget or parked revision allowance with no run reads as a typed stop for a person, never progressing", t => {

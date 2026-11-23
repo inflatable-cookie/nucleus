@@ -653,11 +653,18 @@ for (const releasePath of ["sweep", "callback"]) {
         slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id);
       t.mock.timers.tick(31_000);
       assert.deepEqual(slow(), []);
+      // Pause merge admission so it cannot consume the samples as soon as
+      // the scheduled quantum lifts the timed hold.
+      f.store.setMeta("paused", true);
       t.mock.timers.tick(4_000);
-      assert.equal(
-        f.engine.resolution.reconcileHoldUntil(task.id),
-        "auto_released",
+      if (releasePath === "sweep") await f.engine.sweepOnce();
+      else await f.engine.wakeTask(task.id);
+      await f.engine.quiesce();
+      const releases = f.store.eventsAll(task.id).filter(
+        (event) => event.kind === "hold_auto_released",
       );
+      assert.deepEqual(releases.map((event) => event.at), [until]);
+      assert.equal(f.current(task.id).holds.merge, undefined);
       assert.deepEqual(slow(), []);
       t.mock.timers.tick(30_000);
       assert.deepEqual(slow(), []);

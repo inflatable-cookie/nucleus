@@ -1,5 +1,8 @@
-import { taskActivitySchema } from "./task-activity";
-import { participantActivitySchema } from "./task-activity";
+import {
+  activityOccurrenceSchema,
+  participantActivitySchema,
+  taskActivitySchema,
+} from "./task-activity";
 import { hostSelectionSchema } from "../host-selection";
 import { taskDecisionFactSchema } from "../task-stop";
 import { z } from "zod";
@@ -123,6 +126,8 @@ export const taskSchema = submissionSchema
     // when that run releases, before the next dispatch.
     prerequisiteWait: retainedPrerequisiteWaitSchema.nullable().default(null),
     phase: taskPhaseSchema,
+    /** Starts when the phase or its task-row participant binding changes. */
+    activityOccurrence: activityOccurrenceSchema.optional(),
     /** Free text by contract: the retained-profile fact among it is read by `shared/retained-profile.ts`, never matched here. */
     reason: z.string(),
     reasonFact: taskDecisionFactSchema.nullable().optional(),

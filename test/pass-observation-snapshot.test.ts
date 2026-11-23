@@ -4412,12 +4412,7 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
   const f = engineFixture(t, {
     verifyWorkspace: async () => "ns-worker-presend",
     readStash: async () => {
-      if (expireBeforeCreateAgent) {
-        const until = Date.now() + 220;
-        while (Date.now() < until) {
-          /* advance past 200 ms scope so createAgent itself hits preSend: true */
-        }
-      }
+      if (expireBeforeCreateAgent) t.mock.timers.tick(220);
       return [];
     },
     createAgent: async () => {
@@ -4677,6 +4672,9 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
     profile: workerProfile,
   });
   expireBeforeCreateAgent = true;
+  // The clock advances at the stash read so setup latency cannot expire the
+  // deadline before workspace verification.
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   await runInTaskQuantumScope(200, async () => {
     await f.engine.launchAgent(workerTask);
   });

@@ -4,6 +4,7 @@ import type {
   HostTimelineEntry,
   HostTimelinePage,
 } from "../../shared/host";
+import type { Run } from "../../shared/contracts";
 import type { HostProcessListRead } from "../machine/host-process-listing";
 
 /**
@@ -370,6 +371,11 @@ type CachedTimelinePageEntry = {
  */
 export class PassSnapshot {
   private isActive = true;
+  private busyWakeParticipant?: {
+    run: Run;
+    state: HostObservation;
+    at: string;
+  };
   private readonly hostInventories = new Map<
     string,
     Map<string, HostObservation>
@@ -394,12 +400,30 @@ export class PassSnapshot {
   /** End this pass's validity window and drop all cached observations. */
   expire(): void {
     this.isActive = false;
+    this.busyWakeParticipant = undefined;
     this.hostInventories.clear();
     this.processReads.clear();
     this.timelineReads.clear();
     this.timelinePageReads.clear();
     this.timelineBudgetExhausted.clear();
     this.sealedHosts.clear();
+  }
+
+  /** The wake's direct read of its reported participant, scoped to that run state. */
+  recordBusyWakeParticipant(run: Run, state: HostObservation, at: string): void {
+    if (this.isActive) this.busyWakeParticipant = { run, state, at };
+  }
+
+  observedBusyWakeParticipant(
+    run: Run,
+  ): { state: HostObservation; at: string } | undefined {
+    const captured = this.busyWakeParticipant;
+    if (
+      this.isActive &&
+      captured &&
+      JSON.stringify(captured.run) === JSON.stringify(run)
+    )
+      return captured;
   }
 
   /**

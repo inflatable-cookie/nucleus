@@ -316,8 +316,11 @@ export class CallbackIntake {
         presentedRunId,
       );
       void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
-      await this.resolution.settleCompletedExecutorBlocker(input);
-      void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
+      // Executor blocker settlement can write a new wait after the first wake.
+      if (sourceRun?.role === "executor") {
+        await this.resolution.settleCompletedExecutorBlocker(input);
+        void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
+      }
       return receipt;
     };
     // Task 560: a superseded executor run's late report is historical
