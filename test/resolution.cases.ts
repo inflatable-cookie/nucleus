@@ -78,7 +78,6 @@ import { Decisions } from "../core/planning/decisions";
 import { chooseProfile } from "../core/dispatch/routing";
 import { resolveNonDeliveryRoute } from "../core/dispatch/run-launch/non-delivery-route";
 import { taskWaitStateContext } from "../core/recovery/wait-context";
-import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 import { ownerRevisionFixture } from "./support/review-entry-fixture";
 import { HostPassAgentStates } from "./support/host-pass-agent-states";
 import { stepEngine } from "./support/engine-step";
@@ -14971,15 +14970,15 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
     const resumed = new Engine(reopened, f.adapter, 120_000);
     resumed.profiles = [...f.engine.profiles];
     resumed.lastHookCleanupAt = Date.now();
-    let readStarted!: () => void;
-    let releaseRead!: () => void;
-    const reading = new Promise<void>((resolve) => {
-      readStarted = resolve;
+    let enterCleanup!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      enterCleanup = resolve;
     });
-    const gated = new Promise<null>((resolve) => {
-      releaseRead = () => resolve(null);
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
     });
-    let cleanup: Promise<void> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       assert.equal(
         readCreationAttempt(reopened, run)?.settlement?.attemptId,
@@ -15007,25 +15006,40 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
       ];
       const attemptsBefore = reopened.task(f.task.id).resolution
         .recoveryAttempts;
-      // The host pass can list processes immediately while this cleanup read is owed.
-      cleanup = sweepSettledRunProcesses(reopened, "host", {
-        readProcesses: () => {
-          readStarted();
-          return gated;
-        },
+      // The shared listing is available. Hold the actual cleanup quantum the
+      // audit schedules after that listing so recovery must progress alongside it.
+      const scheduleLane = resumed.scheduleLane.bind(resumed);
+      resumed.scheduleLane = (key, priority, work, options) => {
+        if (
+          key !== `cleanup:${f.task.hostId}` ||
+          options?.coalesce !== "settled-run-process-cleanup"
+        )
+          return scheduleLane(key, priority, work, options);
+        return scheduleLane(
+          key,
+          priority,
+          async () => {
+            enterCleanup();
+            await cleanupGate;
+            await work();
+          },
+          options,
+        );
+      };
+      const deadline = new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () =>
+            reject(
+              Error("Expected audit recovery to finish while its cleanup lane was blocked"),
+            ),
+          5_000,
+        );
       });
-      const audit = resumed.auditPass(true);
-      const timeout = AbortSignal.timeout(5_000);
       const [, pass] = await Promise.race([
-        Promise.all([reading, audit]),
-        new Promise<never>((_, reject) => {
-          timeout.addEventListener(
-            "abort",
-            () => reject(Error("recovery waited for process cleanup")),
-            { once: true },
-          );
-        }),
+        Promise.all([cleanupStarted, resumed.auditPass(true)]),
+        deadline,
       ]);
+      clearTimeout(timeout);
       assert.equal(pass.fault, null);
       assert.ok(pass.visited.has(f.task.id));
       const settled = reopened.task(f.task.id);
@@ -15082,8 +15096,8 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
         moved.reason,
       );
     } finally {
-      releaseRead();
-      await cleanup;
+      clearTimeout(timeout);
+      releaseCleanup();
       await resumed.stop();
       reopened.close();
     }
