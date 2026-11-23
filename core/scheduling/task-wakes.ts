@@ -30,6 +30,7 @@ import {
 import { routeUnavailableStop } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { HostReadRefusalError } from "../host";
+import { PassProofPendingError } from "../host/errors";
 import { WorkspaceObservationUnavailableError } from "../workspaces/workspace-allocation";
 import { isTransportFailure } from "../../shared/transport";
 import {
@@ -53,6 +54,7 @@ import {
   runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
 import { knownExecutionParticipantIds } from "../machine/execution-participants";
+import { custodyProofDeferral, requireCustodyEvidence } from "../machine/custody-proof";
 import {
   TOOL_TIMELINE_LIMIT,
   TOOL_TIMELINE_READ_BUDGET,
@@ -454,7 +456,7 @@ export class TaskWakes {
         operation.id,
         "op",
       );
-      if (episode && episode.exhaustedAt == null)
+      if (episode && episode.exhaustedAt == null && !episode.retryOnPass)
         this.armHostReadTransient(operation.id, episode.retryAt, "op");
     }
   }
@@ -692,27 +694,34 @@ export class TaskWakes {
       }
       return "exhausted";
     }
-    this.store.setMeta(key, next);
+    const retryOnPass =
+      operation &&
+      (error instanceof PassProofPendingError || activeOld?.retryOnPass === true);
     const scopeParts = [
       next.hostId ? `host ${next.hostId}` : null,
       next.target || null,
     ].filter(Boolean);
     const scopeText = scopeParts.length ? ` (${scopeParts.join(", ")})` : "";
-    const visible = `${next.step ?? step} read incomplete${scopeText}; retrying automatically (attempt ${next.attempts}): ${detail}`;
+    const retry = retryOnPass ? "retrying after the next host pass" : "retrying automatically";
+    const visible = `${next.step ?? step} read incomplete${scopeText}; ${retry} (attempt ${next.attempts}): ${detail}`;
     if (operation) {
-      const current = this.store.operation(id);
-      if (current)
-        this.store.putOperation({
-          ...current,
-          state: "pending",
-          settledAt: null,
-          diagnostic: visible.slice(0, 4000),
-        });
+      this.store.transaction(() => {
+        this.store.setMeta(key, retryOnPass ? { ...next, retryOnPass: true } : next);
+        const current = this.store.operation(id);
+        if (current)
+          this.store.putOperation({
+            ...current,
+            state: "pending",
+            settledAt: null,
+            diagnostic: visible.slice(0, 4000),
+          });
+      });
     } else {
+      this.store.setMeta(key, next);
       const task = this.store.taskOrNull(id);
       if (task) this.resolution.waiting(task, visible, "external_unavailable");
     }
-    this.armHostReadTransient(id, next.retryAt, scope);
+    if (!retryOnPass) this.armHostReadTransient(id, next.retryAt, scope);
     return "wait";
   }
 
@@ -1002,17 +1011,17 @@ export class TaskWakes {
             hostId,
             async () => {
               try {
-                const listed = await adapter.hostProcessListing!();
-                return listed
-                  ? { state: "listed", processes: listed }
-                  : {
-                      state: "unknown",
-                      reason: "the host process listing is unreadable",
-                    };
+                const processes = requireCustodyEvidence(
+                  await adapter.hostProcessListing!(),
+                  "the host process listing",
+                );
+                return { state: "listed", processes };
               } catch (error) {
+                const deferred = custodyProofDeferral({ kind: "error", error });
                 return {
                   state: "unknown",
                   reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+                  ...(deferred ? { deferred: true } : {}),
                 };
               }
             },

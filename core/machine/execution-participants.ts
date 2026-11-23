@@ -62,6 +62,7 @@ export function executionParticipants(
 export function knownExecutionParticipantIds(
   task: Task,
   runs: Run[],
+  options: { includeExplicitlyReleased?: boolean } = {},
 ): Array<{ agentId: string; workspaceId: string | null }> {
   const byAgent = new Map<string, string | null>();
   const add = (
@@ -75,18 +76,18 @@ export function knownExecutionParticipantIds(
   add(task.agentId, task.workspaceId);
   for (const worker of task.retiredWorkers) {
     const run = runs.find((item) => item.id === worker.runId);
-    if (run?.explicitlyReleasedAt) continue;
+    if (run?.explicitlyReleasedAt && !options.includeExplicitlyReleased) continue;
     add(worker.agentId, run?.workspaceId || task.workspaceId);
   }
   for (const run of runs) {
     if (!["revision", "reviewer", "executor"].includes(run.role)) continue;
     if (run.taskId !== task.id) continue;
-    if (run.explicitlyReleasedAt) continue;
+    if (run.explicitlyReleasedAt && !options.includeExplicitlyReleased) continue;
     add(run.agentId, run.workspaceId);
   }
   for (const proof of task.proofExecutions) {
     const run = runs.find((item) => item.id === proof.runId);
-    if (run?.explicitlyReleasedAt) continue;
+    if (run?.explicitlyReleasedAt && !options.includeExplicitlyReleased) continue;
     add(proof.agentId, proof.workspaceId);
   }
   return [...byAgent.entries()].map(([agentId, workspaceId]) => ({

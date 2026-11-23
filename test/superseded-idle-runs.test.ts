@@ -856,7 +856,7 @@ test("conflicting running shell needs the same empty process proof", async () =>
   }
 });
 
-test("an unreadable provider process listing still holds a finished turn", async () => {
+test("an unreadable provider process listing leaves a finished turn pending", async () => {
   const f = fixture();
   try {
     f.store.update(f.taskId, {
@@ -892,10 +892,8 @@ test("an unreadable provider process listing still holds a finished turn", async
       0,
     );
     assert.equal(f.store.run("stale-unreadable-run")!.released, false);
-    assert.match(
-      f.events("owned_tool_hold")[0]!.detail,
-      /process tree is unreadable/,
-    );
+    assert.equal(f.events("owned_tool_hold").length, 0);
+    assert.equal(f.events("owned_tool_settled").length, 0);
   } finally {
     await f.close();
   }
@@ -1060,7 +1058,10 @@ test("a refused owned-tool retry settles its operation without creating an uncer
       },
     });
     f.run({ id: "refused-unknown-run", agentId: "coord-refused" });
-    f.observe("coord-refused", { activeTurnId: null });
+    f.observe("coord-refused", {
+      activeTurnId: null,
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
     f.timelineEntries.push({
       timestamp: new Date().toISOString(),
       turnId: "turn-1",
@@ -1125,8 +1126,11 @@ test("a refused owned-tool retry settles its operation without creating an uncer
       expectedVersion: task.version,
     });
     assert.ok("accepted" in accepted);
-    const operation = await f.engine.awaitOperation(accepted.operation.id);
-    assert.equal(operation.state, "failed", "the read-only refusal is settled");
+    await f.engine.quiesce();
+    assert.equal(f.engine.operationStatus(accepted.operation.id).state, "pending");
+    await f.engine.auditPass(true);
+    const operation = f.engine.operationStatus(accepted.operation.id);
+    assert.equal(operation.state, "failed", "the fresh proof refuses the live hold");
     assert.match(
       operation.diagnostic,
       /Owned-tool hold refused-unknown-run remains/,
@@ -1146,7 +1150,7 @@ test("a refused owned-tool retry settles its operation without creating an uncer
   }
 });
 
-test("a live shell descendant and an unreadable process tree keep the idle run held", async () => {
+test("a live shell descendant holds the idle run and a null listing defers settlement", async () => {
   for (const processes of [
     [
       {
@@ -1221,10 +1225,7 @@ test("a live shell descendant and an unreadable process tree keep the idle run h
           /descendant pid 102/,
         );
       else
-        assert.match(
-          f.events("owned_tool_hold")[0]!.detail,
-          /process tree is unreadable/,
-        );
+        assert.equal(f.events("owned_tool_hold").length, 0);
     } finally {
       await f.close();
     }

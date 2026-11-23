@@ -10,6 +10,7 @@ import { archiveUnusedWorkspace } from "../workspaces/unused-workspace";
 import { progressDisposition, reopenDispositionWorkspace } from "./disposition";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
 import type { Engine } from "../engine";
+import { PassProofPendingError } from "../host/errors";
 import {
   collectOwnerVerbFacts,
   ownerEffectIdentity,
@@ -434,6 +435,10 @@ export async function reconcileOwnedToolHold(
     requireCompleteEvidence: true,
     allowRetired: true,
   });
+  // An unread proof is demanded from the next pass, so it waits there; only a
+  // proven hold refuses (Spec 068 §6).
+  if (hold.kind === "deferred")
+    throw new PassProofPendingError(`Owned-tool hold ${runId}`, hold.reason);
   if (hold.kind !== "clear")
     throw Error(`Owned-tool hold ${runId} remains: ${hold.reason}`);
 }

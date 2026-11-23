@@ -44,6 +44,7 @@ function creationLookup(
 import { CREATION_REFUSED_BEFORE_SEND, refusedRunIds } from "./refused-launch";
 import { unwrapCoordinatorRouteWrapper } from "./host-read-transient";
 import {
+  coordinatorActionAttempt,
   taskProgressDigest,
   reportNamesNoAction,
   reportSettlesAsObservation,
@@ -590,13 +591,7 @@ export class CoordinatorEpisode {
       return;
     }
     if (
-      this.store
-        .eventsAll(t.id)
-        .some(
-          (event) =>
-            event.kind === "run_result_applying" &&
-            event.detail === applicationKey,
-        ) &&
+      coordinatorActionAttempt(this.store, t.id, applicationKey) === "run_result_applying" &&
       !resultApplied(this.store, t.id, latest.id)
     ) {
       this.resolution.attention(

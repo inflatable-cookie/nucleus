@@ -21,11 +21,15 @@ import { currentBrief } from "../planning/brief";
 import type { Store } from "../store/store";
 import type { HostFacade } from "../host/host-facade";
 import type { OwnedTools } from "../machine/owned-tool";
+import { PassProofPendingError } from "../host/errors";
+import { custodyProofDeferral } from "../machine/custody-proof";
+import type { Resolution } from "../resolution";
 
 export interface OrdinaryCustodyContext {
   readonly store: Store;
   readonly host: Pick<HostFacade, "observe">;
   ownedToolHold: OwnedTools["ownedToolHold"];
+  requestPassProof: Resolution["requestPassProof"];
   startsNoRuns(): boolean;
 }
 
@@ -89,7 +93,12 @@ export class OrdinaryCustody {
     for (const [id, workspaceId] of participants) {
       const allowRetired = restoring || id !== run.agentId;
       if (!allowRetired) {
-        const state = await this.context.host.observe(id);
+        const state = await this.context.host.observe(id).catch((error) => {
+          const deferred = custodyProofDeferral({ kind: "error", error });
+          if (!deferred) throw error;
+          this.context.requestPassProof(t.hostId, id);
+          throw new PassProofPendingError(`Ordinary review participant ${id}`, deferred.reason);
+        });
         if (
           !matchingInactiveParticipant({ agentId: id, workspaceId }, state, [
             "idle",
@@ -113,6 +122,13 @@ export class OrdinaryCustody {
         taskId: t.id,
         workspaceId,
       });
+      // A proof the pass could not read yet is demanded from the next pass:
+      // the send waits for it rather than stopping the task (Spec 068 §6).
+      if (held.kind === "deferred")
+        throw new PassProofPendingError(
+          `Ordinary review participant ${id}`,
+          held.reason,
+        );
       if (held.kind !== "clear") {
         if (
           held.reason ===

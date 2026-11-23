@@ -135,6 +135,7 @@ import {
 
 import { Stalls } from "./recovery/stall";
 import { OwnedTools } from "./machine/owned-tool";
+import { custodyProofDeferral, requireCustodyEvidence } from "./machine/custody-proof";
 import { PrAdoption } from "./review/pr-adoption";
 import {
   ProviderRefusals,
@@ -492,7 +493,7 @@ export class Resolution {
   /** The currently active pass snapshot (sweep pass or wake-scoped), or null outside a pass. */
   currentPassSnapshot(): PassSnapshot | null {
     const scoped = currentTaskQuantumScope()?.snapshot;
-    if (scoped?.active) return scoped;
+    if (scoped) return scoped.active ? scoped : null;
     return this.passSnapshot?.active ? this.passSnapshot : null;
   }
 
@@ -601,21 +602,21 @@ export class Resolution {
   ): Promise<PassProcessRead> {
     const key = this.passHostKey(hostId);
     const deadlineMs = this.passProcessReadTimeoutMs;
-    const read = async (): Promise<HostProcessListRead> => {
+    const read = async (): Promise<HostProcessListRead & { deferred?: true }> => {
       if (this.adapter.hostProcessListing) {
         try {
-          const listed = await this.adapter.hostProcessListing();
-          return listed
-            ? { state: "listed", processes: listed }
-            : {
-                state: "unknown",
-                reason: "the host process listing is unreadable",
-              };
+          const processes = requireCustodyEvidence(
+            await this.adapter.hostProcessListing(),
+            "the host process listing",
+          );
+          return { state: "listed", processes };
         } catch (error) {
           if (isQuantumDeadlineExceeded(error)) throw error;
+          const deferred = custodyProofDeferral({ kind: "error", error });
           return {
             state: "unknown",
             reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+            ...(deferred ? { deferred: true } : {}),
           };
         }
       }
@@ -1293,7 +1294,7 @@ export class Resolution {
     portsContext(this, ["adapter", "continuedPrBinding", "store"]),
   );
   readonly ordinaryCustody = new OrdinaryCustody(
-    portsContext(this, ["host", "ownedToolHold", "startsNoRuns", "store"]),
+    portsContext(this, ["host", "ownedToolHold", "requestPassProof", "startsNoRuns", "store"]),
   );
   readonly reviewAdvances = new ReviewAdvances(
     portsContext(this, [
@@ -1678,6 +1679,7 @@ export class Resolution {
       "claimIntegrationTurn",
       "continuedPrBinding",
       "continuedProgressWait",
+      "currentPassSnapshot",
       "deliverLaunchRun",
       "ensureIncident",
       "holdForSpentBudget",

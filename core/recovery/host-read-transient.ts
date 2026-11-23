@@ -14,6 +14,8 @@ export interface HostReadTransientEpisode {
   exhaustedAt?: number | null;
   resumePhase?: Task["phase"] | null;
   movedToAttention?: boolean;
+  /** The next attempt needs the owning host's completed pass snapshot. */
+  retryOnPass?: true;
 }
 
 /** Binding context for one pre-send or host observation read wait. */
