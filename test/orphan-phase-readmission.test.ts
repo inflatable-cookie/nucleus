@@ -186,7 +186,7 @@ test("a released revision nothing binds goes through ordinary result application
   releasedRevision(f, "ready_for_review", "Addressed review findings", head, false);
   const orphan = orphanPhase(f.store, f.store.task(f.task.id), false);
   assert.equal(orphan?.move, "result");
-  assert.equal(orphan?.result?.id, "revision-1");
+  assert.equal(orphan?.result?.kind === "revision" && orphan.result.run.id, "revision-1");
   quantum(f).graceMs = 0;
   await quantum(f).settle(f.task.id, false);
   assert.equal(events(f, ORPHAN_PHASE_STOPPED).length, 0, JSON.stringify(events(f, ORPHAN_PHASE_STOPPED)));

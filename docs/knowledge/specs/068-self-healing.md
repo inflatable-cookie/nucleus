@@ -164,7 +164,12 @@ safe. The LLM coordinator is kept for ambiguity, and planners for judgement.
   failover, a provider retry and a blocking side effect. A released revision
   whose authenticated report nothing applied goes back through ordinary result
   application, so a pushed head goes to review and a blocked report climbs the
-  blocker ladder. A refused move, a result application that changes nothing, or
+  blocker ladder. So does an initial worker's report whose binding was released
+  before it applied: it gets its run binding back and the worker's own result
+  acceptance verifies the PR it names at the exact head. A lifecycle wait does
+  not hold that result, since nothing else owns it. A resolved recovery episode
+  is history, not an owner, and an intent flag holds the task only while its
+  creation has bound nothing. A refused move, a result application that changes nothing, or
   a fourth readmission in one episode with nothing started records
   `operator_needed` with fact `orphan_phase`. The readmission is the backstop: a
   state that reaches it is some owner deferring silently, and the cause is fixed

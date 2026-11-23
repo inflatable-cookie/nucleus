@@ -282,6 +282,7 @@ export class Engine {
     enginePorts(
       this,
       [
+        "acceptWorkerResult",
         "adapter",
         "cleanContext",
         "enqueueCleanup",
