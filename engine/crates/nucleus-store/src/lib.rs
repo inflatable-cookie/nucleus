@@ -16,9 +16,11 @@ pub use settings::{EngineSettings, EngineStorage, SettingsFile, StorageError};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
+const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
+  WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -85,13 +87,17 @@ impl Store {
                 })? == 0 =>
             {
                 tx.execute_batch(include_str!("schema.sql"))?;
+                tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
-            (APPLICATION_ID, 1) => {
-                tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
-                tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
+            (APPLICATION_ID, 1 | 2) => {
+                if version == 1 {
+                    tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
+                    tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
+                }
+                tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -126,12 +132,20 @@ impl Store {
     /// # Errors
     /// Returns an error if the database cannot read the page.
     pub fn active_ids(&self, after: Option<&str>, limit: u32) -> Result<Vec<String>, StoreError> {
-        let mut query = self.connection.prepare_cached(
-            "SELECT id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
-             AND (?1 IS NULL OR id > ?1) ORDER BY id LIMIT ?2",
-        )?;
-        let rows = query.query_map(params![after, limit], |row| row.get(0))?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        let prefix =
+            "SELECT id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)";
+        let statement = if after.is_some() {
+            format!("{prefix} AND id > ?2 ORDER BY id LIMIT ?1")
+        } else {
+            format!("{prefix} ORDER BY id LIMIT ?1")
+        };
+        let mut query = self.connection.prepare_cached(&statement)?;
+        let decode = |row: &Row<'_>| row.get(0);
+        let ids = match after {
+            Some(id) => query.query_map(params![limit, id], decode)?,
+            None => query.query_map(params![limit], decode)?,
+        };
+        Ok(ids.collect::<Result<_, _>>()?)
     }
 
     /// Count other tasks whose possibly sent run still holds a launch slot.
@@ -193,21 +207,8 @@ impl Store {
         Ok(())
     }
 
-    /// Replace a task if its observed state is still current. State and audit
-    /// event commit together. Callers perform remote I/O outside the transaction.
-    ///
-    /// # Errors
-    /// Returns an error if the expected state is stale or the write fails.
-    pub fn save(
-        &mut self,
-        expected: &Task,
-        task: &Task,
-        event: &EventDraft,
-    ) -> Result<(), StoreError> {
-        self.replace(expected, None, task, event).map(|_| ())
-    }
-
-    /// Replace exactly the row version and run read by the caller.
+    /// Replace exactly the row version and run read by the caller. State and
+    /// audit commit together. Remote I/O belongs outside the transaction.
     /// # Errors
     /// Returns an error on a competing write or transaction failure.
     pub fn save_row(
@@ -216,24 +217,14 @@ impl Store {
         task: &Task,
         event: &EventDraft,
     ) -> Result<i64, StoreError> {
-        self.replace(&expected.task, Some(expected.version), task, event)
-    }
-
-    fn replace(
-        &mut self,
-        expected: &Task,
-        version: Option<i64>,
-        task: &Task,
-        event: &EventDraft,
-    ) -> Result<i64, StoreError> {
-        if expected.identity() != task.identity() {
+        if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
         }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let row = load(&tx, &task.identity().id)?.ok_or(StoreError::StaleTask)?;
-        if &row.task != expected || version.is_some_and(|version| version != row.version) {
+        if row != *expected {
             return Err(StoreError::StaleTask);
         }
         persist(&tx, task, true)?;

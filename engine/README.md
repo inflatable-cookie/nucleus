@@ -234,11 +234,13 @@ board reads committed task data separately from those checks.
 An open question owns its message intent. Resolve the project's most active
 responsible planner at send time. Keep the thread ID only as part of the native delivery
 binding. Reconcile that binding before rebinding when the planner changes.
-Unsettle a settled thread and read that change back before queueing. Queue
-behind an active turn and let an idle planner start immediately. Derive
-acceptance and turn start from the exact message. Turn start proves delivery.
-Replay the saved wire under the same command ID after the host's wait window.
-Clearing the question also clears its binding.
+Unsettle a settled thread with a command ID tied to that settlement, then read
+it back. Queue behind an active turn and let an idle planner start immediately.
+Record the send marker after the preflight, just before dispatching the frozen
+message. The exact turn's start timestamp proves delivery. Replay uncertain
+delivery under the same ID after the host's wait window. A durable rejection or
+a terminal turn that never started permits a fresh binding. Clearing the
+question also clears its binding.
 
 ## ACP task sessions
 

@@ -20,7 +20,7 @@ use launch::{Method, Wire, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
 use process::{Activity, Inventory};
 use projection::Projection;
-pub use questions::{NoticeAuthorization, NoticeState, PlannerThread};
+pub use questions::{NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, PlannerThread};
 use rpc::{Read, Reply, Rpc};
 use serde_json::{Value, json};
 use tokio::sync::OnceCell;
@@ -507,44 +507,47 @@ fn available(provider: &Value, profile: &RoleProfile) -> bool {
 }
 
 fn rejected(cause: &Value, wire: &Wire, instance: &str) -> bool {
-    let Some([reason]) = cause.as_array().map(Vec::as_slice) else {
+    if wire.method == Method::Continue {
+        return dispatch_rejected(cause, instance);
+    }
+    let Some(error) = command_failure(cause, instance) else {
         return false;
     };
-    if reason["_tag"] != "Fail" {
-        return false;
-    }
-    let error = &reason["error"];
-    if error["commandId"] != instance {
-        return false;
-    }
     let defect = &error["cause"];
-    match wire.method {
-        Method::Continue => {
-            error["_tag"] == "OrchestrationV2DispatchCommandError"
-                && error["commandType"] == "message.dispatch"
-                && rejected_command(defect, instance, "message.dispatch")
-        }
-        Method::Create => {
-            error["_tag"] == "OrchestrationV2ThreadLaunchError"
-                && error["projectId"] == wire.binding.project_id
-                && defect_named(defect, "ThreadLaunchError")
-                && [
-                    ("create-thread", instance.to_owned(), "thread.create"),
-                    (
-                        "dispatch-message",
-                        format!("{instance}:initial-message"),
-                        "message.dispatch",
-                    ),
-                ]
-                .iter()
-                .any(|(operation, command_id, command)| {
-                    (defect["operation"] == *operation
-                        || defect["message"]
-                            == format!("Thread launch {instance} failed during {operation}."))
-                        && rejected_command(&defect["cause"], command_id, command)
-                })
-        }
-    }
+    error["_tag"] == "OrchestrationV2ThreadLaunchError"
+        && error["projectId"] == wire.binding.project_id
+        && defect_named(defect, "ThreadLaunchError")
+        && [
+            ("create-thread", instance.to_owned(), "thread.create"),
+            (
+                "dispatch-message",
+                format!("{instance}:initial-message"),
+                "message.dispatch",
+            ),
+        ]
+        .iter()
+        .any(|(operation, command_id, command)| {
+            (defect["operation"] == *operation
+                || defect["message"]
+                    == format!("Thread launch {instance} failed during {operation}."))
+                && rejected_command(&defect["cause"], command_id, command)
+        })
+}
+
+fn dispatch_rejected(cause: &Value, id: &str) -> bool {
+    command_failure(cause, id).is_some_and(|error| {
+        error["_tag"] == "OrchestrationV2DispatchCommandError"
+            && error["commandType"] == "message.dispatch"
+            && rejected_command(&error["cause"], id, "message.dispatch")
+    })
+}
+
+fn command_failure<'a>(cause: &'a Value, id: &str) -> Option<&'a Value> {
+    let [reason] = cause.as_array()?.as_slice() else {
+        return None;
+    };
+    let error = &reason["error"];
+    (reason["_tag"] == "Fail" && error["commandId"] == id).then_some(error)
 }
 
 fn defect_named(value: &Value, name: &str) -> bool {

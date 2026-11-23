@@ -3,9 +3,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use nucleus_core::QuestionDelivery;
 use serde::Deserialize;
 use serde_json::{Value, json, value::RawValue};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
-    HostError, LATE_REPLY_MS, T3,
+    HostError, LATE_REPLY_MS, T3, dispatch_rejected,
     launch::message_id,
     projection,
     rpc::{Read, Reply},
@@ -28,28 +29,47 @@ pub enum NoticeState {
     Absent,
     Queued,
     Started,
+    /// The exact turn terminated before entering its provider.
+    Undelivered,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeSend {
+    Accepted,
+    Rejected,
+}
+
+/// Exact wire prepared by a fresh native read and any required unsettle.
 pub struct NoticeAuthorization {
     thread: String,
     command: String,
+    payload: Box<RawValue>,
     previous: Option<u64>,
-    now_ms: u64,
+}
+
+/// The caller must persist the corresponding send marker before dispatch.
+pub struct NoticeDispatch {
+    command: String,
+    payload: Box<RawValue>,
 }
 
 impl NoticeAuthorization {
     /// Advance the notice marker before persisting and using the permit.
     /// # Errors
     /// Returns an error if the notice changed after authorization.
-    pub fn record(&self, delivery: &mut QuestionDelivery) -> Result<(), HostError> {
+    pub fn record(self, delivery: &mut QuestionDelivery) -> Result<NoticeDispatch, HostError> {
         if delivery.thread != self.thread
             || delivery.command != self.command
+            || delivery.payload != self.payload.get()
             || delivery.last_send_at_ms != self.previous
         {
             return Err(HostError::Binding);
         }
-        delivery.last_send_at_ms = Some(self.now_ms);
-        Ok(())
+        delivery.last_send_at_ms = Some(clock_ms()?);
+        Ok(NoticeDispatch {
+            command: self.command,
+            payload: self.payload,
+        })
     }
 }
 
@@ -130,92 +150,79 @@ impl T3 {
         notice_state(&projection, &delivery.command)
     }
 
-    /// Permit a new send only after the preceding late reply can be reconciled.
+    /// Reconcile any preceding send and unsettle the exact planner if needed.
+    /// The caller holds the question's task fence across this operation.
     /// # Errors
     /// Returns an error when the request is unreadable.
     pub async fn authorize_notice(
         &self,
         delivery: &QuestionDelivery,
     ) -> Result<Option<NoticeAuthorization>, HostError> {
-        let clock = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| HostError::Uncertain)?;
-        let now_ms = u64::try_from(clock.as_millis()).map_err(|_| HostError::Uncertain)?;
-        if delivery
+        let now_ms = clock_ms()?;
+        let reply_may_arrive = delivery
             .last_send_at_ms
-            .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS)
-        {
-            return Ok(None);
-        }
-        let Some((thread, projection)) = self.notice_projection(&delivery.thread).await? else {
+            .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS);
+        let payload = frozen_payload(delivery)?;
+        let Some((mut thread, mut projection)) = self.notice_projection(&delivery.thread).await?
+        else {
             return Ok(None);
         };
         let state = notice_state(&projection, &delivery.command)?;
-        let due = thread.snoozed_until.is_none()
-            && (state == NoticeState::Absent || state == NoticeState::Queued && settled(&thread));
-        Ok(due.then(|| NoticeAuthorization {
-            thread: delivery.thread.clone(),
-            command: delivery.command.clone(),
-            previous: delivery.last_send_at_ms,
-            now_ms,
-        }))
-    }
-
-    /// Unsettle the exact planner thread, then queue its durable message.
-    /// # Errors
-    /// Returns an error if the target is unreadable or the outcome is uncertain.
-    pub async fn send_notice(
-        &self,
-        delivery: &QuestionDelivery,
-        authorization: NoticeAuthorization,
-    ) -> Result<(), HostError> {
-        if delivery.thread != authorization.thread
-            || delivery.command != authorization.command
-            || delivery.last_send_at_ms != Some(authorization.now_ms)
-        {
-            return Err(HostError::Binding);
-        }
-        let payload: Box<RawValue> =
-            serde_json::from_str(&delivery.payload).map_err(|_| HostError::Binding)?;
-        let fields: Value = serde_json::from_str(payload.get()).map_err(|_| HostError::Binding)?;
-        if fields["threadId"] != delivery.thread
-            || fields["commandId"] != delivery.command
-            || fields["messageId"] != message_id(&delivery.command)
-            || fields["type"] != "message.dispatch"
-            || fields["dispatchMode"]["type"] != "queue_after_active"
-        {
-            return Err(HostError::Binding);
-        }
-        let Some((mut thread, mut projection)) = self.notice_projection(&delivery.thread).await?
-        else {
-            return Err(HostError::Uncertain);
+        let ready = match state {
+            NoticeState::Absent => !reply_may_arrive,
+            NoticeState::Queued => settled(&thread),
+            _ => false,
         };
-        if thread.snoozed_until.is_some() {
-            return Err(HostError::Uncertain);
+        if !ready || snoozed(&thread)? {
+            return Ok(None);
         }
         if settled(&thread) {
+            let at = thread.settled_at.as_deref().ok_or(HostError::Uncertain)?;
+            let occurrence = OffsetDateTime::parse(at, &Rfc3339)
+                .map_err(|_| HostError::Protocol)?
+                .unix_timestamp_nanos();
             self.thread_command(json!({
                 "type":"thread.unsettle", "threadId":delivery.thread,
-                "commandId":format!("{}-unsettle", delivery.command), "reason":"user",
+                "commandId":format!("{}-unsettle-{occurrence}", delivery.command), "reason":"user",
             }))
             .await?;
             let Some(fresh) = self.notice_projection(&delivery.thread).await? else {
                 return Err(HostError::Uncertain);
             };
             (thread, projection) = fresh;
-            if settled(&thread) || thread.snoozed_until.is_some() {
-                return Err(HostError::Uncertain);
+            if settled(&thread) || snoozed(&thread)? {
+                return Ok(None);
             }
         }
-        if notice_state(&projection, &delivery.command)? != NoticeState::Absent {
-            return Ok(());
+        if reply_may_arrive || notice_state(&projection, &delivery.command)? != NoticeState::Absent
+        {
+            return Ok(None);
         }
+        Ok(Some(NoticeAuthorization {
+            thread: delivery.thread.clone(),
+            command: delivery.command.clone(),
+            payload,
+            previous: delivery.last_send_at_ms,
+        }))
+    }
+
+    /// Send the recorded wire. An exact rejection permits a fresh binding.
+    /// # Errors
+    /// Returns an error if the outcome is uncertain.
+    pub async fn send_notice(&self, dispatch: NoticeDispatch) -> Result<NoticeSend, HostError> {
         match self
             .rpc
-            .call("orchestration.dispatchCommand", payload.as_ref(), Read::One)
+            .call(
+                "orchestration.dispatchCommand",
+                dispatch.payload.as_ref(),
+                Read::One,
+            )
             .await?
         {
-            Reply::Value(_) => Ok(()),
+            Reply::Value(_) => Ok(NoticeSend::Accepted),
+            Reply::Failure(cause) if dispatch_rejected(&cause, &dispatch.command) => {
+                Ok(NoticeSend::Rejected)
+            }
             Reply::Failure(_) => Err(HostError::Uncertain),
         }
     }
@@ -262,6 +269,35 @@ fn settled(thread: &NoticeThread) -> bool {
     thread.settled_at.is_some() || thread.settled_override.as_deref() == Some("settled")
 }
 
+fn clock_ms() -> Result<u64, HostError> {
+    let clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| HostError::Uncertain)?;
+    u64::try_from(clock.as_millis()).map_err(|_| HostError::Uncertain)
+}
+
+fn snoozed(thread: &NoticeThread) -> Result<bool, HostError> {
+    thread.snoozed_until.as_deref().map_or(Ok(false), |end| {
+        let end = OffsetDateTime::parse(end, &Rfc3339).map_err(|_| HostError::Protocol)?;
+        Ok(end > OffsetDateTime::now_utc())
+    })
+}
+
+fn frozen_payload(delivery: &QuestionDelivery) -> Result<Box<RawValue>, HostError> {
+    let payload: Box<RawValue> =
+        serde_json::from_str(&delivery.payload).map_err(|_| HostError::Binding)?;
+    let fields: Value = serde_json::from_str(payload.get()).map_err(|_| HostError::Binding)?;
+    if fields["threadId"] != delivery.thread
+        || fields["commandId"] != delivery.command
+        || fields["messageId"] != message_id(&delivery.command)
+        || fields["type"] != "message.dispatch"
+        || fields["dispatchMode"]["type"] != "queue_after_active"
+    {
+        return Err(HostError::Binding);
+    }
+    Ok(payload)
+}
+
 fn notice_state(projection: &Value, command: &str) -> Result<NoticeState, HostError> {
     let message = message_id(command);
     let runs = projection["runs"].as_array().ok_or(HostError::Protocol)?;
@@ -274,15 +310,19 @@ fn notice_state(projection: &Value, command: &str) -> Result<NoticeState, HostEr
         .iter()
         .find(|run| run["userMessageId"] == message || associated.is_some_and(|id| run["id"] == id))
     {
-        return match run["status"].as_str() {
-            Some("running" | "waiting" | "completed" | "interrupted") => Ok(NoticeState::Started),
-            Some("failed" | "cancelled") if run["startedAt"].is_string() => {
+        return match (run["status"].as_str(), run.get("startedAt")) {
+            (_, Some(Value::String(started)))
+                if OffsetDateTime::parse(started, &Rfc3339).is_ok() =>
+            {
                 Ok(NoticeState::Started)
             }
-            Some(
-                "failed" | "cancelled" | "preparing" | "queued" | "starting" | "idle"
-                | "rolled_back",
-            ) => Ok(NoticeState::Queued),
+            (
+                Some("failed" | "cancelled" | "completed" | "interrupted" | "rolled_back"),
+                Some(Value::Null),
+            ) => Ok(NoticeState::Undelivered),
+            (Some("preparing" | "queued" | "starting" | "idle"), Some(Value::Null)) => {
+                Ok(NoticeState::Queued)
+            }
             _ => Err(HostError::Uncertain),
         };
     }
