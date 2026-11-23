@@ -5,9 +5,12 @@ that own durable task dispatch, review, merge, closeout and recovery. Every task
 runs the responsible lifecycle: one worker owns it end to end, one retained
 reviewer reviews it, the planner ladder takes rulings, and one retained recovery
 thread handles faults code cannot settle. Nucleus must never become a place that
-invents planning decisions, grants execution authority from documents, or
-bypasses exact-head review (only an explicit, recorded operator source
-acceptance of the exact head may stand in for it; Tom, 2026-10-20).
+invents planning decisions or grants execution authority from documents.
+Merging through Nucleus requires exact-head review, qualified owner acceptance
+or recorded operator source acceptance. The operator-source rule came through
+a 2026-10-20 agent relay. A responsible planner or the operator board may
+explicitly accept an observed external merge for closeout (Tom, 2026-11-23).
+See [Spec 067](docs/knowledge/specs/067-explicit-resolution.md#external-merge-source-acceptance).
 
 ## Where things live
 

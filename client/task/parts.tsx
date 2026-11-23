@@ -609,6 +609,8 @@ function ownerAcceptanceLabel(
         : record.actor.role === "delegated"
           ? `delegated to ${record.actor.agentId}`
           : record.actor.agentId;
+  if (record.kind === "external_merge_source")
+    return `${record.actor.role === "planner" ? `Planner ${who}` : "Operator"} accepted external merge · head ${record.head.slice(0, 12)} · ${record.missingEvidence}`;
   // A source acceptance is accepted risk, not verified review: the board names what was missing.
   const kind =
     record.kind === "operator_source"

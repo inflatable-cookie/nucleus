@@ -1195,9 +1195,9 @@ export type OwnedToolHoldResult =
  * - `unavailable`: unreadable observation or identity mismatch.
  */
 export type ObservedTurnStateRead =
-  | { kind: "observed"; state: ObservedTurnState }
+  | { kind: "observed"; state: AgentObservation }
   | { kind: "deferred"; reason: string }
-  | { kind: "unavailable"; reason: string };
+  | { kind: "unavailable"; reason: string; error?: unknown };
 
 /**
  * The turn facts of one fresh observation, read after the tool evidence it
@@ -1231,6 +1231,7 @@ export async function observedTurnState(
     return {
       kind: "unavailable",
       reason: error instanceof Error ? error.message : String(error),
+      error,
     };
   }
 }

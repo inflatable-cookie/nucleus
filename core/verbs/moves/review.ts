@@ -8,6 +8,7 @@ import {
 import { validateNamedProfile } from "../../dispatch/routing";
 import type { Engine } from "../../engine";
 import { assertCanonicalPrSource, taskPrNumber } from "../../forge/index";
+import { PassProofPendingError } from "../../host/errors";
 import { publishedReviewDecision } from "../../intake/result-application";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
 import { verifyEnclosingOperationMatching } from "../../planning/enclosing-operation";
@@ -300,6 +301,8 @@ export async function moveToReview(
           taskId: task.id,
           workspaceId: task.workspaceId,
         });
+        if (hold.kind === "deferred")
+          throw new PassProofPendingError(`Retired worker ${agentId}`, hold.reason);
         if (hold.kind !== "clear")
           throw Error(
             hold.reason ===

@@ -1,0 +1,1 @@
+Restore an escalation's operator wait after a restart or repeated handoff while keeping its existing decision. Record new handoffs atomically, honor answers while their wait is current, and show the escalation clear command in `next`.

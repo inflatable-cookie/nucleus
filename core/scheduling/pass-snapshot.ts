@@ -385,6 +385,7 @@ export class PassSnapshot {
   >();
   private readonly timelineBudgetExhausted = new Map<string, string>();
   private readonly sealedHosts = new Set<string>();
+  private readonly completedHostPasses = new Set<string>();
 
   /** True only while the owning sweep pass is still running. */
   get active(): boolean {
@@ -400,6 +401,16 @@ export class PassSnapshot {
     this.timelinePageReads.clear();
     this.timelineBudgetExhausted.clear();
     this.sealedHosts.clear();
+    this.completedHostPasses.clear();
+  }
+
+  /** Actual host passes that finished warming without a host fault. */
+  completeHostPass(hostId: string): void {
+    if (this.isActive) this.completedHostPasses.add(hostId);
+  }
+
+  hostPassCompleted(hostId: string | null | undefined): boolean {
+    return Boolean(hostId && this.completedHostPasses.has(hostId));
   }
 
   /**

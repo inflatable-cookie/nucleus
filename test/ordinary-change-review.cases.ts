@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ownerRevisionFixture, runGit } from "./support/review-entry-fixture";
+import { HostPassAgentStates } from "./support/host-pass-agent-states";
 import {
   OPERATOR_BOARD_CALLER,
   runSchema,
@@ -25,7 +26,9 @@ import { queueOperationSchema } from "../shared/operations";
 import { supersedeIdleRunInTx } from "../core/recovery/fence-settlement";
 import { reviewPublicationBody } from "../core/forge/index";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
-import type { ResolutionAdapter } from "../core/resolution";
+import { TOOL_TIMELINE_LIMIT } from "../core/recovery/stall";
+import { HostReadRefusalError } from "../core/host/errors";
+import type { HostProcessFact } from "../core/host";
 import {
   ordinaryReviewSource,
   ordinaryReviewDelta,
@@ -47,7 +50,8 @@ import {
 import type { HostAgentSpec } from "../shared/host";
 
 function fixture() {
-  const f = ownerRevisionFixture();
+  const states = new HostPassAgentStates();
+  const f = ownerRevisionFixture(states);
   let store = f.store;
   const worker: Profile = {
     ...f.reviewer,
@@ -123,12 +127,10 @@ function fixture() {
   });
   const sends: Run[] = [];
   let reviewPublications = 0;
-  const make = (
-    f.buildAdapter() as ReturnType<typeof f.buildAdapter> & ResolutionAdapter
-  ).createRun;
+  const host = f.buildAdapter();
+  const make = host.createRun;
 
   const faults = {
-    unknownTools: false,
     staleCovering: false,
     mergeNeedsApproval: false,
     blockOrdinarySend: false,
@@ -139,6 +141,7 @@ function fixture() {
     createTrace: [] as string[],
   };
   const overrides: Parameters<typeof f.buildEngine>[0] = {
+    observe: async (id) => states.withActivityStamp(await host.observe(id)),
     verifyPr: async () => ({
       url: store.task(task.id).prUrl!,
       head: f.state.prSha,
@@ -170,8 +173,7 @@ function fixture() {
       base: runGit(f.repo, "rev-parse", "main"),
       wait: "",
     }),
-    agentTimelinePage: async () =>
-      faults.unknownTools ? null : toolTimelinePage([]),
+    agentTimelinePage: async () => toolTimelinePage([]),
     authorCommentEvidence: async () => {
       if (faults.admissionRace) {
         faults.admissionRace = false;
@@ -187,6 +189,9 @@ function fixture() {
       assert.equal(stillAllowed(), true);
       await ordinaryReviewSource(t, run.head);
       sends.push(run);
+      const state = states.get(run.agentId!);
+      assert.ok(state);
+      states.set(state.id, { ...state, status: "running", active: true });
       return { sent: true };
     },
     createRun: async (t, run, token, _context, _owner, guard) => {
@@ -2626,26 +2631,6 @@ test("a retained new-head round checkpoints and automatically continues the same
   }
 });
 
-test("unknown tools refuse the ordinary new-head send while preserving the earlier verdict and checkout", async () => {
-  const f = fixture();
-  try {
-    await f.engine.wake();
-    const first = f.current();
-    await f.report(first, "changes_required");
-    f.faults.unknownTools = true;
-    await authorRevision(f, 1);
-    assert.equal(f.sends.length, 0);
-    assert.match(f.store.task(f.task.id).reason, /unknown tools|inconclusive/);
-    assert.equal(f.store.run(first.id)!.completion!.status, "changes_required");
-    assert.equal(
-      runGit(f.workspace, "branch", "--show-current"),
-      "feature/external",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
 test("a genuine rebase author report receives base movement and covering evidence, then a genuine verdict at the new head", async () => {
   const f = fixture();
   try {
@@ -2701,42 +2686,107 @@ test("a genuine rebase author report receives base movement and covering evidenc
   }
 });
 
-test("a closed reviewer after a retained round permits a fresh reviewer", async () => {
-  const f = fixture();
-  try {
-    await f.engine.wake();
-    const first = f.current();
-    await f.report(first, "changes_required");
-    const second = await authorRevision(f, 1);
-    await f.report(second, "blocked", { reviewResponsibility: "environment" });
-    f.states.set(second.agentId!, {
-      ...f.states.get(second.agentId!)!,
-      status: "closed",
-      active: false,
-    });
-    await f.engine.performTaskControl({
-      taskId: f.task.id,
-      version: f.store.task(f.task.id).version,
-      action: "restart",
-      role: "reviewer",
-      fresh: true,
-      reason: "Owner requests a fresh reviewer",
-    });
-    await f.engine.wake();
-    await f.engine.wake();
-    const review = f.current();
-    assert.ok(review, f.store.task(f.task.id).reason);
-    assert.notEqual(review.agentId, second.agentId);
-    assert.equal(review.head, second.head);
-    assert.equal(f.store.run(second.id)!.completion!.status, "blocked");
-    assert.equal(
-      runGit(f.workspace, "branch", "--show-current"),
-      "feature/external",
-    );
-  } finally {
-    await f.close();
-  }
-});
+test(
+  "a closed reviewer after a retained round permits a fresh reviewer",
+  async () => {
+    const f = fixture();
+    try {
+      await f.engine.wake();
+      const first = f.current();
+      await f.report(first, "changes_required");
+      const second = await authorRevision(f, 1);
+      assert.equal(second.agentId, first.agentId);
+      // Record the callback without sending a separate task wake. The host
+      // pass supplies both checkout participants' pages before application.
+      f.idle(second);
+      const receipt = f.engine.resolution.complete(
+        {
+          taskId: f.task.id,
+          runId: second.id,
+          eventId: randomUUID(),
+          status: "blocked",
+          reviewResponsibility: "environment",
+          head: second.head,
+          summary: "Environment unavailable",
+        },
+        f.tokens.get(second.id)!,
+      );
+      assert.equal(receipt.accepted, true);
+      const reporting = f.store.task(f.task.id);
+      const { hostId, agentId } = reporting;
+      const reviewerId = second.agentId;
+      assert.ok(hostId && agentId && reviewerId);
+      const resolution = f.engine.resolution;
+      const pass = resolution.beginPassSnapshot();
+      try {
+        await f.engine.onTaskHost(reporting, async () => {
+          for (const id of [agentId, reviewerId]) {
+            const observation = await f.adapter.observe(id);
+            resolution.recordPassHostObservation(hostId, id, observation);
+            const page = await resolution.primePassTimelinePage(
+              id,
+              TOOL_TIMELINE_LIMIT,
+              hostId,
+              { coveredObservation: observation },
+            );
+            assert.equal(page.state, "ok", `host-pass page for ${id}`);
+          }
+        });
+        resolution.sealPassHost(hostId);
+        await f.engine.scheduleTaskQuantum(reporting.id, pass);
+      } finally {
+        resolution.endPassSnapshot(pass);
+      }
+      const blocked = f.store.task(f.task.id);
+      assert.equal(
+        resultApplied(f.store, blocked.id, second.id),
+        true,
+        blocked.reason,
+      );
+      assert.equal(blocked.phase, "blocked", blocked.reason);
+      assert.equal(blocked.resolution.currentRunId, null);
+      assert.equal(blocked.resolution.review?.runId, second.id);
+      assert.equal(blocked.resolution.review?.status, "blocked");
+      f.states.set(reviewerId, {
+        ...f.states.get(reviewerId)!,
+        status: "closed",
+        active: false,
+      });
+      const closed = await f.adapter.observe(reviewerId);
+      assert.equal(closed.status, "closed");
+      assert.equal(closed.workspaceId, second.workspaceId);
+      assert.ok(Date.parse(closed.updatedAt ?? "") > 0);
+      assert.equal(f.store.run(second.id)?.released, true);
+      const restarted = await f.engine.performTaskControl({
+        taskId: f.task.id,
+        version: f.store.task(f.task.id).version,
+        action: "restart",
+        role: "reviewer",
+        fresh: true,
+        reason: "Owner requests a fresh reviewer",
+      });
+      await f.engine.wake();
+      await f.engine.wake();
+      const review = f.current();
+      assert.ok(review, f.store.task(f.task.id).reason);
+      const task = f.store.task(f.task.id);
+      assert.notEqual(
+        review.agentId,
+        reviewerId,
+        `restart returned "${restarted.phase}: ${restarted.reason}"; after two passes "${task.phase}: ${task.reason}"`,
+      );
+      assert.equal(task.resolution.reviewerAgentId, review.agentId);
+      assert.equal(review.head, second.head);
+      assert.equal(f.store.run(second.id)!.completion!.status, "blocked");
+      assert.equal(
+        runGit(f.workspace, "branch", "--show-current"),
+        "feature/external",
+      );
+    } finally {
+      await f.close();
+    }
+  },
+);
 
 test("a launch owns its reservation across concurrent observation and released-run telemetry refresh", async () => {
   const f = fixture();
@@ -3266,6 +3316,277 @@ test("a reviewer that reported while its turn still runs is stopped once and its
       `the reported verdict is applied: ${f.store.task(f.task.id).reason}`,
     );
     assert.equal(f.store.task(f.task.id).resolution.attention, false);
+  } finally {
+    await f.close();
+  }
+});
+
+async function waitForOrdinaryPassProof(f: ReturnType<typeof fixture>) {
+  await f.engine.wake();
+  const earlierReview = f.current();
+  await f.report(earlierReview, "changes_required");
+  await f.engine.wake();
+  const revision = f.current();
+  assert.equal(revision.role, "revision");
+  const head = f.pushRevision("revision 1");
+  f.idle(revision);
+  assert.ok(revision.profile);
+  const retired = { ...revision, id: "retired-revision", agentId: "retired-worker" };
+  const releasedAt = new Date().toISOString();
+  f.store.putRun({
+    ...retired,
+    active: false,
+    released: true,
+    explicitlyReleasedAt: releasedAt,
+    status: "superseded",
+    temporaryDirectory: join(f.root, "retired-scratch"),
+  });
+  f.idle(retired);
+  const task = f.store.task(f.task.id);
+  const namedCheck = "effigy test unit -- test/named-environment-check.test.ts";
+  f.store.update(task.id, {
+    retiredWorkers: [...task.retiredWorkers, {
+      runId: retired.id,
+      agentId: retired.agentId,
+      profile: revision.profile,
+      reason: "Retired and explicitly released",
+    }],
+    resolution: {
+      ...task.resolution,
+      proofRetry: { runId: earlierReview.id, head, proofs: [namedCheck], at: releasedAt },
+    },
+  });
+  // T3 stamps every observation; the freshness rule needs it.
+  const stamp = new Date(Date.now() - 60_000).toISOString();
+  for (const [id, state] of f.states)
+    f.states.set(id, { ...state, activeTurnId: null, updatedAt: stamp });
+  // The callback's own wake admits the reviewer outside any sweep pass. Its
+  // host-side prefetch runs out of budget before it reaches the retained
+  // participants (a slow host), so the custody proof inside the quantum reads
+  // a page that was never captured: unknown, never a refusal.
+  const resolution = f.engine.resolution as { hostPassWarmBudgetMs: number };
+  const warmBudget = resolution.hostPassWarmBudgetMs;
+  resolution.hostPassWarmBudgetMs = 0;
+  const result = await new Reports(f.engine).report(
+    {
+      taskId: f.task.id,
+      runId: revision.id,
+      eventId: randomUUID(),
+      status: "ready_for_review",
+      summary: "Fixed revision 1",
+      prNumber: 41,
+      head,
+    },
+    f.tokens.get(revision.id)!,
+  );
+  assert.equal((result as { accepted: boolean }).accepted, true);
+  await f.engine.quiesce();
+  resolution.hostPassWarmBudgetMs = warmBudget;
+  return { head, namedCheck, retiredAgentId: retired.agentId, earlierReview };
+}
+
+for (const evidence of ["timeline page", "process listing"] as const) {
+  test(`ordinary review retries a null ${evidence} without refusing the send`, async () => {
+    const f = fixture();
+    try {
+      const { retiredAgentId, earlierReview } = await waitForOrdinaryPassProof(f);
+      let unavailable = true;
+      if (evidence === "timeline page") {
+        const readPage = f.adapter.agentTimelinePage!;
+        f.adapter.agentTimelinePage = async (id, limit) =>
+          unavailable && id === retiredAgentId ? null : readPage(id, limit);
+      } else {
+        const retired = f.states.get(retiredAgentId);
+        assert.ok(retired);
+        f.states.set(retiredAgentId, { ...retired, status: "closed" });
+        f.adapter.noLiveWorkspaceProcesses = async () => null;
+        f.adapter.hostProcessListing = async () => unavailable ? null : [];
+      }
+      await f.engine.auditPass(true);
+      const waiting = f.store.task(f.task.id);
+      assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
+      assert.match(waiting.reason, new RegExp(`${evidence} is unreadable`));
+      assert.equal(f.sends.length, 0);
+      assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
+      assert.equal(f.store.run(earlierReview.id)?.completion?.status, "changes_required");
+      assert.equal(runGit(f.workspace, "branch", "--show-current"), "feature/external");
+
+      unavailable = false;
+      await f.engine.auditPass(true);
+      assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("ordinary review waits for a pass proof and sends the full review with its named check", async () => {
+  const f = fixture();
+  try {
+    const { head, namedCheck, retiredAgentId } = await waitForOrdinaryPassProof(f);
+    const waiting = f.store.task(f.task.id);
+    assert.equal(f.sends.length, 0, "nothing is sent on an unread proof");
+    assert.notEqual(
+      waiting.phase,
+      "needs_attention",
+      `an unread proof waits for the next pass (reason: ${waiting.reason})`,
+    );
+    assert.equal(waiting.resolution.stop?.reason ?? null, "lifecycle");
+    assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
+    assert.match(waiting.reason, /waits for the next host pass: agent timeline page was not captured/);
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .filter((event) => event.kind === "review_waiting_on_pass_proof").length,
+      1,
+      "the wait is retried by the next pass, not by an immediate follow-up reading the same miss",
+    );
+    assert.ok(
+      !f.store
+        .eventsAll(f.task.id)
+        .some((event) => event.kind === "ordinary_review_refused_before_send"),
+      "no pre-send refusal is recorded",
+    );
+    assert.equal(waiting.resolution.recovery ?? null, null, "no coordinator is summoned");
+    const beforeSend = f.store.runs(f.task.id).at(-1)!;
+    assert.equal(beforeSend.releasedBeforeSend, true);
+
+    const pages: string[] = [];
+    const readPage = f.adapter.agentTimelinePage!;
+    f.adapter.agentTimelinePage = async (id, request) => {
+      pages.push(id);
+      return readPage(id, request);
+    };
+    // The next host pass serves even the explicitly released retired worker.
+    await f.engine.auditPass(true);
+    if (!f.sends.length) await f.engine.auditPass(true);
+    const sent = f.store.task(f.task.id);
+    assert.equal(f.sends.length, 1, `the reviewer is sent (reason: ${sent.reason}, pages: ${pages.join(", ")})`);
+    assert.ok(pages.includes(retiredAgentId));
+    const run = f.sends[0]!;
+    assert.equal(run.ordinaryDetached, true);
+    assert.equal(run.head, head);
+    const prompt = runPrompt(sent, run, "/helper", "ticket", false);
+    assert.match(prompt, /You are the independent reviewer/);
+    assert.ok(prompt.includes(namedCheck), "the sent review keeps the named check");
+    assert.doesNotMatch(prompt, /Recover your own finished findings/);
+    assert.equal(sent.resolution.reviewPassProofWait, null);
+  } finally {
+    await f.close();
+  }
+});
+
+test("an intervening host-read wait preserves the ordinary pass proof deadline", async () => {
+  const f = fixture();
+  try {
+    await waitForOrdinaryPassProof(f);
+    const waiting = f.store.task(f.task.id);
+    const stop = waiting.resolution.stop;
+    assert.equal(stop?.fact?.code, "pass_proof");
+    assert.ok(stop);
+    (f.engine.resolution as { hostPassWarmBudgetMs: number }).hostPassWarmBudgetMs = 0;
+    await f.engine.auditPass(true);
+    const missed = f.store.task(f.task.id);
+    assert.equal(missed.resolution.stop?.since, stop.since, "a missed pass preserves the wait's start");
+    const proofWait = missed.resolution.reviewPassProofWait;
+    assert.ok(proofWait);
+    const since = new Date(Date.now() - 6 * 60_000).toISOString();
+    f.store.update(f.task.id, {
+      resolution: {
+        ...missed.resolution,
+        reviewPassProofWait: { ...proofWait, since },
+      },
+    });
+    const custody = f.engine.resolution.ordinaryRoundCustody.bind(f.engine.resolution);
+    f.engine.resolution.ordinaryRoundCustody = async (...args) => {
+      f.engine.resolution.ordinaryRoundCustody = custody;
+      throw new HostReadRefusalError("The participant inventory changed during the read");
+    };
+    await f.engine.auditPass(true);
+    const transient = f.store.task(f.task.id);
+    assert.equal(transient.resolution.stop?.reason, "external_unavailable");
+    assert.equal(transient.resolution.reviewPassProofWait?.since, since);
+    await f.engine.auditPass(true);
+    const exhausted = f.store.task(f.task.id);
+    assert.equal(f.sends.length, 0);
+    assert.equal(exhausted.phase, "needs_attention");
+    assert.equal(exhausted.resolution.stop?.reason, "operator_needed");
+    assert.equal(exhausted.resolution.stop?.fact?.code, "pass_proof_exhausted");
+    assert.match(exhausted.reason, /Ordinary review participant .*host pass timeline warming budget .* exhausted/);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const location of ["empty", "workspace", "scratch"] as const) {
+  test(`ordinary review defers when a retired worker changes after the ${location} process scan`, async () => {
+    const f = fixture();
+    try {
+      const { retiredAgentId } = await waitForOrdinaryPassProof(f);
+      const retired = f.states.get(retiredAgentId);
+      assert.ok(retired);
+      f.states.set(retiredAgentId, { ...retired, status: "closed" });
+      let scans = 0;
+      const exited: HostProcessFact = {
+        pid: 4242, ppid: 1, pgid: 4242, uid: 501, startIdentity: "retired-process",
+        command: "node retired-tool.js",
+        cwd: location === "workspace" ? f.workspace : join(f.root, "retired-scratch"),
+      };
+      f.adapter.noLiveWorkspaceProcesses = async (_workspace, _runs, _runtime, processes) =>
+        location === "workspace" && processes?.some((process) => process.pid === exited.pid)
+          ? "a cached workspace process is still listed"
+          : null;
+      f.adapter.hostProcessListing = async () => {
+        if (++scans === 1) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          f.states.set(retiredAgentId, {
+            ...retired,
+            status: "closed",
+            updatedAt: new Date().toISOString(),
+          });
+          if (location !== "empty") return [exited];
+        }
+        return [];
+      };
+      await f.engine.auditPass(true);
+      const waiting = f.store.task(f.task.id);
+      assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
+      assert.match(waiting.reason, /predates the participant's latest activity/);
+      assert.equal(f.sends.length, 0);
+      assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
+      await f.engine.auditPass(true);
+      assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("ordinary review defers on an empty tool page that predates later participant activity", async () => {
+  const f = fixture();
+  try {
+    const { retiredAgentId } = await waitForOrdinaryPassProof(f);
+    const retired = f.states.get(retiredAgentId);
+    assert.ok(retired);
+    const readPage = f.adapter.agentTimelinePage!;
+    let advanced = false;
+    f.adapter.agentTimelinePage = async (id, limit) => {
+      const page = await readPage(id, limit);
+      if (!advanced && id === retiredAgentId) {
+        advanced = true;
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        f.states.set(retiredAgentId, { ...retired, updatedAt: new Date().toISOString() });
+      }
+      return page;
+    };
+    await f.engine.auditPass(true);
+    const waiting = f.store.task(f.task.id);
+    assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
+    assert.match(waiting.reason, /cached tool timeline predates/);
+    assert.equal(f.sends.length, 0);
+    assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
+    await f.engine.auditPass(true);
+    assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
   } finally {
     await f.close();
   }

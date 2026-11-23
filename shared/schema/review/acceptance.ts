@@ -54,7 +54,7 @@ export type ReviewRecord = z.infer<typeof reviewRecordSchema>;
  * and authentic review identities, and a later PR head invalidates it for merge
  * while its history remains.
  *
- * Operator source acceptance (2026-10-20, Tom's "Approve" on lead 87115b71):
+ * Operator source acceptance (2026-10-20, introduced through an agent relay):
  * `kind: "operator_source"` records the same authority accepting the exact
  * published source head AS IS when no review evidence binds that head — an
  * interrupted or unfinished reviewer, an unpublished verdict, or a head a
@@ -63,7 +63,7 @@ export type ReviewRecord = z.infer<typeof reviewRecordSchema>;
  * risk. It is history the moment the head changes, never inherited by a new
  * head.
  */
-export const ownerAcceptanceRecordSchema = z.object({
+const sourceAndOwnerAcceptanceSchema = z.object({
   at: z.string(),
   /** What the acceptance binds. Absent parses as `reviewed`, so stored records keep loading unchanged. */
   kind: z.enum(["reviewed", "operator_source"]).default("reviewed"),
@@ -85,6 +85,22 @@ export const ownerAcceptanceRecordSchema = z.object({
   /** `operator_source` only: the concrete review evidence Queue found missing at the accepted head. It records the accepted risk, never a check result. */
   missingEvidence: z.string().trim().min(1).max(4000).nullable().default(null),
 }).strict();
+
+export const ownerAcceptanceRecordSchema = z.union([
+  sourceAndOwnerAcceptanceSchema,
+  sourceAndOwnerAcceptanceSchema.extend({
+    kind: z.literal("external_merge_source"),
+    mergedCommit: z.string().regex(/^[a-f0-9]{40}$/),
+    review: z.null(),
+    actor: sourceAndOwnerAcceptanceSchema.shape.actor.extend({
+      role: z.enum(["operator", "planner"]),
+    }),
+    authority: sourceAndOwnerAcceptanceSchema.shape.authority.extend({
+      kind: z.enum(["operator", "planner"]),
+    }),
+    missingEvidence: z.string().trim().min(1).max(4000),
+  }),
+]);
 
 export type OwnerAcceptanceRecord = z.infer<typeof ownerAcceptanceRecordSchema>;
 

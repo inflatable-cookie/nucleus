@@ -1366,12 +1366,19 @@ renderer resolves the seeds itself. Nucleus maps supplied roles to the board,
 uses its own surface steps for seeds, and fills missing roles from the board
 palette. A fixed environment appearance takes precedence over the browser's
 preference. A theme with one usable appearance uses that palette. An unavailable
-read or missing definition leaves a usable board palette.
+settings read or an unknown theme ID leaves the board's own palette.
+
+In both T3 appearances, the list and detail panes share the canvas and cards
+keep their own fills (Tom, 2026-11-23). The header and menu use the palette's
+sidebar shade, falling back to the canvas when the palette omits it. The menu
+uses foreground washes for hover and selection and marks the selected entry
+with a foreground bar.
 
 The planner ruled on 2026-11-23 that the board follows the environment defaults.
-T3 stores per-renderer choices and built-in palettes in its renderer. The board
-can use a built-in's colours only if the server supplies its definition. Exact
-parity with local T3 choices needs a supported T3 API.
+Published definitions take precedence over the built-in palettes copied from
+T3 Code and pinned to `0.1.12-nightly.20261122.5098`. An empty default theme
+uses the stock T3 Code palette in both appearances. Exact parity with a theme
+chosen locally in the T3 renderer's localStorage needs a supported T3 API.
 
 ### Native question answers
 

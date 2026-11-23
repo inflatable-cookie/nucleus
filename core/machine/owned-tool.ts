@@ -6,6 +6,7 @@ import type { Run, Task } from "../../shared/contracts";
 import { isTransportFailure } from "../../shared/transport";
 import { agentSettled } from "./agent-settled";
 import { boundedToolHold } from "./bounded-tool";
+import { custodyProofDeferral, requireCustodyEvidence } from "./custody-proof";
 import {
   bbThreadForAgent,
   bbWorkspaceThreads,
@@ -41,7 +42,6 @@ import {
   PASS_PROCESS_READ_DEADLINE_MS,
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
-  isQuantumDeadlineExceeded,
   type PassProcessRead,
   type PassTimelinePageRead,
 } from "../scheduling/pass-snapshot";
@@ -82,9 +82,13 @@ export class OwnedTools {
     onRead?: (read: PassTimelinePageRead) => void,
     deadlineMs?: number,
   ) {
-    if (!this.resolution.readPassTimelinePage) return this.resolution.host;
     return {
       agentTimelinePage: async (id: string, limit?: number) => {
+        if (!this.resolution.readPassTimelinePage)
+          return requireCustodyEvidence(
+            await this.resolution.host.agentTimelinePage(id, limit),
+            "the agent timeline page",
+          );
         const read = await this.resolution.readPassTimelinePage(
           id,
           limit,
@@ -98,7 +102,7 @@ export class OwnedTools {
         this.resolution.requestPassProof?.(hostId, id);
         if (read.state === "unknown")
           throw new DeferredPassReadError(read.reason);
-        return read.value;
+        return requireCustodyEvidence(read.value, "the agent timeline page");
       },
     };
   }
@@ -112,18 +116,22 @@ export class OwnedTools {
     if (this.adapter.hostProcessListing) {
       const read = await boundedRead(
         "host process listing",
-        () => this.adapter.hostProcessListing!(),
+        async () => requireCustodyEvidence(
+          await this.adapter.hostProcessListing!(),
+          "the host process listing",
+        ),
         this.processDeadlineMs,
-      ).catch((error) =>
-        isQuantumDeadlineExceeded(error)
-          ? { state: "unknown" as const, reason: error.message, deferred: true }
+      ).catch((error) => {
+        const deferred = custodyProofDeferral({ kind: "error", error });
+        return deferred
+          ? { state: "unknown" as const, reason: deferred.reason, deferred: true }
           : {
               state: "unknown" as const,
               reason: "failed",
               deferred: false,
-            },
-      );
-      if (read.state === "ok" && read.value) {
+            };
+      });
+      if (read.state === "ok") {
         return {
           state: "listed",
           processes: read.value,
@@ -131,20 +139,12 @@ export class OwnedTools {
           fromPassSnapshot: false,
         };
       }
-      if (read.state === "unknown") {
-        return {
-          state: "unknown",
-          reason: read.reason,
-          capturedAt,
-          fromPassSnapshot: false,
-          deferred: "deferred" in read ? read.deferred : true,
-        };
-      }
       return {
         state: "unknown",
-        reason: "the host process listing is unreadable",
+        reason: read.reason,
         capturedAt,
         fromPassSnapshot: false,
+        deferred: "deferred" in read ? read.deferred : true,
       };
     }
     const listing = await readHostUidProcesses({
@@ -167,67 +167,36 @@ export class OwnedTools {
    * - the participant's `updatedAt` has not advanced past `capturedAt` or
    *   changed since that pre-process observation.
    */
-  private processSnapshotPredatesEvidence(
+  private processProofDeferral(
     read: PassProcessRead,
     hostId: string | null | undefined,
     agentId: string,
     turn?: ObservedTurnState | null,
     entries?: TimelineEntry[],
-  ): string | null {
+  ) {
     // This proof reads the pass's process snapshot: ask the next host pass to
     // observe the participant before its snapshot, so the freshness rule can
     // hold there. The demand renews on every use and expires once unused.
     if (read.fromPassSnapshot) this.resolution.requestPassProof?.(hostId, agentId);
-    return this.snapshotPredates(read, hostId, agentId, turn, entries);
+    return custodyProofDeferral({
+      kind: "processes",
+      scan: read,
+      participant: turn,
+      beforeScan: read.fromPassSnapshot
+        ? this.resolution.passObservedBeforeProcesses?.(hostId, agentId)
+        : null,
+      entries,
+    });
   }
 
-  private snapshotPredates(
-    read: PassProcessRead,
+  private proofReadError(
+    error: unknown,
     hostId: string | null | undefined,
     agentId: string,
-    turn?: ObservedTurnState | null,
-    entries?: TimelineEntry[],
-  ): string | null {
-    if (!read.fromPassSnapshot) return null;
-    if (entries) {
-      for (const entry of entries) {
-        const at = Date.parse(entry.timestamp);
-        if (Number.isFinite(at) && at > read.capturedAt) {
-          return "the pass process snapshot predates observed tool activity; waiting for the next host pass";
-        }
-      }
-    }
-    if (turn?.updatedAt) {
-      const updatedMs = Date.parse(turn.updatedAt);
-      if (Number.isFinite(updatedMs) && updatedMs > read.capturedAt) {
-        return "the pass process snapshot predates the participant's latest activity; waiting for the next host pass";
-      }
-    }
-    const prior =
-      this.resolution.passObservedBeforeProcesses?.(hostId, agentId) ?? null;
-    const priorInactive = Boolean(
-      prior &&
-        (noTurnLive(prior) ||
-          prior.status === "gone" ||
-          prior.status === "closed" ||
-          prior.archived === true),
-    );
-    if (!priorInactive) {
-      return "the pass process snapshot was captured before the participant was proven inactive; waiting for the next host pass";
-    }
-    const priorTerminal = Boolean(
-      prior && (prior.status === "gone" || prior.archived === true),
-    );
-    if (!priorTerminal) {
-      if (
-        !turn?.updatedAt ||
-        !prior?.updatedAt ||
-        prior.updatedAt !== turn.updatedAt
-      ) {
-        return "the participant was active after the pass process snapshot or lacks a positive activity stamp; waiting for the next host pass";
-      }
-    }
-    return null;
+  ) {
+    const deferred = custodyProofDeferral({ kind: "error", error });
+    if (deferred) this.resolution.requestPassProof?.(hostId, agentId);
+    return deferred;
   }
 
   /**
@@ -313,6 +282,7 @@ export class OwnedTools {
     const task = options.taskId ? this.store.task(options.taskId) : null;
     const taskRuns = task ? this.store.runs(task.id) : [];
     const boundRun = options.runId ? this.store.run(options.runId) : null;
+    const hostId = boundRun?.hostId ?? task?.hostId;
     const runIds = options.runIds?.length
       ? options.runIds
       : options.runId
@@ -329,8 +299,10 @@ export class OwnedTools {
         workspaceId,
         remainingMs(),
       );
-      if (custody.kind === "deferred")
+      if (custody.kind === "deferred") {
+        this.resolution.requestPassProof?.(hostId, agentId);
         return { kind: "deferred", reason: custody.reason };
+      }
       if (custody.kind === "refuse")
         return { kind: "hold", reason: custody.reason };
       if (custody.kind === "retired" || custody.kind === "gone") {
@@ -387,14 +359,14 @@ export class OwnedTools {
           }
         : { kind: "clear" };
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
-    let lastPageRead: PassTimelinePageRead | null = null;
+    const timeline: { page?: PassTimelinePageRead } = {};
     try {
       const timelineDeadlineMs = remainingMs();
       read = await readToolTimeline(
         this.timelineHost(
-          boundRun?.hostId ?? task?.hostId,
+          hostId,
           (pageRead) => {
-            lastPageRead = pageRead;
+            timeline.page = pageRead;
           },
           timelineDeadlineMs,
         ),
@@ -402,8 +374,8 @@ export class OwnedTools {
         timelineDeadlineMs,
       );
     } catch (error) {
-      if (isQuantumDeadlineExceeded(error))
-        return { kind: "deferred", reason: error.message };
+      const deferred = this.proofReadError(error, hostId, agentId);
+      if (deferred) return deferred;
       if (
         error instanceof HostReadRefusalError ||
         isTransportFailure(error) ||
@@ -416,8 +388,45 @@ export class OwnedTools {
     if (read.kind === "deferred") {
       return { kind: "deferred", reason: read.reason };
     }
+    if (read.kind === "hold" && read.transientError) {
+      const deferred = this.proofReadError(read.transientError, hostId, agentId);
+      if (deferred) return deferred;
+      throw read.transientError;
+    }
+    const emptyPage =
+      read.kind === "ok" && read.coverage !== "bounded" &&
+      !liveToolIssueFact(read.entries);
+    const page = timeline.page;
+    const cachedPage =
+      page?.state === "ok" && page.value !== null && page.fromPassSnapshot
+        ? page
+        : null;
+    const turnRead =
+      cachedPage || (read.kind === "ok" && !emptyPage)
+      ? await observedTurnState(this.resolution.host, agentId, remainingMs())
+      : null;
+    if (turnRead?.kind === "deferred") return turnRead;
+    if (turnRead?.kind === "unavailable") {
+      const deferred = this.proofReadError(turnRead.error, hostId, agentId);
+      if (deferred) return deferred;
+      if (
+        read.kind === "ok" && read.coverage === "bounded" &&
+        (isTransportFailure(turnRead.error) || isHostOperationTimeout(turnRead.error) ||
+          turnRead.error instanceof HostTransportFault)
+      )
+        throw turnRead.error;
+    }
+    const turn = turnRead?.kind === "observed" ? turnRead.state : null;
+    if (cachedPage) {
+      const deferred = custodyProofDeferral({
+        kind: "timeline",
+        page: cachedPage,
+        participant: turn,
+        requiresInactivity: emptyPage,
+      });
+      if (deferred) return deferred;
+    }
     if (read.kind === "hold") {
-      if (read.transientError) throw read.transientError;
       return {
         kind: "hold",
         reason: `owned tool evidence is inconclusive: ${read.reason}`,
@@ -426,7 +435,7 @@ export class OwnedTools {
     if (read.coverage === "bounded") {
       const hold = await boundedToolHold(
         read,
-        this.resolution.host,
+        { observe: async () => turn },
         agentId,
         workspaceId,
         (observed) =>
@@ -460,55 +469,7 @@ export class OwnedTools {
           );
       return hold;
     }
-    if (!liveToolIssueFact(read.entries)) {
-      // Spec 068 §6: a warmed tool page with no live call may only clear a
-      // hold when a fresh observation proves no newer turn occurred since the
-      // page was captured (positive matching `coveredObservation.updatedAt`).
-      // A missing activity stamp never proves the turn did not change.
-      const pageMeta = lastPageRead as PassTimelinePageRead | null;
-      if (pageMeta?.fromPassSnapshot) {
-        const freshTurnRead = await observedTurnState(
-          this.resolution.host,
-          agentId,
-          remainingMs(),
-        );
-        if (freshTurnRead.kind === "deferred") {
-          return { kind: "deferred", reason: freshTurnRead.reason };
-        }
-        const freshTurn =
-          freshTurnRead.kind === "observed" ? freshTurnRead.state : null;
-        const freshInactive = Boolean(
-          freshTurn &&
-            !freshTurn.active &&
-            !freshTurn.permissions &&
-            !freshTurn.activeTurnId &&
-            ["idle", "error", "closed", "gone"].includes(
-              freshTurn.status ?? "",
-            ),
-        );
-        if (!freshInactive) {
-          return {
-            kind: "hold",
-            reason:
-              "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass",
-          };
-        }
-        const covered = pageMeta.coveredObservation;
-        const coveredUpdatedAt = covered?.updatedAt ?? null;
-        const freshUpdatedAt = freshTurn?.updatedAt ?? null;
-        const positiveMatch = Boolean(
-          coveredUpdatedAt &&
-            freshUpdatedAt &&
-            freshUpdatedAt === coveredUpdatedAt,
-        );
-        if (!positiveMatch) {
-          return {
-            kind: "hold",
-            reason:
-              "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation or lacks a positive activity stamp; waiting for the next host pass",
-          };
-        }
-      }
+    if (emptyPage) {
       if (options.taskId)
         for (const runId of runIds)
           this.recordOwnedToolSettlement(
@@ -518,17 +479,6 @@ export class OwnedTools {
           );
       return { kind: "clear" };
     }
-    // The turn proof is read AFTER the evidence it settles: an agent that became
-    // active, permissioned or turn-bound since then is caught here and holds.
-    const turnRead = await observedTurnState(
-      this.resolution.host,
-      agentId,
-      remainingMs(),
-    );
-    if (turnRead.kind === "deferred") {
-      return { kind: "deferred", reason: turnRead.reason };
-    }
-    const turn = turnRead.kind === "observed" ? turnRead.state : null;
     const issue = liveToolIssueFact(read.entries, turn);
     let hold = issue ? formatLiveToolIssue(issue) : null;
     const processEntries = read.entries.filter(
@@ -560,12 +510,10 @@ export class OwnedTools {
       const task = this.store.task(options.taskId);
       const processHostId = boundRun?.hostId ?? task.hostId;
       const processRead = await this.readProcesses(processHostId);
-      if (processRead.state === "unknown" && processRead.deferred) {
-        return {
-          kind: "deferred",
-          reason: `${toolLabel}; ${processRead.reason}`,
-        };
-      }
+      const deferred = this.processProofDeferral(
+        processRead, processHostId, agentId, turn, read.entries,
+      );
+      if (deferred) return { ...deferred, reason: `${toolLabel}; ${deferred.reason}` };
       const processes =
         processRead.state === "listed" ? processRead.processes : null;
       const bbThread = bbThreadForAgent(agentId, processHostId);
@@ -579,26 +527,15 @@ export class OwnedTools {
         noTurnLive: true,
         runtime,
       });
-      const predates = this.processSnapshotPredatesEvidence(
-        processRead,
-        processHostId,
-        agentId,
-        turn,
-        read.entries,
-      );
       if (verdict.state === "empty") {
-        if (predates) {
-          hold = `${toolLabel}; ${predates}`;
-        } else {
-          const heldRunId = options.runId ?? verdict.runId;
-          this.recordOwnedToolSettlement(
-            options.taskId,
-            heldRunId,
-            `run ${heldRunId}: stale non-turn-bound tool settled; agent helper run ${verdict.runId} proves provider pid ${verdict.providerPid} has no live descendants except Nucleus MCP report helper pid ${verdict.helperPid}`,
-            true,
-          );
-          hold = null;
-        }
+        const heldRunId = options.runId ?? verdict.runId;
+        this.recordOwnedToolSettlement(
+          options.taskId,
+          heldRunId,
+          `run ${heldRunId}: stale non-turn-bound tool settled; agent helper run ${verdict.runId} proves provider pid ${verdict.providerPid} has no live descendants except Nucleus MCP report helper pid ${verdict.helperPid}`,
+          true,
+        );
+        hold = null;
       } else if (verdict.state === "live") {
         hold = `${toolLabel}; descendant pid ${verdict.pid} remains under provider pid ${verdict.providerPid}`;
       } else if (
@@ -606,37 +543,21 @@ export class OwnedTools {
         options.workspaceId &&
         this.adapter.noLiveWorkspaceProcesses
       ) {
-        if (predates) {
-          hold = `${toolLabel}; ${predates}`;
-        } else {
-          const workspaceRead = await boundedRead(
-            "workspace process probe",
-            () =>
-              this.adapter.noLiveWorkspaceProcesses!(
-                options.workspaceId!,
-                runIds,
-                runtime,
-                processes,
-              ),
-            this.readDeadlineMs,
+        const workspaceRead = await this.workspaceProcessProof(
+          options.workspaceId, runIds, runtime, processes, processHostId,
+          agentId, remainingMs(),
+        );
+        if (workspaceRead.kind === "deferred")
+          return { ...workspaceRead, reason: `${toolLabel}; ${workspaceRead.reason}` };
+        if (workspaceRead.kind === "clear") {
+          this.recordOwnedToolSettlement(
+            options.taskId,
+            runIds[0]!,
+            `run ids ${runIds.join(", ")}: stale non-turn-bound tool settled; no process carried an MCP ticket and the task workspace process tree was empty`,
+            true,
           );
-          if (workspaceRead.state === "unknown") {
-            return {
-              kind: "deferred",
-              reason: `${toolLabel}; ${workspaceRead.reason}`,
-            };
-          }
-          const workspaceIssue = workspaceRead.value;
-          if (!workspaceIssue) {
-            this.recordOwnedToolSettlement(
-              options.taskId,
-              runIds[0]!,
-              `run ids ${runIds.join(", ")}: stale non-turn-bound tool settled; no process carried an MCP ticket and the task workspace process tree was empty`,
-              true,
-            );
-            hold = null;
-          } else hold = `${toolLabel}; ${workspaceIssue}`;
-        }
+          hold = null;
+        } else hold = `${toolLabel}; ${workspaceRead.reason}`;
       } else
         hold = `${toolLabel}; process tree is unreadable: ${verdict.reason}`;
     }
@@ -707,8 +628,8 @@ export class OwnedTools {
           "participant is not idle and permission-free in the recorded workspace",
       };
     } catch (error) {
-      if (isQuantumDeadlineExceeded(error))
-        return { kind: "deferred", reason: error.message };
+      const deferred = custodyProofDeferral({ kind: "error", error });
+      if (deferred) return deferred;
       observeError = error;
     }
     if (
@@ -733,8 +654,8 @@ export class OwnedTools {
           };
         origin = read.value;
       } catch (originError) {
-        if (isQuantumDeadlineExceeded(originError))
-          return { kind: "deferred", reason: originError.message };
+        const deferred = custodyProofDeferral({ kind: "error", error: originError });
+        if (deferred) return deferred;
         if (
           originError instanceof HostReadRefusalError ||
           isTransportFailure(originError) ||
@@ -817,24 +738,42 @@ export class OwnedTools {
     });
     const processHostId = boundRun?.hostId ?? task.hostId;
     const processRead = await this.readProcesses(processHostId);
+    const deferred = this.processProofDeferral(
+      processRead, processHostId, agentId, turn, entries,
+    );
+    if (deferred) return deferred;
     if (processRead.state !== "listed") {
-      if (processRead.deferred) {
-        return { kind: "deferred", reason: processRead.reason };
-      }
       return {
         kind: "hold",
         reason: processRead.reason || "the host process listing is unreadable",
       };
     }
     const processes = processRead.processes;
-    const predates = this.processSnapshotPredatesEvidence(
-      processRead,
-      processHostId,
-      agentId,
-      turn,
-      entries,
+    const workspaceProof = await this.workspaceProcessProof(
+      workspaceId, runIds, runtime, processes, processHostId, agentId, deadlineMs,
     );
-    if (predates) return { kind: "hold", reason: predates };
+    if (workspaceProof.kind !== "clear") return workspaceProof;
+    for (const directory of new Set(temporaryDirectories)) {
+      const issue = workspaceToolProcessIssue(
+        processes,
+        directory!,
+        runIds,
+        runtime,
+      );
+      if (issue) return { kind: "hold", reason: issue };
+    }
+    return { kind: "clear" };
+  }
+
+  private async workspaceProcessProof(
+    workspaceId: string,
+    runIds: string[],
+    runtime: ReturnType<typeof participantRuntime>,
+    processes: HostProcessFact[] | null,
+    hostId: string | null | undefined,
+    agentId: string,
+    deadlineMs: number,
+  ): Promise<OwnedToolHoldResult> {
     let workspaceRead: Awaited<ReturnType<typeof boundedRead<string | null>>>;
     try {
       workspaceRead = await boundedRead(
@@ -849,8 +788,8 @@ export class OwnedTools {
         deadlineMs,
       );
     } catch (error) {
-      if (isQuantumDeadlineExceeded(error))
-        return { kind: "deferred", reason: error.message };
+      const deferred = this.proofReadError(error, hostId, agentId);
+      if (deferred) return deferred;
       return {
         kind: "hold",
         reason: error instanceof Error ? error.message : String(error),
@@ -865,15 +804,6 @@ export class OwnedTools {
         reason:
           workspaceIssue || "the workspace process probe returned no verdict",
       };
-    for (const directory of new Set(temporaryDirectories)) {
-      const issue = workspaceToolProcessIssue(
-        processes,
-        directory!,
-        runIds,
-        runtime,
-      );
-      if (issue) return { kind: "hold", reason: issue };
-    }
     return { kind: "clear" };
   }
 

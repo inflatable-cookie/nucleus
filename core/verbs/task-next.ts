@@ -1,9 +1,10 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
 import { releaseWarnings } from "./explicit-resolution";
+import { plannerEscalations } from "../questions/ladder/records";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
-import { taskDetailView } from "../../shared/task-view";
+import { externalMergeSourceAcceptance, mergeReviewEvidenceAt, taskDetailView } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import { budgetGatesPhase } from "../../shared/task-budget";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
@@ -813,7 +814,23 @@ function explicitCommandsFor(
     });
   }
 
-  if (task.resolution.mergedCommit) {
+  const { mergedCommit, mergeHead, externalMerge } = task.resolution;
+  const proof = facts.externalCloseout;
+  const unreviewed = proof?.taskId === task.id && proof.version === task.version
+    ? proof.warning
+    : null;
+  if (unreviewed) {
+    push({
+      action: "closeout.now",
+      args: { action: "closeout.now", ...base },
+      fill: ["reason"],
+      note: `${unreviewed.text} Only a responsible planner or the operator board may accept this warning.`,
+      warnings: ["unreviewed_merge"],
+    });
+  } else if (mergedCommit && (
+    !externalMerge || externalMergeSourceAcceptance(task) ||
+    (mergeHead && mergeReviewEvidenceAt(task, mergeHead))
+  )) {
     push({
       action: "closeout.now",
       args: { action: "closeout.now", ...base },
@@ -891,6 +908,7 @@ function explicitCommandsFor(
   }
 
   if (task.resolution.stop) {
+    const fact = task.resolution.stop.fact;
     push({
       action: "record.clear",
       args: {
@@ -902,6 +920,16 @@ function explicitCommandsFor(
       fill: ["reason"],
       note: `Clear the ${task.resolution.stop.reason} stop record.`,
     });
+    if (fact?.code === "escalation" && fact.subject && plannerEscalations(facts.events).some(
+      escalation => escalation.id === fact.subject && !escalation.answered,
+    )) {
+      push({
+        action: "record.clear",
+        args: { action: "record.clear", ...base, kind: "escalation", id: fact.subject },
+        fill: ["reason"],
+        note: "Settle the escalation that owns this stop.",
+      });
+    }
   }
 
   return commands.map((command) => {
@@ -933,7 +961,7 @@ function expectedWarnings(
       return releaseWarnings(store, task, String(args.run)).map(
         (warning) => warning.id,
       );
-    if (command.action === "record.clear" && args.kind === "stop") return [];
+    if (command.action === "record.clear" && (args.kind === "stop" || args.kind === "escalation")) return [];
     if (command.action === "record.clear" && args.kind === "workspace_intent")
       return facts.launchInFlight
         ? ["workspace_may_exist", "effect_may_land"]

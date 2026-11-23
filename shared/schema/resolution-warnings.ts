@@ -20,6 +20,7 @@ export const resolutionWarningId = z.enum([
   "checks",
   "holds",
   "unverified_merge",
+  "unreviewed_merge",
   "no_verdict",
   // A reviewer run already reported a verdict at the current head that has not
   // been applied; replacing or superseding it would discard that verdict.
@@ -48,4 +49,5 @@ export const PLANNER_ONLY_WARNINGS: ReadonlySet<WarningId> = new Set<WarningId>(
   // a second thread beside a create the host may still answer.
   "creation_in_flight",
   "budget",
+  "unreviewed_merge",
 ]);

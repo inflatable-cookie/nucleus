@@ -6,7 +6,7 @@ import { coordinatorReportMatches } from "./coordinator-report";
 import { latestAuthorResult } from "../verbs/owner-verbs";
 import {
   blockerLadderStep as decideBlockerLadderStep,
-  plannerEscalations,
+  plannerEscalationsHoldingTask,
   reviewerConsults,
   blockerCauseId,
   stalledUnknownEscalation,
@@ -112,7 +112,7 @@ export class RecoveryLifecycle {
     const thresholdMs =
       (this.context.store.getMeta<number>("stallThresholdMinutes") ??
         DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
-    const escalations = plannerEscalations(events as LadderEvent[]);
+    const escalations = plannerEscalationsHoldingTask(events, t.resolution.stop);
     const unknownStall = stalledUnknownEscalation({
       escalations,
       now: Date.now(),
@@ -144,6 +144,7 @@ export class RecoveryLifecycle {
     } else if (first.kind === "wait") {
       this.context.waiting(t, first.detail, "escalated", {
         holderAgentId: first.holderAgentId,
+        fact: first.fact,
       });
       return null;
     } else if (first.kind === "continue") {
@@ -153,13 +154,14 @@ export class RecoveryLifecycle {
     // open, re-assert its escalated wait so no later wait-stamp can strand the
     // ladder behind an operator stop.
     const ladderEvents = this.context.store.eventsAll(t.id);
+    const updatedEscalations = plannerEscalationsHoldingTask(ladderEvents, this.context.store.task(t.id).resolution.stop);
     const after = decideBlockerLadderStep({
       classified: true,
       completion,
-      escalations: plannerEscalations(ladderEvents as LadderEvent[]),
+      escalations: updatedEscalations,
       consults: reviewerConsults(ladderEvents as LadderEvent[]),
       unknownStall: stalledUnknownEscalation({
-        escalations: plannerEscalations(ladderEvents as LadderEvent[]),
+        escalations: updatedEscalations,
         now: Date.now(),
         thresholdMs,
       }),
@@ -171,6 +173,7 @@ export class RecoveryLifecycle {
     if (after.kind === "wait") {
       this.context.waiting(t, after.detail, "escalated", {
         holderAgentId: after.holderAgentId,
+        fact: after.fact,
       });
       return null;
     }

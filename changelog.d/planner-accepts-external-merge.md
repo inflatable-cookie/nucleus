@@ -1,0 +1,1 @@
+Responsible planners can close out verified external merges by accepting the `unreviewed_merge` warning, including when changes were requested or the merged head is a verified descendant of the recorded source. Nucleus records the actual merged head, who accepted it and which review approval was missing.

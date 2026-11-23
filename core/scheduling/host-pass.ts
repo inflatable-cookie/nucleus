@@ -399,10 +399,14 @@ export class HostPass {
     if (!resolution.takePassProofs) return [];
     const taskOf = new Map<string, string>();
     const participantsOf = new Map<string, string[]>();
-    for (const task of activeTasks)
+    for (const task of activeTasks) {
+      const runs = this.store.runs(task.id);
       for (const { agentId } of knownExecutionParticipantIds(
         task,
-        this.store.runs(task.id),
+        runs,
+        // Ordinary review still proves custody for retired participants with an
+        // explicitly released run. Serve that demand without changing lease membership.
+        { includeExplicitlyReleased: true },
       )) {
         if (taskOf.has(agentId)) continue;
         taskOf.set(agentId, task.id);
@@ -411,6 +415,12 @@ export class HostPass {
           agentId,
         ]);
       }
+      // An owned-tool retry may name a recovery or closeout run. Warm its
+      // participant when requested, without adding it to ordinary custody.
+      for (const run of runs)
+        if (run.agentId && run.taskId === task.id && !taskOf.has(run.agentId))
+          taskOf.set(run.agentId, task.id);
+    }
     const pending = resolution.takePassProofs(host, new Set(taskOf.keys()));
     if (!pending.length) return [];
     const serve = new Set<string>();
