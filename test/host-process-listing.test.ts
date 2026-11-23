@@ -100,3 +100,48 @@ ROWS
     process.env.PATH = path;
   }
 });
+
+test('a darwin process table read killed at its deadline is unknown with its own reason', { skip: process.platform !== 'darwin' }, async (t) => {
+  assert.ok(process.getuid);
+  const uid = process.getuid();
+  const root = await mkdtemp(join(tmpdir(), 'host-process-ps-timeout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  // The table read outlives its deadline; a timeout is not an empty table.
+  await writeFile(join(root, 'ps'), '#!/bin/sh\nexec sleep 6\n', { mode: 0o755 });
+  const path = process.env.PATH ?? '';
+  process.env.PATH = `${root}${delimiter}${path}`;
+  try {
+    const read = await readHostUidProcesses();
+    assert.deepEqual(read, {
+      state: 'unknown',
+      reason: 'the process table read timed out after 5000 ms',
+    });
+  } finally {
+    process.env.PATH = path;
+  }
+});
+
+test('a darwin open-file listing killed at its deadline is unknown, not missing working-directory coverage', { skip: process.platform !== 'darwin' }, async (t) => {
+  assert.ok(process.getuid);
+  const uid = process.getuid();
+  const root = await mkdtemp(join(tmpdir(), 'host-process-lsof-timeout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const start = 'Mon Nov 23 18:30:00 2026';
+  await writeFile(join(root, 'ps'), `#!/bin/sh
+cat <<'ROWS'
+${uid} 42 1 1 S ${start} live-command
+ROWS
+`, { mode: 0o755 });
+  await writeFile(join(root, 'lsof'), '#!/bin/sh\nexec sleep 6\n', { mode: 0o755 });
+  const path = process.env.PATH ?? '';
+  process.env.PATH = `${root}${delimiter}${path}`;
+  try {
+    const read = await readHostUidProcesses();
+    assert.deepEqual(read, {
+      state: 'unknown',
+      reason: 'the open-file listing timed out after 5000 ms',
+    });
+  } finally {
+    process.env.PATH = path;
+  }
+});

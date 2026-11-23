@@ -87,7 +87,11 @@ export function dropExitedProcesses(
   });
 }
 
-/** Preserve command failure and partial output; never turn an OS error into absence. */
+/**
+ * Preserve command failure and partial output; never turn an OS error into absence.
+ * A command killed at its deadline is `timedOut`, so the caller reports the
+ * deadline as its own unknown reason instead of as missing coverage.
+ */
 async function processListing(
   command: string,
   args: string[],
@@ -101,10 +105,11 @@ async function processListing(
       maxBuffer: LISTING_MAX_BUFFER,
       env,
     });
-    return { status: 0, stdout, stderr };
+    return { status: 0, stdout, stderr, timedOut: false };
   } catch (error) {
     const failure = error as Error & {
       code?: string | number;
+      killed?: boolean;
       stdout?: string;
       stderr?: string;
       signal?: NodeJS.Signals;
@@ -115,6 +120,9 @@ async function processListing(
       stderr: failure.stderr ?? "",
       error,
       signal: failure.signal,
+      timedOut:
+        failure.killed === true &&
+        failure.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
     };
   }
 }
@@ -314,6 +322,11 @@ async function darwinProcesses(
     LC_ALL: "C",
     TZ: "UTC",
   });
+  if (listing.timedOut)
+    return {
+      state: "unknown",
+      reason: `the process table read timed out after ${PS_TIMEOUT_MS} ms`,
+    };
   if (listing.status !== 0 || !listing.stdout)
     return {
       state: "unknown",
@@ -344,7 +357,13 @@ async function darwinProcesses(
   const selection = requested ? ["-p", pids.join(",")] : ["-u", String(uid)];
   const listingFiles = pids.length ? await processListing("lsof", [
     "-nP", ...selection, "-F0pfn",
-  ]) : { status: 0, stdout: "", stderr: "" };
+  ]) : { status: 0, stdout: "", stderr: "", timedOut: false };
+  // A file scan killed at its deadline is unknown, not missing working directories.
+  if (listingFiles.timedOut)
+    return {
+      state: "unknown",
+      reason: `the open-file listing timed out after ${PS_TIMEOUT_MS} ms`,
+    };
   const paths = darwinOpenFiles(listingFiles.stdout);
   const complete = listingFiles.status === 0 && !listingFiles.stderr.trim();
   const cwds = new Map<number, CwdState>();
@@ -370,6 +389,11 @@ async function darwinProcesses(
     const states = await processListing("ps", [
       "-p", [...missing.keys()].join(","), "-o", "pid=,stat=",
     ]);
+    if (states.timedOut)
+      return {
+        state: "unknown",
+        reason: `the process state listing timed out after ${PS_TIMEOUT_MS} ms`,
+      };
     if (states.status === 0) {
       for (const line of states.stdout.split("\n")) {
         const match = /^\s*(\d+)\s+(Z\S*)\s*$/.exec(line);

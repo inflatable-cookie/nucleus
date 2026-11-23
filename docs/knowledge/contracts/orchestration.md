@@ -1787,6 +1787,9 @@ request identities and stored committed-handoff rows are not rewritten.
   process still has its cwd or an open file in the workspace or scratch, or
   remains in the run's process tree. Incomplete cwd or open-file coverage for
   live processes owned by the service UID also leaves the intent pending.
+  A macOS listing whose `ps` or `lsof` read overruns its deadline is unknown and
+  names that deadline; it is never reported as incomplete coverage, so a busy
+  host reads as "still unknown", not as a missing working directory.
   On macOS, the inventory rechecks the state of processes that a successful
   file scan omitted and the kernel still sees. A confirmed zombie holds no
   custody. The hourly host sweep applies the same ownership proof to settled
