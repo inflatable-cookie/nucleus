@@ -127,6 +127,30 @@ function coordinatorFor(f: Fixture) {
   return { run, completion };
 }
 
+function reportCoordinatorBeforeHeadChange(f: Fixture) {
+  const task = f.current();
+  const { run, completion } = coordinatorFor(f);
+  f.store.putRun({ ...run, status: "running", active: true, completion: null });
+  f.store.update(task.id, {
+    resolution: {
+      ...task.resolution,
+      recoveryActive: true,
+      recovery: episodeFor(task, {
+        runId: run.id,
+        agentId: run.agentId,
+        status: "running",
+      }),
+    },
+  });
+  const receipt = f.engine.resolution.complete(
+    { ...completion, head, coordinatorGeneration: run.generation },
+    "coordinator-token",
+  );
+  assert.equal(receipt.accepted, true);
+  f.store.update(task.id, { prHead: "c".repeat(40) });
+  return { run, completion: f.store.run(run.id)!.completion! };
+}
+
 function parkedVerdict(
   test: TestContext,
   status: "ready_to_merge" | "changes_required" = "ready_to_merge",
@@ -483,9 +507,8 @@ test("permanently stale coordinator bindings release without another escalation"
   let observations = 0;
   const observe = f.adapter.observe.bind(f.adapter);
   f.adapter.observe = async (agentId) => {
-    if (agentId !== run.agentId) return observe(agentId);
-    observations++;
-    throw Error("The old coordinator can no longer be observed");
+    if (agentId === run.agentId) observations++;
+    return observe(agentId);
   };
   f.store.update(before.id, {
     resolution: {
@@ -515,7 +538,121 @@ test("permanently stale coordinator bindings release without another escalation"
   assert.equal(f.current().resolution.recoveryActive, false);
   assert.equal(f.events("coordinator_binding_released").length, 1);
   assert.equal(f.events("recovery_escalated").length, 0);
-  assert.equal(observations, 0);
+  assert.equal(observations, 1);
+});
+
+test("a stale coordinator report cannot release its active turn", async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const task = f.current();
+  const { run, completion } = reportCoordinatorBeforeHeadChange(f);
+  const observe = f.adapter.observe.bind(f.adapter);
+  let sawActiveTurn = false;
+  f.adapter.observe = async (id) => {
+    const state = await observe(id);
+    if (id !== run.agentId) return state;
+    sawActiveTurn = true;
+    return {
+      ...state,
+      status: "running",
+      active: true,
+      activeTurnId: "reporting-turn",
+    };
+  };
+
+  await f.engine.resolution.recovery.pass(task.id);
+  assert.equal(f.store.run(run.id)?.released, false);
+  assert.doesNotThrow(() => f.store.authenticate(run.id, "coordinator-token"));
+  assert.equal(sawActiveTurn, true);
+  assert.equal(f.current().resolution.recovery?.action?.status, "pending");
+
+  f.adapter.observe = observe;
+  f.idle(run.agentId!);
+  await f.engine.resolution.recovery.pass(task.id);
+  assert.equal(f.store.run(run.id)?.released, true);
+  assert.deepEqual(f.store.run(run.id)?.completion, completion);
+  assert.equal(f.current().resolution.recovery?.action?.status, "refused");
+});
+
+test("a stale coordinator claim with unknown outcome still requires planner acceptance after restart", async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const caller = registerPlanner(f);
+  const task = f.current();
+  const { run, completion } = reportCoordinatorBeforeHeadChange(f);
+  // The previous process had ended the turn and claimed the action, then
+  // stopped before writing its outcome. Only the durable journal remains.
+  f.store.putRun({
+    ...f.store.run(run.id)!,
+    status: "finished",
+    released: true,
+    active: false,
+  });
+  const claim = JSON.stringify([task.id, run.id, completion.eventId]);
+  f.store.event(task.id, "run_result_applying", claim);
+  await f.engine.resolution.recovery.pass(task.id);
+  const episode = f.current().resolution.recovery;
+  assert.equal(episode?.action?.status, "pending");
+  assert.equal(f.events("coordinator_action_refused").length, 0);
+  const offer = settlementOffers(f).find((item) => item.args.id === episode?.id);
+  assert.ok(offer);
+  assert.deepEqual(offer.warnings, ["effect_may_land"]);
+  const probe = await recoveryCommand(f, caller, offer.args);
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  const result = await recoveryCommand(f, caller, {
+    ...offer.args,
+    accept: offer.warnings,
+  });
+  assert.equal(result.explicitResolution?.status, "applied");
+  assert.equal(f.current().resolution.recovery?.action?.status, "refused");
+  assert.equal(f.events("run_result_applying")[0]?.detail, claim);
+});
+
+test("clearing a pending episode while admission waits prevents its coordinator launch", async (t) => {
+  const f = fixture({ responsible: false });
+  t.after(() => f.close());
+  const caller = registerPlanner(f);
+  const task = f.current();
+  f.store.update(task.id, {
+    phase: "error",
+    reason: "Resolve a coordinator fault",
+  });
+  let entered!: () => void;
+  const atLease = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let finishLease!: (available: boolean) => void;
+  const lease = new Promise<boolean>((resolve) => {
+    finishLease = resolve;
+  });
+  f.engine.resolution.lease = async () => {
+    entered();
+    return lease;
+  };
+  const routing = f.engine.resolution.recovery.route(f.current());
+  await Promise.race([
+    atLease,
+    routing.then(() => {
+      throw Error("Coordinator route never reached its lease");
+    }),
+  ]);
+  try {
+    const episode = f.current().resolution.recovery;
+    assert.equal(episode?.status, "pending");
+    const result = await recoveryCommand(f, caller, {
+      action: "record.clear",
+      kind: "recovery",
+      id: episode.id,
+    });
+    assert.equal(result.explicitResolution?.status, "applied");
+    assert.equal(f.current().resolution.recovery?.id, episode.id);
+  } finally {
+    finishLease(true);
+    await routing;
+  }
+  assert.equal(f.current().resolution.recovery?.status, "resolved");
+  assert.deepEqual(f.coordinatorRuns(), []);
+  assert.equal(f.events("telemetry_recovery").length, 0);
 });
 
 test("a late coordinator observation cannot reopen a released recovery", async (t) => {

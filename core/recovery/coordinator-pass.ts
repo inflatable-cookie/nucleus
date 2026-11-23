@@ -21,8 +21,9 @@ import { plannerEscalations, type LadderEvent } from "../questions/ladder";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { releaseRunFromRecordedCompletion } from "./fence-settlement";
 import { resultApplied } from "../intake/applied-result";
+import { matchingInactiveParticipant } from "../intake/run-settlement";
 import { releaseCoordinatorBinding } from "../verbs/explicit-resolution";
-import { recoveryApplicationsInFlight } from "./coordinator-settlement";
+import { coordinatorClaim } from "./coordinator-settlement";
 import type { AgentObservation } from "../host/adapter";
 import {
   completedTurnCanRelease,
@@ -174,61 +175,104 @@ export class CoordinatorPass {
     return true;
   }
 
-  /** Refused and displaced completed runs have no action left to observe. */
-  private settleStaleBindings(task: Task, runs: Run[]): Task {
+  private staleBindingReason(task: Task, run: Run): string | null {
+    if (run.role !== "recovery" || run.mergeRetirement) return null;
     const episode = task.resolution.recovery;
-    const stale = runs.filter((run) => {
-      if (run.role !== "recovery" || run.mergeRetirement) return false;
+    const settled =
+      "The completed coordinator run no longer owns an applicable action.";
+    if (episode?.runId !== run.id)
+      return !run.released && run.completion ? settled : null;
+    const action = episode.action;
+    if (run.generation !== task.coordinatorGeneration)
+      return !run.released ||
+        episode.status !== "resolved" ||
+        action?.status === "pending"
+        ? "coordinator generation changed after the accepted report"
+        : null;
+    if (
+      !run.completion ||
+      action?.runId !== run.id ||
+      action.eventId !== run.completion.eventId
+    )
+      return null;
+    if (!run.released && action.status === "refused") return settled;
+    if (
+      action.status === "pending" &&
+      action.coordinatorAction &&
+      !["none", "cannot"].includes(action.coordinatorAction.verb) &&
+      episode.progress &&
+      !coordinatorReportMatches(task)
+    )
+      return "The task moved on since the coordinator was asked (its results, head, phase, run or routes changed)";
+    return null;
+  }
+
+  /** Staleness retires the action only after the coordinator's turn settles. */
+  private async settleStaleBindings(
+    task: Task,
+    stale: Run[],
+  ): Promise<Task | null> {
+    let current = task;
+    for (const candidate of stale) {
+      const run = this.store.run(candidate.id);
+      if (!run) continue;
+      const reason = this.staleBindingReason(current, run);
+      if (!reason) continue;
+      const episode = current.resolution.recovery;
       const bound = episode?.runId === run.id;
-      const action = bound ? episode.action : null;
+      const action = bound ? this.episode.bindingFrom(run, episode) : null;
       const reportId = run.completion?.eventId ?? action?.eventId;
-      if (
-        reportId &&
-        recoveryApplicationsInFlight.has(
-          JSON.stringify([task.id, run.id, reportId]),
+      if (!run.released) {
+        if (!run.agentId) continue;
+        const agentId = run.agentId;
+        const observed = await this.resolution
+          .onTaskHost(run, () => this.resolution.host.observe(agentId))
+          .catch(() => null);
+        if (
+          this.resolution.startsNoRuns() ||
+          this.store.task(current.id).version !== current.version ||
+          JSON.stringify(this.store.run(run.id)) !== JSON.stringify(run)
         )
-      )
-        return false;
-      if (bound && run.generation !== task.coordinatorGeneration)
-        return !run.released || episode.status !== "resolved" || action?.status === "pending";
-      if (!run.completion) return false;
-      if (!bound) return !run.released;
-      if (action?.runId !== run.id || action.eventId !== run.completion.eventId)
-        return false;
-      return (
-        (!run.released && action.status === "refused") ||
-        (action.status === "pending" &&
-          action.coordinatorAction &&
-          !["none", "cannot"].includes(action.coordinatorAction.verb) &&
-          episode.progress &&
-          !coordinatorReportMatches(task))
-      );
-    });
-    if (!stale.length) return task;
-    return this.store.transaction(() => {
-      let current = task;
-      for (const run of stale) {
-        const reason =
-          run.generation !== current.coordinatorGeneration
-            ? "coordinator generation changed after the accepted report"
-            : episode?.runId === run.id && episode.action?.status === "pending"
-              ? "The task moved on since the coordinator was asked (its results, head, phase, run or routes changed)"
-              : "The completed coordinator run no longer owns an applicable action.";
+          return null;
+        if (!observed || !matchingInactiveParticipant(run, observed)) continue;
+      }
+      const claim =
+        reportId && !resultApplied(this.store, current.id, run.id)
+          ? coordinatorClaim(this.store, current.id, run.id, reportId)
+          : "unclaimed";
+      if (claim === "unknown" || claim === "in_flight") continue;
+      if (bound && (claim === "applied" || claim === "refused")) {
+        // The recorded owner-verb outcome still owns the report, even at an older head.
+        if (
+          action?.runId === run.id &&
+          action.eventId === reportId &&
+          this.coordinatorActionHandler
+        ) {
+          await this.coordinatorActionHandler(current, run, action);
+          current = this.store.task(current.id);
+        }
+        continue;
+      }
+      current = this.store.transaction(() => {
         const patch = releaseCoordinatorBinding(
           this.store,
           current,
           run,
           reason,
         );
-        current = this.store.update(
+        return this.store.update(
           current.id,
           patch,
           "coordinator_binding_released",
           run.id,
         );
-      }
-      return current;
-    });
+      });
+    }
+    // A stale bound run still waiting on proof or an outcome must stay out of
+    // the ordinary report path, which has its own release and refusal rules.
+    const boundRunId = current.resolution.recovery?.runId;
+    const boundRun = boundRunId ? this.store.run(boundRunId) : null;
+    return boundRun && this.staleBindingReason(current, boundRun) ? null : current;
   }
 
   async pass(taskId?: string) {
@@ -250,8 +294,13 @@ export class CoordinatorPass {
         !isDispositionComplete(t) &&
         !["done", "cancelled"].includes(t.phase)
       ) {
-        t = this.settleStaleBindings(t, runs);
-        incident = t.resolution.recovery;
+        const stale = runs.filter((run) => this.staleBindingReason(t, run));
+        if (stale.length) {
+          const settled = await this.settleStaleBindings(t, stale);
+          if (!settled) continue;
+          t = settled;
+          incident = t.resolution.recovery;
+        }
       }
       // The retired report is already history. Release its execution custody
       // only after the ordinary merge lease positively observes participants and

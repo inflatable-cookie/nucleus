@@ -1,5 +1,5 @@
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
-import { digest } from "../store/store";
+import { digest, type Store } from "../store/store";
 import type { Task, Run, RecoveryActionBinding } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import type { Resolution } from "../resolution";
@@ -23,6 +23,27 @@ import {
  */
 /** Reports currently being applied, so a second pass never applies the same claim twice. */
 export const recoveryApplicationsInFlight = new Set<string>();
+
+/** A persisted claim without an outcome must survive a service restart. */
+export function coordinatorClaim(
+  store: Store,
+  taskId: string,
+  runId: string,
+  eventId: string,
+): "unclaimed" | "in_flight" | "unknown" | "applied" | "refused" {
+  const key = JSON.stringify([taskId, runId, eventId]);
+  if (recoveryApplicationsInFlight.has(key)) return "in_flight";
+  if (
+    !store.eventsAll(taskId).some(
+      (event) => event.kind === "run_result_applying" && event.detail === key,
+    )
+  )
+    return "unclaimed";
+  const outcome = store.db
+    .prepare("SELECT outcome FROM verb_outcomes WHERE taskId=? AND key=?")
+    .get(taskId, `coordinator:${eventId}`)?.outcome;
+  return outcome === "applied" || outcome === "refused" ? outcome : "unknown";
+}
 
 export type RecoverySettlementContext = Pick<
   Engine,
@@ -171,26 +192,16 @@ export class RecoverySettlement {
     };
 
     const claimKey = JSON.stringify([task.id, run.id, binding.eventId]);
-    if (recoveryApplicationsInFlight.has(claimKey)) return;
-    const previousClaim = this.store
-      .eventsAll(task.id)
-      .some(
-        (event) =>
-          event.kind === "run_result_applying" && event.detail === claimKey,
-      );
-    if (previousClaim) {
-      const outcome = this.store.db
-        .prepare("SELECT outcome FROM verb_outcomes WHERE taskId=? AND key=?")
-        .get(task.id, `coordinator:${binding.eventId}`) as
-        | { outcome?: string }
-        | undefined;
-      if (outcome?.outcome === "applied" || outcome?.outcome === "refused") {
-        finish(outcome.outcome);
-      } else {
-        const latest = this.store.task(task.id);
-        const reason = `Coordinator result ${run.id} has an uncertain owner-verb outcome; inspect next and settle the existing action before retrying`;
-        if (latest.reason !== reason) this.resolution.attention(latest, reason);
-      }
+    const claim = coordinatorClaim(this.store, task.id, run.id, binding.eventId);
+    if (claim === "in_flight") return;
+    if (claim === "applied" || claim === "refused") {
+      finish(claim);
+      return;
+    }
+    if (claim === "unknown") {
+      const latest = this.store.task(task.id);
+      const reason = `Coordinator result ${run.id} has an uncertain owner-verb outcome; inspect next and settle the existing action before retrying`;
+      if (latest.reason !== reason) this.resolution.attention(latest, reason);
       return;
     }
     const claimed = this.store.transaction(() => {

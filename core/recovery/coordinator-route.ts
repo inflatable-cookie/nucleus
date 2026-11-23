@@ -889,11 +889,18 @@ export class CoordinatorRoute {
       this.store.transaction(() => {
         // The awaits above leave room for an operator control (resume, revise, resolve) to clear or
         // replace this recovery. It then owns the lane: launch nothing and escalate nothing.
-        if (this.store.task(t.id).resolution.recovery?.id !== incident!.id) {
+        const current = this.store.task(t.id);
+        const pending = current.resolution.recovery;
+        if (
+          pending?.id !== incident!.id ||
+          pending.status !== "pending" ||
+          pending.runId ||
+          pending.generation !== run.generation ||
+          current.coordinatorGeneration !== run.generation
+        ) {
           superseded = true;
           return;
         }
-        const current = this.store.task(t.id);
         if (
           dispatchBlocked(current) ||
           reviewFenceHoldsCoordinators(current, this.store)
