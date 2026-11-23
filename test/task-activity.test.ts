@@ -115,7 +115,7 @@ test("slot waits, uncertain creation, escalation and completion read from stored
   assert.equal(read().state, "finished");
 });
 
-test("no run, spent budget and parked revision allowance are visible gaps even when next reads progressing", t => {
+test("a spent budget or parked revision allowance with no run reads as a typed stop for a person, never progressing", t => {
   const { store, task, read, next } = fixture(t);
   store.update(task.id, { phase: "working", reason: TASK_PROGRESSING_REASON });
   assert.equal(read().state, "unclassified");
@@ -125,14 +125,25 @@ test("no run, spent budget and parked revision allowance are visible gaps even w
     agentId: "reviewer", workspaceId: "workspace", profile: null, status: "finished",
     createdAt: at(100_000), lastObservedAt: null, idleSince: null, active: false, completion: null, released: true,
   }));
-  assert.equal(next().reason, TASK_PROGRESSING_REASON);
-  assert.equal(read().detail, "Task budget reached without a stop");
+  // Spec 068 Decision 1: a first spend is the sweep's to extend, not a person's.
+  assert.notEqual(next().stop?.reason, "budget");
+  assert.notEqual(read().detail, "Task budget reached");
+  // Spec 068 §5 (papercut 677c378d): a later spend is the task's stop before the
+  // sweep records it, worded as such and carrying its explicit command.
+  store.update(task.id, { resolution: { ...store.task(task.id).resolution, budgetExtensions: 1 } });
+  assert.equal(next().stop?.reason, "budget");
+  assert.match(next().reason, /^Budget reached/);
+  assert.notEqual(next().reason, TASK_PROGRESSING_REASON);
+  assert.deepEqual(read().state, "needs_person");
+  assert.equal(read().detail, "Task budget reached");
   store.update(task.id, {
     phase: "changes_requested", budgetSince: at(1),
     resolution: { ...task.resolution, revisionRuns: REVISION_BUDGET },
   }, "revision_budget_exhausted");
-  assert.equal(next().stop, null);
-  assert.equal(read().detail, "Revision allowance reached without a stop");
+  assert.equal(next().stop?.reason, "operator_needed");
+  assert.match(next().stop?.detail ?? "", /^Revision cap reached: 6 of 6 review rounds/);
+  assert.equal(read().state, "needs_person");
+  assert.equal(read().detail, "Revision cap reached");
 });
 
 test("a process recorded before boot and its unapplied verdict are visible despite a running display", t => {

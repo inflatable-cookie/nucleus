@@ -403,7 +403,9 @@ from the typed `TaskChangedRefusal` (`shared/task-version.ts`), `owner-authority
 proves owner and delegated authority, `receipt-acceptance.ts` records the one
 operator receipt acceptance, `budget-extension.ts` applies an authorized
 extension, `no-automatic-retry-record.ts` records the durable retry rule, and
-`author-revision-cap.ts` gates the exhausted author-revision allowance. Enforces
+`author-revision-cap.ts` holds the authority over the exhausted author-revision
+allowance and records the planner's or operator's acceptance of one more round
+(the revision launch gate enforces the cap). Enforces
 [Verbs](#verbs). Delegates remain on Engine.
 
 **ForceVerbs** (`core/verbs/force.ts`). Applies `force: true` on
@@ -2451,13 +2453,25 @@ archive the same decider again. An unknown send is never blindly retried. See
 - Nucleus never upgrades a worker model automatically based on review history.
   A responsible task that does not converge uses the #584 ladder: worker,
   reviewer consult, planner, then operator when the planner forwards the
-  question. The three-round question and revision-cap stop go to the planner.
+  question. The revision-cap stop goes to the planner. At the third
+  non-converging round Nucleus continues the current approach on its own and
+  tells the task's planner (Spec 068 Decision 2).
 - A planner who wants a stronger worker chooses it with `route role=worker`.
   The Spec 050 worker replacement rule creates one replacement when that route
   selects a different model, preserving the task, workspace, branch and PR.
 - The lifetime revision cap remains six rounds (`REVISION_BUDGET`). At the cap,
   the task stops for the planner's delegated decision and proceeds one round at
-  a time
+  a time. The revision launch is the one enforcement point: while the allowance
+  is exhausted (`revisionAllowanceExhausted`: the cap park with no author round
+  since and no `revision_cap_accepted` since), a revision launch holds with an
+  `operator_needed` stop worded as the cap, however the task reached
+  `changes_requested` (`phase.set`, an orphan readmission or a verb). A planner's,
+  the operator's or a delegated answer's author-round control (`move to=work`,
+  `restart role=worker`, `route role=worker`) records `revision_cap_accepted`
+  before it applies; a coordinator's is refused. The explicit `run.start` for the
+  worker, with `budget` accepted (planner or operator board only), creates the
+  revision run itself. The cap park stays the visible stop and its planner
+  escalation
   ([vision](../vision.md#reviewer-choice-review-loop-caps-and-coordinators-that-act)).
 - Historical author-escalation rows are stripped from task rows (schema 54, task 989;
   the live rows held only empty defaults, so there was nothing of theirs to archive)
@@ -3186,16 +3200,34 @@ movement invalidates source approval and preserves the normal readiness gates.
   head, once per stopped head. A second stop at that head, or any fault code cannot
   settle, opens one retained recovery run (Spec 058 Recovery).
 - After three substantive `changes_required` reviews without convergence the task
-  does not upgrade its author. Nucleus writes one durable `responsible_question`
-  intent, prompts the task's own thread to raise one native Paseo planner question
-  carrying the reviewer's authenticated full finding (`reviewText`) and the worker's
-  last return, and waits in the
-  `responsible_question` stop. Answering it clears the stop and the next round
-  continues in the same worker thread; an interrupted observation records
-  `responsible_question_unknown` and is never resent.
+  does not upgrade its author and asks nothing (Spec 068 Decision 2, Tom
+  2026-11-22: planners chose "Continue the current approach" 48 times out of 50).
+  Nucleus records `review_round_continued`, the next round continues in the same
+  worker thread, and the task's planner (its own planner, else the project
+  planner) gets one tell carrying the reviewer's authenticated full finding
+  (`reviewText`) and the worker's last return. The tell's intent
+  (`review_round_planner_tell_intent`) is recorded before the send and an unknown
+  delivery is never resent. A miss (no planner, or no proven or available host)
+  is `review_round_planner_tell_missed`, recorded once per distinct cause; nothing
+  was sent, so the task's pass tries it again at most every five minutes. A
+  continued round with no intent or outcome recorded, and no tell in flight, has
+  sent nothing (the service stopped in between, or the tell was missed), so the
+  task's next pass sends it. A change
+  of approach stays the planner's (`move to=work` with direction, or `route
+  role=worker`), and the revision cap still stops the task and asks. A joint
+  `responsible_question` recorded before this rule still holds its
+  `responsible_question` stop until it is answered or superseded.
+- The first time a task's budget is spent, Nucleus extends it once by one
+  default increment itself (Spec 068 Decision 1, Tom 2026-11-22: 34 of 35 spent
+  budgets were extended), whether or not a run is live, and records
+  `budget_extended` with the detail `automatic: <policy>; <figures>`. Only a later
+  spend stops the task and asks.
 - A task over its effective-token or wall-time budget (Spec 058 slice 6)
   starts no new run after the one in flight. The launch funnel stops it with the
-  `budget` reason and raises one native operator question on its own thread: extend
+  `budget` reason; the sweep's settle pass records the same stop for a task with
+  no live run and no other stop whose next step is a run (working, changes
+  requested or review), so a spent budget never reads "progressing"
+  (papercut 677c378d). The stop raises one native operator question on its own thread: extend
   (one default increment), change the approach (the answer is the worker's next
   instruction, with the same increment) or stop and keep the work (owner `stop`).
   An interrupted observation is `operator_question_unknown` and is never resent. A
@@ -3221,10 +3253,32 @@ movement invalidates source approval and preserves the normal readiness gates.
   subtracted from the wall figure, so a defect never spends a task's budget. A budget
   pause, a merge hold, capacity queueing and the task's own validation keep charging.
   A host outage opens no clock (Spec 069 §3): every budget reader passes the task
-  host's outages from the host's own record (`hostOutageIntervals`) to
-  `taskBudget`, which discounts them like a hold, so an outage writes nothing per task.
+  host's outages from the host's own record, and the Nucleus service's own
+  downtime, through `budgetOutageIntervals` to `taskBudget`, which discounts them
+  like a hold, so an outage writes nothing per task. Service downtime (Spec 068
+  Decision 1) runs from the previous owner's last-alive stamp (stamped each
+  minute and at the start of its drain, so a roll's window counts) to the next
+  owner's start. While one owner runs, each beat compares the wall clock with
+  the monotonic clock (`process.hrtime`), which does not advance while the
+  machine sleeps but does through an event-loop stall: more than a minute of wall
+  time the monotonic clock did not see is recorded as downtime ending at that
+  beat, and a stall records nothing. The history in meta keeps 30 days of
+  entries, under a hard ceiling.
   The read uses the task's current host, so a task moved to another host keeps no
   discount for its old host's outages.
+- A spent budget or revision cap is a typed stop worded as such (Spec 068 §5).
+  Until the sweep records the budget stop, and for a cap whose stop was cleared
+  without an author round starting, `next` and the activity reading type the stop
+  from the scheduler's own conditions (`Budget reached: …`, `Revision cap reached:
+  …`, Needs a person) and list `run.start` for the next run with `accept:
+  ["budget"]`; `extend_budget` stays the owner verb for a spent budget. A spent
+  budget counts only in a phase whose next step is a run, and a first spend not at
+  all: the sweep extends it once there, and the launch gate wherever a run would
+  start. Only the planner or the operator board may accept `budget`; a
+  coordinator is refused and its snapshot omits that command. The
+  `run.start` `budget` warning reads the same conditions: the measured budget, the
+  revision allowance (a cap stop with no author round since, never six rounds
+  alone) and, for a fresh worker, the replacement ceiling.
 - Any thread registers itself with `task.register` (Spec 058 slice 4): the worker
   is the calling thread, bound to its own live worktree, always responsible, with
   no planner, owner or coordinator. Identity comes from the authenticated thread,
@@ -3256,7 +3310,13 @@ movement invalidates source approval and preserves the normal readiness gates.
 [Explicit resolution](../specs/067-explicit-resolution.md) has a separate
 version-fenced transaction. An applied command records one `owner_resolution`
 event with the target's prior state, the caller, the reason and the warnings
-the caller accepted. Release revokes the run credential and retires its
+the caller accepted. A command that applied nothing does not look applied
+(papercut ee6e634c): the CLI prints one line first on stderr (`applied`,
+`warnings: <ids> (not applied; resend with "accept": [...])` or `stale: …`), then
+the JSON body on stdout, and exits 2 unless the command applied. `next` lists
+each explicit command's expected warning IDs in `warnings`, read from the same
+stored state the command reads; a command can still name a warning only its own
+preflight reads (`head_mismatch`, a live worker turn's `two_writers`). Release revokes the run credential and retires its
 delivery records before any best-effort host cancellation or archive. Clear
 changes the stored fact the fence reads. Ordinary scheduling evaluates the
 resulting state on its own cadence.
@@ -3402,9 +3462,20 @@ resulting state on its own cadence.
 ### Coordinator loop breaker
 
 - Coordinator recovery never loops (Tom, 2026-10-19 and 2026-10-27): after three
-  coordinator runs for the task's current work identity since the last
-  deliberate re-arm, Nucleus launches no further coordinator and escalates once to
-  the owner.
+  coordinator runs in a row that applied nothing for the task's current work
+  identity since the last deliberate re-arm, Nucleus launches no further
+  coordinator and escalates once to the owner.
+- A coordinator run that applied something is progress, not a charge, and ends
+  the charged chain (Spec 068 §4; on 2026-11-22 three successful repairs at one
+  head spent the cap): its report's owner verb was applied
+  (`coordinator_action_applied`, never `none` or `cannot`), or an explicit command
+  it sent as the coordinator applied (`owner_resolution` with source
+  `coordinator`) before the next coordinator launch. Only a command that changes
+  task or run state counts; `message.send` changes neither.
+- A hard ceiling of six coordinator launches at one exact head, whatever they
+  applied, stops the loop and escalates to the planner
+  (`COORDINATOR_HEAD_CEILING`). Outage launches spend neither bound; a new head or
+  the explicit coordinator re-arm resets both.
 - Work identity is the exact head, the approved instruction source, the merge
   state and the maximum accepted checkpoint ordinal across all reviewers at that
   head. A change to any of these resets the count; a routine retained restart,

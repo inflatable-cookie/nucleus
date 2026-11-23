@@ -1,4 +1,4 @@
-import { hostOutageIntervals } from "../scheduling/host-outage";
+import { budgetOutageIntervals } from "../scheduling/host-outage";
 import type { WaitStateContext } from "../../shared/wait-state";
 import { taskWaitStateContext } from "../recovery/wait-context";
 import { taskDetailView } from "../../shared/task-view";
@@ -22,6 +22,8 @@ import {
   DISPATCH_WAIT_REASON,
   blockingHoldFence,
   WORKER_REPLACEMENT_CEILING,
+  REVISION_BUDGET,
+  taskHasUnreleasedRun,
   type Notice,
   type Profile,
   type Run,
@@ -30,9 +32,10 @@ import {
   type TaskNextStop,
 } from "../../shared/contracts";
 import { type HookRecord } from "../../shared/hooks";
-import type { TaskStopReason } from "../../shared/task-stop";
+import type { TaskStopReason, TaskStopRecord } from "../../shared/task-stop";
+import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import { noActionEscalationAtAcceptedHead } from "../recovery/task-reasons";
-import { taskBudget } from "../../shared/task-budget";
+import { automaticBudgetExtensionDue, budgetGatesPhase, budgetPauseDetail, taskBudget } from "../../shared/task-budget";
 import { type Store } from "../store/store";
 import { OWNER_STOP_HOLD_PREFIX } from "../merge/merge-hold";
 import {
@@ -340,7 +343,7 @@ export const ownerTaskBudget = (facts: OwnerVerbFacts) =>
     Date.now(),
     facts.events,
     facts.store.canonicalRepository(facts.task.repoPath, facts.task.repository),
-    hostOutageIntervals(facts.store, facts.task.hostId),
+    budgetOutageIntervals(facts.store, facts.task.hostId),
   );
 
 /**
@@ -507,6 +510,38 @@ function withRecoveryNote(text: string, note: string, limit = 2000): string {
  * its precedence are `taskStopKind` in the shared contracts, so the board badge
  * and this read never drift apart; this adds the reason, owner and evidence.
  */
+/**
+ * Spec 068 §5: a spent budget or revision cap is a typed stop worded as such, never
+ * "progressing" (papercut 677c378d). The sweep records the budget stop itself; until
+ * it has, and for a cap whose stop was cleared without an author round starting,
+ * the read types the stop from the same conditions the scheduler reads. Null when
+ * the task records a stop of its own, has a live run, or neither limit holds.
+ */
+export function ownerPolicyStop(facts: OwnerVerbFacts): TaskStopRecord | null {
+  const task = facts.waitTask ?? facts.task;
+  if (task.removedAt || ["done", "cancelled", "queued"].includes(task.phase)) return null;
+  const budget = ownerTaskBudget(facts);
+  if (currentTaskStop(task, budget) || holdsOf(task).dispatch || holdsOf(task).merge) return null;
+  if (taskHasUnreleasedRun(task) || facts.runs.some((run) => !run.released)) return null;
+  // A first spend is the sweep's to extend (Spec 068 Decision 1), not a person's.
+  if (budget?.exhausted && budgetGatesPhase(task.phase) && !automaticBudgetExtensionDue(task) && !task.resolution.hostWait)
+    return taskStopRecord("budget", budgetPauseDetail(budget), null, task.updatedAt);
+  if (
+    ["changes_requested", "needs_attention"].includes(task.phase) &&
+    revisionAllowanceExhausted(task, facts.runs, facts.events)
+  ) {
+    const capAt = facts.events.findLast((event) => event.kind === "revision_budget_exhausted")?.at ?? task.updatedAt;
+    return taskStopRecord(
+      "operator_needed",
+      `Revision cap reached: ${task.resolution.revisionRuns} of ${REVISION_BUDGET} review rounds, and no author round has started since the cap stopped the task. The planner decides the next approach: move to=work with direction starts one more round, and the explicit run.start for the worker names the budget warning to accept.`,
+      null,
+      capAt,
+      ["move"],
+    );
+  }
+  return null;
+}
+
 export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
   const { runs } = facts,
     task = facts.waitTask ?? facts.task;
@@ -533,9 +568,10 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
     taskWaitStateContext(facts.store, task, null),
     runs,
   ).waitState;
-  const kind = taskStopKind(task, runs, budget, wait);
+  const policy = ownerPolicyStop(facts);
+  const kind = taskStopKind(task, runs, budget, wait) ?? (policy ? "attention" : null);
   if (!kind) return null;
-  const stored = currentTaskStop(task, budget);
+  const stored = currentTaskStop(task, budget) ?? policy;
   // No recorded stop: type it from the stop kind. Only a queued task's reason is
   // Nucleus's own dispatch text to classify; any other reason may be an agent's report.
   // A row released before its release reset the hold text still says "Dispatch
@@ -571,10 +607,10 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
   const bound =
     runs.some((run) => run.role === "recovery") || task.resolution.recovery
       ? recoveryBoundStatus(facts.store, task)
-      : { charged: 0, limit: 0, basis: "" };
+      : { charged: 0, limit: 0, basis: "", atHead: 0, ceiling: 0 };
   const boundNote =
     bound.charged > 0
-      ? `Coordinator recovery: ${bound.charged} of ${bound.limit} launches are charged to the current work (${bound.basis}); a routine restart or route at unchanged work does not reset that count, and one explicit restart role=coordinator re-arms it.`
+      ? `Coordinator recovery: ${bound.charged} of ${bound.limit} launches that applied nothing are charged to the current work (${bound.basis}), and ${bound.atHead} of ${bound.ceiling} launches ran at this head; a repair that applies is not charged, a routine restart or route at unchanged work does not reset the count, and one explicit restart role=coordinator re-arms it.`
       : "";
   const latestAuthorReport = latestAuthorResult(task, runs);
   // Preserve independent stop reasons, but replace a detail copied from the

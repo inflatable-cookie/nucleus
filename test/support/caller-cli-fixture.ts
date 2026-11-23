@@ -55,7 +55,11 @@ function cliContractDigests() {
   ));
 }
 
-export async function callerCliFixture(mismatch = false) {
+/**
+ * `answers` lets a case have the synthetic service answer one method with a stored
+ * result shape (by default every other method refuses with the fixture marker).
+ */
+export async function callerCliFixture(mismatch = false, answers: Record<string, (input: any) => unknown> = {}) {
   const rpcContracts = await cliContractDigests();
   const dir = mkdtempSync(join(tmpdir(), "caller-cli-"));
   const store = new Store(":memory:");
@@ -157,6 +161,7 @@ export async function callerCliFixture(mismatch = false) {
         } else if (frame.method !== "service.auth") {
           calls.push({ method: frame.method, input: frame.input });
           if (frame.method === "queue.detail") result = detail;
+          else if (answers[frame.method]) result = answers[frame.method]!(frame.input);
           else {
             socket.write(
               encodeFrame({
@@ -226,6 +231,7 @@ export async function callerCliFixture(mismatch = false) {
       }),
     );
   return {
+    task,
     calls,
     callbacks,
     hostResolutions,

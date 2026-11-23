@@ -82,8 +82,8 @@ GitHub read in the same call shows the PR unmerged.
 
 The board, the task's live responsible project planner and its coordinator
 may use the explicit commands, including `merge.now` and `closeout.now`. Only
-the board or planner may accept `hold_owner`, `route_policy`, `two_writers` or
-`creation_in_flight`,
+the board or planner may accept `hold_owner`, `route_policy`, `two_writers`,
+`creation_in_flight` or `budget`,
 or resolve a critical task; only the operator board may accept
 `unverified_merge`. Explicit resolution updates only the named record and
 preserves its previous state in the audit history.

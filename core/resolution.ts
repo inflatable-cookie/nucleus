@@ -1,4 +1,8 @@
 import type { IntegrationFastForwardObserver } from "./git/git-dispatch";
+import {
+  AUTOMATIC_BUDGET_EXTENSION_DETAIL,
+  automaticBudgetExtensionDue,
+} from "../shared/task-budget";
 import type { FormalReviewRuntime } from "./forge/reviews";
 import { portsContext } from "./port-context";
 import {
@@ -1207,6 +1211,7 @@ export class Resolution {
   readonly taskStops = new TaskStops(
     portsContext(this, [
       "ensureIncident",
+      "extendTaskBudgetAutomatically",
       "questions",
       "recordIncidentEvent",
       "saveIncident",
@@ -1295,6 +1300,7 @@ export class Resolution {
       "continuedProgressWait",
       "deliverLaunchRun",
       "ensureIncident",
+      "extendTaskBudgetAutomatically",
       "host",
       "launch",
       "launchingRuns",
@@ -2671,6 +2677,10 @@ export class Resolution {
   responsibleJointQuestion(t: Task): Promise<boolean> {
     return this.jointReviewQuestion.responsibleJointQuestion(t);
   }
+  /** Sends a continued round's planner tell that never reached its intent (Spec 068 Decision 2). */
+  resumeRoundTells(t: Task): void {
+    this.jointReviewQuestion.resumeRoundTells(t);
+  }
   settleJointQuestion(taskId: string, id: string, answer: string): void {
     return this.jointReviewQuestion.settleJointQuestion(taskId, id, answer);
   }
@@ -2878,6 +2888,19 @@ export class Resolution {
     by = "The operator",
   ): Task | null {
     return this.questionSupersession.extendTaskBudget(taskId, detail, by);
+  }
+  /**
+   * Spec 068 Decision 1: a task's first spent budget is extended once by Nucleus
+   * itself, recorded as `budget_extended` with source `automatic` and the policy.
+   * Null when the budget is not spent or was already extended once.
+   */
+  extendTaskBudgetAutomatically(taskId: string): Task | null {
+    if (!automaticBudgetExtensionDue(this.store.task(taskId))) return null;
+    return this.questionSupersession.extendTaskBudget(
+      taskId,
+      AUTOMATIC_BUDGET_EXTENSION_DETAIL,
+      "Nucleus automatically",
+    );
   }
   /**
    * An applied owner control replaces any outstanding question about the

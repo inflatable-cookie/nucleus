@@ -1,6 +1,6 @@
 import type { Run, Task } from "./contracts";
 import type { ParticipantActivity, ParticipantProcess, TaskActivity } from "./schema/task-activity";
-import type { BudgetEvent, TaskBudgetView } from "./task-budget";
+import { automaticBudgetExtensionDue, budgetGatesPhase, type BudgetEvent, type TaskBudgetView } from "./task-budget";
 import { DEFAULT_STALL_THRESHOLD_MINUTES } from "./schema/settings/capacity";
 import { REVISION_BUDGET } from "./incident";
 import { holdsOf, isOperatorOwner } from "./holds";
@@ -63,11 +63,34 @@ const personStops = new Set<TaskStopReason>([
   "operator_needed", "interactive", "responsible_question", "escalated", "budget",
 ]);
 
-/** The cap is current until a later author round starts. */
-export function revisionAllowanceExhausted(task: Task, runs: readonly Run[], events: readonly BudgetEvent[]): boolean {
+/**
+ * The event a planner's, the operator's or a delegated answer's author-round
+ * control records when it starts one more round past the revision cap. It ends
+ * the exhausted allowance as an author round would, so the launch gate lets that
+ * round's revision launch.
+ */
+export const REVISION_CAP_ACCEPTED_EVENT = "revision_cap_accepted";
+
+/**
+ * The author revision allowance is spent: the cap park stopped the task (a new
+ * changes_required review at `REVISION_BUDGET` rounds) and since then no author
+ * round has started and no planner or operator has accepted one. This is the
+ * scheduler's own condition, the one the revision launch gate, the cap park and
+ * the author-round rule read; six rounds alone, or rounds inside a round an owner
+ * approved after the park, are not the cap (papercut 677c378d).
+ */
+export function revisionAllowanceExhausted(task: Pick<Task, "resolution">, runs: readonly Run[], events: readonly BudgetEvent[]): boolean {
   if (task.resolution.revisionRuns < REVISION_BUDGET) return false;
   const capAt = events.findLast(event => event.kind === "revision_budget_exhausted")?.at;
-  return !capAt || !runs.some(run => run.role === "revision" && run.createdAt > capAt);
+  return Boolean(capAt)
+    && !runs.some(run => run.role === "revision" && run.createdAt >= capAt!)
+    && !events.some(event => event.kind === REVISION_CAP_ACCEPTED_EVENT && event.at >= capAt!);
+}
+
+/** The stop a revision launch held at the cap records. */
+export function revisionCapHoldDetail(task: Pick<Task, "resolution">): string {
+  return `Revision cap reached: ${task.resolution.revisionRuns} of ${REVISION_BUDGET} review rounds, and no author round has started since the cap stopped the task. `
+    + "The revision launch holds until the planner decides: move to=work with direction starts one more round, or the explicit run.start for the worker accepting the budget warning.";
 }
 
 function boundActivity(runId: string | null, agentId: string | null, observation?: ParticipantActivity | null) {
@@ -182,10 +205,13 @@ export function taskActivity({ task, runs, events, stop, wait, budget, read, now
       return answer("unclassified", "Review verdict is waiting on a gone thread", reported.lastObservedAt ?? reported.createdAt, { role: "reviewer" });
   }
 
-  if (budget?.exhausted && !stop && !wait && !resolution.hostWait)
-    return answer("unclassified", "Task budget reached without a stop");
+  // Spec 068 §5: a spent budget or revision cap is the owner's, never "progressing".
+  // The sweep records the budget stop; until it has, the reading says what it is.
+  // A first spend is not one: the sweep extends it once on its own (Decision 1).
+  if (budget?.exhausted && budgetGatesPhase(task.phase) && !automaticBudgetExtensionDue(task) && !stop && !wait && !resolution.hostWait && !live)
+    return answer("needs_person", stopWords.budget);
   if (["changes_requested", "needs_attention"].includes(task.phase) && revisionAllowanceExhausted(task, runs, events) && !live && !stop)
-    return answer("unclassified", "Revision allowance reached without a stop");
+    return answer("needs_person", "Revision cap reached");
 
   const quietMs = read?.quietMs ?? DEFAULT_STALL_THRESHOLD_MINUTES * 60_000;
   const runningTool = observation?.tool;

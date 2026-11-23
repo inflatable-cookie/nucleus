@@ -4,6 +4,7 @@ import { laneKeySchema } from "../schema/task-primitives";
 import { taskSchema } from "./tasks";
 import { taskControlFields } from "./task-control-fields";
 import { checkTaskControlRules } from "./task-control-rules";
+import { resolutionWarningId } from "./resolution-warnings";
 
 export { TASK_CONTROL_RELAYED_NOTE_ACTIONS } from "./task-control-rules";
 export {
@@ -86,33 +87,7 @@ export type TaskControlRequest = z.infer<typeof taskControlRequestSchema>;
 export type TaskControlInput = z.infer<typeof taskControlInputSchema>;
 
 const resolutionId = z.string().trim().min(1).max(240);
-const resolutionWarningId = z.enum([
-  "live_turn",
-  "unreported_result",
-  "hold_owner",
-  "effect_may_land",
-  "owned_tool",
-  "duplicate_thread",
-  "two_writers",
-  "head_mismatch",
-  "budget",
-  "route_policy",
-  "live_runs",
-  "queued",
-  "no_thread",
-  "turn_held",
-  "merge_in_flight",
-  "checks",
-  "holds",
-  "unverified_merge",
-  "no_verdict",
-  // A reviewer run already reported a verdict at the current head that has not
-  // been applied; replacing or superseding it would discard that verdict.
-  "discard_reported_verdict",
-  // The host may still answer the create command of this role's uncertain run;
-  // a new run could stand beside the thread that late answer brings (Spec 068).
-  "creation_in_flight",
-]);
+export { resolutionWarningId };
 const resolutionFields = {
   taskId: resolutionId,
   version: z.number().int().positive(),

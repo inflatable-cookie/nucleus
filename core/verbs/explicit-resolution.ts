@@ -12,6 +12,7 @@ import type {
   ResolutionWarningId,
   TaskControlTask,
 } from "../../shared/schema/task-control";
+import { PLANNER_ONLY_WARNINGS } from "../../shared/schema/resolution-warnings";
 import {
   TASK_PROGRESSING_REASON,
   isWaitingTaskStop,
@@ -74,14 +75,6 @@ export type ExplicitPlan = {
 type Warning = ExplicitWarning;
 type Plan = ExplicitPlan;
 
-const plannerWarnings = new Set<ResolutionWarningId>([
-  "hold_owner",
-  "route_policy",
-  "two_writers",
-  // Spec 068 §3: a coordinator started before the wait could otherwise accept
-  // a second thread beside a create the host may still answer.
-  "creation_in_flight",
-]);
 const missing = (kind: string, id: string): never => {
   throw Error(`No current ${kind} ${id} belongs to this task`);
 };
@@ -384,10 +377,10 @@ export async function resolveExplicitly(
     if (task.removedAt) throw Error("Task was removed from the queue");
     if (
       source === "coordinator" &&
-      input.accept.some((id) => plannerWarnings.has(id))
+      input.accept.some((id) => PLANNER_ONLY_WARNINGS.has(id))
     )
       throw Error(
-        "Only the live responsible planner or operator board can accept hold_owner, route_policy, two_writers or creation_in_flight",
+        `Only the live responsible planner or operator board can accept ${[...PLANNER_ONLY_WARNINGS].join(", ")}`,
       );
     if (
       source !== "operator_board" &&
@@ -494,6 +487,44 @@ export async function resolveExplicitly(
  */
 export type ReleasePlanContext = Pick<Engine, "store" | "host" | "withHost">;
 
+function releasedRunLive(task: Task, run: ReturnType<Store["run"]>): boolean {
+  return run
+    ? !run.released &&
+        (run.active !== false ||
+          ["running", "intent", "uncertain"].includes(run.status))
+    : task.agentActive !== false || task.agentIntent;
+}
+
+/**
+ * The warnings a `run.release` of this run names, read from the stored run, the
+ * task and the run's host process alone. `next` lists them as the command's
+ * expected warnings (papercut ee6e634c).
+ */
+export function releaseWarnings(
+  store: Store,
+  task: Task,
+  runId: string,
+): Warning[] {
+  const run = store.run(runId);
+  const completion = run ? run.completion : task.completion;
+  const process = store.hostRun(runId);
+  const warnings: Warning[] = [];
+  if (releasedRunLive(task, run) || process?.state === "running")
+    warnings.push({
+      id: "live_turn",
+      text: "This run may have a live turn. Stopping a worker may lose uncommitted changes.",
+    });
+  if (!completion && !run?.released)
+    warnings.push({
+      id: "unreported_result",
+      text:
+        run?.role === "reviewer" && run.agentId && !run.exhaustionReason
+          ? "Only this reviewer's first verdict at the current exact head can still be accepted."
+          : "Any later report from this run will be refused.",
+    });
+  return warnings;
+}
+
 export function releasePlan(
   engine: ReleasePlanContext,
   task: Task,
@@ -507,26 +538,9 @@ export function releasePlan(
   const agentId = run ? run.agentId : task.agentId;
   const hostId = run?.hostId ?? task.hostId;
   const completion = run ? run.completion : task.completion;
-  const live = run
-    ? !run.released &&
-      (run.active !== false ||
-        ["running", "intent", "uncertain"].includes(run.status))
-    : task.agentActive !== false || task.agentIntent;
+  const live = releasedRunLive(task, run);
   const process = store.hostRun(input.run);
-  const warnings: Warning[] = [];
-  if (live || process?.state === "running")
-    warnings.push({
-      id: "live_turn",
-      text: "This run may have a live turn. Stopping a worker may lose uncommitted changes.",
-    });
-  if (!completion && !run?.released)
-    warnings.push({
-      id: "unreported_result",
-      text:
-        run?.role === "reviewer" && run.agentId && !run.exhaustionReason
-          ? "Only this reviewer's first verdict at the current exact head can still be accepted."
-          : "Any later report from this run will be refused.",
-    });
+  const warnings = releaseWarnings(store, task, input.run);
 
   return {
     warnings,

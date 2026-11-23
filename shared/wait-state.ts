@@ -428,7 +428,7 @@ export interface WaitStateContext {
   declaration?: WaitDeclaration | null;
   /**
    * Spec 069 §3: the outages of the task's host, read from the host's own record
-   * (`hostOutageIntervals`), which the budget figure discounts. Never a task write.
+   * and the service's own downtime (`budgetOutageIntervals`), which the budget figure discounts. Never a task write.
    */
   hostOutages?: readonly { since: string; until: string | null }[];
 }

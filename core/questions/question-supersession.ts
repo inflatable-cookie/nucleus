@@ -1,4 +1,4 @@
-import { hostOutageIntervals } from "../scheduling/host-outage";
+import { budgetOutageIntervals } from "../scheduling/host-outage";
 import type { Task } from "../../shared/contracts";
 import { extendedTaskBudgetLimits, taskBudget } from "../../shared/task-budget";
 import { Decisions } from "../planning/decisions";
@@ -50,7 +50,7 @@ export class QuestionSupersession {
       Date.now(),
       events,
       repository,
-      hostOutageIntervals(this.store, current.hostId),
+      budgetOutageIntervals(this.store, current.hostId),
     );
     if (!budget.exhausted) return null;
     const wasBudgetPause = current.resolution.stop?.reason === "budget";

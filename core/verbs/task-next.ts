@@ -1,7 +1,11 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
+import { releaseWarnings } from "./explicit-resolution";
+import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
+import type { ResolutionWarningId } from "../../shared/schema/task-control";
 import { taskDetailView } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
+import { budgetGatesPhase } from "../../shared/task-budget";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { ownerStopPendingRefusal } from "./owner-stop";
 import { taskNeverDispatched } from "../task-decision-rules";
@@ -27,6 +31,7 @@ import {
   ownerTaskBudget,
   retainedCheckpointRun,
   ownerActiveRun,
+  ownerPolicyStop,
   ownerTaskStop,
 } from "./owner-facts";
 import type { OwnerVerbFacts } from "./owner-facts";
@@ -492,7 +497,11 @@ export function assembleOwnerTaskNext(
     attention: task.resolution.attention,
     // Papercut 703b4aa3: the reason is the one the current stop supports, so a
     // budget pause the measured budget no longer shows cannot keep its text.
-    reason: taskVisibleReason(facts.waitTask ?? task, ownerTaskBudget(facts)),
+    // Spec 068 §5: a spent budget or cap the sweep has not yet recorded reads as
+    // that stop, never "progressing" (papercut 677c378d).
+    reason:
+      ownerPolicyStop(facts)?.detail ??
+      taskVisibleReason(facts.waitTask ?? task, ownerTaskBudget(facts)),
     activeRun: ownerActiveRun(facts),
     activity: taskDetailView(
       facts.waitTask ?? task,
@@ -816,6 +825,45 @@ function explicitCommandsFor(
     });
   }
 
+  // Spec 068 §5: a spent budget, revision cap or replacement ceiling carries its
+  // explicit command. The planner may start the next run past it by accepting the
+  // `budget` warning (or extend the budget with the owner verb). A spent budget counts
+  // only in a phase whose next step is a run: a task verifying or merging starts none.
+  const policyRole =
+    task.phase === "awaiting_review" || task.phase === "reviewing"
+      ? "reviewer"
+      : "worker";
+  const policyAgent =
+    policyRole === "worker"
+      ? task.agentId
+        ? "retained"
+        : "fresh"
+      : task.resolution.reviewerAgentId
+        ? "retained"
+        : "fresh";
+  const policyStop = runStartPolicyStop(
+    facts.store,
+    task,
+    policyRole,
+    policyAgent,
+    runs,
+    budgetGatesPhase(task.phase),
+  );
+  if (policyStop && !runs.some((run) => !run.released)) {
+    push({
+      action: "run.start",
+      args: {
+        action: "run.start",
+        ...base,
+        role: policyRole,
+        agent: policyAgent,
+        accept: ["budget"],
+      },
+      fill: ["reason"],
+      note: `${policyStop}. Start the next ${policyRole} run past it; extend_budget instead adds one budget increment.`,
+    });
+  }
+
   if (task.resolution.stop) {
     push({
       action: "record.clear",
@@ -830,7 +878,40 @@ function explicitCommandsFor(
     });
   }
 
-  return commands;
+  return commands.map((command) => {
+    const warnings = expectedWarnings(facts, command);
+    return warnings ? { ...command, warnings } : command;
+  });
+}
+
+/**
+ * The warning IDs an explicit command will name, read from the same stored state
+ * the command reads (papercut ee6e634c). Null when only the command's own
+ * preflight can tell (integration and message commands).
+ */
+function expectedWarnings(
+  facts: OwnerVerbFacts,
+  command: TaskNextExplicitCommand,
+): ResolutionWarningId[] | null {
+  const { store, task } = facts;
+  const args = command.args;
+  try {
+    if (command.action === "run.start")
+      return runStartWarnings(store, task, {
+        role: args.role as "worker" | "reviewer" | "coordinator",
+        agent: args.agent as "fresh" | "retained" | undefined,
+        replacing: args.replacing as string | undefined,
+        head: args.head as string | undefined,
+      }).map((warning) => warning.id);
+    if (command.action === "run.release")
+      return releaseWarnings(store, task, String(args.run)).map(
+        (warning) => warning.id,
+      );
+    if (command.action === "record.clear" && args.kind === "stop") return [];
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 /**

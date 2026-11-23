@@ -37,6 +37,7 @@ import { operationInputHash } from "../core/store/store";
 import {
   collectOwnerVerbFacts,
   ownerPendingEffects,
+  ownerTaskNext,
 } from "../core/verbs/owner-verbs";
 import { taskControlOperation } from "../core/verbs/task-control-key";
 import {
@@ -49,6 +50,7 @@ import { checkoutRunScratchPlacement } from "../core/workspaces/run-scratch";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
+import { explicitOutcome } from "../bin/explicit-outcome.mjs";
 
 const head = "a".repeat(40);
 const host = "paseo-fixture";
@@ -882,6 +884,12 @@ test("run.start enforces two_writers and budget warnings and coordinator authori
       },
     },
   });
+  // The cap park's own record: six rounds alone are not the cap (papercut 677c378d).
+  store.event(
+    current().id,
+    "revision_budget_exhausted",
+    `Revision budget exhausted after ${REVISION_BUDGET} review rounds; the project planner decides the next approach`,
+  );
   runtime.engine.profiles = [profile("worker-prof")];
   store.setMeta("pool", [
     {
@@ -907,12 +915,85 @@ test("run.start enforces two_writers and budget warnings and coordinator authori
     command({ ...args, caller: coordCaller, accept: ["two_writers"] }),
     /only the live responsible planner/i,
   );
+  // The revision cap (and a second budget spend) is the planner's disposition,
+  // as the author-round rule holds: a coordinator cannot start a run past it.
+  await assert.rejects(
+    command({ ...args, caller: coordCaller, agent: "retained", accept: ["budget"] }),
+    /only the live responsible planner or operator board can accept .*budget/i,
+  );
   const applied = await command({
     ...args,
     caller: planner,
     accept: ["duplicate_thread", "two_writers", "budget"],
   });
   assert.equal(applied.explicitResolution?.status, "applied");
+});
+
+test("an unaccepted explicit command leads with its warnings and exits non-zero, and next lists them up front (papercut ee6e634c)", async (t) => {
+  const { store, current, run, command, runtime } = await fixture(t);
+  const uncertain = run("uncertain-revision", "revision", null);
+  store.putRun(uncertain);
+  store.update(current().id, {
+    phase: "changes_requested",
+    prHead: head,
+    workspaceId: "workspace",
+    profile: profile("worker-prof"),
+  });
+  runtime.engine.profiles = [profile("worker-prof")];
+  store.setMeta("pool", [
+    {
+      profileId: "worker-prof",
+      enabled: true,
+      group: "work",
+      weight: "default",
+      scopes: ["general"],
+      roles: ["worker"],
+    },
+  ]);
+
+  // `next` names each command's warnings before it is sent.
+  const next = ownerTaskNext(collectOwnerVerbFacts(store, current()));
+  const start = next.explicitCommands?.find(
+    (item) => item.action === "run.start" && item.args.replacing === uncertain.id,
+  );
+  assert.ok(start, JSON.stringify(next.explicitCommands));
+  assert.deepEqual(start!.warnings, ["duplicate_thread", "two_writers"]);
+  const release = next.explicitCommands?.find(
+    (item) => item.action === "run.release" && item.args.run === uncertain.id,
+  );
+  assert.deepEqual(release?.warnings, ["live_turn", "unreported_result"]);
+
+  // Sent without them, the command applies nothing and says so first.
+  const { action: _action, taskId: _taskId, version: _version, ...args } = start!.args;
+  const probe = await command({ action: "run.start", ...args });
+  assert.equal(probe.explicitResolution?.status, "warnings");
+  assert.deepEqual(
+    probe.explicitResolution?.warnings.map((warning) => warning.id),
+    start!.warnings,
+    "the listed warnings are the ones the command names",
+  );
+  const refused = explicitOutcome(probe)!;
+  assert.equal(
+    refused.line,
+    'warnings: duplicate_thread, two_writers (not applied; resend with "accept": ["duplicate_thread","two_writers"] to apply; only the live responsible planner or the operator board may accept two_writers)',
+  );
+  assert.ok(refused.line.startsWith("warnings: duplicate_thread, two_writers"));
+  assert.equal(refused.exitCode, 2);
+  assert.equal(store.run(uncertain.id)?.released, false, "nothing was applied");
+
+  // A stale version is not applied either.
+  const stale = await command({ action: "run.start", ...args, version: current().version + 1 });
+  assert.equal(stale.explicitResolution?.status, "stale");
+  assert.match(explicitOutcome(stale)!.line, /^stale: not applied/);
+  assert.equal(explicitOutcome(stale)!.exitCode, 2);
+
+  // Resent with next's list, it applies and exits zero.
+  const applied = await command({ action: "run.start", ...args, accept: start!.warnings });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  const outcome = explicitOutcome(applied)!;
+  assert.match(outcome.line, /^applied/);
+  assert.equal(outcome.exitCode, 0);
+  assert.equal(explicitOutcome({ id: "not an explicit answer" }), null);
 });
 
 test("phase.set warns on live_runs and writes only phase and reason", async (t) => {

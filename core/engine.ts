@@ -339,6 +339,7 @@ export class Engine {
         "recoverExternalMerge",
         "recovery",
         "resumeClearedAttention",
+        "resumeRoundTells",
         "settleBudgetClock",
         "settleSettledWaitStop",
         "slotAdmissionReason",

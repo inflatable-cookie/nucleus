@@ -18,7 +18,7 @@ import {
   slotRequestFenced,
 } from "../dispatch/capacity";
 import type { Store } from "../store/store";
-import { hostOutageIntervals } from "../scheduling/host-outage";
+import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { HOST_WAIT_PRESERVED_STOPS } from "../../shared/host-outage";
 
 /** The typed stop identifies the recorded occurrence. Its detail is historical. */
@@ -61,7 +61,7 @@ export function taskWaitStateContext(
     hostOutages:
       task.phase === "done" || task.phase === "cancelled"
         ? []
-        : hostOutageIntervals(store, task.hostId),
+        : budgetOutageIntervals(store, task.hostId),
     decisionId,
     dependencyWait,
     prerequisiteOwner: unfinished.join(", ") || null,

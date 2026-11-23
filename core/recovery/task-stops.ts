@@ -1,4 +1,4 @@
-import { hostOutageIntervals } from "../scheduling/host-outage";
+import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { callbackTransportPhase } from "../../shared/service/transport.mjs";
 import { hostKindOf } from "../../shared/host-kind";
 import { randomUUID } from "node:crypto";
@@ -14,6 +14,9 @@ import {
   type TaskStopVerb,
 } from "../../shared/task-stop";
 import {
+  automaticBudgetExtensionDue,
+  budgetGatesPhase,
+  budgetPauseDetail,
   NUCLEUS_HELD_REFUSAL_EVENTS,
   nucleusHeldReason,
   taskBudget,
@@ -22,7 +25,7 @@ import {
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import { holdsOf } from "../../shared/holds";
 import { isSettledWaitProse, type TaskDecisionFact } from "../../shared/task-stop";
-import { taskHasUnreleasedRun } from "../../shared/task-view";
+import { currentTaskStop, taskHasUnreleasedRun } from "../../shared/task-view";
 import {
   plannerEscalations,
   type LadderEvent,
@@ -59,6 +62,7 @@ export type { ResolutionChanges };
 export type TaskStopsContext = Pick<
   Resolution,
   | "ensureIncident"
+  | "extendTaskBudgetAutomatically"
   | "questions"
   | "recordIncidentEvent"
   | "saveIncident"
@@ -117,7 +121,9 @@ export class TaskStops {
    * returned.
    */
   settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task {
-    const current = this.clearPassedBudgetStop(this.store.task(task.id));
+    const current = this.settleSpentBudget(
+      this.clearPassedBudgetStop(this.store.task(task.id)),
+    );
     const at = Date.parse(now());
     const clock: BudgetClock = current.resolution.budgetClock ?? {
       pausedMs: 0,
@@ -305,7 +311,7 @@ export class TaskStops {
       Date.now(),
       this.store.eventsAll(task.id),
       this.store.canonicalRepository(task.repoPath, task.repository),
-      hostOutageIntervals(this.store, task.hostId),
+      budgetOutageIntervals(this.store, task.hostId),
     );
     if (budget.exhausted) return task;
     // A queued task's own wait is dispatch; every other phase is progressing under
@@ -332,6 +338,46 @@ export class TaskStops {
       "The measured budget no longer shows the pause.",
     );
     return cleared;
+  }
+  /**
+   * Spec 068 Decision 1 and §5: a spent budget is never silent. In a phase whose
+   * next step is a run, the first spend is extended once by Nucleus itself
+   * (`budget_extended`, source `automatic`), whether or not a run is live; a task
+   * verifying or merging keeps its one extension for the launch gate, should that
+   * stage need a run. A later spend on a task with no live run and no other
+   * stop, in a phase whose next step is a run, becomes the typed `budget` stop
+   * worded as such, which the task's own pass turns into the ordinary operator
+   * budget question; the launch gate records the
+   * same stop when a run would start. Before this, a task whose run ended at a
+   * reboot read "progressing" with its budget spent and no agent (papercut 677c378d).
+   */
+  settleSpentBudget(task: Task): Task {
+    if (task.removedAt || ["done", "cancelled", "queued"].includes(task.phase))
+      return task;
+    const budget = taskBudget(
+      task,
+      this.store.runs(task.id),
+      Date.now(),
+      this.store.eventsAll(task.id),
+      this.store.canonicalRepository(task.repoPath, task.repository),
+      budgetOutageIntervals(this.store, task.hostId),
+    );
+    if (!budget.exhausted || !budgetGatesPhase(task.phase)) return task;
+    if (automaticBudgetExtensionDue(task))
+      return (
+        this.resolution.extendTaskBudgetAutomatically(task.id) ??
+        this.store.task(task.id)
+      );
+    if (
+      currentTaskStop(task, budget) ||
+      task.resolution.hostWait ||
+      holdsOf(task).dispatch ||
+      taskHasUnreleasedRun(task) ||
+      this.store.runs(task.id).some((run) => !run.released)
+    )
+      return task;
+    this.resolution.waiting(task, budgetPauseDetail(budget), "budget");
+    return this.store.task(task.id);
   }
   /**
    * nucleus#1437 (installed as #1427): a stop the sweep wrote from settled-wait prose is

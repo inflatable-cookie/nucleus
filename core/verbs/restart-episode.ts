@@ -1,8 +1,5 @@
 import { TaskChangedRefusal } from "../../shared/task-version";
-import {
-  COORDINATOR_LOOP_LIMIT,
-  unproductiveCoordinatorRuns,
-} from "../recovery/recovery-bound";
+import { coordinatorBoundExhausted } from "../recovery/recovery-bound";
 import {
   DEFAULT_GLOBAL_LIMIT,
   type Run,
@@ -250,8 +247,7 @@ export class EpisodeRestarts {
       const current = this.store.task(task.id);
       return (
         current.resolution.recovery?.status === "escalated" &&
-        unproductiveCoordinatorRuns(this.store, current.id) >=
-          COORDINATOR_LOOP_LIMIT
+        coordinatorBoundExhausted(this.store, current.id) !== null
       );
     };
     return this.engine.control(
