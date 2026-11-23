@@ -1301,7 +1301,7 @@ test("the card keeps two-line titles, drops the repository and phase chips, and 
   assert.match(ui, /Stop category · \{taskSummaryStop\.reason\}/);
   assert.match(
     ui,
-    /Suggested owner verbs · \{taskSummaryStop\.suggestedVerbs\.join\(\", \"\)\}/,
+    /Suggested owner verbs ·\{" "\}\s*\{taskSummaryStop\.suggestedVerbs\.join\(", "\)\}/,
   );
 });
 

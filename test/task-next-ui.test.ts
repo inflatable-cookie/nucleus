@@ -81,11 +81,31 @@ async function selectDetailTab(
     () => tree.query(title)?.props.accessibilityState?.selected === true,
   );
 }
+/** nucleus#1537: the What's happening card's More button holds the rest of next's available verbs. */
 async function showMoreVerbs(tree: ReturnType<typeof mountBoard>) {
-  const more = tree.all(/^Show \d+ further owner verbs$/)[0];
+  const more = tree.all(/^Show \d+ more actions$/)[0];
   if (more) tree.press(more.props.accessibilityLabel as string);
-  await settle(() => Boolean(tree.all(/^Hide further owner verbs$/)[0]));
+  await settle(() => Boolean(tree.all(/^Hide more actions$/)[0]));
 }
+/** Editing verbs (routing, holds, dependencies, budget) live in the ⋯ menu, sentence-cased. */
+const EDITING_VERB =
+  /^(route|release|keep|set dependencies|extend budget|withdraw)/;
+/**
+ * Press an owner verb: an editing verb from the ⋯ menu, anything else on the
+ * Overview card, opening More when it is not a lead action.
+ */
+async function pressVerb(tree: ReturnType<typeof mountBoard>, label: string) {
+  if (EDITING_VERB.test(label)) {
+    const menuLabel = label.charAt(0).toUpperCase() + label.slice(1);
+    tree.press("Task actions menu");
+    await settle(() => Boolean(tree.query(menuLabel)));
+    tree.press(menuLabel);
+    return;
+  }
+  if (!tree.query(label)) await showMoreVerbs(tree);
+  tree.press(label);
+}
+const happening = /^What is happening: /;
 
 const summaryOf = (overrides: Record<string, unknown>) =>
   taskSummarySchema.parse({
@@ -244,32 +264,39 @@ test("task detail renders the Next section and submits a derived verb with the o
     mounted = tree;
     await settle(() => tree.text().includes("Parked pre-dispatch"));
     tree.press(/Parked pre-dispatch/);
-    await settle(() => Boolean(tree.query(/^Wait: /)));
+    await settle(() => Boolean(tree.query(happening)));
     assert.match(
-      tree.text(),
-      /Waiting for the operator/,
-      "the summary says what the task waits on",
+      String(tree.query(happening)?.props.accessibilityLabel),
+      /^What is happening: Needs you\. /,
+      "the Overview says the task needs the operator",
     );
-    assert.ok(
-      tree.query("Stop: attention; operator_needed; Waiting for the operator"),
-      "the stop line names its category, reason and detail",
-    );
-    // Task 538: a verb that does not apply is not an action; its refusal stays readable in Technical.
+    // Task 538: a verb that does not apply is not an action; its refusal stays readable in Details.
     assert.equal(
       tree.all(/unavailable/).length,
       0,
       "no refused verb is offered as an action",
     );
-    await selectDetailTab(tree, "Technical");
+    await selectDetailTab(tree, "Details");
     assert.ok(
-      tree.query(
-        /^move: unavailable, move work: Move to work requires the task author/,
-      ),
-      "the technical reference names the refusal",
+      tree.query(/^Stop category operator_needed/),
+      "the raw stop record names its category",
+    );
+    assert.match(
+      tree.text(),
+      /Waiting for the operator/,
+      "the raw stop detail stays readable in Details",
+    );
+    const verbsDisclosure = tree.query(/^All owner verbs \(\d+\), collapsed$/);
+    if (verbsDisclosure)
+      tree.press(verbsDisclosure.props.accessibilityLabel as string);
+    await settle(() => Boolean(tree.query(/^move: unavailable, /)));
+    assert.ok(
+      tree.query(/^move: unavailable, .*Move to work requires the task author/),
+      "the owner verb reference names the refusal",
     );
     // Round 4: the parked task restarts with the derived args plus the owner's reason.
     await selectDetailTab(tree, "Overview");
-    tree.press("restart");
+    await pressVerb(tree, "restart");
     await settle(() => Boolean(tree.query("Reason (required)")));
     tree.type("Reason (required)", "The operator repaired the planning base");
     const expectedVersion = store.task(task.id).version;
@@ -289,23 +316,31 @@ test("task detail renders the Next section and submits a derived verb with the o
   }
 });
 
-test("queued dependency edits submit reference lists and allow an empty list to clear them", async () => {
+test("queued dependency edits open prefilled, never send an untouched list, and clear only on purpose", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   const calls: Array<Record<string, unknown>> = [];
-  const task = store.insert(
-    submissionSchema.parse({
-      submissionId: "dependency-form",
-      title: "Edit prerequisites",
-      repoPath: "/app",
-      planningCommit: head,
-      handoffPath: "task.md",
-      originAgentId: "origin",
-    }),
-    "host",
-    "handoff",
-    head,
+  const insert = (submissionId: string, title: string) =>
+    store.insert(
+      submissionSchema.parse({
+        submissionId,
+        title,
+        repoPath: "/app",
+        planningCommit: head,
+        handoffPath: `${submissionId}.md`,
+        originAgentId: "origin",
+      }),
+      "host",
+      "handoff",
+      head,
+    );
+  const prerequisite = insert("dependency-prerequisite", "Prerequisite task");
+  const task = store.update(
+    insert("dependency-form", "Edit prerequisites").id,
+    {
+      dependsOn: [prerequisite.id],
+    },
   );
   const read = createTaskDetailCache(store);
   const invoke = async (method: string, input: unknown) => {
@@ -324,25 +359,57 @@ test("queued dependency edits submit reference lists and allow an empty list to 
     if (method === "lead.board") return { cards: [], links: [] };
     return [];
   };
+  const field =
+    "Prerequisites (comma-separated task IDs or references; leave empty to clear)";
   try {
     const tree = mountBoard(invoke);
     mounted = tree;
     await settle(() => tree.text().includes(task.title));
     tree.press(/Edit prerequisites/);
-    await settle(() => Boolean(tree.query(/^Wait: /)));
-    if (!tree.query("set dependencies")) await showMoreVerbs(tree);
-    tree.press("set dependencies");
-    await settle(() => Boolean(tree.query("Prerequisites (optional)")));
-    tree.type("Prerequisites (optional)", "nucleus#1070, nucleus#1071");
-    tree.press("Confirm set dependencies");
+    await settle(() => Boolean(tree.query(happening)));
+    // `next` offers set_dependencies, so the menu offers the prefilled editor.
+    tree.press("Task actions menu");
+    await settle(() => Boolean(tree.query("Set dependencies")));
+    tree.press("Set dependencies");
+    await settle(() => Boolean(tree.query(field)));
+    assert.equal(
+      tree.get(field).props.value,
+      prerequisite.id,
+      "the existing list is shown",
+    );
+    assert.equal(
+      tree.get("Save dependencies").props.accessibilityState?.disabled,
+      true,
+      "an untouched form cannot submit",
+    );
+    // Clearing on purpose sends the empty list.
+    tree.type(field, "");
+    assert.equal(
+      tree.get("Save dependencies").props.accessibilityState?.disabled,
+      false,
+    );
+    tree.press("Save dependencies");
     await settle(() => calls.length === 1);
-    assert.deepEqual(calls[0].dependsOn, ["nucleus#1070", "nucleus#1071"]);
-    await settle(() => tree.text().includes("Applied set dependencies"));
-    tree.press("set dependencies");
-    await settle(() => Boolean(tree.query("Confirm set dependencies")));
-    tree.press("Confirm set dependencies");
-    await settle(() => calls.length === 2);
-    assert.deepEqual(calls[1].dependsOn, []);
+    assert.deepEqual(calls[0].dependsOn, []);
+    tree.update(h("View", null));
+
+    // Once dispatch has begun, `next` refuses the edit and the menu does not offer it.
+    store.update(task.id, { agentIntent: true });
+    const refused = ownerTaskNext(
+      collectOwnerVerbFacts(store, store.task(task.id)),
+    );
+    assert.equal(
+      refused.verbs.find((verb) => verb.verb === "set_dependencies")?.available,
+      false,
+    );
+    const dispatched = mountBoard(invoke);
+    mounted = dispatched;
+    await settle(() => dispatched.text().includes(task.title));
+    dispatched.press(/Edit prerequisites/);
+    await settle(() => Boolean(dispatched.query(happening)));
+    dispatched.press("Task actions menu");
+    await settle(() => Boolean(dispatched.query("Task actions")));
+    assert.equal(dispatched.query("Set dependencies"), undefined);
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -491,7 +558,13 @@ test("a verb with fill fields requires them before submit and reports refusals i
       /Revision Worker is working\./,
       "a running display without a recent activity stamp does not prove work",
     );
-    tree.press("move to work");
+    await settle(() => Boolean(tree.query(happening)));
+    assert.match(
+      tree.text(),
+      /Worker/,
+      "Who's on it names the active run's profile",
+    );
+    await pressVerb(tree, "move to work");
     await settle(() => Boolean(tree.query("Instruction (required)")));
     tree.type("Reason (required)", "Return to the retained author");
     assert.equal(
@@ -588,9 +661,9 @@ test(
       await settle(
         () =>
           Boolean(tree.query("move to closeout")) ||
-          Boolean(tree.all(/^Show \d+ further owner verbs$/).length),
+          Boolean(tree.all(/^Show \d+ more actions$/).length),
       );
-      await showMoreVerbs(tree);
+      if (!tree.query("move to closeout")) await showMoreVerbs(tree);
       assert.ok(
         tree.query("move to closeout"),
         "the closeout move stays reachable",
@@ -875,7 +948,8 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       try {
         await settle(() => tree.text().includes("Policy task"));
         tree.press(/Policy task/);
-        await selectDetailTab(tree, "Technical");
+        // nucleus#1537: the routing policy lines sit under Details → Routing and timing.
+        await selectDetailTab(tree, "Details");
         await settle(() =>
           Boolean(tree.query("Routing policy for worker profile frontier")),
         );
@@ -900,8 +974,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
         );
         // The route chooser: tags read the effective policy; the chosen profile keeps route explicit.
         await selectDetailTab(tree, "Overview");
-        await showMoreVerbs(tree);
-        tree.press("route reviewer");
+        await pressVerb(tree, "route reviewer");
         await settle(() => Boolean(tree.query("Profile Frontier Opus")));
         assert.equal(
           flat(tree.get("Profile Frontier Opus")),
@@ -947,7 +1020,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
           queryKey: ["nucleus", "next", task.id],
           exact: true,
         });
-        await selectDetailTab(tree, "Technical");
+        await selectDetailTab(tree, "Details");
         await settle(() =>
           line("worker", "frontier").includes("above the task"),
         );
@@ -1128,10 +1201,9 @@ test("Spec 052: bundled dark choosers name an unavailable subscription group ins
         await settle(
           () =>
             Boolean(tree.query("route reviewer")) ||
-            Boolean(tree.all(/^Show \d+ further owner verbs$/).length),
+            Boolean(tree.all(/^Show \d+ more actions$/).length),
         );
-        await showMoreVerbs(tree);
-        tree.press("route reviewer");
+        await pressVerb(tree, "route reviewer");
         await settle(() =>
           Boolean(tree.query("Profile Frontier in a paused group")),
         );
@@ -1145,18 +1217,17 @@ test("Spec 052: bundled dark choosers name an unavailable subscription group ins
           tree.text(),
           /Automatic selection: (Frontier · )?Automatic/,
         );
-        // The worker preference chooser in Routing reads the same.
-        await selectDetailTab(tree, "Technical");
+        // The worker preference chooser in Routing (⋯ menu) reads the same.
+        tree.press("Task actions menu");
+        await settle(() => Boolean(tree.query("Change routing & profiles")));
+        tree.press("Change routing & profiles");
+        await settle(() => Boolean(tree.query("Change routing")));
         tree.press("Change routing");
-        const preference = tree
-          .ofType("Text")
-          .find(
-            (node) =>
-              flat(node) === "Frontier in a paused group · group unavailable" &&
-              !tree
-                .get("Profile Frontier in a paused group")
-                .children.includes(node),
-          );
+        const preference = tree.ofType("Text").find(
+          (node) =>
+            // Opening the routing panel replaced the route verb's chooser.
+            flat(node) === "Frontier in a paused group · group unavailable",
+        );
         assert.ok(
           preference,
           "the preference button names the unavailable group",
@@ -1270,8 +1341,13 @@ test("task detail shows the recorded run-bound build output cleanup beside the c
     mounted = tree;
     await settle(() => tree.text().includes("Built once"));
     tree.press(/Built once/);
-    await selectDetailTab(tree, "Runs & agents");
-    await settle(() => tree.text().includes("Run-bound build output"));
+    // nucleus#1537: the build output disclosure moved off the Overview into Details.
+    await selectDetailTab(tree, "Details");
+    await settle(() =>
+      Boolean(tree.query(/^Run-bound build output, collapsed$/)),
+    );
+    tree.press(/^Run-bound build output, collapsed$/);
+    await settle(() => Boolean(tree.query("Run-bound build output cleanup")));
     const rendered = tree.query("Run-bound build output cleanup")?.props
       .children;
     assert.equal(typeof rendered, "string");
@@ -1304,17 +1380,12 @@ test("task detail shows the recorded run-bound build output cleanup beside the c
       rendered.length < 2600,
       `the detail disclosure stays bounded, got ${rendered.length}`,
     );
-    // The disclosure is prominent: it precedes the run history and the
-    // continuation guidance an owner reads before sending the task back to work.
-    // Task identity now lives in Technical (task 860), so it is not on this tab.
-    const text = tree.text();
-    assert.ok(
-      text.indexOf("Run-bound build output") <
-        text.indexOf("Runs and delivery"),
-    );
-    assert.ok(
-      text.indexOf("Run-bound build output") <
-        text.indexOf("A blocked pre-PR worker resumes through restart"),
+    // The Overview no longer carries the disclosure (nucleus#1537).
+    await selectDetailTab(tree, "Overview");
+    assert.equal(
+      tree.query("Run-bound build output cleanup"),
+      undefined,
+      "the build output record is a Details fact, not an Overview one",
     );
   } finally {
     mounted?.update(h("View", null));
@@ -1387,7 +1458,7 @@ const evidenceInvoke = (
 for (const compact of [false, true]) {
   const size = compact ? "narrow" : "wide";
 
-  test(`task 895 (${size}): all five detail sections stay visible and accessible`, async () => {
+  test(`task 895 and nucleus#1537 (${size}): all three detail sections stay visible and accessible`, async () => {
     await load();
     const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1408,13 +1479,7 @@ for (const compact of [false, true]) {
           tree.query("Task detail sections")?.props.accessibilityRole ===
           "tablist",
       );
-      const labels = [
-        "Overview",
-        "Technical",
-        "Runs & agents",
-        "Messages",
-        "Activity",
-      ];
+      const labels = ["Overview", "Activity", "Details"];
       for (const label of labels)
         assert.equal(
           tree.query(label)?.props.accessibilityRole,
@@ -1436,7 +1501,7 @@ for (const compact of [false, true]) {
         () =>
           detailReads > 1 &&
           tree.query("Activity")?.props.accessibilityState?.selected === true &&
-          tree.text().includes("Recorded events"),
+          tree.text().includes("Add a coordination note"),
       );
     } finally {
       mounted?.update(h("View", null));
@@ -1444,7 +1509,7 @@ for (const compact of [false, true]) {
     }
   });
 
-  test(`task 860 (${size}): live runs lead Runs & agents and earlier runs sit behind a disclosure`, async () => {
+  test(`task 860 (${size}): live runs lead Runs and delivery and earlier runs sit behind a disclosure`, async () => {
     await load();
     const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1487,7 +1552,7 @@ for (const compact of [false, true]) {
       mounted = tree;
       await settle(() => tree.text().includes("Evidence"));
       tree.press(/Evidence/);
-      await selectDetailTab(tree, "Runs & agents");
+      await selectDetailTab(tree, "Details");
       await settle(() => Boolean(tree.query("Earlier runs (1)")));
       const collapsed = tree.text();
       assert.ok(
@@ -1517,7 +1582,7 @@ for (const compact of [false, true]) {
     }
   });
 
-  test(`task 860 (${size}): messages say what their delivery state is, and the empty tab says what a message is`, async () => {
+  test(`task 860 and nucleus#1537 (${size}): messages fold into Activity and say what their delivery state is`, async () => {
     await load();
     const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1559,17 +1624,23 @@ for (const compact of [false, true]) {
       mounted = tree;
       await settle(() => tree.text().includes("Evidence"));
       tree.press(/Evidence/);
-      await selectDetailTab(tree, "Messages");
+      await selectDetailTab(tree, "Activity");
       await settle(() => tree.text().includes("Message queued-one"));
       const text = tree.text();
+      assert.match(text, /Message sent to owner\/app#7/);
       assert.match(
         text,
-        /Queued · waiting for the recipient’s next turn · last note: recipient busy/,
+        /Queued · waiting for the recipient’s next turn · last note: recipient busy · Message queued-one/,
       );
-      assert.match(text, /Delivered/);
-      assert.match(text, /Not delivered · expired before delivery/);
+      assert.match(text, /Delivered · Message delivered-one/);
+      assert.match(
+        text,
+        /Expired · not delivered before the recipient finished · Message expired-one/,
+      );
       assert.ok(
-        tree.query(/^Delivery Not delivered/),
+        tree.query(
+          /^Message sent to owner\/app#7: Expired · not delivered before the recipient finished · Message expired-one$/,
+        ),
         "each delivery state has an accessible label",
       );
     } finally {
@@ -1578,7 +1649,7 @@ for (const compact of [false, true]) {
     }
   });
 
-  test(`task 860 (${size}): Activity bounds long event detail behind a disclosure and counts the recorded events`, async () => {
+  test(`task 860 and nucleus#1537 (${size}): Activity reads in words, hides bookkeeping, and keeps every original event behind Show raw events`, async () => {
     await load();
     const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1616,42 +1687,43 @@ for (const compact of [false, true]) {
       await settle(() => tree.text().includes("Evidence"));
       tree.press(/Evidence/);
       await selectDetailTab(tree, "Activity");
-      await settle(() => tree.text().includes("Recorded events"));
-      assert.doesNotMatch(
-        tree.text(),
-        /Recorded events · \d/,
-        "the events heading carries no count: the detail holds only the newest window",
-      );
+      await settle(() => Boolean(tree.query("Activity timeline")));
       assert.match(tree.text(), /Add a coordination note/);
       assert.match(
         tree.text(),
         /Worker Report/,
         "the kind reads in words, not as a snake_case key",
       );
+      assert.equal(
+        tree.text().includes("validation_wait"),
+        false,
+        "low-value stage mechanics stay behind the raw disclosure",
+      );
+      assert.equal(
+        tree.text().includes(long),
+        false,
+        "the timeline line is bounded; the full detail waits in the raw events",
+      );
+      assert.match(
+        tree.text(),
+        /Show raw events \(3\)/,
+        "the raw toggle counts every recorded event",
+      );
+      tree.press(/^Show raw events \(3\), collapsed$/);
+      await settle(() => tree.text().includes("validation_wait"));
       assert.match(
         tree.text(),
         /Not recorded ·/,
-        "events are honest when the event record has no actor field",
+        "raw events are honest when the event record has no actor field",
       );
       assert.match(
         tree.text(),
         /Tom · /,
         "the recorded actor stops at the colon before the note text",
       );
-      assert.match(
-        tree.text(),
-        /Show technical events \(1\)/,
-        "low-value stage mechanics stay behind an explicit disclosure",
-      );
-      assert.equal(tree.text().includes("validation_wait"), false);
-      assert.equal(
-        tree.text().includes(long),
-        false,
-        "the full detail waits behind its disclosure",
-      );
       assert.ok(
         tree.query(/^Worker Report, actor Not recorded, /),
-        "the event row announces its event, actor and time",
+        "the raw event row announces its event, actor and time",
       );
       tree.press("Original event 1");
       await settle(() => tree.text().includes(long));
@@ -1662,8 +1734,6 @@ for (const compact of [false, true]) {
         true,
         "the full original detail can be selected on demand",
       );
-      tree.press(/^Show technical events \(1\), collapsed$/);
-      await settle(() => tree.text().includes("validation_wait"));
     } finally {
       mounted?.update(h("View", null));
       store.close();
@@ -1706,7 +1776,7 @@ test("task 860: a capped run history says the earlier count is the latest window
     mounted = tree;
     await settle(() => tree.text().includes("Evidence"));
     tree.press(/Evidence/);
-    await selectDetailTab(tree, "Runs & agents");
+    await selectDetailTab(tree, "Details");
     await settle(() =>
       Boolean(tree.query("Earlier runs (200, of the latest 200 runs)")),
     );
@@ -1716,23 +1786,25 @@ test("task 860: a capped run history says the earlier count is the latest window
   }
 });
 
-test("task 860: an empty Messages tab says what a message is and names no tool", async () => {
+test("task 860 and nucleus#1537: a task with no messages or events says so in Activity and names no tool", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const task = evidenceTask(store);
     const tree = mountBoard(
-      evidenceInvoke(store, task.id, (detail) => ({ ...detail, messages: [] })),
+      evidenceInvoke(store, task.id, (detail) => ({
+        ...detail,
+        messages: [],
+        events: [],
+      })),
     );
     mounted = tree;
     await settle(() => tree.text().includes("Evidence"));
     tree.press(/Evidence/);
-    await selectDetailTab(tree, "Messages");
-    await settle(() => tree.text().includes("No messages yet"));
-    assert.match(
-      tree.text(),
-      /They carry information only and never change a task/,
+    await selectDetailTab(tree, "Activity");
+    await settle(() =>
+      tree.text().includes("No activity recorded for this task yet."),
     );
     assert.doesNotMatch(
       tree.text(),
@@ -1768,6 +1840,10 @@ test("task 860: Activity names its window when the detail holds the newest 100 e
     tree.press(/Evidence/);
     await selectDetailTab(tree, "Activity");
     await settle(() =>
+      Boolean(tree.query(/^Show raw events \(100\), collapsed$/)),
+    );
+    tree.press(/^Show raw events \(100\), collapsed$/);
+    await settle(() =>
       tree.text().includes("Showing the newest 100 events, newest first."),
     );
   } finally {
@@ -1776,7 +1852,7 @@ test("task 860: Activity names its window when the detail holds the newest 100 e
   }
 });
 
-test("task 860: Activity with no recorded events says so, and Technical keeps raw identity behind a disclosure", async () => {
+test("task 860 and nucleus#1537: Activity with no recorded events says so, and Details keeps raw identity behind a disclosure", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1790,17 +1866,17 @@ test("task 860: Activity with no recorded events says so, and Technical keeps ra
     tree.press(/Evidence/);
     await selectDetailTab(tree, "Activity");
     await settle(() =>
-      tree.text().includes("No events recorded for this task yet."),
+      tree.text().includes("No activity recorded for this task yet."),
     );
-    await selectDetailTab(tree, "Technical");
-    await settle(() => Boolean(tree.query("Raw IDs and records")));
+    await selectDetailTab(tree, "Details");
+    await settle(() => Boolean(tree.query(/^Raw IDs and records, collapsed$/)));
     assert.match(tree.text(), /Repository/, "the repository reads as a fact");
     assert.doesNotMatch(
       tree.text(),
       /Planning commit/,
       "raw identity waits behind its disclosure",
     );
-    tree.press("Raw IDs and records");
+    tree.press(/^Raw IDs and records, collapsed$/);
     await settle(() => tree.text().includes("Planning commit"));
   } finally {
     mounted?.update(h("View", null));

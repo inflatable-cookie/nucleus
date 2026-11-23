@@ -21,6 +21,7 @@ import {
 } from "../../shared/contracts";
 import { routeUnavailableStop } from "../../shared/task-stop";
 import {
+  CAPACITY_LIMIT_SENTENCES,
   CAPACITY_WAIT_PREFIX,
   inFlightSlotWaitReason,
 } from "../../shared/wait-state";
@@ -377,11 +378,7 @@ function occupiedCapacityLimit(
 
 /** The sentence one limit is written as; the wait prefix is `CAPACITY_WAIT_PREFIX`. */
 export const capacityReason = (limit: CapacityLimit): string =>
-  limit === "global"
-    ? "Global concurrent task-slot limit reached"
-    : limit === "papercut"
-      ? "Project papercut task-slot limit reached"
-      : "Project concurrent task-slot limit reached";
+  CAPACITY_LIMIT_SENTENCES[limit];
 
 /** The capacity refusal a caller writes, or the empty string when the request has capacity. */
 export function capacityFor(

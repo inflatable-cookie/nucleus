@@ -818,11 +818,11 @@ test("the task tab shows the board task detail for a role thread", async () => {
   await settle(
     () =>
       tab.text().includes("Primary repository task") &&
-      tab.query("Runs & agents") !== undefined,
+      tab.query("Details") !== undefined,
     "the task detail",
   );
   // A prerequisite link opens that task in the tab, as on the board, and Back returns.
-  tab.press("Runs & agents");
+  tab.press("Details");
   await settle(
     () => tab.all(/^Second repository task · /u).length === 1,
     "the prerequisite link",
