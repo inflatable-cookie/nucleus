@@ -263,6 +263,12 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
   assert.equal(await lease(), false);
   assert.match(store.task(task.id).reason, /command synthetic-item-1/);
   thread.turnItems[0].status = "completed";
+  thread.thread.pullRequests = [
+    { host: "github.com", repository: "example/repo", number: 12, source: "agent", watch: {} },
+  ];
+  assert.equal(await lease(), false);
+  assert.match(store.task(task.id).reason, /pull-request-watch:github.com\/example\/repo#12/);
+  thread.thread.pullRequests = [];
   assert.equal(await lease(), true);
 
   thread.thread.updatedAt = new Date(Date.parse(STAMP) + 1_000).toISOString();

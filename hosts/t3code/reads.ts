@@ -48,6 +48,18 @@ import {
 export type ThreadReadKind = "observation" | "window" | "transcript" | "custody";
 export type Projection = z.infer<typeof projection>;
 
+const custodyThreadLinks = z.object({
+  thread: z.object({
+    pullRequests: z.array(z.object({
+      host: z.string().min(1),
+      repository: z.string().min(1),
+      number: z.number().int().positive(),
+      source: z.string().min(1),
+      watch: z.object({}).optional(),
+    })).default([]),
+  }),
+});
+
 function backgroundTasks(threads: NonNullable<Projection["providerThreads"]>) {
   return threads.flatMap((thread) =>
     (thread.pendingBackgroundTasks ?? []).map((task) => `${task.kind} ${task.taskId}`),
@@ -61,6 +73,7 @@ function backgroundTasks(threads: NonNullable<Projection["providerThreads"]>) {
 function custodyBackgroundTasks(
   projection: Projection,
   providerThreads: NonNullable<Projection["providerThreads"]>,
+  pullRequests: z.infer<typeof custodyThreadLinks>["thread"]["pullRequests"],
 ): string[] {
   const rolledBack = new Set(
     projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
@@ -68,7 +81,8 @@ function custodyBackgroundTasks(
   const tasks = new Set(backgroundTasks(providerThreads));
   for (const item of projection.turnItems) {
     if (item.runId && rolledBack.has(item.runId)) continue;
-    if (item.status !== "pending" && item.status !== "running" && item.status !== "waiting")
+    if (item.status !== "pending" && item.status !== "running" &&
+        item.status !== "waiting")
       continue;
     if (item.type === "command_execution")
       tasks.add(`${item.monitor === true ? "monitor" : "command"} ${item.id}`);
@@ -79,7 +93,7 @@ function custodyBackgroundTasks(
         !Array.isArray(item.input) && "persistent" in item.input && item.input.persistent === true))
       tasks.add(`background_task ${item.id}`);
   }
-  for (const pr of projection.thread.pullRequests ?? []) {
+  for (const pr of pullRequests) {
     if (pr.watch && pr.source !== "stack-dismissed")
       tasks.add(`monitor pull-request-watch:${pr.host.toLowerCase()}/${pr.repository.toLowerCase()}#${pr.number}`);
   }
@@ -91,6 +105,8 @@ function custodyBackgroundTasks(
  */
 export interface ThreadSnapshotRead {
   projection: Projection;
+  /** Available on complete custody reads with a provider roster. */
+  pendingBackgroundTasks?: string[];
   paged: boolean;
   /** The nightly left the turn items themselves out of a bounded answer. */
   omitsTurnItems: boolean;
@@ -577,8 +593,11 @@ export class T3Reads {
     this.core.requireConnection();
     // Bounded projections can omit older idle provider sessions, and the
     // shell roster covers only the active session. Require all sessions here.
-    const { projection } = await this.readFreshSnapshot(id, "custody");
-    if (projection.thread.deletedAt || !projection.providerThreads) return null;
+    const { projection, pendingBackgroundTasks } = await this.readFreshSnapshot(
+      id,
+      "custody",
+    );
+    if (projection.thread.deletedAt || !pendingBackgroundTasks) return null;
     const row = rowFromProjection(projection);
     return {
       id: row.id,
@@ -588,7 +607,7 @@ export class T3Reads {
       permissions: row.pendingRuntimeRequest !== null,
       activeTurnId: row.activeRunId,
       updatedAt: projection.updatedAt,
-      pendingBackgroundTasks: custodyBackgroundTasks(projection, projection.providerThreads),
+      pendingBackgroundTasks,
     };
   }
   /** `readListRow` for a caller outside this module. */
@@ -903,6 +922,18 @@ export class T3Reads {
               paged: coverage.paged,
               omitsTurnItems: coverage.omitsTurnItems,
             };
+            if (kind === "custody" && snapshot.providerThreads) {
+              const { thread } = decode(
+                custodyThreadLinks,
+                item.projection,
+                "subscribeThread.projection",
+              );
+              read.pendingBackgroundTasks = custodyBackgroundTasks(
+                snapshot,
+                snapshot.providerThreads,
+                thread.pullRequests,
+              );
+            }
           } else if (item.kind === "synchronized") {
             if (!read)
               throw new T3CompatibilityError(

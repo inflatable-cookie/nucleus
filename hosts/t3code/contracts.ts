@@ -186,7 +186,6 @@ export const turnItem = z
   .object({
     id,
     type: id,
-    status: id.optional(),
     requestId: id.optional(),
     /** A user message's own id: the identity an operator command is served by (nucleus#1415). */
     messageId: id.optional(),
@@ -273,15 +272,7 @@ export const providerThread = z
   })
   .passthrough();
 export const projection = z.object({
-  thread: threadRecord.extend({
-    pullRequests: z.array(z.object({
-      host: id,
-      repository: id,
-      number: z.number().int().positive(),
-      source: id,
-      watch: z.object({}).optional(),
-    })).optional(),
-  }),
+  thread: threadRecord,
   // `rootNodeId` is the run's own root node (recorded `runKeys`): the parent node
   // a `thread.created.record` card on that run must name.
   runs: z.array(
