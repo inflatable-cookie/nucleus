@@ -1077,25 +1077,32 @@ export class HostPass {
           )
             addTool(run.agentId, observedMap?.get(run.agentId));
         }
-        if (observedMap) {
-          if (task.agentId) {
-            const state = observedMap.get(task.agentId);
-            if (state && noTurnLive(state)) addTool(task.agentId, state);
-          }
-          for (const run of runs) {
-            if (!run.released && run.agentId) {
-              const state = observedMap.get(run.agentId);
-              if (state && noTurnLive(state)) addTool(run.agentId, state);
-            }
-          }
-        } else if (
-          ["merging", "syncing", "awaiting_review", "needs_attention"].includes(
-            task.phase,
-          ) ||
-          Boolean(task.completion)
-        ) {
-          for (const [agentId] of executionParticipants(task, runs))
+        for (const [agentId] of executionParticipants(task, runs)) {
+          const state = observedMap?.get(agentId) ?? null;
+          if (state) {
+            if (
+              noTurnLive(state) ||
+              state.status === "closed" ||
+              state.status === "gone" ||
+              state.archived === true
+            )
+              addTool(agentId, state);
+          } else if (
+            !observedMap ||
+            [
+              "verifying",
+              "merging",
+              "syncing",
+              "closing",
+              "awaiting_review",
+              "reviewing",
+              "changes_requested",
+              "needs_attention",
+            ].includes(task.phase) ||
+            Boolean(task.completion)
+          ) {
             addTool(agentId, null);
+          }
         }
       }
       if (toolCandidates.length) {
@@ -1106,6 +1113,27 @@ export class HostPass {
             if (!canWarmMore()) return;
             const cap = perCandidateCap(orderedTools.length);
             if (cap <= 0) return;
+            let coveredObservation = candidate.coveredObservation;
+            if (!coveredObservation) {
+              const obsRead = await boundedRead(
+                "participant observation",
+                () => this.context.host.observe(candidate.agentId),
+                cap,
+              ).catch(() => ({
+                state: "unknown" as const,
+                reason: "observe failed",
+              }));
+              if (obsRead.state === "ok") {
+                const s = obsRead.value;
+                coveredObservation = {
+                  updatedAt: s.updatedAt ?? null,
+                  status: s.status,
+                  archived: s.archived,
+                };
+              }
+            }
+            const pageCap = perCandidateCap(orderedTools.length);
+            if (pageCap <= 0) return;
             warmed++;
             const firstRead = await this.context.resolution
               .primePassTimelinePage!(
@@ -1113,8 +1141,8 @@ export class HostPass {
               TOOL_TIMELINE_LIMIT,
               host,
               {
-                coveredObservation: candidate.coveredObservation,
-                deadlineMs: cap,
+                coveredObservation,
+                deadlineMs: pageCap,
               },
             ).catch(() => null);
             if (firstRead?.state === "unknown") {
@@ -1160,9 +1188,7 @@ export class HostPass {
                   ...expanded,
                   capturedAt: Date.now(),
                   fromPassSnapshot: true,
-                  ...(candidate.coveredObservation
-                    ? { coveredObservation: candidate.coveredObservation }
-                    : {}),
+                  ...(coveredObservation ? { coveredObservation } : {}),
                 },
               );
               page = expanded.value;
@@ -1172,26 +1198,53 @@ export class HostPass {
       }
     }
     if (
-      observed &&
       this.adapter.agentTimeline &&
       this.context.resolution.primePassTimeline &&
       canWarmMore()
     ) {
       const shellAgents: string[] = [];
+      const seenShell = new Set<string>();
+      const addShell = (agentId: string): void => {
+        if (seenShell.has(agentId)) return;
+        seenShell.add(agentId);
+        shellAgents.push(agentId);
+      };
       const nowMs = Date.now();
-      for (const [agentId, state] of observed as ReadonlyMap<
-        string,
-        AgentObservation
-      >) {
-        if (!state.active && !state.permissions) continue;
-        const turnStartedAt = state.turnStartedAt
-          ? Date.parse(state.turnStartedAt)
-          : NaN;
-        if (
-          Number.isFinite(turnStartedAt) &&
-          nowMs - turnStartedAt >= SHELL_NOTICE_MS
-        )
-          shellAgents.push(agentId);
+      const stallMinutes = this.store.getMeta<number>("stallThresholdMinutes");
+      const stallThresholdMs =
+        typeof stallMinutes === "number" &&
+        Number.isFinite(stallMinutes) &&
+        stallMinutes > 0
+          ? stallMinutes * 60_000
+          : 30 * 60_000;
+      if (observed) {
+        for (const [agentId, state] of observed as ReadonlyMap<
+          string,
+          AgentObservation
+        >) {
+          if (!state.active && !state.permissions) continue;
+          const turnStartedAt = state.turnStartedAt
+            ? Date.parse(state.turnStartedAt)
+            : NaN;
+          const updatedAt = state.updatedAt ? Date.parse(state.updatedAt) : NaN;
+          const longTurn =
+            Number.isFinite(turnStartedAt) &&
+            nowMs - turnStartedAt >= SHELL_NOTICE_MS;
+          const staleTurn =
+            Number.isFinite(updatedAt) &&
+            nowMs - updatedAt >= Math.min(SHELL_NOTICE_MS, stallThresholdMs);
+          if (longTurn || staleTurn) addShell(agentId);
+        }
+      } else {
+        for (const task of activeTasks) {
+          if (
+            task.agentId &&
+            ["working", "reviewing", "needs_attention"].includes(task.phase)
+          )
+            addShell(task.agentId);
+          for (const run of this.store.runs(task.id))
+            if (!run.released && run.agentId) addShell(run.agentId);
+        }
       }
       if (shellAgents.length) {
         const orderedShells = rotate(shellAgents, passOffset);

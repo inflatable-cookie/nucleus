@@ -378,12 +378,30 @@ export class OwnedTools {
           agentId,
           this.readDeadlineMs,
         );
-        const coveredUpdatedAt = pageMeta.coveredObservation?.updatedAt ?? null;
-        if (
-          !noTurnLive(freshTurn) ||
-          !coveredUpdatedAt ||
-          freshTurn?.updatedAt !== coveredUpdatedAt
-        ) {
+        const freshInactive = Boolean(
+          freshTurn &&
+            !freshTurn.active &&
+            !freshTurn.permissions &&
+            !freshTurn.activeTurnId &&
+            (["idle", "error", "closed", "gone"].includes(
+              freshTurn.status ?? "",
+            ) ||
+              freshTurn.archived === true),
+        );
+        const covered = pageMeta.coveredObservation;
+        const coveredUpdatedAt = covered?.updatedAt ?? null;
+        const freshUpdatedAt = freshTurn?.updatedAt ?? null;
+        const turnUnchanged =
+          freshUpdatedAt !== null
+            ? coveredUpdatedAt !== null && freshUpdatedAt === coveredUpdatedAt
+            : Boolean(
+                covered &&
+                  (["idle", "error", "closed", "gone"].includes(
+                    covered.status ?? "",
+                  ) ||
+                    covered.archived === true),
+              );
+        if (!freshInactive || !turnUnchanged) {
           return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass";
         }
       }
