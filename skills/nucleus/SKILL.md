@@ -502,7 +502,7 @@ four capability brackets: **Mechanical**, **Worker**, **Heavyweight** and
 Mechanical, `medium` and `high` on Worker, and `very_high` on Heavyweight. The
 difference between `medium` and `high` is the step-up: a `medium` task stays on
 Worker, while a `high` task may climb once to Heavyweight after a review asks for
-changes, and a `very_high` task can climb to Frontier at Extra high and Maximum. Roles have no
+changes, and a `very_high` task can climb to Frontier at Extra high (at Maximum it starts there). Roles have no
 offsets: the reviewer's bracket follows the usage level and the coordinator runs
 on Mechanical when one is available. Nucleus rotates among the profiles at the
 run's bracket, leaning toward cheaper ones, so rate honestly: `medium` for
@@ -516,19 +516,19 @@ The operator sets a host-wide usage level (Settings → Dispatch limits slider, 
 `queue.usage`): `low`, `normal` (default), `high`, `extra_high` or `maximum`,
 with an optional `until` when it returns to normal (Tom, 2026-11-17; `minimal` is
 gone and a stored value reads as `low`). The levels move a task by whole
-brackets; "the top two" are Heavyweight and Frontier. Where a task starts and
-what needs permission:
+brackets. Where a task starts and what needs permission:
 
 | Level | Worker starts | Reviewer | Permission |
 | --- | --- | --- | --- |
 | `low` | one bracket below the one it may climb to | one bracket below the worker | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); Frontier is request-only, and Heavyweight unless the task starts or climbs there |
 | `normal` | Mechanical, Worker or Heavyweight by complexity (above) | one bracket below the worker | Frontier is request-only, and Heavyweight unless the task starts or climbs there |
-| `high` | `high` and `very_high` on Heavyweight; lower as at `normal` | the worker's bracket | Frontier is request-only |
+| `high` | `high` and `very_high` on Heavyweight; lower as at `normal` | one bracket below a Heavyweight or Frontier worker; a Worker worker's bracket | Frontier is request-only |
 | `extra_high` | as at `high` | the worker's bracket | none |
-| `maximum` | workers and reviewers on Heavyweight or Frontier whatever the complexity | the worker's bracket | none |
+| `maximum` | one bracket above its own: `very_low` and `low` on Worker, `medium` and `high` on Heavyweight, `very_high` on Frontier | the worker's bracket | none |
 
-A Mechanical worker gets a Mechanical reviewer, and a `critical` task still
-prefers a reviewer at least as capable as the worker.
+No reviewer runs above its worker, a Mechanical worker gets a Mechanical
+reviewer at every level, and a `critical` task still prefers a reviewer at least
+as capable as the worker. At Maximum a `high` task may climb once to Frontier.
 
 An applied review that asks for changes can move the worker up one bracket
 on a fresh agent and records the climb for that round. At Low, Normal and High

@@ -69,8 +69,10 @@ Each run gets a **demand**: the capability bracket it needs.
 
 ```
 worker      = the usage level's start bracket for the task's complexity (Spec 052)
-reviewer    = one bracket below the worker's actual profile at Low, Normal and High,
-              the worker's bracket at Extra high and Maximum
+reviewer    = never above the worker's actual profile: one bracket below at Low and
+              Normal; at High one below a Heavyweight or Frontier worker and on a
+              Worker worker's bracket; the worker's bracket at Extra high and
+              Maximum; Mechanical for a Mechanical worker (Spec 052, 2026-11-23)
 coordinator = Mechanical
 ```
 
@@ -83,7 +85,8 @@ coordinator = Mechanical
   ([Spec 052](052-usage-level.md)). At Normal very-low and low complexity start
   on Mechanical, medium and high on Worker, very high on Heavyweight. Low starts
   one bracket below the bracket the task may climb to, High and Extra high at
-  it (up to Heavyweight), Maximum on Heavyweight. The level's permission rule
+  it (up to Heavyweight), Maximum one bracket above the task's own (Worker,
+  Heavyweight or Frontier, Tom 2026-11-23). The level's permission rule
   gates Heavyweight and Frontier; cost is only the rotation lean.
 - **No role offsets** (Tom, 2026-11-19: "Coordinator should always be
   mechanical if available, worker shouldn't have an offset at all"). The
@@ -117,7 +120,7 @@ Selection for a run then:
 2. Keeps every profile at the run's own bracket (the demand); the nearest bracket above is the bail-out when none carries it, and a
    shortfall takes the most capable profile at or below the bracket the task may
    climb to. A profile above that bracket is never automatic for a worker
-   (Maximum's rule is Heavyweight and Frontier for workers and reviewers only).
+   except at Maximum, whose ceiling is Frontier.
    A reviewer and a coordinator are not capped there: they take the nearest
    permitted bracket above or the most capable permitted profile rather than
    wait ([Spec 052](052-usage-level.md)).
@@ -238,10 +241,10 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | --- | --- | --- |
 | 1 | Complexity medium, Normal, worker | Every Worker profile rotates by weight share, none is starved; a review asking for changes never climbs past Worker |
 | 2 | Complexity high, Normal, worker | Starts on Worker; after an applied changes-required review, climbs once to Heavyweight |
-| 2b | Same task, reviewer, Worker author | Mechanical (one bracket below) at Low, Normal and High; on the author's bracket at Extra high and Maximum |
+| 2b | Same task, reviewer, Worker author | Mechanical (one bracket below) at Low and Normal; on the author's bracket at High, Extra high and Maximum |
 | 3 | Any complexity, coordinator | Mechanical when available, else the lowest permitted bracket with a profile |
 | 4 | Complexity very_high, Normal | Starts on Heavyweight. Frontier requires an explicit request. |
-| 5 | Same task at Maximum | Heavyweight or Frontier |
+| 5 | Same task at Maximum | Starts on Frontier; a medium task starts on Heavyweight and a low one on Worker |
 | 6 | Same task at Low after an approved submission | Starts one bracket below the bracket it may climb to |
 | 7 | Reviewer shares the author's model | Excluded, as today |
 | 8 | Author escalation history (rows stripped 2026-11-09, task 989) | No demand change |

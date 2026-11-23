@@ -265,18 +265,20 @@ test("explicit preferred and required requests win independent of rating distanc
     },
   };
   assert.equal(
-    chooseProfile(
-      lowerRequest,
-      profiles,
-      pool,
-      usage,
-      new Set(),
-      "worker",
-      usage,
-      "maximum",
+    ids(
+      chooseProfile(
+        lowerRequest,
+        profiles,
+        pool,
+        usage,
+        new Set(),
+        "worker",
+        usage,
+        "maximum",
+      ),
     ),
-    null,
-    "a required Worker request cannot serve at Maximum",
+    "agent-worker",
+    "a required Worker request serves at Maximum, which no longer reserves the top two (Tom, 2026-11-23)",
   );
   assert.equal(
     chooseProfile(
@@ -572,7 +574,9 @@ test("Spec 052: the coordinator runs on Mechanical at every level, Maximum inclu
     "agent-worker",
     "the next lowest permitted bracket",
   );
-  // Maximum reserves Heavyweight and Frontier for workers and reviewers, not the coordinator.
+  // Maximum no longer reserves Heavyweight and Frontier for workers and
+  // reviewers (Tom, 2026-11-23): on a shortfall every role takes the most
+  // capable profile available, as at the other levels.
   const mediumProfile = profile("mid");
   const mediumOnly = [
     poolSchema.parse({
@@ -601,34 +605,23 @@ test("Spec 052: the coordinator runs on Mechanical at every level, Maximum inclu
     "mid",
     "the coordinator has a pick at Maximum",
   );
-  assert.equal(
-    chooseProfile(
-      taskOf({ complexity: "very_high" }),
-      [mediumProfile],
-      mediumOnly,
-      {},
-      new Set(),
-      "worker",
-      {},
-      "maximum",
-    ),
-    null,
-    "a worker still needs a top-two profile at Maximum",
-  );
-  assert.equal(
-    chooseProfile(
-      taskOf({ complexity: "very_high" }),
-      [mediumProfile],
-      mediumOnly,
-      {},
-      new Set(),
-      "reviewer",
-      {},
-      "maximum",
-    ),
-    null,
-    "a reviewer still needs a top-two profile at Maximum",
-  );
+  for (const role of ["worker", "reviewer"] as const)
+    assert.equal(
+      ids(
+        chooseProfile(
+          taskOf({ complexity: "very_high" }),
+          [mediumProfile],
+          mediumOnly,
+          {},
+          new Set(),
+          role,
+          {},
+          "maximum",
+        ),
+      ),
+      "mid",
+      `a ${role} at Maximum falls short to the most capable profile`,
+    );
 });
 
 test("Spec 053: worker, reviewer and coordinator selection use the demand; explicit requests still lead", () => {
@@ -1469,8 +1462,8 @@ test("a reviewer takes the nearest permitted bracket above when no independent p
         "high",
       ),
     ),
-    "agent-mechanical",
-    "at High the reviewer is one bracket below the worker's bracket, so Mechanical serves",
+    "agent-heavyweight",
+    "at High a Worker author keeps a Worker reviewer (Tom, 2026-11-23), so the nearest bracket above serves",
   );
   assert.equal(
     ids(
@@ -1586,8 +1579,8 @@ test("the usage level sets the reviewer bracket, a critical task prefers at leas
         "high",
       ),
     ),
-    "agent-mechanical",
-    "and a Mechanical reviewer at High",
+    "agent-worker-2",
+    "and a Worker reviewer at High: the one-bracket step applies only to Heavyweight and Frontier workers (Tom, 2026-11-23)",
   );
   assert.equal(
     ids(

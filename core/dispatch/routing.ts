@@ -30,7 +30,6 @@ import {
   requestOnly,
   describeRoutePolicy,
   groupIsUnavailable,
-  topTier,
 } from "../../shared/pool";
 import {
   climbedTier,
@@ -474,21 +473,11 @@ export function chooseProfile(
       : role === "reviewer"
         ? raised
         : fullDemand;
-  // Maximum reserves Heavyweight and Frontier for workers and reviewers (an explicit
-  // request included), and a reviewer never runs below the worker's actual tier.
-  const roleMeets = (entry: PoolEntry) => {
-    if (
-      usage === "maximum" &&
-      role !== "coordinator" &&
-      !topTier(entry.capability)
-    )
-      return false;
-    // No absolute reviewer floor (Tom, 2026-11-18: "a reviewer should be able to
-    // be lower tier", "a Sol reviewer for an Opus worker is fine"): the reviewer
-    // level sets its demand, and a critical task prefers a rigorous reviewer
-    // below, falling back to the best independent one when none is available.
-    return true;
-  };
+  // No absolute reviewer floor (Tom, 2026-11-18: "a reviewer should be able to
+  // be lower tier", "a Sol reviewer for an Opus worker is fine"): the reviewer
+  // level sets its demand, and a critical task prefers a rigorous reviewer
+  // below, falling back to the best independent one when none is available.
+  // Maximum no longer reserves Heavyweight and Frontier (Tom, 2026-11-23).
   let eligible = pool.flatMap((entry) => {
     const profile = profiles.find((p) => p.id === entry.profileId);
     // Spec 053 retires the pool's role and scope switches: every model can work, review and coordinate.
@@ -514,7 +503,6 @@ export function chooseProfile(
     // A legacy preference is subject to the automatic selection bounds.
     if (
       preferred &&
-      roleMeets(preferred.entry) &&
       (request ||
         automaticReachable(preferred.entry, usage, requested, climbTier, role))
     )
@@ -543,19 +531,11 @@ export function chooseProfile(
   // a worker is bounded by the bracket the task may climb to.
   const ceiling =
     role === "worker" && usage !== "maximum" ? requested : "frontier";
-  // Maximum's top-two rule is for workers and reviewers; a coordinator stays
-  // on the ordinary bracket set.
-  const topOnly = usage === "maximum" && role !== "coordinator";
-  const { tier: rawTier } = selectionTier(
+  const { tier } = selectionTier(
     demand,
     eligible.map((candidate) => candidate.entry),
-    topOnly,
     ceiling,
   );
-  // The reviewer floor is absolute: when every independent candidate is weaker
-  // than the worker's actual tier, the role waits for a route rather than
-  // certifying that tier on a weaker profile.
-  const tier = rawTier.filter((entry) => roleMeets(entry));
   const inTier = new Set(tier.map((entry) => entry.profileId));
   const ranked = eligible.filter((candidate) =>
     inTier.has(candidate.entry.profileId),
@@ -732,7 +712,6 @@ export function workerSelectionExplanation(
   const { tier, shortfall } = selectionTier(
     demand,
     eligible,
-    usage === "maximum",
     usageCeiling(usage, requested),
   );
   const nameOf = (id: string) =>
@@ -1131,10 +1110,9 @@ export class RoleSelection {
       : "";
   }
   /**
-   * Spec 052 (Tom, 2026-11-19; Tom, 2026-11-22: High joins the one-below
-   * levels): a retained reviewer below the bracket the level asks of it for
-   * the worker's actual profile (one below at Low, Normal and High, the same
-   * at Extra high and Maximum) is replaced on the next round.
+   * Spec 052 (Tom, 2026-11-19; 2026-11-23): a retained reviewer below the
+   * bracket the level asks of it for the worker's actual profile
+   * (`reviewerBracket`) is replaced on the next round.
    */
   reviewerCapabilityIssue(t: Task, assigned: Profile | null): string | null {
     if (!assigned) return null;
@@ -1142,11 +1120,9 @@ export class RoleSelection {
     const usage = this.store.usageLevel();
     const entry = pool.find((item) => item.profileId === assigned.id);
     // A null capability is a supported rating (unrated counts as Worker), not
-    // an absent profile: Maximum's top-tier floor still applies to it.
+    // an absent profile.
     const reviewer = entry?.capability ?? null;
     if (!entry) return null;
-    if (usage === "maximum" && !topTier(reviewer))
-      return `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below Heavyweight and Frontier, which Maximum reserves for reviewers`;
     // A retained reviewer is measured against the level's reviewer bracket, not the critical
     // preference, so a critical task's fallback reviewer is not churned.
     const required = reviewerDemand({ ...t, critical: false }, pool, usage);

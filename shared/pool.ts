@@ -36,19 +36,6 @@ export function demandRank(value: DemandLevel): number {
   return DEMAND_LEVELS.indexOf(value);
 }
 /**
- * Spec 052: each level uses the profile's capability bracket. "The top two" are Heavyweight and Frontier (Tom, 2026-11-19).
- */
-export const TOP_TIERS: readonly ProfileCapability[] = [
-  "heavyweight",
-  "frontier",
-];
-
-/** Whether a profile's bracket is one of the top two. */
-export const topTier = (
-  capability: ProfileCapability | null | undefined,
-): boolean => capability === "heavyweight" || capability === "frontier";
-
-/**
  * The operator's levels, spelled once for diagnostics and Settings: what a
  * level does, in one line, and the rule behind it.
  */
@@ -75,7 +62,7 @@ export const USAGE_LABELS: Record<
     summary:
       "High-complexity work starts on Heavyweight; Frontier is request-only",
     detail:
-      "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles require an explicit request. The reviewer runs one bracket below the worker.",
+      "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles require an explicit request. The reviewer runs one bracket below a Heavyweight or Frontier worker, and on the worker's bracket otherwise.",
   },
   extra_high: {
     label: "Extra high",
@@ -86,9 +73,10 @@ export const USAGE_LABELS: Record<
   },
   maximum: {
     label: "Maximum",
-    summary: "Workers and reviewers run on Heavyweight or Frontier profiles",
+    summary:
+      "Low complexity on Worker, medium and high on Heavyweight, very high on Frontier",
     detail:
-      "Workers and reviewers run on Heavyweight or Frontier profiles regardless of complexity, and no run needs permission. The coordinator stays on Mechanical.",
+      "Very-low and low complexity start on Worker, medium and high on Heavyweight, and very high on Frontier. A high task may climb once to Frontier after review changes, and no run needs permission. The reviewer runs on the worker's bracket; the coordinator stays on Mechanical.",
   },
 };
 
@@ -140,9 +128,9 @@ export function submissionNeedsPermission(
   );
 }
 /**
- * Whether automatic selection may ever reach this profile at this level: within
- * the task's own requested tier (Maximum is the exception, where workers and
- * reviewers use the top two tiers), and eligible under the usage level.
+ * Whether automatic selection may ever reach this profile at this level: for a
+ * worker, within the task's own requested tier (Maximum, where a task may start
+ * above it, has no such cap), and eligible under the usage level.
  */
 export function automaticReachable(
   entry: Pick<PoolEntry, "capability">,
@@ -152,11 +140,11 @@ export function automaticReachable(
   role: "worker" | "reviewer" | "coordinator" = "worker",
 ): boolean {
   const tier = entry.capability;
-  if (level === "maximum" && role !== "coordinator") return topTier(tier);
   // Only a worker is capped at the climb bracket (Tom, 2026-11-18 reviewer; 2026-11-19 coordinator):
-  // the usage level bounds the other roles.
+  // the usage level bounds the other roles. Maximum's ceiling is Frontier (Tom, 2026-11-23).
   if (
     role === "worker" &&
+    level !== "maximum" &&
     requested &&
     tier &&
     demandRank(tier) > demandRank(requested)
@@ -210,12 +198,9 @@ export function describeAutomaticSelection(
         requested &&
         entry.capability &&
         demandRank(entry.capability) > demandRank(requested);
-      const rule =
-        usage.level === "maximum" && role !== "coordinator"
-          ? "below Heavyweight and Frontier, which Maximum reserves for workers and reviewers"
-          : aboveRequested
-            ? `above the task's ${BRACKET_LABELS[requested]} bracket, so an explicit route is required`
-            : `request-only at ${label}`;
+      const rule = aboveRequested
+        ? `above the task's ${BRACKET_LABELS[requested]} bracket, so an explicit route is required`
+        : `request-only at ${label}`;
       return `${tier}: ${rule}${ended}`;
     }
   }
