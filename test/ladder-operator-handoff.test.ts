@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Engine } from "../core/engine";
 import { Decisions } from "../core/planning/decisions";
-import { escalationWaitDetail } from "../core/questions/ladder";
+import { escalationWaitDetail, plannerEscalations } from "../core/questions/ladder";
 import { resolveExplicitly } from "../core/verbs/explicit-resolution";
+import { collectOwnerVerbFacts, ownerTaskNext } from "../core/verbs/owner-verbs";
 import { OPERATOR_BOARD_CALLER } from "../shared/contracts";
 import { fixture } from "./support/responsible-lifecycle-fixture";
 
@@ -128,9 +129,43 @@ test("an operator handoff adopts the pre-upgrade decision created before its lin
   }
 });
 
+test("next prefills the escalation clear when a legacy handoff has multiple candidates", async () => {
+  const f = handoffFixture();
+  try {
+    f.store.event(f.taskId, "planner_escalation_decision", `${escalationId}: the planner origin said it cannot decide: Scope needs an operator ruling`);
+    for (const question of ["Should the import boundary move?", "Does the import boundary still apply?"]) {
+      f.decisions.add({
+        question,
+        choices,
+        options: choices.map(choice => choice.label),
+        context,
+        askedBy: f.current().agentId ?? "nucleus",
+        tasks: [f.taskId],
+        by: "nucleus",
+      });
+    }
+    assert.throws(() => f.handoff(), /ambiguous unlinked operator decisions/);
+    const task = f.current();
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, task));
+    const clear = next.explicitCommands?.find(command => command.action === "record.clear" && command.args.kind === "escalation");
+    assert.ok(clear);
+    assert.deepEqual(clear.args, { action: "record.clear", taskId: task.id, version: task.version, kind: "escalation", id: escalationId });
+    assert.deepEqual(clear.fill, ["reason"]);
+    assert.ok(next.explicitCommands?.some(command => command.action === "record.clear" && command.args.kind === "stop"));
+    const result = await resolveExplicitly(f.engine, {
+      action: "record.clear", taskId: task.id, version: task.version, kind: "escalation", id: escalationId,
+      caller: OPERATOR_BOARD_CALLER, reason: "Settle the ambiguous handoff", accept: [],
+    }, () => "next");
+    assert.equal(result.explicitResolution?.status, "applied");
+    assert.equal(plannerEscalations(f.store.eventsAll(f.taskId))[0]?.answered, true);
+  } finally {
+    await f.close();
+  }
+});
+
 for (const [control, name] of [
   ["none", "a roll repairs a linked operator decision whose wait journal is missing"],
-  ["move", "a roll respects an owner control after a link with no operator wait journal"],
+  ["replace", "a roll keeps the replacement stop after an interrupted operator handoff"],
   ["hold", "clearing an independent merge hold leaves the linked operator wait recoverable"],
   ["clear", "a roll keeps an explicitly cleared stop cleared after an interrupted operator handoff"],
 ] as const) {
@@ -154,7 +189,7 @@ for (const [control, name] of [
         tasks: [f.taskId],
       });
       f.store.event(f.taskId, "planner_escalation_decision_linked", `${escalationId}: decision ${decision.id}`);
-      if (control === "move") f.store.event(f.taskId, "operator_control", "move");
+      if (control === "replace") f.engine.resolution.waiting(f.current(), "Waiting for a project slot…", "capacity");
       if (control === "clear" || control === "hold") {
         const task = f.current();
         const stopId = task.resolution.stop?.since;
@@ -181,6 +216,7 @@ for (const [control, name] of [
         assert.deepEqual(f.current().resolution.stop?.fact?.escalationWait, { kind: "decision", target: decision.id });
         assert.equal(f.current().resolution.stop?.detail, escalationWaitDetail.operator(escalationId, decision.id));
       }
+      if (control === "replace") assert.equal(f.current().resolution.stop?.reason, "capacity");
       if (control === "clear") {
         assert.equal(f.current().resolution.stop, null);
         await replacement.resolution.blockerLadderStep(f.current());
@@ -203,6 +239,36 @@ for (const [control, name] of [
     }
   });
 }
+
+test("routing a reviewer without now preserves the operator's answer path", async () => {
+  const f = handoffFixture();
+  try {
+    f.handoff();
+    const [decision] = f.decisions.list({ task: f.taskId });
+    const task = f.current();
+    assert.ok(decision && task.resolution.stop);
+    const routed = await f.engine.performTaskControl({
+      taskId: task.id, version: task.version, action: "route", role: "reviewer", profileId: "reviewer",
+      caller: OPERATOR_BOARD_CALLER, reason: "Use this reviewer on the next run",
+    });
+    assert.deepEqual(routed.resolution.stop, task.resolution.stop);
+    assert.ok(f.events("operator_control").some(event => event.detail === "route"));
+    assert.equal(f.engine.resolution.ladder.operatorDecisionApplied(f.taskId, escalationId), true);
+    const answered = f.decisions.answer({
+      id: decision.id, version: decision.version, answer: choices[0]!.label,
+      answeredBy: OPERATOR_BOARD_CALLER, relayed: false, note: "",
+    });
+    const applied: unknown[][] = [];
+    f.engine.resolution.settlePlannerEscalation = async (_task, id, answer) => {
+      applied.push([id, answer]);
+      return null;
+    };
+    f.engine.resolution.operatorDecisionAnswered(answered);
+    assert.deepEqual(applied, [[escalationId, choices[0]!.label]]);
+  } finally {
+    await f.close();
+  }
+});
 
 test("clearing an installed operator stop fences both live answer delivery and journal replay", async () => {
   const f = handoffFixture();

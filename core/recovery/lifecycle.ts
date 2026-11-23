@@ -112,7 +112,7 @@ export class RecoveryLifecycle {
     const thresholdMs =
       (this.context.store.getMeta<number>("stallThresholdMinutes") ??
         DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
-    const escalations = plannerEscalationsHoldingTask(events);
+    const escalations = plannerEscalationsHoldingTask(events, t.resolution.stop);
     const unknownStall = stalledUnknownEscalation({
       escalations,
       now: Date.now(),
@@ -154,7 +154,7 @@ export class RecoveryLifecycle {
     // open, re-assert its escalated wait so no later wait-stamp can strand the
     // ladder behind an operator stop.
     const ladderEvents = this.context.store.eventsAll(t.id);
-    const updatedEscalations = plannerEscalationsHoldingTask(ladderEvents);
+    const updatedEscalations = plannerEscalationsHoldingTask(ladderEvents, this.context.store.task(t.id).resolution.stop);
     const after = decideBlockerLadderStep({
       classified: true,
       completion,

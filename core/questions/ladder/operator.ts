@@ -4,10 +4,10 @@ import { normalizeRepositoryOrigin } from '../../../shared/lanes';
 import { Decisions } from '../../planning/decisions';
 import { digest } from '../../store/store-core';
 import { decisionAnswerLinks } from '../question-events';
-import { establishEscalationWait, matchesEscalationWait, type EscalationWait } from './hold';
+import { canInstallEscalationWait, establishEscalationWait, matchesEscalationWait, operatorEscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { plannerEscalationSuggestedVerbs } from './proof';
-import { escalationWaitSettledAfter, plannerEscalations, type LadderEvent } from './records';
+import { plannerEscalations, type LadderEvent } from './records';
 import { escalationWaitDetail } from './waits';
 
 /**
@@ -99,10 +99,6 @@ function legacyUnlinkedOperatorDecision(ladder: Ladder, task: Task, events: Ladd
   return candidate;
 }
 
-function operatorWait(id: string, decisionId: string): EscalationWait {
-  return { kind: 'decision', target: decisionId, stopDetail: escalationWaitDetail.operator(id, decisionId) };
-}
-
 function isReturnQuestionId(questionId: string | undefined, escalationId: string): boolean {
   return Boolean(
     questionId &&
@@ -147,7 +143,6 @@ export function operatorDecisionApplied(ladder: Ladder, taskId: string, id: stri
   const linked = events.findLast(event => event.kind === 'planner_escalation_decision_linked' && event.detail.startsWith(`${id}:`));
   const decisionId = linked?.detail.match(/decision ([0-9a-f-]{36})/)?.[1];
   if (!linked || !decisionId) return false;
-  if (escalationWaitSettledAfter(events, id, linked.id)) return false;
   if (events.some(event => event.kind === 'planner_escalation_returned' && event.id > linked.id && event.detail.startsWith(`${id}:`)))
     return false;
   const waitEvent = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`));
@@ -174,7 +169,7 @@ export function restoreLinkedOperatorWaits(ladder: Ladder, taskId: string, event
       ))
     ))) continue;
     if (!readOperatorDecision(ladder, taskId, decisionId)) continue;
-    if (establishEscalationWait(ladder, taskId, id, operatorWait(id, decisionId), linked.id)) restored = true;
+    if (establishEscalationWait(ladder, taskId, id, operatorEscalationWait(id, decisionId), linked.id)) restored = true;
   }
   return restored;
 }
@@ -266,14 +261,7 @@ export function reconcileLegacyPlaceholderDecisions(ladder: Ladder, t: Task): vo
   const events = ladder.store.eventsAll(t.id);
   for (const escalation of plannerEscalations(events as LadderEvent[])) {
     if (escalation.answered || !escalation.decisionId) continue;
-    const linked = events.findLast(event => event.kind === 'planner_escalation_decision_linked'
-      && event.detail === `${escalation.id}: decision ${escalation.decisionId}`);
-    if (!linked) continue;
-    const waitEvent = events.findLast(event => event.kind === 'planner_escalation_wait'
-      && event.detail.startsWith(`${escalation.id}:`)
-      && !events.some(sup => sup.kind === 'planner_escalation_wait_superseded' && sup.id > event.id && sup.detail.startsWith(`${escalation.id}:`)));
-    const anchorId = waitEvent?.id ?? linked.id;
-    if (escalationWaitSettledAfter(events, escalation.id, anchorId)) continue;
+    if (!canInstallEscalationWait(ladder.store.task(t.id).resolution.stop, escalation.id, operatorEscalationWait(escalation.id, escalation.decisionId))) continue;
     let stored: Decision;
     try { stored = ladder.store.decision(escalation.decisionId); } catch { continue; }
     if (stored.status !== 'open' || !isPlaceholderDecisionRecord(stored)) continue;
@@ -345,7 +333,7 @@ export function classifyEscalationToOperator(
     }
     if (linkedId !== target)
       store.event(t.id, 'planner_escalation_decision_linked', `${id}: decision ${target}`);
-    if (!establishEscalationWait(ladder, t.id, id, operatorWait(id, target), classification?.id ?? 0))
+    if (!establishEscalationWait(ladder, t.id, id, operatorEscalationWait(id, target), classification?.id ?? 0))
       throw Error(`Escalation ${id} could not establish its operator decision wait`);
   };
   if (ladder.store.db.isTransaction) write();

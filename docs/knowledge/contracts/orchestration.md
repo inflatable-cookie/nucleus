@@ -2437,8 +2437,11 @@ wait commit together. The decision identity is keyed to the escalation occurrenc
 and handoff generation. An interrupted older insert can be linked using its
 recorded classification, original task link and choices when they identify one
 decision. Recovery can rebuild a linked decision's missing wait while the link
-still owns the escalation. Clearing the escalation's own stop fences both wait
-recovery and late answers. Clearing an independent hold leaves the wait in place.
+still owns the escalation. Recovery and late answers check the task's current
+stop or prerequisite wait identity. Clearing or replacing that record retires
+the wait. A control that preserves it, such as routing a reviewer for the next
+run, preserves the answer path. `next` prefills the clear command for the open
+escalation that owns the stop.
 
 When the retained worker's own in-turn ask holds its turn, an escalation's
 worker direction is recorded once and the ask returns pending without being

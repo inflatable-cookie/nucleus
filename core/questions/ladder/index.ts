@@ -38,12 +38,12 @@ export {
   findOpenPlannerEscalation,
   parseAnsweredText,
   plannerEscalations,
-  plannerEscalationsHoldingTask,
   reviewerConsults,
   type LadderEvent,
   type PlannerEscalation,
   type ReviewerConsult,
 } from "./records";
+export { plannerEscalationsHoldingTask } from "./hold";
 export {
   blockerLadderStep,
   consultRecovery,

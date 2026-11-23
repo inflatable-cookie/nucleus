@@ -1,6 +1,3 @@
-import { z } from "zod";
-import { taskStopRecordSchema } from "../../../shared/task-stop";
-
 /**
  * What the ladder's durable records say. The ladder writes each intent twice in
  * one transaction: a readable line, and a typed payload beside it. An episode's
@@ -22,41 +19,7 @@ export type LadderEvent = {
   detail: string;
 };
 
-const recordedStopClearSchema = z.object({
-  command: z.literal("record.clear"),
-  arguments: z.object({ kind: z.enum(["stop", "wait"]), id: z.string() }),
-  before: taskStopRecordSchema,
-});
-
-/** Ordinary controls that can dispose of a parked escalation's work. */
-export function ordinaryControlSettlesEscalation(action: string): boolean {
-  return ["move", "restart", "route", "retry_effect", "complete", "stop"].includes(action);
-}
-
-/** Read the disposition of this escalation or a clear of its own stop. */
-export function escalationWaitSettledAfter(events: readonly LadderEvent[], id: string, after: number): boolean {
-  return events.some(event => {
-    if (event.id <= after) return false;
-    if (event.kind === "planner_escalation_resolved") return event.detail.startsWith(`${id}:`);
-    if (event.kind === "planner_escalation_answered") return event.detail.startsWith(`${id}: answered by ordinary `);
-    if (event.kind === "operator_control") return ordinaryControlSettlesEscalation(event.detail);
-    if (event.kind !== "owner_control" && event.kind !== "owner_resolution") return false;
-    try {
-      const detail: unknown = JSON.parse(event.detail);
-      if (!detail || typeof detail !== "object") return false;
-      if (event.kind === "owner_control")
-        return "verb" in detail && typeof detail.verb === "string" && ordinaryControlSettlesEscalation(detail.verb);
-      // These transitions retire the current stop as part of entering merge or closeout.
-      if ("command" in detail && (detail.command === "merge.now" || detail.command === "closeout.now")) return true;
-      const cleared = recordedStopClearSchema.safeParse(detail);
-      if (!cleared.success) return false;
-      const { before, arguments: target } = cleared.data;
-      return before.since === target.id && before.fact?.code === "escalation" && before.fact.subject === id;
-    } catch {
-      return false;
-    }
-  });
-}
+type LadderHistoryEvent = Omit<LadderEvent, "taskId">;
 
 export interface ReviewerConsult {
   /** The consult id, stable per cause occurrence. */
@@ -104,13 +67,13 @@ export interface PlannerEscalation {
 }
 
 const eventsOf = (
-  events: readonly LadderEvent[],
+  events: readonly LadderHistoryEvent[],
   kind: string,
-): LadderEvent[] => events.filter((event) => event.kind === kind);
+): LadderHistoryEvent[] => events.filter((event) => event.kind === kind);
 
 /** The typed payload recorded beside one intent, or null when it is absent or unreadable. */
 const payloadOf = (
-  events: readonly LadderEvent[],
+  events: readonly LadderHistoryEvent[],
   kind: string,
   id: string,
 ): Record<string, unknown> | null => {
@@ -221,7 +184,7 @@ function readRoutingWait(text: string): PlannerEscalation["routingWait"] {
 }
 
 /** The planner escalations recorded on a task, in order. */
-export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
+export function plannerEscalations(events: readonly LadderHistoryEvent[]): PlannerEscalation[] {
   return eventsOf(events, "planner_escalation").map((intent) => {
     const id = intent.detail.split(":", 1)[0]!;
     const payload = payloadOf(events, "planner_escalation_payload", id);
@@ -304,17 +267,6 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
       decisionId:
         activeDecision?.detail.match(/decision ([0-9a-f-]{36})/)?.[1] ?? null,
     };
-  });
-}
-
-/** An open decision can outlive a stop the owner cleared. Only its active wait holds the task. */
-export function plannerEscalationsHoldingTask(events: LadderEvent[]): PlannerEscalation[] {
-  return plannerEscalations(events).filter(({ id, answered, decisionId }) => {
-    if (answered) return false;
-    if (!decisionId) return true;
-    const link = events.findLast(event => event.kind === "planner_escalation_decision_linked"
-      && event.detail === `${id}: decision ${decisionId}`);
-    return !link || !escalationWaitSettledAfter(events, id, link.id);
   });
 }
 

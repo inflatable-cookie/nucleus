@@ -1,6 +1,6 @@
 import type { Task, TaskControlInput } from '../../../shared/contracts';
 import type { Ladder } from './ladder';
-import { ordinaryControlSettlesEscalation, plannerEscalations } from './records';
+import { plannerEscalations } from './records';
 import type { Store } from '../../store/store';
 
 /** Retire every recorded refusal follow-up and return prompt once its escalation has settled. */
@@ -45,7 +45,7 @@ export function continueWorkerAfterLadder(
 
 /** An ordinary owner control that moved a parked task answers the escalations it stepped over. */
 export function settleLadderControl(ladder: Ladder, before: Task, after: Task, action: TaskControlInput["action"]): void {
-  if (after.resolution.stop || !ordinaryControlSettlesEscalation(action)) return;
+  if (after.resolution.stop || !["move", "restart", "route", "retry_effect", "complete", "stop"].includes(action)) return;
   for (const escalation of plannerEscalations(ladder.store.eventsAll(before.id)).filter(item => !item.answered)) {
     ladder.store.event(before.id, "planner_escalation_answered", `${escalation.id}: answered by ordinary ${action}: task control moved the task`);
     closeEscalationFollowups(ladder.store, before.id, escalation.id);

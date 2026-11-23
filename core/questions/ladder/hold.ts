@@ -2,7 +2,8 @@ import type { DecisionView } from '../../../shared/contracts';
 import type { TaskDecisionFact, TaskStopRecord } from '../../../shared/task-stop';
 import { Decisions } from '../../planning/decisions';
 import type { Ladder } from './ladder';
-import { escalationWaitSettledAfter } from './records';
+import { plannerEscalations, type LadderEvent } from './records';
+import { escalationWaitDetail } from './waits';
 
 /**
  * The task-side wait an escalation establishes: the durable wait event and the
@@ -29,6 +30,35 @@ export function matchesEscalationWait(stop: TaskStopRecord | null, id: string, w
     && fact.escalationWait?.kind === wait.kind && fact.escalationWait.target === wait.target;
 }
 
+export function operatorEscalationWait(id: string, decisionId: string): EscalationWait {
+  return { kind: 'decision', target: decisionId, stopDetail: escalationWaitDetail.operator(id, decisionId) };
+}
+
+/** Whether the task still records this wait, or its planner stop if no target is named. */
+export function escalationWaitIsCurrent(stop: TaskStopRecord | null, id: string, wait?: EscalationWait): boolean {
+  const fact = stop?.fact;
+  if (!stop || fact?.code !== 'escalation' || fact.subject !== id) return false;
+  if (!wait) {
+    return stop.reason === 'escalated' && (fact.escalationWait?.kind === 'planner' || (
+      !fact.escalationWait && /^(?:Waiting with (?:the planner|a decider)|Blocker escalation )/.test(stop.detail)
+    ));
+  }
+  if (fact.escalationWait) return matchesEscalationWait(stop, id, wait);
+  // Older stops stored the escalation ID and rendered target without the typed wait.
+  const { stopReason, stopDetail } = escalationWaitState(id, wait);
+  return stop.reason === stopReason && stop.detail === stopDetail;
+}
+
+export function canInstallEscalationWait(stop: TaskStopRecord | null, id: string, wait: EscalationWait): boolean {
+  return escalationWaitIsCurrent(stop, id, wait) || escalationWaitIsCurrent(stop, id);
+}
+
+/** A linked decision can hold the task only while its wait or planner predecessor is current. */
+export function plannerEscalationsHoldingTask(events: LadderEvent[], stop: TaskStopRecord | null) {
+  return plannerEscalations(events).filter(({ id, answered, decisionId }) =>
+    !answered && (!decisionId || canInstallEscalationWait(stop, id, operatorEscalationWait(id, decisionId))));
+}
+
 /** The stop the wait writes, with the recorded detail and reason winning. */
 export function escalationWaitState(id: string, wait: EscalationWait) {
   const stopDetail = wait.stopDetail ?? (wait.kind === 'time'
@@ -42,9 +72,8 @@ export function escalationWaitState(id: string, wait: EscalationWait) {
 export function establishEscalationWait(ladder: Ladder, taskId: string, id: string, wait: EscalationWait, afterEventId = 0): boolean {
   const write = () => {
     const current = ladder.store.task(taskId);
-    if (['done', 'cancelled'].includes(current.phase)) return false;
+    if (['done', 'cancelled'].includes(current.phase) || !canInstallEscalationWait(current.resolution.stop, id, wait)) return false;
     const events = ladder.store.eventsAll(taskId);
-    if (afterEventId > 0 && escalationWaitSettledAfter(events, id, afterEventId)) return false;
     if (wait.kind === 'decision') {
       let decision: DecisionView;
       try { decision = new Decisions(ladder.store).get({ id: wait.target }); } catch { return false; }
